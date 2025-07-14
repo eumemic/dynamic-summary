@@ -1,13 +1,10 @@
 """FastAPI routes for RagZoom REST interface."""
 
 import logging
-from typing import List, Optional
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
-
-from contextlib import asynccontextmanager
-from threading import Lock
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
@@ -20,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Thread-safe service creation - new instance per request
 class RagZoomService:
     """Service container for RagZoom components."""
-    
+
     def __init__(self):
         self.config = RagZoomConfig()
         self.store = Store(self.config)
@@ -111,14 +108,16 @@ async def index_document(
 ):
     """Index a new document."""
     try:
-        # Add document to tree
-        document_id = service.tree_builder.add_document(request.text, request.document_id)
-        
+        # Add document to tree - use async version directly since we're in an async endpoint
+        document_id = await service.tree_builder.add_document_async(
+            request.text, request.document_id, show_progress=False
+        )
+
         # Get stats
         leaf_nodes = service.store.get_leaf_nodes()
         root = service.store.get_root_node()
         tree_depth = root.depth if root else 0
-        
+
         return IndexDocumentResponse(
             document_id=document_id,
             chunks_created=len(leaf_nodes),
@@ -143,12 +142,12 @@ async def query(
             )
         else:
             retrieval_result = service.retriever.retrieve(request.query, request.n_max)
-        
+
         # Assemble summary
         summary, token_count = service.assembler.assemble_with_budget(
             retrieval_result, request.token_budget
         )
-        
+
         return QueryResponse(
             summary=summary,
             token_count=token_count,
@@ -201,7 +200,7 @@ async def update_config(
             service.config.ttl_turns = request.ttl_turns
         if request.freshness_decay is not None:
             service.config.freshness_decay = request.freshness_decay
-        
+
         return {"message": "Configuration updated successfully"}
     except Exception as e:
         logger.error(f"Error updating config: {e}")
@@ -219,7 +218,7 @@ async def get_status(
         leaf_nodes = service.store.get_leaf_nodes()
         root = service.store.get_root_node()
         pinned = service.store.get_pinned_nodes()
-        
+
         return SystemStatusResponse(
             total_nodes=all_nodes,
             leaf_nodes=len(leaf_nodes),
@@ -257,13 +256,13 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     # Configure logging
     service = RagZoomService()
     logging.basicConfig(
         level=getattr(logging, service.config.log_level),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    
+
     # Run server
     uvicorn.run(app, host="0.0.0.0", port=8000)
