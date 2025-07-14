@@ -12,6 +12,12 @@ from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
 from ragzoom.utils import batch_process
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    # Fallback if tqdm not installed
+    tqdm = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,7 +90,7 @@ class TreeBuilder:
             logger.error(f"Error summarizing text: {e}")
             raise
 
-    def add_document(self, text: str, document_id: Optional[str] = None) -> str:
+    def add_document(self, text: str, document_id: Optional[str] = None, show_progress: bool = True) -> str:
         """Add a document to the tree, creating leaf nodes."""
         if not document_id:
             document_id = self._generate_node_id()
@@ -95,7 +101,14 @@ class TreeBuilder:
         
         # Create leaf nodes
         leaf_ids = []
-        for i, chunk in enumerate(chunks):
+        
+        # Use tqdm for progress if available and requested
+        if show_progress and tqdm:
+            chunk_iterator = tqdm(enumerate(chunks), total=len(chunks), desc="Creating leaf nodes")
+        else:
+            chunk_iterator = enumerate(chunks)
+        
+        for i, chunk in chunk_iterator:
             node_id = self._generate_node_id()
             embedding = self._get_embedding(chunk)
             
@@ -120,11 +133,13 @@ class TreeBuilder:
             leaf_ids.append(node_id)
         
         # Build tree from leaves
-        self._build_tree_from_leaves(leaf_ids, chunks)
+        if show_progress and tqdm:
+            logger.info("Building hierarchical tree...")
+        self._build_tree_from_leaves(leaf_ids, chunks, show_progress=show_progress)
         
         return document_id
 
-    def _build_tree_from_leaves(self, leaf_ids: List[str], leaf_texts: List[str]) -> str:
+    def _build_tree_from_leaves(self, leaf_ids: List[str], leaf_texts: List[str], show_progress: bool = True) -> str:
         """Build tree bottom-up from leaf nodes."""
         current_level_ids = leaf_ids
         current_level_texts = leaf_texts
@@ -135,8 +150,21 @@ class TreeBuilder:
             next_level_texts = []
             current_depth += 1
             
+            # Calculate number of parent nodes to create
+            num_pairs = (len(current_level_ids) + 1) // 2
+            
+            # Use tqdm for progress if available
+            if show_progress and tqdm:
+                pair_iterator = tqdm(
+                    range(0, len(current_level_ids), 2),
+                    total=num_pairs,
+                    desc=f"Building level {current_depth}"
+                )
+            else:
+                pair_iterator = range(0, len(current_level_ids), 2)
+            
             # Process pairs of nodes
-            for i in range(0, len(current_level_ids), 2):
+            for i in pair_iterator:
                 left_id = current_level_ids[i]
                 left_text = current_level_texts[i]
                 
@@ -222,7 +250,7 @@ class TreeBuilder:
                 node.parent_id = parent_id
                 session.commit()
 
-    def append_chunks(self, chunks: List[str], document_id: Optional[str] = None) -> str:
+    def append_chunks(self, chunks: List[str], document_id: Optional[str] = None, show_progress: bool = True) -> str:
         """Append new chunks to existing tree."""
         if not document_id:
             document_id = self._generate_node_id()
@@ -233,7 +261,14 @@ class TreeBuilder:
         
         # Create new leaf nodes
         new_leaf_ids = []
-        for i, chunk in enumerate(chunks):
+        
+        # Use tqdm for progress if available and requested
+        if show_progress and tqdm:
+            chunk_iterator = tqdm(enumerate(chunks), total=len(chunks), desc="Appending chunks")
+        else:
+            chunk_iterator = enumerate(chunks)
+            
+        for i, chunk in chunk_iterator:
             node_id = self._generate_node_id()
             embedding = self._get_embedding(chunk)
             
@@ -258,6 +293,8 @@ class TreeBuilder:
             new_leaf_ids.append(node_id)
         
         # Now merge new leaves into existing tree
+        if show_progress and tqdm:
+            logger.info("Merging into existing tree...")
         self._merge_into_tree(new_leaf_ids, chunks)
         return document_id
     

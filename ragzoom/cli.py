@@ -45,8 +45,9 @@ def cli(ctx):
 @cli.command()
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--document-id", help="Optional document ID")
+@click.option("--no-progress", is_flag=True, help="Disable progress bar")
 @click.pass_context
-def index(ctx, file_path: str, document_id: Optional[str]):
+def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool):
     """Index a document from file."""
     try:
         # Read file
@@ -57,7 +58,7 @@ def index(ctx, file_path: str, document_id: Optional[str]):
         
         # Index document
         tree_builder = ctx.obj["tree_builder"]
-        doc_id = tree_builder.add_document(text, document_id)
+        doc_id = tree_builder.add_document(text, document_id, show_progress=not no_progress)
         
         # Get stats
         store = ctx.obj["store"]
