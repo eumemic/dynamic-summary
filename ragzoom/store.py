@@ -18,8 +18,7 @@ from sqlalchemy import (
     Text,
     create_engine,
 )
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import declarative_base, Session, sessionmaker
 
 from ragzoom.config import RagZoomConfig
 
