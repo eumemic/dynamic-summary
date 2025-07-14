@@ -159,10 +159,11 @@ class Assembler:
         """Find a node at given depth that overlaps with the span."""
         with self.store.SessionLocal() as session:
             # Query for nodes at target depth that overlap the span
-            node = session.query(self.store.TreeNode).filter(
-                self.store.TreeNode.depth == depth,
-                self.store.TreeNode.span_start < span_end,
-                self.store.TreeNode.span_end > span_start
+            from ragzoom.store import TreeNode
+            node = session.query(TreeNode).filter(
+                TreeNode.depth == depth,
+                TreeNode.span_start < span_end,
+                TreeNode.span_end > span_start
             ).first()
             return node
 

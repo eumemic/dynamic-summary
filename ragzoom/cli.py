@@ -1,5 +1,6 @@
 """CLI interface for RagZoom."""
 
+import asyncio
 import json
 import logging
 import sys
@@ -11,7 +12,6 @@ from dotenv import load_dotenv
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
-from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
 
@@ -25,6 +25,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress noisy HTTP logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+# Keep ragzoom.index at INFO to show batch progress
+
 
 @click.group()
 @click.pass_context
@@ -37,7 +42,6 @@ def cli(ctx):
     ctx.ensure_object(dict)
     ctx.obj["config"] = config
     ctx.obj["store"] = store
-    ctx.obj["tree_builder"] = TreeBuilder(config, store)
     ctx.obj["retriever"] = Retriever(config, store)
     ctx.obj["assembler"] = Assembler(config, store)
 
@@ -46,8 +50,9 @@ def cli(ctx):
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--document-id", help="Optional document ID")
 @click.option("--no-progress", is_flag=True, help="Disable progress bar")
+@click.option("--max-concurrent", type=int, default=10, help="Maximum concurrent API requests (default: 10)")
 @click.pass_context
-def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool):
+def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, max_concurrent: int):
     """Index a document from file."""
     try:
         # Read file
@@ -56,9 +61,18 @@ def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool):
         
         click.echo(f"Indexing {path.name}...")
         
-        # Index document
-        tree_builder = ctx.obj["tree_builder"]
-        doc_id = tree_builder.add_document(text, document_id, show_progress=not no_progress)
+        # Create tree builder with specified concurrency
+        from ragzoom.index import TreeBuilder
+        config = ctx.obj["config"]
+        store = ctx.obj["store"]
+        tree_builder = TreeBuilder(config, store, max_concurrent=max_concurrent)
+        
+        doc_id = tree_builder.add_document(
+            text, 
+            document_id=document_id, 
+            file_path=str(path.absolute()),
+            show_progress=not no_progress
+        )
         
         # Get stats
         store = ctx.obj["store"]
@@ -199,6 +213,47 @@ def serve(host: str, port: int, reload: bool):
 
 
 @cli.command()
+@click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
+@click.pass_context
+def clear(ctx, confirm: bool):
+    """Clear all data from the database."""
+    try:
+        if not confirm:
+            click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
+        
+        store = ctx.obj["store"]
+        
+        # Clear SQLite data
+        with store.SessionLocal() as session:
+            # Import models
+            from ragzoom.store import TreeNode, Document
+            
+            # Delete all nodes
+            deleted_count = session.query(TreeNode).count()
+            session.query(TreeNode).delete()
+            session.query(Document).delete()
+            session.commit()
+        
+        # Clear Chroma collection - delete all documents
+        # Get all IDs first
+        results = store.collection.get()
+        if results['ids']:
+            store.collection.delete(ids=results['ids'])
+        
+        # Clear the cache
+        store.node_cache.clear()
+        store.cache_order.clear()
+        
+        click.echo(f"✅ Cleared {deleted_count} nodes from the database")
+        
+    except click.Abort:
+        click.echo("❌ Clear operation cancelled")
+    except Exception as e:
+        click.echo(f"❌ Error clearing database: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
 @click.argument("input_file", type=click.Path(exists=True))
 @click.argument("output_file", type=click.Path())
 @click.option("--format", type=click.Choice(["json", "text"]), default="text")
@@ -211,7 +266,8 @@ def export(ctx, input_file: str, output_file: str, format: str):
         # Get all nodes
         nodes_data = []
         with store.SessionLocal() as session:
-            nodes = session.query(store.TreeNode).all()
+            from ragzoom.store import TreeNode
+            nodes = session.query(TreeNode).all()
             for node in nodes:
                 node_dict = {
                     "id": node.id,

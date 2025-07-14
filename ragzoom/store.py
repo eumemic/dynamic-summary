@@ -1,5 +1,6 @@
 """Storage layer for RagZoom - SQLite for tree structure, Chroma for vectors."""
 
+import hashlib
 import logging
 from collections import deque
 from datetime import datetime
@@ -46,6 +47,19 @@ class TreeNode(Base):
     last_accessed = Column(DateTime, default=datetime.utcnow)
     access_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+    document_id = Column(String, ForeignKey("documents.id"), nullable=True)
+
+
+class Document(Base):
+    """SQLite model for documents."""
+    
+    __tablename__ = "documents"
+    
+    id = Column(String, primary_key=True)
+    file_path = Column(String, nullable=True, unique=True)  # Path to the source file
+    content_hash = Column(String, nullable=False)  # SHA256 hash of content
+    indexed_at = Column(DateTime, default=datetime.utcnow)
+    chunk_count = Column(Integer, default=0)
 
 
 class Store:
@@ -111,6 +125,7 @@ class Store:
         left_child_id: Optional[str] = None,
         right_child_id: Optional[str] = None,
         summary: Optional[str] = None,
+        document_id: Optional[str] = None,
     ) -> TreeNode:
         """Add a node to both SQLite and Chroma."""
         with self.SessionLocal() as session:
@@ -124,6 +139,7 @@ class Store:
                 span_end=span_end,
                 text=text,
                 summary=summary,
+                document_id=document_id,
             )
             session.add(node)
             session.commit()
@@ -340,3 +356,58 @@ class Store:
         
         # Return selected node IDs
         return [candidates[i][0] for i in selected_indices]
+    
+    def get_document_by_path(self, file_path: str) -> Optional[Document]:
+        """Get a document by file path."""
+        with self.SessionLocal() as session:
+            return session.query(Document).filter_by(file_path=file_path).first()
+    
+    def get_document_by_hash(self, content_hash: str) -> Optional[Document]:
+        """Get a document by content hash."""
+        with self.SessionLocal() as session:
+            return session.query(Document).filter_by(content_hash=content_hash).first()
+    
+    def add_document(self, document_id: str, file_path: Optional[str], 
+                    content_hash: str, chunk_count: int) -> Document:
+        """Add a document record."""
+        with self.SessionLocal() as session:
+            doc = Document(
+                id=document_id,
+                file_path=file_path,
+                content_hash=content_hash,
+                chunk_count=chunk_count
+            )
+            session.add(doc)
+            session.commit()
+            return doc
+    
+    def delete_document_nodes(self, document_id: str) -> int:
+        """Delete all nodes associated with a document."""
+        with self.SessionLocal() as session:
+            # Get all nodes for this document
+            nodes = session.query(TreeNode).filter_by(document_id=document_id).all()
+            node_ids = [n.id for n in nodes]
+            
+            # Delete from SQLite
+            deleted_count = session.query(TreeNode).filter_by(document_id=document_id).delete()
+            session.commit()
+            
+            # Delete from Chroma
+            if node_ids:
+                self.collection.delete(ids=node_ids)
+            
+            # Clear from cache
+            for node_id in node_ids:
+                if node_id in self.node_cache:
+                    del self.node_cache[node_id]
+                    try:
+                        self.cache_order.remove(node_id)
+                    except ValueError:
+                        pass
+            
+            return deleted_count
+    
+    @staticmethod
+    def compute_content_hash(content: str) -> str:
+        """Compute SHA256 hash of content."""
+        return hashlib.sha256(content.encode('utf-8')).hexdigest()

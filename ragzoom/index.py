@@ -1,54 +1,75 @@
 """Tree building and indexing functionality for RagZoom."""
 
+import asyncio
 import logging
+import math
 import uuid
+from datetime import datetime
 from typing import List, Optional, Tuple
 
 import openai
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
 from ragzoom.utils import batch_process
-
-try:
-    from tqdm import tqdm
-except ImportError:
-    # Fallback if tqdm not installed
-    tqdm = None
+from ragzoom.progress import GlobalProgressTracker, AsyncProgressWrapper
 
 logger = logging.getLogger(__name__)
 
 
 class TreeBuilder:
-    """Builds and maintains the hierarchical tree structure."""
+    """Tree builder with concurrent processing."""
 
-    def __init__(self, config: RagZoomConfig, store: Store):
-        """Initialize tree builder."""
+    def __init__(self, config: RagZoomConfig, store: Store, max_concurrent: int = 10):
+        """Initialize tree builder.
+        
+        Args:
+            config: RagZoom configuration
+            store: Storage backend
+            max_concurrent: Maximum concurrent API requests (default: 10)
+        """
         self.config = config
         self.store = store
         self.splitter = TextSplitter(config)
-        self.client = OpenAI(api_key=config.openai_api_key)
+        self.client = AsyncOpenAI(api_key=config.openai_api_key)
+        self.semaphore = asyncio.Semaphore(max_concurrent)
 
     def _generate_node_id(self) -> str:
         """Generate unique node ID."""
         return str(uuid.uuid4())
 
-    def _get_embedding(self, text: str) -> List[float]:
+    async def _get_embedding(self, text: str) -> List[float]:
         """Get embedding for text using OpenAI."""
-        try:
-            response = self.client.embeddings.create(
-                model=self.config.embedding_model,
-                input=text,
-                dimensions=self.config.embedding_dimensions,
-            )
-            return response.data[0].embedding
-        except Exception as e:
-            logger.error(f"Error getting embedding: {e}")
-            raise
+        async with self.semaphore:
+            try:
+                response = await self.client.embeddings.create(
+                    model=self.config.embedding_model,
+                    input=text,
+                    dimensions=self.config.embedding_dimensions,
+                )
+                return response.data[0].embedding
+            except Exception as e:
+                logger.error(f"Error getting embedding: {e}")
+                raise
 
-    def _summarize_text(
+    async def _get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """Get embeddings for multiple texts in a single request."""
+        async with self.semaphore:
+            try:
+                # OpenAI batch endpoint supports up to 2048 texts
+                response = await self.client.embeddings.create(
+                    model=self.config.embedding_model,
+                    input=texts,
+                    dimensions=self.config.embedding_dimensions,
+                )
+                return [item.embedding for item in response.data]
+            except Exception as e:
+                logger.error(f"Error getting batch embeddings: {e}")
+                raise
+
+    async def _summarize_text(
         self,
         text: str,
         target_tokens: int,
@@ -75,108 +96,237 @@ class TreeBuilder:
         
         full_prompt = "\n\n".join(prompt_parts)
         
-        try:
-            response = self.client.chat.completions.create(
-                model=self.config.summary_model,
-                messages=[
-                    {"role": "system", "content": "You are a precise summarizer."},
-                    {"role": "user", "content": full_prompt},
-                ],
-                temperature=self.config.summary_temperature,
-                max_tokens=target_tokens,
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"Error summarizing text: {e}")
-            raise
+        async with self.semaphore:
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.config.summary_model,
+                    messages=[
+                        {"role": "system", "content": "You are a precise summarizer."},
+                        {"role": "user", "content": full_prompt},
+                    ],
+                    temperature=self.config.summary_temperature,
+                    max_tokens=target_tokens,
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                logger.error(f"Error summarizing text: {e}")
+                raise
 
-    def add_document(self, text: str, document_id: Optional[str] = None, show_progress: bool = True) -> str:
+    async def _add_document_impl(
+        self, text: str, document_id: Optional[str] = None, 
+        file_path: Optional[str] = None, show_progress: bool = True
+    ) -> str:
         """Add a document to the tree, creating leaf nodes."""
+        # Compute content hash
+        content_hash = self.store.compute_content_hash(text)
+        
+        # Check if document already exists
+        existing_doc = None
+        if file_path:
+            existing_doc = self.store.get_document_by_path(file_path)
+            if existing_doc:
+                # Check if content changed
+                if existing_doc.content_hash == content_hash:
+                    logger.info(f"Document at {file_path} unchanged, skipping re-indexing")
+                    return existing_doc.id
+                else:
+                    logger.info(f"Document at {file_path} has changed, re-indexing...")
+                    # Delete old nodes
+                    deleted = self.store.delete_document_nodes(existing_doc.id)
+                    logger.info(f"Deleted {deleted} old nodes")
+                    document_id = existing_doc.id
+        
         if not document_id:
             document_id = self._generate_node_id()
         
         # Split into chunks
+        if show_progress:
+            logger.info("Splitting document into chunks...")
         chunks = self.splitter.split_text(text)
         logger.info(f"Split document into {len(chunks)} chunks")
         
-        # Create leaf nodes
-        leaf_ids = []
+        # Create progress tracker
+        progress = GlobalProgressTracker(len(chunks), show_progress)
+        async_progress = AsyncProgressWrapper(progress)
         
-        # Use tqdm for progress if available and requested
-        if show_progress and tqdm:
-            chunk_iterator = tqdm(enumerate(chunks), total=len(chunks), desc="Creating leaf nodes")
-        else:
-            chunk_iterator = enumerate(chunks)
-        
-        for i, chunk in chunk_iterator:
-            node_id = self._generate_node_id()
-            embedding = self._get_embedding(chunk)
+        try:
+            # Create leaf nodes with batch embeddings
+            if show_progress and len(chunks) > 100:
+                logger.info("Preparing chunk data...")
             
-            # Calculate span positions in tokens (not bytes) - cache encoding
-            tokens_before = 0
-            for j in range(i):
-                tokens_before += len(self.splitter.tokenizer.encode(chunks[j]))
+            leaf_ids = []
+            chunk_data = []
             
-            chunk_encoded = self.splitter.tokenizer.encode(chunk)
-            chunk_tokens = len(chunk_encoded)
-            span_start = tokens_before
-            span_end = span_start + chunk_tokens
+            # Prepare all chunk data
+            for i, chunk in enumerate(chunks):
+                node_id = self._generate_node_id()
+                
+                # Calculate span positions in tokens
+                tokens_before = 0
+                for j in range(i):
+                    tokens_before += len(self.splitter.tokenizer.encode(chunks[j]))
+                
+                chunk_encoded = self.splitter.tokenizer.encode(chunk)
+                chunk_tokens = len(chunk_encoded)
+                span_start = tokens_before
+                span_end = span_start + chunk_tokens
+                
+                chunk_data.append({
+                    'id': node_id,
+                    'text': chunk,
+                    'span_start': span_start,
+                    'span_end': span_end,
+                })
+                leaf_ids.append(node_id)
+        
+            # Get embeddings in batches
+            batch_size = 100  # Process 100 at a time for efficiency
+            all_embeddings = []
             
-            self.store.add_node(
-                node_id=node_id,
-                text=chunk,
-                embedding=embedding,
-                depth=0,
-                span_start=span_start,
-                span_end=span_end,
-            )
-            leaf_ids.append(node_id)
+            for i in range(0, len(chunks), batch_size):
+                batch_texts = [d['text'] for d in chunk_data[i:i+batch_size]]
+                batch_end = min(i + batch_size, len(chunks))
+                
+                # Show which batch we're processing
+                if show_progress:
+                    logger.info(f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)}")
+                
+                batch_embeddings = await self._get_embeddings_batch(batch_texts)
+                all_embeddings.extend(batch_embeddings)
+                
+                # Update progress for embeddings
+                await async_progress.update(len(batch_texts))
         
-        # Build tree from leaves
-        if show_progress and tqdm:
-            logger.info("Building hierarchical tree...")
-        self._build_tree_from_leaves(leaf_ids, chunks, show_progress=show_progress)
-        
-        return document_id
+            # Store all leaf nodes
+            for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
+                self.store.add_node(
+                    node_id=data['id'],
+                    text=data['text'],
+                    embedding=embedding,
+                    depth=0,
+                    span_start=data['span_start'],
+                    span_end=data['span_end'],
+                    document_id=document_id,
+                )
+            
+            # Add document record
+            if not existing_doc:
+                self.store.add_document(document_id, file_path, content_hash, len(chunks))
+            else:
+                # Update existing document
+                with self.store.SessionLocal() as session:
+                    from ragzoom.store import Document
+                    doc = session.query(Document).filter_by(id=document_id).first()
+                    if doc:
+                        doc.content_hash = content_hash
+                        doc.chunk_count = len(chunks)
+                        doc.indexed_at = datetime.utcnow()
+                        session.commit()
+            
+            # Build tree from leaves
+            await self._build_tree_from_leaves(leaf_ids, chunks, document_id, async_progress)
+            
+            return document_id
+        finally:
+            # Always close progress
+            progress.close()
+    
+    def add_document(self, text: str, document_id: Optional[str] = None,
+                    file_path: Optional[str] = None, show_progress: bool = True) -> str:
+        """Sync wrapper for add_document."""
+        return asyncio.run(self.add_document_async(text, document_id, file_path, show_progress))
+    
+    async def add_document_async(self, text: str, document_id: Optional[str] = None,
+                                file_path: Optional[str] = None, show_progress: bool = True) -> str:
+        """Async version of add_document - called by sync wrapper."""
+        return await self._add_document_impl(text, document_id, file_path, show_progress)
 
-    def _build_tree_from_leaves(self, leaf_ids: List[str], leaf_texts: List[str], show_progress: bool = True) -> str:
-        """Build tree bottom-up from leaf nodes."""
+    async def _process_node_pair(
+        self, left_id: str, left_text: str, right_id: str, right_text: str,
+        prev_context: Optional[str], next_context: Optional[str],
+        current_depth: int, document_id: Optional[str]
+    ) -> Tuple[str, str, str]:
+        """Process a single node pair - generate summary and embedding."""
+        parent_id = self._generate_node_id()
+        
+        # Combine texts for parent
+        combined_text = f"{left_text}\n\n{right_text}"
+        
+        # Calculate target tokens for summary with depth-based compression
+        left_tokens = len(self.splitter.tokenizer.encode(left_text))
+        right_tokens = len(self.splitter.tokenizer.encode(right_text))
+        
+        # Compression ratio increases with depth
+        compression_ratio = 1.0 / (current_depth + 1)
+        target_tokens = max(int((left_tokens + right_tokens) * compression_ratio), 50)
+        
+        # Generate summary (async)
+        summary = await self._summarize_text(
+            combined_text, target_tokens, prev_context, next_context
+        )
+        
+        # Get embedding for summary (this could be batched later)
+        embedding = await self._get_embedding(summary)
+        
+        # Store the node data
+        left_node = self.store.get_node(left_id)
+        right_node = self.store.get_node(right_id)
+        
+        if not left_node or not right_node:
+            logger.error(f"Failed to retrieve child nodes: left={left_id}, right={right_id}")
+            raise ValueError(f"Child nodes not found in store")
+        
+        self.store.add_node(
+            node_id=parent_id,
+            text=summary,
+            embedding=embedding,
+            depth=current_depth,
+            span_start=left_node.span_start,
+            span_end=right_node.span_end,
+            left_child_id=left_id,
+            right_child_id=right_id,
+            summary=summary,
+            document_id=document_id,
+        )
+        
+        # Update children's parent references
+        self._update_parent_reference(left_id, parent_id)
+        self._update_parent_reference(right_id, parent_id)
+        
+        return parent_id, summary, embedding
+
+    async def _build_tree_from_leaves(
+        self, leaf_ids: List[str], leaf_texts: List[str], 
+        document_id: Optional[str] = None, progress: Optional[AsyncProgressWrapper] = None
+    ) -> str:
+        """Build tree bottom-up from leaf nodes with concurrent processing."""
         current_level_ids = leaf_ids
         current_level_texts = leaf_texts
         current_depth = 0
+        
+        # Calculate total tree height (depth from root to leaves)
+        import math
+        total_tree_height = math.ceil(math.log2(len(leaf_ids))) if len(leaf_ids) > 1 else 0
         
         while len(current_level_ids) > 1:
             next_level_ids = []
             next_level_texts = []
             current_depth += 1
             
-            # Calculate number of parent nodes to create
-            num_pairs = (len(current_level_ids) + 1) // 2
+            # Process pairs concurrently
+            tasks = []
+            pair_info = []
             
-            # Use tqdm for progress if available
-            if show_progress and tqdm:
-                pair_iterator = tqdm(
-                    range(0, len(current_level_ids), 2),
-                    total=num_pairs,
-                    desc=f"Building level {current_depth}"
-                )
-            else:
-                pair_iterator = range(0, len(current_level_ids), 2)
-            
-            # Process pairs of nodes
-            for i in pair_iterator:
+            # Prepare all pairs
+            for i in range(0, len(current_level_ids), 2):
                 left_id = current_level_ids[i]
                 left_text = current_level_texts[i]
                 
-                # Check if we have a right child
                 if i + 1 < len(current_level_ids):
                     right_id = current_level_ids[i + 1]
                     right_text = current_level_texts[i + 1]
                     
-                    # Create parent node
-                    parent_id = self._generate_node_id()
-                    
-                    # Get adjacent context for summarization
+                    # Get adjacent context
                     prev_context = None
                     next_context = None
                     
@@ -190,261 +340,76 @@ class TreeBuilder:
                             current_level_texts, i + 1
                         )
                     
-                    # Combine texts for parent
-                    combined_text = f"{left_text}\n\n{right_text}"
-                    
-                    # Calculate target tokens for summary with depth-based compression
-                    left_tokens = len(self.splitter.tokenizer.encode(left_text))
-                    right_tokens = len(self.splitter.tokenizer.encode(right_text))
-                    
-                    # Compression ratio increases with depth: 0.5 at depth 1, 0.33 at depth 2, etc.
-                    compression_ratio = 1.0 / (current_depth + 1)
-                    target_tokens = max(int((left_tokens + right_tokens) * compression_ratio), 50)
-                    
-                    # Generate summary
-                    summary = self._summarize_text(
-                        combined_text, target_tokens, prev_context, next_context
+                    # Create async task
+                    task = self._process_node_pair(
+                        left_id, left_text, right_id, right_text,
+                        prev_context, next_context, current_depth, document_id
                     )
-                    
-                    # Get embedding for summary
-                    embedding = self._get_embedding(summary)
-                    
-                    # Calculate span
-                    left_node = self.store.get_node(left_id)
-                    right_node = self.store.get_node(right_id)
-                    
-                    self.store.add_node(
-                        node_id=parent_id,
-                        text=summary,
-                        embedding=embedding,
-                        depth=current_depth,
-                        span_start=left_node.span_start,
-                        span_end=right_node.span_end,
-                        left_child_id=left_id,
-                        right_child_id=right_id,
-                        summary=summary,
-                    )
-                    
-                    # Update children's parent references
-                    self._update_parent_reference(left_id, parent_id)
-                    self._update_parent_reference(right_id, parent_id)
-                    
-                    next_level_ids.append(parent_id)
-                    next_level_texts.append(summary)
+                    tasks.append(task)
+                    pair_info.append((i, i+1))
                 else:
                     # Odd node at end - promote to next level
                     next_level_ids.append(left_id)
                     next_level_texts.append(left_text)
             
+            # Process all pairs concurrently
+            if tasks:
+                # Always log tree building progress
+                level_from_root = total_tree_height - current_depth
+                logger.info(f"Building tree level {level_from_root}: processing {len(tasks)} node pairs")
+                
+                # Track completion count and start time
+                completed_count = 0
+                import time
+                level_start_time = time.time()
+                
+                # Wrap each task to update progress when it completes
+                async def track_progress(task, task_index):
+                    nonlocal completed_count
+                    result = await task
+                    
+                    # Update progress immediately when this pair completes
+                    if progress:
+                        await progress.update(2)
+                    
+                    # Log batch completion every 10 tasks
+                    completed_count += 1
+                    if completed_count % 10 == 0:
+                        elapsed = time.time() - level_start_time
+                        mins, secs = divmod(int(elapsed), 60)
+                        logger.info(f"  Completed {completed_count}/{len(tasks)} pairs at level {total_tree_height - current_depth} [{mins}m {secs}s elapsed]")
+                    
+                    return result
+                
+                # Create tracked tasks
+                tracked_tasks = [track_progress(task, i) for i, task in enumerate(tasks)]
+                
+                # Process tasks in smaller groups for better progress feedback
+                results = []
+                group_size = 20  # Process 20 at a time
+                
+                for i in range(0, len(tracked_tasks), group_size):
+                    group = tracked_tasks[i:i+group_size]
+                    group_results = await asyncio.gather(*group)
+                    results.extend(group_results)
+                
+                for parent_id, summary, _ in results:
+                    next_level_ids.append(parent_id)
+                    next_level_texts.append(summary)
+            
             current_level_ids = next_level_ids
             current_level_texts = next_level_texts
         
         # Return root node ID
+        if current_level_ids:
+            logger.info(f"Tree building complete. Root node at level 0 with ID: {current_level_ids[0][:8]}...")
         return current_level_ids[0] if current_level_ids else None
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference."""
         with self.store.SessionLocal() as session:
-            node = session.query(self.store.TreeNode).filter_by(id=node_id).first()
+            from ragzoom.store import TreeNode
+            node = session.query(TreeNode).filter_by(id=node_id).first()
             if node:
                 node.parent_id = parent_id
                 session.commit()
-
-    def append_chunks(self, chunks: List[str], document_id: Optional[str] = None, show_progress: bool = True) -> str:
-        """Append new chunks to existing tree."""
-        if not document_id:
-            document_id = self._generate_node_id()
-            
-        # Get the rightmost leaf to calculate span offsets
-        rightmost_leaf = self._get_rightmost_leaf()
-        span_offset = rightmost_leaf.span_end if rightmost_leaf else 0
-        
-        # Create new leaf nodes
-        new_leaf_ids = []
-        
-        # Use tqdm for progress if available and requested
-        if show_progress and tqdm:
-            chunk_iterator = tqdm(enumerate(chunks), total=len(chunks), desc="Appending chunks")
-        else:
-            chunk_iterator = enumerate(chunks)
-            
-        for i, chunk in chunk_iterator:
-            node_id = self._generate_node_id()
-            embedding = self._get_embedding(chunk)
-            
-            # Calculate span in tokens with proper offset - cache encoding
-            tokens_before = 0
-            for j in range(i):
-                tokens_before += len(self.splitter.tokenizer.encode(chunks[j]))
-            
-            chunk_encoded = self.splitter.tokenizer.encode(chunk)
-            chunk_tokens = len(chunk_encoded)
-            span_start = span_offset + tokens_before
-            span_end = span_start + chunk_tokens
-            
-            self.store.add_node(
-                node_id=node_id,
-                text=chunk,
-                embedding=embedding,
-                depth=0,
-                span_start=span_start,
-                span_end=span_end,
-            )
-            new_leaf_ids.append(node_id)
-        
-        # Now merge new leaves into existing tree
-        if show_progress and tqdm:
-            logger.info("Merging into existing tree...")
-        self._merge_into_tree(new_leaf_ids, chunks)
-        return document_id
-    
-    def _get_rightmost_leaf(self) -> Optional["TreeNode"]:
-        """Get the rightmost (highest span_end) leaf node."""
-        with self.store.SessionLocal() as session:
-            return session.query(self.store.TreeNode).filter_by(
-                summary=None  # Leaf nodes have no summary
-            ).order_by(self.store.TreeNode.span_end.desc()).first()
-    
-    def _merge_into_tree(self, new_leaf_ids: List[str], new_leaf_texts: List[str]) -> None:
-        """Merge new leaves into the existing tree structure."""
-        # Find nodes at depth 0 that need new parents
-        existing_leaves = self.store.get_leaf_nodes()
-        
-        # Group leaves that need to be paired
-        unpaired_leaves = []
-        for leaf in existing_leaves:
-            if not leaf.parent_id:
-                unpaired_leaves.append(leaf)
-        
-        # Combine unpaired existing leaves with new leaves
-        all_unpaired_ids = [leaf.id for leaf in unpaired_leaves] + new_leaf_ids
-        all_unpaired_texts = [leaf.text for leaf in unpaired_leaves] + new_leaf_texts
-        
-        # Build tree from all unpaired leaves
-        if len(all_unpaired_ids) > 1:
-            root_id = self._build_tree_from_leaves(all_unpaired_ids, all_unpaired_texts)
-            
-            # Connect new subtree to existing root if needed
-            existing_root = self.store.get_root_node()
-            if existing_root and root_id != existing_root.id:
-                # Create new root combining old and new
-                new_root_id = self._generate_node_id()
-                combined_text = f"{existing_root.text}\n\n{self.store.get_node(root_id).text}"
-                
-                # Summary for new root
-                existing_tokens = len(self.splitter.tokenizer.encode(existing_root.text))
-                new_subtree_tokens = len(self.splitter.tokenizer.encode(self.store.get_node(root_id).text))
-                target_tokens = max((existing_tokens + new_subtree_tokens) // 2, 50)
-                summary = self._summarize_text(combined_text, target_tokens)
-                embedding = self._get_embedding(summary)
-                
-                # Get combined span
-                new_subtree_root = self.store.get_node(root_id)
-                
-                self.store.add_node(
-                    node_id=new_root_id,
-                    text=summary,
-                    embedding=embedding,
-                    depth=max(existing_root.depth, new_subtree_root.depth) + 1,
-                    span_start=min(existing_root.span_start, new_subtree_root.span_start),
-                    span_end=max(existing_root.span_end, new_subtree_root.span_end),
-                    left_child_id=existing_root.id,
-                    right_child_id=root_id,
-                    summary=summary,
-                )
-                
-                # Update parent references
-                self._update_parent_reference(existing_root.id, new_root_id)
-                self._update_parent_reference(root_id, new_root_id)
-
-    def recompute_dirty_summaries(self) -> int:
-        """Recompute summaries for nodes marked as dirty."""
-        logger.info("Recomputing dirty summaries...")
-        count = 0
-        
-        with self.store.SessionLocal() as session:
-            # Get all dirty nodes, ordered by depth (bottom-up)
-            dirty_nodes = session.query(self.store.TreeNode).filter_by(
-                is_dirty=1
-            ).order_by(self.store.TreeNode.depth).all()
-            
-            for node in dirty_nodes:
-                if node.left_child_id and node.right_child_id:
-                    # Get children
-                    left_child = session.query(self.store.TreeNode).filter_by(
-                        id=node.left_child_id
-                    ).first()
-                    right_child = session.query(self.store.TreeNode).filter_by(
-                        id=node.right_child_id
-                    ).first()
-                    
-                    if left_child and right_child:
-                        # Combine texts
-                        combined_text = f"{left_child.text}\n\n{right_child.text}"
-                        
-                        # Get adjacent context
-                        prev_context, next_context = self._get_node_context(session, node)
-                        
-                        # Regenerate summary
-                        target_tokens = self.config.leaf_tokens
-                        new_summary = self._summarize_text(
-                            combined_text, target_tokens, prev_context, next_context
-                        )
-                        
-                        # Update node
-                        node.text = new_summary
-                        node.summary = new_summary
-                        node.is_dirty = 0
-                        
-                        # Update embedding
-                        new_embedding = self._get_embedding(new_summary)
-                        self.store.collection.update(
-                            ids=[node.id],
-                            embeddings=[new_embedding],
-                            documents=[new_summary]
-                        )
-                        
-                        count += 1
-                        logger.info(f"Recomputed summary for node {node.id}")
-            
-            session.commit()
-        
-        return count
-    
-    def _get_node_context(
-        self, session, node: "TreeNode"
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """Get adjacent context for a node during re-summarization."""
-        # Find siblings at same depth with adjacent spans
-        prev_node = session.query(self.store.TreeNode).filter(
-            self.store.TreeNode.depth == node.depth,
-            self.store.TreeNode.span_end <= node.span_start
-        ).order_by(self.store.TreeNode.span_end.desc()).first()
-        
-        next_node = session.query(self.store.TreeNode).filter(
-            self.store.TreeNode.depth == node.depth,
-            self.store.TreeNode.span_start >= node.span_end
-        ).order_by(self.store.TreeNode.span_start).first()
-        
-        prev_context = None
-        next_context = None
-        
-        if prev_node:
-            prev_tokens = self.splitter.tokenizer.encode(prev_node.text)
-            if len(prev_tokens) > self.config.adjacent_context_tokens:
-                prev_context = self.splitter.tokenizer.decode(
-                    prev_tokens[-self.config.adjacent_context_tokens:]
-                )
-            else:
-                prev_context = prev_node.text
-        
-        if next_node:
-            next_tokens = self.splitter.tokenizer.encode(next_node.text)
-            if len(next_tokens) > self.config.adjacent_context_tokens:
-                next_context = self.splitter.tokenizer.decode(
-                    next_tokens[:self.config.adjacent_context_tokens]
-                )
-            else:
-                next_context = next_node.text
-        
-        return prev_context, next_context
