@@ -6,6 +6,9 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel, Field
 
+from contextlib import asynccontextmanager
+from threading import Lock
+
 from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
@@ -14,19 +17,41 @@ from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
 
+# Thread-safe singleton pattern for shared resources
+class RagZoomService:
+    _instance = None
+    _lock = Lock()
+    
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+        
+        self.config = RagZoomConfig()
+        self.store = Store(self.config)
+        self.tree_builder = TreeBuilder(self.config, self.store)
+        self.retriever = Retriever(self.config, self.store)
+        self.assembler = Assembler(self.config, self.store)
+        self._initialized = True
+
+# Dependency injection
+def get_ragzoom_service() -> RagZoomService:
+    """Get the RagZoom service instance."""
+    return RagZoomService()
+
 # Create FastAPI app
 app = FastAPI(
     title="RagZoom API",
     description="Incremental, hierarchical RAG memory system",
     version="0.1.0",
 )
-
-# Global instances (in production, use dependency injection)
-config = RagZoomConfig()
-store = Store(config)
-tree_builder = TreeBuilder(config, store)
-retriever = Retriever(config, store)
-assembler = Assembler(config, store)
 
 
 # Request/Response models
@@ -92,15 +117,18 @@ async def root():
 
 
 @app.post("/index", response_model=IndexDocumentResponse)
-async def index_document(request: IndexDocumentRequest):
+async def index_document(
+    request: IndexDocumentRequest,
+    service: RagZoomService = Depends(get_ragzoom_service)
+):
     """Index a new document."""
     try:
         # Add document to tree
-        document_id = tree_builder.add_document(request.text, request.document_id)
+        document_id = service.tree_builder.add_document(request.text, request.document_id)
         
         # Get stats
-        leaf_nodes = store.get_leaf_nodes()
-        root = store.get_root_node()
+        leaf_nodes = service.store.get_leaf_nodes()
+        root = service.store.get_root_node()
         tree_depth = root.depth if root else 0
         
         return IndexDocumentResponse(
@@ -114,19 +142,22 @@ async def index_document(request: IndexDocumentRequest):
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query(request: QueryRequest):
+async def query(
+    request: QueryRequest,
+    service: RagZoomService = Depends(get_ragzoom_service)
+):
     """Query the system."""
     try:
         # Retrieve with or without eviction
         if request.use_eviction:
-            retrieval_result = retriever.retrieve_with_eviction(
+            retrieval_result = service.retriever.retrieve_with_eviction(
                 request.query, request.token_budget
             )
         else:
-            retrieval_result = retriever.retrieve(request.query, request.n_max)
+            retrieval_result = service.retriever.retrieve(request.query, request.n_max)
         
         # Assemble summary
-        summary, token_count = assembler.assemble_with_budget(
+        summary, token_count = service.assembler.assemble_with_budget(
             retrieval_result, request.token_budget
         )
         
@@ -142,10 +173,13 @@ async def query(request: QueryRequest):
 
 
 @app.post("/pin")
-async def pin_node(request: PinNodeRequest):
+async def pin_node(
+    request: PinNodeRequest,
+    service: RagZoomService = Depends(get_ragzoom_service)
+):
     """Pin a node."""
     try:
-        success = store.pin_node(request.node_id)
+        success = service.store.pin_node(request.node_id)
         if not success:
             raise HTTPException(
                 status_code=400,
@@ -158,24 +192,27 @@ async def pin_node(request: PinNodeRequest):
 
 
 @app.patch("/config")
-async def update_config(request: UpdateConfigRequest):
+async def update_config(
+    request: UpdateConfigRequest,
+    service: RagZoomService = Depends(get_ragzoom_service)
+):
     """Update configuration dynamically."""
     try:
         # Update only provided fields
         if request.budget_tokens is not None:
-            config.budget_tokens = request.budget_tokens
+            service.config.budget_tokens = request.budget_tokens
         if request.leaf_tokens is not None:
-            config.leaf_tokens = request.leaf_tokens
+            service.config.leaf_tokens = request.leaf_tokens
         if request.mmr_lambda is not None:
-            config.mmr_lambda = request.mmr_lambda
+            service.config.mmr_lambda = request.mmr_lambda
         if request.slope_cap is not None:
-            config.slope_cap = request.slope_cap
+            service.config.slope_cap = request.slope_cap
         if request.smoothing_pass_enabled is not None:
-            config.smoothing_pass_enabled = request.smoothing_pass_enabled
+            service.config.smoothing_pass_enabled = request.smoothing_pass_enabled
         if request.ttl_turns is not None:
-            config.ttl_turns = request.ttl_turns
+            service.config.ttl_turns = request.ttl_turns
         if request.freshness_decay is not None:
-            config.freshness_decay = request.freshness_decay
+            service.config.freshness_decay = request.freshness_decay
         
         return {"message": "Configuration updated successfully"}
     except Exception as e:
@@ -184,21 +221,23 @@ async def update_config(request: UpdateConfigRequest):
 
 
 @app.get("/status", response_model=SystemStatusResponse)
-async def get_status():
+async def get_status(
+    service: RagZoomService = Depends(get_ragzoom_service)
+):
     """Get system status."""
     try:
         # Gather stats
-        all_nodes = store.collection.count()
-        leaf_nodes = store.get_leaf_nodes()
-        root = store.get_root_node()
-        pinned = store.get_pinned_nodes()
+        all_nodes = service.store.collection.count()
+        leaf_nodes = service.store.get_leaf_nodes()
+        root = service.store.get_root_node()
+        pinned = service.store.get_pinned_nodes()
         
         return SystemStatusResponse(
             total_nodes=all_nodes,
             leaf_nodes=len(leaf_nodes),
             tree_depth=root.depth if root else 0,
             pinned_nodes=len(pinned),
-            config=config.model_dump(),
+            config=service.config.model_dump(),
         )
     except Exception as e:
         logger.error(f"Error getting status: {e}")
@@ -206,10 +245,12 @@ async def get_status():
 
 
 @app.post("/recompute")
-async def recompute_summaries():
+async def recompute_summaries(
+    service: RagZoomService = Depends(get_ragzoom_service)
+):
     """Recompute summaries for dirty nodes."""
     try:
-        count = tree_builder.recompute_dirty_summaries()
+        count = service.tree_builder.recompute_dirty_summaries()
         return {
             "message": "Summaries recomputed",
             "nodes_updated": count,
@@ -230,8 +271,9 @@ if __name__ == "__main__":
     import uvicorn
     
     # Configure logging
+    service = RagZoomService()
     logging.basicConfig(
-        level=getattr(logging, config.log_level),
+        level=getattr(logging, service.config.log_level),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     

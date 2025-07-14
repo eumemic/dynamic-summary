@@ -98,9 +98,12 @@ class TreeBuilder:
             node_id = self._generate_node_id()
             embedding = self._get_embedding(chunk)
             
-            # Calculate span positions
-            span_start = i * self.config.leaf_tokens
-            span_end = span_start + len(self.splitter.tokenizer.encode(chunk))
+            # Calculate span positions in tokens (not bytes)
+            tokens_before = sum(len(self.splitter.tokenizer.encode(chunks[j])) 
+                              for j in range(i))
+            chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
+            span_start = tokens_before
+            span_end = span_start + chunk_tokens
             
             self.store.add_node(
                 node_id=node_id,
@@ -158,8 +161,8 @@ class TreeBuilder:
                     # Combine texts for parent
                     combined_text = f"{left_text}\n\n{right_text}"
                     
-                    # Calculate target tokens for summary
-                    target_tokens = self.config.leaf_tokens * 2  # Roughly same size as children
+                    # Calculate target tokens for summary (≤½ of combined children)
+                    target_tokens = self.config.leaf_tokens  # Half the size of combined children
                     
                     # Generate summary
                     summary = self._summarize_text(
@@ -204,41 +207,162 @@ class TreeBuilder:
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference."""
-        # This would typically be done via SQLAlchemy update
-        # For now, we'll handle this in the store layer
-        pass
+        with self.store.SessionLocal() as session:
+            node = session.query(self.store.TreeNode).filter_by(id=node_id).first()
+            if node:
+                node.parent_id = parent_id
+                session.commit()
 
-    def append_chunks(self, chunks: List[str], continue_from_root: bool = True) -> None:
+    def append_chunks(self, chunks: List[str], document_id: Optional[str] = None) -> str:
         """Append new chunks to existing tree."""
-        # Get current tree state
-        root = self.store.get_root_node()
-        if not root and not continue_from_root:
-            # Start new tree
-            leaf_ids = []
-            for chunk in chunks:
-                node_id = self._generate_node_id()
-                embedding = self._get_embedding(chunk)
-                
-                self.store.add_node(
-                    node_id=node_id,
-                    text=chunk,
-                    embedding=embedding,
-                    depth=0,
-                    span_start=0,  # Would need proper calculation
-                    span_end=len(chunk),
-                )
-                leaf_ids.append(node_id)
+        if not document_id:
+            document_id = self._generate_node_id()
             
-            self._build_tree_from_leaves(leaf_ids, chunks)
-        else:
-            # Append to existing tree - more complex logic needed
-            logger.warning("Incremental append not yet fully implemented")
+        # Get the rightmost leaf to calculate span offsets
+        rightmost_leaf = self._get_rightmost_leaf()
+        span_offset = rightmost_leaf.span_end if rightmost_leaf else 0
+        
+        # Create new leaf nodes
+        new_leaf_ids = []
+        for i, chunk in enumerate(chunks):
+            node_id = self._generate_node_id()
+            embedding = self._get_embedding(chunk)
+            
+            # Calculate span in tokens with proper offset
+            tokens_before = sum(len(self.splitter.tokenizer.encode(chunks[j])) 
+                              for j in range(i))
+            chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
+            span_start = span_offset + tokens_before
+            span_end = span_start + chunk_tokens
+            
+            self.store.add_node(
+                node_id=node_id,
+                text=chunk,
+                embedding=embedding,
+                depth=0,
+                span_start=span_start,
+                span_end=span_end,
+            )
+            new_leaf_ids.append(node_id)
+        
+        # Now merge new leaves into existing tree
+        self._merge_into_tree(new_leaf_ids, chunks)
+        return document_id
+    
+    def _get_rightmost_leaf(self) -> Optional["TreeNode"]:
+        """Get the rightmost (highest span_end) leaf node."""
+        with self.store.SessionLocal() as session:
+            return session.query(self.store.TreeNode).filter_by(
+                summary=None  # Leaf nodes have no summary
+            ).order_by(self.store.TreeNode.span_end.desc()).first()
+    
+    def _merge_into_tree(self, new_leaf_ids: List[str], new_leaf_texts: List[str]) -> None:
+        """Merge new leaves into the existing tree structure."""
+        # Find nodes at depth 0 that need new parents
+        existing_leaves = self.store.get_leaf_nodes()
+        
+        # Group leaves that need to be paired
+        unpaired_leaves = []
+        for leaf in existing_leaves:
+            if not leaf.parent_id:
+                unpaired_leaves.append(leaf)
+        
+        # Combine unpaired existing leaves with new leaves
+        all_unpaired_ids = [leaf.id for leaf in unpaired_leaves] + new_leaf_ids
+        all_unpaired_texts = [leaf.text for leaf in unpaired_leaves] + new_leaf_texts
+        
+        # Build tree from all unpaired leaves
+        if len(all_unpaired_ids) > 1:
+            self._build_tree_from_leaves(all_unpaired_ids, all_unpaired_texts)
 
     def recompute_dirty_summaries(self) -> int:
         """Recompute summaries for nodes marked as dirty."""
-        # This would traverse dirty nodes and regenerate summaries
-        # Implementation depends on specific update patterns
         logger.info("Recomputing dirty summaries...")
         count = 0
-        # TODO: Implement dirty node recomputation
+        
+        with self.store.SessionLocal() as session:
+            # Get all dirty nodes, ordered by depth (bottom-up)
+            dirty_nodes = session.query(self.store.TreeNode).filter_by(
+                is_dirty=1
+            ).order_by(self.store.TreeNode.depth).all()
+            
+            for node in dirty_nodes:
+                if node.left_child_id and node.right_child_id:
+                    # Get children
+                    left_child = session.query(self.store.TreeNode).filter_by(
+                        id=node.left_child_id
+                    ).first()
+                    right_child = session.query(self.store.TreeNode).filter_by(
+                        id=node.right_child_id
+                    ).first()
+                    
+                    if left_child and right_child:
+                        # Combine texts
+                        combined_text = f"{left_child.text}\n\n{right_child.text}"
+                        
+                        # Get adjacent context
+                        prev_context, next_context = self._get_node_context(session, node)
+                        
+                        # Regenerate summary
+                        target_tokens = self.config.leaf_tokens
+                        new_summary = self._summarize_text(
+                            combined_text, target_tokens, prev_context, next_context
+                        )
+                        
+                        # Update node
+                        node.text = new_summary
+                        node.summary = new_summary
+                        node.is_dirty = 0
+                        
+                        # Update embedding
+                        new_embedding = self._get_embedding(new_summary)
+                        self.store.collection.update(
+                            ids=[node.id],
+                            embeddings=[new_embedding],
+                            documents=[new_summary]
+                        )
+                        
+                        count += 1
+                        logger.info(f"Recomputed summary for node {node.id}")
+            
+            session.commit()
+        
         return count
+    
+    def _get_node_context(
+        self, session, node: "TreeNode"
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Get adjacent context for a node during re-summarization."""
+        # Find siblings at same depth with adjacent spans
+        prev_node = session.query(self.store.TreeNode).filter(
+            self.store.TreeNode.depth == node.depth,
+            self.store.TreeNode.span_end <= node.span_start
+        ).order_by(self.store.TreeNode.span_end.desc()).first()
+        
+        next_node = session.query(self.store.TreeNode).filter(
+            self.store.TreeNode.depth == node.depth,
+            self.store.TreeNode.span_start >= node.span_end
+        ).order_by(self.store.TreeNode.span_start).first()
+        
+        prev_context = None
+        next_context = None
+        
+        if prev_node:
+            prev_tokens = self.splitter.tokenizer.encode(prev_node.text)
+            if len(prev_tokens) > self.config.adjacent_context_tokens:
+                prev_context = self.splitter.tokenizer.decode(
+                    prev_tokens[-self.config.adjacent_context_tokens:]
+                )
+            else:
+                prev_context = prev_node.text
+        
+        if next_node:
+            next_tokens = self.splitter.tokenizer.encode(next_node.text)
+            if len(next_tokens) > self.config.adjacent_context_tokens:
+                next_context = self.splitter.tokenizer.decode(
+                    next_tokens[:self.config.adjacent_context_tokens]
+                )
+            else:
+                next_context = next_node.text
+        
+        return prev_context, next_context

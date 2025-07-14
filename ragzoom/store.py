@@ -272,54 +272,67 @@ class Store:
         
         # Get embeddings for all candidates
         candidate_ids = [c[0] for c in candidates]
-        candidate_embeddings = []
         
+        # Batch retrieve embeddings
         results = self.collection.get(
             ids=candidate_ids,
             include=["embeddings"]
         )
         
-        for i, cid in enumerate(candidate_ids):
-            idx = results["ids"].index(cid)
-            candidate_embeddings.append(results["embeddings"][idx])
+        # Create ID to embedding mapping for O(1) lookup
+        id_to_embedding = {
+            results["ids"][i]: np.array(results["embeddings"][i])
+            for i in range(len(results["ids"]))
+        }
         
-        # Convert to numpy for efficient computation
+        # Build candidate embeddings array in order
+        cand_embs = np.array([id_to_embedding[cid] for cid in candidate_ids])
         query_emb = np.array(query_embedding)
-        cand_embs = np.array(candidate_embeddings)
         
-        # Compute similarities to query
+        # Vectorized similarity computation
         query_sims = np.dot(cand_embs, query_emb)
         
-        # MMR iterative selection
+        # MMR iterative selection with optimized operations
+        selected_mask = np.zeros(len(candidates), dtype=bool)
         selected_indices = []
-        unselected_indices = list(range(len(candidates)))
         
         # Select first item (highest relevance)
         first_idx = np.argmax(query_sims)
         selected_indices.append(first_idx)
-        unselected_indices.remove(first_idx)
+        selected_mask[first_idx] = True
+        
+        # Pre-compute pairwise similarities for efficiency
+        if len(candidates) > 1:
+            pairwise_sims = np.dot(cand_embs, cand_embs.T)
         
         # Select remaining items
-        while len(selected_indices) < k and unselected_indices:
-            selected_embs = cand_embs[selected_indices]
+        for _ in range(1, min(k, len(candidates))):
+            # Vectorized MMR computation for all unselected
+            unselected_mask = ~selected_mask
+            if not np.any(unselected_mask):
+                break
             
-            mmr_scores = []
-            for idx in unselected_indices:
-                # Relevance to query
-                relevance = query_sims[idx]
-                
-                # Max similarity to already selected
-                sims_to_selected = np.dot(selected_embs, cand_embs[idx])
-                max_sim = np.max(sims_to_selected) if len(sims_to_selected) > 0 else 0
-                
-                # MMR score
-                mmr = lambda_param * relevance - (1 - lambda_param) * max_sim
-                mmr_scores.append(mmr)
+            # Relevance scores for unselected
+            relevances = query_sims[unselected_mask]
             
-            # Select best MMR score
-            best_idx = unselected_indices[np.argmax(mmr_scores)]
+            # Max similarity to any selected item (vectorized)
+            max_sims = np.max(
+                pairwise_sims[np.ix_(unselected_mask, selected_mask)],
+                axis=1
+            ) if np.any(selected_mask) else np.zeros(np.sum(unselected_mask))
+            
+            # MMR scores
+            mmr_scores = lambda_param * relevances - (1 - lambda_param) * max_sims
+            
+            # Get index in unselected subset
+            best_unselected_idx = np.argmax(mmr_scores)
+            
+            # Convert to original index
+            unselected_indices = np.where(unselected_mask)[0]
+            best_idx = unselected_indices[best_unselected_idx]
+            
             selected_indices.append(best_idx)
-            unselected_indices.remove(best_idx)
+            selected_mask[best_idx] = True
         
         # Return selected node IDs
         return [candidates[i][0] for i in selected_indices]
