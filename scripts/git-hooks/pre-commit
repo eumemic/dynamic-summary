@@ -1,0 +1,81 @@
+#!/bin/bash
+# Git pre-commit hook for RagZoom
+# Runs relevant tests based on modified files
+
+# Get modified Python files
+modified_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$')
+
+if [ -z "$modified_files" ]; then
+    echo "No Python files modified, skipping tests"
+    exit 0
+fi
+
+echo "Running tests for modified files..."
+
+# Initialize test selection
+test_args=""
+
+# Check which source files were modified and select appropriate tests
+for file in $modified_files; do
+    case "$file" in
+        ragzoom/splitter.py)
+            test_args="$test_args tests/test_splitter.py"
+            ;;
+        ragzoom/store.py)
+            test_args="$test_args tests/test_store.py"
+            ;;
+        ragzoom/index.py|ragzoom/retrieve.py|ragzoom/assemble.py)
+            test_args="$test_args tests/test_integration.py"
+            ;;
+        ragzoom/api.py)
+            test_args="$test_args tests/test_concurrency.py"
+            ;;
+        ragzoom/utils.py)
+            test_args="$test_args tests/test_utils.py"
+            ;;
+        ragzoom/config.py)
+            # Config changes affect all tests
+            test_args="tests/"
+            break
+            ;;
+        tests/*.py)
+            # If test files are modified, run them
+            test_args="$test_args $file"
+            ;;
+    esac
+done
+
+# Remove duplicates
+test_args=$(echo $test_args | tr ' ' '\n' | sort -u | tr '\n' ' ')
+
+if [ -z "$test_args" ]; then
+    echo "No relevant tests found for modified files"
+    exit 0
+fi
+
+# Run the tests
+echo "Running: pytest $test_args --tb=short -q"
+pytest $test_args --tb=short -q
+
+# Capture the exit code
+test_result=$?
+
+if [ $test_result -ne 0 ]; then
+    echo "Tests failed! Commit aborted."
+    echo "Run 'pytest $test_args -v' for detailed output"
+    exit 1
+fi
+
+echo "Tests passed!"
+
+# Also run linting on modified Python files
+echo "Running linting checks..."
+for file in $modified_files; do
+    if [[ "$file" == *.py ]]; then
+        # Run ruff check
+        ruff check "$file" || exit 1
+    fi
+done
+
+echo "All checks passed!"
+exit 0

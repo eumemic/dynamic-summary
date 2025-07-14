@@ -26,13 +26,18 @@ cd dynamic-summary
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install in development mode
-pip install -e .
+# Run the development setup script
+./scripts/setup-dev.sh
 
-# Copy environment template and add your OpenAI API key
-cp .env.example .env
-# Edit .env and set OPENAI_API_KEY
+# Add your OpenAI API key to .env
+echo "OPENAI_API_KEY=your-key-here" >> .env
 ```
+
+The setup script will:
+- Install all dependencies
+- Set up git hooks for automated testing
+- Configure your development environment
+- Verify everything is working
 
 ## Quick Start
 
@@ -123,11 +128,13 @@ ragzoom/
 ## Development
 
 ```bash
-# Install dev dependencies
-pip install -r requirements-dev.txt
+# Set up development environment (first time only)
+./scripts/setup-dev.sh
 
 # Run tests
-pytest
+pytest                      # All tests
+./test_quick.sh            # Quick test runner
+./test_quick.sh splitter   # Test specific module
 
 # Format code
 black ragzoom/ tests/
@@ -135,6 +142,11 @@ ruff check ragzoom/ tests/
 
 # Type checking
 mypy ragzoom/
+
+# Git hooks (automatically installed by setup script)
+# - pre-commit: Runs relevant tests for changed files
+# - pre-push: Runs full test suite
+# Skip with: git commit/push --no-verify
 ```
 
 ## License

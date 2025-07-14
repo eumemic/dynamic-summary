@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "post_edit": {
+      "command": "bash .claude/run-tests.sh",
+      "description": "Run relevant tests after file edits",
+      "enabled": true
+    },
+    "pre_write": {
+      "command": "ruff check {file_path}",
+      "description": "Check code style before writing",
+      "enabled": true,
+      "file_pattern": "*.py"
+    }
+  }
+}
