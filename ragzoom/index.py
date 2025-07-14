@@ -10,6 +10,7 @@ from openai import OpenAI
 from ragzoom.config import RagZoomConfig
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
+from ragzoom.utils import batch_process
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +99,13 @@ class TreeBuilder:
             node_id = self._generate_node_id()
             embedding = self._get_embedding(chunk)
             
-            # Calculate span positions in tokens (not bytes)
-            tokens_before = sum(len(self.splitter.tokenizer.encode(chunks[j])) 
-                              for j in range(i))
-            chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
+            # Calculate span positions in tokens (not bytes) - cache encoding
+            tokens_before = 0
+            for j in range(i):
+                tokens_before += len(self.splitter.tokenizer.encode(chunks[j]))
+            
+            chunk_encoded = self.splitter.tokenizer.encode(chunk)
+            chunk_tokens = len(chunk_encoded)
             span_start = tokens_before
             span_end = span_start + chunk_tokens
             
@@ -161,10 +165,13 @@ class TreeBuilder:
                     # Combine texts for parent
                     combined_text = f"{left_text}\n\n{right_text}"
                     
-                    # Calculate target tokens for summary (≤½ of combined children)
+                    # Calculate target tokens for summary with depth-based compression
                     left_tokens = len(self.splitter.tokenizer.encode(left_text))
                     right_tokens = len(self.splitter.tokenizer.encode(right_text))
-                    target_tokens = max((left_tokens + right_tokens) // 2, 50)
+                    
+                    # Compression ratio increases with depth: 0.5 at depth 1, 0.33 at depth 2, etc.
+                    compression_ratio = 1.0 / (current_depth + 1)
+                    target_tokens = max(int((left_tokens + right_tokens) * compression_ratio), 50)
                     
                     # Generate summary
                     summary = self._summarize_text(
@@ -230,10 +237,13 @@ class TreeBuilder:
             node_id = self._generate_node_id()
             embedding = self._get_embedding(chunk)
             
-            # Calculate span in tokens with proper offset
-            tokens_before = sum(len(self.splitter.tokenizer.encode(chunks[j])) 
-                              for j in range(i))
-            chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
+            # Calculate span in tokens with proper offset - cache encoding
+            tokens_before = 0
+            for j in range(i):
+                tokens_before += len(self.splitter.tokenizer.encode(chunks[j]))
+            
+            chunk_encoded = self.splitter.tokenizer.encode(chunk)
+            chunk_tokens = len(chunk_encoded)
             span_start = span_offset + tokens_before
             span_end = span_start + chunk_tokens
             

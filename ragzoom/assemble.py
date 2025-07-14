@@ -34,7 +34,9 @@ class Assembler:
             root = self.store.get_root_node()
             if root:
                 return root.text
-            return ""
+            else:
+                logger.warning("No frontier nodes and no root node found")
+                return ""
         
         # Apply slope cap if enabled
         if self.config.slope_cap:
@@ -68,8 +70,9 @@ class Assembler:
             if node:
                 node_depths.append((node_id, node.depth))
         
-        # Apply slope cap
+        # Apply slope cap with deduplication
         capped_nodes = [node_depths[0]]
+        seen = {node_depths[0][0]}  # Track seen node IDs
         
         for i in range(1, len(node_depths)):
             current_id, current_depth = node_depths[i]
@@ -80,7 +83,9 @@ class Assembler:
             
             if depth_diff <= 1:
                 # Within slope cap
-                capped_nodes.append((current_id, current_depth))
+                if current_id not in seen:
+                    capped_nodes.append((current_id, current_depth))
+                    seen.add(current_id)
             else:
                 # Need to find intermediate nodes
                 logger.info(f"Slope cap violation: {prev_depth} -> {current_depth}")
@@ -88,11 +93,16 @@ class Assembler:
                 # Try to find a path with gradual depth changes
                 intermediate = self._find_intermediate_path(prev_id, current_id)
                 if intermediate:
-                    capped_nodes.extend(intermediate)
-                else:
-                    # If no path found, include anyway but log warning
-                    logger.warning(f"No intermediate path found, including anyway")
+                    # Add only unseen intermediates
+                    for node_id, depth in intermediate:
+                        if node_id not in seen:
+                            capped_nodes.append((node_id, depth))
+                            seen.add(node_id)
+                
+                # Always add the target node if not seen
+                if current_id not in seen:
                     capped_nodes.append((current_id, current_depth))
+                    seen.add(current_id)
         
         return [node_id for node_id, _ in capped_nodes]
 
