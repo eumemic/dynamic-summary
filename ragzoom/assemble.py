@@ -30,6 +30,10 @@ class Assembler:
         frontier_nodes = retrieval_result.frontier_nodes
         
         if not frontier_nodes:
+            # Return root synopsis if available
+            root = self.store.get_root_node()
+            if root:
+                return root.text
             return ""
         
         # Apply slope cap if enabled
@@ -102,30 +106,55 @@ class Assembler:
         if not start_node or not end_node:
             return []
         
-        # This is a simplified version - in practice, you'd want a more
-        # sophisticated path-finding algorithm
         path = []
         
-        # If going up in depth (toward root)
+        # Handle both upward and downward transitions
         if start_node.depth > end_node.depth:
+            # Going up (toward root)
             current_id = start_id
-            while current_id:
+            current_depth = start_node.depth
+            
+            while current_depth > end_node.depth + 1:
                 node = self.store.get_node(current_id)
-                if not node:
+                if not node or not node.parent_id:
                     break
-                
-                if node.depth <= end_node.depth:
-                    break
-                
-                if node.parent_id:
-                    parent = self.store.get_node(node.parent_id)
-                    if parent and abs(parent.depth - node.depth) == 1:
-                        path.append((parent.id, parent.depth))
-                        current_id = parent.id
+                    
+                parent = self.store.get_node(node.parent_id)
+                if parent:
+                    path.append((parent.id, parent.depth))
+                    current_id = parent.id
+                    current_depth = parent.depth
                 else:
                     break
+                    
+        elif start_node.depth < end_node.depth:
+            # Going down (toward leaves) - need to find a path
+            # Try to find nodes at intermediate depths in the same span range
+            target_span_start = end_node.span_start
+            target_span_end = end_node.span_end
+            current_depth = start_node.depth
+            
+            # Search for nodes at intermediate depths that cover the target span
+            for depth in range(current_depth + 1, end_node.depth):
+                # Find a node at this depth that overlaps with target span
+                intermediate = self._find_node_at_depth_in_span(
+                    depth, target_span_start, target_span_end
+                )
+                if intermediate:
+                    path.append((intermediate.id, intermediate.depth))
         
         return path
+    
+    def _find_node_at_depth_in_span(self, depth: int, span_start: int, span_end: int):
+        """Find a node at given depth that overlaps with the span."""
+        with self.store.SessionLocal() as session:
+            # Query for nodes at target depth that overlap the span
+            node = session.query(self.store.TreeNode).filter(
+                self.store.TreeNode.depth == depth,
+                self.store.TreeNode.span_start < span_end,
+                self.store.TreeNode.span_end > span_start
+            ).first()
+            return node
 
     def _apply_smoothing_pass(
         self, frontier_nodes: List[str], texts: List[str]
@@ -249,9 +278,15 @@ class Assembler:
         # Over budget - need to truncate
         logger.warning(f"Assembly over budget: {token_count} > {token_budget}")
         
-        # Truncate from the end (could be smarter about this)
+        # Safely truncate without breaking UTF-8
         tokens = self.tokenizer.encode(assembled)
-        truncated_tokens = tokens[:token_budget]
-        truncated_text = self.tokenizer.decode(truncated_tokens)
         
-        return truncated_text, token_budget
+        # tiktoken handles token boundaries properly
+        if len(tokens) > token_budget:
+            # Decode only the tokens that fit in budget
+            truncated_tokens = tokens[:token_budget]
+            truncated_text = self.tokenizer.decode(truncated_tokens)
+        else:
+            truncated_text = assembled
+        
+        return truncated_text, min(token_count, token_budget)

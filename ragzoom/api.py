@@ -17,33 +17,21 @@ from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
 
-# Thread-safe singleton pattern for shared resources
+# Thread-safe service creation - new instance per request
 class RagZoomService:
-    _instance = None
-    _lock = Lock()
-    
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
+    """Service container for RagZoom components."""
     
     def __init__(self):
-        if self._initialized:
-            return
-        
         self.config = RagZoomConfig()
         self.store = Store(self.config)
+        # Each service gets its own OpenAI client to avoid thread issues
         self.tree_builder = TreeBuilder(self.config, self.store)
         self.retriever = Retriever(self.config, self.store)
         self.assembler = Assembler(self.config, self.store)
-        self._initialized = True
 
-# Dependency injection
+# Dependency injection - creates new service per request
 def get_ragzoom_service() -> RagZoomService:
-    """Get the RagZoom service instance."""
+    """Create a new RagZoom service instance for thread safety."""
     return RagZoomService()
 
 # Create FastAPI app

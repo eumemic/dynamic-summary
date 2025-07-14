@@ -241,6 +241,11 @@ class Store:
         if not node or node.depth > self.config.pin_depth_max:
             return False
         
+        # Check if already pinned
+        if node.is_pinned == 1:
+            logger.info(f"Node {node_id} is already pinned")
+            return False
+        
         with self.SessionLocal() as session:
             node = session.query(TreeNode).filter_by(id=node_id).first()
             if node:

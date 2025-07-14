@@ -162,7 +162,9 @@ class TreeBuilder:
                     combined_text = f"{left_text}\n\n{right_text}"
                     
                     # Calculate target tokens for summary (≤½ of combined children)
-                    target_tokens = self.config.leaf_tokens  # Half the size of combined children
+                    left_tokens = len(self.splitter.tokenizer.encode(left_text))
+                    right_tokens = len(self.splitter.tokenizer.encode(right_text))
+                    target_tokens = max((left_tokens + right_tokens) // 2, 50)
                     
                     # Generate summary
                     summary = self._summarize_text(
@@ -273,7 +275,40 @@ class TreeBuilder:
         
         # Build tree from all unpaired leaves
         if len(all_unpaired_ids) > 1:
-            self._build_tree_from_leaves(all_unpaired_ids, all_unpaired_texts)
+            root_id = self._build_tree_from_leaves(all_unpaired_ids, all_unpaired_texts)
+            
+            # Connect new subtree to existing root if needed
+            existing_root = self.store.get_root_node()
+            if existing_root and root_id != existing_root.id:
+                # Create new root combining old and new
+                new_root_id = self._generate_node_id()
+                combined_text = f"{existing_root.text}\n\n{self.store.get_node(root_id).text}"
+                
+                # Summary for new root
+                existing_tokens = len(self.splitter.tokenizer.encode(existing_root.text))
+                new_subtree_tokens = len(self.splitter.tokenizer.encode(self.store.get_node(root_id).text))
+                target_tokens = max((existing_tokens + new_subtree_tokens) // 2, 50)
+                summary = self._summarize_text(combined_text, target_tokens)
+                embedding = self._get_embedding(summary)
+                
+                # Get combined span
+                new_subtree_root = self.store.get_node(root_id)
+                
+                self.store.add_node(
+                    node_id=new_root_id,
+                    text=summary,
+                    embedding=embedding,
+                    depth=max(existing_root.depth, new_subtree_root.depth) + 1,
+                    span_start=min(existing_root.span_start, new_subtree_root.span_start),
+                    span_end=max(existing_root.span_end, new_subtree_root.span_end),
+                    left_child_id=existing_root.id,
+                    right_child_id=root_id,
+                    summary=summary,
+                )
+                
+                # Update parent references
+                self._update_parent_reference(existing_root.id, new_root_id)
+                self._update_parent_reference(root_id, new_root_id)
 
     def recompute_dirty_summaries(self) -> int:
         """Recompute summaries for nodes marked as dirty."""

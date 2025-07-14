@@ -181,9 +181,15 @@ class Retriever:
         """Calculate priority scores for sliding queue eviction."""
         priority_scores = {}
         
+        # Guard against div-by-zero if decay is 0
+        decay = self.config.freshness_decay
+        if decay <= 0 or decay > 1:
+            decay = 0.9  # Safe default
+            logger.warning(f"Invalid freshness_decay {self.config.freshness_decay}, using 0.9")
+        
         for node_id, (similarity, turns_ago) in self.access_history.items():
             # Priority = similarity * decay^turns_ago
-            priority = similarity * (self.config.freshness_decay ** turns_ago)
+            priority = similarity * (decay ** turns_ago)
             priority_scores[node_id] = priority
         
         return priority_scores
