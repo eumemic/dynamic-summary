@@ -137,3 +137,4 @@ Key settings in `RagZoomConfig`:
 - Improved test mocking for AsyncOpenAI client
 - Added comprehensive git hooks for testing
 - Added complete test coverage for CLI and progress modules
+- Fixed progress tracking to show cumulative elapsed time across all operations
