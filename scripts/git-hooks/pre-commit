@@ -33,6 +33,12 @@ for file in $modified_files; do
         ragzoom/utils.py)
             test_args="$test_args tests/test_utils.py"
             ;;
+        ragzoom/cli.py)
+            test_args="$test_args tests/test_cli.py"
+            ;;
+        ragzoom/progress.py)
+            test_args="$test_args tests/test_progress.py"
+            ;;
         ragzoom/config.py)
             # Config changes affect all tests
             test_args="tests/"

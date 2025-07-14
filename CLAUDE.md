@@ -90,8 +90,11 @@ Key settings in `RagZoomConfig`:
 - `test_store.py` → `store.py` (unit tests)
 - `test_integration.py` → `index.py`, `retrieve.py`, `assemble.py` (integration)
 - `test_concurrency.py` → `api.py` (thread safety, FastAPI)
+- `test_cli.py` → `cli.py` (CLI commands and options)
+- `test_progress.py` → `progress.py` (progress tracking)
+- `test_utils.py` → `utils.py` (utility functions)
 
-**Missing Coverage**: `cli.py`, `progress.py`, `utils.py` need tests
+**Coverage Status**: All core modules now have test coverage
 
 ### Performance Considerations
 
@@ -133,3 +136,4 @@ Key settings in `RagZoomConfig`:
 - Fixed priority score clamping for eviction (must be in [0,1] range)
 - Improved test mocking for AsyncOpenAI client
 - Added comprehensive git hooks for testing
+- Added complete test coverage for CLI and progress modules
