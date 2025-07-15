@@ -83,7 +83,7 @@ class TreeBuilder:
         if attempt > max_attempts:
             logger.error(f"Failed to get <<<MID>>> delimiter after {max_attempts} attempts")
             raise ValueError("LLM consistently failing to include required delimiter")
-        
+
         # Build prompt with adjacent context (trim to avoid token explosion)
         prompt_parts = []
 
@@ -101,7 +101,7 @@ class TreeBuilder:
         prompt_parts.append(f"[SECOND HALF]\n{right_text}")
 
         if next_context:
-            # Trim next_context to adjacent_context_tokens  
+            # Trim next_context to adjacent_context_tokens
             next_tokens = self.splitter.tokenizer.encode(next_context)
             if len(next_tokens) > self.config.adjacent_context_tokens:
                 context_tokens = next_tokens[:self.config.adjacent_context_tokens]
@@ -133,20 +133,20 @@ class TreeBuilder:
                     max_tokens=target_tokens,
                 )
                 summary = response.choices[0].message.content.strip()
-                
+
                 # Find <<<MID>>> delimiter position
                 mid_offset = summary.find('<<<MID>>>')
-                
+
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
                 raise
-        
+
         # Check for delimiter outside semaphore to avoid deadlock
         if mid_offset == -1:
             logger.warning(f"No <<<MID>>> delimiter found in summary (attempt {attempt}/{max_attempts}), retrying...")
-            return await self._summarize_text(left_text, right_text, target_tokens, 
+            return await self._summarize_text(left_text, right_text, target_tokens,
                                             prev_context, next_context, attempt + 1)
-        
+
         return summary, mid_offset
 
     async def _add_document_impl(

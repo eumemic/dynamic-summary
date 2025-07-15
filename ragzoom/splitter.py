@@ -36,16 +36,16 @@ class TextSplitter:
     def split_documents(self, documents: List[dict]) -> List[dict]:
         """Split documents into chunks with metadata preserved."""
         all_chunks = []
-        
+
         for doc in documents:
             chunks = self.split_text(doc["text"])
-            
+
             # Calculate character positions for each chunk
             current_pos = 0
             for i, chunk in enumerate(chunks):
                 chunk_start = doc["text"].find(chunk, current_pos)
                 chunk_end = chunk_start + len(chunk)
-                
+
                 all_chunks.append({
                     "text": chunk,
                     "metadata": {
@@ -56,11 +56,11 @@ class TextSplitter:
                         "source_doc_id": doc.get("id", "unknown"),
                     }
                 })
-                
+
                 # For character position, estimate overlap in characters (rough: 1 token ≈ 4 chars)
                 overlap_chars = self.config.leaf_overlap_tokens * 4
                 current_pos = chunk_start + len(chunk) - overlap_chars
-                
+
         return all_chunks
 
     def get_adjacent_context(

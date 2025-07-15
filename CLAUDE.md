@@ -74,14 +74,17 @@ ragzoom serve
 
 **Assembly (`assemble.py`)**
 - Slope capping: ±1 depth transitions for coherence
-- Token budget enforcement
+- Token budget enforcement with drop vs truncate strategies
 - Optional smoothing pass with transition markers
+- Lazy refresh of dirty nodes to maintain summary consistency
 
 ### Configuration
 
 Key settings in `RagZoomConfig`:
 - `budget_tokens`: Maximum tokens for final summary (default: 8000)
+- `budget_strategy`: Budget enforcement strategy: "drop" or "truncate" (default: "drop")
 - `leaf_tokens`: Target size for leaf chunks (default: 200)
+- `slope_cap_size`: Maximum depth difference between adjacent frontier nodes (default: 1)
 - `mmr_lambda`: Relevance vs diversity trade-off (default: 0.7)
 - `embedding_model`: Default "text-embedding-3-small" 
 - `summary_model`: Default "gpt-4o" for high-quality summaries
@@ -146,6 +149,11 @@ Key settings in `RagZoomConfig`:
 - Fixed chunk size configuration to use tokens directly (was creating 775-token chunks instead of 200)
 - Added comprehensive assembly integration tests
 - Simplified pre-commit hook to use test_quick.sh script
+- **Fixed budget guarantee calculations**: Updated to use dynamic (slope_cap_size + 2) multiplier for mathematically correct worst-case bounds
+- **Added drop vs truncate budget strategies**: Intelligent node dropping preserves coherence vs tail truncation
+- **Fixed cache invalidation bug**: Added existence check before removing nodes from cache_order deque
+- **Added lazy dirty node refresh**: Infrastructure for re-summarizing stale nodes with placeholder implementation
+- **Enhanced slope cap handling**: Re-apply slope cap after budget trimming to prevent "bridge node" violations
 
 ## Development Practices
 
