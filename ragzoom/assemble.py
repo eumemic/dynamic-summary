@@ -463,6 +463,17 @@ class Assembler:
     def get_token_count(self, text: str) -> int:
         """Get token count for text."""
         return len(self.tokenizer.encode(text))
+    
+    def _count_frontier_tokens(self, frontier_nodes: list[str]) -> int:
+        """Count actual tokens that would be extracted from frontier nodes."""
+        total_tokens = 0
+        for node_id in frontier_nodes:
+            node = self.store.get_node(node_id)
+            if node:
+                # Get actual text that would be extracted for this node
+                actual_text = self._extract_node_text(node, {}, set(frontier_nodes))
+                total_tokens += len(self.tokenizer.encode(actual_text))
+        return total_tokens
 
     def trim_frontier_to_budget(
         self, frontier_nodes: List[str], budget_tokens: int, scores: dict[str, float]
@@ -524,6 +535,24 @@ class Assembler:
             # becomes a ±2 sequence after dropping the middle node
             if self.config.slope_cap and len(trimmed_frontier) > 1:
                 trimmed_frontier = self._apply_slope_cap(trimmed_frontier)
+                
+                # Check if slope cap added nodes that exceed budget
+                post_slope_cap_tokens = self._count_frontier_tokens(trimmed_frontier)
+                if post_slope_cap_tokens > token_budget:
+                    logger.warning(f"Slope cap caused budget overflow: {post_slope_cap_tokens} > {token_budget}, re-trimming")
+                    # Second trim pass to restore budget compliance
+                    trimmed_frontier = self.trim_frontier_to_budget(
+                        trimmed_frontier,
+                        token_budget,
+                        retrieval_result.scores
+                    )
+                    
+                # Guard against empty frontier after aggressive trimming
+                if not trimmed_frontier:
+                    root_node = self.store.get_root_node()
+                    if root_node:
+                        trimmed_frontier = [root_node.id]
+                        logger.warning("Budget trimming left empty frontier, falling back to root node")
 
             # Create new retrieval result with trimmed frontier
             trimmed_result = RetrievalResult(

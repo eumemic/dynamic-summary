@@ -443,3 +443,61 @@ class TestBudgetGuarantee:
 
         # Should produce valid output despite slope cap challenge
         assert len(assembled_text) > 0, "Drop strategy with slope cap produced empty summary"
+
+    def test_post_slope_cap_budget_overflow_prevention(self, setup_system):
+        """Test that budget is not exceeded after slope cap adds ancestor nodes."""
+        config, store, tree_builder, retriever, assembler = setup_system
+
+        # Create a scenario where slope cap will add ancestor nodes after budget trim
+        # Tree: Root -> Parent -> Child (depths 2, 1, 0)
+        # If we select root + child initially, slope cap will add parent to fix ±2 violation
+        
+        child_text = "Child content. " * 50  # ~200 tokens
+        parent_text = "Parent summary. " * 50  # ~200 tokens  
+        root_text = "Root summary. " * 100  # ~400 tokens
+
+        # Add nodes manually
+        store.add_node("0_0_200_child", child_text, [0.1] * 384, 0, 0, 200, None, None, None, "test-doc")
+        store.add_node("1_0_200_parent", parent_text, [0.2] * 384, 1, 0, 200, None, None, None, "test-doc") 
+        store.add_node("2_0_200_root", root_text, [0.3] * 384, 2, 0, 200, None, None, None, "test-doc")
+
+        # Set up parent-child relationships
+        with store.SessionLocal() as session:
+            from ragzoom.store import TreeNode
+            
+            child = session.query(TreeNode).filter_by(id="0_0_200_child").first()
+            if child:
+                child.parent_id = "1_0_200_parent"
+                
+            parent = session.query(TreeNode).filter_by(id="1_0_200_parent").first()
+            if parent:
+                parent.left_child_id = "0_0_200_child"
+                parent.parent_id = "2_0_200_root"
+                
+            root = session.query(TreeNode).filter_by(id="2_0_200_root").first()
+            if root:
+                root.left_child_id = "1_0_200_parent"
+                
+            session.commit()
+
+        # Create retrieval result with frontier that violates slope cap (root + child = ±2)
+        from ragzoom.retrieve import RetrievalResult
+        result = RetrievalResult(
+            node_ids=["2_0_200_root", "0_0_200_child"],
+            scores={"2_0_200_root": 0.9, "0_0_200_child": 0.8, "1_0_200_parent": 0.7},
+            coverage_map={"2_0_200_root": True, "0_0_200_child": True},
+            frontier_nodes=["2_0_200_root", "0_0_200_child"]  # This violates slope cap ±2
+        )
+
+        # Set very tight budget that root + child would fit, but adding parent would exceed
+        config.budget_strategy = "drop"
+        tight_budget = 550  # Root(400) + Child(200) = 600, but Parent adds 200 more
+
+        # Assemble - slope cap should add parent node, potentially exceeding budget
+        assembled_text, token_count = assembler.assemble_with_budget(result, token_budget=tight_budget)
+
+        # CRITICAL: Must never exceed budget, even after slope cap modifications
+        assert token_count <= tight_budget, f"Budget exceeded after slope cap: {token_count} > {tight_budget}"
+        
+        # Should still produce valid output
+        assert len(assembled_text) > 0, "Post-slope-cap budget fix produced empty summary"
