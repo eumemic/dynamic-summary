@@ -1,5 +1,6 @@
 """Test budget guarantees in retrieval and assembly."""
 
+import tempfile
 from unittest.mock import Mock, patch
 
 import pytest
@@ -72,22 +73,23 @@ class TestBudgetGuarantee:
                 instance_sync.embeddings = mock_embeddings_sync
                 mock_client.return_value = instance_sync
 
-            # Create test config with specific budget
-            config = RagZoomConfig(
-                openai_api_key="test-key",
-                sqlite_database_url="sqlite:///:memory:",
-                chroma_persist_directory=":memory:",
-                leaf_tokens=200,  # Standard leaf size
-                budget_tokens=1000,  # Strict budget for testing
-                adjacent_context_tokens=50
-            )
+            # Create test config with specific budget and temporary directory for ChromaDB
+            with tempfile.TemporaryDirectory() as temp_dir:
+                config = RagZoomConfig(
+                    openai_api_key="test-key",
+                    sqlite_database_url="sqlite:///:memory:",
+                    chroma_persist_directory=temp_dir,
+                    leaf_tokens=200,  # Standard leaf size
+                    budget_tokens=1000,  # Strict budget for testing
+                    adjacent_context_tokens=50
+                )
 
-            store = Store(config)
-            tree_builder = TreeBuilder(config, store)
-            retriever = Retriever(config, store)
-            assembler = Assembler(config, store)
+                store = Store(config)
+                tree_builder = TreeBuilder(config, store)
+                retriever = Retriever(config, store, tree_builder)
+                assembler = Assembler(config, store)
 
-            yield config, store, tree_builder, retriever, assembler
+                yield config, store, tree_builder, retriever, assembler
 
     def test_budget_never_exceeded_worst_case(self, setup_system):
         """Test that assembly never exceeds budget even in worst case."""
@@ -451,33 +453,33 @@ class TestBudgetGuarantee:
         # Create a scenario where slope cap will add ancestor nodes after budget trim
         # Tree: Root -> Parent -> Child (depths 2, 1, 0)
         # If we select root + child initially, slope cap will add parent to fix ±2 violation
-        
+
         child_text = "Child content. " * 50  # ~200 tokens
-        parent_text = "Parent summary. " * 50  # ~200 tokens  
+        parent_text = "Parent summary. " * 50  # ~200 tokens
         root_text = "Root summary. " * 100  # ~400 tokens
 
         # Add nodes manually
         store.add_node("0_0_200_child", child_text, [0.1] * 384, 0, 0, 200, None, None, None, "test-doc")
-        store.add_node("1_0_200_parent", parent_text, [0.2] * 384, 1, 0, 200, None, None, None, "test-doc") 
+        store.add_node("1_0_200_parent", parent_text, [0.2] * 384, 1, 0, 200, None, None, None, "test-doc")
         store.add_node("2_0_200_root", root_text, [0.3] * 384, 2, 0, 200, None, None, None, "test-doc")
 
         # Set up parent-child relationships
         with store.SessionLocal() as session:
             from ragzoom.store import TreeNode
-            
+
             child = session.query(TreeNode).filter_by(id="0_0_200_child").first()
             if child:
                 child.parent_id = "1_0_200_parent"
-                
+
             parent = session.query(TreeNode).filter_by(id="1_0_200_parent").first()
             if parent:
                 parent.left_child_id = "0_0_200_child"
                 parent.parent_id = "2_0_200_root"
-                
+
             root = session.query(TreeNode).filter_by(id="2_0_200_root").first()
             if root:
                 root.left_child_id = "1_0_200_parent"
-                
+
             session.commit()
 
         # Create retrieval result with frontier that violates slope cap (root + child = ±2)
@@ -498,6 +500,6 @@ class TestBudgetGuarantee:
 
         # CRITICAL: Must never exceed budget, even after slope cap modifications
         assert token_count <= tight_budget, f"Budget exceeded after slope cap: {token_count} > {tight_budget}"
-        
+
         # Should still produce valid output
         assert len(assembled_text) > 0, "Post-slope-cap budget fix produced empty summary"

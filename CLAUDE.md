@@ -161,6 +161,7 @@ Key settings in `RagZoomConfig`:
 - **Fixed cache eviction after refresh**: Ensures refreshed nodes are properly re-added to LRU cache
 - **Added empty frontier guard**: Falls back to root node when budget trimming leaves empty frontier
 - **Implemented async retrieval**: Added retrieve_async() with proper sync wrappers for FastAPI compatibility
+- **Fixed ChromaDB test configuration**: Tests now use tempfile.TemporaryDirectory() instead of ":memory:" which ChromaDB doesn't support
 
 ## Development Practices
 
