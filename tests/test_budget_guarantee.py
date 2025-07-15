@@ -91,6 +91,9 @@ class TestBudgetGuarantee:
 
                 yield config, store, tree_builder, retriever, assembler
 
+                # Close store to prevent file handle leaks
+                store.close()
+
     def test_budget_never_exceeded_worst_case(self, setup_system):
         """Test that assembly never exceeds budget even in worst case."""
         config, store, tree_builder, retriever, assembler = setup_system

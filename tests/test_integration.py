@@ -108,8 +108,9 @@ class TestIntegration:
 
         yield config, store, tree_builder, retriever, assembler
 
-        # Cleanup
-        shutil.rmtree(temp_dir)
+        # Cleanup - close store first to release file handles
+        store.close()
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_index_and_query(self, temp_system):
         """Test indexing a document and querying it."""

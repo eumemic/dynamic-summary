@@ -1,7 +1,7 @@
 """Assembly logic for creating coherent summaries from frontier nodes."""
 
 import logging
-from typing import List, Optional, Tuple
+from typing import Optional
 
 import tiktoken
 from openai import OpenAI
@@ -61,9 +61,10 @@ class Assembler:
         final_coverage_map = self._build_coverage_map(frontier_nodes)
 
         # Step 6: Extract texts with <<<MID>>> delimiter handling and span deduplication
-        texts = []
+        text_fragments = []  # Store (actual_span_start, actual_span_end, text) tuples
         seen_spans = set()  # Store (span_start, span_end) for span dedup
         frontier_set = set(frontier_nodes)
+
 
         for node_id in frontier_nodes:
             node = self.store.get_node(node_id)
@@ -71,15 +72,19 @@ class Assembler:
                 # Check span BEFORE extracting text
                 span = (node.span_start, node.span_end)
                 if span not in seen_spans:
-                    text = self._extract_node_text(node, final_coverage_map, frontier_set)
+                    text, actual_span = self._extract_node_text_with_span(node, final_coverage_map, frontier_set)
                     if text:  # Only add non-empty text
                         logger.info(f"Extracted from node {node_id} (depth {node.depth}, span {span}): {len(text)} chars")
-                        texts.append(text)
+                        text_fragments.append((actual_span[0], actual_span[1], text))
                     else:
                         logger.info(f"Node {node_id} produced empty text, skipping")
                     seen_spans.add(span)
                 else:
                     logger.info(f"Skipping duplicate span node {node_id} with span {span}")
+
+        # Sort by actual coverage span start (not node span_start)
+        text_fragments.sort(key=lambda x: x[0])
+        texts = [text for _, _, text in text_fragments]
 
         # Basic concatenation
         assembled = "\n\n".join(texts)
@@ -93,6 +98,45 @@ class Assembler:
     def _clean_mid_delimiter(self, text: str) -> str:
         """Remove <<<MID>>> delimiter from text."""
         return text.replace('<<<MID>>>', '')
+
+    def _extract_node_text_with_span(self, node, coverage_map, frontier_set=None):
+        """Extract appropriate text from node and return its actual coverage span."""
+        text = self._extract_node_text(node, coverage_map, frontier_set)
+
+        # Determine actual coverage span based on what part of the node we're outputting
+        if not text:
+            return "", (node.span_start, node.span_start)
+
+        # Get children to determine which part we're outputting
+        left_child, right_child = self.store.get_children(node.id)
+
+        # If no mid_offset, we're outputting the full node
+        if not hasattr(node, 'mid_offset') or node.mid_offset is None:
+            return text, (node.span_start, node.span_end)
+
+        # Check if children are in the frontier
+        if frontier_set:
+            left_in_frontier = left_child and left_child.id in frontier_set
+            right_in_frontier = right_child and right_child.id in frontier_set
+        else:
+            left_in_frontier = False
+            right_in_frontier = False
+
+        # Determine actual span based on which half we're outputting
+        if left_in_frontier and not right_in_frontier:
+            # Outputting only right half - spans from right child's start to node's end
+            actual_start = right_child.span_start if right_child else node.span_start
+            return text, (actual_start, node.span_end)
+        elif right_in_frontier and not left_in_frontier:
+            # Outputting only left half - spans from node's start to left child's end
+            actual_end = left_child.span_end if left_child else node.span_end
+            return text, (node.span_start, actual_end)
+        elif left_in_frontier and right_in_frontier:
+            # Both children in frontier - parent outputs nothing
+            return text, (node.span_start, node.span_start)
+        else:
+            # Full node output
+            return text, (node.span_start, node.span_end)
 
     def _extract_node_text(self, node, coverage_map, frontier_set=None):
         """Extract appropriate text from node based on <<<MID>>> delimiter logic."""
@@ -233,7 +277,7 @@ class Assembler:
 
         return coverage_map
 
-    def _apply_slope_cap(self, frontier_nodes: List[str]) -> List[str]:
+    def _apply_slope_cap(self, frontier_nodes: list[str]) -> list[str]:
         """Apply slope cap constraint (max ±1 depth change between adjacent nodes)."""
         if len(frontier_nodes) <= 1:
             return frontier_nodes
@@ -302,7 +346,7 @@ class Assembler:
 
     def _find_intermediate_path(
         self, start_id: str, end_id: str
-    ) -> List[Tuple[str, int]]:
+    ) -> list[tuple[str, int]]:
         """Find intermediate nodes to satisfy slope cap between two nodes."""
         start_node = self.store.get_node(start_id)
         end_node = self.store.get_node(end_id)
@@ -362,7 +406,7 @@ class Assembler:
             return node
 
     def _apply_smoothing_pass(
-        self, frontier_nodes: List[str], texts: List[str]
+        self, frontier_nodes: list[str], texts: list[str]
     ) -> str:
         """Apply smoothing pass to improve coherence at boundaries."""
         if len(texts) <= 1:
@@ -463,7 +507,7 @@ class Assembler:
     def get_token_count(self, text: str) -> int:
         """Get token count for text."""
         return len(self.tokenizer.encode(text))
-    
+
     def _count_frontier_tokens(self, frontier_nodes: list[str]) -> int:
         """Count actual tokens that would be extracted from frontier nodes."""
         total_tokens = 0
@@ -476,8 +520,8 @@ class Assembler:
         return total_tokens
 
     def trim_frontier_to_budget(
-        self, frontier_nodes: List[str], budget_tokens: int, scores: dict[str, float]
-    ) -> List[str]:
+        self, frontier_nodes: list[str], budget_tokens: int, scores: dict[str, float]
+    ) -> list[str]:
         """Trim frontier by dropping lowest-utility nodes until under budget."""
         if not frontier_nodes:
             return frontier_nodes
@@ -516,7 +560,7 @@ class Assembler:
 
     def assemble_with_budget(
         self, retrieval_result: RetrievalResult, token_budget: Optional[int] = None
-    ) -> Tuple[str, int]:
+    ) -> tuple[str, int]:
         """Assemble with strict token budget enforcement."""
         if token_budget is None:
             token_budget = self.config.budget_tokens
@@ -535,7 +579,7 @@ class Assembler:
             # becomes a ±2 sequence after dropping the middle node
             if self.config.slope_cap and len(trimmed_frontier) > 1:
                 trimmed_frontier = self._apply_slope_cap(trimmed_frontier)
-                
+
                 # Check if slope cap added nodes that exceed budget
                 post_slope_cap_tokens = self._count_frontier_tokens(trimmed_frontier)
                 if post_slope_cap_tokens > token_budget:
@@ -546,7 +590,7 @@ class Assembler:
                         token_budget,
                         retrieval_result.scores
                     )
-                    
+
                 # Guard against empty frontier after aggressive trimming
                 if not trimmed_frontier:
                     root_node = self.store.get_root_node()

@@ -26,6 +26,11 @@ class RagZoomService:
         self.retriever = Retriever(self.config, self.store, self.tree_builder)
         self.assembler = Assembler(self.config, self.store)
 
+    def close(self):
+        """Close store connections and cleanup resources."""
+        if hasattr(self, 'store'):
+            self.store.close()
+
 # Dependency injection - creates new service per request
 def get_ragzoom_service() -> RagZoomService:
     """Create a new RagZoom service instance for thread safety."""

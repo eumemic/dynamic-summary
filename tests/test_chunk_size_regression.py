@@ -169,6 +169,9 @@ class TestChunkSizeRegression:
             assert token_count <= max_summary_tokens, \
                 f"Parent node at depth {node.depth} has {token_count} tokens, too large"
 
+        # Close store to prevent file handle leaks
+        store.close()
+
     def test_token_budget_not_exceeded_due_to_large_chunks(self, config):
         """Test that retrieval token budget is not massively exceeded due to chunk size issues."""
         # This tests the symptom we saw: 11k tokens returned for 2k budget
@@ -194,6 +197,9 @@ class TestChunkSizeRegression:
         store.get_node.side_effect = lambda node_id: next(
             (n for n in mock_nodes if n.id == node_id), None
         )
+
+        # Mock get_children to return no children (these are leaf nodes)
+        store.get_children.return_value = (None, None)
 
         # Mock retrieval result with 10 nodes (should be ~2000 tokens)
         from ragzoom.retrieve import RetrievalResult
