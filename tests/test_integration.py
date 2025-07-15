@@ -35,7 +35,7 @@ class TestIntegration:
                     return Mock(data=[Mock(embedding=[0.1] * 384)])
 
             async def mock_chat_create(*args, **kwargs):
-                return Mock(choices=[Mock(message=Mock(content="Summary of the text."))])
+                return Mock(choices=[Mock(message=Mock(content="Summary of left half. <<<MID>>> Summary of right half."))])
 
             # Create sync mock functions for retriever and assembler
             def mock_embeddings_create_sync(*args, **kwargs):
@@ -49,7 +49,7 @@ class TestIntegration:
                     return Mock(data=[Mock(embedding=[0.1] * 384)])
 
             def mock_chat_create_sync(*args, **kwargs):
-                return Mock(choices=[Mock(message=Mock(content="Summary of the text."))])
+                return Mock(choices=[Mock(message=Mock(content="Summary of left half. <<<MID>>> Summary of right half."))])
 
             # Mock embeddings for async client (index)
             mock_embeddings_async = Mock()
