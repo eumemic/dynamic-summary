@@ -363,40 +363,44 @@ class TreeBuilder:
             tasks = []
             pair_info = []
 
+            # Handle odd number of nodes - keep last one unpaired
+            nodes_to_pair = len(current_level_ids)
+            if nodes_to_pair % 2 == 1:
+                nodes_to_pair -= 1  # We'll handle the last node separately
+
             # Prepare all pairs
-            for i in range(0, len(current_level_ids), 2):
+            for i in range(0, nodes_to_pair, 2):
                 left_id = current_level_ids[i]
                 left_text = current_level_texts[i]
+                right_id = current_level_ids[i + 1]
+                right_text = current_level_texts[i + 1]
 
-                if i + 1 < len(current_level_ids):
-                    right_id = current_level_ids[i + 1]
-                    right_text = current_level_texts[i + 1]
+                # Get adjacent context
+                prev_context = None
+                next_context = None
 
-                    # Get adjacent context
-                    prev_context = None
-                    next_context = None
-
-                    if i > 0:
-                        prev_context, _ = self.splitter.get_adjacent_context(
-                            current_level_texts, i - 1
-                        )
-
-                    if i + 2 < len(current_level_texts):
-                        _, next_context = self.splitter.get_adjacent_context(
-                            current_level_texts, i + 1
-                        )
-
-                    # Create async task
-                    task = self._process_node_pair(
-                        left_id, left_text, right_id, right_text,
-                        prev_context, next_context, current_depth, document_id
+                if i > 0:
+                    prev_context, _ = self.splitter.get_adjacent_context(
+                        current_level_texts, i - 1
                     )
-                    tasks.append(task)
-                    pair_info.append((i, i+1))
-                else:
-                    # Odd node at end - promote to next level
-                    next_level_ids.append(left_id)
-                    next_level_texts.append(left_text)
+
+                if i + 2 < len(current_level_texts):
+                    _, next_context = self.splitter.get_adjacent_context(
+                        current_level_texts, i + 1
+                    )
+
+                # Create async task
+                task = self._process_node_pair(
+                    left_id, left_text, right_id, right_text,
+                    prev_context, next_context, current_depth, document_id
+                )
+                tasks.append(task)
+                pair_info.append((i, i+1))
+
+            # If there's an odd node at the end, promote it to next level
+            if nodes_to_pair < len(current_level_ids):
+                next_level_ids.append(current_level_ids[-1])
+                next_level_texts.append(current_level_texts[-1])
 
             # Process all pairs concurrently
             if tasks:
@@ -442,9 +446,27 @@ class TreeBuilder:
                     group_results = await asyncio.gather(*group)
                     results.extend(group_results)
 
-                for parent_id, summary, _ in results:
-                    next_level_ids.append(parent_id)
-                    next_level_texts.append(summary)
+                # Add the parent nodes to next level
+                # IMPORTANT: We already added any odd node to next_level_ids above,
+                # so now we insert the new parent nodes BEFORE it to maintain order
+                if nodes_to_pair < len(current_level_ids):
+                    # We have an odd node already in next_level_ids
+                    # Insert new parents before it
+                    odd_node_id = next_level_ids.pop()
+                    odd_node_text = next_level_texts.pop()
+                    
+                    for parent_id, summary, _ in results:
+                        next_level_ids.append(parent_id)
+                        next_level_texts.append(summary)
+                    
+                    # Add the odd node back at the end
+                    next_level_ids.append(odd_node_id)
+                    next_level_texts.append(odd_node_text)
+                else:
+                    # No odd node, just add all parents
+                    for parent_id, summary, _ in results:
+                        next_level_ids.append(parent_id)
+                        next_level_texts.append(summary)
 
             current_level_ids = next_level_ids
             current_level_texts = next_level_texts
