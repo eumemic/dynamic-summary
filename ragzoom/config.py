@@ -116,4 +116,5 @@ class RagZoomConfig(BaseSettings):
     @property
     def n_max(self) -> int:
         """Calculate maximum number of nodes based on budget."""
-        return self.budget_tokens // (2 * self.leaf_tokens)
+        # Increased from budget/2*leaf to budget/leaf for better coverage
+        return self.budget_tokens // self.leaf_tokens

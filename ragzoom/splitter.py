@@ -16,14 +16,10 @@ class TextSplitter:
         self.config = config
         self.tokenizer = tiktoken.get_encoding("cl100k_base")  # GPT-4 encoding
 
-        # Convert token counts to approximate character counts
-        # Rough estimate: 1 token ≈ 4 characters
-        chunk_size_chars = config.leaf_tokens * 4
-        chunk_overlap_chars = config.leaf_overlap_tokens * 4
-
+        # Use token counts directly since our length_function returns tokens
         self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size_chars,
-            chunk_overlap=chunk_overlap_chars,
+            chunk_size=config.leaf_tokens,
+            chunk_overlap=config.leaf_overlap_tokens,
             separators=["\n\n", "\n", ". ", " ", ""],
             length_function=self._token_length,
             is_separator_regex=False,
@@ -61,7 +57,9 @@ class TextSplitter:
                     }
                 })
                 
-                current_pos = chunk_start + len(chunk) - self.config.leaf_overlap_tokens * 4
+                # For character position, estimate overlap in characters (rough: 1 token ≈ 4 chars)
+                overlap_chars = self.config.leaf_overlap_tokens * 4
+                current_pos = chunk_start + len(chunk) - overlap_chars
                 
         return all_chunks
 

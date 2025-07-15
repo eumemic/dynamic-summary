@@ -38,16 +38,49 @@ class Assembler:
                 logger.warning("No frontier nodes and no root node found")
                 return ""
         
-        # Apply slope cap if enabled
+        # Step 1: Remove children if their parents are in frontier
+        # This handles invalid frontiers where both parent and child are included
+        frontier_nodes = self._remove_children_with_parents_in_frontier(frontier_nodes)
+        
+        # Step 2: Apply slope cap if enabled
         if self.config.slope_cap:
             frontier_nodes = self._apply_slope_cap(frontier_nodes)
         
-        # Concatenate frontier texts
+        # Step 3: Deduplicate by node ID (slope-cap may create duplicates)
+        seen_node_ids = set()
+        unique_frontier = []
+        for node_id in frontier_nodes:
+            if node_id not in seen_node_ids:
+                unique_frontier.append(node_id)
+                seen_node_ids.add(node_id)
+        frontier_nodes = unique_frontier
+        
+        # Step 4: Sort frontier nodes by span_start for chronological order
+        frontier_nodes = self._sort_nodes_chronologically(frontier_nodes)
+        
+        # Step 5: Build coverage map AFTER all frontier mutations
+        final_coverage_map = self._build_coverage_map(frontier_nodes)
+        
+        # Step 6: Extract texts with <<<MID>>> delimiter handling and span deduplication
         texts = []
+        seen_spans = set()  # Store (span_start, span_end) for span dedup
+        frontier_set = set(frontier_nodes)
+        
         for node_id in frontier_nodes:
             node = self.store.get_node(node_id)
             if node:
-                texts.append(node.text)
+                # Check span BEFORE extracting text
+                span = (node.span_start, node.span_end)
+                if span not in seen_spans:
+                    text = self._extract_node_text(node, final_coverage_map, frontier_set)
+                    if text:  # Only add non-empty text
+                        logger.info(f"Extracted from node {node_id} (depth {node.depth}, span {span}): {len(text)} chars")
+                        texts.append(text)
+                    else:
+                        logger.info(f"Node {node_id} produced empty text, skipping")
+                    seen_spans.add(span)
+                else:
+                    logger.info(f"Skipping duplicate span node {node_id} with span {span}")
         
         # Basic concatenation
         assembled = "\n\n".join(texts)
@@ -57,6 +90,149 @@ class Assembler:
             assembled = self._apply_smoothing_pass(frontier_nodes, texts)
         
         return assembled
+
+    def _clean_mid_delimiter(self, text: str) -> str:
+        """Remove <<<MID>>> delimiter from text."""
+        return text.replace('<<<MID>>>', '')
+
+    def _extract_node_text(self, node, coverage_map, frontier_set=None):
+        """Extract appropriate text from node based on <<<MID>>> delimiter logic."""
+        # If node has no mid_offset, return full text (with <<<MID>>> removed if present)
+        if not hasattr(node, 'mid_offset') or node.mid_offset is None:
+            logger.info(f"Node {node.id} has no mid_offset, using full text")
+            return self._clean_mid_delimiter(node.text)
+        
+        # Get children
+        left_child, right_child = self.store.get_children(node.id)
+        
+        # Check if children are in the frontier (not coverage map for parent processing)
+        if frontier_set:
+            left_in_frontier = left_child and left_child.id in frontier_set
+            right_in_frontier = right_child and right_child.id in frontier_set
+        else:
+            left_in_frontier = False
+            right_in_frontier = False
+        
+        # For parent nodes: if a child is in the frontier, it will handle its own text
+        # So we should only include the OTHER child's summary from the parent
+        if left_in_frontier and not right_in_frontier:
+            # Left child will output its own text, parent should only output right summary
+            mid_delimiter_len = len('<<<MID>>>')
+            parent_right = node.text[node.mid_offset + mid_delimiter_len:].strip()
+            logger.info(f"Node {node.id}: left child in frontier, outputting only right summary")
+            return parent_right
+        
+        elif right_in_frontier and not left_in_frontier:
+            # Right child will output its own text, parent should only output left summary
+            parent_left = node.text[:node.mid_offset]
+            logger.info(f"Node {node.id}: right child in frontier, outputting only left summary")
+            return parent_left.strip()
+        
+        elif left_in_frontier and right_in_frontier:
+            # Both children in frontier - parent should output nothing
+            logger.info(f"Node {node.id}: both children in frontier, skipping parent")
+            return ""
+        
+        # Neither child is in frontier - use normal coverage logic
+        left_covered = left_child and left_child.id in coverage_map
+        right_covered = right_child and right_child.id in coverage_map
+        
+        logger.info(f"Node {node.id}: left_child={left_child.id if left_child else None} (covered={left_covered}), right_child={right_child.id if right_child else None} (covered={right_covered})")
+        
+        # Apply the three cases for normal coverage
+        if left_covered and not right_covered:
+            # Use left child + parent's right half
+            left_text = left_child.text
+            mid_delimiter_len = len('<<<MID>>>')
+            parent_right = node.text[node.mid_offset + mid_delimiter_len:]
+            logger.info(f"Case 1: Using left child + parent right half")
+            return f"{left_text}\n\n{parent_right}"
+        
+        elif right_covered and not left_covered:
+            # Use parent's left half + right child
+            parent_left = node.text[:node.mid_offset]
+            right_text = right_child.text
+            logger.info(f"Case 2: Using parent left half + right child")
+            return f"{parent_left}\n\n{right_text}"
+        
+        else:
+            # Both or neither covered - use full parent (remove <<<MID>>>)
+            logger.info(f"Case 3: Both or neither covered, using full parent")
+            return self._clean_mid_delimiter(node.text)
+
+    def _has_span_overlap_detailed(self, span, seen_items):
+        """Check if span overlaps with any item in seen_items (includes depth/node info)."""
+        span_start, span_end = span
+        for seen_start, seen_end, seen_depth, seen_id in seen_items:
+            # Two spans overlap if one doesn't end before the other starts
+            if not (span_end <= seen_start or seen_end <= span_start):
+                return True
+        return False
+
+    def _sort_nodes_chronologically(self, frontier_nodes):
+        """Sort frontier nodes by span_start for chronological order."""
+        # Get nodes with their span_start values
+        node_spans = []
+        for node_id in frontier_nodes:
+            node = self.store.get_node(node_id)
+            if node:
+                node_spans.append((node_id, node.span_start))
+        
+        # Sort by span_start, then by depth (leaves first - depth 0 before depth 1)
+        node_spans.sort(key=lambda x: (x[1], self.store.get_node(x[0]).depth))
+        
+        # Return just the node IDs in sorted order
+        return [node_id for node_id, _ in node_spans]
+
+    def _remove_children_with_parents_in_frontier(self, frontier_nodes):
+        """Smart deduplication: only remove nodes when their content would be fully redundant."""
+        # Build set of all nodes in frontier for quick lookup
+        frontier_set = set(frontier_nodes)
+        
+        # Track which children each parent has in the frontier
+        parent_children_in_frontier = {}  # parent_id -> set of child_ids
+        
+        for node_id in frontier_nodes:
+            node = self.store.get_node(node_id)
+            if node and node.parent_id and node.parent_id in frontier_set:
+                if node.parent_id not in parent_children_in_frontier:
+                    parent_children_in_frontier[node.parent_id] = set()
+                parent_children_in_frontier[node.parent_id].add(node_id)
+        
+        # Decide what to remove
+        nodes_to_remove = set()
+        
+        for parent_id, children_in_frontier in parent_children_in_frontier.items():
+            # Get all children of this parent
+            left_child, right_child = self.store.get_children(parent_id)
+            
+            # Count how many children are in frontier
+            left_in_frontier = left_child and left_child.id in children_in_frontier
+            right_in_frontier = right_child and right_child.id in children_in_frontier
+            
+            if left_in_frontier and right_in_frontier:
+                # Both children are in frontier - parent is redundant
+                nodes_to_remove.add(parent_id)
+                logger.info(f"Removing parent {parent_id} because both children are in frontier")
+            # If only one child is in frontier, keep both parent and child
+            # The <<<MID>>> extraction will combine them properly
+        
+        # Return filtered list maintaining order
+        return [n for n in frontier_nodes if n not in nodes_to_remove]
+
+    def _build_coverage_map(self, frontier_nodes):
+        """Build coverage map from final frontier nodes (includes ancestors)."""
+        coverage_map = set()
+        
+        for node_id in frontier_nodes:
+            # Mark this node and all its ancestors as covered
+            current_id = node_id
+            while current_id:
+                coverage_map.add(current_id)
+                node = self.store.get_node(current_id)
+                current_id = node.parent_id if node else None
+        
+        return coverage_map
 
     def _apply_slope_cap(self, frontier_nodes: List[str]) -> List[str]:
         """Apply slope cap constraint (max ±1 depth change between adjacent nodes)."""
@@ -70,7 +246,7 @@ class Assembler:
             if node:
                 node_depths.append((node_id, node.depth))
         
-        # Apply slope cap with deduplication
+        # Apply slope cap with replacement (not insertion)
         capped_nodes = [node_depths[0]]
         seen = {node_depths[0][0]}  # Track seen node IDs
         
@@ -87,24 +263,43 @@ class Assembler:
                     capped_nodes.append((current_id, current_depth))
                     seen.add(current_id)
             else:
-                # Need to find intermediate nodes
+                # Need to replace deep node with ancestor to satisfy slope cap
                 logger.info(f"Slope cap violation: {prev_depth} -> {current_depth}")
                 
-                # Try to find a path with gradual depth changes
-                intermediate = self._find_intermediate_path(prev_id, current_id)
-                if intermediate:
-                    # Add only unseen intermediates
-                    for node_id, depth in intermediate:
-                        if node_id not in seen:
-                            capped_nodes.append((node_id, depth))
-                            seen.add(node_id)
+                # Find appropriate ancestor depth (max 1 level change from previous)
+                target_depth = prev_depth + 1 if current_depth > prev_depth else prev_depth - 1
                 
-                # Always add the target node if not seen
-                if current_id not in seen:
+                # Find ancestor at target depth
+                replacement_node = self._find_ancestor_at_depth(current_id, target_depth)
+                if replacement_node and replacement_node.id not in seen:
+                    capped_nodes.append((replacement_node.id, replacement_node.depth))
+                    seen.add(replacement_node.id)
+                elif current_id not in seen:
+                    # Fallback to original node if no suitable ancestor
                     capped_nodes.append((current_id, current_depth))
                     seen.add(current_id)
         
-        return [node_id for node_id, _ in capped_nodes]
+        # Re-sort by span_start after replacements to maintain chronological order
+        capped_with_spans = []
+        for node_id, depth in capped_nodes:
+            node = self.store.get_node(node_id)
+            if node:
+                capped_with_spans.append((node_id, depth, node.span_start))
+        
+        capped_with_spans.sort(key=lambda x: x[2])  # Sort by span_start
+        return [node_id for node_id, _, _ in capped_with_spans]
+
+    def _find_ancestor_at_depth(self, node_id: str, target_depth: int):
+        """Find ancestor of node at target depth."""
+        current_node = self.store.get_node(node_id)
+        
+        while current_node and current_node.depth > target_depth:
+            if current_node.parent_id:
+                current_node = self.store.get_node(current_node.parent_id)
+            else:
+                break
+                
+        return current_node if current_node and current_node.depth == target_depth else None
 
     def _find_intermediate_path(
         self, start_id: str, end_id: str

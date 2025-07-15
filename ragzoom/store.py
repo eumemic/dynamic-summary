@@ -41,6 +41,7 @@ class TreeNode(Base):
     span_end = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     summary = Column(Text, nullable=True)  # NULL for leaf nodes
+    mid_offset = Column(Integer, nullable=True)  # Position of <<<MID>>> delimiter in parent summaries
     is_dirty = Column(Integer, default=0)  # Boolean flag for re-summarization
     is_pinned = Column(Integer, default=0)
     last_accessed = Column(DateTime, default=datetime.utcnow)
@@ -72,6 +73,11 @@ class Store:
         self.engine = create_engine(
             config.sqlite_database_url, connect_args={"check_same_thread": False}
         )
+        
+        # Handle migration before creating tables with new schema
+        self._run_migrations()
+        
+        # Create all tables (will only create missing ones)
         Base.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(bind=self.engine)
 
@@ -124,6 +130,7 @@ class Store:
         left_child_id: Optional[str] = None,
         right_child_id: Optional[str] = None,
         summary: Optional[str] = None,
+        mid_offset: Optional[int] = None,
         document_id: Optional[str] = None,
     ) -> TreeNode:
         """Add a node to both SQLite and Chroma."""
@@ -138,6 +145,7 @@ class Store:
                 span_end=span_end,
                 text=text,
                 summary=summary,
+                mid_offset=mid_offset,
                 document_id=document_id,
             )
             session.add(node)
@@ -413,6 +421,35 @@ class Store:
                         pass
 
             return deleted_count
+
+    def _run_migrations(self):
+        """Run any necessary database migrations."""
+        try:
+            with self.engine.connect() as conn:
+                # Check if tree_nodes table exists first
+                result = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tree_nodes'")
+                if result.fetchone():
+                    # Table exists, check if mid_offset column exists
+                    result = conn.execute("PRAGMA table_info(tree_nodes)")
+                    columns = [row[1] for row in result.fetchall()]
+                    
+                    if 'mid_offset' not in columns:
+                        # Add the missing column (with proper error handling)
+                        try:
+                            conn.execute("ALTER TABLE tree_nodes ADD COLUMN mid_offset INTEGER")
+                            conn.commit()
+                            logger.info("Added mid_offset column to tree_nodes table")
+                        except Exception as e:
+                            if "duplicate column" in str(e).lower():
+                                logger.debug("mid_offset column already exists")
+                            else:
+                                raise
+                    else:
+                        logger.debug("mid_offset column already exists")
+                else:
+                    logger.debug("tree_nodes table does not exist yet, will be created by SQLAlchemy")
+        except Exception as e:
+            logger.debug(f"Migration check failed (this is normal for new databases): {e}")
 
     @staticmethod
     def compute_content_hash(content: str) -> str:

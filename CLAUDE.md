@@ -137,4 +137,14 @@ Key settings in `RagZoomConfig`:
 - Improved test mocking for AsyncOpenAI client
 - Added comprehensive git hooks for testing
 - Added complete test coverage for CLI and progress modules
-- Fixed progress tracking to show cumulative elapsed time across all operations
+- Fixed <<<MID>>> delimiter missing in summaries with retry logic (up to 3 attempts)
+- Fixed parent-child frontier deduplication to work with <<<MID>>> extraction logic
+- Fixed chunk size configuration to use tokens directly (was creating 775-token chunks instead of 200)
+- Added comprehensive assembly integration tests
+- Simplified pre-commit hook to use test_quick.sh script
+
+## Development Practices
+
+- Always write regression tests when regressions are discovered
+- Group related changes into single commits that leave the app in a working state
+- Run tests for modified components before committing

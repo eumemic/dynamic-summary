@@ -70,25 +70,51 @@ class TreeBuilder:
 
     async def _summarize_text(
         self,
-        text: str,
+        left_text: str,
+        right_text: str,
         target_tokens: int,
         prev_context: Optional[str] = None,
         next_context: Optional[str] = None,
-    ) -> str:
-        """Summarize text using LLM."""
-        # Build prompt with adjacent context
+        attempt: int = 1,
+    ) -> tuple[str, Optional[int]]:
+        """Summarize text using LLM with <<<MID>>> delimiter."""
+        # Maximum retry attempts to get delimiter
+        max_attempts = 3
+        if attempt > max_attempts:
+            logger.error(f"Failed to get <<<MID>>> delimiter after {max_attempts} attempts")
+            raise ValueError("LLM consistently failing to include required delimiter")
+        
+        # Build prompt with adjacent context (trim to avoid token explosion)
         prompt_parts = []
 
         if prev_context:
-            prompt_parts.append(f"Previous context: ...{prev_context}")
+            # Trim prev_context to adjacent_context_tokens
+            prev_tokens = self.splitter.tokenizer.encode(prev_context)
+            if len(prev_tokens) > self.config.adjacent_context_tokens:
+                context_tokens = prev_tokens[-self.config.adjacent_context_tokens:]
+                trimmed_prev = self.splitter.tokenizer.decode(context_tokens)
+            else:
+                trimmed_prev = prev_context
+            prompt_parts.append(f"Previous context: ...{trimmed_prev}")
 
-        prompt_parts.append(f"Main passage: {text}")
+        prompt_parts.append(f"[FIRST HALF]\n{left_text}")
+        prompt_parts.append(f"[SECOND HALF]\n{right_text}")
 
         if next_context:
-            prompt_parts.append(f"Next context: {next_context}...")
+            # Trim next_context to adjacent_context_tokens  
+            next_tokens = self.splitter.tokenizer.encode(next_context)
+            if len(next_tokens) > self.config.adjacent_context_tokens:
+                context_tokens = next_tokens[:self.config.adjacent_context_tokens]
+                trimmed_next = self.splitter.tokenizer.decode(context_tokens)
+            else:
+                trimmed_next = next_context
+            prompt_parts.append(f"Next context: {trimmed_next}...")
 
         prompt_parts.append(
-            f"\nSummarize the main passage in ≤{target_tokens} tokens. "
+            f"\nSummarize the two halves above in ≤{target_tokens} tokens total. "
+            "CRITICAL: You MUST insert exactly the token <<<MID>>> at the point where the second half begins. "
+            "This delimiter is required for proper text processing. "
+            "Format: [summary of first half] <<<MID>>> [summary of second half]. "
             "Use third-person past tense, no pronouns, keep all proper names. "
             "Focus on key events, facts, and themes."
         )
@@ -106,10 +132,22 @@ class TreeBuilder:
                     temperature=self.config.summary_temperature,
                     max_tokens=target_tokens,
                 )
-                return response.choices[0].message.content.strip()
+                summary = response.choices[0].message.content.strip()
+                
+                # Find <<<MID>>> delimiter position
+                mid_offset = summary.find('<<<MID>>>')
+                
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
                 raise
+        
+        # Check for delimiter outside semaphore to avoid deadlock
+        if mid_offset == -1:
+            logger.warning(f"No <<<MID>>> delimiter found in summary (attempt {attempt}/{max_attempts}), retrying...")
+            return await self._summarize_text(left_text, right_text, target_tokens, 
+                                            prev_context, next_context, attempt + 1)
+        
+        return summary, mid_offset
 
     async def _add_document_impl(
         self, text: str, document_id: Optional[str] = None,
@@ -259,9 +297,6 @@ class TreeBuilder:
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
 
-        # Combine texts for parent
-        combined_text = f"{left_text}\n\n{right_text}"
-
         # Calculate target tokens for summary with depth-based compression
         left_tokens = len(self.splitter.tokenizer.encode(left_text))
         right_tokens = len(self.splitter.tokenizer.encode(right_text))
@@ -270,9 +305,9 @@ class TreeBuilder:
         compression_ratio = 1.0 / (current_depth + 1)
         target_tokens = max(int((left_tokens + right_tokens) * compression_ratio), 50)
 
-        # Generate summary (async)
-        summary = await self._summarize_text(
-            combined_text, target_tokens, prev_context, next_context
+        # Generate summary with <<<MID>>> delimiter (async)
+        summary, mid_offset = await self._summarize_text(
+            left_text, right_text, target_tokens, prev_context, next_context
         )
 
         # Get embedding for summary (this could be batched later)
@@ -296,6 +331,7 @@ class TreeBuilder:
             left_child_id=left_id,
             right_child_id=right_id,
             summary=summary,
+            mid_offset=mid_offset,
             document_id=document_id,
         )
 
