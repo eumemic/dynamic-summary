@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+@docs/project-brief.md
+@docs/implementation-notes.md
+@docs/testing-strategy.md
+
 ## Project Overview
 
 RagZoom is an incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system that creates dynamic summaries with intelligent resolution control. It builds a binary tree structure from documents where leaf nodes contain original text chunks and internal nodes contain AI-generated summaries. During retrieval, it "zooms in" on relevant content while maintaining global context.
