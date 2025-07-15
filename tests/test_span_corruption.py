@@ -1,7 +1,7 @@
 """Test for span corruption bug in tree building."""
 
 import tempfile
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -27,31 +27,34 @@ class TestSpanCorruption:
             )
             store = Store(config)
             tree_builder = TreeBuilder(config, store)
-            
+
             # Mock API calls
             mock_client = AsyncMock()
             tree_builder.client = mock_client
-            
+
             yield config, store, tree_builder, mock_client
+
+            # Close store to prevent file handle leaks
+            store.close()
 
     @pytest.mark.asyncio
     async def test_odd_nodes_create_invalid_spans(self, setup_system):
         """Test that odd number of nodes creates span corruption."""
         config, store, tree_builder, mock_client = setup_system
-        
+
         # Create text that will split into an odd number of chunks
         # Each chunk is ~100 tokens, so we need longer content
         chunk_text = "This is a longer chunk of text that should be approximately one hundred tokens. " * 12
         chunks = [f"Chunk {i}: {chunk_text}" for i in range(15)]
         text = " ".join(chunks)
-        
+
         # Mock embeddings - return different embeddings for each text
         mock_client.embeddings.create = AsyncMock(
             side_effect=lambda **kwargs: Mock(
                 data=[Mock(embedding=[0.1] * 1536)] * len(kwargs.get('input', [kwargs.get('input')]))
             )
         )
-        
+
         # Mock summaries with <<<MID>>> delimiter
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
@@ -60,17 +63,17 @@ class TestSpanCorruption:
                 )]
             )
         )
-        
+
         # Index the document
         doc_id = await tree_builder.add_document_async(text, show_progress=False)
-        
+
         # Check for span corruption
         with store.SessionLocal() as session:
             from ragzoom.store import TreeNode
-            
+
             # Get all nodes
             all_nodes = session.query(TreeNode).filter_by(document_id=doc_id).all()
-            
+
             # Check for invalid spans
             corrupt_nodes = []
             for node in all_nodes:
@@ -89,13 +92,13 @@ class TestSpanCorruption:
                         'span_start': node.span_start,
                         'span_end': node.span_end,
                     })
-            
+
             # Report findings
             if corrupt_nodes:
                 print(f"\nFound {len(corrupt_nodes)} corrupt nodes:")
                 for node in corrupt_nodes:
                     print(f"  Depth {node['depth']}: span ({node['span_start']}, {node['span_end']})")
-            
+
             # This test SHOULD fail with the current implementation
             assert len(corrupt_nodes) == 0, f"Found {len(corrupt_nodes)} nodes with invalid spans"
 
@@ -103,7 +106,7 @@ class TestSpanCorruption:
     async def test_wraparound_pairing(self, setup_system):
         """Test that demonstrates wraparound pairing issue."""
         config, store, tree_builder, mock_client = setup_system
-        
+
         # Create 5 chunks that will split properly at 100 tokens each
         # Each chunk needs to be long enough to hit the token limit
         base_text = "The quick brown fox jumps over the lazy dog. " * 20  # ~100 tokens
@@ -111,14 +114,14 @@ class TestSpanCorruption:
         for i in range(5):
             chunks.append(f"CHUNK_{i}_START {base_text} CHUNK_{i}_END")
         text = " ".join(chunks)
-        
+
         # Mock embeddings
         mock_client.embeddings.create = AsyncMock(
             side_effect=lambda **kwargs: Mock(
                 data=[Mock(embedding=[0.1] * 1536)] * len(kwargs.get('input', [kwargs.get('input')]))
             )
         )
-        
+
         # Mock summaries
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
@@ -127,27 +130,27 @@ class TestSpanCorruption:
                 )]
             )
         )
-        
+
         # Index the document
         doc_id = await tree_builder.add_document_async(text, show_progress=False)
-        
+
         # Verify tree structure
         with store.SessionLocal() as session:
             from ragzoom.store import TreeNode
-            
+
             # Get nodes by depth
             nodes_by_depth = {}
             all_nodes = session.query(TreeNode).filter_by(document_id=doc_id).all()
-            
+
             for node in all_nodes:
                 if node.depth not in nodes_by_depth:
                     nodes_by_depth[node.depth] = []
                 nodes_by_depth[node.depth].append(node)
-            
+
             # Sort nodes by span_start within each depth
             for depth in nodes_by_depth:
                 nodes_by_depth[depth].sort(key=lambda n: n.span_start)
-            
+
             print("\nTree structure:")
             for depth in sorted(nodes_by_depth.keys()):
                 print(f"\nDepth {depth}:")
@@ -158,11 +161,11 @@ class TestSpanCorruption:
                         right = next(n for n in all_nodes if n.id == node.right_child_id)
                         print(f"    Left child: span ({left.span_start}, {left.span_end})")
                         print(f"    Right child: span ({right.span_start}, {right.span_end})")
-                        
+
                         # Check for wraparound
                         if left.span_end > right.span_start:
                             print(f"    WARNING: Wraparound detected! Left end {left.span_end} > Right start {right.span_start}")
-            
+
             # Check all parent nodes have valid spans
             for node in all_nodes:
                 if node.depth > 0:

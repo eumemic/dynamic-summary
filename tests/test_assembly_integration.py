@@ -30,7 +30,10 @@ class TestAssemblyIntegration:
         mock_client = MagicMock()
         mock_async_client = MagicMock()
 
-        return config, store, mock_client, mock_async_client
+        yield config, store, mock_client, mock_async_client
+
+        # Close store to prevent file handle leaks
+        store.close()
 
     def test_no_duplicate_content_in_assembly(self, setup_components):
         """Test that assembled output contains no repeated content."""
@@ -397,7 +400,7 @@ class TestAssemblyIntegration:
         test_doc = """Chapter 1: The Beginning
 Sarah discovered an old book in her grandmother's attic.
 
-Chapter 2: The Journey  
+Chapter 2: The Journey
 She traveled to the library to decode the mysterious symbols.
 
 Chapter 3: The End

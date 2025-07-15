@@ -215,14 +215,14 @@ class TestMidDelimiter:
         seen_items = {(0, 100, 1, 'node1'), (200, 300, 2, 'node2')}
 
         # Test overlapping spans
-        assert assembler._has_span_overlap_detailed((50, 150), seen_items) == True  # Overlaps (0,100)
-        assert assembler._has_span_overlap_detailed((250, 350), seen_items) == True  # Overlaps (200,300)
-        assert assembler._has_span_overlap_detailed((90, 210), seen_items) == True  # Overlaps both
+        assert assembler._has_span_overlap_detailed((50, 150), seen_items)  # Overlaps (0,100)
+        assert assembler._has_span_overlap_detailed((250, 350), seen_items)  # Overlaps (200,300)
+        assert assembler._has_span_overlap_detailed((90, 210), seen_items)  # Overlaps both
 
         # Test non-overlapping spans
-        assert assembler._has_span_overlap_detailed((100, 200), seen_items) == False  # Between
-        assert assembler._has_span_overlap_detailed((300, 400), seen_items) == False  # After
-        assert assembler._has_span_overlap_detailed((400, 500), seen_items) == False  # Far after
+        assert not assembler._has_span_overlap_detailed((100, 200), seen_items)  # Between
+        assert not assembler._has_span_overlap_detailed((300, 400), seen_items)  # After
+        assert not assembler._has_span_overlap_detailed((400, 500), seen_items)  # Far after
 
     def test_sort_nodes_chronologically(self, assembler):
         """Test chronological sorting of nodes."""
@@ -295,6 +295,8 @@ class TestMidDelimiter:
             return None
 
         assembler.store.get_node.side_effect = mock_get_node
+        # Mock get_children to return no children (these are leaf nodes)
+        assembler.store.get_children.return_value = (None, None)
         assembler.config.slope_cap = False
         assembler.config.smoothing_pass_enabled = False
 

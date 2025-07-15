@@ -31,6 +31,9 @@ class TestIncompleteIndexing:
             store = Store(config)
             yield config, store
 
+            # Close store to prevent file handle leaks
+            store.close()
+
     def test_full_document_gets_indexed(self, setup):
         """Test that the entire document is indexed, not just first 37%."""
         config, store = setup

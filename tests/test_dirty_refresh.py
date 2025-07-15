@@ -79,6 +79,9 @@ class TestDirtyRefresh:
 
                 yield config, store, tree_builder, retriever, mock_chat_async
 
+                # Close store to prevent file handle leaks
+                store.close()
+
     def test_refresh_nodes_async(self, setup_system):
         """Test TreeBuilder.refresh_nodes_async updates dirty nodes."""
         config, store, tree_builder, retriever, mock_chat = setup_system

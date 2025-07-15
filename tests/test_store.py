@@ -30,8 +30,9 @@ class TestStore:
         store = Store(config)
         yield store
 
-        # Cleanup
-        shutil.rmtree(temp_dir)
+        # Cleanup - close store first to release file handles
+        store.close()
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_add_node(self, temp_store):
         """Test adding a node to the store."""
