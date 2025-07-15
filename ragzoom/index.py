@@ -468,3 +468,51 @@ class TreeBuilder:
                 node.parent_id = parent_id
                 session.commit()
 
+    async def refresh_nodes_async(self, node_ids: list[str]) -> int:
+        """Refresh dirty nodes by re-summarizing their content.
+
+        Args:
+            node_ids: List of node IDs to refresh
+
+        Returns:
+            Number of nodes successfully refreshed
+        """
+        refreshed_count = 0
+
+        for node_id in node_ids:
+            try:
+                node = self.store.get_node(node_id)
+                if not node or node.depth == 0:
+                    # Skip leaf nodes - they don't have summaries
+                    continue
+
+                # Get children
+                left_child, right_child = self.store.get_children(node_id)
+                if not left_child or not right_child:
+                    logger.warning(f"Node {node_id} missing children, skipping refresh")
+                    continue
+
+                # Re-summarize with fresh content
+                summary, mid_offset = await self._summarize_text(
+                    left_child.text,
+                    right_child.text,
+                    target_tokens=self.config.leaf_tokens,
+                    prev_context="",
+                    next_context=""
+                )
+
+                # Get new embedding
+                embedding = await self._get_embedding(summary)
+
+                # Update the node
+                self.store.update_summary(node_id, summary, embedding, mid_offset)
+                refreshed_count += 1
+
+                logger.info(f"Refreshed node {node_id} with new summary")
+
+            except Exception as e:
+                logger.error(f"Error refreshing node {node_id}: {e}")
+                continue
+
+        return refreshed_count
+

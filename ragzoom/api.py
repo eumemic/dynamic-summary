@@ -23,7 +23,7 @@ class RagZoomService:
         self.store = Store(self.config)
         # Each service gets its own OpenAI client to avoid thread issues
         self.tree_builder = TreeBuilder(self.config, self.store)
-        self.retriever = Retriever(self.config, self.store)
+        self.retriever = Retriever(self.config, self.store, self.tree_builder)
         self.assembler = Assembler(self.config, self.store)
 
 # Dependency injection - creates new service per request
@@ -137,11 +137,15 @@ async def query(
     try:
         # Retrieve with or without eviction
         if request.use_eviction:
-            retrieval_result = service.retriever.retrieve_with_eviction(
+            # Use async version since we're in an async endpoint
+            retrieval_result = await service.retriever.retrieve_with_eviction_async(
                 request.query, request.token_budget
             )
         else:
-            retrieval_result = service.retriever.retrieve(request.query, request.n_max)
+            # Use async version since we're in an async endpoint
+            retrieval_result = await service.retriever.retrieve_async(
+                request.query, request.n_max, request.token_budget
+            )
 
         # Assemble summary
         summary, token_count = service.assembler.assemble_with_budget(

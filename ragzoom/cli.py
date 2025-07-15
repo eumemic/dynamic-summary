@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
+from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
 
@@ -41,7 +42,9 @@ def cli(ctx):
     ctx.ensure_object(dict)
     ctx.obj["config"] = config
     ctx.obj["store"] = store
-    ctx.obj["retriever"] = Retriever(config, store)
+    tree_builder = TreeBuilder(config, store)
+    ctx.obj["tree_builder"] = tree_builder
+    ctx.obj["retriever"] = Retriever(config, store, tree_builder)
     ctx.obj["assembler"] = Assembler(config, store)
 
 
@@ -61,7 +64,6 @@ def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, ma
         click.echo(f"Indexing {path.name}...")
 
         # Create tree builder with specified concurrency
-        from ragzoom.index import TreeBuilder
         config = ctx.obj["config"]
         store = ctx.obj["store"]
         tree_builder = TreeBuilder(config, store, max_concurrent=max_concurrent)

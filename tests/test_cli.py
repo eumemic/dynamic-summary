@@ -23,7 +23,7 @@ class TestCLI:
         """Mock RagZoom components."""
         with patch('ragzoom.cli.RagZoomConfig') as mock_config, \
              patch('ragzoom.cli.Store') as mock_store, \
-             patch('ragzoom.index.TreeBuilder') as mock_builder, \
+             patch('ragzoom.cli.TreeBuilder') as mock_builder, \
              patch('ragzoom.cli.Retriever') as mock_retriever, \
              patch('ragzoom.cli.Assembler') as mock_assembler:
 
