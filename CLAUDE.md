@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 @docs/project-brief.md
 @docs/implementation-notes.md
 @docs/testing-strategy.md
+@docs/bug-investigations.md
 
 ## Project Overview
 
