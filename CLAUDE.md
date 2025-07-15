@@ -100,6 +100,8 @@ Key settings in `RagZoomConfig`:
 - `test_cli.py` → `cli.py` (CLI commands and options)
 - `test_progress.py` → `progress.py` (progress tracking)
 - `test_utils.py` → `utils.py` (utility functions)
+- `test_dirty_refresh.py` → dirty node refresh functionality (async refresh, retrieval integration)
+- `test_budget_guarantee.py` → budget constraint enforcement (worst-case bounds, strategies)
 
 **Coverage Status**: All core modules now have test coverage
 
@@ -152,8 +154,13 @@ Key settings in `RagZoomConfig`:
 - **Fixed budget guarantee calculations**: Updated to use dynamic (slope_cap_size + 2) multiplier for mathematically correct worst-case bounds
 - **Added drop vs truncate budget strategies**: Intelligent node dropping preserves coherence vs tail truncation
 - **Fixed cache invalidation bug**: Added existence check before removing nodes from cache_order deque
-- **Added lazy dirty node refresh**: Infrastructure for re-summarizing stale nodes with placeholder implementation
+- **Implemented dirty node refresh**: Full async implementation with TreeBuilder.refresh_nodes_async() for re-summarizing stale nodes
 - **Enhanced slope cap handling**: Re-apply slope cap after budget trimming to prevent "bridge node" violations
+- **Fixed post-slope-cap budget overflow**: Added second budget check and trim after slope cap re-application
+- **Added embedding dimension validation**: Validates embeddings match expected dimensions, preventing runtime errors
+- **Fixed cache eviction after refresh**: Ensures refreshed nodes are properly re-added to LRU cache
+- **Added empty frontier guard**: Falls back to root node when budget trimming leaves empty frontier
+- **Implemented async retrieval**: Added retrieve_async() with proper sync wrappers for FastAPI compatibility
 
 ## Development Practices
 
