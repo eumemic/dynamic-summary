@@ -197,27 +197,31 @@ class TreeBuilder:
             leaf_ids = []
             chunk_data = []
 
-            # Prepare all chunk data
+            # Prepare all chunk data with character positions
+            current_char_pos = 0
             for i, chunk in enumerate(chunks):
                 node_id = self._generate_node_id()
 
-                # Calculate span positions in tokens
-                tokens_before = 0
-                for j in range(i):
-                    tokens_before += len(self.splitter.tokenizer.encode(chunks[j]))
-
-                chunk_encoded = self.splitter.tokenizer.encode(chunk)
-                chunk_tokens = len(chunk_encoded)
-                span_start = tokens_before
-                span_end = span_start + chunk_tokens
+                # Calculate character positions (not token positions)
+                # Find the chunk in the original text to get exact position
+                chunk_start = text.find(chunk, current_char_pos)
+                if chunk_start == -1:
+                    # Fallback if exact match not found (shouldn't happen)
+                    chunk_start = current_char_pos
+                chunk_end = chunk_start + len(chunk)
 
                 chunk_data.append({
                     'id': node_id,
                     'text': chunk,
-                    'span_start': span_start,
-                    'span_end': span_end,
+                    'span_start': chunk_start,
+                    'span_end': chunk_end,
                 })
                 leaf_ids.append(node_id)
+
+                # Update position for next search, accounting for overlap
+                # Estimate overlap in characters (rough: 1 token ≈ 4 chars)
+                overlap_chars = self.config.leaf_overlap_tokens * 4
+                current_char_pos = chunk_end - overlap_chars
 
             # Get embeddings in batches
             batch_size = 100  # Process 100 at a time for efficiency
@@ -454,11 +458,11 @@ class TreeBuilder:
                     # Insert new parents before it
                     odd_node_id = next_level_ids.pop()
                     odd_node_text = next_level_texts.pop()
-                    
+
                     for parent_id, summary, _ in results:
                         next_level_ids.append(parent_id)
                         next_level_texts.append(summary)
-                    
+
                     # Add the odd node back at the end
                     next_level_ids.append(odd_node_id)
                     next_level_texts.append(odd_node_text)
@@ -489,6 +493,12 @@ class TreeBuilder:
             if node:
                 node.parent_id = parent_id
                 session.commit()
+
+                # Invalidate the cache entry for this node since we've updated it
+                if node_id in self.store.node_cache:
+                    del self.store.node_cache[node_id]
+                    if node_id in self.store.cache_order:
+                        self.store.cache_order.remove(node_id)
 
     async def refresh_nodes_async(self, node_ids: list[str]) -> int:
         """Refresh dirty nodes by re-summarizing their content.
