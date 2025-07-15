@@ -19,35 +19,6 @@ Before beginning any work, consider if you need clarification on any aspects of 
 
 If everything is clear and you have all the information needed, proceed to Phase 1. It's better to ask questions upfront than to make incorrect assumptions that lead to rework.
 
-## Phase 0.5: Feature Branch Setup
-
-Before beginning any implementation work, ensure you're on an appropriate feature branch:
-
-1. **Check current branch**:
-   - Run `git branch --show-current` to see which branch you're on
-   - If you're on `master` or `main`, you MUST create a feature branch
-
-2. **Create feature branch** (if needed):
-   - Branch naming convention: `<type>/<brief-description>`
-   - Types: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`
-   - Examples: `feat/add-pricing-modal`, `fix/authentication-flow`, `refactor/claims-processing`
-   - Create with: `git checkout -b <branch-name>`
-
-3. **For existing issues**:
-   - If working on a GitHub issue, include issue number: `feat/14-synthetic-data-generator`
-   - This helps track which branches correspond to which issues
-
-4. **Verify branch state**:
-   - Ensure your branch is up to date with the base branch
-   - Run `git status` to confirm you're starting from a clean state
-   - If there are uncommitted changes from previous work, handle them appropriately
-
-**IMPORTANT**: Never implement features directly on `master` or `main`. This ensures:
-- The main branch remains stable
-- Changes can be reviewed via pull requests
-- Easy rollback if issues arise
-- Multiple features can be developed in parallel
-
 ## Phase 1: Understanding & Planning
 
 1. **Clarify the requirements**:
