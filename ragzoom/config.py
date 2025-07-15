@@ -17,6 +17,9 @@ class RagZoomConfig(BaseSettings):
     budget_tokens: int = Field(
         default=8000, description="Hard budget for stitched summary in tokens"
     )
+    budget_strategy: str = Field(
+        default="drop", description="Budget enforcement strategy: 'drop' or 'truncate'"
+    )
     leaf_tokens: int = Field(
         default=200, description="Target size for leaf chunks in tokens"
     )
@@ -35,6 +38,9 @@ class RagZoomConfig(BaseSettings):
     # Slope cap and smoothing
     slope_cap: bool = Field(
         default=True, description="Forbid depth jumps > 1 level in frontier"
+    )
+    slope_cap_size: int = Field(
+        default=1, description="Maximum depth difference allowed between adjacent frontier nodes"
     )
     adjacent_context_tokens: int = Field(
         default=75, description="Tokens from prev/next chunks for summarization context"
@@ -102,6 +108,14 @@ class RagZoomConfig(BaseSettings):
         """Ensure freshness decay is between 0 and 1."""
         if not 0 < v <= 1:
             raise ValueError("freshness_decay must be between 0 and 1")
+        return v
+
+    @field_validator("budget_strategy")
+    @classmethod
+    def validate_budget_strategy(cls, v: str) -> str:
+        """Ensure budget strategy is valid."""
+        if v not in ["drop", "truncate"]:
+            raise ValueError("budget_strategy must be 'drop' or 'truncate'")
         return v
 
     @field_validator("adjacent_context_tokens")

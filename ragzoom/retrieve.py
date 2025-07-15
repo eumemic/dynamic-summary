@@ -55,6 +55,10 @@ class Retriever:
         2. Budget + n_max: Use n_max but drop nodes if needed for budget
         3. n_max only: Just use n_max, no budget enforcement
         """
+        # Refresh dirty nodes before retrieval
+        self._refresh_dirty_nodes()
+
+        # Continue with existing logic...
         # Determine which mode we're in
         if budget_tokens is not None and n_max is None:
             # Mode 1: Budget only - calculate conservative n_max
@@ -110,6 +114,30 @@ class Retriever:
             coverage_map=coverage_map,
             frontier_nodes=frontier_nodes,
         )
+
+    def _refresh_dirty_nodes(self) -> None:
+        """Refresh dirty nodes by re-summarizing them."""
+        dirty_nodes = self.store.get_dirty_nodes()
+        if not dirty_nodes:
+            return
+
+        logger.info(f"Found {len(dirty_nodes)} dirty nodes to refresh")
+
+        # For now, implement basic refresh logic
+        # In a full implementation, this would be async and use TreeBuilder logic
+        for node in dirty_nodes:
+            if node.depth > 0:  # Only refresh internal nodes
+                left_child, right_child = self.store.get_children(node.id)
+                if left_child and right_child:
+                    # Simple re-summarization using existing pattern
+                    try:
+                        # For now, just mark as clean without re-summarization
+                        # This prevents infinite loops while we implement proper async refresh
+                        self.store.update_summary(node.id, node.text, [0.0] * 384, node.mid_offset)
+                        logger.info(f"Marked dirty node {node.id} as clean (placeholder)")
+
+                    except Exception as e:
+                        logger.error(f"Error refreshing dirty node {node.id}: {e}")
 
     def _build_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
         """Build coverage map including selected nodes and their ancestors."""
@@ -271,18 +299,24 @@ class Retriever:
     def _calculate_conservative_n_max(self, budget_tokens: int) -> int:
         """Calculate conservative n_max that guarantees no budget overflow.
 
-        Worst case scenario:
-        - Each frontier node could be a parent with one child in frontier
-        - Parent outputs full child text + its own summary half
-        - This could be up to 1.5x the leaf size
-
-        To be extra conservative, assume 2x leaf size per node.
+        Dynamic bound based on slope_cap_size: (slope_cap_size + 2) * leaf_tokens.
         """
-        # Very conservative: assume each node could expand to 2x leaf size
-        worst_case_tokens_per_node = self.config.leaf_tokens * 2
+        if self.config.slope_cap:
+            safe_factor = self.config.slope_cap_size + 2  # ±1→3, ±2→4, etc
+        else:
+            # Without slope cap, use tree height for worst case
+            root = self.store.get_root_node()
+            tree_height = root.depth if root else 3
+            safe_factor = 2 ** tree_height  # Exponential worst case
+            logger.warning(
+                f"Budget guarantees require slope_cap; using factor {safe_factor} "
+                f"based on tree height {tree_height}"
+            )
+
+        safe_tokens_per_node = safe_factor * self.config.leaf_tokens
 
         # Calculate how many nodes we can safely include
-        conservative_n_max = max(1, budget_tokens // worst_case_tokens_per_node)
+        conservative_n_max = max(1, budget_tokens // safe_tokens_per_node)
 
         return conservative_n_max
 

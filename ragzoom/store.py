@@ -73,10 +73,10 @@ class Store:
         self.engine = create_engine(
             config.sqlite_database_url, connect_args={"check_same_thread": False}
         )
-        
+
         # Handle migration before creating tables with new schema
         self._run_migrations()
-        
+
         # Create all tables (will only create missing ones)
         Base.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(bind=self.engine)
@@ -210,7 +210,36 @@ class Store:
             for node_id in marked_ids:
                 if node_id in self.node_cache:
                     del self.node_cache[node_id]
-                    self.cache_order.remove(node_id)
+                    # Only remove from cache_order if it exists
+                    if node_id in self.cache_order:
+                        self.cache_order.remove(node_id)
+
+    def update_summary(self, node_id: str, text: str, embedding: list[float], mid_offset: Optional[int] = None) -> None:
+        """Update node summary and clear dirty flag."""
+        with self.SessionLocal() as session:
+            node = session.query(TreeNode).filter_by(id=node_id).first()
+            if node:
+                node.text = text
+                node.summary = text  # These are the same for internal nodes
+                if mid_offset is not None:
+                    node.mid_offset = mid_offset
+                node.is_dirty = 0
+                session.commit()
+
+                # Update in vector store
+                self.collection.update(
+                    ids=[node_id],
+                    embeddings=[embedding],
+                    metadatas=[{"text": text}]
+                )
+
+                # Update cache
+                self._add_to_cache(node)
+
+    def get_dirty_nodes(self) -> list[TreeNode]:
+        """Get all nodes marked as dirty."""
+        with self.SessionLocal() as session:
+            return session.query(TreeNode).filter_by(is_dirty=1).all()
 
     def get_children(self, node_id: str) -> tuple[Optional[TreeNode], Optional[TreeNode]]:
         """Get left and right children of a node."""
@@ -432,7 +461,7 @@ class Store:
                     # Table exists, check if mid_offset column exists
                     result = conn.execute("PRAGMA table_info(tree_nodes)")
                     columns = [row[1] for row in result.fetchall()]
-                    
+
                     if 'mid_offset' not in columns:
                         # Add the missing column (with proper error handling)
                         try:
