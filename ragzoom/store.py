@@ -96,6 +96,9 @@ class Store:
         # LRU cache for hot nodes
         self.node_cache: dict[str, TreeNode] = {}
         self.cache_order = deque(maxlen=1000)
+        
+        # Cache expected embedding dimension for validation
+        self._expected_embedding_dim = self._get_expected_embedding_dimension()
 
     def _get_from_cache(self, node_id: str) -> Optional[TreeNode]:
         """Get node from cache if available."""
@@ -117,6 +120,41 @@ class Store:
 
         self.node_cache[node.id] = node
         self.cache_order.append(node.id)
+    
+    def _get_expected_embedding_dimension(self) -> Optional[int]:
+        """Get expected embedding dimension from config or existing data."""
+        if self.config.embedding_dimensions:
+            return self.config.embedding_dimensions
+            
+        # Try to infer from existing data
+        try:
+            # Get any existing embedding from collection
+            results = self.collection.peek(limit=1)
+            if results.get("embeddings") and len(results["embeddings"]) > 0:
+                return len(results["embeddings"][0])
+        except Exception as e:
+            logger.debug(f"Could not infer embedding dimension: {e}")
+            
+        # If no explicit config and no existing data, don't enforce validation
+        # This allows tests and first-time setups to work with any dimension
+        return None
+    
+    def _validate_embedding_dimension(self, embedding: list[float]) -> None:
+        """Validate embedding dimension matches expected."""
+        if not embedding:
+            raise ValueError("Embedding cannot be empty")
+            
+        actual_dim = len(embedding)
+        
+        # If we don't have an expected dimension yet, use this as the reference
+        if self._expected_embedding_dim is None:
+            self._expected_embedding_dim = actual_dim
+            logger.debug(f"Setting embedding dimension reference to {actual_dim}")
+        elif actual_dim != self._expected_embedding_dim:
+            raise ValueError(
+                f"Embedding dimension mismatch: expected {self._expected_embedding_dim}, "
+                f"got {actual_dim}. Check embedding_model configuration."
+            )
 
     def add_node(
         self,
@@ -134,6 +172,9 @@ class Store:
         document_id: Optional[str] = None,
     ) -> TreeNode:
         """Add a node to both SQLite and Chroma."""
+        # Validate embedding dimension
+        self._validate_embedding_dimension(embedding)
+        
         with self.SessionLocal() as session:
             node = TreeNode(
                 id=node_id,
@@ -216,6 +257,9 @@ class Store:
 
     def update_summary(self, node_id: str, text: str, embedding: list[float], mid_offset: Optional[int] = None) -> None:
         """Update node summary and clear dirty flag."""
+        # Validate embedding dimension
+        self._validate_embedding_dimension(embedding)
+        
         with self.SessionLocal() as session:
             node = session.query(TreeNode).filter_by(id=node_id).first()
             if node:
@@ -233,7 +277,12 @@ class Store:
                     metadatas=[{"text": text}]
                 )
 
-                # Update cache
+                # Update cache - refresh the cached node with new data
+                if node_id in self.node_cache:
+                    del self.node_cache[node_id]
+                    if node_id in self.cache_order:
+                        self.cache_order.remove(node_id)
+                # Re-add to cache with fresh data
                 self._add_to_cache(node)
 
     def get_dirty_nodes(self) -> list[TreeNode]:
