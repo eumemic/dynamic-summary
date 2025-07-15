@@ -47,11 +47,26 @@ class Retriever:
             logger.error(f"Error getting query embedding: {e}")
             raise
 
-    def retrieve(self, query: str, n_max: Optional[int] = None) -> RetrievalResult:
-        """Main retrieval method with MMR diversity."""
-        # Calculate n_max if not provided
-        if n_max is None:
+    def retrieve(self, query: str, n_max: Optional[int] = None, budget_tokens: Optional[int] = None) -> RetrievalResult:
+        """Main retrieval method with MMR diversity.
+
+        Supports three modes:
+        1. Budget only: Calculate conservative n_max to guarantee no overflow
+        2. Budget + n_max: Use n_max but drop nodes if needed for budget
+        3. n_max only: Just use n_max, no budget enforcement
+        """
+        # Determine which mode we're in
+        if budget_tokens is not None and n_max is None:
+            # Mode 1: Budget only - calculate conservative n_max
+            n_max = self._calculate_conservative_n_max(budget_tokens)
+            logger.info(f"Budget-only mode: calculated conservative n_max={n_max} for budget={budget_tokens}")
+        elif budget_tokens is not None and n_max is not None:
+            # Mode 2: Budget + n_max - will enforce both constraints
+            logger.info(f"Mixed mode: n_max={n_max}, budget={budget_tokens}")
+        elif n_max is None:
+            # Mode 3: n_max only (using default)
             n_max = self.config.n_max
+            logger.info(f"n_max-only mode: using n_max={n_max}")
 
         # Get query embedding
         query_embedding = self._get_query_embedding(query)
@@ -76,14 +91,18 @@ class Retriever:
         for node in pinned_nodes:
             coverage_map[node.id] = True
 
+        # Build scores map
+        scores = {cand[0]: 1.0 - cand[1] for cand in candidates}  # Convert distance to similarity
+
         # Step 5: Extract frontier
         frontier_nodes = self._extract_frontier(coverage_map)
 
+        # Step 6: If budget specified, ensure frontier fits within budget
+        if budget_tokens is not None:
+            frontier_nodes = self._enforce_budget_constraint(frontier_nodes, budget_tokens, scores)
+
         # Update access history
         self._update_access_history(selected_ids, candidates)
-
-        # Build scores map
-        scores = {cand[0]: 1.0 - cand[1] for cand in candidates}  # Convert distance to similarity
 
         return RetrievalResult(
             node_ids=selected_ids,
@@ -248,3 +267,86 @@ class Retriever:
         ]
 
         return result
+
+    def _calculate_conservative_n_max(self, budget_tokens: int) -> int:
+        """Calculate conservative n_max that guarantees no budget overflow.
+
+        Worst case scenario:
+        - Each frontier node could be a parent with one child in frontier
+        - Parent outputs full child text + its own summary half
+        - This could be up to 1.5x the leaf size
+
+        To be extra conservative, assume 2x leaf size per node.
+        """
+        # Very conservative: assume each node could expand to 2x leaf size
+        worst_case_tokens_per_node = self.config.leaf_tokens * 2
+
+        # Calculate how many nodes we can safely include
+        conservative_n_max = max(1, budget_tokens // worst_case_tokens_per_node)
+
+        return conservative_n_max
+
+    def _enforce_budget_constraint(self, frontier_nodes: list[str], budget_tokens: int, scores: dict[str, float]) -> list[str]:
+        """Ensure frontier nodes fit within token budget.
+
+        Uses worst-case token estimation for each node to guarantee
+        the assembled result won't exceed budget.
+        """
+        import tiktoken
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+
+        # Estimate worst-case tokens for each frontier node
+        node_estimates = []
+        for node_id in frontier_nodes:
+            node = self.store.get_node(node_id)
+            if not node:
+                continue
+
+            # Worst case: node might output full text + child content
+            # For parent nodes with <<<MID>>>, this could be substantial
+            worst_case = self._estimate_worst_case_tokens(node, frontier_nodes, tokenizer)
+            node_estimates.append((node_id, worst_case, scores.get(node_id, 0.0)))
+
+        # Sort by score (highest first) to keep best nodes
+        node_estimates.sort(key=lambda x: x[2], reverse=True)
+
+        # Select nodes that fit within budget
+        selected = []
+        total_tokens = 0
+
+        for node_id, token_estimate, score in node_estimates:
+            if total_tokens + token_estimate <= budget_tokens:
+                selected.append(node_id)
+                total_tokens += token_estimate
+            else:
+                logger.info(f"Dropping node {node_id} (score={score:.3f}) to stay within budget")
+
+        # Maintain chronological order
+        selected_set = set(selected)
+        return [nid for nid in frontier_nodes if nid in selected_set]
+
+    def _estimate_worst_case_tokens(self, node, frontier_nodes, tokenizer) -> int:
+        """Estimate worst-case token count for a node in assembly.
+
+        Considers:
+        - Parent nodes with children in frontier (<<<MID>>> extraction)
+        - Full node text
+        - Potential expansion during assembly
+        """
+        # Base case: at least the node's own text
+        base_tokens = len(tokenizer.encode(node.text))
+
+        # Check if this is a parent with children in frontier
+        left_child, right_child = self.store.get_children(node.id)
+        frontier_set = set(frontier_nodes)
+
+        if left_child and left_child.id in frontier_set:
+            # Parent + left child case: could output both
+            base_tokens += len(tokenizer.encode(left_child.text))
+
+        if right_child and right_child.id in frontier_set:
+            # Parent + right child case: could output both
+            base_tokens += len(tokenizer.encode(right_child.text))
+
+        # Add some buffer for assembly overhead (newlines, etc)
+        return int(base_tokens * 1.1)

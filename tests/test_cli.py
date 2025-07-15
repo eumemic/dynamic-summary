@@ -152,9 +152,9 @@ class TestCLI:
 
             assert result.exit_code == 0
 
-            # Verify retrieve was called with correct query and n_max
+            # Verify retrieve was called with correct query, n_max, and budget_tokens
             mock_ragzoom['retriever_instance'].retrieve.assert_called_once_with(
-                'Tell me about cats', 5
+                'Tell me about cats', n_max=5, budget_tokens=1000
             )
 
     def test_pin_command(self, runner, mock_ragzoom):

@@ -1,6 +1,5 @@
 """CLI interface for RagZoom."""
 
-import asyncio
 import json
 import logging
 import sys
@@ -38,7 +37,7 @@ def cli(ctx):
     # Initialize shared components
     config = RagZoomConfig()
     store = Store(config)
-    
+
     ctx.ensure_object(dict)
     ctx.obj["config"] = config
     ctx.obj["store"] = store
@@ -58,32 +57,32 @@ def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, ma
         # Read file
         path = Path(file_path)
         text = path.read_text(encoding="utf-8")
-        
+
         click.echo(f"Indexing {path.name}...")
-        
+
         # Create tree builder with specified concurrency
         from ragzoom.index import TreeBuilder
         config = ctx.obj["config"]
         store = ctx.obj["store"]
         tree_builder = TreeBuilder(config, store, max_concurrent=max_concurrent)
-        
+
         doc_id = tree_builder.add_document(
-            text, 
-            document_id=document_id, 
+            text,
+            document_id=document_id,
             file_path=str(path.absolute()),
             show_progress=not no_progress
         )
-        
+
         # Get stats
         store = ctx.obj["store"]
         leaf_nodes = store.get_leaf_nodes()
         root = store.get_root_node()
-        
-        click.echo(f"✅ Document indexed successfully!")
+
+        click.echo("✅ Document indexed successfully!")
         click.echo(f"   Document ID: {doc_id}")
         click.echo(f"   Chunks created: {len(leaf_nodes)}")
         click.echo(f"   Tree depth: {root.depth if root else 0}")
-        
+
     except Exception as e:
         click.echo(f"❌ Error indexing document: {e}", err=True)
         sys.exit(1)
@@ -108,23 +107,24 @@ def query(
     try:
         retriever = ctx.obj["retriever"]
         assembler = ctx.obj["assembler"]
-        
+
         # Retrieve
         if use_eviction:
             result = retriever.retrieve_with_eviction(query_text, token_budget)
         else:
-            result = retriever.retrieve(query_text, n_max)
-        
+            # Pass both n_max and budget_tokens to support all three modes
+            result = retriever.retrieve(query_text, n_max=n_max, budget_tokens=token_budget)
+
         # Assemble
         summary, token_count = assembler.assemble_with_budget(result, token_budget)
-        
+
         # Output summary
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY:")
         click.echo("=" * 60)
         click.echo(summary)
         click.echo("=" * 60 + "\n")
-        
+
         # Show stats if requested
         if show_stats:
             click.echo("STATISTICS:")
@@ -132,7 +132,7 @@ def query(
             click.echo(f"  Frontier size: {len(result.frontier_nodes)}")
             click.echo(f"  Token count: {token_count}")
             click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
-        
+
     except Exception as e:
         click.echo(f"❌ Error processing query: {e}", err=True)
         sys.exit(1)
@@ -146,13 +146,13 @@ def pin(ctx, node_id: str):
     try:
         store = ctx.obj["store"]
         success = store.pin_node(node_id)
-        
+
         if success:
             click.echo(f"✅ Node {node_id} pinned successfully!")
         else:
             click.echo(f"❌ Failed to pin node {node_id} (doesn't exist or too deep)")
             sys.exit(1)
-            
+
     except Exception as e:
         click.echo(f"❌ Error pinning node: {e}", err=True)
         sys.exit(1)
@@ -165,13 +165,13 @@ def status(ctx):
     try:
         store = ctx.obj["store"]
         config = ctx.obj["config"]
-        
+
         # Gather stats
         all_nodes = store.collection.count()
         leaf_nodes = store.get_leaf_nodes()
         root = store.get_root_node()
         pinned = store.get_pinned_nodes()
-        
+
         click.echo("\nSYSTEM STATUS:")
         click.echo("=" * 40)
         click.echo(f"Total nodes: {all_nodes}")
@@ -185,7 +185,7 @@ def status(ctx):
         click.echo(f"MMR lambda: {config.mmr_lambda}")
         click.echo(f"Slope cap: {config.slope_cap}")
         click.echo(f"Smoothing enabled: {config.smoothing_pass_enabled}")
-        
+
     except Exception as e:
         click.echo(f"❌ Error getting status: {e}", err=True)
         sys.exit(1)
@@ -199,7 +199,7 @@ def serve(host: str, port: int, reload: bool):
     """Start the REST API server."""
     try:
         import uvicorn
-        
+
         click.echo(f"Starting RagZoom API server on {host}:{port}...")
         uvicorn.run(
             "ragzoom.api:app",
@@ -220,32 +220,32 @@ def clear(ctx, confirm: bool):
     try:
         if not confirm:
             click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
-        
+
         store = ctx.obj["store"]
-        
+
         # Clear SQLite data
         with store.SessionLocal() as session:
             # Import models
-            from ragzoom.store import TreeNode, Document
-            
+            from ragzoom.store import Document, TreeNode
+
             # Delete all nodes
             deleted_count = session.query(TreeNode).count()
             session.query(TreeNode).delete()
             session.query(Document).delete()
             session.commit()
-        
+
         # Clear Chroma collection - delete all documents
         # Get all IDs first
         results = store.collection.get()
         if results['ids']:
             store.collection.delete(ids=results['ids'])
-        
+
         # Clear the cache
         store.node_cache.clear()
         store.cache_order.clear()
-        
+
         click.echo(f"✅ Cleared {deleted_count} nodes from the database")
-        
+
     except click.Abort:
         click.echo("❌ Clear operation cancelled")
     except Exception as e:
@@ -262,7 +262,7 @@ def export(ctx, input_file: str, output_file: str, format: str):
     """Export tree structure to file."""
     try:
         store = ctx.obj["store"]
-        
+
         # Get all nodes
         nodes_data = []
         with store.SessionLocal() as session:
@@ -279,7 +279,7 @@ def export(ctx, input_file: str, output_file: str, format: str):
                     "text_preview": node.text[:100] + "..." if len(node.text) > 100 else node.text,
                 }
                 nodes_data.append(node_dict)
-        
+
         # Write output
         output_path = Path(output_file)
         if format == "json":
@@ -292,9 +292,9 @@ def export(ctx, input_file: str, output_file: str, format: str):
                 leaf_marker = "🍃" if node["is_leaf"] else "📁"
                 lines.append(f"{indent}{leaf_marker} {node['id'][:8]}... [{node['span_start']}-{node['span_end']}]")
             output_path.write_text("\n".join(lines))
-        
+
         click.echo(f"✅ Exported {len(nodes_data)} nodes to {output_file}")
-        
+
     except Exception as e:
         click.echo(f"❌ Error exporting: {e}", err=True)
         sys.exit(1)

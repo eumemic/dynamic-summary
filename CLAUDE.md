@@ -67,6 +67,10 @@ ragzoom serve
 - Coverage map propagation (selected nodes + ancestors)
 - Frontier extraction (covered nodes with uncovered children)
 - Optional sliding queue eviction with freshness decay
+- Budget guarantee modes:
+  - Budget-only: Conservative n_max calculation to prevent overflow
+  - Budget + n_max: Intelligent node dropping to respect both constraints
+  - n_max-only: Traditional retrieval without budget enforcement
 
 **Assembly (`assemble.py`)**
 - Slope capping: ±1 depth transitions for coherence
