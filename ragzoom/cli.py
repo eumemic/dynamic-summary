@@ -51,20 +51,41 @@ def cli(ctx):
 @cli.command()
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--document-id", help="Optional document ID")
+@click.option("--clear", is_flag=True, help="Clear existing document before indexing")
 @click.option("--no-progress", is_flag=True, help="Disable progress bar")
 @click.option("--max-concurrent", type=int, default=10, help="Maximum concurrent API requests (default: 10)")
 @click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.pass_context
-def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, max_concurrent: int, validate: bool):
+def index(ctx, file_path: str, document_id: Optional[str], clear: bool, no_progress: bool, max_concurrent: int, validate: bool):
     """Index a document from file."""
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
     set_validation_enabled(validate)
-    
+
     try:
         # Read file
         path = Path(file_path)
         text = path.read_text(encoding="utf-8")
+
+        # Determine document ID (use provided ID or filename)
+        if not document_id:
+            document_id = path.name
+
+        # Clear existing document if requested
+        if clear:
+            store = ctx.obj["store"]
+            # Check if document exists
+            with store.SessionLocal() as session:
+                from ragzoom.store import Document
+                existing_doc = session.query(Document).filter_by(id=document_id).first()
+                if existing_doc:
+                    click.echo(f"Clearing existing document '{document_id}'...")
+                    # Delete document nodes
+                    deleted_count = store.delete_document_nodes(document_id)
+                    # Delete document record
+                    session.query(Document).filter_by(id=document_id).delete()
+                    session.commit()
+                    click.echo(f"   Cleared {deleted_count} nodes")
 
         click.echo(f"Indexing {path.name}...")
 
@@ -82,7 +103,7 @@ def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, ma
 
         # Get stats
         store = ctx.obj["store"]
-        
+
         # Get leaf nodes for this specific document
         with store.SessionLocal() as session:
             from ragzoom.store import TreeNode
@@ -90,7 +111,7 @@ def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, ma
                 document_id=doc_id,
                 summary=None  # Leaf nodes have no summary
             ).all()
-        
+
         # Get root node for this document
         with store.SessionLocal() as session:
             root = session.query(TreeNode).filter_by(
@@ -102,26 +123,26 @@ def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, ma
         click.echo(f"   Document ID: {doc_id}")
         click.echo(f"   Chunks created: {len(doc_leaves)}")
         click.echo(f"   Tree depth: {root.depth if root else 0}")
-        
+
         # Run validation checks
         from ragzoom.validate import (
             validate,
-            validate_document_coverage, 
             validate_chunk_sizes,
-            validate_tree_structure
+            validate_document_coverage,
+            validate_tree_structure,
         )
-        
+
         # Validations will run only if --validate was passed
         validate(
             lambda: validate_document_coverage(text, doc_leaves, config.leaf_overlap_tokens),
             "document coverage"
         )
-        
+
         validate(
             lambda: validate_chunk_sizes(doc_leaves, config.leaf_tokens),
             "chunk sizes"
         )
-        
+
         validate(
             lambda: validate_tree_structure(store, doc_id, text),
             "tree structure"
@@ -133,7 +154,50 @@ def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, ma
 
 
 @cli.command()
+@click.pass_context
+def documents(ctx):
+    """List all indexed documents."""
+    try:
+        store = ctx.obj["store"]
+
+        # Get all unique documents
+        with store.SessionLocal() as session:
+            from ragzoom.store import Document
+            docs = session.query(Document).all()
+
+        if not docs:
+            click.echo("No documents indexed yet.")
+            return
+
+        click.echo("\nIndexed Documents:")
+        click.echo("-" * 60)
+
+        for doc in docs:
+            # Get document stats
+            with store.SessionLocal() as session:
+                from ragzoom.store import TreeNode
+                node_count = session.query(TreeNode).filter_by(document_id=doc.id).count()
+                leaf_count = session.query(TreeNode).filter_by(
+                    document_id=doc.id,
+                    summary=None
+                ).count()
+
+            click.echo(f"\nDocument ID: {doc.id}")
+            if doc.file_path:
+                click.echo(f"File: {doc.file_path}")
+            click.echo(f"Indexed: {doc.indexed_at}")
+            click.echo(f"Chunks: {doc.chunk_count}")
+            click.echo(f"Total nodes: {node_count}")
+            click.echo(f"Leaf nodes: {leaf_count}")
+
+    except Exception as e:
+        click.echo(f"❌ Error listing documents: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
 @click.argument("query_text")
+@click.option("--document-id", "-d", required=True, help="Document ID to query within")
 @click.option("--n-max", type=int, help="Max nodes to retrieve")
 @click.option("--token-budget", type=int, help="Token budget for summary")
 @click.option("--use-eviction", is_flag=True, help="Use sliding queue eviction")
@@ -143,6 +207,7 @@ def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, ma
 def query(
     ctx,
     query_text: str,
+    document_id: str,
     n_max: Optional[int],
     token_budget: Optional[int],
     use_eviction: bool,
@@ -153,17 +218,17 @@ def query(
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
     set_validation_enabled(validate)
-    
+
     try:
         retriever = ctx.obj["retriever"]
         assembler = ctx.obj["assembler"]
 
         # Retrieve
         if use_eviction:
-            result = retriever.retrieve_with_eviction(query_text, token_budget)
+            result = retriever.retrieve_with_eviction(query_text, token_budget, document_id=document_id)
         else:
             # Pass both n_max and budget_tokens to support all three modes
-            result = retriever.retrieve(query_text, n_max=n_max, budget_tokens=token_budget)
+            result = retriever.retrieve(query_text, n_max=n_max, budget_tokens=token_budget, document_id=document_id)
 
         # Assemble
         summary, token_count = assembler.assemble_with_budget(result, token_budget)
@@ -263,38 +328,67 @@ def serve(host: str, port: int, reload: bool):
 
 
 @cli.command()
+@click.option("--document-id", "-d", help="Clear only a specific document")
 @click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
-def clear(ctx, confirm: bool):
-    """Clear all data from the database."""
-    try:
-        if not confirm:
-            click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
+def clear(ctx, document_id: Optional[str], confirm: bool):
+    """Clear data from the database.
 
+    Without --document-id, clears all data.
+    With --document-id, clears only the specified document.
+    """
+    try:
         store = ctx.obj["store"]
 
-        # Clear SQLite data
-        with store.SessionLocal() as session:
-            # Import models
-            from ragzoom.store import Document, TreeNode
+        if document_id:
+            # Clear specific document
+            if not confirm:
+                click.confirm(f"⚠️  This will delete document '{document_id}' and all its data. Are you sure?", abort=True)
 
-            # Delete all nodes
-            deleted_count = session.query(TreeNode).count()
-            session.query(TreeNode).delete()
-            session.query(Document).delete()
-            session.commit()
+            # Check if document exists
+            with store.SessionLocal() as session:
+                from ragzoom.store import Document
+                doc = session.query(Document).filter_by(id=document_id).first()
+                if not doc:
+                    click.echo(f"❌ Document '{document_id}' not found")
+                    sys.exit(1)
 
-        # Clear Chroma collection - delete all documents
-        # Get all IDs first
-        results = store.collection.get()
-        if results['ids']:
-            store.collection.delete(ids=results['ids'])
+            # Delete document nodes
+            deleted_count = store.delete_document_nodes(document_id)
 
-        # Clear the cache
-        store.node_cache.clear()
-        store.cache_order.clear()
+            # Delete document record
+            with store.SessionLocal() as session:
+                session.query(Document).filter_by(id=document_id).delete()
+                session.commit()
 
-        click.echo(f"✅ Cleared {deleted_count} nodes from the database")
+            click.echo(f"✅ Cleared document '{document_id}' ({deleted_count} nodes deleted)")
+        else:
+            # Clear all data
+            if not confirm:
+                click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
+
+            # Clear SQLite data
+            with store.SessionLocal() as session:
+                # Import models
+                from ragzoom.store import Document, TreeNode
+
+                # Delete all nodes
+                deleted_count = session.query(TreeNode).count()
+                session.query(TreeNode).delete()
+                session.query(Document).delete()
+                session.commit()
+
+            # Clear Chroma collection - delete all documents
+            # Get all IDs first
+            results = store.collection.get()
+            if results['ids']:
+                store.collection.delete(ids=results['ids'])
+
+            # Clear the cache
+            store.node_cache.clear()
+            store.cache_order.clear()
+
+            click.echo(f"✅ Cleared {deleted_count} nodes from the database")
 
     except click.Abort:
         click.echo("❌ Clear operation cancelled")

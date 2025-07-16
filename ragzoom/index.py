@@ -135,7 +135,7 @@ class TreeBuilder:
                 summary = response.choices[0].message.content.strip()
 
                 # Check if summary exceeds target length
-                actual_tokens = len(self.splitter.tokenizer.encode(summary))
+                # actual_tokens = len(self.splitter.tokenizer.encode(summary))
                 # if actual_tokens > target_tokens:
                 #     logger.warning(f"Summary exceeded target length: got {actual_tokens} tokens, target was {target_tokens} tokens")
 
@@ -179,7 +179,12 @@ class TreeBuilder:
                     document_id = existing_doc.id
 
         if not document_id:
-            document_id = self._generate_node_id()
+            if file_path:
+                # Use filename (without path) as document_id
+                from pathlib import Path
+                document_id = Path(file_path).name
+            else:
+                document_id = self._generate_node_id()
 
         # Split into chunks
         if show_progress:
@@ -189,7 +194,7 @@ class TreeBuilder:
 
         # Early validation: Check chunk sizes immediately after splitting
         from ragzoom.validate import validate, validate_chunk_sizes
-        
+
         # Create simple objects with just the fields needed for validation
         chunk_objects = []
         for i, chunk in enumerate(chunks):
@@ -198,7 +203,7 @@ class TreeBuilder:
                 'id': f'chunk_{i}'
             })()
             chunk_objects.append(chunk_obj)
-        
+
         validate(
             lambda: validate_chunk_sizes(chunk_objects, self.config.leaf_tokens),
             "early chunk size validation"
@@ -221,7 +226,6 @@ class TreeBuilder:
 
             # Prepare all chunk data with character positions
             # Track positions more accurately by reconstructing from chunks
-            reconstructed_pos = 0
             for i, chunk in enumerate(chunks):
                 node_id = self._generate_node_id()
 
@@ -232,17 +236,17 @@ class TreeBuilder:
                     # For subsequent chunks, find where this chunk starts
                     # Look for overlap with previous chunk
                     prev_chunk = chunks[i-1]
-                    
+
                     # Find overlap between chunks
                     overlap_size = 0
                     for overlap_len in range(min(len(prev_chunk), len(chunk)), 0, -1):
                         if prev_chunk[-overlap_len:] == chunk[:overlap_len]:
                             overlap_size = overlap_len
                             break
-                    
+
                     # This chunk starts where the previous ended minus the overlap
                     chunk_start = chunk_data[-1]['span_end'] - overlap_size
-                    
+
                     # Verify this is correct by checking the text
                     if text[chunk_start:chunk_start+len(chunk)] != chunk:
                         # Fallback to find
@@ -250,7 +254,7 @@ class TreeBuilder:
                         chunk_start = text.find(chunk, chunk_data[-1]['span_start'])
                         if chunk_start == -1:
                             chunk_start = chunk_data[-1]['span_end']
-                
+
                 chunk_end = chunk_start + len(chunk)
 
                 chunk_data.append({
@@ -263,7 +267,7 @@ class TreeBuilder:
 
             # Early validation: Check document coverage before processing embeddings
             from ragzoom.validate import validate, validate_document_coverage
-            
+
             # Create node objects for validation using actual chunk data
             leaf_nodes_for_validation = []
             for data in chunk_data:
@@ -274,7 +278,7 @@ class TreeBuilder:
                     'text': data['text']
                 })()
                 leaf_nodes_for_validation.append(node_obj)
-            
+
             validate(
                 lambda: validate_document_coverage(text, leaf_nodes_for_validation, self.config.leaf_overlap_tokens),
                 "early document coverage check"
@@ -395,28 +399,28 @@ class TreeBuilder:
         # Update children's parent references
         self._update_parent_reference(left_id, parent_id)
         self._update_parent_reference(right_id, parent_id)
-        
+
         # Early validation: Check tree structure immediately after creating parent
         from ragzoom.validate import validate
-        
+
         def check_parent_structure():
             # Check span validity
             if left_node.span_start >= right_node.span_end:
                 return f"Invalid parent span: left child starts at {left_node.span_start}, right child ends at {right_node.span_end}"
-            
+
             # Skip gap check in early validation - we'll check it properly in final validation
             # where we have access to the original text to verify if gaps are just whitespace
-            
+
             # Check summary has MID delimiter
             if '<<<MID>>>' not in summary:
                 return f"Parent node {parent_id} missing <<<MID>>> delimiter in summary"
-            
+
             # Check mid_offset is valid
             if mid_offset is None or mid_offset < 0 or mid_offset >= len(summary):
                 return f"Parent node {parent_id} has invalid mid_offset: {mid_offset}"
-            
+
             return None
-        
+
         validate(check_parent_structure, f"tree structure for parent {parent_id}")
 
         return parent_id, summary, embedding

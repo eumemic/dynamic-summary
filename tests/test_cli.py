@@ -2,7 +2,7 @@
 
 import os
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -161,7 +161,7 @@ class TestCLI:
     def test_query_command(self, runner, mock_ragzoom):
         """Test query command."""
         with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
-            result = runner.invoke(cli, ['query', 'Tell me about cats'])
+            result = runner.invoke(cli, ['query', 'Tell me about cats', '-d', 'test-doc'])
 
             assert result.exit_code == 0
             assert 'SUMMARY:' in result.output
@@ -171,14 +171,15 @@ class TestCLI:
         """Test query command with options."""
         with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
             result = runner.invoke(cli, ['query', 'Tell me about cats',
+                                        '-d', 'test-doc',
                                         '--n-max', '5',
                                         '--token-budget', '1000'])
 
             assert result.exit_code == 0
 
-            # Verify retrieve was called with correct query, n_max, and budget_tokens
+            # Verify retrieve was called with correct query, n_max, budget_tokens, and document_id
             mock_ragzoom['retriever_instance'].retrieve.assert_called_once_with(
-                'Tell me about cats', n_max=5, budget_tokens=1000
+                'Tell me about cats', n_max=5, budget_tokens=1000, document_id='test-doc'
             )
 
     def test_pin_command(self, runner, mock_ragzoom):
@@ -219,6 +220,32 @@ class TestCLI:
                     reload=False
                 )
 
+    def test_documents_command(self, runner, mock_ragzoom):
+        """Test documents command."""
+        # Mock document results
+        from datetime import datetime
+        from unittest.mock import MagicMock
+
+        mock_doc1 = MagicMock()
+        mock_doc1.id = "doc-123"
+        mock_doc1.file_path = "/path/to/file.txt"
+        mock_doc1.indexed_at = datetime.now()
+        mock_doc1.chunk_count = 10
+
+        mock_session = MagicMock()
+        mock_session.query.return_value.all.return_value = [mock_doc1]
+        mock_session.query.return_value.filter_by.return_value.count.return_value = 15
+
+        mock_ragzoom['store_instance'].SessionLocal.return_value.__enter__.return_value = mock_session
+
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
+            result = runner.invoke(cli, ['documents'])
+
+            assert result.exit_code == 0
+            assert 'Document ID: doc-123' in result.output
+            assert 'File: /path/to/file.txt' in result.output
+            assert 'Chunks: 10' in result.output
+
     def test_missing_api_key(self, runner):
         """Test commands fail without API key."""
         # Mock the RagZoomConfig to raise an error when instantiated without API key
@@ -231,6 +258,62 @@ class TestCLI:
                 # Should fail due to missing API key
                 assert result.exit_code != 0
                 assert result.exception is not None
+
+    def test_index_with_clear(self, runner, mock_ragzoom):
+        """Test indexing with --clear option."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write("Test content for clear.")
+            temp_file = f.name
+
+        try:
+            # Mock existing document
+            mock_session = MagicMock()
+            mock_doc = MagicMock()
+            mock_doc.id = os.path.basename(temp_file)
+            mock_session.query.return_value.filter_by.return_value.first.return_value = mock_doc
+            mock_session.query.return_value.filter_by.return_value.delete.return_value = 1
+
+            mock_ragzoom['store_instance'].SessionLocal.return_value.__enter__.return_value = mock_session
+            mock_ragzoom['store_instance'].delete_document_nodes.return_value = 5
+
+            with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
+                result = runner.invoke(cli, ['index', temp_file, '--clear'])
+
+                assert result.exit_code == 0
+                assert f"Clearing existing document '{os.path.basename(temp_file)}'" in result.output
+                assert "Cleared 5 nodes" in result.output
+                assert 'Document indexed successfully!' in result.output
+
+                # Verify delete_document_nodes was called
+                mock_ragzoom['store_instance'].delete_document_nodes.assert_called_once_with(os.path.basename(temp_file))
+        finally:
+            os.unlink(temp_file)
+
+    def test_index_with_clear_no_existing(self, runner, mock_ragzoom):
+        """Test indexing with --clear when document doesn't exist."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write("Test content.")
+            temp_file = f.name
+
+        try:
+            # Mock no existing document
+            mock_session = MagicMock()
+            mock_session.query.return_value.filter_by.return_value.first.return_value = None
+
+            mock_ragzoom['store_instance'].SessionLocal.return_value.__enter__.return_value = mock_session
+
+            with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
+                result = runner.invoke(cli, ['index', temp_file, '--clear'])
+
+                assert result.exit_code == 0
+                # Should not show clearing message
+                assert "Clearing existing document" not in result.output
+                assert 'Document indexed successfully!' in result.output
+
+                # Verify delete_document_nodes was NOT called
+                mock_ragzoom['store_instance'].delete_document_nodes.assert_not_called()
+        finally:
+            os.unlink(temp_file)
 
     def test_index_no_progress(self, runner, mock_ragzoom):
         """Test indexing without progress bar."""
@@ -259,11 +342,63 @@ class TestCLI:
         )
 
         with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
-            result = runner.invoke(cli, ['query', 'Test query', '--use-eviction'])
+            result = runner.invoke(cli, ['query', 'Test query', '-d', 'test-doc', '--use-eviction'])
 
             assert result.exit_code == 0
 
-            # Verify retrieve_with_eviction was called
-            mock_ragzoom['retriever_instance'].retrieve_with_eviction.assert_called_once()
+            # Verify retrieve_with_eviction was called with document_id
+            mock_ragzoom['retriever_instance'].retrieve_with_eviction.assert_called_once_with(
+                'Test query', None, document_id='test-doc'
+            )
 
             assert 'SUMMARY:' in result.output
+
+    def test_clear_specific_document(self, runner, mock_ragzoom):
+        """Test clearing a specific document."""
+        # Mock document exists
+        mock_session = MagicMock()
+        mock_doc = MagicMock()
+        mock_doc.id = "test-doc"
+        mock_session.query.return_value.filter_by.return_value.first.return_value = mock_doc
+        mock_session.query.return_value.filter_by.return_value.delete.return_value = 1
+
+        mock_ragzoom['store_instance'].SessionLocal.return_value.__enter__.return_value = mock_session
+        mock_ragzoom['store_instance'].delete_document_nodes.return_value = 10
+
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
+            result = runner.invoke(cli, ['clear', '--document-id', 'test-doc', '--confirm'])
+
+            assert result.exit_code == 0
+            assert "Cleared document 'test-doc' (10 nodes deleted)" in result.output
+
+            # Verify delete_document_nodes was called
+            mock_ragzoom['store_instance'].delete_document_nodes.assert_called_once_with('test-doc')
+
+    def test_clear_document_not_found(self, runner, mock_ragzoom):
+        """Test clearing a non-existent document."""
+        # Mock document doesn't exist
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter_by.return_value.first.return_value = None
+
+        mock_ragzoom['store_instance'].SessionLocal.return_value.__enter__.return_value = mock_session
+
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
+            result = runner.invoke(cli, ['clear', '--document-id', 'non-existent', '--confirm'])
+
+            assert result.exit_code == 1
+            assert "Document 'non-existent' not found" in result.output
+
+    def test_clear_all_data(self, runner, mock_ragzoom):
+        """Test clearing all data."""
+        # Mock database state
+        mock_session = MagicMock()
+        mock_session.query.return_value.count.return_value = 50
+
+        mock_ragzoom['store_instance'].SessionLocal.return_value.__enter__.return_value = mock_session
+        mock_ragzoom['store_instance'].collection.get.return_value = {'ids': ['id1', 'id2']}
+
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
+            result = runner.invoke(cli, ['clear', '--confirm'])
+
+            assert result.exit_code == 0
+            assert 'Cleared 50 nodes from the database' in result.output

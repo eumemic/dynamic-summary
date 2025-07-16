@@ -34,13 +34,21 @@ black ragzoom/ tests/        # Format code
 mypy ragzoom/               # Type checking
 
 # Index documents
+ragzoom index <file>                      # Uses filename as document ID
+ragzoom index <file> --document-id my-doc # Custom document ID
+ragzoom index <file> --clear              # Clear existing document first
 ragzoom index <file> --max-concurrent 10  # Default parallelism
 ragzoom index <file> --max-concurrent 50  # Higher parallelism for large docs
 ragzoom index <file> --validate           # Enable validation checks
 
-# Query documents
-ragzoom query "search text"               # Basic query
-ragzoom query "search text" --validate    # With validation checks
+# Query documents (document ID is REQUIRED)
+ragzoom query "search text" -d <doc-id>              # Query specific document
+ragzoom query "search text" -d <doc-id> --validate   # With validation checks
+
+# Document management
+ragzoom documents                         # List all indexed documents
+ragzoom clear -d <doc-id> --confirm      # Clear specific document
+ragzoom clear --confirm                   # Clear all documents
 
 # Start API server
 ragzoom serve
@@ -183,6 +191,13 @@ Key settings in `RagZoomConfig`:
 - **Fixed ChromaDB test configuration**: Tests now use tempfile.TemporaryDirectory() instead of ":memory:" which ChromaDB doesn't support
 - **Fixed token budget allocation**: Removed depth-based compression that artificially limited higher-level nodes to as few as 50 tokens; all nodes now get consistent RAGZOOM_LEAF_TOKENS budget, with LLM instructed via prompt rather than hard API limits
 - **Added --validate flag**: Comprehensive validation for indexing (document coverage, chunk sizes, tree structure) and retrieval (frontier completeness, no overlaps) to ensure correctness
+- **Implemented document isolation**: Complete namespace separation between indexed documents
+  - Queries now require document_id parameter to prevent cross-document contamination
+  - Filename used as default document_id when indexing files
+  - Added `documents` command to list all indexed documents
+  - Added `--document-id` parameter to `clear` command for targeted deletion
+  - Added `--clear` flag to `index` command for atomic re-indexing
+  - Updated API endpoints to require document_id in query requests
 
 ## Development Practices
 

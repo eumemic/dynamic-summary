@@ -205,6 +205,7 @@ class Store:
                 "span_end": span_end,
                 "parent_id": parent_id or "",
                 "is_leaf": 1 if summary is None else 0,
+                "document_id": document_id or "",  # ChromaDB doesn't accept None values
             }],
             documents=[text],
         )

@@ -49,6 +49,7 @@ class IndexDocumentRequest(BaseModel):
     """Request to index a new document."""
     text: str = Field(..., description="Document text to index")
     document_id: Optional[str] = Field(None, description="Optional document ID")
+    file_path: Optional[str] = Field(None, description="Optional file path (used for default document ID)")
 
 
 class IndexDocumentResponse(BaseModel):
@@ -61,6 +62,7 @@ class IndexDocumentResponse(BaseModel):
 class QueryRequest(BaseModel):
     """Request to query the system."""
     query: str = Field(..., description="Query text")
+    document_id: str = Field(..., description="Document ID to query within")
     n_max: Optional[int] = Field(None, description="Override max nodes to retrieve")
     token_budget: Optional[int] = Field(None, description="Override token budget")
     use_eviction: bool = Field(False, description="Use sliding queue eviction")
@@ -99,6 +101,20 @@ class SystemStatusResponse(BaseModel):
     config: dict
 
 
+class DocumentInfo(BaseModel):
+    """Information about an indexed document."""
+    document_id: str
+    file_path: Optional[str]
+    indexed_at: str
+    chunk_count: int
+    node_count: int
+
+
+class DocumentsResponse(BaseModel):
+    """Response listing all indexed documents."""
+    documents: list[DocumentInfo]
+
+
 # Routes
 @app.get("/")
 async def root():
@@ -115,21 +131,61 @@ async def index_document(
     try:
         # Add document to tree - use async version directly since we're in an async endpoint
         document_id = await service.tree_builder.add_document_async(
-            request.text, request.document_id, show_progress=False
+            request.text, request.document_id, file_path=request.file_path, show_progress=False
         )
 
-        # Get stats
-        leaf_nodes = service.store.get_leaf_nodes()
-        root = service.store.get_root_node()
+        # Get stats for this specific document
+        with service.store.SessionLocal() as session:
+            from ragzoom.store import TreeNode
+            doc_leaves = session.query(TreeNode).filter_by(
+                document_id=document_id,
+                summary=None  # Leaf nodes have no summary
+            ).all()
+
+            root = session.query(TreeNode).filter_by(
+                document_id=document_id,
+                parent_id=None
+            ).first()
+
         tree_depth = root.depth if root else 0
 
         return IndexDocumentResponse(
             document_id=document_id,
-            chunks_created=len(leaf_nodes),
+            chunks_created=len(doc_leaves),
             tree_depth=tree_depth,
         )
     except Exception as e:
         logger.error(f"Error indexing document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/documents", response_model=DocumentsResponse)
+async def list_documents(
+    service: RagZoomService = Depends(get_ragzoom_service)
+):
+    """List all indexed documents."""
+    try:
+        documents = []
+
+        with service.store.SessionLocal() as session:
+            from ragzoom.store import Document, TreeNode
+            docs = session.query(Document).all()
+
+            for doc in docs:
+                # Get node count for this document
+                node_count = session.query(TreeNode).filter_by(document_id=doc.id).count()
+
+                documents.append(DocumentInfo(
+                    document_id=doc.id,
+                    file_path=doc.file_path,
+                    indexed_at=doc.indexed_at.isoformat(),
+                    chunk_count=doc.chunk_count,
+                    node_count=node_count
+                ))
+
+        return DocumentsResponse(documents=documents)
+    except Exception as e:
+        logger.error(f"Error listing documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -144,12 +200,12 @@ async def query(
         if request.use_eviction:
             # Use async version since we're in an async endpoint
             retrieval_result = await service.retriever.retrieve_with_eviction_async(
-                request.query, request.token_budget
+                request.query, request.token_budget, document_id=request.document_id
             )
         else:
             # Use async version since we're in an async endpoint
             retrieval_result = await service.retriever.retrieve_async(
-                request.query, request.n_max, request.token_budget
+                request.query, request.n_max, request.token_budget, document_id=request.document_id
             )
 
         # Assemble summary

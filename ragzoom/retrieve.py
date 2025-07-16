@@ -55,7 +55,7 @@ class Retriever:
             logger.error(f"Error getting query embedding: {e}")
             raise
 
-    async def retrieve_async(self, query: str, n_max: Optional[int] = None, budget_tokens: Optional[int] = None) -> RetrievalResult:
+    async def retrieve_async(self, query: str, n_max: Optional[int] = None, budget_tokens: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
         """Async retrieval method with MMR diversity and dirty node refresh.
 
         Supports three modes:
@@ -85,7 +85,10 @@ class Retriever:
 
         # Step 1: Initial retrieval (2 * n_max candidates)
         k_candidates = int(n_max * self.config.mmr_k_multiplier)
-        candidates = self.store.search_similar(query_embedding, k_candidates)
+
+        # Filter by document_id if provided
+        where_filter = {"document_id": document_id} if document_id else None
+        candidates = self.store.search_similar(query_embedding, k_candidates, where=where_filter)
 
         # Step 2: Apply MMR to get diverse n_max results
         selected_ids = self.store.compute_mmr_diverse_results(
@@ -123,7 +126,7 @@ class Retriever:
             frontier_nodes=frontier_nodes,
         )
 
-    def retrieve(self, query: str, n_max: Optional[int] = None, budget_tokens: Optional[int] = None) -> RetrievalResult:
+    def retrieve(self, query: str, n_max: Optional[int] = None, budget_tokens: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
         """Synchronous wrapper for retrieve_async.
 
         Creates a new event loop if needed to run the async version.
@@ -134,12 +137,12 @@ class Retriever:
             # We're already in an async context, can't use asyncio.run
             logger.warning("retrieve() called from async context; use retrieve_async() instead")
             # Fall back to sync-only refresh (skip dirty node refresh)
-            return self._retrieve_sync_only(query, n_max, budget_tokens)
+            return self._retrieve_sync_only(query, n_max, budget_tokens, document_id)
         except RuntimeError:
             # No event loop, create one
-            return asyncio.run(self.retrieve_async(query, n_max, budget_tokens))
+            return asyncio.run(self.retrieve_async(query, n_max, budget_tokens, document_id))
 
-    def _retrieve_sync_only(self, query: str, n_max: Optional[int] = None, budget_tokens: Optional[int] = None) -> RetrievalResult:
+    def _retrieve_sync_only(self, query: str, n_max: Optional[int] = None, budget_tokens: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
         """Synchronous retrieval without dirty node refresh.
 
         Used as fallback when called from async context.
@@ -163,7 +166,10 @@ class Retriever:
 
         # Step 1: Initial retrieval (2 * n_max candidates)
         k_candidates = int(n_max * self.config.mmr_k_multiplier)
-        candidates = self.store.search_similar(query_embedding, k_candidates)
+
+        # Filter by document_id if provided
+        where_filter = {"document_id": document_id} if document_id else None
+        candidates = self.store.search_similar(query_embedding, k_candidates, where=where_filter)
 
         # Step 2: Apply MMR to get diverse n_max results
         selected_ids = self.store.compute_mmr_diverse_results(
@@ -335,13 +341,13 @@ class Retriever:
 
         return priority_scores
 
-    async def retrieve_with_eviction_async(self, query: str, token_budget: Optional[int] = None) -> RetrievalResult:
+    async def retrieve_with_eviction_async(self, query: str, token_budget: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
         """Async retrieve with sliding queue eviction to fit token budget."""
         if token_budget is None:
             token_budget = self.config.budget_tokens
 
         # Initial retrieval
-        result = await self.retrieve_async(query)
+        result = await self.retrieve_async(query, document_id=document_id)
 
         # Calculate token usage
         total_tokens = 0
@@ -389,7 +395,7 @@ class Retriever:
 
         return result
 
-    def retrieve_with_eviction(self, query: str, token_budget: Optional[int] = None) -> RetrievalResult:
+    def retrieve_with_eviction(self, query: str, token_budget: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
         """Sync wrapper for retrieve_with_eviction_async."""
         try:
             # Try to get existing event loop
@@ -397,18 +403,18 @@ class Retriever:
             # We're already in an async context
             logger.warning("retrieve_with_eviction() called from async context; use retrieve_with_eviction_async() instead")
             # Fall back to regular retrieve (without dirty refresh)
-            return self._retrieve_with_eviction_sync_only(query, token_budget)
+            return self._retrieve_with_eviction_sync_only(query, token_budget, document_id)
         except RuntimeError:
             # No event loop, create one
-            return asyncio.run(self.retrieve_with_eviction_async(query, token_budget))
+            return asyncio.run(self.retrieve_with_eviction_async(query, token_budget, document_id))
 
-    def _retrieve_with_eviction_sync_only(self, query: str, token_budget: Optional[int] = None) -> RetrievalResult:
+    def _retrieve_with_eviction_sync_only(self, query: str, token_budget: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
         """Sync-only version of retrieve_with_eviction without dirty refresh."""
         if token_budget is None:
             token_budget = self.config.budget_tokens
 
         # Initial retrieval (without dirty refresh)
-        result = self._retrieve_sync_only(query)
+        result = self._retrieve_sync_only(query, document_id=document_id)
 
         # Calculate token usage
         total_tokens = 0
