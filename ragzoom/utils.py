@@ -20,7 +20,9 @@ class RateLimiter:
         """Acquire a slot."""
         await self.semaphore.acquire()
         self.request_count += 1
-        logger.debug(f"Rate limiter: acquired slot (total requests: {self.request_count})")
+        logger.debug(
+            f"Rate limiter: acquired slot (total requests: {self.request_count})"
+        )
 
     def release(self):
         """Release a slot."""
@@ -43,17 +45,19 @@ openai_rate_limiter = RateLimiter(max_concurrent=10)
 
 def with_rate_limit(func: Callable) -> Callable:
     """Decorator to apply rate limiting to async functions."""
+
     @wraps(func)
     async def wrapper(*args, **kwargs) -> Any:
         async with openai_rate_limiter:
             return await func(*args, **kwargs)
+
     return wrapper
 
 
 def batch_process(items: list, batch_size: int) -> list:
     """Process items in batches."""
     for i in range(0, len(items), batch_size):
-        yield items[i:i + batch_size]
+        yield items[i : i + batch_size]
 
 
 def format_token_count(tokens: int) -> str:

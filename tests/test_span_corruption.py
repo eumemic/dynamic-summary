@@ -44,23 +44,27 @@ class TestSpanCorruption:
 
         # Create text that will split into an odd number of chunks
         # Each chunk is ~100 tokens, so we need longer content
-        chunk_text = "This is a longer chunk of text that should be approximately one hundred tokens. " * 12
+        chunk_text = (
+            "This is a longer chunk of text that should be approximately one hundred tokens. "
+            * 12
+        )
         chunks = [f"Chunk {i}: {chunk_text}" for i in range(15)]
         text = " ".join(chunks)
 
         # Mock embeddings - return different embeddings for each text
         mock_client.embeddings.create = AsyncMock(
             side_effect=lambda **kwargs: Mock(
-                data=[Mock(embedding=[0.1] * 1536)] * len(kwargs.get('input', [kwargs.get('input')]))
+                data=[Mock(embedding=[0.1] * 1536)]
+                * len(kwargs.get("input", [kwargs.get("input")]))
             )
         )
 
         # Mock summaries with <<<MID>>> delimiter
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
-                choices=[Mock(
-                    message=Mock(content="Left summary <<<MID>>> Right summary")
-                )]
+                choices=[
+                    Mock(message=Mock(content="Left summary <<<MID>>> Right summary"))
+                ]
             )
         )
 
@@ -78,29 +82,37 @@ class TestSpanCorruption:
             corrupt_nodes = []
             for node in all_nodes:
                 if node.span_end < node.span_start:
-                    corrupt_nodes.append({
-                        'id': node.id,
-                        'depth': node.depth,
-                        'span_start': node.span_start,
-                        'span_end': node.span_end,
-                    })
+                    corrupt_nodes.append(
+                        {
+                            "id": node.id,
+                            "depth": node.depth,
+                            "span_start": node.span_start,
+                            "span_end": node.span_end,
+                        }
+                    )
                 elif node.span_start == node.span_end and node.depth > 0:
                     # Zero-width spans for non-leaf nodes are also invalid
-                    corrupt_nodes.append({
-                        'id': node.id,
-                        'depth': node.depth,
-                        'span_start': node.span_start,
-                        'span_end': node.span_end,
-                    })
+                    corrupt_nodes.append(
+                        {
+                            "id": node.id,
+                            "depth": node.depth,
+                            "span_start": node.span_start,
+                            "span_end": node.span_end,
+                        }
+                    )
 
             # Report findings
             if corrupt_nodes:
                 print(f"\nFound {len(corrupt_nodes)} corrupt nodes:")
                 for node in corrupt_nodes:
-                    print(f"  Depth {node['depth']}: span ({node['span_start']}, {node['span_end']})")
+                    print(
+                        f"  Depth {node['depth']}: span ({node['span_start']}, {node['span_end']})"
+                    )
 
             # This test SHOULD fail with the current implementation
-            assert len(corrupt_nodes) == 0, f"Found {len(corrupt_nodes)} nodes with invalid spans"
+            assert (
+                len(corrupt_nodes) == 0
+            ), f"Found {len(corrupt_nodes)} nodes with invalid spans"
 
     @pytest.mark.asyncio
     async def test_wraparound_pairing(self, setup_system):
@@ -118,16 +130,15 @@ class TestSpanCorruption:
         # Mock embeddings
         mock_client.embeddings.create = AsyncMock(
             side_effect=lambda **kwargs: Mock(
-                data=[Mock(embedding=[0.1] * 1536)] * len(kwargs.get('input', [kwargs.get('input')]))
+                data=[Mock(embedding=[0.1] * 1536)]
+                * len(kwargs.get("input", [kwargs.get("input")]))
             )
         )
 
         # Mock summaries
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
-                choices=[Mock(
-                    message=Mock(content="Summary <<<MID>>> Summary")
-                )]
+                choices=[Mock(message=Mock(content="Summary <<<MID>>> Summary"))]
             )
         )
 
@@ -158,16 +169,25 @@ class TestSpanCorruption:
                     print(f"  Node: span ({node.span_start}, {node.span_end})")
                     if node.left_child_id and node.right_child_id:
                         left = next(n for n in all_nodes if n.id == node.left_child_id)
-                        right = next(n for n in all_nodes if n.id == node.right_child_id)
-                        print(f"    Left child: span ({left.span_start}, {left.span_end})")
-                        print(f"    Right child: span ({right.span_start}, {right.span_end})")
+                        right = next(
+                            n for n in all_nodes if n.id == node.right_child_id
+                        )
+                        print(
+                            f"    Left child: span ({left.span_start}, {left.span_end})"
+                        )
+                        print(
+                            f"    Right child: span ({right.span_start}, {right.span_end})"
+                        )
 
                         # Check for wraparound
                         if left.span_end > right.span_start:
-                            print(f"    WARNING: Wraparound detected! Left end {left.span_end} > Right start {right.span_start}")
+                            print(
+                                f"    WARNING: Wraparound detected! Left end {left.span_end} > Right start {right.span_start}"
+                            )
 
             # Check all parent nodes have valid spans
             for node in all_nodes:
                 if node.depth > 0:
-                    assert node.span_end >= node.span_start, \
-                        f"Node at depth {node.depth} has invalid span: ({node.span_start}, {node.span_end})"
+                    assert (
+                        node.span_end >= node.span_start
+                    ), f"Node at depth {node.depth} has invalid span: ({node.span_start}, {node.span_end})"

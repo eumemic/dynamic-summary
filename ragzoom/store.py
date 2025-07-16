@@ -41,7 +41,9 @@ class TreeNode(Base):
     span_end = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     summary = Column(Text, nullable=True)  # NULL for leaf nodes
-    mid_offset = Column(Integer, nullable=True)  # Position of <<<MID>>> delimiter in parent summaries
+    mid_offset = Column(
+        Integer, nullable=True
+    )  # Position of <<<MID>>> delimiter in parent summaries
     is_dirty = Column(Integer, default=0)  # Boolean flag for re-summarization
     is_pinned = Column(Integer, default=0)
     last_accessed = Column(DateTime, default=datetime.utcnow)
@@ -130,7 +132,12 @@ class Store:
         try:
             # Get any existing embedding from collection
             results = self.collection.peek(limit=1)
-            if results.get("embeddings") and len(results["embeddings"]) > 0:
+            embeddings = results.get("embeddings")
+            if (
+                embeddings is not None
+                and isinstance(embeddings, list)
+                and len(embeddings) > 0
+            ):
                 return len(results["embeddings"][0])
         except Exception as e:
             logger.debug(f"Could not infer embedding dimension: {e}")
@@ -199,14 +206,17 @@ class Store:
         self.collection.add(
             ids=[node_id],
             embeddings=[embedding],
-            metadatas=[{
-                "depth": depth,
-                "span_start": span_start,
-                "span_end": span_end,
-                "parent_id": parent_id or "",
-                "is_leaf": 1 if summary is None else 0,
-                "document_id": document_id or "",  # ChromaDB doesn't accept None values
-            }],
+            metadatas=[
+                {
+                    "depth": depth,
+                    "span_start": span_start,
+                    "span_end": span_end,
+                    "parent_id": parent_id or "",
+                    "is_leaf": 1 if summary is None else 0,
+                    "document_id": document_id
+                    or "",  # ChromaDB doesn't accept None values
+                }
+            ],
             documents=[text],
         )
 
@@ -256,7 +266,13 @@ class Store:
                     if node_id in self.cache_order:
                         self.cache_order.remove(node_id)
 
-    def update_summary(self, node_id: str, text: str, embedding: list[float], mid_offset: Optional[int] = None) -> None:
+    def update_summary(
+        self,
+        node_id: str,
+        text: str,
+        embedding: list[float],
+        mid_offset: Optional[int] = None,
+    ) -> None:
         """Update node summary and clear dirty flag."""
         # Validate embedding dimension
         self._validate_embedding_dimension(embedding)
@@ -273,9 +289,7 @@ class Store:
 
                 # Update in vector store
                 self.collection.update(
-                    ids=[node_id],
-                    embeddings=[embedding],
-                    metadatas=[{"text": text}]
+                    ids=[node_id], embeddings=[embedding], metadatas=[{"text": text}]
                 )
 
                 # Update cache - refresh the cached node with new data
@@ -291,7 +305,9 @@ class Store:
         with self.SessionLocal() as session:
             return session.query(TreeNode).filter_by(is_dirty=1).all()
 
-    def get_children(self, node_id: str) -> tuple[Optional[TreeNode], Optional[TreeNode]]:
+    def get_children(
+        self, node_id: str
+    ) -> tuple[Optional[TreeNode], Optional[TreeNode]]:
         """Get left and right children of a node."""
         node = self.get_node(node_id)
         if not node:
@@ -328,11 +344,13 @@ class Store:
         # Return list of (id, distance, metadata) tuples
         output = []
         for i in range(len(results["ids"][0])):
-            output.append((
-                results["ids"][0][i],
-                results["distances"][0][i],
-                results["metadatas"][0][i],
-            ))
+            output.append(
+                (
+                    results["ids"][0][i],
+                    results["distances"][0][i],
+                    results["metadatas"][0][i],
+                )
+            )
 
         return output
 
@@ -388,10 +406,7 @@ class Store:
         candidate_ids = [c[0] for c in candidates]
 
         # Batch retrieve embeddings
-        results = self.collection.get(
-            ids=candidate_ids,
-            include=["embeddings"]
-        )
+        results = self.collection.get(ids=candidate_ids, include=["embeddings"])
 
         # Create ID to embedding mapping for O(1) lookup
         id_to_embedding = {
@@ -430,10 +445,11 @@ class Store:
             relevances = query_sims[unselected_mask]
 
             # Max similarity to any selected item (vectorized)
-            max_sims = np.max(
-                pairwise_sims[np.ix_(unselected_mask, selected_mask)],
-                axis=1
-            ) if np.any(selected_mask) else np.zeros(np.sum(unselected_mask))
+            max_sims = (
+                np.max(pairwise_sims[np.ix_(unselected_mask, selected_mask)], axis=1)
+                if np.any(selected_mask)
+                else np.zeros(np.sum(unselected_mask))
+            )
 
             # MMR scores
             mmr_scores = lambda_param * relevances - (1 - lambda_param) * max_sims
@@ -461,15 +477,20 @@ class Store:
         with self.SessionLocal() as session:
             return session.query(Document).filter_by(content_hash=content_hash).first()
 
-    def add_document(self, document_id: str, file_path: Optional[str],
-                    content_hash: str, chunk_count: int) -> Document:
+    def add_document(
+        self,
+        document_id: str,
+        file_path: Optional[str],
+        content_hash: str,
+        chunk_count: int,
+    ) -> Document:
         """Add a document record."""
         with self.SessionLocal() as session:
             doc = Document(
                 id=document_id,
                 file_path=file_path,
                 content_hash=content_hash,
-                chunk_count=chunk_count
+                chunk_count=chunk_count,
             )
             session.add(doc)
             session.commit()
@@ -483,7 +504,9 @@ class Store:
             node_ids = [n.id for n in nodes]
 
             # Delete from SQLite
-            deleted_count = session.query(TreeNode).filter_by(document_id=document_id).delete()
+            deleted_count = (
+                session.query(TreeNode).filter_by(document_id=document_id).delete()
+            )
             session.commit()
 
             # Delete from Chroma
@@ -506,16 +529,20 @@ class Store:
         try:
             with self.engine.connect() as conn:
                 # Check if tree_nodes table exists first
-                result = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tree_nodes'")
+                result = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='tree_nodes'"
+                )
                 if result.fetchone():
                     # Table exists, check if mid_offset column exists
                     result = conn.execute("PRAGMA table_info(tree_nodes)")
                     columns = [row[1] for row in result.fetchall()]
 
-                    if 'mid_offset' not in columns:
+                    if "mid_offset" not in columns:
                         # Add the missing column (with proper error handling)
                         try:
-                            conn.execute("ALTER TABLE tree_nodes ADD COLUMN mid_offset INTEGER")
+                            conn.execute(
+                                "ALTER TABLE tree_nodes ADD COLUMN mid_offset INTEGER"
+                            )
                             conn.commit()
                             logger.info("Added mid_offset column to tree_nodes table")
                         except Exception as e:
@@ -526,21 +553,25 @@ class Store:
                     else:
                         logger.debug("mid_offset column already exists")
                 else:
-                    logger.debug("tree_nodes table does not exist yet, will be created by SQLAlchemy")
+                    logger.debug(
+                        "tree_nodes table does not exist yet, will be created by SQLAlchemy"
+                    )
         except Exception as e:
-            logger.debug(f"Migration check failed (this is normal for new databases): {e}")
+            logger.debug(
+                f"Migration check failed (this is normal for new databases): {e}"
+            )
 
     def close(self):
         """Close database connections and cleanup resources."""
-        if hasattr(self, 'engine'):
+        if hasattr(self, "engine"):
             self.engine.dispose()
         # ChromaDB PersistentClient doesn't have a close method, but we can help GC
-        if hasattr(self, 'collection'):
+        if hasattr(self, "collection"):
             self.collection = None
-        if hasattr(self, 'chroma_client'):
+        if hasattr(self, "chroma_client"):
             self.chroma_client = None
 
     @staticmethod
     def compute_content_hash(content: str) -> str:
         """Compute SHA256 hash of content."""
-        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()

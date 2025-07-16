@@ -24,7 +24,7 @@ class TestStore:
         config = RagZoomConfig(
             openai_api_key="test-key",
             chroma_persist_directory=chroma_dir,
-            sqlite_database_url=f"sqlite:///{db_path}"
+            sqlite_database_url=f"sqlite:///{db_path}",
         )
 
         store = Store(config)
@@ -42,7 +42,7 @@ class TestStore:
             embedding=[0.1] * 384,
             depth=0,
             span_start=0,
-            span_end=10
+            span_end=10,
         )
 
         assert node.id == "test-1"
@@ -60,7 +60,7 @@ class TestStore:
             embedding=[0.2] * 384,
             depth=1,
             span_start=10,
-            span_end=20
+            span_end=20,
         )
 
         # Retrieve it
@@ -85,7 +85,7 @@ class TestStore:
             span_end=20,
             left_child_id="child1",
             right_child_id="child2",
-            summary="Parent summary"
+            summary="Parent summary",
         )
 
         temp_store.add_node(
@@ -95,7 +95,7 @@ class TestStore:
             depth=0,
             span_start=0,
             span_end=10,
-            parent_id="parent"
+            parent_id="parent",
         )
 
         temp_store.add_node(
@@ -105,7 +105,7 @@ class TestStore:
             depth=0,
             span_start=10,
             span_end=20,
-            parent_id="parent"
+            parent_id="parent",
         )
 
         # Test relationships
@@ -128,7 +128,7 @@ class TestStore:
                 embedding=embedding,
                 depth=0,
                 span_start=i * 10,
-                span_end=(i + 1) * 10
+                span_end=(i + 1) * 10,
             )
 
         # Search with a query embedding
@@ -144,9 +144,9 @@ class TestStore:
         # Create candidates with different similarities
         candidates = [
             ("node-1", 0.1, {}),  # Very similar
-            ("node-2", 0.15, {}), # Similar
+            ("node-2", 0.15, {}),  # Similar
             ("node-3", 0.5, {}),  # Less similar
-            ("node-4", 0.12, {}), # Similar to node-1
+            ("node-4", 0.12, {}),  # Similar to node-1
             ("node-5", 0.8, {}),  # Different
         ]
 
@@ -155,7 +155,7 @@ class TestStore:
             [1.0, 0.0, 0.0],  # node-1
             [0.9, 0.1, 0.0],  # node-2 (similar to 1)
             [0.5, 0.5, 0.0],  # node-3 (different)
-            [0.95, 0.05, 0.0], # node-4 (very similar to 1)
+            [0.95, 0.05, 0.0],  # node-4 (very similar to 1)
             [0.0, 0.0, 1.0],  # node-5 (very different)
         ]
 
@@ -168,16 +168,13 @@ class TestStore:
                 embedding=full_embedding,
                 depth=0,
                 span_start=i * 10,
-                span_end=(i + 1) * 10
+                span_end=(i + 1) * 10,
             )
 
         # Test MMR selection
         query_embedding = [1.0, 0.0, 0.0] + [0.0] * 381  # Similar to node-1
         selected = temp_store.compute_mmr_diverse_results(
-            query_embedding,
-            candidates,
-            lambda_param=0.7,
-            k=3
+            query_embedding, candidates, lambda_param=0.7, k=3
         )
 
         assert len(selected) == 3
@@ -195,7 +192,7 @@ class TestStore:
             embedding=[0.6] * 384,
             depth=1,
             span_start=0,
-            span_end=10
+            span_end=10,
         )
 
         temp_store.add_node(
@@ -204,7 +201,7 @@ class TestStore:
             embedding=[0.7] * 384,
             depth=5,
             span_start=10,
-            span_end=20
+            span_end=20,
         )
 
         # Pin shallow node (should succeed)
@@ -234,7 +231,7 @@ class TestStore:
             embedding=[0.8] * 384,
             depth=0,
             span_start=0,
-            span_end=10
+            span_end=10,
         )
 
         # First retrieval (from DB)
@@ -258,7 +255,7 @@ class TestStore:
             embedding=[0.9] * 384,
             depth=2,
             span_start=0,
-            span_end=40
+            span_end=40,
         )
 
         temp_store.add_node(
@@ -268,7 +265,7 @@ class TestStore:
             depth=1,
             span_start=0,
             span_end=20,
-            parent_id="root"
+            parent_id="root",
         )
 
         temp_store.add_node(
@@ -278,7 +275,7 @@ class TestStore:
             depth=0,
             span_start=0,
             span_end=10,
-            parent_id="parent"
+            parent_id="parent",
         )
 
         # Mark child as dirty
@@ -293,8 +290,12 @@ class TestStore:
         assert child_node is not None, "Child node not found"
         assert parent_node is not None, "Parent node not found"
         assert root_node is not None, "Root node not found"
-        assert child_node.parent_id == "parent", f"Child parent_id is {child_node.parent_id}"
-        assert parent_node.parent_id == "root", f"Parent parent_id is {parent_node.parent_id}"
+        assert (
+            child_node.parent_id == "parent"
+        ), f"Child parent_id is {child_node.parent_id}"
+        assert (
+            parent_node.parent_id == "root"
+        ), f"Parent parent_id is {parent_node.parent_id}"
 
         # Now check is_dirty
         assert child_node.is_dirty == 1, f"Child is_dirty is {child_node.is_dirty}"

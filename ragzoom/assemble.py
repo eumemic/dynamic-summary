@@ -65,31 +65,40 @@ class Assembler:
         seen_spans = set()  # Store (span_start, span_end) for span dedup
         frontier_set = set(frontier_nodes)
 
-
         for node_id in frontier_nodes:
             node = self.store.get_node(node_id)
             if node:
                 # Check span BEFORE extracting text
                 span = (node.span_start, node.span_end)
                 if span not in seen_spans:
-                    text, actual_span = self._extract_node_text_with_span(node, final_coverage_map, frontier_set)
+                    text, actual_span = self._extract_node_text_with_span(
+                        node, final_coverage_map, frontier_set
+                    )
                     if text:  # Only add non-empty text
-                        logger.info(f"Extracted from node {node_id} (depth {node.depth}, node span {span}, actual span {actual_span}): {len(text)} chars")
+                        logger.info(
+                            f"Extracted from node {node_id} (depth {node.depth}, node span {span}, actual span {actual_span}): {len(text)} chars"
+                        )
                         text_fragments.append((actual_span[0], actual_span[1], text))
                     else:
                         logger.info(f"Node {node_id} produced empty text, skipping")
                     seen_spans.add(span)
                 else:
-                    logger.info(f"Skipping duplicate span node {node_id} with span {span}")
+                    logger.info(
+                        f"Skipping duplicate span node {node_id} with span {span}"
+                    )
 
         # Sort by actual coverage span start (not node span_start)
         text_fragments.sort(key=lambda x: x[0])
 
         # Debug: Log the frontier segments
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Frontier segments before validation ({len(text_fragments)} total):")
+            logger.debug(
+                f"Frontier segments before validation ({len(text_fragments)} total):"
+            )
             for i, (start, end, text) in enumerate(text_fragments[:10]):  # First 10
-                logger.debug(f"  Segment {i}: [{start}, {end}) = {end - start} chars, text preview: {repr(text[:30])}...")
+                logger.debug(
+                    f"  Segment {i}: [{start}, {end}) = {end - start} chars, text preview: {repr(text[:30])}..."
+                )
             if len(text_fragments) > 10:
                 logger.debug(f"  ... and {len(text_fragments) - 10} more segments")
 
@@ -106,20 +115,23 @@ class Assembler:
             document_span = (0, root.span_end)
 
             # Prepare segments for validation
-            simple_segments = [(f"node_{i}", text, start, end)
-                             for i, (start, end, text) in enumerate(text_fragments)]
+            simple_segments = [
+                (f"node_{i}", text, start, end)
+                for i, (start, end, text) in enumerate(text_fragments)
+            ]
 
             # Validate completeness
             # TODO: Get original text for whitespace gap validation
             validate(
-                lambda: validate_frontier_completeness(simple_segments, document_span, None),
-                "frontier completeness"
+                lambda: validate_frontier_completeness(
+                    simple_segments, document_span, None
+                ),
+                "frontier completeness",
             )
 
             # Validate no overlap
             validate(
-                lambda: validate_no_overlap(simple_segments),
-                "frontier overlap check"
+                lambda: validate_no_overlap(simple_segments), "frontier overlap check"
             )
 
         texts = [text for _, _, text in text_fragments]
@@ -135,7 +147,7 @@ class Assembler:
 
     def _clean_mid_delimiter(self, text: str) -> str:
         """Remove <<<MID>>> delimiter from text."""
-        return text.replace('<<<MID>>>', '')
+        return text.replace("<<<MID>>>", "")
 
     def _extract_node_text_with_span(self, node, coverage_map, frontier_set=None):
         """Extract appropriate text from node and return its actual coverage span."""
@@ -149,7 +161,7 @@ class Assembler:
         left_child, right_child = self.store.get_children(node.id)
 
         # If no mid_offset, we're outputting the full node
-        if not hasattr(node, 'mid_offset') or node.mid_offset is None:
+        if not hasattr(node, "mid_offset") or node.mid_offset is None:
             return text, (node.span_start, node.span_end)
 
         # Check if children are in the frontier
@@ -179,7 +191,7 @@ class Assembler:
     def _extract_node_text(self, node, coverage_map, frontier_set=None):
         """Extract appropriate text from node based on <<<MID>>> delimiter logic."""
         # If node has no mid_offset, return full text (with <<<MID>>> removed if present)
-        if not hasattr(node, 'mid_offset') or node.mid_offset is None:
+        if not hasattr(node, "mid_offset") or node.mid_offset is None:
             logger.info(f"Node {node.id} has no mid_offset, using full text")
             return self._clean_mid_delimiter(node.text)
 
@@ -198,15 +210,19 @@ class Assembler:
         # So we should only include the OTHER child's summary from the parent
         if left_in_frontier and not right_in_frontier:
             # Left child will output its own text, parent should only output right summary
-            mid_delimiter_len = len('<<<MID>>>')
-            parent_right = node.text[node.mid_offset + mid_delimiter_len:].strip()
-            logger.info(f"Node {node.id}: left child in frontier, outputting only right summary")
+            mid_delimiter_len = len("<<<MID>>>")
+            parent_right = node.text[node.mid_offset + mid_delimiter_len :].strip()
+            logger.info(
+                f"Node {node.id}: left child in frontier, outputting only right summary"
+            )
             return parent_right
 
         elif right_in_frontier and not left_in_frontier:
             # Right child will output its own text, parent should only output left summary
-            parent_left = node.text[:node.mid_offset]
-            logger.info(f"Node {node.id}: right child in frontier, outputting only left summary")
+            parent_left = node.text[: node.mid_offset]
+            logger.info(
+                f"Node {node.id}: right child in frontier, outputting only left summary"
+            )
             return parent_left.strip()
 
         elif left_in_frontier and right_in_frontier:
@@ -218,20 +234,22 @@ class Assembler:
         left_covered = left_child and left_child.id in coverage_map
         right_covered = right_child and right_child.id in coverage_map
 
-        logger.info(f"Node {node.id}: left_child={left_child.id if left_child else None} (covered={left_covered}), right_child={right_child.id if right_child else None} (covered={right_covered})")
+        logger.info(
+            f"Node {node.id}: left_child={left_child.id if left_child else None} (covered={left_covered}), right_child={right_child.id if right_child else None} (covered={right_covered})"
+        )
 
         # Apply the three cases for normal coverage
         if left_covered and not right_covered:
             # Use left child + parent's right half
             left_text = left_child.text
-            mid_delimiter_len = len('<<<MID>>>')
-            parent_right = node.text[node.mid_offset + mid_delimiter_len:]
+            mid_delimiter_len = len("<<<MID>>>")
+            parent_right = node.text[node.mid_offset + mid_delimiter_len :]
             logger.info("Case 1: Using left child + parent right half")
             return f"{left_text}\n\n{parent_right}"
 
         elif right_covered and not left_covered:
             # Use parent's left half + right child
-            parent_left = node.text[:node.mid_offset]
+            parent_left = node.text[: node.mid_offset]
             right_text = right_child.text
             logger.info("Case 2: Using parent left half + right child")
             return f"{parent_left}\n\n{right_text}"
@@ -294,7 +312,9 @@ class Assembler:
             if left_in_frontier and right_in_frontier:
                 # Both children are in frontier - parent is redundant
                 nodes_to_remove.add(parent_id)
-                logger.info(f"Removing parent {parent_id} because both children are in frontier")
+                logger.info(
+                    f"Removing parent {parent_id} because both children are in frontier"
+                )
             # If only one child is in frontier, keep both parent and child
             # The <<<MID>>> extraction will combine them properly
 
@@ -348,10 +368,14 @@ class Assembler:
                 logger.info(f"Slope cap violation: {prev_depth} -> {current_depth}")
 
                 # Find appropriate ancestor depth (max 1 level change from previous)
-                target_depth = prev_depth + 1 if current_depth > prev_depth else prev_depth - 1
+                target_depth = (
+                    prev_depth + 1 if current_depth > prev_depth else prev_depth - 1
+                )
 
                 # Find ancestor at target depth
-                replacement_node = self._find_ancestor_at_depth(current_id, target_depth)
+                replacement_node = self._find_ancestor_at_depth(
+                    current_id, target_depth
+                )
                 if replacement_node and replacement_node.id not in seen:
                     capped_nodes.append((replacement_node.id, replacement_node.depth))
                     seen.add(replacement_node.id)
@@ -374,7 +398,11 @@ class Assembler:
             else:
                 break
 
-        return current_node if current_node and current_node.depth == target_depth else None
+        return (
+            current_node
+            if current_node and current_node.depth == target_depth
+            else None
+        )
 
     def _find_intermediate_path(
         self, start_id: str, end_id: str
@@ -430,16 +458,19 @@ class Assembler:
         with self.store.SessionLocal() as session:
             # Query for nodes at target depth that overlap the span
             from ragzoom.store import TreeNode
-            node = session.query(TreeNode).filter(
-                TreeNode.depth == depth,
-                TreeNode.span_start < span_end,
-                TreeNode.span_end > span_start
-            ).first()
+
+            node = (
+                session.query(TreeNode)
+                .filter(
+                    TreeNode.depth == depth,
+                    TreeNode.span_start < span_end,
+                    TreeNode.span_end > span_start,
+                )
+                .first()
+            )
             return node
 
-    def _apply_smoothing_pass(
-        self, frontier_nodes: list[str], texts: list[str]
-    ) -> str:
+    def _apply_smoothing_pass(self, frontier_nodes: list[str], texts: list[str]) -> str:
         """Apply smoothing pass to improve coherence at boundaries."""
         if len(texts) <= 1:
             return "\n\n".join(texts)
@@ -453,25 +484,17 @@ class Assembler:
                     None,
                     texts[i],
                     texts[i + 1] if i + 1 < len(texts) else None,
-                    "start"
+                    "start",
                 )
                 smoothed_parts.append(smoothed)
             elif i == len(texts) - 1:
                 # Last chunk
-                smoothed = self._smooth_boundary(
-                    texts[i - 1],
-                    texts[i],
-                    None,
-                    "end"
-                )
+                smoothed = self._smooth_boundary(texts[i - 1], texts[i], None, "end")
                 smoothed_parts.append(smoothed)
             else:
                 # Middle chunk
                 smoothed = self._smooth_boundary(
-                    texts[i - 1],
-                    texts[i],
-                    texts[i + 1],
-                    "middle"
+                    texts[i - 1], texts[i], texts[i + 1], "middle"
                 )
                 smoothed_parts.append(smoothed)
 
@@ -582,9 +605,13 @@ class Assembler:
             if total_tokens + cost <= budget_tokens:
                 selected.append(node_id)
                 total_tokens += cost
-                logger.info(f"Selected node {node_id} (utility={utility_ratio:.4f}, cost={cost})")
+                logger.info(
+                    f"Selected node {node_id} (utility={utility_ratio:.4f}, cost={cost})"
+                )
             else:
-                logger.info(f"Dropping node {node_id} (utility={utility_ratio:.4f}, cost={cost}) to stay within budget")
+                logger.info(
+                    f"Dropping node {node_id} (utility={utility_ratio:.4f}, cost={cost}) to stay within budget"
+                )
 
         # Maintain chronological order
         selected_set = set(selected)
@@ -601,9 +628,7 @@ class Assembler:
         if self.config.budget_strategy == "drop":
             # Apply drop strategy before assembly
             trimmed_frontier = self.trim_frontier_to_budget(
-                retrieval_result.frontier_nodes,
-                token_budget,
-                retrieval_result.scores
+                retrieval_result.frontier_nodes, token_budget, retrieval_result.scores
             )
 
             # Re-apply slope cap after trimming to ensure constraints are maintained
@@ -615,12 +640,12 @@ class Assembler:
                 # Check if slope cap added nodes that exceed budget
                 post_slope_cap_tokens = self._count_frontier_tokens(trimmed_frontier)
                 if post_slope_cap_tokens > token_budget:
-                    logger.warning(f"Slope cap caused budget overflow: {post_slope_cap_tokens} > {token_budget}, re-trimming")
+                    logger.warning(
+                        f"Slope cap caused budget overflow: {post_slope_cap_tokens} > {token_budget}, re-trimming"
+                    )
                     # Second trim pass to restore budget compliance
                     trimmed_frontier = self.trim_frontier_to_budget(
-                        trimmed_frontier,
-                        token_budget,
-                        retrieval_result.scores
+                        trimmed_frontier, token_budget, retrieval_result.scores
                     )
 
                 # Guard against empty frontier after aggressive trimming
@@ -628,7 +653,9 @@ class Assembler:
                     root_node = self.store.get_root_node()
                     if root_node:
                         trimmed_frontier = [root_node.id]
-                        logger.warning("Budget trimming left empty frontier, falling back to root node")
+                        logger.warning(
+                            "Budget trimming left empty frontier, falling back to root node"
+                        )
 
             # Create new retrieval result with trimmed frontier
             trimmed_result = RetrievalResult(

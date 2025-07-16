@@ -81,7 +81,9 @@ class TreeBuilder:
         # Maximum retry attempts to get delimiter
         max_attempts = 3
         if attempt > max_attempts:
-            logger.error(f"Failed to get <<<MID>>> delimiter after {max_attempts} attempts")
+            logger.error(
+                f"Failed to get <<<MID>>> delimiter after {max_attempts} attempts"
+            )
             raise ValueError("LLM consistently failing to include required delimiter")
 
         # Build prompt with adjacent context (trim to avoid token explosion)
@@ -91,7 +93,7 @@ class TreeBuilder:
             # Trim prev_context to adjacent_context_tokens
             prev_tokens = self.splitter.tokenizer.encode(prev_context)
             if len(prev_tokens) > self.config.adjacent_context_tokens:
-                context_tokens = prev_tokens[-self.config.adjacent_context_tokens:]
+                context_tokens = prev_tokens[-self.config.adjacent_context_tokens :]
                 trimmed_prev = self.splitter.tokenizer.decode(context_tokens)
             else:
                 trimmed_prev = prev_context
@@ -104,7 +106,7 @@ class TreeBuilder:
             # Trim next_context to adjacent_context_tokens
             next_tokens = self.splitter.tokenizer.encode(next_context)
             if len(next_tokens) > self.config.adjacent_context_tokens:
-                context_tokens = next_tokens[:self.config.adjacent_context_tokens]
+                context_tokens = next_tokens[: self.config.adjacent_context_tokens]
                 trimmed_next = self.splitter.tokenizer.decode(context_tokens)
             else:
                 trimmed_next = next_context
@@ -140,7 +142,7 @@ class TreeBuilder:
                 #     logger.warning(f"Summary exceeded target length: got {actual_tokens} tokens, target was {target_tokens} tokens")
 
                 # Find <<<MID>>> delimiter position
-                mid_offset = summary.find('<<<MID>>>')
+                mid_offset = summary.find("<<<MID>>>")
 
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
@@ -148,15 +150,26 @@ class TreeBuilder:
 
         # Check for delimiter outside semaphore to avoid deadlock
         if mid_offset == -1:
-            logger.warning(f"No <<<MID>>> delimiter found in summary (attempt {attempt}/{max_attempts}), retrying...")
-            return await self._summarize_text(left_text, right_text, target_tokens,
-                                            prev_context, next_context, attempt + 1)
+            logger.warning(
+                f"No <<<MID>>> delimiter found in summary (attempt {attempt}/{max_attempts}), retrying..."
+            )
+            return await self._summarize_text(
+                left_text,
+                right_text,
+                target_tokens,
+                prev_context,
+                next_context,
+                attempt + 1,
+            )
 
         return summary, mid_offset
 
     async def _add_document_impl(
-        self, text: str, document_id: Optional[str] = None,
-        file_path: Optional[str] = None, show_progress: bool = True
+        self,
+        text: str,
+        document_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        show_progress: bool = True,
     ) -> str:
         """Add a document to the tree, creating leaf nodes."""
         # Compute content hash
@@ -169,7 +182,9 @@ class TreeBuilder:
             if existing_doc:
                 # Check if content changed
                 if existing_doc.content_hash == content_hash:
-                    logger.info(f"Document at {file_path} unchanged, skipping re-indexing")
+                    logger.info(
+                        f"Document at {file_path} unchanged, skipping re-indexing"
+                    )
                     return existing_doc.id
                 else:
                     logger.info(f"Document at {file_path} has changed, re-indexing...")
@@ -182,6 +197,7 @@ class TreeBuilder:
             if file_path:
                 # Use filename (without path) as document_id
                 from pathlib import Path
+
                 document_id = Path(file_path).name
             else:
                 document_id = self._generate_node_id()
@@ -198,15 +214,12 @@ class TreeBuilder:
         # Create simple objects with just the fields needed for validation
         chunk_objects = []
         for i, chunk in enumerate(chunks):
-            chunk_obj = type('ChunkObj', (), {
-                'text': chunk,
-                'id': f'chunk_{i}'
-            })()
+            chunk_obj = type("ChunkObj", (), {"text": chunk, "id": f"chunk_{i}"})()
             chunk_objects.append(chunk_obj)
 
         validate(
             lambda: validate_chunk_sizes(chunk_objects, self.config.leaf_tokens),
-            "early chunk size validation"
+            "early chunk size validation",
         )
 
         # Create progress tracker
@@ -233,25 +246,29 @@ class TreeBuilder:
                 # Chunks now have complete coverage with no gaps
                 chunk_start = current_pos
                 chunk_end = chunk_start + len(chunk)
-                
+
                 # Verify this chunk matches the original text
                 if text[chunk_start:chunk_end] != chunk:
                     # This should not happen with the fixed splitter, but provide fallback
-                    logger.warning(f"Chunk {i} position mismatch, using find() fallback")
+                    logger.warning(
+                        f"Chunk {i} position mismatch, using find() fallback"
+                    )
                     chunk_start = text.find(chunk, current_pos)
                     if chunk_start == -1:
                         logger.error(f"Could not find chunk {i} in text")
                         chunk_start = current_pos
                     chunk_end = chunk_start + len(chunk)
 
-                chunk_data.append({
-                    'id': node_id,
-                    'text': chunk,
-                    'span_start': chunk_start,
-                    'span_end': chunk_end,
-                })
+                chunk_data.append(
+                    {
+                        "id": node_id,
+                        "text": chunk,
+                        "span_start": chunk_start,
+                        "span_end": chunk_end,
+                    }
+                )
                 leaf_ids.append(node_id)
-                
+
                 current_pos = chunk_end
 
             # Early validation: Check document coverage before processing embeddings
@@ -260,17 +277,21 @@ class TreeBuilder:
             # Create node objects for validation using actual chunk data
             leaf_nodes_for_validation = []
             for data in chunk_data:
-                node_obj = type('Node', (), {
-                    'id': data['id'],
-                    'span_start': data['span_start'],
-                    'span_end': data['span_end'],
-                    'text': data['text']
-                })()
+                node_obj = type(
+                    "Node",
+                    (),
+                    {
+                        "id": data["id"],
+                        "span_start": data["span_start"],
+                        "span_end": data["span_end"],
+                        "text": data["text"],
+                    },
+                )()
                 leaf_nodes_for_validation.append(node_obj)
 
             validate(
                 lambda: validate_document_coverage(text, leaf_nodes_for_validation),
-                "early document coverage check"
+                "early document coverage check",
             )
 
             # Get embeddings in batches
@@ -278,14 +299,16 @@ class TreeBuilder:
             all_embeddings = []
 
             for i in range(0, len(chunks), batch_size):
-                batch_texts = [d['text'] for d in chunk_data[i:i+batch_size]]
+                batch_texts = [d["text"] for d in chunk_data[i : i + batch_size]]
                 batch_end = min(i + batch_size, len(chunks))
 
                 # Show which batch we're processing with cumulative elapsed time
                 if show_progress:
                     elapsed = time.time() - overall_start_time
                     mins, secs = divmod(int(elapsed), 60)
-                    logger.info(f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]")
+                    logger.info(
+                        f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]"
+                    )
 
                 batch_embeddings = await self._get_embeddings_batch(batch_texts)
                 all_embeddings.extend(batch_embeddings)
@@ -296,22 +319,25 @@ class TreeBuilder:
             # Store all leaf nodes
             for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
                 self.store.add_node(
-                    node_id=data['id'],
-                    text=data['text'],
+                    node_id=data["id"],
+                    text=data["text"],
                     embedding=embedding,
                     depth=0,
-                    span_start=data['span_start'],
-                    span_end=data['span_end'],
+                    span_start=data["span_start"],
+                    span_end=data["span_end"],
                     document_id=document_id,
                 )
 
             # Add document record
             if not existing_doc:
-                self.store.add_document(document_id, file_path, content_hash, len(chunks))
+                self.store.add_document(
+                    document_id, file_path, content_hash, len(chunks)
+                )
             else:
                 # Update existing document
                 with self.store.SessionLocal() as session:
                     from ragzoom.store import Document
+
                     doc = session.query(Document).filter_by(id=document_id).first()
                     if doc:
                         doc.content_hash = content_hash
@@ -320,33 +346,57 @@ class TreeBuilder:
                         session.commit()
 
             # Build tree from leaves
-            root_id = await self._build_tree_from_leaves(leaf_ids, chunks, document_id, async_progress, overall_start_time)
+            root_id = await self._build_tree_from_leaves(
+                leaf_ids, chunks, document_id, async_progress, overall_start_time
+            )
 
             # Final completion logging with total elapsed time
             if root_id:
                 total_elapsed = time.time() - overall_start_time
                 mins, secs = divmod(int(total_elapsed), 60)
-                logger.info(f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]")
+                logger.info(
+                    f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
+                )
 
             return document_id
         finally:
             # Always close progress
             progress.close()
 
-    def add_document(self, text: str, document_id: Optional[str] = None,
-                    file_path: Optional[str] = None, show_progress: bool = True) -> str:
+    def add_document(
+        self,
+        text: str,
+        document_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        show_progress: bool = True,
+    ) -> str:
         """Sync wrapper for add_document."""
-        return asyncio.run(self.add_document_async(text, document_id, file_path, show_progress))
+        return asyncio.run(
+            self.add_document_async(text, document_id, file_path, show_progress)
+        )
 
-    async def add_document_async(self, text: str, document_id: Optional[str] = None,
-                                file_path: Optional[str] = None, show_progress: bool = True) -> str:
+    async def add_document_async(
+        self,
+        text: str,
+        document_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        show_progress: bool = True,
+    ) -> str:
         """Async version of add_document - called by sync wrapper."""
-        return await self._add_document_impl(text, document_id, file_path, show_progress)
+        return await self._add_document_impl(
+            text, document_id, file_path, show_progress
+        )
 
     async def _process_node_pair(
-        self, left_id: str, left_text: str, right_id: str, right_text: str,
-        prev_context: Optional[str], next_context: Optional[str],
-        current_depth: int, document_id: Optional[str]
+        self,
+        left_id: str,
+        left_text: str,
+        right_id: str,
+        right_text: str,
+        prev_context: Optional[str],
+        next_context: Optional[str],
+        current_depth: int,
+        document_id: Optional[str],
     ) -> tuple[str, str, str]:
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
@@ -368,7 +418,9 @@ class TreeBuilder:
         right_node = self.store.get_node(right_id)
 
         if not left_node or not right_node:
-            logger.error(f"Failed to retrieve child nodes: left={left_id}, right={right_id}")
+            logger.error(
+                f"Failed to retrieve child nodes: left={left_id}, right={right_id}"
+            )
             raise ValueError("Child nodes not found in store")
 
         self.store.add_node(
@@ -401,7 +453,7 @@ class TreeBuilder:
             # where we have access to the original text to verify if gaps are just whitespace
 
             # Check summary has MID delimiter
-            if '<<<MID>>>' not in summary:
+            if "<<<MID>>>" not in summary:
                 return f"Parent node {parent_id} missing <<<MID>>> delimiter in summary"
 
             # Check mid_offset is valid
@@ -415,9 +467,12 @@ class TreeBuilder:
         return parent_id, summary, embedding
 
     async def _build_tree_from_leaves(
-        self, leaf_ids: list[str], leaf_texts: list[str],
-        document_id: Optional[str] = None, progress: Optional[AsyncProgressWrapper] = None,
-        overall_start_time: Optional[float] = None
+        self,
+        leaf_ids: list[str],
+        leaf_texts: list[str],
+        document_id: Optional[str] = None,
+        progress: Optional[AsyncProgressWrapper] = None,
+        overall_start_time: Optional[float] = None,
     ) -> str:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
         current_level_ids = leaf_ids
@@ -425,7 +480,9 @@ class TreeBuilder:
         current_depth = 0
 
         # Calculate total tree height (depth from root to leaves)
-        total_tree_height = math.ceil(math.log2(len(leaf_ids))) if len(leaf_ids) > 1 else 0
+        total_tree_height = (
+            math.ceil(math.log2(len(leaf_ids))) if len(leaf_ids) > 1 else 0
+        )
 
         while len(current_level_ids) > 1:
             next_level_ids = []
@@ -464,11 +521,17 @@ class TreeBuilder:
 
                 # Create async task
                 task = self._process_node_pair(
-                    left_id, left_text, right_id, right_text,
-                    prev_context, next_context, current_depth, document_id
+                    left_id,
+                    left_text,
+                    right_id,
+                    right_text,
+                    prev_context,
+                    next_context,
+                    current_depth,
+                    document_id,
                 )
                 tasks.append(task)
-                pair_info.append((i, i+1))
+                pair_info.append((i, i + 1))
 
             # If there's an odd node at the end, promote it to next level
             if nodes_to_pair < len(current_level_ids):
@@ -482,9 +545,13 @@ class TreeBuilder:
                 if overall_start_time:
                     elapsed = time.time() - overall_start_time
                     mins, secs = divmod(int(elapsed), 60)
-                    logger.info(f"Building tree level {level_from_root}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]")
+                    logger.info(
+                        f"Building tree level {level_from_root}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
+                    )
                 else:
-                    logger.info(f"Building tree level {level_from_root}: processing {len(tasks)} node pairs")
+                    logger.info(
+                        f"Building tree level {level_from_root}: processing {len(tasks)} node pairs"
+                    )
 
                 # Track completion count
                 completed_count = 0
@@ -503,19 +570,23 @@ class TreeBuilder:
                     if completed_count % 10 == 0 and overall_start_time:
                         elapsed = time.time() - overall_start_time
                         mins, secs = divmod(int(elapsed), 60)
-                        logger.info(f"  Completed {completed_count}/{len(tasks)} pairs at level {total_tree_height - current_depth} [{mins}m {secs}s elapsed total]")
+                        logger.info(
+                            f"  Completed {completed_count}/{len(tasks)} pairs at level {total_tree_height - current_depth} [{mins}m {secs}s elapsed total]"
+                        )
 
                     return result
 
                 # Create tracked tasks
-                tracked_tasks = [track_progress(task, i) for i, task in enumerate(tasks)]
+                tracked_tasks = [
+                    track_progress(task, i) for i, task in enumerate(tasks)
+                ]
 
                 # Process tasks in smaller groups for better progress feedback
                 results = []
                 group_size = 20  # Process 20 at a time
 
                 for i in range(0, len(tracked_tasks), group_size):
-                    group = tracked_tasks[i:i+group_size]
+                    group = tracked_tasks[i : i + group_size]
                     group_results = await asyncio.gather(*group)
                     results.extend(group_results)
 
@@ -549,15 +620,20 @@ class TreeBuilder:
             if overall_start_time:
                 elapsed = time.time() - overall_start_time
                 mins, secs = divmod(int(elapsed), 60)
-                logger.info(f"Tree building complete. Root node at level 0 with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]")
+                logger.info(
+                    f"Tree building complete. Root node at level 0 with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]"
+                )
             else:
-                logger.info(f"Tree building complete. Root node at level 0 with ID: {current_level_ids[0][:8]}...")
+                logger.info(
+                    f"Tree building complete. Root node at level 0 with ID: {current_level_ids[0][:8]}..."
+                )
         return current_level_ids[0] if current_level_ids else None
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference."""
         with self.store.SessionLocal() as session:
             from ragzoom.store import TreeNode
+
             node = session.query(TreeNode).filter_by(id=node_id).first()
             if node:
                 node.parent_id = parent_id
@@ -599,7 +675,7 @@ class TreeBuilder:
                     right_child.text,
                     target_tokens=self.config.leaf_tokens,
                     prev_context="",
-                    next_context=""
+                    next_context="",
                 )
 
                 # Get new embedding
@@ -616,4 +692,3 @@ class TreeBuilder:
                 continue
 
         return refreshed_count
-

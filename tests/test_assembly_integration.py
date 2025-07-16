@@ -5,35 +5,25 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import RetrievalResult, Retriever
-from ragzoom.store import Store
 
 
 class TestAssemblyIntegration:
     """Test the complete assembly pipeline."""
 
     @pytest.fixture
-    def setup_components(self, tmp_path, monkeypatch):
+    def setup_components(self, base_config, store, monkeypatch):
         """Set up test components."""
-        # Set environment variables for config
-        monkeypatch.setenv("RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
-        monkeypatch.setenv("RAGZOOM_CHROMA_DB_DIR", str(tmp_path / "chroma"))
+        # Use the store fixture which automatically selects mock/real based on markers
         monkeypatch.setenv("RAGZOOM_OPENAI_API_KEY", "test-key")
         monkeypatch.setenv("RAGZOOM_SLOPE_CAP", "true")
-
-        config = RagZoomConfig()
-        store = Store(config)
 
         # Mock OpenAI client
         mock_client = MagicMock()
         mock_async_client = MagicMock()
 
-        yield config, store, mock_client, mock_async_client
-
-        # Close store to prevent file handle leaks
-        store.close()
+        yield base_config, store, mock_client, mock_async_client
 
     def test_no_duplicate_content_in_assembly(self, setup_components):
         """Test that assembled output contains no repeated content."""
@@ -411,9 +401,13 @@ The book revealed the location of a hidden treasure."""
 
         # Mock embeddings - needs to be async
         async def mock_embeddings(*args, **kwargs):
+            input_texts = kwargs.get("input", [])
+            if isinstance(input_texts, str):
+                input_texts = [input_texts]
             return MagicMock(
-                data=[MagicMock(embedding=[0.1] * 1536) for _ in range(3)]
+                data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts]
             )
+
         mock_async_client.embeddings.create.side_effect = mock_embeddings
 
         # Mock summaries with proper delimiters
@@ -425,10 +419,13 @@ The book revealed the location of a hidden treasure."""
 
         # Mock chat completions - needs to be async
         summary_index = 0
+
         async def mock_chat_completion(*args, **kwargs):
             nonlocal summary_index
             response = MagicMock()
-            response.choices[0].message.content = summaries[summary_index % len(summaries)]
+            response.choices[0].message.content = summaries[
+                summary_index % len(summaries)
+            ]
             summary_index += 1
             return response
 
@@ -453,11 +450,13 @@ The book revealed the location of a hidden treasure."""
         final_text = assembler.assemble(result)
 
         # Verify no repetitions
-        sentences = [s.strip() for s in final_text.split('.') if s.strip()]
+        sentences = [s.strip() for s in final_text.split(".") if s.strip()]
         unique_sentences = set(sentences)
 
         # Each sentence should appear only once
-        assert len(sentences) == len(unique_sentences), f"Found duplicate sentences in output: {final_text}"
+        assert len(sentences) == len(
+            unique_sentences
+        ), f"Found duplicate sentences in output: {final_text}"
 
         # No mid delimiters in output
         assert "<<<MID>>>" not in final_text

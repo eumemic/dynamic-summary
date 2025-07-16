@@ -17,13 +17,15 @@ class TestConcurrency:
     @pytest.fixture
     def mock_openai(self):
         """Mock OpenAI for tests."""
-        with patch('ragzoom.index.AsyncOpenAI') as mock_index, \
-             patch('ragzoom.retrieve.OpenAI') as mock_retrieve, \
-             patch('ragzoom.assemble.OpenAI') as mock_assemble:
+        with (
+            patch("ragzoom.index.AsyncOpenAI") as mock_index,
+            patch("ragzoom.retrieve.OpenAI") as mock_retrieve,
+            patch("ragzoom.assemble.OpenAI") as mock_assemble,
+        ):
 
             # Create async mocks for index client
             async def mock_embeddings_create_async(*args, **kwargs):
-                input_data = kwargs.get('input', args[0] if args else '')
+                input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
                     return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
                 else:
@@ -42,20 +44,28 @@ class TestConcurrency:
             # Setup async client (index)
             instance_async = Mock()
             instance_async.embeddings = Mock()
-            instance_async.embeddings.create = Mock(side_effect=mock_embeddings_create_async)
+            instance_async.embeddings.create = Mock(
+                side_effect=mock_embeddings_create_async
+            )
             instance_async.chat = Mock()
             instance_async.chat.completions = Mock()
-            instance_async.chat.completions.create = Mock(side_effect=mock_chat_create_async)
+            instance_async.chat.completions.create = Mock(
+                side_effect=mock_chat_create_async
+            )
             mock_index.return_value = instance_async
 
             # Setup sync clients (retrieve, assemble)
             for mock_client in [mock_retrieve, mock_assemble]:
                 instance_sync = Mock()
                 instance_sync.embeddings = Mock()
-                instance_sync.embeddings.create = Mock(side_effect=mock_embeddings_create_sync)
+                instance_sync.embeddings.create = Mock(
+                    side_effect=mock_embeddings_create_sync
+                )
                 instance_sync.chat = Mock()
                 instance_sync.chat.completions = Mock()
-                instance_sync.chat.completions.create = Mock(side_effect=mock_chat_create_sync)
+                instance_sync.chat.completions.create = Mock(
+                    side_effect=mock_chat_create_sync
+                )
                 mock_client.return_value = instance_sync
 
             yield
@@ -67,8 +77,12 @@ class TestConcurrency:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Mock environment
             monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-            monkeypatch.setenv("RAGZOOM_CHROMA_PERSIST_DIRECTORY", os.path.join(tmpdir, "chroma"))
-            monkeypatch.setenv("RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmpdir}/test.db")
+            monkeypatch.setenv(
+                "RAGZOOM_CHROMA_PERSIST_DIRECTORY", os.path.join(tmpdir, "chroma")
+            )
+            monkeypatch.setenv(
+                "RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmpdir}/test.db"
+            )
 
             with TestClient(app) as client:
                 yield client
@@ -77,18 +91,21 @@ class TestConcurrency:
     async def test_concurrent_queries(self, client):
         """Test multiple concurrent query requests."""
         # First index some data
-        response = client.post("/index", json={
-            "text": "Test document content for concurrency testing.",
-            "document_id": "test-doc"
-        })
+        response = client.post(
+            "/index",
+            json={
+                "text": "Test document content for concurrency testing.",
+                "document_id": "test-doc",
+            },
+        )
         assert response.status_code == 200
 
         # Make concurrent queries
         async def make_query(query_num):
-            response = client.post("/query", json={
-                "query": f"Test query {query_num}",
-                "document_id": "test-doc"
-            })
+            response = client.post(
+                "/query",
+                json={"query": f"Test query {query_num}", "document_id": "test-doc"},
+            )
             return response
 
         # Run 5 concurrent queries
@@ -117,11 +134,15 @@ class TestConcurrency:
     @pytest.mark.asyncio
     async def test_concurrent_indexing(self, client):
         """Test concurrent document indexing."""
+
         async def index_doc(doc_num):
-            response = client.post("/index", json={
-                "text": f"Document {doc_num} content.",
-                "document_id": f"doc-{doc_num}"
-            })
+            response = client.post(
+                "/index",
+                json={
+                    "text": f"Document {doc_num} content.",
+                    "document_id": f"doc-{doc_num}",
+                },
+            )
             return response
 
         # Index 3 documents concurrently
@@ -137,9 +158,7 @@ class TestConcurrency:
     def test_no_shared_state(self, client):
         """Verify no shared mutable state between requests."""
         # Make a config update
-        response1 = client.patch("/config", json={
-            "budget_tokens": 5000
-        })
+        response1 = client.patch("/config", json={"budget_tokens": 5000})
         assert response1.status_code == 200
 
         # Get status - should reflect change for this request

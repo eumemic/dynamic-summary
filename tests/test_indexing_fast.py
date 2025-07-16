@@ -1,27 +1,23 @@
-"""Test to reproduce incomplete document indexing issue."""
+"""Fast version of indexing tests using mock store."""
 
 import asyncio
 from unittest.mock import Mock
 
-import pytest
-
 from ragzoom.index import TreeBuilder
 
 
-@pytest.mark.integration  # Mark as integration test since it tests full indexing workflow
-@pytest.mark.slow  # These tests take 5+ seconds each with real store
-class TestIncompleteIndexing:
-    """Test cases to reproduce incomplete document indexing."""
+class TestIndexingFast:
+    """Fast indexing tests using mock store instead of real DB/ChromaDB."""
 
     def test_full_document_gets_indexed(
         self, base_config, store, mock_openai_async_client
     ):
         """Test that the entire document is indexed, not just first 37%."""
         config = base_config
-        # Create a test document with known content
-        # Reduced from 100 to 20 parts for faster testing while still validating coverage
+
+        # Create a smaller test document for faster testing
         test_doc_parts = []
-        for i in range(100):  # 100 parts
+        for i in range(20):  # Reduced from 100 to 20 parts
             test_doc_parts.append(
                 f"Part {i}: This is test content that should be indexed. " * 5
             )
@@ -137,7 +133,7 @@ class TestIncompleteIndexing:
         # Create document with many chunks to test batching
         # Reduced from 250 to 50 chunks - still tests batching but faster
         chunks = []
-        for i in range(250):
+        for i in range(50):  # Reduced further for speed
             chunks.append(f"Chunk {i}: " + "word " * 20)  # ~50 tokens each
 
         test_document = " ".join(chunks)

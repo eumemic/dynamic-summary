@@ -13,8 +13,8 @@ class TestGlobalProgressTracker:
 
     def test_init_with_tqdm(self):
         """Test initialization with tqdm available."""
-        with patch('ragzoom.progress.HAS_TQDM', True):
-            with patch('ragzoom.progress.tqdm') as mock_tqdm:
+        with patch("ragzoom.progress.HAS_TQDM", True):
+            with patch("ragzoom.progress.tqdm") as mock_tqdm:
                 mock_pbar = Mock()
                 mock_tqdm.return_value = mock_pbar
 
@@ -29,13 +29,13 @@ class TestGlobalProgressTracker:
                 # Verify tqdm was called with correct parameters
                 mock_tqdm.assert_called_once()
                 call_args = mock_tqdm.call_args[1]
-                assert call_args['total'] == tracker.total_operations
-                assert call_args['unit'] == " ops"
-                assert call_args['leave'] is False
+                assert call_args["total"] == tracker.total_operations
+                assert call_args["unit"] == " ops"
+                assert call_args["leave"] is False
 
     def test_init_without_tqdm(self):
         """Test initialization when tqdm is not available."""
-        with patch('ragzoom.progress.HAS_TQDM', False):
+        with patch("ragzoom.progress.HAS_TQDM", False):
             tracker = GlobalProgressTracker(10, show_progress=True)
 
             assert tracker.total_chunks == 10
@@ -55,15 +55,19 @@ class TestGlobalProgressTracker:
 
         # Test different chunk counts
         assert tracker._estimate_tree_operations(1) == 0  # No tree needed for 1 chunk
-        assert tracker._estimate_tree_operations(2) == 2  # 1 parent node = 1 summary + 1 embedding
-        assert tracker._estimate_tree_operations(4) == 6  # 2 + 1 parent nodes = 3 * 2 ops
+        assert (
+            tracker._estimate_tree_operations(2) == 2
+        )  # 1 parent node = 1 summary + 1 embedding
+        assert (
+            tracker._estimate_tree_operations(4) == 6
+        )  # 2 + 1 parent nodes = 3 * 2 ops
         assert tracker._estimate_tree_operations(8) == 14  # 4 + 2 + 1 = 7 * 2 ops
         assert tracker._estimate_tree_operations(10) == 22  # 5 + 3 + 2 + 1 = 11 * 2 ops
 
     def test_update_with_progress(self):
         """Test updating progress with tqdm."""
-        with patch('ragzoom.progress.HAS_TQDM', True):
-            with patch('ragzoom.progress.tqdm') as mock_tqdm:
+        with patch("ragzoom.progress.HAS_TQDM", True):
+            with patch("ragzoom.progress.tqdm") as mock_tqdm:
                 mock_pbar = Mock()
                 mock_tqdm.return_value = mock_pbar
 
@@ -89,8 +93,8 @@ class TestGlobalProgressTracker:
 
     def test_close(self):
         """Test closing progress bar."""
-        with patch('ragzoom.progress.HAS_TQDM', True):
-            with patch('ragzoom.progress.tqdm') as mock_tqdm:
+        with patch("ragzoom.progress.HAS_TQDM", True):
+            with patch("ragzoom.progress.tqdm") as mock_tqdm:
                 mock_pbar = Mock()
                 mock_tqdm.return_value = mock_pbar
 
@@ -101,8 +105,8 @@ class TestGlobalProgressTracker:
 
     def test_context_manager(self):
         """Test context manager support."""
-        with patch('ragzoom.progress.HAS_TQDM', True):
-            with patch('ragzoom.progress.tqdm') as mock_tqdm:
+        with patch("ragzoom.progress.HAS_TQDM", True):
+            with patch("ragzoom.progress.tqdm") as mock_tqdm:
                 mock_pbar = Mock()
                 mock_tqdm.return_value = mock_pbar
 
@@ -157,7 +161,7 @@ class TestAsyncProgressWrapper:
             update_task(2),
             update_task(3),
             update_task(4),
-            update_task(5)
+            update_task(5),
         )
 
         # All updates should have been called
@@ -173,8 +177,8 @@ class TestProgressIntegration:
 
     def test_full_indexing_scenario(self):
         """Test a full indexing scenario with progress tracking."""
-        with patch('ragzoom.progress.HAS_TQDM', True):
-            with patch('ragzoom.progress.tqdm') as mock_tqdm:
+        with patch("ragzoom.progress.HAS_TQDM", True):
+            with patch("ragzoom.progress.tqdm") as mock_tqdm:
                 mock_pbar = Mock()
                 mock_tqdm.return_value = mock_pbar
 
@@ -200,8 +204,8 @@ class TestProgressIntegration:
 
     def test_error_handling(self):
         """Test that progress bar is closed even on error."""
-        with patch('ragzoom.progress.HAS_TQDM', True):
-            with patch('ragzoom.progress.tqdm') as mock_tqdm:
+        with patch("ragzoom.progress.HAS_TQDM", True):
+            with patch("ragzoom.progress.tqdm") as mock_tqdm:
                 mock_pbar = Mock()
                 mock_tqdm.return_value = mock_pbar
 

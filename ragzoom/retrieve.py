@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RetrievalResult:
     """Result from retrieval operation."""
+
     node_ids: list[str]
     scores: dict[str, float]
     coverage_map: dict[str, bool]
@@ -28,7 +29,12 @@ class RetrievalResult:
 class Retriever:
     """Handles retrieval and MMR diversity for query processing."""
 
-    def __init__(self, config: RagZoomConfig, store: Store, tree_builder: Optional["TreeBuilder"] = None):
+    def __init__(
+        self,
+        config: RagZoomConfig,
+        store: Store,
+        tree_builder: Optional["TreeBuilder"] = None,
+    ):
         """Initialize retriever."""
         self.config = config
         self.store = store
@@ -36,7 +42,9 @@ class Retriever:
         self.client = OpenAI(api_key=config.openai_api_key)
 
         # Track access history for freshness scoring
-        self.access_history: dict[str, tuple[float, int]] = {}  # node_id -> (similarity, turns_ago)
+        self.access_history: dict[str, tuple[float, int]] = (
+            {}
+        )  # node_id -> (similarity, turns_ago)
         self.current_turn = 0
 
         # Per-request cache to avoid double refresh
@@ -55,7 +63,13 @@ class Retriever:
             logger.error(f"Error getting query embedding: {e}")
             raise
 
-    async def retrieve_async(self, query: str, n_max: Optional[int] = None, budget_tokens: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
+    async def retrieve_async(
+        self,
+        query: str,
+        n_max: Optional[int] = None,
+        budget_tokens: Optional[int] = None,
+        document_id: Optional[str] = None,
+    ) -> RetrievalResult:
         """Async retrieval method with MMR diversity and dirty node refresh.
 
         Supports three modes:
@@ -71,7 +85,9 @@ class Retriever:
         if budget_tokens is not None and n_max is None:
             # Mode 1: Budget only - calculate conservative n_max
             n_max = self._calculate_conservative_n_max(budget_tokens)
-            logger.info(f"Budget-only mode: calculated conservative n_max={n_max} for budget={budget_tokens}")
+            logger.info(
+                f"Budget-only mode: calculated conservative n_max={n_max} for budget={budget_tokens}"
+            )
         elif budget_tokens is not None and n_max is not None:
             # Mode 2: Budget + n_max - will enforce both constraints
             logger.info(f"Mixed mode: n_max={n_max}, budget={budget_tokens}")
@@ -88,14 +104,13 @@ class Retriever:
 
         # Filter by document_id if provided
         where_filter = {"document_id": document_id} if document_id else None
-        candidates = self.store.search_similar(query_embedding, k_candidates, where=where_filter)
+        candidates = self.store.search_similar(
+            query_embedding, k_candidates, where=where_filter
+        )
 
         # Step 2: Apply MMR to get diverse n_max results
         selected_ids = self.store.compute_mmr_diverse_results(
-            query_embedding,
-            candidates,
-            self.config.mmr_lambda,
-            n_max
+            query_embedding, candidates, self.config.mmr_lambda, n_max
         )
 
         # Step 3: Build coverage map (selected + ancestors)
@@ -107,14 +122,18 @@ class Retriever:
             coverage_map[node.id] = True
 
         # Build scores map
-        scores = {cand[0]: 1.0 - cand[1] for cand in candidates}  # Convert distance to similarity
+        scores = {
+            cand[0]: 1.0 - cand[1] for cand in candidates
+        }  # Convert distance to similarity
 
         # Step 5: Extract frontier
         frontier_nodes = self._extract_frontier(coverage_map)
 
         # Step 6: If budget specified, ensure frontier fits within budget
         if budget_tokens is not None:
-            frontier_nodes = self._enforce_budget_constraint(frontier_nodes, budget_tokens, scores)
+            frontier_nodes = self._enforce_budget_constraint(
+                frontier_nodes, budget_tokens, scores
+            )
 
         # Update access history
         self._update_access_history(selected_ids, candidates)
@@ -126,7 +145,13 @@ class Retriever:
             frontier_nodes=frontier_nodes,
         )
 
-    def retrieve(self, query: str, n_max: Optional[int] = None, budget_tokens: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
+    def retrieve(
+        self,
+        query: str,
+        n_max: Optional[int] = None,
+        budget_tokens: Optional[int] = None,
+        document_id: Optional[str] = None,
+    ) -> RetrievalResult:
         """Synchronous wrapper for retrieve_async.
 
         Creates a new event loop if needed to run the async version.
@@ -135,14 +160,24 @@ class Retriever:
             # Try to get existing event loop
             asyncio.get_running_loop()
             # We're already in an async context, can't use asyncio.run
-            logger.warning("retrieve() called from async context; use retrieve_async() instead")
+            logger.warning(
+                "retrieve() called from async context; use retrieve_async() instead"
+            )
             # Fall back to sync-only refresh (skip dirty node refresh)
             return self._retrieve_sync_only(query, n_max, budget_tokens, document_id)
         except RuntimeError:
             # No event loop, create one
-            return asyncio.run(self.retrieve_async(query, n_max, budget_tokens, document_id))
+            return asyncio.run(
+                self.retrieve_async(query, n_max, budget_tokens, document_id)
+            )
 
-    def _retrieve_sync_only(self, query: str, n_max: Optional[int] = None, budget_tokens: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
+    def _retrieve_sync_only(
+        self,
+        query: str,
+        n_max: Optional[int] = None,
+        budget_tokens: Optional[int] = None,
+        document_id: Optional[str] = None,
+    ) -> RetrievalResult:
         """Synchronous retrieval without dirty node refresh.
 
         Used as fallback when called from async context.
@@ -152,7 +187,9 @@ class Retriever:
         if budget_tokens is not None and n_max is None:
             # Mode 1: Budget only - calculate conservative n_max
             n_max = self._calculate_conservative_n_max(budget_tokens)
-            logger.info(f"Budget-only mode: calculated conservative n_max={n_max} for budget={budget_tokens}")
+            logger.info(
+                f"Budget-only mode: calculated conservative n_max={n_max} for budget={budget_tokens}"
+            )
         elif budget_tokens is not None and n_max is not None:
             # Mode 2: Budget + n_max - will enforce both constraints
             logger.info(f"Mixed mode: n_max={n_max}, budget={budget_tokens}")
@@ -169,14 +206,13 @@ class Retriever:
 
         # Filter by document_id if provided
         where_filter = {"document_id": document_id} if document_id else None
-        candidates = self.store.search_similar(query_embedding, k_candidates, where=where_filter)
+        candidates = self.store.search_similar(
+            query_embedding, k_candidates, where=where_filter
+        )
 
         # Step 2: Apply MMR to get diverse n_max results
         selected_ids = self.store.compute_mmr_diverse_results(
-            query_embedding,
-            candidates,
-            self.config.mmr_lambda,
-            n_max
+            query_embedding, candidates, self.config.mmr_lambda, n_max
         )
 
         # Step 3: Build coverage map (selected + ancestors)
@@ -188,14 +224,18 @@ class Retriever:
             coverage_map[node.id] = True
 
         # Build scores map
-        scores = {cand[0]: 1.0 - cand[1] for cand in candidates}  # Convert distance to similarity
+        scores = {
+            cand[0]: 1.0 - cand[1] for cand in candidates
+        }  # Convert distance to similarity
 
         # Step 5: Extract frontier
         frontier_nodes = self._extract_frontier(coverage_map)
 
         # Step 6: If budget specified, ensure frontier fits within budget
         if budget_tokens is not None:
-            frontier_nodes = self._enforce_budget_constraint(frontier_nodes, budget_tokens, scores)
+            frontier_nodes = self._enforce_budget_constraint(
+                frontier_nodes, budget_tokens, scores
+            )
 
         # Update access history
         self._update_access_history(selected_ids, candidates)
@@ -210,7 +250,9 @@ class Retriever:
     async def _refresh_dirty_nodes_async(self, limit: int = 10) -> None:
         """Refresh dirty nodes by re-summarizing them asynchronously."""
         if not self.tree_builder:
-            logger.warning("No TreeBuilder available for refresh, skipping dirty node refresh")
+            logger.warning(
+                "No TreeBuilder available for refresh, skipping dirty node refresh"
+            )
             return
 
         dirty_nodes = self.store.get_dirty_nodes()
@@ -231,7 +273,9 @@ class Retriever:
         logger.info(f"Refreshing {len(nodes_to_refresh)} dirty nodes")
 
         try:
-            refreshed_count = await self.tree_builder.refresh_nodes_async(nodes_to_refresh)
+            refreshed_count = await self.tree_builder.refresh_nodes_async(
+                nodes_to_refresh
+            )
             # Update cache to prevent re-refresh in same request
             self._refreshed_node_ids.update(nodes_to_refresh[:refreshed_count])
             logger.info(f"Successfully refreshed {refreshed_count} nodes")
@@ -330,18 +374,25 @@ class Retriever:
         decay = self.config.freshness_decay
         if decay <= 0 or decay > 1:
             decay = 0.9  # Safe default
-            logger.warning(f"Invalid freshness_decay {self.config.freshness_decay}, using 0.9")
+            logger.warning(
+                f"Invalid freshness_decay {self.config.freshness_decay}, using 0.9"
+            )
 
         for node_id, (similarity, turns_ago) in self.access_history.items():
             # Priority = similarity * decay^turns_ago
-            priority = similarity * (decay ** turns_ago)
+            priority = similarity * (decay**turns_ago)
             # Clamp to [0, 1] range (similarity might be > 1 from Chroma)
             priority = max(0.0, min(1.0, priority))
             priority_scores[node_id] = priority
 
         return priority_scores
 
-    async def retrieve_with_eviction_async(self, query: str, token_budget: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
+    async def retrieve_with_eviction_async(
+        self,
+        query: str,
+        token_budget: Optional[int] = None,
+        document_id: Optional[str] = None,
+    ) -> RetrievalResult:
         """Async retrieve with sliding queue eviction to fit token budget."""
         if token_budget is None:
             token_budget = self.config.budget_tokens
@@ -354,6 +405,7 @@ class Retriever:
         node_tokens = {}
 
         import tiktoken
+
         tokenizer = tiktoken.get_encoding("cl100k_base")
 
         for node_id in result.frontier_nodes:
@@ -395,20 +447,36 @@ class Retriever:
 
         return result
 
-    def retrieve_with_eviction(self, query: str, token_budget: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
+    def retrieve_with_eviction(
+        self,
+        query: str,
+        token_budget: Optional[int] = None,
+        document_id: Optional[str] = None,
+    ) -> RetrievalResult:
         """Sync wrapper for retrieve_with_eviction_async."""
         try:
             # Try to get existing event loop
             asyncio.get_running_loop()
             # We're already in an async context
-            logger.warning("retrieve_with_eviction() called from async context; use retrieve_with_eviction_async() instead")
+            logger.warning(
+                "retrieve_with_eviction() called from async context; use retrieve_with_eviction_async() instead"
+            )
             # Fall back to regular retrieve (without dirty refresh)
-            return self._retrieve_with_eviction_sync_only(query, token_budget, document_id)
+            return self._retrieve_with_eviction_sync_only(
+                query, token_budget, document_id
+            )
         except RuntimeError:
             # No event loop, create one
-            return asyncio.run(self.retrieve_with_eviction_async(query, token_budget, document_id))
+            return asyncio.run(
+                self.retrieve_with_eviction_async(query, token_budget, document_id)
+            )
 
-    def _retrieve_with_eviction_sync_only(self, query: str, token_budget: Optional[int] = None, document_id: Optional[str] = None) -> RetrievalResult:
+    def _retrieve_with_eviction_sync_only(
+        self,
+        query: str,
+        token_budget: Optional[int] = None,
+        document_id: Optional[str] = None,
+    ) -> RetrievalResult:
         """Sync-only version of retrieve_with_eviction without dirty refresh."""
         if token_budget is None:
             token_budget = self.config.budget_tokens
@@ -421,6 +489,7 @@ class Retriever:
         node_tokens = {}
 
         import tiktoken
+
         tokenizer = tiktoken.get_encoding("cl100k_base")
 
         for node_id in result.frontier_nodes:
@@ -473,7 +542,7 @@ class Retriever:
             # Without slope cap, use tree height for worst case
             root = self.store.get_root_node()
             tree_height = root.depth if root else 3
-            safe_factor = 2 ** tree_height  # Exponential worst case
+            safe_factor = 2**tree_height  # Exponential worst case
             logger.warning(
                 f"Budget guarantees require slope_cap; using factor {safe_factor} "
                 f"based on tree height {tree_height}"
@@ -486,13 +555,16 @@ class Retriever:
 
         return conservative_n_max
 
-    def _enforce_budget_constraint(self, frontier_nodes: list[str], budget_tokens: int, scores: dict[str, float]) -> list[str]:
+    def _enforce_budget_constraint(
+        self, frontier_nodes: list[str], budget_tokens: int, scores: dict[str, float]
+    ) -> list[str]:
         """Ensure frontier nodes fit within token budget.
 
         Uses worst-case token estimation for each node to guarantee
         the assembled result won't exceed budget.
         """
         import tiktoken
+
         tokenizer = tiktoken.get_encoding("cl100k_base")
 
         # Estimate worst-case tokens for each frontier node
@@ -504,7 +576,9 @@ class Retriever:
 
             # Worst case: node might output full text + child content
             # For parent nodes with <<<MID>>>, this could be substantial
-            worst_case = self._estimate_worst_case_tokens(node, frontier_nodes, tokenizer)
+            worst_case = self._estimate_worst_case_tokens(
+                node, frontier_nodes, tokenizer
+            )
             node_estimates.append((node_id, worst_case, scores.get(node_id, 0.0)))
 
         # Sort by score (highest first) to keep best nodes
@@ -519,7 +593,9 @@ class Retriever:
                 selected.append(node_id)
                 total_tokens += token_estimate
             else:
-                logger.info(f"Dropping node {node_id} (score={score:.3f}) to stay within budget")
+                logger.info(
+                    f"Dropping node {node_id} (score={score:.3f}) to stay within budget"
+                )
 
         # Maintain chronological order
         selected_set = set(selected)

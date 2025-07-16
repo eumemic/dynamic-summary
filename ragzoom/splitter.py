@@ -34,7 +34,9 @@ class TextSplitter:
         """Calculate token length of text."""
         return len(self.tokenizer.encode(text))
 
-    def _reconstruct_chunks_with_whitespace(self, original_text: str, raw_chunks: list[str]) -> list[str]:
+    def _reconstruct_chunks_with_whitespace(
+        self, original_text: str, raw_chunks: list[str]
+    ) -> list[str]:
         """Fill ALL gaps between chunks by appending to the previous chunk.
 
         This ensures complete coverage with no gaps. Any content between chunks
@@ -73,7 +75,7 @@ class TextSplitter:
                     reconstructed_chunks.append(chunk)
             else:
                 # Check for gap before this chunk
-                prev_end = chunk_positions[i-1][1]
+                prev_end = chunk_positions[i - 1][1]
 
                 if start_pos > prev_end:
                     # There's a gap - append it to previous chunk
@@ -112,16 +114,18 @@ class TextSplitter:
                 chunk_start = doc["text"].find(chunk, current_pos)
                 chunk_end = chunk_start + len(chunk)
 
-                all_chunks.append({
-                    "text": chunk,
-                    "metadata": {
-                        **doc.get("metadata", {}),
-                        "chunk_index": i,
-                        "chunk_start": chunk_start,
-                        "chunk_end": chunk_end,
-                        "source_doc_id": doc.get("id", "unknown"),
+                all_chunks.append(
+                    {
+                        "text": chunk,
+                        "metadata": {
+                            **doc.get("metadata", {}),
+                            "chunk_index": i,
+                            "chunk_start": chunk_start,
+                            "chunk_end": chunk_end,
+                            "source_doc_id": doc.get("id", "unknown"),
+                        },
                     }
-                })
+                )
 
                 # Move to the end of the current chunk (no overlap)
                 current_pos = chunk_end
@@ -140,7 +144,7 @@ class TextSplitter:
             prev_tokens = self.tokenizer.encode(prev_text)
             if len(prev_tokens) > self.config.adjacent_context_tokens:
                 # Take last N tokens
-                context_tokens = prev_tokens[-self.config.adjacent_context_tokens:]
+                context_tokens = prev_tokens[-self.config.adjacent_context_tokens :]
                 prev_context = self.tokenizer.decode(context_tokens)
             else:
                 prev_context = prev_text
@@ -150,7 +154,7 @@ class TextSplitter:
             next_tokens = self.tokenizer.encode(next_text)
             if len(next_tokens) > self.config.adjacent_context_tokens:
                 # Take first N tokens
-                context_tokens = next_tokens[:self.config.adjacent_context_tokens]
+                context_tokens = next_tokens[: self.config.adjacent_context_tokens]
                 next_context = self.tokenizer.decode(context_tokens)
             else:
                 next_context = next_text
