@@ -448,16 +448,34 @@ Gap found between nodes: ends at 14790, starts at 14791 (gap of 1 chars)
 
 Even with `keep_separator="end"` parameter, the splitter is not consistently preserving all separator characters. This is a known limitation of text splitters that split on delimiters.
 
-### Current Workaround
+### Solution
 
-Updated validation to allow whitespace-only gaps, since they don't represent meaningful content loss. However, this is a band-aid solution.
+**FIXED** - Implemented comprehensive gap reconstruction in `TextSplitter._reconstruct_chunks_with_whitespace()`:
+1. Identifies ALL gaps between chunks (not just whitespace)
+2. Appends any gap content to the previous chunk
+3. Ensures complete character coverage from start to end of document
+4. Handles content before first chunk and after last chunk
 
-### Proper Solution
+### Implementation Details
 
-Either:
-1. Implement custom text splitting that preserves all characters
-2. Switch to a different splitting strategy that doesn't drop characters
-3. Store the dropped whitespace separately and reconstruct during assembly
+```python
+def _reconstruct_chunks_with_whitespace(self, original_text: str, raw_chunks: List[str]) -> List[str]:
+    # Fill ALL gaps by appending to previous chunk
+    if start_pos > prev_end:
+        # There's a gap - append it to previous chunk
+        gap = original_text[prev_end:start_pos]
+        reconstructed_chunks[-1] += gap
+```
+
+Key improvements:
+- No size limit on gaps - ALL gaps are filled
+- Content before first chunk is included
+- Content after last chunk is appended
+- Guarantees complete coverage with no character loss
+
+### Status
+
+**FIXED** - Complete coverage is guaranteed. No characters are lost between chunks. Validation passes consistently.
 
 ## Issue 11: Root Node Appearing in Frontier
 
@@ -531,7 +549,7 @@ Multiple contributing factors:
 7. **Assembly ordering with partial content** - sorted by node span_start instead of actual coverage span (FIXED)
 8. **Truncated AI summaries during indexing** - AI responses cut off mid-sentence due to max_tokens=target_tokens (IDENTIFIED)
 9. **Confusing depth convention** - uses inverted depth where leaves=0 and root=max_depth instead of standard convention
-10. **Text splitter dropping whitespace** - LangChain splitter loses whitespace between chunks
+10. **Text splitter dropping whitespace** - LangChain splitter loses whitespace between chunks (FIXED)
 11. **Root node appearing in frontier** - Invalid frontier extraction includes nodes that should be excluded
 12. **Frontier validation failures** - Multiple issues with frontier completeness and ordering
 
