@@ -62,3 +62,7 @@ Thumbs.db
 *.tmp
 *.bak
 .cache/
+
+# mypy daemon
+.dmypy.json
+.mypy_cache/
