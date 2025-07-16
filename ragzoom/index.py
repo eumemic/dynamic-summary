@@ -130,9 +130,14 @@ class TreeBuilder:
                         {"role": "user", "content": full_prompt},
                     ],
                     temperature=self.config.summary_temperature,
-                    max_tokens=target_tokens,
+                    # No max_tokens limit - let LLM decide based on prompt instructions
                 )
                 summary = response.choices[0].message.content.strip()
+
+                # Check if summary exceeds target length
+                actual_tokens = len(self.splitter.tokenizer.encode(summary))
+                if actual_tokens > target_tokens:
+                    logger.warning(f"Summary exceeded target length: got {actual_tokens} tokens, target was {target_tokens} tokens")
 
                 # Find <<<MID>>> delimiter position
                 mid_offset = summary.find('<<<MID>>>')
@@ -301,13 +306,9 @@ class TreeBuilder:
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
 
-        # Calculate target tokens for summary with depth-based compression
-        left_tokens = len(self.splitter.tokenizer.encode(left_text))
-        right_tokens = len(self.splitter.tokenizer.encode(right_text))
-
-        # Compression ratio increases with depth
-        compression_ratio = 1.0 / (current_depth + 1)
-        target_tokens = max(int((left_tokens + right_tokens) * compression_ratio), 50)
+        # Use consistent token budget for all levels
+        # Target tokens for the summary (guidance for LLM, not hard limit)
+        target_tokens = self.config.leaf_tokens
 
         # Generate summary with <<<MID>>> delimiter (async)
         summary, mid_offset = await self._summarize_text(

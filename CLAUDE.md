@@ -167,6 +167,7 @@ Key settings in `RagZoomConfig`:
 - **Added empty frontier guard**: Falls back to root node when budget trimming leaves empty frontier
 - **Implemented async retrieval**: Added retrieve_async() with proper sync wrappers for FastAPI compatibility
 - **Fixed ChromaDB test configuration**: Tests now use tempfile.TemporaryDirectory() instead of ":memory:" which ChromaDB doesn't support
+- **Fixed token budget allocation**: Removed depth-based compression that artificially limited higher-level nodes to as few as 50 tokens; all nodes now get consistent RAGZOOM_LEAF_TOKENS budget, with LLM instructed via prompt rather than hard API limits
 
 ## Development Practices
 
