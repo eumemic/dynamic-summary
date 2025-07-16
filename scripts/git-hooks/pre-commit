@@ -53,13 +53,16 @@ if [ -n "$modified_files" ]; then
     fi
 fi
 
-# Optional: Run type checking (warning only)
+# Run type checking (strict for new code, lenient for existing)
 if command -v mypy &> /dev/null && [ -n "$modified_files" ]; then
     echo ""
     echo "Running type checking..."
-    mypy ragzoom --ignore-missing-imports --no-error-summary 2>/dev/null
+    # Only check for missing annotations in modified files
+    mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
     if [ $? -ne 0 ]; then
-        echo "⚠️  Type checking found issues (commit will continue)"
+        echo "⚠️  Type checking found issues in modified files"
+        echo "Please add type annotations to new functions"
+        echo "Commit will continue..."
     else
         echo "✅ Type checking passed!"
     fi

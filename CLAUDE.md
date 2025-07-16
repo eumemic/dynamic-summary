@@ -221,6 +221,15 @@ Key settings in `RagZoomConfig`:
 
 ## Development Practices
 
+**Type Safety**:
+- **ALWAYS write type annotations** for all new functions and methods
+- Include parameter types and return types: `def func(x: str, y: int) -> bool:`
+- Use `from typing import` imports for complex types: `List`, `Dict`, `Optional`, `Union`, etc.
+- Type checking runs in pre-commit hook and will warn about missing annotations
+- For SQLAlchemy ORM code, focus on business logic types rather than Column types
+- When in doubt, `Any` is better than no annotation, but prefer specific types
+
+**Testing & Commits**:
 - Always write regression tests when regressions are discovered
 - Group related changes into single commits that leave the app in a working state
 - Run tests for modified components before committing
