@@ -41,11 +41,14 @@ class Assembler:
         # This handles invalid frontiers where both parent and child are included
         frontier_nodes = self._remove_children_with_parents_in_frontier(frontier_nodes)
 
-        # Step 2: Apply slope cap if enabled
+        # Step 2: Sort frontier nodes by span_start for chronological order
+        frontier_nodes = self._sort_nodes_chronologically(frontier_nodes)
+
+        # Step 3: Apply slope cap if enabled (AFTER sorting to maintain constraint)
         if self.config.slope_cap:
             frontier_nodes = self._apply_slope_cap(frontier_nodes)
 
-        # Step 3: Deduplicate by node ID (slope-cap may create duplicates)
+        # Step 4: Deduplicate by node ID (slope-cap may create duplicates)
         seen_node_ids = set()
         unique_frontier = []
         for node_id in frontier_nodes:
@@ -53,9 +56,6 @@ class Assembler:
                 unique_frontier.append(node_id)
                 seen_node_ids.add(node_id)
         frontier_nodes = unique_frontier
-
-        # Step 4: Sort frontier nodes by span_start for chronological order
-        frontier_nodes = self._sort_nodes_chronologically(frontier_nodes)
 
         # Step 5: Build coverage map AFTER all frontier mutations
         final_coverage_map = self._build_coverage_map(frontier_nodes)
@@ -84,7 +84,7 @@ class Assembler:
 
         # Sort by actual coverage span start (not node span_start)
         text_fragments.sort(key=lambda x: x[0])
-        
+
         # Debug: Log the frontier segments
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Frontier segments before validation ({len(text_fragments)} total):")
@@ -92,32 +92,36 @@ class Assembler:
                 logger.debug(f"  Segment {i}: [{start}, {end}) = {end - start} chars, text preview: {repr(text[:30])}...")
             if len(text_fragments) > 10:
                 logger.debug(f"  ... and {len(text_fragments) - 10} more segments")
-        
+
         # Run validation
-        from ragzoom.validate import validate, validate_frontier_completeness, validate_no_overlap
-        
+        from ragzoom.validate import (
+            validate,
+            validate_frontier_completeness,
+            validate_no_overlap,
+        )
+
         # Get document span for validation
         root = self.store.get_root_node()
         if root:
             document_span = (0, root.span_end)
-            
+
             # Prepare segments for validation
-            simple_segments = [(f"node_{i}", text, start, end) 
+            simple_segments = [(f"node_{i}", text, start, end)
                              for i, (start, end, text) in enumerate(text_fragments)]
-            
+
             # Validate completeness
             # TODO: Get original text for whitespace gap validation
             validate(
                 lambda: validate_frontier_completeness(simple_segments, document_span, None),
                 "frontier completeness"
             )
-            
+
             # Validate no overlap
             validate(
                 lambda: validate_no_overlap(simple_segments),
                 "frontier overlap check"
             )
-        
+
         texts = [text for _, _, text in text_fragments]
 
         # Basic concatenation
@@ -356,15 +360,9 @@ class Assembler:
                     capped_nodes.append((current_id, current_depth))
                     seen.add(current_id)
 
-        # Re-sort by span_start after replacements to maintain chronological order
-        capped_with_spans = []
-        for node_id, depth in capped_nodes:
-            node = self.store.get_node(node_id)
-            if node:
-                capped_with_spans.append((node_id, depth, node.span_start))
-
-        capped_with_spans.sort(key=lambda x: x[2])  # Sort by span_start
-        return [node_id for node_id, _, _ in capped_with_spans]
+        # Don't re-sort - maintain the slope cap order
+        # The caller is responsible for any final sorting if needed
+        return [node_id for node_id, _ in capped_nodes]
 
     def _find_ancestor_at_depth(self, node_id: str, target_depth: int):
         """Find ancestor of node at target depth."""
