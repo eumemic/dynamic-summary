@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
+from collections.abc import Generator
 from functools import wraps
-from typing import Any, Callable, Generator, Optional
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 

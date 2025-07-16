@@ -10,7 +10,6 @@ import chromadb
 import numpy as np
 from chromadb.config import Settings
 from sqlalchemy import (
-    Column,
     DateTime,
     ForeignKey,
     Integer,
@@ -18,13 +17,15 @@ from sqlalchemy import (
     Text,
     create_engine,
 )
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from ragzoom.config import RagZoomConfig
 
 logger = logging.getLogger(__name__)
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
 
 
 class TreeNode(Base):
@@ -32,24 +33,32 @@ class TreeNode(Base):
 
     __tablename__ = "tree_nodes"
 
-    id = Column(String, primary_key=True)
-    parent_id = Column(String, ForeignKey("tree_nodes.id"), nullable=True)
-    left_child_id = Column(String, nullable=True)
-    right_child_id = Column(String, nullable=True)
-    depth = Column(Integer, nullable=False)
-    span_start = Column(Integer, nullable=False)
-    span_end = Column(Integer, nullable=False)
-    text = Column(Text, nullable=False)
-    summary = Column(Text, nullable=True)  # NULL for leaf nodes
-    mid_offset = Column(
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    parent_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("tree_nodes.id"), nullable=True
+    )
+    left_child_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    right_child_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    span_start: Mapped[int] = mapped_column(Integer, nullable=False)
+    span_end: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # NULL for leaf nodes
+    mid_offset: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True
     )  # Position of <<<MID>>> delimiter in parent summaries
-    is_dirty = Column(Integer, default=0)  # Boolean flag for re-summarization
-    is_pinned = Column(Integer, default=0)
-    last_accessed = Column(DateTime, default=datetime.utcnow)
-    access_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    document_id = Column(String, ForeignKey("documents.id"), nullable=True)
+    is_dirty: Mapped[int] = mapped_column(
+        Integer, default=0
+    )  # Boolean flag for re-summarization
+    is_pinned: Mapped[int] = mapped_column(Integer, default=0)
+    last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    access_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    document_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("documents.id"), nullable=True
+    )
 
 
 class Document(Base):
@@ -57,11 +66,15 @@ class Document(Base):
 
     __tablename__ = "documents"
 
-    id = Column(String, primary_key=True)
-    file_path = Column(String, nullable=True, unique=True)  # Path to the source file
-    content_hash = Column(String, nullable=False)  # SHA256 hash of content
-    indexed_at = Column(DateTime, default=datetime.utcnow)
-    chunk_count = Column(Integer, default=0)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    file_path: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True, unique=True
+    )  # Path to the source file
+    content_hash: Mapped[str] = mapped_column(
+        String, nullable=False
+    )  # SHA256 hash of content
+    indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Store:
@@ -97,7 +110,7 @@ class Store:
 
         # LRU cache for hot nodes
         self.node_cache: dict[str, TreeNode] = {}
-        self.cache_order = deque(maxlen=1000)
+        self.cache_order: deque[str] = deque(maxlen=1000)
 
         # Cache expected embedding dimension for validation
         self._expected_embedding_dim = self._get_expected_embedding_dimension()
@@ -115,7 +128,9 @@ class Store:
         """Add node to cache, evicting LRU if necessary."""
         if node.id in self.node_cache:
             self.cache_order.remove(node.id)
-        elif len(self.cache_order) >= self.cache_order.maxlen:
+        elif (
+            self.cache_order.maxlen and len(self.cache_order) >= self.cache_order.maxlen
+        ):
             # Evict LRU
             lru_id = self.cache_order.popleft()
             del self.node_cache[lru_id]
@@ -343,14 +358,23 @@ class Store:
 
         # Return list of (id, distance, metadata) tuples
         output = []
-        for i in range(len(results["ids"][0])):
-            output.append(
-                (
-                    results["ids"][0][i],
-                    results["distances"][0][i],
-                    results["metadatas"][0][i],
+        ids = results.get("ids")
+        distances = results.get("distances")
+        metadatas = results.get("metadatas")
+
+        if ids and distances and metadatas and len(ids) > 0:
+            for i in range(len(ids[0])):
+                output.append(
+                    (
+                        ids[0][i],
+                        float(distances[0][i]),
+                        (
+                            dict(metadatas[0][i])
+                            if isinstance(metadatas[0][i], dict)
+                            else {}
+                        ),
+                    )
                 )
-            )
 
         return output
 
