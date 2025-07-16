@@ -78,14 +78,16 @@ class TestConcurrency:
         """Test multiple concurrent query requests."""
         # First index some data
         response = client.post("/index", json={
-            "text": "Test document content for concurrency testing."
+            "text": "Test document content for concurrency testing.",
+            "document_id": "test-doc"
         })
         assert response.status_code == 200
 
         # Make concurrent queries
         async def make_query(query_num):
             response = client.post("/query", json={
-                "query": f"Test query {query_num}"
+                "query": f"Test query {query_num}",
+                "document_id": "test-doc"
             })
             return response
 
