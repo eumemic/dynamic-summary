@@ -17,11 +17,11 @@ class TestDocumentCoverage:
     
     def test_valid_coverage(self):
         """Test valid document coverage passes."""
-        # Create mock leaf nodes
+        # Create mock leaf nodes - now with exact adjacency (no gaps, no overlaps)
         leaves = [
             MagicMock(span_start=0, span_end=100, id="node1"),
-            MagicMock(span_start=90, span_end=200, id="node2"),  # 10 char overlap
-            MagicMock(span_start=190, span_end=300, id="node3"),
+            MagicMock(span_start=100, span_end=200, id="node2"),  # Exactly adjacent
+            MagicMock(span_start=200, span_end=300, id="node3"),  # Exactly adjacent
         ]
         
         original_text = "x" * 300
@@ -32,7 +32,7 @@ class TestDocumentCoverage:
         """Test detection of missing coverage at start."""
         leaves = [
             MagicMock(span_start=10, span_end=100, id="node1"),  # Doesn't start at 0
-            MagicMock(span_start=90, span_end=200, id="node2"),
+            MagicMock(span_start=100, span_end=200, id="node2"),  # Exactly adjacent
         ]
         
         original_text = "x" * 200
@@ -44,7 +44,7 @@ class TestDocumentCoverage:
         """Test detection of missing coverage at end."""
         leaves = [
             MagicMock(span_start=0, span_end=100, id="node1"),
-            MagicMock(span_start=90, span_end=180, id="node2"),  # Doesn't reach 200
+            MagicMock(span_start=100, span_end=180, id="node2"),  # Doesn't reach 200
         ]
         
         original_text = "x" * 200
@@ -62,7 +62,7 @@ class TestDocumentCoverage:
         original_text = "x" * 200
         error = validate_document_coverage(original_text, leaves)
         assert error is not None
-        assert "Gap found between nodes" in error
+        assert "Non-contiguous chunks found" in error
 
 
 class TestChunkSizes:

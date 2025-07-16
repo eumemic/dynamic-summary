@@ -134,7 +134,7 @@ def index(ctx, file_path: str, document_id: Optional[str], clear: bool, no_progr
 
         # Validations will run only if --validate was passed
         validate(
-            lambda: validate_document_coverage(text, doc_leaves, config.leaf_overlap_tokens),
+            lambda: validate_document_coverage(text, doc_leaves),
             "document coverage"
         )
 

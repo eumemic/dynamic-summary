@@ -23,7 +23,6 @@ class TestMidDelimiter:
         config.summary_temperature = 0.3
         config.slope_cap = True
         config.leaf_tokens = 200
-        config.leaf_overlap_tokens = 20
         config.adjacent_context_tokens = 75
         config.embedding_model = "text-embedding-3-small"
         config.embedding_dimensions = None

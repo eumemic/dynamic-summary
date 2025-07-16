@@ -44,13 +44,12 @@ def validate(validation_fn: Callable[[], Optional[str]], context: str = "") -> N
         os._exit(1)  # Use os._exit to ensure immediate termination
 
 
-def validate_document_coverage(original_text: str, leaf_nodes: List[TreeNode], overlap_tokens: int = 20) -> Optional[str]:
+def validate_document_coverage(original_text: str, leaf_nodes: List[TreeNode]) -> Optional[str]:
     """Validate that leaf nodes cover the entire document.
     
     Args:
         original_text: The original document text
         leaf_nodes: List of leaf nodes (depth 0)
-        overlap_tokens: Expected overlap between chunks in tokens
         
     Returns:
         Error message if invalid, None if valid
@@ -72,36 +71,17 @@ def validate_document_coverage(original_text: str, leaf_nodes: List[TreeNode], o
             f"expected {len(original_text)} (document length)"
         )
     
-    # Check for gaps or invalid overlaps
+    # Check that chunks are contiguous (with our gap reconstruction, they should be)
     for i in range(len(sorted_leaves) - 1):
         current = sorted_leaves[i]
         next_node = sorted_leaves[i + 1]
         
-        # Using half-open intervals [start, end)
-        # Adjacent means: current.span_end == next.span_start
-        # Gap means: next.span_start > current.span_end
-        if next_node.span_start > current.span_end:
-            gap = next_node.span_start - current.span_end
-            gap_text = original_text[current.span_end:next_node.span_start]
-            
-            # Allow gaps that contain only whitespace - these are often artifacts of text splitting
-            # and don't represent meaningful content loss
-            if gap_text.isspace():
-                logger.debug(f"Allowing whitespace-only gap of {gap} chars at position {current.span_end}: {repr(gap_text)}")
-                continue
-            
-            # Show the end of current chunk and start of next chunk
-            current_end = current.text[-50:] if len(current.text) > 50 else current.text
-            next_start = next_node.text[:50] if len(next_node.text) > 50 else next_node.text
-            
-            error_msg = (
-                f"Gap found between nodes: {current.id} ends at {current.span_end}, "
-                f"{next_node.id} starts at {next_node.span_start} (gap of {gap} chars)\n"
-                f"  Gap content: {repr(gap_text)}\n"
-                f"  Current chunk ends: ...{repr(current_end[-30:])}\n"
-                f"  Next chunk starts: {repr(next_start[:30])}..."
+        # Chunks should be exactly adjacent with no gaps
+        if next_node.span_start != current.span_end:
+            return (
+                f"Non-contiguous chunks found: {current.id} ends at {current.span_end}, "
+                f"{next_node.id} starts at {next_node.span_start}"
             )
-            return error_msg
         
     logger.info(f"✓ Document coverage validated: {len(sorted_leaves)} leaf nodes cover entire document")
     return None

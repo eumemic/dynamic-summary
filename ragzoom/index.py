@@ -225,37 +225,24 @@ class TreeBuilder:
             chunk_data = []
 
             # Prepare all chunk data with character positions
-            # Track positions more accurately by reconstructing from chunks
+            # Now that splitter handles whitespace gaps, positioning is straightforward
+            current_pos = 0
             for i, chunk in enumerate(chunks):
                 node_id = self._generate_node_id()
 
-                # For the first chunk, it starts at 0
-                if i == 0:
-                    chunk_start = 0
-                else:
-                    # For subsequent chunks, find where this chunk starts
-                    # Look for overlap with previous chunk
-                    prev_chunk = chunks[i-1]
-
-                    # Find overlap between chunks
-                    overlap_size = 0
-                    for overlap_len in range(min(len(prev_chunk), len(chunk)), 0, -1):
-                        if prev_chunk[-overlap_len:] == chunk[:overlap_len]:
-                            overlap_size = overlap_len
-                            break
-
-                    # This chunk starts where the previous ended minus the overlap
-                    chunk_start = chunk_data[-1]['span_end'] - overlap_size
-
-                    # Verify this is correct by checking the text
-                    if text[chunk_start:chunk_start+len(chunk)] != chunk:
-                        # Fallback to find
-                        logger.warning(f"Chunk {i} position mismatch, using find()")
-                        chunk_start = text.find(chunk, chunk_data[-1]['span_start'])
-                        if chunk_start == -1:
-                            chunk_start = chunk_data[-1]['span_end']
-
+                # Chunks now have complete coverage with no gaps
+                chunk_start = current_pos
                 chunk_end = chunk_start + len(chunk)
+                
+                # Verify this chunk matches the original text
+                if text[chunk_start:chunk_end] != chunk:
+                    # This should not happen with the fixed splitter, but provide fallback
+                    logger.warning(f"Chunk {i} position mismatch, using find() fallback")
+                    chunk_start = text.find(chunk, current_pos)
+                    if chunk_start == -1:
+                        logger.error(f"Could not find chunk {i} in text")
+                        chunk_start = current_pos
+                    chunk_end = chunk_start + len(chunk)
 
                 chunk_data.append({
                     'id': node_id,
@@ -264,6 +251,8 @@ class TreeBuilder:
                     'span_end': chunk_end,
                 })
                 leaf_ids.append(node_id)
+                
+                current_pos = chunk_end
 
             # Early validation: Check document coverage before processing embeddings
             from ragzoom.validate import validate, validate_document_coverage
@@ -280,7 +269,7 @@ class TreeBuilder:
                 leaf_nodes_for_validation.append(node_obj)
 
             validate(
-                lambda: validate_document_coverage(text, leaf_nodes_for_validation, self.config.leaf_overlap_tokens),
+                lambda: validate_document_coverage(text, leaf_nodes_for_validation),
                 "early document coverage check"
             )
 

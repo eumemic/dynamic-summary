@@ -23,9 +23,6 @@ class RagZoomConfig(BaseSettings):
     leaf_tokens: int = Field(
         default=200, description="Target size for leaf chunks in tokens"
     )
-    leaf_overlap_tokens: int = Field(
-        default=20, description="Overlap between consecutive leaf chunks"
-    )
 
     # Retrieval parameters
     mmr_lambda: float = Field(

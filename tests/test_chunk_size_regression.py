@@ -19,7 +19,6 @@ class TestChunkSizeRegression:
         """Create test config with specific leaf token size."""
         return RagZoomConfig(
             leaf_tokens=200,
-            leaf_overlap_tokens=20,
         )
 
     def test_splitter_creates_correct_chunk_size(self, config):
