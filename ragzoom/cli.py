@@ -53,9 +53,14 @@ def cli(ctx):
 @click.option("--document-id", help="Optional document ID")
 @click.option("--no-progress", is_flag=True, help="Disable progress bar")
 @click.option("--max-concurrent", type=int, default=10, help="Maximum concurrent API requests (default: 10)")
+@click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.pass_context
-def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, max_concurrent: int):
+def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, max_concurrent: int, validate: bool):
     """Index a document from file."""
+    # Set global validation flag
+    from ragzoom.validate import set_validation_enabled
+    set_validation_enabled(validate)
+    
     try:
         # Read file
         path = Path(file_path)
@@ -77,13 +82,50 @@ def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, ma
 
         # Get stats
         store = ctx.obj["store"]
-        leaf_nodes = store.get_leaf_nodes()
-        root = store.get_root_node()
+        
+        # Get leaf nodes for this specific document
+        with store.SessionLocal() as session:
+            from ragzoom.store import TreeNode
+            doc_leaves = session.query(TreeNode).filter_by(
+                document_id=doc_id,
+                summary=None  # Leaf nodes have no summary
+            ).all()
+        
+        # Get root node for this document
+        with store.SessionLocal() as session:
+            root = session.query(TreeNode).filter_by(
+                document_id=doc_id,
+                parent_id=None
+            ).first()
 
         click.echo("✅ Document indexed successfully!")
         click.echo(f"   Document ID: {doc_id}")
-        click.echo(f"   Chunks created: {len(leaf_nodes)}")
+        click.echo(f"   Chunks created: {len(doc_leaves)}")
         click.echo(f"   Tree depth: {root.depth if root else 0}")
+        
+        # Run validation checks
+        from ragzoom.validate import (
+            validate,
+            validate_document_coverage, 
+            validate_chunk_sizes,
+            validate_tree_structure
+        )
+        
+        # Validations will run only if --validate was passed
+        validate(
+            lambda: validate_document_coverage(text, doc_leaves, config.leaf_overlap_tokens),
+            "document coverage"
+        )
+        
+        validate(
+            lambda: validate_chunk_sizes(doc_leaves, config.leaf_tokens),
+            "chunk sizes"
+        )
+        
+        validate(
+            lambda: validate_tree_structure(store, doc_id, text),
+            "tree structure"
+        )
 
     except Exception as e:
         click.echo(f"❌ Error indexing document: {e}", err=True)
@@ -96,6 +138,7 @@ def index(ctx, file_path: str, document_id: Optional[str], no_progress: bool, ma
 @click.option("--token-budget", type=int, help="Token budget for summary")
 @click.option("--use-eviction", is_flag=True, help="Use sliding queue eviction")
 @click.option("--show-stats", is_flag=True, help="Show retrieval statistics")
+@click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.pass_context
 def query(
     ctx,
@@ -104,8 +147,13 @@ def query(
     token_budget: Optional[int],
     use_eviction: bool,
     show_stats: bool,
+    validate: bool,
 ):
     """Query the system and get a summary."""
+    # Set global validation flag
+    from ragzoom.validate import set_validation_enabled
+    set_validation_enabled(validate)
+    
     try:
         retriever = ctx.obj["retriever"]
         assembler = ctx.obj["assembler"]

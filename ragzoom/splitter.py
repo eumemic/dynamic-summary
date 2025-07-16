@@ -23,6 +23,7 @@ class TextSplitter:
             separators=["\n\n", "\n", ". ", " ", ""],
             length_function=self._token_length,
             is_separator_regex=False,
+            keep_separator="end",  # Keep separator at end of chunk to avoid gaps
         )
 
     def _token_length(self, text: str) -> int:
