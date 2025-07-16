@@ -37,7 +37,8 @@ pytest tests/test_concurrency.py   # After modifying api.py
 # Linting and formatting
 ruff check ragzoom/ tests/   # Check code style
 black ragzoom/ tests/        # Format code
-mypy ragzoom/               # Type checking
+mypy ragzoom/               # Type checking (regular)
+dmypy run -- ragzoom/       # Type checking with daemon (11x faster after first run)
 
 # Index documents
 ragzoom index <file>                      # Uses filename as document ID

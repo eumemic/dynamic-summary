@@ -57,7 +57,20 @@ run_black() {
 
 # Function to run mypy
 run_mypy() {
-    if command -v mypy &> /dev/null && [ -n "$modified_files" ]; then
+    if command -v dmypy &> /dev/null && [ -n "$modified_files" ]; then
+        echo "[Mypy] Starting type checking with daemon..."
+        # Use dmypy run which starts daemon if needed and runs check
+        dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
+        local result=$?
+        if [ $result -ne 0 ]; then
+            echo "[Mypy] ⚠️  Type checking found issues (non-blocking)"
+            return 0  # Don't fail on type errors for now
+        else
+            echo "[Mypy] ✅ Passed!"
+            return 0
+        fi
+    elif command -v mypy &> /dev/null && [ -n "$modified_files" ]; then
+        # Fallback to regular mypy if dmypy not available
         echo "[Mypy] Starting type checking..."
         mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
         local result=$?
