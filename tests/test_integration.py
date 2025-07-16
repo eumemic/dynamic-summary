@@ -19,14 +19,16 @@ class TestIntegration:
     @pytest.fixture
     def mock_openai(self):
         """Mock OpenAI API calls."""
-        with patch('ragzoom.index.AsyncOpenAI') as mock_index_client, \
-             patch('ragzoom.retrieve.OpenAI') as mock_retrieve_client, \
-             patch('ragzoom.assemble.OpenAI') as mock_assemble_client:
+        with (
+            patch("ragzoom.index.AsyncOpenAI") as mock_index_client,
+            patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
+            patch("ragzoom.assemble.OpenAI") as mock_assemble_client,
+        ):
 
             # Create async mock functions
             async def mock_embeddings_create(*args, **kwargs):
                 # Handle both single and batch embedding requests
-                input_data = kwargs.get('input', args[0] if args else '')
+                input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
                     # Batch request - return multiple embeddings
                     return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
@@ -35,12 +37,20 @@ class TestIntegration:
                     return Mock(data=[Mock(embedding=[0.1] * 384)])
 
             async def mock_chat_create(*args, **kwargs):
-                return Mock(choices=[Mock(message=Mock(content="Summary of left half. <<<MID>>> Summary of right half."))])
+                return Mock(
+                    choices=[
+                        Mock(
+                            message=Mock(
+                                content="Summary of left half. <<<MID>>> Summary of right half."
+                            )
+                        )
+                    ]
+                )
 
             # Create sync mock functions for retriever and assembler
             def mock_embeddings_create_sync(*args, **kwargs):
                 # Handle both single and batch embedding requests
-                input_data = kwargs.get('input', args[0] if args else '')
+                input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
                     # Batch request - return multiple embeddings
                     return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
@@ -49,7 +59,15 @@ class TestIntegration:
                     return Mock(data=[Mock(embedding=[0.1] * 384)])
 
             def mock_chat_create_sync(*args, **kwargs):
-                return Mock(choices=[Mock(message=Mock(content="Summary of left half. <<<MID>>> Summary of right half."))])
+                return Mock(
+                    choices=[
+                        Mock(
+                            message=Mock(
+                                content="Summary of left half. <<<MID>>> Summary of right half."
+                            )
+                        )
+                    ]
+                )
 
             # Mock embeddings for async client (index)
             mock_embeddings_async = Mock()
@@ -98,7 +116,7 @@ class TestIntegration:
             sqlite_database_url=f"sqlite:///{db_path}",
             leaf_tokens=50,
             adjacent_context_tokens=25,  # Must be less than leaf_tokens
-            budget_tokens=500
+            budget_tokens=500,
         )
 
         store = Store(config)
@@ -175,7 +193,7 @@ class TestIntegration:
             "Dogs are loyal pets. The dog barked loudly.",
             "Birds can fly. Eagles are large birds.",
             "Fish swim in water. Salmon swim upstream.",
-            "Cats and dogs are common pets. Many people love cats."
+            "Cats and dogs are common pets. Many people love cats.",
         ]
 
         for i, text in enumerate(texts):

@@ -18,39 +18,47 @@ class TestDocumentIsolation:
     @pytest.fixture
     def mock_openai(self):
         """Mock OpenAI API calls."""
-        with patch('ragzoom.index.AsyncOpenAI') as mock_index_client, \
-             patch('ragzoom.retrieve.OpenAI') as mock_retrieve_client, \
-             patch('ragzoom.assemble.OpenAI') as mock_assemble_client:
+        with (
+            patch("ragzoom.index.AsyncOpenAI") as mock_index_client,
+            patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
+            patch("ragzoom.assemble.OpenAI") as mock_assemble_client,
+        ):
 
             # Mock embeddings - return different embeddings for different content
             async def mock_embeddings_create(*args, **kwargs):
-                input_data = kwargs.get('input', args[0] if args else '')
+                input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
                     embeddings = []
                     for text in input_data:
-                        if 'dragon' in text.lower():
+                        if "dragon" in text.lower():
                             embeddings.append(Mock(embedding=[0.9] * 1536))
-                        elif 'wizard' in text.lower():
+                        elif "wizard" in text.lower():
                             embeddings.append(Mock(embedding=[0.8] * 1536))
                         else:
                             embeddings.append(Mock(embedding=[0.5] * 1536))
                     return Mock(data=embeddings)
                 else:
-                    if 'dragon' in input_data.lower():
+                    if "dragon" in input_data.lower():
                         return Mock(data=[Mock(embedding=[0.9] * 1536)])
-                    elif 'wizard' in input_data.lower():
+                    elif "wizard" in input_data.lower():
                         return Mock(data=[Mock(embedding=[0.8] * 1536)])
                     else:
                         return Mock(data=[Mock(embedding=[0.5] * 1536)])
 
             async def mock_chat_create(*args, **kwargs):
-                return Mock(choices=[Mock(message=Mock(content="Summary left <<<MID>>> Summary right"))])
+                return Mock(
+                    choices=[
+                        Mock(
+                            message=Mock(content="Summary left <<<MID>>> Summary right")
+                        )
+                    ]
+                )
 
             def mock_embeddings_create_sync(*args, **kwargs):
-                input_data = kwargs.get('input', args[0] if args else '')
-                if 'dragon' in input_data.lower():
+                input_data = kwargs.get("input", args[0] if args else "")
+                if "dragon" in input_data.lower():
                     return Mock(data=[Mock(embedding=[0.9] * 1536)])
-                elif 'wizard' in input_data.lower():
+                elif "wizard" in input_data.lower():
                     return Mock(data=[Mock(embedding=[0.8] * 1536)])
                 else:
                     return Mock(data=[Mock(embedding=[0.5] * 1536)])
@@ -68,7 +76,9 @@ class TestDocumentIsolation:
             for mock_client in [mock_retrieve_client, mock_assemble_client]:
                 instance_sync = Mock()
                 instance_sync.embeddings = Mock()
-                instance_sync.embeddings.create = Mock(side_effect=mock_embeddings_create_sync)
+                instance_sync.embeddings.create = Mock(
+                    side_effect=mock_embeddings_create_sync
+                )
                 mock_client.return_value = instance_sync
 
             yield
@@ -83,7 +93,7 @@ class TestDocumentIsolation:
                 sqlite_database_url="sqlite:///:memory:",
                 leaf_tokens=50,
                 adjacent_context_tokens=25,
-                budget_tokens=1000
+                budget_tokens=1000,
             )
 
             store = Store(config)
@@ -116,7 +126,9 @@ class TestDocumentIsolation:
         # Check that all returned nodes are from dragons.txt
         for node_id in result1.node_ids:
             node = store.get_node(node_id)
-            assert node.document_id == "dragons.txt", f"Node {node_id} is from wrong document: {node.document_id}"
+            assert (
+                node.document_id == "dragons.txt"
+            ), f"Node {node_id} is from wrong document: {node.document_id}"
 
         # Query about wizards in the wizards document
         result2 = retriever.retrieve("tell me about wizards", document_id="wizards.txt")
@@ -124,7 +136,9 @@ class TestDocumentIsolation:
         # Check that all returned nodes are from wizards.txt
         for node_id in result2.node_ids:
             node = store.get_node(node_id)
-            assert node.document_id == "wizards.txt", f"Node {node_id} is from wrong document: {node.document_id}"
+            assert (
+                node.document_id == "wizards.txt"
+            ), f"Node {node_id} is from wrong document: {node.document_id}"
 
         # Cross-query test: query about dragons in wizards document
         # Should return nodes from wizards.txt even though query is about dragons
@@ -132,12 +146,18 @@ class TestDocumentIsolation:
 
         for node_id in result3.node_ids:
             node = store.get_node(node_id)
-            assert node.document_id == "wizards.txt", f"Cross-query failed: got node from {node.document_id}"
+            assert (
+                node.document_id == "wizards.txt"
+            ), f"Cross-query failed: got node from {node.document_id}"
 
         # The content should be about wizards, not dragons
         summary = assembler.assemble(result3)
-        assert "wizard" in summary.lower() or "magic" in summary.lower(), "Should return wizard content"
-        assert "dragon" not in summary.lower(), "Should not return dragon content when querying wizards doc"
+        assert (
+            "wizard" in summary.lower() or "magic" in summary.lower()
+        ), "Should return wizard content"
+        assert (
+            "dragon" not in summary.lower()
+        ), "Should not return dragon content when querying wizards doc"
 
     def test_filename_as_default_document_id(self, setup):
         """Test that filename is used as document_id when not specified."""
@@ -145,10 +165,7 @@ class TestDocumentIsolation:
 
         # Index with file_path but no explicit document_id
         text = "Test content for filename ID"
-        doc_id = tree_builder.add_document(
-            text,
-            file_path="/path/to/test_file.txt"
-        )
+        doc_id = tree_builder.add_document(text, file_path="/path/to/test_file.txt")
 
         # Should use filename as document_id
         assert doc_id == "test_file.txt"

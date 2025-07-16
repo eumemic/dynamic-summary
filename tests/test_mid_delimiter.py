@@ -52,7 +52,9 @@ class TestMidDelimiter:
         """Test that _summarize_text includes <<<MID>>> delimiter."""
         # Mock LLM response with <<<MID>>>
         mock_response = MagicMock()
-        mock_response.choices[0].message.content = "Chapter 1 content <<<MID>>> Chapter 2 content"
+        mock_response.choices[0].message.content = (
+            "Chapter 1 content <<<MID>>> Chapter 2 content"
+        )
         tree_builder.client.chat.completions.create.return_value = mock_response
 
         # Call method
@@ -66,8 +68,8 @@ class TestMidDelimiter:
 
         # Check prompt structure
         call_args = tree_builder.client.chat.completions.create.call_args
-        messages = call_args.kwargs['messages']
-        user_prompt = messages[1]['content']
+        messages = call_args.kwargs["messages"]
+        user_prompt = messages[1]["content"]
 
         assert "[FIRST HALF]" in user_prompt
         assert "[SECOND HALF]" in user_prompt
@@ -84,7 +86,9 @@ class TestMidDelimiter:
         tree_builder.client.chat.completions.create.return_value = mock_response
 
         # Should raise ValueError after max attempts
-        with pytest.raises(ValueError, match="LLM consistently failing to include required delimiter"):
+        with pytest.raises(
+            ValueError, match="LLM consistently failing to include required delimiter"
+        ):
             await tree_builder._summarize_text("Left text", "Right text", 100)
 
     @pytest.mark.asyncio
@@ -113,9 +117,13 @@ class TestMidDelimiter:
         """Test that node creation includes mid_offset."""
         # Mock dependencies
         tree_builder.client.chat.completions.create.return_value = MagicMock()
-        tree_builder.client.chat.completions.create.return_value.choices[0].message.content = "Left <<<MID>>> Right"
+        tree_builder.client.chat.completions.create.return_value.choices[
+            0
+        ].message.content = "Left <<<MID>>> Right"
         tree_builder.client.embeddings.create.return_value = MagicMock()
-        tree_builder.client.embeddings.create.return_value.data = [MagicMock(embedding=[0.1, 0.2, 0.3])]
+        tree_builder.client.embeddings.create.return_value.data = [
+            MagicMock(embedding=[0.1, 0.2, 0.3])
+        ]
 
         # Mock store methods
         left_node = MagicMock()
@@ -131,15 +139,16 @@ class TestMidDelimiter:
 
         # Call method
         await tree_builder._process_node_pair(
-            "left_id", "Left text", "right_id", "Right text",
-            None, None, 1, "doc_id"
+            "left_id", "Left text", "right_id", "Right text", None, None, 1, "doc_id"
         )
 
         # Check that add_node was called with mid_offset
         tree_builder.store.add_node.assert_called_once()
         call_kwargs = tree_builder.store.add_node.call_args.kwargs
-        assert 'mid_offset' in call_kwargs
-        assert call_kwargs['mid_offset'] == 5  # Position of <<<MID>>> in "Left <<<MID>>> Right"
+        assert "mid_offset" in call_kwargs
+        assert (
+            call_kwargs["mid_offset"] == 5
+        )  # Position of <<<MID>>> in "Left <<<MID>>> Right"
 
     def test_extract_node_text_no_mid_offset(self, assembler):
         """Test text extraction for node without mid_offset."""
@@ -153,7 +162,9 @@ class TestMidDelimiter:
     def test_extract_node_text_left_child_covered(self, assembler):
         """Test text extraction when left child is covered."""
         node = MagicMock()
-        node.mid_offset = 12  # Position of <<<MID>>> in "Parent left <<<MID>>> parent right"
+        node.mid_offset = (
+            12  # Position of <<<MID>>> in "Parent left <<<MID>>> parent right"
+        )
         node.text = "Parent left <<<MID>>> parent right"
         node.id = "parent_id"
 
@@ -168,7 +179,9 @@ class TestMidDelimiter:
         coverage_map = {"left_id"}  # Only left child covered
 
         result = assembler._extract_node_text(node, coverage_map)
-        expected = "Detailed left content\n\n parent right"  # Left child + parent right half
+        expected = (
+            "Detailed left content\n\n parent right"  # Left child + parent right half
+        )
         assert result == expected
 
     def test_extract_node_text_right_child_covered(self, assembler):
@@ -188,7 +201,9 @@ class TestMidDelimiter:
         coverage_map = {"right_id"}  # Only right child covered
 
         result = assembler._extract_node_text(node, coverage_map)
-        expected = "Parent left \n\nDetailed right content"  # Parent left half + right child
+        expected = (
+            "Parent left \n\nDetailed right content"  # Parent left half + right child
+        )
         assert result == expected
 
     def test_extract_node_text_both_children_covered(self, assembler):
@@ -211,17 +226,27 @@ class TestMidDelimiter:
 
     def test_has_span_overlap(self, assembler):
         """Test span overlap detection."""
-        seen_items = {(0, 100, 1, 'node1'), (200, 300, 2, 'node2')}
+        seen_items = {(0, 100, 1, "node1"), (200, 300, 2, "node2")}
 
         # Test overlapping spans
-        assert assembler._has_span_overlap_detailed((50, 150), seen_items)  # Overlaps (0,100)
-        assert assembler._has_span_overlap_detailed((250, 350), seen_items)  # Overlaps (200,300)
-        assert assembler._has_span_overlap_detailed((90, 210), seen_items)  # Overlaps both
+        assert assembler._has_span_overlap_detailed(
+            (50, 150), seen_items
+        )  # Overlaps (0,100)
+        assert assembler._has_span_overlap_detailed(
+            (250, 350), seen_items
+        )  # Overlaps (200,300)
+        assert assembler._has_span_overlap_detailed(
+            (90, 210), seen_items
+        )  # Overlaps both
 
         # Test non-overlapping spans
-        assert not assembler._has_span_overlap_detailed((100, 200), seen_items)  # Between
+        assert not assembler._has_span_overlap_detailed(
+            (100, 200), seen_items
+        )  # Between
         assert not assembler._has_span_overlap_detailed((300, 400), seen_items)  # After
-        assert not assembler._has_span_overlap_detailed((400, 500), seen_items)  # Far after
+        assert not assembler._has_span_overlap_detailed(
+            (400, 500), seen_items
+        )  # Far after
 
     def test_sort_nodes_chronologically(self, assembler):
         """Test chronological sorting of nodes."""

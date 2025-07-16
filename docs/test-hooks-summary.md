@@ -6,17 +6,10 @@
 
 **Pre-commit Hook** (`.git/hooks/pre-commit`)
 - Runs automatically before each commit
-- Intelligently selects only relevant tests based on modified files
-- Execution time: ~1-2 seconds for targeted tests
-- Also runs linting (ruff) on modified Python files
+- Runs fast tests only (excludes @slow and @integration)
+- Also runs linting (ruff + black) and type checking (mypy)
+- Execution time: ~7-8 seconds with 8 parallel workers
 - Can be skipped with `git commit --no-verify`
-
-**Pre-push Hook** (`.git/hooks/pre-push`)
-- Runs automatically before pushing to remote
-- Executes full test suite (~4.5 seconds)
-- Optionally runs type checking with mypy
-- Ensures code quality before sharing
-- Can be skipped with `git push --no-verify`
 
 ### 2. Claude Code Hooks
 
@@ -52,17 +45,18 @@
 
 ### 5. Performance
 
-- **Full test suite**: ~4.5 seconds (30 tests)
-- **Targeted tests**: 1-2 seconds (varies by module)
+- **Fast tests (pre-commit)**: ~7-8 seconds with mock store
+- **Full test suite**: ~10-11 seconds including integration tests
 - **Single test file**: <1 second
 
 ## Benefits
 
-1. **Fast Feedback**: Pre-commit hooks catch issues in 1-2 seconds
-2. **Quality Gates**: Pre-push ensures all tests pass before sharing
+1. **Fast Feedback**: Pre-commit runs all fast tests + linting in ~7-8 seconds
+2. **Quality Gates**: All checks happen before commit (no separate pre-push)
 3. **AI Integration**: Claude Code automatically runs relevant tests
 4. **Developer Experience**: Clear feedback, easy to understand what's running
 5. **Flexibility**: Can be disabled when needed, multiple ways to run tests
+6. **Mock Store**: 4.5x faster unit tests using in-memory storage
 
 ## Usage Examples
 
@@ -71,14 +65,16 @@
 # Make changes to store.py
 vim ragzoom/store.py
 
-# Commit - only test_store.py runs automatically
+# Commit - runs all fast tests + linting
 git add ragzoom/store.py
 git commit -m "Optimize cache performance"
-# Output: Running tests/test_store.py ... Tests passed!
+# Output: Running fast tests... ✅ Tests passed!
+#         Running ruff... ✅ Ruff passed!
+#         Running black... ✅ Black passed!
+#         Running type checking... ✅ Type checking passed!
 
-# Push - all tests run automatically  
+# Push - no additional checks
 git push origin main
-# Output: Running full test suite ... All tests passed!
 ```
 
 ### With Claude Code

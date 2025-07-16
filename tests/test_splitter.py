@@ -6,7 +6,7 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.splitter import TextSplitter
 
 # Set required env var for tests
-os.environ['OPENAI_API_KEY'] = 'test-key'
+os.environ["OPENAI_API_KEY"] = "test-key"
 
 
 class TestTextSplitter:
@@ -35,7 +35,7 @@ class TestTextSplitter:
         # Should split on sentence boundaries
         for chunk in chunks:
             # Each chunk should end with punctuation or be the last chunk
-            assert chunk.strip().endswith('.') or chunk == chunks[-1]
+            assert chunk.strip().endswith(".") or chunk == chunks[-1]
 
     def test_adjacent_context(self):
         """Test getting adjacent context for chunks."""
@@ -92,7 +92,7 @@ class TestTextSplitter:
 
         # Main test: verify we got multiple chunks from long text
         assert len(chunks) > 1
-        
+
         # Verify complete coverage
-        reconstructed = ''.join(chunks)
+        reconstructed = "".join(chunks)
         assert len(reconstructed) == len(text), "Should have complete coverage"

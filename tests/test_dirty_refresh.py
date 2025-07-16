@@ -19,12 +19,14 @@ class TestDirtyRefresh:
     def setup_system(self):
         """Set up a test system with mocked API."""
         # Mock OpenAI clients
-        with patch('ragzoom.index.AsyncOpenAI') as mock_index_client, \
-             patch('ragzoom.retrieve.OpenAI') as mock_retrieve_client:
+        with (
+            patch("ragzoom.index.AsyncOpenAI") as mock_index_client,
+            patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
+        ):
 
             # Setup async mocks for indexing
             async def mock_embeddings_create(*args, **kwargs):
-                input_data = kwargs.get('input', args[0] if args else '')
+                input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
                     return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
                 else:
@@ -32,11 +34,19 @@ class TestDirtyRefresh:
 
             async def mock_chat_create(*args, **kwargs):
                 # Return fresh summary with MID delimiter
-                return Mock(choices=[Mock(message=Mock(content="Fresh left summary. <<<MID>>> Fresh right summary."))])
+                return Mock(
+                    choices=[
+                        Mock(
+                            message=Mock(
+                                content="Fresh left summary. <<<MID>>> Fresh right summary."
+                            )
+                        )
+                    ]
+                )
 
             # Setup sync mocks for retrieval
             def mock_embeddings_create_sync(*args, **kwargs):
-                input_data = kwargs.get('input', args[0] if args else '')
+                input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
                     return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
                 else:
@@ -70,7 +80,7 @@ class TestDirtyRefresh:
                     sqlite_database_url="sqlite:///:memory:",
                     chroma_persist_directory=temp_dir,
                     leaf_tokens=200,
-                    budget_tokens=1000
+                    budget_tokens=1000,
                 )
 
                 store = Store(config)
@@ -89,27 +99,43 @@ class TestDirtyRefresh:
         # Create a simple tree structure
         # Add leaf nodes
         store.add_node(
-            "leaf1", "Original leaf 1 text", [0.1] * 384,
-            0, 0, 100, document_id="test-doc"
+            "leaf1",
+            "Original leaf 1 text",
+            [0.1] * 384,
+            0,
+            0,
+            100,
+            document_id="test-doc",
         )
         store.add_node(
-            "leaf2", "Original leaf 2 text", [0.2] * 384,
-            0, 100, 200, document_id="test-doc"
+            "leaf2",
+            "Original leaf 2 text",
+            [0.2] * 384,
+            0,
+            100,
+            200,
+            document_id="test-doc",
         )
 
         # Add parent node with old summary
         store.add_node(
-            "parent1", "Old parent summary. <<<MID>>> Old right summary.", [0.15] * 384,
-            1, 0, 200,
-            left_child_id="leaf1", right_child_id="leaf2",
+            "parent1",
+            "Old parent summary. <<<MID>>> Old right summary.",
+            [0.15] * 384,
+            1,
+            0,
+            200,
+            left_child_id="leaf1",
+            right_child_id="leaf2",
             summary="Old parent summary. <<<MID>>> Old right summary.",
             mid_offset=len("Old parent summary. "),
-            document_id="test-doc"
+            document_id="test-doc",
         )
 
         # Update parent references
         with store.SessionLocal() as session:
             from ragzoom.store import TreeNode
+
             for leaf_id in ["leaf1", "leaf2"]:
                 leaf = session.query(TreeNode).filter_by(id=leaf_id).first()
                 if leaf:
@@ -149,18 +175,21 @@ class TestDirtyRefresh:
 
         # Create a tree with dirty node
         store.add_node(
-            "leaf1", "Leaf 1 text", [0.1] * 384,
-            0, 0, 100, document_id="test-doc"
+            "leaf1", "Leaf 1 text", [0.1] * 384, 0, 0, 100, document_id="test-doc"
         )
         store.add_node(
-            "leaf2", "Leaf 2 text", [0.2] * 384,
-            0, 100, 200, document_id="test-doc"
+            "leaf2", "Leaf 2 text", [0.2] * 384, 0, 100, 200, document_id="test-doc"
         )
         store.add_node(
-            "parent1", "Stale summary", [0.15] * 384,
-            1, 0, 200,
-            left_child_id="leaf1", right_child_id="leaf2",
-            document_id="test-doc"
+            "parent1",
+            "Stale summary",
+            [0.15] * 384,
+            1,
+            0,
+            200,
+            left_child_id="leaf1",
+            right_child_id="leaf2",
+            document_id="test-doc",
         )
 
         # Mark as dirty
@@ -180,18 +209,21 @@ class TestDirtyRefresh:
 
         # Create dirty node
         store.add_node(
-            "leaf1", "Leaf 1", [0.1] * 384,
-            0, 0, 100, document_id="test-doc"
+            "leaf1", "Leaf 1", [0.1] * 384, 0, 0, 100, document_id="test-doc"
         )
         store.add_node(
-            "leaf2", "Leaf 2", [0.2] * 384,
-            0, 100, 200, document_id="test-doc"
+            "leaf2", "Leaf 2", [0.2] * 384, 0, 100, 200, document_id="test-doc"
         )
         store.add_node(
-            "parent1", "Old summary", [0.15] * 384,
-            1, 0, 200,
-            left_child_id="leaf1", right_child_id="leaf2",
-            document_id="test-doc"
+            "parent1",
+            "Old summary",
+            [0.15] * 384,
+            1,
+            0,
+            200,
+            left_child_id="leaf1",
+            right_child_id="leaf2",
+            document_id="test-doc",
         )
 
         store.mark_dirty_upward("parent1")
@@ -214,8 +246,7 @@ class TestDirtyRefresh:
 
         # Create and mark leaf as dirty
         store.add_node(
-            "leaf1", "Leaf text", [0.1] * 384,
-            0, 0, 100, document_id="test-doc"
+            "leaf1", "Leaf text", [0.1] * 384, 0, 0, 100, document_id="test-doc"
         )
         store.mark_dirty_upward("leaf1")
 
@@ -235,23 +266,27 @@ class TestDirtyRefresh:
 
         # Create nodes
         store.add_node(
-            "leaf1", "Leaf 1", [0.1] * test_dim,
-            0, 0, 100, document_id="test-doc"
+            "leaf1", "Leaf 1", [0.1] * test_dim, 0, 0, 100, document_id="test-doc"
         )
         store.add_node(
-            "leaf2", "Leaf 2", [0.2] * test_dim,
-            0, 100, 200, document_id="test-doc"
+            "leaf2", "Leaf 2", [0.2] * test_dim, 0, 100, 200, document_id="test-doc"
         )
         store.add_node(
-            "parent1", "Old summary", [0.15] * test_dim,
-            1, 0, 200,
-            left_child_id="leaf1", right_child_id="leaf2",
-            document_id="test-doc"
+            "parent1",
+            "Old summary",
+            [0.15] * test_dim,
+            1,
+            0,
+            200,
+            left_child_id="leaf1",
+            right_child_id="leaf2",
+            document_id="test-doc",
         )
 
         # Update parent references
         with store.SessionLocal() as session:
             from ragzoom.store import TreeNode
+
             for leaf_id in ["leaf1", "leaf2"]:
                 leaf = session.query(TreeNode).filter_by(id=leaf_id).first()
                 if leaf:

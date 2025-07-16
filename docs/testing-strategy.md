@@ -6,23 +6,13 @@ RagZoom uses a multi-layered testing approach with ~4.5 second test execution ti
 
 ## Test Execution Layers
 
-### 1. Git Pre-commit Hook (Fast - ~1-2 seconds)
+### 1. Git Pre-commit Hook (Fast - ~7-8 seconds)
 - **Triggers**: Before every commit
-- **Scope**: Only tests affected by modified files
-- **Purpose**: Catch issues early without slowing down development
+- **Scope**: Fast tests only (excludes @slow and @integration)
+- **Also runs**: Linting (ruff + black) and type checking (mypy)
+- **Purpose**: Comprehensive checks without slowing down development
 
-Example:
-```bash
-# If you modify splitter.py, only test_splitter.py runs
-# If you modify config.py, all tests run (since config affects everything)
-```
-
-### 2. Git Pre-push Hook (Complete - ~4.5 seconds)
-- **Triggers**: Before pushing to remote
-- **Scope**: Full test suite + optional type checking
-- **Purpose**: Ensure all tests pass before sharing code
-
-### 3. Claude Code Hooks (Intelligent)
+### 2. Claude Code Hooks (Intelligent)
 - **post_edit**: Runs relevant tests after file edits
 - **pre_write**: Runs linting before writing Python files
 - **Purpose**: Continuous feedback during AI-assisted development
@@ -92,11 +82,14 @@ The git pre-commit hook runs in 1-2 seconds by only testing what changed:
 # Modifying api.py triggers only test_concurrency.py
 ```
 
-### 2. Comprehensive Pre-push
-Before code reaches the remote repository, all tests must pass:
+### 2. Run Full Test Suite Manually
+To run all tests including slow/integration:
 ```bash
-# Automatic on git push, or run manually:
-pytest tests/ --tb=short
+# Run all tests:
+pytest tests/ -n 8
+
+# Run with real store:
+pytest tests/ --use-real-store -n 8
 ```
 
 ### 3. Test Isolation
@@ -134,8 +127,7 @@ When adding features:
 
 ### Git Hooks
 Located in `.git/hooks/`:
-- `pre-commit`: Smart test selection
-- `pre-push`: Full validation
+- `pre-commit`: Fast tests + linting + type checking
 
 ### Claude Code Hooks
 Configured in `.claude/hooks.json`:

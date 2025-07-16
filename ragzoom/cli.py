@@ -53,13 +53,27 @@ def cli(ctx):
 @click.option("--document-id", help="Optional document ID")
 @click.option("--clear", is_flag=True, help="Clear existing document before indexing")
 @click.option("--no-progress", is_flag=True, help="Disable progress bar")
-@click.option("--max-concurrent", type=int, default=10, help="Maximum concurrent API requests (default: 10)")
+@click.option(
+    "--max-concurrent",
+    type=int,
+    default=10,
+    help="Maximum concurrent API requests (default: 10)",
+)
 @click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.pass_context
-def index(ctx, file_path: str, document_id: Optional[str], clear: bool, no_progress: bool, max_concurrent: int, validate: bool):
+def index(
+    ctx,
+    file_path: str,
+    document_id: Optional[str],
+    clear: bool,
+    no_progress: bool,
+    max_concurrent: int,
+    validate: bool,
+):
     """Index a document from file."""
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
+
     set_validation_enabled(validate)
 
     try:
@@ -77,6 +91,7 @@ def index(ctx, file_path: str, document_id: Optional[str], clear: bool, no_progr
             # Check if document exists
             with store.SessionLocal() as session:
                 from ragzoom.store import Document
+
                 existing_doc = session.query(Document).filter_by(id=document_id).first()
                 if existing_doc:
                     click.echo(f"Clearing existing document '{document_id}'...")
@@ -98,7 +113,7 @@ def index(ctx, file_path: str, document_id: Optional[str], clear: bool, no_progr
             text,
             document_id=document_id,
             file_path=str(path.absolute()),
-            show_progress=not no_progress
+            show_progress=not no_progress,
         )
 
         # Get stats
@@ -107,17 +122,22 @@ def index(ctx, file_path: str, document_id: Optional[str], clear: bool, no_progr
         # Get leaf nodes for this specific document
         with store.SessionLocal() as session:
             from ragzoom.store import TreeNode
-            doc_leaves = session.query(TreeNode).filter_by(
-                document_id=doc_id,
-                summary=None  # Leaf nodes have no summary
-            ).all()
+
+            doc_leaves = (
+                session.query(TreeNode)
+                .filter_by(
+                    document_id=doc_id, summary=None  # Leaf nodes have no summary
+                )
+                .all()
+            )
 
         # Get root node for this document
         with store.SessionLocal() as session:
-            root = session.query(TreeNode).filter_by(
-                document_id=doc_id,
-                parent_id=None
-            ).first()
+            root = (
+                session.query(TreeNode)
+                .filter_by(document_id=doc_id, parent_id=None)
+                .first()
+            )
 
         click.echo("✅ Document indexed successfully!")
         click.echo(f"   Document ID: {doc_id}")
@@ -134,19 +154,14 @@ def index(ctx, file_path: str, document_id: Optional[str], clear: bool, no_progr
 
         # Validations will run only if --validate was passed
         validate(
-            lambda: validate_document_coverage(text, doc_leaves),
-            "document coverage"
+            lambda: validate_document_coverage(text, doc_leaves), "document coverage"
         )
 
         validate(
-            lambda: validate_chunk_sizes(doc_leaves, config.leaf_tokens),
-            "chunk sizes"
+            lambda: validate_chunk_sizes(doc_leaves, config.leaf_tokens), "chunk sizes"
         )
 
-        validate(
-            lambda: validate_tree_structure(store, doc_id, text),
-            "tree structure"
-        )
+        validate(lambda: validate_tree_structure(store, doc_id, text), "tree structure")
 
     except Exception as e:
         click.echo(f"❌ Error indexing document: {e}", err=True)
@@ -163,6 +178,7 @@ def documents(ctx):
         # Get all unique documents
         with store.SessionLocal() as session:
             from ragzoom.store import Document
+
             docs = session.query(Document).all()
 
         if not docs:
@@ -176,11 +192,15 @@ def documents(ctx):
             # Get document stats
             with store.SessionLocal() as session:
                 from ragzoom.store import TreeNode
-                node_count = session.query(TreeNode).filter_by(document_id=doc.id).count()
-                leaf_count = session.query(TreeNode).filter_by(
-                    document_id=doc.id,
-                    summary=None
-                ).count()
+
+                node_count = (
+                    session.query(TreeNode).filter_by(document_id=doc.id).count()
+                )
+                leaf_count = (
+                    session.query(TreeNode)
+                    .filter_by(document_id=doc.id, summary=None)
+                    .count()
+                )
 
             click.echo(f"\nDocument ID: {doc.id}")
             if doc.file_path:
@@ -217,6 +237,7 @@ def query(
     """Query the system and get a summary."""
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
+
     set_validation_enabled(validate)
 
     try:
@@ -225,10 +246,17 @@ def query(
 
         # Retrieve
         if use_eviction:
-            result = retriever.retrieve_with_eviction(query_text, token_budget, document_id=document_id)
+            result = retriever.retrieve_with_eviction(
+                query_text, token_budget, document_id=document_id
+            )
         else:
             # Pass both n_max and budget_tokens to support all three modes
-            result = retriever.retrieve(query_text, n_max=n_max, budget_tokens=token_budget, document_id=document_id)
+            result = retriever.retrieve(
+                query_text,
+                n_max=n_max,
+                budget_tokens=token_budget,
+                document_id=document_id,
+            )
 
         # Assemble
         summary, token_count = assembler.assemble_with_budget(result, token_budget)
@@ -343,11 +371,15 @@ def clear(ctx, document_id: Optional[str], confirm: bool):
         if document_id:
             # Clear specific document
             if not confirm:
-                click.confirm(f"⚠️  This will delete document '{document_id}' and all its data. Are you sure?", abort=True)
+                click.confirm(
+                    f"⚠️  This will delete document '{document_id}' and all its data. Are you sure?",
+                    abort=True,
+                )
 
             # Check if document exists
             with store.SessionLocal() as session:
                 from ragzoom.store import Document
+
                 doc = session.query(Document).filter_by(id=document_id).first()
                 if not doc:
                     click.echo(f"❌ Document '{document_id}' not found")
@@ -361,7 +393,9 @@ def clear(ctx, document_id: Optional[str], confirm: bool):
                 session.query(Document).filter_by(id=document_id).delete()
                 session.commit()
 
-            click.echo(f"✅ Cleared document '{document_id}' ({deleted_count} nodes deleted)")
+            click.echo(
+                f"✅ Cleared document '{document_id}' ({deleted_count} nodes deleted)"
+            )
         else:
             # Clear all data
             if not confirm:
@@ -381,8 +415,8 @@ def clear(ctx, document_id: Optional[str], confirm: bool):
             # Clear Chroma collection - delete all documents
             # Get all IDs first
             results = store.collection.get()
-            if results['ids']:
-                store.collection.delete(ids=results['ids'])
+            if results["ids"]:
+                store.collection.delete(ids=results["ids"])
 
             # Clear the cache
             store.node_cache.clear()
@@ -411,6 +445,7 @@ def export(ctx, input_file: str, output_file: str, format: str):
         nodes_data = []
         with store.SessionLocal() as session:
             from ragzoom.store import TreeNode
+
             nodes = session.query(TreeNode).all()
             for node in nodes:
                 node_dict = {
@@ -420,7 +455,9 @@ def export(ctx, input_file: str, output_file: str, format: str):
                     "span_start": node.span_start,
                     "span_end": node.span_end,
                     "is_leaf": node.summary is None,
-                    "text_preview": node.text[:100] + "..." if len(node.text) > 100 else node.text,
+                    "text_preview": (
+                        node.text[:100] + "..." if len(node.text) > 100 else node.text
+                    ),
                 }
                 nodes_data.append(node_dict)
 
@@ -434,7 +471,9 @@ def export(ctx, input_file: str, output_file: str, format: str):
             for node in sorted(nodes_data, key=lambda x: (x["depth"], x["span_start"])):
                 indent = "  " * node["depth"]
                 leaf_marker = "🍃" if node["is_leaf"] else "📁"
-                lines.append(f"{indent}{leaf_marker} {node['id'][:8]}... [{node['span_start']}-{node['span_end']}]")
+                lines.append(
+                    f"{indent}{leaf_marker} {node['id'][:8]}... [{node['span_start']}-{node['span_end']}]"
+                )
             output_path.write_text("\n".join(lines))
 
         click.echo(f"✅ Exported {len(nodes_data)} nodes to {output_file}")

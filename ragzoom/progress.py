@@ -6,6 +6,7 @@ from typing import Optional
 
 try:
     from tqdm import tqdm
+
     HAS_TQDM = True
 except ImportError:
     HAS_TQDM = False
@@ -19,7 +20,7 @@ class GlobalProgressTracker:
 
     def __init__(self, total_chunks: int, show_progress: bool = True):
         """Initialize progress tracker.
-        
+
         Args:
             total_chunks: Number of leaf chunks
             show_progress: Whether to show progress bar
@@ -42,7 +43,7 @@ class GlobalProgressTracker:
                 smoothing=0.3,  # Smooth out time estimates
                 miniters=1,  # Update on every iteration
                 # Simpler format without descriptions to avoid formatting issues
-                bar_format="{percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+                bar_format="{percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
             )
         else:
             self.pbar = None

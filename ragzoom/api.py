@@ -14,6 +14,7 @@ from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
 
+
 # Thread-safe service creation - new instance per request
 class RagZoomService:
     """Service container for RagZoom components."""
@@ -28,13 +29,15 @@ class RagZoomService:
 
     def close(self):
         """Close store connections and cleanup resources."""
-        if hasattr(self, 'store'):
+        if hasattr(self, "store"):
             self.store.close()
+
 
 # Dependency injection - creates new service per request
 def get_ragzoom_service() -> RagZoomService:
     """Create a new RagZoom service instance for thread safety."""
     return RagZoomService()
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -47,13 +50,17 @@ app = FastAPI(
 # Request/Response models
 class IndexDocumentRequest(BaseModel):
     """Request to index a new document."""
+
     text: str = Field(..., description="Document text to index")
     document_id: Optional[str] = Field(None, description="Optional document ID")
-    file_path: Optional[str] = Field(None, description="Optional file path (used for default document ID)")
+    file_path: Optional[str] = Field(
+        None, description="Optional file path (used for default document ID)"
+    )
 
 
 class IndexDocumentResponse(BaseModel):
     """Response from document indexing."""
+
     document_id: str
     chunks_created: int
     tree_depth: int
@@ -61,6 +68,7 @@ class IndexDocumentResponse(BaseModel):
 
 class QueryRequest(BaseModel):
     """Request to query the system."""
+
     query: str = Field(..., description="Query text")
     document_id: str = Field(..., description="Document ID to query within")
     n_max: Optional[int] = Field(None, description="Override max nodes to retrieve")
@@ -70,6 +78,7 @@ class QueryRequest(BaseModel):
 
 class QueryResponse(BaseModel):
     """Response from query."""
+
     summary: str
     token_count: int
     nodes_retrieved: int
@@ -78,11 +87,13 @@ class QueryResponse(BaseModel):
 
 class PinNodeRequest(BaseModel):
     """Request to pin a node."""
+
     node_id: str = Field(..., description="Node ID to pin")
 
 
 class UpdateConfigRequest(BaseModel):
     """Request to update configuration."""
+
     budget_tokens: Optional[int] = None
     leaf_tokens: Optional[int] = None
     mmr_lambda: Optional[float] = None
@@ -94,6 +105,7 @@ class UpdateConfigRequest(BaseModel):
 
 class SystemStatusResponse(BaseModel):
     """System status information."""
+
     total_nodes: int
     leaf_nodes: int
     tree_depth: int
@@ -103,6 +115,7 @@ class SystemStatusResponse(BaseModel):
 
 class DocumentInfo(BaseModel):
     """Information about an indexed document."""
+
     document_id: str
     file_path: Optional[str]
     indexed_at: str
@@ -112,6 +125,7 @@ class DocumentInfo(BaseModel):
 
 class DocumentsResponse(BaseModel):
     """Response listing all indexed documents."""
+
     documents: list[DocumentInfo]
 
 
@@ -125,27 +139,35 @@ async def root():
 @app.post("/index", response_model=IndexDocumentResponse)
 async def index_document(
     request: IndexDocumentRequest,
-    service: RagZoomService = Depends(get_ragzoom_service)
+    service: RagZoomService = Depends(get_ragzoom_service),
 ):
     """Index a new document."""
     try:
         # Add document to tree - use async version directly since we're in an async endpoint
         document_id = await service.tree_builder.add_document_async(
-            request.text, request.document_id, file_path=request.file_path, show_progress=False
+            request.text,
+            request.document_id,
+            file_path=request.file_path,
+            show_progress=False,
         )
 
         # Get stats for this specific document
         with service.store.SessionLocal() as session:
             from ragzoom.store import TreeNode
-            doc_leaves = session.query(TreeNode).filter_by(
-                document_id=document_id,
-                summary=None  # Leaf nodes have no summary
-            ).all()
 
-            root = session.query(TreeNode).filter_by(
-                document_id=document_id,
-                parent_id=None
-            ).first()
+            doc_leaves = (
+                session.query(TreeNode)
+                .filter_by(
+                    document_id=document_id, summary=None  # Leaf nodes have no summary
+                )
+                .all()
+            )
+
+            root = (
+                session.query(TreeNode)
+                .filter_by(document_id=document_id, parent_id=None)
+                .first()
+            )
 
         tree_depth = root.depth if root else 0
 
@@ -160,28 +182,31 @@ async def index_document(
 
 
 @app.get("/documents", response_model=DocumentsResponse)
-async def list_documents(
-    service: RagZoomService = Depends(get_ragzoom_service)
-):
+async def list_documents(service: RagZoomService = Depends(get_ragzoom_service)):
     """List all indexed documents."""
     try:
         documents = []
 
         with service.store.SessionLocal() as session:
             from ragzoom.store import Document, TreeNode
+
             docs = session.query(Document).all()
 
             for doc in docs:
                 # Get node count for this document
-                node_count = session.query(TreeNode).filter_by(document_id=doc.id).count()
+                node_count = (
+                    session.query(TreeNode).filter_by(document_id=doc.id).count()
+                )
 
-                documents.append(DocumentInfo(
-                    document_id=doc.id,
-                    file_path=doc.file_path,
-                    indexed_at=doc.indexed_at.isoformat(),
-                    chunk_count=doc.chunk_count,
-                    node_count=node_count
-                ))
+                documents.append(
+                    DocumentInfo(
+                        document_id=doc.id,
+                        file_path=doc.file_path,
+                        indexed_at=doc.indexed_at.isoformat(),
+                        chunk_count=doc.chunk_count,
+                        node_count=node_count,
+                    )
+                )
 
         return DocumentsResponse(documents=documents)
     except Exception as e:
@@ -191,8 +216,7 @@ async def list_documents(
 
 @app.post("/query", response_model=QueryResponse)
 async def query(
-    request: QueryRequest,
-    service: RagZoomService = Depends(get_ragzoom_service)
+    request: QueryRequest, service: RagZoomService = Depends(get_ragzoom_service)
 ):
     """Query the system."""
     try:
@@ -205,7 +229,10 @@ async def query(
         else:
             # Use async version since we're in an async endpoint
             retrieval_result = await service.retriever.retrieve_async(
-                request.query, request.n_max, request.token_budget, document_id=request.document_id
+                request.query,
+                request.n_max,
+                request.token_budget,
+                document_id=request.document_id,
             )
 
         # Assemble summary
@@ -226,8 +253,7 @@ async def query(
 
 @app.post("/pin")
 async def pin_node(
-    request: PinNodeRequest,
-    service: RagZoomService = Depends(get_ragzoom_service)
+    request: PinNodeRequest, service: RagZoomService = Depends(get_ragzoom_service)
 ):
     """Pin a node."""
     try:
@@ -245,8 +271,7 @@ async def pin_node(
 
 @app.patch("/config")
 async def update_config(
-    request: UpdateConfigRequest,
-    service: RagZoomService = Depends(get_ragzoom_service)
+    request: UpdateConfigRequest, service: RagZoomService = Depends(get_ragzoom_service)
 ):
     """Update configuration dynamically."""
     try:
@@ -273,9 +298,7 @@ async def update_config(
 
 
 @app.get("/status", response_model=SystemStatusResponse)
-async def get_status(
-    service: RagZoomService = Depends(get_ragzoom_service)
-):
+async def get_status(service: RagZoomService = Depends(get_ragzoom_service)):
     """Get system status."""
     try:
         # Gather stats
@@ -297,9 +320,7 @@ async def get_status(
 
 
 @app.post("/recompute")
-async def recompute_summaries(
-    service: RagZoomService = Depends(get_ragzoom_service)
-):
+async def recompute_summaries(service: RagZoomService = Depends(get_ragzoom_service)):
     """Recompute summaries for dirty nodes."""
     try:
         count = service.tree_builder.recompute_dirty_summaries()

@@ -44,9 +44,6 @@ mkdir -p "$PROJECT_ROOT/.git/hooks"
 # Symlink pre-commit hook
 create_symlink "$PROJECT_ROOT/scripts/git-hooks/pre-commit" "$PROJECT_ROOT/.git/hooks/pre-commit"
 
-# Symlink pre-push hook
-create_symlink "$PROJECT_ROOT/scripts/git-hooks/pre-push" "$PROJECT_ROOT/.git/hooks/pre-push"
-
 # 2. Check Python environment
 echo ""
 echo "🐍 Checking Python environment..."
@@ -125,8 +122,7 @@ echo "   • Lint code: ruff check ragzoom/ tests/"
 echo "   • Type check: mypy ragzoom/"
 echo ""
 echo "🪝 Git hooks installed:"
-echo "   • pre-commit: Runs relevant tests for changed files"
-echo "   • pre-push: Runs full test suite before pushing"
+echo "   • pre-commit: Runs fast tests + linting + type checking"
 echo "   • Skip hooks with --no-verify flag"
 echo ""
 echo "📖 Documentation:"

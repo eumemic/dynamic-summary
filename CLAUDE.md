@@ -15,8 +15,14 @@ RagZoom is an incremental, hierarchical RAG (Retrieval-Augmented Generation) mem
 
 ### Development
 ```bash
-# Run all tests (takes ~4.5 seconds)
-pytest tests/ -v
+# Run fast tests (excludes @slow and @integration)
+pytest tests/ -m "not slow and not integration" -n 8
+
+# Run all tests including slow/integration
+pytest tests/ -n 8
+
+# Run with real store for all tests
+pytest tests/ --use-real-store -n 8
 
 # Run specific test files based on what you're working on
 pytest tests/test_splitter.py      # After modifying splitter.py
@@ -55,8 +61,9 @@ ragzoom serve
 ```
 
 ### Git Hooks
-- **pre-commit**: Runs relevant tests for modified files (~1-2 seconds)
-- **pre-push**: Runs full test suite before pushing (~4.5 seconds)
+- **pre-commit**: Runs fast tests + linting + type checking (~8 seconds with 8 workers)
+- Excludes @slow and @integration tests for speed
+- Uses `pytest tests/ -m "not slow and not integration" -n 8`
 
 ## Architecture
 
@@ -110,6 +117,11 @@ Key settings in `RagZoomConfig`:
 
 ### Testing Strategy
 
+**Test Performance**: Full test suite optimized for speed with mock storage layer
+- **Fast tests**: 137 tests in ~8.5 seconds with 8 parallel workers
+- **Integration tests**: 3 tests using real SQLite + ChromaDB (marked @pytest.mark.integration)
+- **Slow tests**: 3 tests taking >5 seconds (marked @pytest.mark.slow)
+
 **Test Coverage Map**:
 - `test_splitter.py` → `splitter.py` (unit tests)
 - `test_store.py` → `store.py` (unit tests)
@@ -121,8 +133,13 @@ Key settings in `RagZoomConfig`:
 - `test_dirty_refresh.py` → dirty node refresh functionality (async refresh, retrieval integration)
 - `test_budget_guarantee.py` → budget constraint enforcement (worst-case bounds, strategies)
 - `test_validate.py` → `validate.py` (validation functions)
+- `test_indexing_fast.py` → fast versions of indexing tests using mock store
+- `test_incomplete_indexing.py` → slow integration tests for indexing edge cases
 
-**Coverage Status**: All core modules now have test coverage
+**Mock Store**: `tests/mock_store.py` provides SimpleMockStore for 4.5x faster unit tests
+- In-memory tree structure and state management
+- Compatible with all Store methods used in tests
+- Automatic selection via pytest fixtures (mock by default, real store for @integration)
 
 ### Validation Features
 

@@ -3,7 +3,6 @@
 This test fails with the OLD code but passes with the NEW code.
 """
 
-
 import pytest
 
 from ragzoom.assemble import Assembler
@@ -18,7 +17,9 @@ class TestAssemblyOrderingBug:
     @pytest.fixture
     def setup_components(self, tmp_path, monkeypatch):
         """Set up test components."""
-        monkeypatch.setenv("RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
+        monkeypatch.setenv(
+            "RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmp_path}/test.db"
+        )
         monkeypatch.setenv("RAGZOOM_CHROMA_DB_DIR", str(tmp_path / "chroma"))
         monkeypatch.setenv("RAGZOOM_OPENAI_API_KEY", "test-key")
         monkeypatch.setenv("RAGZOOM_SLOPE_CAP", "false")
@@ -91,7 +92,7 @@ class TestAssemblyOrderingBug:
             embedding=[0.3] * 1536,
             depth=0,
             span_start=40,  # This will be sorted second by _sort_nodes_chronologically
-            span_end=80,    # But should appear BEFORE parent's right half (50-100)
+            span_end=80,  # But should appear BEFORE parent's right half (50-100)
             document_id="doc1",
         )
 
@@ -115,13 +116,13 @@ class TestAssemblyOrderingBug:
         assembler = Assembler(config, store)
         result = assembler.assemble(retrieval_result)
 
-        lines = result.strip().split('\n\n')
+        lines = result.strip().split("\n\n")
 
         # With the NEW code (fix), should be in correct chronological order:
         assert len(lines) == 3
-        assert "FIRST:" in lines[0]   # left_child (0-50)
+        assert "FIRST:" in lines[0]  # left_child (0-50)
         assert "SECOND:" in lines[1]  # middle_node (40-80)
-        assert "THIRD:" in lines[2]   # parent_node right half (50-100)
+        assert "THIRD:" in lines[2]  # parent_node right half (50-100)
 
         # With OLD code (bug), this assertion would FAIL because:
         # - parent_node would be sorted before middle_node due to span_start=0 < 40

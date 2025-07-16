@@ -26,7 +26,8 @@ class RagZoomConfig(BaseSettings):
 
     # Retrieval parameters
     mmr_lambda: float = Field(
-        default=0.7, description="MMR relevance vs diversity (0-1, higher=more relevant)"
+        default=0.7,
+        description="MMR relevance vs diversity (0-1, higher=more relevant)",
     )
     mmr_k_multiplier: float = Field(
         default=2.0, description="Retrieve k_multiplier * N_max candidates for MMR"
@@ -37,7 +38,8 @@ class RagZoomConfig(BaseSettings):
         default=True, description="Forbid depth jumps > 1 level in frontier"
     )
     slope_cap_size: int = Field(
-        default=1, description="Maximum depth difference allowed between adjacent frontier nodes"
+        default=1,
+        description="Maximum depth difference allowed between adjacent frontier nodes",
     )
     adjacent_context_tokens: int = Field(
         default=75, description="Tokens from prev/next chunks for summarization context"
@@ -45,7 +47,7 @@ class RagZoomConfig(BaseSettings):
     smoothing_pass_enabled: bool = Field(
         default=False, description="Enable smoothing pass for frontier joins"
     )
-    
+
     # Validation
     validate_pipeline: bool = Field(
         default=False, description="Enable validation checks for frontier invariants"

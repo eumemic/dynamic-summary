@@ -28,7 +28,8 @@ class TestChunkSizeRegression:
 
         # Create a test document with known content
         # Moby Dick opening - should be split into multiple chunks
-        test_text = """
+        test_text = (
+            """
         Call me Ishmael. Some years ago—never mind how long precisely—having
         little or no money in my purse, and nothing particular to interest me
         on shore, I thought I would sail about a little and see the watery part
@@ -52,7 +53,9 @@ class TestChunkSizeRegression:
         downtown is the battery, where that noble mole is washed by waves, and
         cooled by breezes, which a few hours previous were out of sight of
         land. Look at the crowds of water-gazers there.
-        """ * 5  # Repeat to ensure we get multiple chunks
+        """
+            * 5
+        )  # Repeat to ensure we get multiple chunks
 
         chunks = splitter.split_text(test_text)
 
@@ -70,23 +73,28 @@ class TestChunkSizeRegression:
 
             # Last chunk can be even smaller
             if i < len(chunks) - 1:
-                assert min_tokens <= token_count <= max_tokens, \
-                    f"Chunk {i} has {token_count} tokens, expected ~{config.leaf_tokens}"
+                assert (
+                    min_tokens <= token_count <= max_tokens
+                ), f"Chunk {i} has {token_count} tokens, expected ~{config.leaf_tokens}"
             else:
                 # Last chunk just needs to be non-empty
-                assert token_count > 0 and token_count <= max_tokens, \
-                    f"Last chunk {i} has {token_count} tokens, should be > 0 and <= {max_tokens}"
+                assert (
+                    token_count > 0 and token_count <= max_tokens
+                ), f"Last chunk {i} has {token_count} tokens, should be > 0 and <= {max_tokens}"
 
         # Check average chunk size - should be reasonable but can be lower due to boundaries
         avg_tokens = sum(len(tokenizer.encode(chunk)) for chunk in chunks) / len(chunks)
-        assert 50 <= avg_tokens <= config.leaf_tokens * 1.2, \
-            f"Average chunk size {avg_tokens} tokens is outside reasonable range (expected 50-{int(config.leaf_tokens * 1.2)})"
+        assert (
+            50 <= avg_tokens <= config.leaf_tokens * 1.2
+        ), f"Average chunk size {avg_tokens} tokens is outside reasonable range (expected 50-{int(config.leaf_tokens * 1.2)})"
 
     @pytest.mark.asyncio
     async def test_indexed_chunks_have_correct_size(self, tmp_path, monkeypatch):
         """Test that indexed chunks in the database have the correct token size."""
         # Set up test environment
-        monkeypatch.setenv("RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
+        monkeypatch.setenv(
+            "RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmp_path}/test.db"
+        )
         monkeypatch.setenv("RAGZOOM_CHROMA_DB_DIR", str(tmp_path / "chroma"))
         monkeypatch.setenv("RAGZOOM_OPENAI_API_KEY", "test-key")
         monkeypatch.setenv("RAGZOOM_LEAF_TOKENS", "200")
@@ -96,13 +104,16 @@ class TestChunkSizeRegression:
         tokenizer = tiktoken.get_encoding("cl100k_base")
 
         # Create test document with more varied content
-        test_doc = """Once upon a time in a distant kingdom, there lived a wise old king who ruled with fairness and justice.
+        test_doc = (
+            """Once upon a time in a distant kingdom, there lived a wise old king who ruled with fairness and justice.
         The kingdom prospered under his reign, with fertile lands yielding abundant harvests and trade routes bringing wealth from far and wide.
         The people were happy and content, living in peace and harmony. Children played in the streets without fear, and merchants conducted their business honestly.
         However, not all was perfect in this idyllic realm. In the shadows lurked those who envied the king's success and plotted against him.
         They whispered in dark corners and made secret alliances, waiting for the right moment to strike.
         The king, aware of these threats, surrounded himself with loyal advisors and brave knights who would defend the kingdom with their lives.
-        """ * 50  # Create a larger, more realistic document
+        """
+            * 50
+        )  # Create a larger, more realistic document
         test_file = tmp_path / "test.txt"
         test_file.write_text(test_doc)
 
@@ -111,15 +122,16 @@ class TestChunkSizeRegression:
 
         # Mock embeddings (one per chunk) - needs to be async
         async def mock_embeddings(*args, **kwargs):
-            return MagicMock(
-                data=[MagicMock(embedding=[0.1] * 1536) for _ in range(5)]
-            )
+            return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in range(5)])
+
         mock_async_client.embeddings.create.side_effect = mock_embeddings
 
         # Mock summaries with mid delimiters - needs to be async
         async def mock_chat_completion(*args, **kwargs):
             response = MagicMock()
-            response.choices[0].message.content = "Summary part 1 <<<MID>>> Summary part 2"
+            response.choices[0].message.content = (
+                "Summary part 1 <<<MID>>> Summary part 2"
+            )
             return response
 
         mock_async_client.chat.completions.create.side_effect = mock_chat_completion
@@ -133,6 +145,7 @@ class TestChunkSizeRegression:
         leaf_nodes = []
         with store.SessionLocal() as session:
             from ragzoom.store import TreeNode
+
             leaf_nodes = session.query(TreeNode).filter(TreeNode.depth == 0).all()
 
         assert len(leaf_nodes) > 0, "Should have created leaf nodes"
@@ -151,8 +164,9 @@ class TestChunkSizeRegression:
                 min_tokens = int(config.leaf_tokens * 0.7)  # Allow 30% smaller
                 max_tokens = int(config.leaf_tokens * 1.3)  # Allow 30% larger
 
-            assert min_tokens <= token_count <= max_tokens, \
-                f"Leaf node {node.id} (chunk {i+1}/{len(leaf_nodes)}) has {token_count} tokens, expected ~{config.leaf_tokens}"
+            assert (
+                min_tokens <= token_count <= max_tokens
+            ), f"Leaf node {node.id} (chunk {i+1}/{len(leaf_nodes)}) has {token_count} tokens, expected ~{config.leaf_tokens}"
 
         # Check that parent nodes (summaries) are also reasonable size
         parent_nodes = []
@@ -165,8 +179,9 @@ class TestChunkSizeRegression:
             # Parent summaries should also be roughly the same size
             max_summary_tokens = config.leaf_tokens * 2  # Allow up to 2x for summaries
 
-            assert token_count <= max_summary_tokens, \
-                f"Parent node at depth {node.depth} has {token_count} tokens, too large"
+            assert (
+                token_count <= max_summary_tokens
+            ), f"Parent node at depth {node.depth} has {token_count} tokens, too large"
 
         # Close store to prevent file handle leaks
         store.close()
@@ -202,6 +217,7 @@ class TestChunkSizeRegression:
 
         # Mock retrieval result with 10 nodes (should be ~2000 tokens)
         from ragzoom.retrieve import RetrievalResult
+
         retrieval_result = RetrievalResult(
             node_ids=[n.id for n in mock_nodes],
             scores={n.id: 0.9 for n in mock_nodes},
@@ -217,6 +233,6 @@ class TestChunkSizeRegression:
 
         # With properly sized chunks, assembly shouldn't be wildly over budget
         # Allow up to 50% over due to assembly overhead
-        assert token_count <= 3000, \
-            f"Assembly produced {token_count} tokens, way over 2000 budget"
-
+        assert (
+            token_count <= 3000
+        ), f"Assembly produced {token_count} tokens, way over 2000 budget"
