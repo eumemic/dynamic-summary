@@ -1,73 +1,126 @@
 #!/bin/bash
 # Git pre-commit hook for RagZoom
-# Runs tests (excluding slow ones) and linting checks
+# Runs tests (excluding slow ones) and linting checks in parallel
 
 echo "Running pre-commit checks..."
 
 # Get the list of modified Python files
 modified_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$')
 
-# Run tests excluding slow and integration tests
-echo "Running fast tests..."
-pytest tests/ -v --tb=short -m "not slow and not integration" -n 8
-
-# Capture the test exit code
-test_result=$?
-
-if [ $test_result -ne 0 ]; then
-    echo ""
-    echo "❌ Tests failed! Commit aborted."
-    echo "Fix the failing tests before committing."
-    exit 1
-fi
-
-echo "✅ Tests passed!"
-
-# Run linting if Python files were modified
-if [ -n "$modified_files" ]; then
-    echo ""
-    echo "Running linting checks..."
-    
-    # Run ruff
-    if command -v ruff &> /dev/null; then
-        echo "Running ruff..."
-        ruff check ragzoom/ tests/
-        if [ $? -ne 0 ]; then
-            echo "❌ Ruff found issues! Commit aborted."
-            echo "Run 'ruff check ragzoom/ tests/ --fix' to auto-fix some issues."
-            exit 1
-        fi
-        echo "✅ Ruff passed!"
-    fi
-    
-    # Run black check
-    if command -v black &> /dev/null; then
-        echo "Running black..."
-        black --check ragzoom/ tests/
-        if [ $? -ne 0 ]; then
-            echo "❌ Black formatting issues found! Commit aborted."
-            echo "Run 'black ragzoom/ tests/' to auto-format."
-            exit 1
-        fi
-        echo "✅ Black passed!"
-    fi
-fi
-
-# Run type checking (strict for new code, lenient for existing)
-if command -v mypy &> /dev/null && [ -n "$modified_files" ]; then
-    echo ""
-    echo "Running type checking..."
-    # Only check for missing annotations in modified files
-    mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
-    if [ $? -ne 0 ]; then
-        echo "⚠️  Type checking found issues in modified files"
-        echo "Please add type annotations to new functions"
-        echo "Commit will continue..."
+# Function to run tests
+run_tests() {
+    echo "[Tests] Starting..."
+    pytest tests/ -v --tb=short -m "not slow and not integration" -n 8
+    local result=$?
+    if [ $result -ne 0 ]; then
+        echo "[Tests] ❌ Failed!"
+        return 1
     else
-        echo "✅ Type checking passed!"
+        echo "[Tests] ✅ Passed!"
+        return 0
     fi
+}
+
+# Function to run ruff
+run_ruff() {
+    if command -v ruff &> /dev/null && [ -n "$modified_files" ]; then
+        echo "[Ruff] Starting..."
+        ruff check ragzoom/ tests/
+        local result=$?
+        if [ $result -ne 0 ]; then
+            echo "[Ruff] ❌ Found issues! Run 'ruff check ragzoom/ tests/ --fix' to auto-fix."
+            return 1
+        else
+            echo "[Ruff] ✅ Passed!"
+            return 0
+        fi
+    fi
+    return 0
+}
+
+# Function to run black
+run_black() {
+    if command -v black &> /dev/null && [ -n "$modified_files" ]; then
+        echo "[Black] Starting..."
+        black --check ragzoom/ tests/
+        local result=$?
+        if [ $result -ne 0 ]; then
+            echo "[Black] ❌ Formatting issues! Run 'black ragzoom/ tests/' to auto-format."
+            return 1
+        else
+            echo "[Black] ✅ Passed!"
+            return 0
+        fi
+    fi
+    return 0
+}
+
+# Function to run mypy
+run_mypy() {
+    if command -v mypy &> /dev/null && [ -n "$modified_files" ]; then
+        echo "[Mypy] Starting type checking..."
+        mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
+        local result=$?
+        if [ $result -ne 0 ]; then
+            echo "[Mypy] ⚠️  Type checking found issues (non-blocking)"
+            return 0  # Don't fail on type errors for now
+        else
+            echo "[Mypy] ✅ Passed!"
+            return 0
+        fi
+    fi
+    return 0
+}
+
+# Create temporary files for storing results
+tmpdir=$(mktemp -d)
+trap "rm -rf $tmpdir" EXIT
+
+# Run all checks in parallel
+(run_tests; echo $? > "$tmpdir/tests.result") &
+pid_tests=$!
+
+(run_ruff; echo $? > "$tmpdir/ruff.result") &
+pid_ruff=$!
+
+(run_black; echo $? > "$tmpdir/black.result") &
+pid_black=$!
+
+(run_mypy; echo $? > "$tmpdir/mypy.result") &
+pid_mypy=$!
+
+# Wait for all background jobs to complete
+echo ""
+echo "Running tests, ruff, black, and mypy in parallel..."
+echo ""
+
+wait $pid_tests $pid_ruff $pid_black $pid_mypy
+
+# Check results
+failed=0
+
+# Check test results
+if [ -f "$tmpdir/tests.result" ] && [ "$(cat "$tmpdir/tests.result")" -ne 0 ]; then
+    failed=1
 fi
+
+# Check ruff results
+if [ -f "$tmpdir/ruff.result" ] && [ "$(cat "$tmpdir/ruff.result")" -ne 0 ]; then
+    failed=1
+fi
+
+# Check black results
+if [ -f "$tmpdir/black.result" ] && [ "$(cat "$tmpdir/black.result")" -ne 0 ]; then
+    failed=1
+fi
+
+# Note: mypy is non-blocking, so we don't check its result for failure
 
 echo ""
-echo "✅ All pre-commit checks passed!"
-exit 0
+if [ $failed -eq 0 ]; then
+    echo "✅ All pre-commit checks passed!"
+    exit 0
+else
+    echo "❌ Pre-commit checks failed! See above for details."
+    exit 1
+fi
