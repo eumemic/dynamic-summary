@@ -430,6 +430,96 @@ This inverted convention causes confusion when:
 
 Refactor to use standard tree depth convention where root = depth 0 and depth increases toward leaves. This would make the codebase more intuitive and align with computer science standards.
 
+## Issue 10: Text Splitter Dropping Whitespace
+
+### Problem Statement
+
+The LangChain `RecursiveCharacterTextSplitter` is dropping whitespace characters (particularly newlines) between chunks, causing validation failures and potential content loss.
+
+### Evidence
+
+During validation, we see gaps like:
+```
+Gap found between nodes: ends at 14790, starts at 14791 (gap of 1 chars)
+  Gap content: '\n'
+```
+
+### Root Cause
+
+Even with `keep_separator="end"` parameter, the splitter is not consistently preserving all separator characters. This is a known limitation of text splitters that split on delimiters.
+
+### Current Workaround
+
+Updated validation to allow whitespace-only gaps, since they don't represent meaningful content loss. However, this is a band-aid solution.
+
+### Proper Solution
+
+Either:
+1. Implement custom text splitting that preserves all characters
+2. Switch to a different splitting strategy that doesn't drop characters
+3. Store the dropped whitespace separately and reconstruct during assembly
+
+## Issue 11: Root Node Appearing in Frontier
+
+### Problem Statement
+
+During retrieval, the root node (depth 8 in RagZoom's inverted convention) sometimes appears in the frontier, causing the entire document summary to be included alongside more detailed nodes.
+
+### Evidence
+
+```
+Extracted from node 9d11cef2-6105-45ad-b1f6-8b850a89954a (depth 8, node span (0, 46077), actual span (0, 46077)): 706 chars
+```
+
+This shows the root node in the frontier with full document span [0, 46077].
+
+### Impact
+
+This violates the frontier principle and can cause:
+1. Redundant content (whole document summary + detailed sections)
+2. Incorrect coverage calculations
+3. Wasted tokens on duplicate information
+
+### Root Cause
+
+The frontier extraction logic has a bug where it's including nodes that shouldn't be in the frontier. A node should only be in the frontier if:
+- The node itself is covered (in coverage_map)
+- At least one of its children is NOT covered
+
+If both children are covered, the node should not be in the frontier (the children handle that coverage).
+
+### Solution
+
+Fix the frontier extraction logic in `retrieve.py` to properly check child coverage before including a node in the frontier.
+
+## Issue 12: Frontier Validation Failures
+
+### Problem Statement
+
+Frontier validation during query operations reveals multiple issues:
+1. Segments out of order
+2. Gaps between segments (beyond whitespace)
+3. Incomplete coverage (frontier doesn't reach document end)
+
+### Evidence
+
+```
+Validation failed in frontier completeness: Frontier ends at 39876, expected 46077
+```
+
+### Root Cause
+
+Multiple contributing factors:
+1. The `_extract_node_text_with_span()` method returns actual coverage spans that differ from node spans when using MID delimiter
+2. Frontier extraction may include invalid nodes (see Issue 11)
+3. Assembly logic doesn't properly validate segment ordering
+
+### Solution
+
+1. Fix frontier extraction to ensure valid frontier
+2. Add validation for segment ordering
+3. Ensure actual coverage spans are calculated correctly
+
 ## Summary of All Issues
 
 1. **Budget trimming breaks coverage** - drops by relevance instead of maintaining frontier property
@@ -441,6 +531,9 @@ Refactor to use standard tree depth convention where root = depth 0 and depth in
 7. **Assembly ordering with partial content** - sorted by node span_start instead of actual coverage span (FIXED)
 8. **Truncated AI summaries during indexing** - AI responses cut off mid-sentence due to max_tokens=target_tokens (IDENTIFIED)
 9. **Confusing depth convention** - uses inverted depth where leaves=0 and root=max_depth instead of standard convention
+10. **Text splitter dropping whitespace** - LangChain splitter loses whitespace between chunks
+11. **Root node appearing in frontier** - Invalid frontier extraction includes nodes that should be excluded
+12. **Frontier validation failures** - Multiple issues with frontier completeness and ordering
 
 ## Recommended Fix Order
 
