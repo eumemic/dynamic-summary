@@ -191,6 +191,9 @@ Key settings in `RagZoomConfig`:
 - **Fixed ChromaDB test configuration**: Tests now use tempfile.TemporaryDirectory() instead of ":memory:" which ChromaDB doesn't support
 - **Fixed token budget allocation**: Removed depth-based compression that artificially limited higher-level nodes to as few as 50 tokens; all nodes now get consistent RAGZOOM_LEAF_TOKENS budget, with LLM instructed via prompt rather than hard API limits
 - **Added --validate flag**: Comprehensive validation for indexing (document coverage, chunk sizes, tree structure) and retrieval (frontier completeness, no overlaps) to ensure correctness
+- **Removed chunk overlap**: Set chunk_overlap=0 in text splitter since RagZoom requires sequential non-overlapping chunks for correct span calculation
+- **Fixed whitespace gaps**: Implemented comprehensive gap reconstruction that appends ALL gaps to previous chunks, ensuring complete coverage with no character loss (Issue 10)
+- **Removed leaf_overlap_tokens parameter**: Simplified codebase by removing unused overlap handling since chunks are now guaranteed to be contiguous with no gaps
 - **Implemented document isolation**: Complete namespace separation between indexed documents
   - Queries now require document_id parameter to prevent cross-document contamination
   - Filename used as default document_id when indexing files

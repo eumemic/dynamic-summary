@@ -32,7 +32,6 @@ class TestCLI:
             config_instance.budget_tokens = 8000
             config_instance.mmr_lambda = 0.7
             config_instance.leaf_tokens = 200
-            config_instance.leaf_overlap_tokens = 20
             config_instance.slope_cap = True
             config_instance.smoothing_pass_enabled = False
             mock_config.return_value = config_instance

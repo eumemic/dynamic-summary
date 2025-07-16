@@ -23,7 +23,6 @@ class TestIncompleteIndexing:
                 sqlite_database_url="sqlite:///:memory:",
                 chroma_persist_directory=temp_dir,
                 leaf_tokens=50,  # Small chunks for easier testing
-                leaf_overlap_tokens=5,
                 adjacent_context_tokens=25,  # Must be <= leaf_tokens
                 budget_tokens=1000,
                 embedding_dimensions=1536,

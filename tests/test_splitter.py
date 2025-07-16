@@ -14,7 +14,7 @@ class TestTextSplitter:
 
     def test_split_basic_text(self):
         """Test basic text splitting."""
-        config = RagZoomConfig(leaf_tokens=50, leaf_overlap_tokens=5, adjacent_context_tokens=25)
+        config = RagZoomConfig(leaf_tokens=50, adjacent_context_tokens=25)
         splitter = TextSplitter(config)
 
         text = "This is a test. " * 50  # ~200 tokens
@@ -80,17 +80,19 @@ class TestTextSplitter:
         # LangChain returns empty list for empty text
         assert chunks == []
 
-    def test_overlapping_chunks(self):
-        """Test that chunks overlap correctly."""
-        config = RagZoomConfig(leaf_tokens=50, leaf_overlap_tokens=10, adjacent_context_tokens=25)
+    def test_sequential_chunks(self):
+        """Test that chunks are sequential without overlap."""
+        config = RagZoomConfig(leaf_tokens=50, adjacent_context_tokens=25)
         splitter = TextSplitter(config)
 
         text = " ".join([f"Word{i}" for i in range(200)])  # Long text
         chunks = splitter.split_text(text)
 
-        # Check that consecutive chunks have overlapping content
-        # Note: LangChain's overlap behavior may vary, so we just verify
-        # that we got multiple chunks from the long text
+        # Chunks should be sequential without overlap
 
         # Main test: verify we got multiple chunks from long text
         assert len(chunks) > 1
+        
+        # Verify complete coverage
+        reconstructed = ''.join(chunks)
+        assert len(reconstructed) == len(text), "Should have complete coverage"
