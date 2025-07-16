@@ -36,6 +36,11 @@ mypy ragzoom/               # Type checking
 # Index documents
 ragzoom index <file> --max-concurrent 10  # Default parallelism
 ragzoom index <file> --max-concurrent 50  # Higher parallelism for large docs
+ragzoom index <file> --validate           # Enable validation checks
+
+# Query documents
+ragzoom query "search text"               # Basic query
+ragzoom query "search text" --validate    # With validation checks
 
 # Start API server
 ragzoom serve
@@ -107,8 +112,17 @@ Key settings in `RagZoomConfig`:
 - `test_utils.py` → `utils.py` (utility functions)
 - `test_dirty_refresh.py` → dirty node refresh functionality (async refresh, retrieval integration)
 - `test_budget_guarantee.py` → budget constraint enforcement (worst-case bounds, strategies)
+- `test_validate.py` → `validate.py` (validation functions)
 
 **Coverage Status**: All core modules now have test coverage
+
+### Validation Features
+
+**Validation System**: Use `--validate` flag on index/query commands to enable comprehensive validation checks:
+- Early validation during indexing (chunk sizes, document coverage, tree structure)
+- Frontier validation during querying (completeness, no overlaps, ordering)
+- Whitespace-only gaps are allowed (text splitter limitation)
+- Fast-fail behavior with exit code 1 on validation errors
 
 ### Performance Considerations
 
@@ -168,6 +182,7 @@ Key settings in `RagZoomConfig`:
 - **Implemented async retrieval**: Added retrieve_async() with proper sync wrappers for FastAPI compatibility
 - **Fixed ChromaDB test configuration**: Tests now use tempfile.TemporaryDirectory() instead of ":memory:" which ChromaDB doesn't support
 - **Fixed token budget allocation**: Removed depth-based compression that artificially limited higher-level nodes to as few as 50 tokens; all nodes now get consistent RAGZOOM_LEAF_TOKENS budget, with LLM instructed via prompt rather than hard API limits
+- **Added --validate flag**: Comprehensive validation for indexing (document coverage, chunk sizes, tree structure) and retrieval (frontier completeness, no overlaps) to ensure correctness
 
 ## Development Practices
 

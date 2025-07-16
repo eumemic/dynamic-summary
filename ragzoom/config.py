@@ -48,6 +48,11 @@ class RagZoomConfig(BaseSettings):
     smoothing_pass_enabled: bool = Field(
         default=False, description="Enable smoothing pass for frontier joins"
     )
+    
+    # Validation
+    validate_pipeline: bool = Field(
+        default=False, description="Enable validation checks for frontier invariants"
+    )
     smoothing_model: str = Field(
         default="gpt-3.5-turbo", description="Model for smoothing pass"
     )

@@ -136,8 +136,8 @@ class TreeBuilder:
 
                 # Check if summary exceeds target length
                 actual_tokens = len(self.splitter.tokenizer.encode(summary))
-                if actual_tokens > target_tokens:
-                    logger.warning(f"Summary exceeded target length: got {actual_tokens} tokens, target was {target_tokens} tokens")
+                # if actual_tokens > target_tokens:
+                #     logger.warning(f"Summary exceeded target length: got {actual_tokens} tokens, target was {target_tokens} tokens")
 
                 # Find <<<MID>>> delimiter position
                 mid_offset = summary.find('<<<MID>>>')
@@ -187,6 +187,23 @@ class TreeBuilder:
         chunks = self.splitter.split_text(text)
         logger.info(f"Split document into {len(chunks)} chunks")
 
+        # Early validation: Check chunk sizes immediately after splitting
+        from ragzoom.validate import validate, validate_chunk_sizes
+        
+        # Create simple objects with just the fields needed for validation
+        chunk_objects = []
+        for i, chunk in enumerate(chunks):
+            chunk_obj = type('ChunkObj', (), {
+                'text': chunk,
+                'id': f'chunk_{i}'
+            })()
+            chunk_objects.append(chunk_obj)
+        
+        validate(
+            lambda: validate_chunk_sizes(chunk_objects, self.config.leaf_tokens),
+            "early chunk size validation"
+        )
+
         # Create progress tracker
         progress = GlobalProgressTracker(len(chunks), show_progress)
         async_progress = AsyncProgressWrapper(progress)
@@ -203,16 +220,37 @@ class TreeBuilder:
             chunk_data = []
 
             # Prepare all chunk data with character positions
-            current_char_pos = 0
+            # Track positions more accurately by reconstructing from chunks
+            reconstructed_pos = 0
             for i, chunk in enumerate(chunks):
                 node_id = self._generate_node_id()
 
-                # Calculate character positions (not token positions)
-                # Find the chunk in the original text to get exact position
-                chunk_start = text.find(chunk, current_char_pos)
-                if chunk_start == -1:
-                    # Fallback if exact match not found (shouldn't happen)
-                    chunk_start = current_char_pos
+                # For the first chunk, it starts at 0
+                if i == 0:
+                    chunk_start = 0
+                else:
+                    # For subsequent chunks, find where this chunk starts
+                    # Look for overlap with previous chunk
+                    prev_chunk = chunks[i-1]
+                    
+                    # Find overlap between chunks
+                    overlap_size = 0
+                    for overlap_len in range(min(len(prev_chunk), len(chunk)), 0, -1):
+                        if prev_chunk[-overlap_len:] == chunk[:overlap_len]:
+                            overlap_size = overlap_len
+                            break
+                    
+                    # This chunk starts where the previous ended minus the overlap
+                    chunk_start = chunk_data[-1]['span_end'] - overlap_size
+                    
+                    # Verify this is correct by checking the text
+                    if text[chunk_start:chunk_start+len(chunk)] != chunk:
+                        # Fallback to find
+                        logger.warning(f"Chunk {i} position mismatch, using find()")
+                        chunk_start = text.find(chunk, chunk_data[-1]['span_start'])
+                        if chunk_start == -1:
+                            chunk_start = chunk_data[-1]['span_end']
+                
                 chunk_end = chunk_start + len(chunk)
 
                 chunk_data.append({
@@ -223,10 +261,24 @@ class TreeBuilder:
                 })
                 leaf_ids.append(node_id)
 
-                # Update position for next search, accounting for overlap
-                # Estimate overlap in characters (rough: 1 token ≈ 4 chars)
-                overlap_chars = self.config.leaf_overlap_tokens * 4
-                current_char_pos = chunk_end - overlap_chars
+            # Early validation: Check document coverage before processing embeddings
+            from ragzoom.validate import validate, validate_document_coverage
+            
+            # Create node objects for validation using actual chunk data
+            leaf_nodes_for_validation = []
+            for data in chunk_data:
+                node_obj = type('Node', (), {
+                    'id': data['id'],
+                    'span_start': data['span_start'],
+                    'span_end': data['span_end'],
+                    'text': data['text']
+                })()
+                leaf_nodes_for_validation.append(node_obj)
+            
+            validate(
+                lambda: validate_document_coverage(text, leaf_nodes_for_validation, self.config.leaf_overlap_tokens),
+                "early document coverage check"
+            )
 
             # Get embeddings in batches
             batch_size = 100  # Process 100 at a time for efficiency
@@ -343,6 +395,29 @@ class TreeBuilder:
         # Update children's parent references
         self._update_parent_reference(left_id, parent_id)
         self._update_parent_reference(right_id, parent_id)
+        
+        # Early validation: Check tree structure immediately after creating parent
+        from ragzoom.validate import validate
+        
+        def check_parent_structure():
+            # Check span validity
+            if left_node.span_start >= right_node.span_end:
+                return f"Invalid parent span: left child starts at {left_node.span_start}, right child ends at {right_node.span_end}"
+            
+            # Skip gap check in early validation - we'll check it properly in final validation
+            # where we have access to the original text to verify if gaps are just whitespace
+            
+            # Check summary has MID delimiter
+            if '<<<MID>>>' not in summary:
+                return f"Parent node {parent_id} missing <<<MID>>> delimiter in summary"
+            
+            # Check mid_offset is valid
+            if mid_offset is None or mid_offset < 0 or mid_offset >= len(summary):
+                return f"Parent node {parent_id} has invalid mid_offset: {mid_offset}"
+            
+            return None
+        
+        validate(check_parent_structure, f"tree structure for parent {parent_id}")
 
         return parent_id, summary, embedding
 

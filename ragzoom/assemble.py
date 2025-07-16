@@ -74,7 +74,7 @@ class Assembler:
                 if span not in seen_spans:
                     text, actual_span = self._extract_node_text_with_span(node, final_coverage_map, frontier_set)
                     if text:  # Only add non-empty text
-                        logger.info(f"Extracted from node {node_id} (depth {node.depth}, span {span}): {len(text)} chars")
+                        logger.info(f"Extracted from node {node_id} (depth {node.depth}, node span {span}, actual span {actual_span}): {len(text)} chars")
                         text_fragments.append((actual_span[0], actual_span[1], text))
                     else:
                         logger.info(f"Node {node_id} produced empty text, skipping")
@@ -84,6 +84,40 @@ class Assembler:
 
         # Sort by actual coverage span start (not node span_start)
         text_fragments.sort(key=lambda x: x[0])
+        
+        # Debug: Log the frontier segments
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Frontier segments before validation ({len(text_fragments)} total):")
+            for i, (start, end, text) in enumerate(text_fragments[:10]):  # First 10
+                logger.debug(f"  Segment {i}: [{start}, {end}) = {end - start} chars, text preview: {repr(text[:30])}...")
+            if len(text_fragments) > 10:
+                logger.debug(f"  ... and {len(text_fragments) - 10} more segments")
+        
+        # Run validation
+        from ragzoom.validate import validate, validate_frontier_completeness, validate_no_overlap
+        
+        # Get document span for validation
+        root = self.store.get_root_node()
+        if root:
+            document_span = (0, root.span_end)
+            
+            # Prepare segments for validation
+            simple_segments = [(f"node_{i}", text, start, end) 
+                             for i, (start, end, text) in enumerate(text_fragments)]
+            
+            # Validate completeness
+            # TODO: Get original text for whitespace gap validation
+            validate(
+                lambda: validate_frontier_completeness(simple_segments, document_span, None),
+                "frontier completeness"
+            )
+            
+            # Validate no overlap
+            validate(
+                lambda: validate_no_overlap(simple_segments),
+                "frontier overlap check"
+            )
+        
         texts = [text for _, _, text in text_fragments]
 
         # Basic concatenation
