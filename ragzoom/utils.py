@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from functools import wraps
-from typing import Any, Callable
+from typing import Any, Callable, Generator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class RateLimiter:
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.request_count = 0
 
-    async def acquire(self):
+    async def acquire(self) -> None:
         """Acquire a slot."""
         await self.semaphore.acquire()
         self.request_count += 1
@@ -24,17 +24,17 @@ class RateLimiter:
             f"Rate limiter: acquired slot (total requests: {self.request_count})"
         )
 
-    def release(self):
+    def release(self) -> None:
         """Release a slot."""
         self.semaphore.release()
         logger.debug("Rate limiter: released slot")
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "RateLimiter":
         """Async context manager entry."""
         await self.acquire()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
         self.release()
 
@@ -43,18 +43,18 @@ class RateLimiter:
 openai_rate_limiter = RateLimiter(max_concurrent=10)
 
 
-def with_rate_limit(func: Callable) -> Callable:
+def with_rate_limit(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to apply rate limiting to async functions."""
 
     @wraps(func)
-    async def wrapper(*args, **kwargs) -> Any:
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
         async with openai_rate_limiter:
             return await func(*args, **kwargs)
 
     return wrapper
 
 
-def batch_process(items: list, batch_size: int) -> list:
+def batch_process(items: list, batch_size: int) -> Generator[list, None, None]:
     """Process items in batches."""
     for i in range(0, len(items), batch_size):
         yield items[i : i + batch_size]

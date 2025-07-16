@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 try:
     from tqdm import tqdm
@@ -65,22 +65,22 @@ class GlobalProgressTracker:
 
         return operations
 
-    def update(self, n: int = 1, stage: Optional[str] = None):
+    def update(self, n: int = 1, stage: Optional[str] = None) -> None:
         """Update progress."""
         self.current += n
         if self.pbar:
             self.pbar.update(n)
 
-    def close(self):
+    def close(self) -> None:
         """Close progress bar."""
         if self.pbar:
             self.pbar.close()
 
-    def __enter__(self):
+    def __enter__(self) -> "GlobalProgressTracker":
         """Context manager support."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Close on exit."""
         self.close()
 
@@ -92,11 +92,11 @@ class AsyncProgressWrapper:
         self.tracker = tracker
         self.lock = asyncio.Lock()
 
-    async def update(self, n: int = 1, stage: Optional[str] = None):
+    async def update(self, n: int = 1, stage: Optional[str] = None) -> None:
         """Thread-safe async update."""
         async with self.lock:
             self.tracker.update(n, stage)
 
-    def update_sync(self, n: int = 1, stage: Optional[str] = None):
+    def update_sync(self, n: int = 1, stage: Optional[str] = None) -> None:
         """Sync update for non-async contexts."""
         self.tracker.update(n, stage)

@@ -1,6 +1,6 @@
 """Configuration management for RagZoom."""
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -124,7 +124,7 @@ class RagZoomConfig(BaseSettings):
 
     @field_validator("adjacent_context_tokens")
     @classmethod
-    def validate_adjacent_context(cls, v: int, info) -> int:
+    def validate_adjacent_context(cls, v: int, info: Any) -> int:
         """Ensure adjacent context doesn't exceed leaf size."""
         leaf_tokens = info.data.get("leaf_tokens", 200)
         if v > leaf_tokens:
