@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from openai import OpenAI
+from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.store import Store
@@ -56,7 +57,11 @@ class Retriever:
             response = self.client.embeddings.create(
                 model=self.config.embedding_model,
                 input=query,
-                dimensions=self.config.embedding_dimensions,
+                dimensions=(
+                    self.config.embedding_dimensions
+                    if self.config.embedding_dimensions is not None
+                    else NOT_GIVEN
+                ),
             )
             return response.data[0].embedding
         except Exception as e:

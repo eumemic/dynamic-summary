@@ -553,7 +553,8 @@ class Assembler:
                 temperature=0.3,
                 max_tokens=self.config.smoothing_max_tokens,
             )
-            return response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+            return content.strip() if content else current_text
         except Exception as e:
             logger.error(f"Error in smoothing pass: {e}")
             # Fall back to original text

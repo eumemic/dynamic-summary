@@ -6,9 +6,10 @@ import math
 import time
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional, cast
 
 from openai import AsyncOpenAI
+from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
@@ -46,7 +47,11 @@ class TreeBuilder:
                 response = await self.client.embeddings.create(
                     model=self.config.embedding_model,
                     input=text,
-                    dimensions=self.config.embedding_dimensions,
+                    dimensions=(
+                        self.config.embedding_dimensions
+                        if self.config.embedding_dimensions is not None
+                        else NOT_GIVEN
+                    ),
                 )
                 return response.data[0].embedding
             except Exception as e:
@@ -61,7 +66,11 @@ class TreeBuilder:
                 response = await self.client.embeddings.create(
                     model=self.config.embedding_model,
                     input=texts,
-                    dimensions=self.config.embedding_dimensions,
+                    dimensions=(
+                        self.config.embedding_dimensions
+                        if self.config.embedding_dimensions is not None
+                        else NOT_GIVEN
+                    ),
                 )
                 return [item.embedding for item in response.data]
             except Exception as e:
@@ -134,7 +143,8 @@ class TreeBuilder:
                     temperature=self.config.summary_temperature,
                     # No max_tokens limit - let LLM decide based on prompt instructions
                 )
-                summary = response.choices[0].message.content.strip()
+                content = response.choices[0].message.content
+                summary = content.strip() if content else ""
 
                 # Check if summary exceeds target length
                 # actual_tokens = len(self.splitter.tokenizer.encode(summary))
@@ -234,8 +244,8 @@ class TreeBuilder:
             if show_progress and len(chunks) > 100:
                 logger.info("Preparing chunk data...")
 
-            leaf_ids = []
-            chunk_data = []
+            leaf_ids: list[str] = []
+            chunk_data: list[dict[str, Any]] = []
 
             # Prepare all chunk data with character positions
             # Now that splitter handles whitespace gaps, positioning is straightforward
@@ -299,7 +309,9 @@ class TreeBuilder:
             all_embeddings = []
 
             for i in range(0, len(chunks), batch_size):
-                batch_texts = [d["text"] for d in chunk_data[i : i + batch_size]]
+                batch_texts = [
+                    cast(str, d["text"]) for d in chunk_data[i : i + batch_size]
+                ]
                 batch_end = min(i + batch_size, len(chunks))
 
                 # Show which batch we're processing with cumulative elapsed time
@@ -319,12 +331,12 @@ class TreeBuilder:
             # Store all leaf nodes
             for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
                 self.store.add_node(
-                    node_id=data["id"],
-                    text=data["text"],
+                    node_id=cast(str, data["id"]),
+                    text=cast(str, data["text"]),
                     embedding=embedding,
                     depth=0,
-                    span_start=data["span_start"],
-                    span_end=data["span_end"],
+                    span_start=cast(int, data["span_start"]),
+                    span_end=cast(int, data["span_end"]),
                     document_id=document_id,
                 )
 
@@ -397,7 +409,7 @@ class TreeBuilder:
         next_context: Optional[str],
         current_depth: int,
         document_id: Optional[str],
-    ) -> tuple[str, str, str]:
+    ) -> tuple[str, str, list[float]]:
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
 
@@ -444,7 +456,7 @@ class TreeBuilder:
         # Early validation: Check tree structure immediately after creating parent
         from ragzoom.validate import validate
 
-        def check_parent_structure():
+        def check_parent_structure() -> Optional[str]:
             # Check span validity
             if left_node.span_start >= right_node.span_end:
                 return f"Invalid parent span: left child starts at {left_node.span_start}, right child ends at {right_node.span_end}"
@@ -557,7 +569,7 @@ class TreeBuilder:
                 completed_count = 0
 
                 # Wrap each task to update progress when it completes
-                async def track_progress(task, task_index):
+                async def track_progress(task: Any, task_index: int) -> Any:
                     nonlocal completed_count
                     result = await task
 
@@ -627,7 +639,7 @@ class TreeBuilder:
                 logger.info(
                     f"Tree building complete. Root node at level 0 with ID: {current_level_ids[0][:8]}..."
                 )
-        return current_level_ids[0] if current_level_ids else None
+        return current_level_ids[0] if current_level_ids else ""
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference."""

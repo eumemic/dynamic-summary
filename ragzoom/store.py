@@ -4,7 +4,7 @@ import hashlib
 import logging
 from collections import deque
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional, Union, cast
 
 import chromadb
 import numpy as np
@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
@@ -153,7 +154,7 @@ class Store:
                 and isinstance(embeddings, list)
                 and len(embeddings) > 0
             ):
-                return len(results["embeddings"][0])
+                return len(embeddings[0])
         except Exception as e:
             logger.debug(f"Could not infer embedding dimension: {e}")
 
@@ -161,7 +162,9 @@ class Store:
         # This allows tests and first-time setups to work with any dimension
         return None
 
-    def _validate_embedding_dimension(self, embedding: list[float]) -> None:
+    def _validate_embedding_dimension(
+        self, embedding: Union[list[float], np.ndarray]
+    ) -> None:
         """Validate embedding dimension matches expected."""
         if not embedding:
             raise ValueError("Embedding cannot be empty")
@@ -182,7 +185,7 @@ class Store:
         self,
         node_id: str,
         text: str,
-        embedding: list[float],
+        embedding: Union[list[float], np.ndarray],
         depth: int,
         span_start: int,
         span_end: int,
@@ -218,9 +221,11 @@ class Store:
             self._add_to_cache(node)
 
         # Add to Chroma
+        # Convert to numpy array if needed
+        embedding_array = np.array(embedding, dtype=np.float32)
         self.collection.add(
             ids=[node_id],
-            embeddings=[embedding],
+            embeddings=cast(Any, [embedding_array]),
             metadatas=[
                 {
                     "depth": depth,
@@ -262,7 +267,7 @@ class Store:
     def mark_dirty_upward(self, node_id: str) -> None:
         """Mark a node and all ancestors as dirty (needs re-summarization)."""
         with self.SessionLocal() as session:
-            current_id = node_id
+            current_id: Optional[str] = node_id
             marked_ids = []
             while current_id:
                 node = session.query(TreeNode).filter_by(id=current_id).first()
@@ -285,7 +290,7 @@ class Store:
         self,
         node_id: str,
         text: str,
-        embedding: list[float],
+        embedding: Union[list[float], np.ndarray],
         mid_offset: Optional[int] = None,
     ) -> None:
         """Update node summary and clear dirty flag."""
@@ -295,7 +300,8 @@ class Store:
         with self.SessionLocal() as session:
             node = session.query(TreeNode).filter_by(id=node_id).first()
             if node:
-                node.text = text
+                # Use cast to handle the nullable text field
+                node.text = cast(str, text)
                 node.summary = text  # These are the same for internal nodes
                 if mid_offset is not None:
                     node.mid_offset = mid_offset
@@ -303,8 +309,12 @@ class Store:
                 session.commit()
 
                 # Update in vector store
+                # Convert to numpy array if needed
+                embedding_array = np.array(embedding, dtype=np.float32)
                 self.collection.update(
-                    ids=[node_id], embeddings=[embedding], metadatas=[{"text": text}]
+                    ids=[node_id],
+                    embeddings=cast(Any, [embedding_array]),
+                    metadatas=[{"text": text}],
                 )
 
                 # Update cache - refresh the cached node with new data
@@ -344,14 +354,19 @@ class Store:
                 ancestors.add(node.parent_id)
                 to_process.append(node.parent_id)
 
-        return [self.get_node(aid) for aid in ancestors if self.get_node(aid)]
+        return [node for aid in ancestors if (node := self.get_node(aid)) is not None]
 
     def search_similar(
-        self, query_embedding: list[float], n_results: int, where: Optional[dict] = None
+        self,
+        query_embedding: Union[list[float], np.ndarray],
+        n_results: int,
+        where: Optional[dict] = None,
     ) -> list[tuple[str, float, dict]]:
         """Search for similar nodes using Chroma."""
+        # Convert to numpy array if needed
+        query_array = np.array(query_embedding, dtype=np.float32)
         results = self.collection.query(
-            query_embeddings=[query_embedding],
+            query_embeddings=cast(Any, [query_array]),
             n_results=n_results,
             where=where,
         )
@@ -417,7 +432,7 @@ class Store:
 
     def compute_mmr_diverse_results(
         self,
-        query_embedding: list[float],
+        query_embedding: Union[list[float], np.ndarray],
         candidates: list[tuple[str, float, dict]],
         lambda_param: float,
         k: int,
@@ -433,10 +448,12 @@ class Store:
         results = self.collection.get(ids=candidate_ids, include=["embeddings"])
 
         # Create ID to embedding mapping for O(1) lookup
-        id_to_embedding = {
-            results["ids"][i]: np.array(results["embeddings"][i])
-            for i in range(len(results["ids"]))
-        }
+        embeddings = results.get("embeddings")
+        ids = results.get("ids")
+        if embeddings is None or ids is None:
+            return []
+
+        id_to_embedding = {ids[i]: np.array(embeddings[i]) for i in range(len(ids))}
 
         # Build candidate embeddings array in order
         cand_embs = np.array([id_to_embedding[cid] for cid in candidate_ids])
@@ -446,7 +463,7 @@ class Store:
         query_sims = np.dot(cand_embs, query_emb)
 
         # MMR iterative selection with optimized operations
-        selected_mask = np.zeros(len(candidates), dtype=bool)
+        selected_mask = np.zeros(len(candidates), dtype="bool")
         selected_indices = []
 
         # Select first item (highest relevance)
@@ -472,7 +489,7 @@ class Store:
             max_sims = (
                 np.max(pairwise_sims[np.ix_(unselected_mask, selected_mask)], axis=1)
                 if np.any(selected_mask)
-                else np.zeros(np.sum(unselected_mask))
+                else np.zeros(int(np.sum(unselected_mask)))
             )
 
             # MMR scores
@@ -554,18 +571,22 @@ class Store:
             with self.engine.connect() as conn:
                 # Check if tree_nodes table exists first
                 result = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='tree_nodes'"
+                    text(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='tree_nodes'"
+                    )
                 )
                 if result.fetchone():
                     # Table exists, check if mid_offset column exists
-                    result = conn.execute("PRAGMA table_info(tree_nodes)")
+                    result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
                     columns = [row[1] for row in result.fetchall()]
 
                     if "mid_offset" not in columns:
                         # Add the missing column (with proper error handling)
                         try:
                             conn.execute(
-                                "ALTER TABLE tree_nodes ADD COLUMN mid_offset INTEGER"
+                                text(
+                                    "ALTER TABLE tree_nodes ADD COLUMN mid_offset INTEGER"
+                                )
                             )
                             conn.commit()
                             logger.info("Added mid_offset column to tree_nodes table")
