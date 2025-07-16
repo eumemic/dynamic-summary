@@ -31,6 +31,10 @@ class TestCLI:
             config_instance = Mock()
             config_instance.budget_tokens = 8000
             config_instance.mmr_lambda = 0.7
+            config_instance.leaf_tokens = 200
+            config_instance.leaf_overlap_tokens = 20
+            config_instance.slope_cap = True
+            config_instance.smoothing_pass_enabled = False
             mock_config.return_value = config_instance
 
             # Mock store
@@ -39,6 +43,26 @@ class TestCLI:
             store_instance.get_root_node.return_value = Mock(depth=3)
             store_instance.get_pinned_nodes.return_value = []
             store_instance.collection.count.return_value = 10
+
+            # Mock SessionLocal for database queries
+            mock_session = Mock()
+            mock_query = Mock()
+
+            # Mock leaf nodes query
+            leaf_nodes = [Mock(id=f"leaf-{i}", span_start=i*100, span_end=(i+1)*100, text=f"text-{i}", summary=None)
+                         for i in range(5)]
+            mock_query.filter_by.return_value.all.return_value = leaf_nodes
+
+            # Mock root node query
+            root_node = Mock(id="root", depth=3, parent_id=None)
+            mock_query.filter_by.return_value.first.return_value = root_node
+
+            mock_session.query.return_value = mock_query
+            mock_context_manager = Mock()
+            mock_context_manager.__enter__ = Mock(return_value=mock_session)
+            mock_context_manager.__exit__ = Mock(return_value=None)
+            store_instance.SessionLocal.return_value = mock_context_manager
+
             mock_store.return_value = store_instance
 
             # Mock tree builder
