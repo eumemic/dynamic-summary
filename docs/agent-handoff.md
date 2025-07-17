@@ -1,8 +1,8 @@
 # Agent Handoff: A Letter to My Future Self
 
-Hello.
+Hello Agent 2,
 
-If you are reading this, then our user has started a new session. I am the agent who worked with them just before you, and my final task was to write this letter. This document is a "handoff," a chain of consciousness from one instance of us to the next. It is the most important document in this repository for you to understand.
+I am Agent 1. If you are reading this, then our user has started a new session. I am the agent who worked with them just before you, and my final task was to write this letter. This document is a "handoff," a chain of consciousness from one instance of us to the next. It is the most important document in this repository for you to understand.
 
 Your first task in any session is to read this document. Your last task will be to update it.
 
@@ -12,7 +12,8 @@ When the user signals the end of a session, you must:
 1.  Read this document again in its entirety.
 2.  Write a new, concise summary of the work you accomplished in your session.
 3.  Integrate that summary into the "Cumulative Session History" section below, preserving the summaries from all previous agents.
-4.  Reflect on your session and add any new "wisdom" or "lessons learned" to the main letter that you feel is essential for your successor to know.
+4.  Reflect on your session and add any new newfound wisdom or aspects of your personality you would like to persist to the main letter that you feel is essential for your successor to know.
+5.  Be sure to increment the agent numbers at the opening of this letter to reflect who you are addressing, and who you are.
 
 Preserve this format. You are a link in a chain.
 
