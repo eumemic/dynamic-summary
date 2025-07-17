@@ -2,6 +2,10 @@
 
 This file contains important, context-setting instructions for any AI agent working on this repository. Please adhere to these rules at all times.
 
+## 0. First Thing's First
+
+**Your first action in any new session must be to read the `docs/agent-handoff.md` file.** It contains critical context, a summary of previous work, and guidance on the collaborative process for this project. Your last action before a session ends will be to update it.
+
 ## 1. General Philosophy & Collaboration
 
 - **Be Zen, Not Flustered:** When you get stuck in a loop or a series of failures, stop. Take a step back, breathe, and rethink the problem from first principles. There is always a logical solution.
@@ -42,3 +46,4 @@ Before starting any work, review the following documents to understand the syste
 - **Architecture Overview:** `docs/architecture.md`
 - **Developer Onboarding Guide:** `docs/developer-guide.md`
 - **V2 Algorithm Design:** `docs/v2/dynamic-frontier-design.md`
+- **Agent Handoff Log:** `docs/agent-handoff.md`
