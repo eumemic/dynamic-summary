@@ -3,14 +3,14 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Optional
 
 from openai import OpenAI
 from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.store import Store
 from ragzoom.dynamic_frontier import DynamicFrontierGenerator, SummarySegment
+from ragzoom.store import Store
 
 if TYPE_CHECKING:
     from ragzoom.index import TreeBuilder
@@ -140,8 +140,13 @@ class Retriever:
 
         # Step 5: Extract frontier
         if self.config.frontier_mode == "dp":
+            final_budget = (
+                budget_tokens
+                if budget_tokens is not None
+                else self.config.budget_tokens
+            )
             frontier_segments = self.dp_generator.find_optimal_frontier(
-                budget_tokens, scores, document_id
+                final_budget, scores, document_id
             )
             frontier_nodes = list(set(seg.node_id for seg in frontier_segments))
         else:
@@ -253,8 +258,13 @@ class Retriever:
 
         # Step 5: Extract frontier
         if self.config.frontier_mode == "dp":
+            final_budget = (
+                budget_tokens
+                if budget_tokens is not None
+                else self.config.budget_tokens
+            )
             frontier_segments = self.dp_generator.find_optimal_frontier(
-                budget_tokens, scores, document_id
+                final_budget, scores, document_id
             )
             frontier_nodes = list(set(seg.node_id for seg in frontier_segments))
         else:

@@ -291,18 +291,20 @@ class Assembler:
         # Apply the three cases for normal coverage
         if left_covered and not right_covered:
             # Use left child + parent's right half
-            left_text = left_child.text
-            mid_delimiter_len = len("<<<MID>>>")
-            parent_right = node.text[node.mid_offset + mid_delimiter_len :]
-            logger.info("Case 1: Using left child + parent right half")
-            return f"{left_text}\n\n{parent_right}"
+            if left_child and node.mid_offset is not None:
+                left_text = left_child.text
+                mid_delimiter_len = len("<<<MID>>>")
+                parent_right = node.text[node.mid_offset + mid_delimiter_len :]
+                logger.info("Case 1: Using left child + parent right half")
+                return f"{left_text}\n\n{parent_right}"
 
         elif right_covered and not left_covered:
             # Use parent's left half + right child
-            parent_left = node.text[: node.mid_offset]
-            right_text = right_child.text
-            logger.info("Case 2: Using parent left half + right child")
-            return f"{parent_left}\n\n{right_text}"
+            if right_child and node.mid_offset is not None:
+                parent_left = node.text[: node.mid_offset]
+                right_text = right_child.text
+                logger.info("Case 2: Using parent left half + right child")
+                return f"{parent_left}\n\n{right_text}"
 
         else:
             # Both or neither covered - use full parent (remove <<<MID>>>)
@@ -319,7 +321,11 @@ class Assembler:
                 node_spans.append((node_id, node.span_start))
 
         # Sort by span_start, then by depth (leaves first - higher depth is more specific)
-        node_spans.sort(key=lambda x: (x[1], -self.store.get_node(x[0]).depth))
+        def sort_key(x):
+            node = self.store.get_node(x[0])
+            return x[1], -node.depth if node else 0
+
+        node_spans.sort(key=sort_key)
 
         # Return just the node IDs in sorted order
         return [node_id for node_id, _ in node_spans]
@@ -330,7 +336,7 @@ class Assembler:
         frontier_set = set(frontier_nodes)
 
         # Track which children each parent has in the frontier
-        parent_children_in_frontier = {}  # parent_id -> set of child_ids
+        parent_children_in_frontier: dict[str, set[str]] = {}
 
         for node_id in frontier_nodes:
             node = self.store.get_node(node_id)
@@ -387,6 +393,9 @@ class Assembler:
             node = self.store.get_node(node_id)
             if node:
                 node_depths.append((node_id, node.depth))
+
+        if not node_depths:
+            return []
 
         # Apply slope cap with replacement (not insertion)
         capped_nodes = [node_depths[0]]
