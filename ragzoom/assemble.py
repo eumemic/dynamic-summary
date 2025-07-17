@@ -60,32 +60,33 @@ class Assembler:
         # Step 5: Build coverage map AFTER all frontier mutations
         final_coverage_map = self._build_coverage_map(frontier_nodes)
 
-        # Step 6: Extract texts with <<<MID>>> delimiter handling and span deduplication
+        # Step 6: Extract texts, performing proper overlap checks on ACTUAL spans
         text_fragments = []  # Store (actual_span_start, actual_span_end, text) tuples
-        seen_spans = set()  # Store (span_start, span_end) for span dedup
+        # Use a list of tuples for seen_spans to perform real overlap checks
+        seen_spans: list[tuple[int, int, int, str]] = []  # Store (start, end, depth, id)
         frontier_set = set(frontier_nodes)
 
         for node_id in frontier_nodes:
             node = self.store.get_node(node_id)
             if node:
-                # Check span BEFORE extracting text
-                span = (node.span_start, node.span_end)
-                if span not in seen_spans:
-                    text, actual_span = self._extract_node_text_with_span(
-                        node, final_coverage_map, frontier_set
-                    )
-                    if text:  # Only add non-empty text
+                text, actual_span = self._extract_node_text_with_span(
+                    node, final_coverage_map, frontier_set
+                )
+
+                if text:  # Only add non-empty text
+                    # Perform a real overlap check on the actual span
+                    if not self._has_span_overlap_detailed(actual_span, seen_spans):
                         logger.info(
-                            f"Extracted from node {node_id} (depth {node.depth}, node span {span}, actual span {actual_span}): {len(text)} chars"
+                            f"Extracted from node {node_id} (depth {node.depth}, node span {(node.span_start, node.span_end)}, actual span {actual_span}): {len(text)} chars"
                         )
                         text_fragments.append((actual_span[0], actual_span[1], text))
+                        seen_spans.append(
+                            (actual_span[0], actual_span[1], node.depth, node_id)
+                        )
                     else:
-                        logger.info(f"Node {node_id} produced empty text, skipping")
-                    seen_spans.add(span)
-                else:
-                    logger.info(
-                        f"Skipping duplicate span node {node_id} with span {span}"
-                    )
+                        logger.warning(
+                            f"Skipping node {node_id} due to ACTUAL span overlap on {actual_span}"
+                        )
 
         # Sort by actual coverage span start (not node span_start)
         text_fragments.sort(key=lambda x: x[0])
@@ -149,6 +150,15 @@ class Assembler:
         """Remove <<<MID>>> delimiter from text."""
         return text.replace("<<<MID>>>", "")
 
+    def _has_span_overlap_detailed(self, span, seen_items):
+        """Check if span overlaps with any item in seen_items (includes depth/node info)."""
+        span_start, span_end = span
+        for seen_start, seen_end, seen_depth, seen_id in seen_items:
+            # Two spans overlap if one doesn't end before the other starts
+            if not (span_end <= seen_start or seen_end <= span_start):
+                return True
+        return False
+
     def _extract_node_text_with_span(self, node, coverage_map, frontier_set=None):
         """Extract appropriate text from node and return its actual coverage span."""
         text = self._extract_node_text(node, coverage_map, frontier_set)
@@ -174,13 +184,15 @@ class Assembler:
 
         # Determine actual span based on which half we're outputting
         if left_in_frontier and not right_in_frontier:
-            # Outputting only right half - spans from right child's start to node's end
+            # Outputting only right half - spans from right child's start to its end
             actual_start = right_child.span_start if right_child else node.span_start
-            return text, (actual_start, node.span_end)
+            actual_end = right_child.span_end if right_child else node.span_end
+            return text, (actual_start, actual_end)
         elif right_in_frontier and not left_in_frontier:
-            # Outputting only left half - spans from node's start to left child's end
+            # Outputting only left half - spans from left child's start to its end
+            actual_start = left_child.span_start if left_child else node.span_start
             actual_end = left_child.span_end if left_child else node.span_end
-            return text, (node.span_start, actual_end)
+            return text, (actual_start, actual_end)
         elif left_in_frontier and right_in_frontier:
             # Both children in frontier - parent outputs nothing
             return text, (node.span_start, node.span_start)
@@ -230,7 +242,9 @@ class Assembler:
             logger.info(f"Node {node.id}: both children in frontier, skipping parent")
             return ""
 
-        # Neither child is in frontier - use normal coverage logic
+        # --- Fallback to Coverage-Based Logic ---
+        # This runs if the node is NOT a frontier node with children on the frontier,
+        # but is being processed for its content based on covered children.
         left_covered = left_child and left_child.id in coverage_map
         right_covered = right_child and right_child.id in coverage_map
 
@@ -259,15 +273,6 @@ class Assembler:
             logger.info("Case 3: Both or neither covered, using full parent")
             return self._clean_mid_delimiter(node.text)
 
-    def _has_span_overlap_detailed(self, span, seen_items):
-        """Check if span overlaps with any item in seen_items (includes depth/node info)."""
-        span_start, span_end = span
-        for seen_start, seen_end, seen_depth, seen_id in seen_items:
-            # Two spans overlap if one doesn't end before the other starts
-            if not (span_end <= seen_start or seen_end <= span_start):
-                return True
-        return False
-
     def _sort_nodes_chronologically(self, frontier_nodes):
         """Sort frontier nodes by span_start for chronological order."""
         # Get nodes with their span_start values
@@ -277,8 +282,8 @@ class Assembler:
             if node:
                 node_spans.append((node_id, node.span_start))
 
-        # Sort by span_start, then by depth (leaves first - depth 0 before depth 1)
-        node_spans.sort(key=lambda x: (x[1], self.store.get_node(x[0]).depth))
+        # Sort by span_start, then by depth (leaves first - higher depth is more specific)
+        node_spans.sort(key=lambda x: (x[1], -self.store.get_node(x[0]).depth))
 
         # Return just the node IDs in sorted order
         return [node_id for node_id, _ in node_spans]
