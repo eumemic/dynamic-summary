@@ -242,10 +242,12 @@ def validate_tree_structure(
         if node.depth > 0:
             if not node.summary:
                 errors.append(f"Node {node.id}: Non-leaf node missing summary")
-            elif "<<<MID>>>" not in node.summary:
-                errors.append(f"Node {node.id}: Summary missing <<<MID>>> delimiter")
-            elif node.mid_offset is None or node.mid_offset < 0:
-                errors.append(f"Node {node.id}: Invalid mid_offset: {node.mid_offset}")
+
+            # For non-leaf nodes, a valid mid_offset is required.
+            if node.mid_offset is None or node.mid_offset < 0:
+                errors.append(
+                    f"Node {node.id}: Invalid or missing mid_offset: {node.mid_offset}"
+                )
 
     if errors:
         for error in errors[:10]:  # Show first 10 errors
