@@ -130,6 +130,26 @@ The algorithm as defined above does not enforce the slope cap constraint. It cou
 
 The core challenge is that the optimal choice for a node's right-side frontier depends on the depth of the last segment in the left-side frontier. This breaks the independence of the two subproblems and dramatically complicates the memoization state (e.g., from `(node_id, budget)` to `(node_id, budget, left_neighbor_depth, right_neighbor_depth)`).
 
+## 5. Implementation Discoveries & Refinements
+
+The process of implementing the pseudocode above revealed two subtle but important flaws in the initial design, which have been corrected in the final implementation.
+
+### 5.1. The Proportional Budget Split is Not a Guarantee
+
+The `v6` pseudocode in the design doc operated on an optimistic assumption: that if the parent node's full summary fit within the total budget at the top of the function, and we then split that budget for the recursive calls, the final combined frontier would also implicitly be under budget.
+
+**Discovery:** This is not always true. The core issue is that the left and right subproblems are solved *independently*. Each side can return a valid frontier that respects its *proportional* budget. However, the sum of their costs is not guaranteed to be less than the *total* budget for the parent span.
+
+For example, consider `Node P` with `budget_total = 100` and `cost = 80`. It passes the initial check. A skewed relevance score gives `budget_left = 60` and `budget_right = 40`. The left side might return a frontier costing `55`, and the right side might return one costing `38`. Both are valid for their proportional budgets, but their sum (`93`) is within the total budget. However, it's also possible the left side returns a frontier costing `58` and the right `40`, for a total of `98`. A different relevance split could yield a left frontier of `30` and a right of `75`, for a total of `105`, which exceeds the budget.
+
+**Refinement:** The final, robust implementation must include a final check after the optimal left and right frontiers are chosen. Their combined cost is calculated. If this cost exceeds the total budget for the current node's span, the algorithm gracefully falls back to using the parent node's own two half-segments, which are known from the initial check to be affordable.
+
+### 5.2. Defining Quality for Half-Node Segments
+
+**Discovery:** The design was ambiguous about how to calculate the "quality" of a `SummarySegment` representing only one half of a parent node's summary. Does it inherit the full quality score of the parent node?
+
+**Refinement:** To resolve this, a heuristic was introduced. The quality of a half-segment is defined as **50% of its parent node's total quality score**. This provides a reasonable and consistent way to compare the value of keeping a lower-resolution parent segment versus descending to a higher-resolution child frontier. This detail was critical for making the quality comparisons in `_find_best_choice_for_side` meaningful.
+
 ### 4.1. Proposed Solution: A Two-Pass Approach
 
 Instead of forcing this complex constraint into the core recursion, we propose a cleaner, two-pass approach that decouples the concerns of "optimal quality" and "aesthetic smoothness".
