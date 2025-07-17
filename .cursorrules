@@ -43,6 +43,7 @@ This file contains important, context-setting instructions for any AI agent work
 
 Before starting any work, review the following documents to understand the system architecture and development process:
 
+- **Project Brief:** `docs/architecture.md`
 - **Architecture Overview:** `docs/architecture.md`
 - **Developer Onboarding Guide:** `docs/developer-guide.md`
 - **V2 Algorithm Design:** `docs/v2/dynamic-frontier-design.md`
