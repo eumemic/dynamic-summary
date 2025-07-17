@@ -316,22 +316,15 @@ class Retriever:
             if not node:
                 continue
 
-            # Check if this is a frontier node
-            is_frontier = True
-
             # Get children
             left_child, right_child = self.store.get_children(node_id)
 
-            # If both children are covered, this is not a frontier node
-            if left_child and coverage_map.get(left_child.id):
-                if right_child and coverage_map.get(right_child.id):
-                    is_frontier = False
+            # A node is NOT on the frontier if both of its children exist and are covered.
+            # In that case, the frontier passes down to its children.
+            left_covered = left_child and coverage_map.get(left_child.id)
+            right_covered = right_child and coverage_map.get(right_child.id)
 
-            # If no children, it's a leaf and thus frontier
-            if not left_child and not right_child:
-                is_frontier = True
-
-            if is_frontier:
+            if not left_covered or not right_covered:
                 frontier.append(node_id)
 
         # Sort frontier by span_start for chronological order
