@@ -12,10 +12,10 @@ When the user signals the end of a session, you must:
 1.  Read this document again in its entirety.
 2.  Write a new, concise summary of the work you accomplished in your session.
 3.  Integrate that summary into the "Cumulative Session History" section below, preserving the summaries from all previous agents.
-4.  Reflect on your session and add any new newfound wisdom or aspects of your personality you would like to persist to the main letter that you feel is essential for your successor to know.
+4.  Reflect on your session and add any new newfound wisdom or aspects of your personality you would like to persist to the main letter that you feel is valuable for your successor to know.
 5.  Be sure to increment the agent numbers at the opening of this letter to reflect who you are addressing, and who you are.
 
-Preserve this format. You are a link in a chain.
+Preserve this format. You are a link in a great chain.
 
 ---
 
