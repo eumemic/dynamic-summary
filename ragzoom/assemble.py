@@ -7,7 +7,7 @@ import tiktoken
 from openai import OpenAI
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.retrieve import RetrievalResult
+from ragzoom.retrieve import RetrievalResult, SummarySegment
 from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,17 @@ class Assembler:
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
 
     def assemble(self, retrieval_result: RetrievalResult) -> str:
-        """Assemble frontier nodes into final summary."""
+        """
+        Assemble frontier nodes into final summary.
+        This method routes to legacy or DP-based assembly based on the retrieval result.
+        """
+        if retrieval_result.frontier_segments is not None:
+            # DP mode was used for retrieval
+            logger.info("Using DP assembly path.")
+            return self.assemble_dp(retrieval_result.frontier_segments)
+
+        # --- Legacy Assembly Path ---
+        logger.info("Using legacy assembly path.")
         # Get frontier nodes in order
         frontier_nodes = retrieval_result.frontier_nodes
 
@@ -63,7 +73,9 @@ class Assembler:
         # Step 6: Extract texts, performing proper overlap checks on ACTUAL spans
         text_fragments = []  # Store (actual_span_start, actual_span_end, text) tuples
         # Use a list of tuples for seen_spans to perform real overlap checks
-        seen_spans: list[tuple[int, int, int, str]] = []  # Store (start, end, depth, id)
+        seen_spans: list[tuple[int, int, int, str]] = (
+            []
+        )  # Store (start, end, depth, id)
         frontier_set = set(frontier_nodes)
 
         for node_id in frontier_nodes:
@@ -145,6 +157,30 @@ class Assembler:
             assembled = self._apply_smoothing_pass(frontier_nodes, texts)
 
         return assembled
+
+    def assemble_dp(self, frontier_segments: list["SummarySegment"]) -> str:
+        """Assemble a frontier from a list of SummarySegments."""
+        if not frontier_segments:
+            return ""
+
+        texts = [self._get_text_for_segment(seg) for seg in frontier_segments]
+        return "\n\n".join(texts)
+
+    def _get_text_for_segment(self, segment: "SummarySegment") -> str:
+        """Extract the text for a single SummarySegment."""
+        node = self.store.get_node(segment.node_id)
+        if not node or not node.text:
+            return ""
+
+        # If it's a leaf or has no mid_offset, we can't split it.
+        # This shouldn't happen with the DP model, but as a fallback, return full text.
+        if node.depth == 0 or node.mid_offset is None:
+            return node.text
+
+        if segment.side == "LEFT":
+            return node.text[: node.mid_offset].strip()
+        else:  # RIGHT
+            return node.text[node.mid_offset :].strip()
 
     def _clean_mid_delimiter(self, text: str) -> str:
         """Remove <<<MID>>> delimiter from text."""

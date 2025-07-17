@@ -219,7 +219,7 @@ class TestStore:
         assert pinned[0].id == "shallow"
 
         # Check with max depth
-        pinned = temp_store.get_pinned_nodes(max_depth=0)
+        pinned = temp_store.get_pinned_nodes(depth_max=0)
         assert len(pinned) == 0
 
     def test_cache_functionality(self, temp_store):

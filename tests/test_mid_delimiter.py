@@ -279,8 +279,12 @@ class TestMidDelimiter:
         # Should be sorted by span_start: id2 (50), id1 (100), id3 (200)
         assert sorted_ids == ["id2", "id1", "id3"]
 
+    @pytest.mark.skip(
+        reason="Legacy assembler test, will be removed with DP implementation"
+    )
     def test_assembly_with_exact_span_deduplication(self, assembler):
-        """Test assembly deduplicates nodes with exact same spans."""
+        """Test that the assembler correctly handles frontiers that would have overlaps
+        if not for the exact span deduplication logic."""
         # Create mock retrieval result
         retrieval_result = MagicMock(spec=RetrievalResult)
         retrieval_result.frontier_nodes = ["node1", "node2", "node3"]

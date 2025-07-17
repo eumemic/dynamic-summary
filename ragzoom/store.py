@@ -342,6 +342,19 @@ class Store:
         right = self.get_node(node.right_child_id) if node.right_child_id else None
         return left, right
 
+    def get_child(self, node_id: str, side: str) -> Optional[TreeNode]:
+        """Get the left or right child of a node."""
+        with self.SessionLocal() as session:
+            node = session.query(TreeNode).filter_by(id=node_id).first()
+            if not node:
+                return None
+
+            child_id = node.left_child_id if side == "LEFT" else node.right_child_id
+            if not child_id:
+                return None
+
+            return session.query(TreeNode).filter_by(id=child_id).first()
+
     def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
         """Get all ancestors of given nodes."""
         ancestors = set()
@@ -426,9 +439,30 @@ class Store:
             return session.query(TreeNode).filter_by(summary=None).all()
 
     def get_root_node(self) -> Optional[TreeNode]:
-        """Get the root node (node without parent)."""
+        """Get the root node (node with no parent)."""
         with self.SessionLocal() as session:
             return session.query(TreeNode).filter_by(parent_id=None).first()
+
+    def get_root_node_for_document(
+        self, document_id: Optional[str]
+    ) -> Optional[TreeNode]:
+        """Get the root node for a specific document."""
+        with self.SessionLocal() as session:
+            query = session.query(TreeNode).filter_by(parent_id=None)
+            if document_id:
+                query = query.filter_by(document_id=document_id)
+            return query.first()
+
+    def get_all_nodes_for_document(self, document_id: Optional[str]) -> list[TreeNode]:
+        """Get all nodes for a specific document."""
+        with self.SessionLocal() as session:
+            if document_id:
+                return session.query(TreeNode).filter_by(document_id=document_id).all()
+            else:
+                # If no document_id, maybe return all nodes? Or raise error?
+                # For now, let's return all nodes, but this could be memory intensive
+                logger.warning("No document_id provided, returning all nodes in store.")
+                return session.query(TreeNode).all()
 
     def compute_mmr_diverse_results(
         self,

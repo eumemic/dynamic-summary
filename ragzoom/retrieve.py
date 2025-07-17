@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 from openai import OpenAI
 from openai._types import NOT_GIVEN
@@ -12,7 +12,7 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.store import Store
 
 if TYPE_CHECKING:
-    from ragzoom.index import TreeBuilder
+    from ragzoom.index import TreeBuilder, TreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,15 @@ class RetrievalResult:
     scores: dict[str, float]
     coverage_map: dict[str, bool]
     frontier_nodes: list[str]
+    frontier_segments: Optional[list["SummarySegment"]] = None
+
+
+@dataclass
+class SummarySegment:
+    """Represents a segment of the summary, which is always a half-node."""
+
+    node_id: str
+    side: Literal["LEFT", "RIGHT"]
 
 
 class Retriever:
@@ -89,7 +98,7 @@ class Retriever:
         # Determine which mode we're in
         if budget_tokens is not None and n_max is None:
             # Mode 1: Budget only - calculate conservative n_max
-            n_max = self._calculate_conservative_n_max(budget_tokens)
+            n_max = self._calculate_conservative_n_max(budget_tokens, document_id)
             logger.info(
                 f"Budget-only mode: calculated conservative n_max={n_max} for budget={budget_tokens}"
             )
@@ -132,13 +141,24 @@ class Retriever:
         }  # Convert distance to similarity
 
         # Step 5: Extract frontier
-        frontier_nodes = self._extract_frontier(coverage_map)
-
-        # Step 6: If budget specified, ensure frontier fits within budget
-        if budget_tokens is not None:
-            frontier_nodes = self._enforce_budget_constraint(
-                frontier_nodes, budget_tokens, scores
+        if self.config.frontier_mode == "dp":
+            # New DP-based frontier generation
+            frontier_segments = self._find_optimal_frontier_dp(
+                budget_tokens, scores, document_id
             )
+            frontier_nodes = [
+                seg.node_id for seg in frontier_segments
+            ]  # TBD if this is right
+        else:
+            # Legacy frontier generation
+            frontier_nodes = self._extract_frontier(coverage_map)
+            frontier_segments = None
+
+            # Step 6: If budget specified, ensure frontier fits within budget
+            if budget_tokens is not None:
+                frontier_nodes = self._enforce_budget_constraint(
+                    frontier_nodes, budget_tokens, scores
+                )
 
         # Update access history
         self._update_access_history(selected_ids, candidates)
@@ -148,6 +168,9 @@ class Retriever:
             scores=scores,
             coverage_map=coverage_map,
             frontier_nodes=frontier_nodes,
+            frontier_segments=(
+                frontier_segments if self.config.frontier_mode == "dp" else None
+            ),
         )
 
     def retrieve(
@@ -191,7 +214,7 @@ class Retriever:
         # Determine which mode we're in
         if budget_tokens is not None and n_max is None:
             # Mode 1: Budget only - calculate conservative n_max
-            n_max = self._calculate_conservative_n_max(budget_tokens)
+            n_max = self._calculate_conservative_n_max(budget_tokens, document_id)
             logger.info(
                 f"Budget-only mode: calculated conservative n_max={n_max} for budget={budget_tokens}"
             )
@@ -235,6 +258,7 @@ class Retriever:
 
         # Step 5: Extract frontier
         frontier_nodes = self._extract_frontier(coverage_map)
+        frontier_segments = None
 
         # Step 6: If budget specified, ensure frontier fits within budget
         if budget_tokens is not None:
@@ -250,6 +274,7 @@ class Retriever:
             scores=scores,
             coverage_map=coverage_map,
             frontier_nodes=frontier_nodes,
+            frontier_segments=frontier_segments,
         )
 
     async def _refresh_dirty_nodes_async(self, limit: int = 10) -> None:
@@ -529,27 +554,35 @@ class Retriever:
 
         return result
 
-    def _calculate_conservative_n_max(self, budget_tokens: int) -> int:
-        """Calculate conservative n_max that guarantees no budget overflow.
+    def _calculate_conservative_n_max(
+        self, budget_tokens: int, document_id: Optional[str] = None
+    ) -> int:
+        """Calculate conservative n_max that is more grounded in document reality."""
 
-        Dynamic bound based on slope_cap_size: (slope_cap_size + 2) * leaf_tokens.
-        """
-        if self.config.slope_cap:
-            safe_factor = self.config.slope_cap_size + 2  # ±1→3, ±2→4, etc
-        else:
-            # Without slope cap, use tree height for worst case
-            root = self.store.get_root_node()
-            tree_height = root.depth if root else 3
-            safe_factor = 2**tree_height  # Exponential worst case
-            logger.warning(
-                f"Budget guarantees require slope_cap; using factor {safe_factor} "
-                f"based on tree height {tree_height}"
+        # Get all nodes for the document to calculate an average cost.
+        # This is more realistic than a hardcoded multiplier.
+        all_nodes = self.store.get_all_nodes_for_document(document_id)
+        if not all_nodes:
+            # Fallback to old logic if no nodes are found
+            leaf_tokens = (
+                self.config.leaf_tokens if self.config.leaf_tokens > 0 else 256
             )
+            return max(1, budget_tokens // leaf_tokens)
 
-        safe_tokens_per_node = safe_factor * self.config.leaf_tokens
+        import tiktoken
 
-        # Calculate how many nodes we can safely include
-        conservative_n_max = max(1, budget_tokens // safe_tokens_per_node)
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+
+        total_tokens = sum(len(tokenizer.encode(node.text)) for node in all_nodes)
+        average_tokens_per_node = total_tokens / len(all_nodes)
+
+        if average_tokens_per_node == 0:
+            average_tokens_per_node = self.config.leaf_tokens
+
+        # Add a small safety buffer (e.g., 25%) to the average to be safe
+        safe_average_cost = average_tokens_per_node * 1.25
+
+        conservative_n_max = max(1, int(budget_tokens // safe_average_cost))
 
         return conservative_n_max
 
@@ -558,69 +591,201 @@ class Retriever:
     ) -> list[str]:
         """Ensure frontier nodes fit within token budget.
 
-        Uses worst-case token estimation for each node to guarantee
+        Uses exact token calculation for each node to guarantee
         the assembled result won't exceed budget.
         """
         import tiktoken
 
-        tokenizer = tiktoken.get_encoding("cl100k_base")
+        from ragzoom.utils import get_actual_node_text
 
-        # Estimate worst-case tokens for each frontier node
-        node_estimates = []
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+        frontier_set = set(frontier_nodes)
+
+        # Calculate exact token cost for each frontier node
+        node_costs = []
         for node_id in frontier_nodes:
             node = self.store.get_node(node_id)
             if not node:
                 continue
 
-            # Worst case: node might output full text + child content
-            # For parent nodes with <<<MID>>>, this could be substantial
-            worst_case = self._estimate_worst_case_tokens(
-                node, frontier_nodes, tokenizer
-            )
-            node_estimates.append((node_id, worst_case, scores.get(node_id, 0.0)))
+            actual_text = get_actual_node_text(node, self.store, frontier_set)
+            token_cost = len(tokenizer.encode(actual_text))
+
+            node_costs.append((node_id, token_cost, scores.get(node_id, 0.0)))
 
         # Sort by score (highest first) to keep best nodes
-        node_estimates.sort(key=lambda x: x[2], reverse=True)
+        node_costs.sort(key=lambda x: x[2], reverse=True)
 
         # Select nodes that fit within budget
         selected = []
         total_tokens = 0
 
-        for node_id, token_estimate, score in node_estimates:
-            if total_tokens + token_estimate <= budget_tokens:
+        for node_id, token_cost, score in node_costs:
+            if total_tokens + token_cost <= budget_tokens:
                 selected.append(node_id)
-                total_tokens += token_estimate
+                total_tokens += token_cost
             else:
                 logger.info(
-                    f"Dropping node {node_id} (score={score:.3f}) to stay within budget"
+                    f"Dropping node {node_id} (score={score:.3f}, cost={token_cost}) to stay within budget"
                 )
 
         # Maintain chronological order
         selected_set = set(selected)
         return [nid for nid in frontier_nodes if nid in selected_set]
 
-    def _estimate_worst_case_tokens(self, node, frontier_nodes, tokenizer) -> int:
-        """Estimate worst-case token count for a node in assembly.
+    # --- V2: Dynamic Programming Frontier Generation ---
 
-        Considers:
-        - Parent nodes with children in frontier (<<<MID>>> extraction)
-        - Full node text
-        - Potential expansion during assembly
+    def _find_optimal_frontier_dp(
+        self, budget_tokens: int, scores: dict[str, float], document_id: Optional[str]
+    ) -> list["SummarySegment"]:
         """
-        # Base case: at least the node's own text
-        base_tokens = len(tokenizer.encode(node.text))
+        Top-level entry point for the new DP-based frontier generation.
+        """
+        logger.info("Using DP frontier generation")
+        root_node = self.store.get_root_node_for_document(document_id)
+        if not root_node:
+            return []
 
-        # Check if this is a parent with children in frontier
+        # We need a tokenizer for cost calculation
+        import tiktoken
+
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+
+        # Initialize the memoization cache for this run
+        self._memo_cache = {}
+
+        # This is the main call
+        segments, quality = self._find_optimal_frontier_for_span(
+            root_node, budget_tokens, scores, tokenizer
+        )
+        logger.info(f"DP frontier generated with total quality {quality:.3f}")
+        return segments
+
+    def _get_segment_cost(self, segment: "SummarySegment", tokenizer) -> int:
+        """Calculate the token cost of a single summary segment."""
+        node = self.store.get_node(segment.node_id)
+        if not node or not node.text:
+            return 0
+
+        # If it's a leaf or has no mid_offset, the segment cost is half the node's text
+        if node.depth == 0 or node.mid_offset is None:
+            return len(tokenizer.encode(node.text)) // 2
+
+        if segment.side == "LEFT":
+            text = node.text[: node.mid_offset]
+        else:
+            text = node.text[node.mid_offset :]
+
+        return len(tokenizer.encode(text.strip()))
+
+    def _calculate_segment_quality(
+        self, segment: "SummarySegment", scores: dict[str, float]
+    ) -> float:
+        """
+        Calculates the quality of a segment.
+        The quality is the relevance score of the underlying node.
+        """
+        return scores.get(segment.node_id, 0.0)
+
+    def _split_budget_proportionally(
+        self, budget: int, node: "TreeNode", scores: dict[str, float]
+    ) -> tuple[int, int]:
+        """Splits budget for children based on relevance of underlying seeds."""
         left_child, right_child = self.store.get_children(node.id)
-        frontier_set = set(frontier_nodes)
 
-        if left_child and left_child.id in frontier_set:
-            # Parent + left child case: could output both
-            base_tokens += len(tokenizer.encode(left_child.text))
+        if not left_child or not right_child:
+            return budget // 2, budget // 2
 
-        if right_child and right_child.id in frontier_set:
-            # Parent + right child case: could output both
-            base_tokens += len(tokenizer.encode(right_child.text))
+        # To do this properly, we need to find all seed nodes in each subtree
+        # This is expensive. A simpler proxy is to use the score of the direct children.
+        relevance_left = scores.get(left_child.id, 0.0)
+        relevance_right = scores.get(right_child.id, 0.0)
 
-        # Add some buffer for assembly overhead (newlines, etc)
-        return int(base_tokens * 1.1)
+        total_relevance = relevance_left + relevance_right
+
+        if total_relevance == 0:
+            return budget // 2, budget // 2
+
+        budget_left = int(budget * (relevance_left / total_relevance))
+        budget_right = budget - budget_left
+        return budget_left, budget_right
+
+    def _find_best_choice_for_side(
+        self,
+        parent_node,
+        side: str,
+        budget_for_side: int,
+        scores: dict[str, float],
+        tokenizer,
+    ) -> tuple[list["SummarySegment"], float]:
+        """
+        Chooses between the parent's low-res segment and a high-res frontier from the child.
+        """
+        # Option 1 (Default): The parent's own low-resolution segment.
+        frontier_1 = [SummarySegment(parent_node.id, side)]
+        quality_1 = self._calculate_segment_quality(frontier_1[0], scores)
+
+        # Option 2 (Upgrade): Attempt to get a better frontier from the corresponding child.
+        child_node = self.store.get_child(parent_node.id, side)
+
+        frontier_2, quality_2 = self._find_optimal_frontier_for_span(
+            child_node, budget_for_side, scores, tokenizer
+        )
+
+        # Return the winning option.
+        if quality_2 > quality_1:
+            return (frontier_2, quality_2)
+        else:
+            return (frontier_1, quality_1)
+
+    def _find_optimal_frontier_for_span_unmemoized(
+        self, node: "TreeNode", budget: int, scores: dict[str, float], tokenizer
+    ) -> tuple[list["SummarySegment"], float]:
+        """
+        Core recursive logic for finding the optimal frontier for a given node's span.
+        """
+        # Base case 1: Node doesn't exist.
+        if not node:
+            return ([], 0.0)
+
+        # Base case 2: The node's own summary is too expensive.
+        cost_of_this_node = self._get_segment_cost(
+            SummarySegment(node.id, "LEFT"), tokenizer
+        ) + self._get_segment_cost(SummarySegment(node.id, "RIGHT"), tokenizer)
+        if budget < cost_of_this_node:
+            return ([], 0.0)
+
+        # Decompose the problem into two independent "side" problems.
+        budget_l, budget_r = self._split_budget_proportionally(budget, node, scores)
+
+        best_frontier_left, best_quality_left = self._find_best_choice_for_side(
+            node, "LEFT", budget_l, scores, tokenizer
+        )
+        best_frontier_right, best_quality_right = self._find_best_choice_for_side(
+            node, "RIGHT", budget_r, scores, tokenizer
+        )
+
+        # Combine the optimal solutions for both sides.
+        final_frontier = best_frontier_left + best_frontier_right
+        final_quality = best_quality_left + best_quality_right
+
+        return (final_frontier, final_quality)
+
+    def _find_optimal_frontier_for_span(
+        self, node: "TreeNode", budget: int, scores: dict[str, float], tokenizer
+    ) -> tuple[list["SummarySegment"], float]:
+        """
+        Memoization wrapper for the recursive frontier generation.
+        """
+        node_id = node.id if node else None
+        cache_key = (node_id, budget)
+
+        if cache_key in self._memo_cache:
+            return self._memo_cache[cache_key]
+
+        result = self._find_optimal_frontier_for_span_unmemoized(
+            node, budget, scores, tokenizer
+        )
+
+        self._memo_cache[cache_key] = result
+        return result

@@ -227,47 +227,42 @@ class TestBudgetGuarantee:
         ), "Content was duplicated"
 
     def test_conservative_n_max_calculation(self, setup_system):
-        """Test that conservative n_max calculation prevents overruns."""
+        """Test that the conservative n_max calculation is reasonable and respects budget."""
         config, store, tree_builder, retriever, assembler = setup_system
+        config.leaf_tokens = 100  # Use a predictable size for testing
+
+        document = "This is test content for budget calculation. " * 500
+        tree_builder.add_document(document, "doc-budget-test")
 
         # Test various budget sizes
         test_budgets = [500, 1000, 2000, 5000]
 
         for budget in test_budgets:
             # Calculate conservative n_max using the retriever's method
-            conservative_n_max = retriever._calculate_conservative_n_max(budget)
+            conservative_n_max = retriever._calculate_conservative_n_max(
+                budget, "doc-budget-test"
+            )
 
-            # Verify the calculation makes sense
+            # Verify the calculation is at least 1
             assert (
                 conservative_n_max >= 1
-            ), f"n_max calculation failed for budget {budget}"
+            ), f"n_max calculation should be at least 1 for budget {budget}"
 
-            # Calculate expected safe factor
-            if config.slope_cap:
-                safe_factor = config.slope_cap_size + 2  # ±1→3, ±2→4, etc
-            else:
-                safe_factor = 8  # Fallback for disabled slope cap
+            # Now, verify the outcome: does using this n_max actually respect the budget?
+            result = retriever.retrieve(
+                "test",
+                n_max=conservative_n_max,
+                budget_tokens=budget,
+                document_id="doc-budget-test",
+            )
 
-            # For very small budgets, even 1 node might exceed budget
-            if budget < config.leaf_tokens * safe_factor:
-                # In this case, we still return 1 but assembly will need to handle it
-                assert (
-                    conservative_n_max == 1
-                ), f"Should return 1 for small budget {budget}"
-            else:
-                # Verify this n_max would never exceed budget with safe factor
-                worst_case_tokens = (
-                    conservative_n_max * config.leaf_tokens * safe_factor
-                )
-                assert (
-                    worst_case_tokens <= budget
-                ), f"Conservative n_max would exceed budget: {worst_case_tokens} > {budget}"
+            # The retriever's own internal enforcement should already have trimmed the frontier
+            # Let's assemble and get the final count
+            _, final_token_count = assembler.assemble_with_budget(result, budget)
 
-                # Also verify the exact calculation
-                expected_n_max = max(1, budget // (config.leaf_tokens * safe_factor))
-                assert (
-                    conservative_n_max == expected_n_max
-                ), f"n_max calculation incorrect: {conservative_n_max} != {expected_n_max}"
+            assert (
+                final_token_count <= budget
+            ), f"Budget {budget} exceeded with conservative_n_max={conservative_n_max}, final tokens={final_token_count}"
 
     def test_mixed_mode_budget_plus_n_max(self, setup_system):
         """Test mixed mode where both budget and n_max are specified."""

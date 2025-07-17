@@ -418,12 +418,15 @@ class TreeBuilder:
         target_tokens = self.config.leaf_tokens
 
         # Generate summary with <<<MID>>> delimiter (async)
-        summary, mid_offset = await self._summarize_text(
+        summary_with_delimiter, mid_offset = await self._summarize_text(
             left_text, right_text, target_tokens, prev_context, next_context
         )
 
-        # Get embedding for summary (this could be batched later)
-        embedding = await self._get_embedding(summary)
+        # Clean the delimiter from the text before storing
+        cleaned_summary = summary_with_delimiter.replace("<<<MID>>>", "").strip()
+
+        # Get embedding for the cleaned summary
+        embedding = await self._get_embedding(cleaned_summary)
 
         # Store the node data
         left_node = self.store.get_node(left_id)
@@ -437,14 +440,14 @@ class TreeBuilder:
 
         self.store.add_node(
             node_id=parent_id,
-            text=summary,
+            text=cleaned_summary,
             embedding=embedding,
             depth=current_depth,
             span_start=left_node.span_start,
             span_end=right_node.span_end,
             left_child_id=left_id,
             right_child_id=right_id,
-            summary=summary,
+            summary=cleaned_summary,
             mid_offset=mid_offset,
             document_id=document_id,
         )
@@ -464,19 +467,23 @@ class TreeBuilder:
             # Skip gap check in early validation - we'll check it properly in final validation
             # where we have access to the original text to verify if gaps are just whitespace
 
-            # Check summary has MID delimiter
-            if "<<<MID>>>" not in summary:
+            # Check summary has MID delimiter (on the original text)
+            if "<<<MID>>>" not in summary_with_delimiter:
                 return f"Parent node {parent_id} missing <<<MID>>> delimiter in summary"
 
             # Check mid_offset is valid
-            if mid_offset is None or mid_offset < 0 or mid_offset >= len(summary):
+            if (
+                mid_offset is None
+                or mid_offset < 0
+                or mid_offset >= len(summary_with_delimiter)
+            ):
                 return f"Parent node {parent_id} has invalid mid_offset: {mid_offset}"
 
             return None
 
         validate(check_parent_structure, f"tree structure for parent {parent_id}")
 
-        return parent_id, summary, embedding
+        return parent_id, cleaned_summary, embedding
 
     async def _build_tree_from_leaves(
         self,

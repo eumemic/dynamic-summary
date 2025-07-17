@@ -1,7 +1,8 @@
 """Tests for the Retriever class and its methods."""
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.retrieve import Retriever
@@ -43,7 +44,7 @@ class TestRetriever:
             "GC2": MagicMock(id="GC2", span_start=75),
         }
         store.get_node.side_effect = lambda node_id: nodes.get(node_id)
-        
+
         children_map = {
             "P1": (nodes["C1"], nodes["C2"]),
             "C1": (None, None),
@@ -51,7 +52,9 @@ class TestRetriever:
             "GC1": (None, None),
             "GC2": (None, None),
         }
-        store.get_children.side_effect = lambda node_id: children_map.get(node_id, (None, None))
+        store.get_children.side_effect = lambda node_id: children_map.get(
+            node_id, (None, None)
+        )
 
         # Case 1: P1 is covered, but its children are not. P1 is the frontier.
         coverage_map = {"P1": True}
@@ -69,9 +72,9 @@ class TestRetriever:
         coverage_map = {"P1": True, "C1": True, "C2": True}
         frontier = retriever._extract_frontier(coverage_map)
         assert sorted(frontier) == sorted(["C1", "C2"])
-        
+
         # Case 4: Full branch is covered.
         # Frontier is the deepest covered nodes: C1, GC1, GC2
         coverage_map = {"P1": True, "C1": True, "C2": True, "GC1": True, "GC2": True}
         frontier = retriever._extract_frontier(coverage_map)
-        assert sorted(frontier) == sorted(["C1", "GC1", "GC2"]) 
+        assert sorted(frontier) == sorted(["C1", "GC1", "GC2"])
