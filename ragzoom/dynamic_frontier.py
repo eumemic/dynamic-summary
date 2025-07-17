@@ -65,22 +65,11 @@ class DynamicFrontierGenerator:
     def _calculate_segment_quality(
         self, segment: "SummarySegment", scores: dict[str, float]
     ) -> float:
-        segment_node = self.store.get_node(segment.node_id)
-        if not segment_node:
-            return 0.0
-        child = self.store.get_child(segment.node_id, segment.side)
-        if not child:
-            if segment_node.depth == 0:
-                return scores.get(segment_node.id, 0.0)
-            return scores.get(segment_node.id, 0.0) / 2.0
-
-        segment_span_start = child.span_start
-        segment_span_end = child.span_end
-        seed_nodes = self.store.get_nodes(list(scores.keys()))
-        covered_seeds = self._get_nodes_in_span(
-            segment_span_start, segment_span_end, seed_nodes
-        )
-        return sum(scores.get(seed.id, 0.0) for seed in covered_seeds)
+        base_score = scores.get(segment.node_id, 0.0)
+        node = self.store.get_node(segment.node_id)
+        if node and node.depth > 0:
+            return base_score / 2.0
+        return base_score
 
     def _get_nodes_in_span(
         self, span_start: int, span_end: int, nodes: list["TreeNode"]
@@ -130,7 +119,7 @@ class DynamicFrontierGenerator:
         frontier_2, quality_2 = self._find_optimal_frontier_for_span(
             child_node, budget_for_side, scores
         )
-        if quality_2 > quality_1:
+        if frontier_2 and quality_2 > quality_1:
             return (frontier_2, quality_2)
         else:
             return (frontier_1, quality_1)
@@ -170,8 +159,6 @@ class DynamicFrontierGenerator:
     def _find_optimal_frontier_for_span(
         self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
     ) -> tuple[list[SummarySegment], float]:
-        if budget is None:
-            budget = self.config.budget_tokens
         node_id = node.id if node else None
         cache_key = (node_id, budget)
         if cache_key in self._memo_cache:

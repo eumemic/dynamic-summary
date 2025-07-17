@@ -25,6 +25,7 @@ class SimpleMockStore:
         # State tracking
         self.dirty_nodes: set[str] = set()
         self.pinned_nodes: set[str] = set()
+        self.mock_scores: dict[str, float] = {}
 
         # Cache simulation
         self.node_cache = OrderedDict()
@@ -162,6 +163,22 @@ class SimpleMockStore:
 
         return left, right
 
+    def get_child(self, node_id: str, side: str) -> Optional[SimpleNamespace]:
+        """Get the left or right child of a node."""
+        parent = self.nodes.get(node_id)
+        if not parent:
+            return None
+
+        child_id = parent.left_child_id if side == "LEFT" else parent.right_child_id
+        if not child_id:
+            return None
+
+        return self.nodes.get(child_id)
+
+    def get_nodes(self, node_ids: list[str]) -> list[SimpleNamespace]:
+        """Get multiple nodes by their IDs."""
+        return [self.nodes[nid] for nid in node_ids if nid in self.nodes]
+
     def get_leaf_nodes(
         self, document_id: Optional[str] = None
     ) -> list[SimpleNamespace]:
@@ -186,6 +203,12 @@ class SimpleMockStore:
         if candidates:
             return max(candidates, key=lambda x: x.depth)
         return None
+
+    def get_root_node_for_document(
+        self, document_id: Optional[str] = None
+    ) -> Optional[SimpleNamespace]:
+        """Get the root node for a specific document from the mock store."""
+        return self.get_root_node(document_id=document_id)
 
     def mark_dirty_upward(self, node_id: str) -> None:
         """Mark a node and all its ancestors as dirty."""
@@ -218,6 +241,14 @@ class SimpleMockStore:
         # Return node objects, not just IDs
         return [self.nodes[aid] for aid in ancestor_ids if aid in self.nodes]
 
+    def get_all_nodes_for_document(
+        self, document_id: Optional[str]
+    ) -> list[SimpleNamespace]:
+        """Get all nodes for a document from the mock store."""
+        if not document_id:
+            return list(self.nodes.values())
+        return [node for node in self.nodes.values() if node.document_id == document_id]
+
     def search_similar(
         self,
         query_embedding: list[float],
@@ -231,23 +262,46 @@ class SimpleMockStore:
         eligible_nodes = list(self.nodes.keys())
 
         if where and "document_id" in where:
-            doc_id = where["document_id"]["$eq"]
-            eligible_nodes = [
-                nid for nid in eligible_nodes if self.nodes[nid].document_id == doc_id
-            ]
+            doc_id_filter = where["document_id"]
+            if isinstance(doc_id_filter, dict) and "$eq" in doc_id_filter:
+                doc_id = doc_id_filter["$eq"]
+                eligible_nodes = [
+                    nid
+                    for nid in eligible_nodes
+                    if self.nodes[nid].document_id == doc_id
+                ]
+            elif isinstance(
+                doc_id_filter, str
+            ):  # Handle simple string filter for robustness
+                eligible_nodes = [
+                    nid
+                    for nid in eligible_nodes
+                    if self.nodes[nid].document_id == doc_id_filter
+                ]
 
-        # For testing, return nodes with mock similarity scores
-        # Real implementation would compute cosine similarity
         results = []
-        for i, node_id in enumerate(eligible_nodes[:n_results]):
-            # Mock decreasing similarity scores
-            score = 0.9 - (i * 0.05)
-            metadata = {
-                "depth": self.nodes[node_id].depth,
-                "span_start": self.nodes[node_id].span_start,
-                "span_end": self.nodes[node_id].span_end,
-            }
-            results.append((node_id, score, metadata))
+        # If mock_scores is set, use it to determine the candidates and their scores
+        if self.mock_scores:
+            for node_id, score in self.mock_scores.items():
+                if node_id in eligible_nodes:
+                    metadata = {
+                        "depth": self.nodes[node_id].depth,
+                        "span_start": self.nodes[node_id].span_start,
+                        "span_end": self.nodes[node_id].span_end,
+                    }
+                    results.append(
+                        (node_id, 1.0 - score, metadata)
+                    )  # Convert score to distance
+        else:
+            # Fallback to old mock behavior if no scores are set
+            for i, node_id in enumerate(eligible_nodes[:n_results]):
+                score = 0.9 - (i * 0.05)
+                metadata = {
+                    "depth": self.nodes[node_id].depth,
+                    "span_start": self.nodes[node_id].span_start,
+                    "span_end": self.nodes[node_id].span_end,
+                }
+                results.append((node_id, 1.0 - score, metadata))
 
         return results
 
@@ -272,6 +326,10 @@ class SimpleMockStore:
         node = self.nodes.get(node_id)
         if node:
             node.is_pinned = True
+
+    def set_mock_scores(self, scores: dict[str, float]):
+        """Set mock scores for testing."""
+        self.mock_scores = scores
 
     def get_pinned_nodes(
         self, max_depth: Optional[int] = None
