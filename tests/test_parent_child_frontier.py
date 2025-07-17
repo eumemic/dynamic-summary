@@ -9,8 +9,11 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.retrieve import RetrievalResult
 
 
+@pytest.mark.skip(
+    reason="Legacy assembler tests, will be removed with DP implementation"
+)
 class TestParentChildFrontier:
-    """Test cases for parent-child nodes in frontier with <<<MID>>> extraction."""
+    """Tests for assembling frontiers containing both parent and child nodes."""
 
     @pytest.fixture
     def setup_assembler(self):

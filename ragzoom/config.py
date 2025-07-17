@@ -18,7 +18,12 @@ class RagZoomConfig(BaseSettings):
         default=8000, description="Hard budget for stitched summary in tokens"
     )
     budget_strategy: str = Field(
-        default="drop", description="Budget enforcement strategy: 'drop' or 'truncate'"
+        default="truncate",
+        description="Strategy for handling budget overflows ('truncate' or 'drop').",
+    )
+    frontier_mode: str = Field(
+        default="legacy",
+        description="Frontier generation mode ('legacy' or 'dp').",
     )
     leaf_tokens: int = Field(
         default=200, description="Target size for leaf chunks in tokens"
