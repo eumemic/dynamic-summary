@@ -1,0 +1,28 @@
+# Cursor Rules for the RagZoom Repository
+
+This file contains important, context-setting instructions for any AI agent working on this codebase. Please adhere to these rules at all times.
+
+## 1. Core Principles
+
+- **"Correct-by-Construction" Design:** The central architectural principle of this system, particularly for frontier generation, is to be "correct-by-construction". Avoid multi-stage, corrective pipelines that patch up errors from previous steps. Instead, design algorithms that produce a valid final state in a single, principled pass. Refer to the DP implementation in `ragzoom/dynamic_frontier.py` as the canonical example.
+
+- **Trust, but Verify (with Mocks):** The core algorithms should be pure and testable. Do not trust that external systems (databases, LLMs) will always behave as expected. Use the `SimpleMockStore` for fast, reliable, and hermetic unit tests of algorithmic logic.
+
+## 2. Development Process
+
+- **Pre-commit is Mandatory:** The pre-commit hook (`scripts/git-hooks/pre-commit`) is the guardian of code quality. **You must never bypass it with `--no-verify` without explicit permission.**
+- **Auto-Fixing is Enabled:** The hook will automatically run `ruff --fix` and `black` to handle trivial linting and formatting issues. If the hook still fails, you must manually fix the remaining errors (usually from `pytest` or `mypy`).
+- **Use the Mock Store for Tests:** When writing new tests for algorithms in `ragzoom/retrieve.py` or `ragzoom/dynamic_frontier.py`, use the `tests.mock_store.SimpleMockStore` to avoid slow and flaky tests that depend on a real database and LLM calls.
+
+## 3. Troubleshooting
+
+- **Segmentation Faults:** If `pytest` crashes with a `Segmentation fault`, the local `chroma_db/` directory is almost certainly corrupted. The first step in debugging should always be to delete it and restart the test run: `rm -rf chroma_db/`
+- **Persistent `mypy` Errors:** The `dmypy` daemon can sometimes get into a bad state. If you are struggling with type errors that you believe you have fixed, run a full, stateless `mypy` check to get a reliable result: `mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs`
+
+## 4. Key Documents
+
+Before starting any work, review the following documents to understand the system architecture and development process:
+
+- **Architecture Overview:** `docs/architecture.md`
+- **Developer Onboarding Guide:** `docs/developer-guide.md`
+- **V2 Algorithm Design:** `docs/v2/dynamic-frontier-design.md`
