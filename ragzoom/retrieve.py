@@ -60,6 +60,10 @@ class Retriever:
         # Per-request cache to avoid double refresh
         self._refreshed_node_ids: set[str] = set()
 
+        self._memo_cache: dict[
+            tuple[Optional[str], int], tuple[list[SummarySegment], float]
+        ] = {}
+
     def _get_query_embedding(self, query: str) -> list[float]:
         """Get embedding for query text."""
         try:
@@ -142,13 +146,10 @@ class Retriever:
 
         # Step 5: Extract frontier
         if self.config.frontier_mode == "dp":
-            # New DP-based frontier generation
             frontier_segments = self._find_optimal_frontier_dp(
                 budget_tokens, scores, document_id
             )
-            frontier_nodes = [
-                seg.node_id for seg in frontier_segments
-            ]  # TBD if this is right
+            frontier_nodes = list(set(seg.node_id for seg in frontier_segments))
         else:
             # Legacy frontier generation
             frontier_nodes = self._extract_frontier(coverage_map)
@@ -257,14 +258,20 @@ class Retriever:
         }  # Convert distance to similarity
 
         # Step 5: Extract frontier
-        frontier_nodes = self._extract_frontier(coverage_map)
-        frontier_segments = None
-
-        # Step 6: If budget specified, ensure frontier fits within budget
-        if budget_tokens is not None:
-            frontier_nodes = self._enforce_budget_constraint(
-                frontier_nodes, budget_tokens, scores
+        if self.config.frontier_mode == "dp":
+            frontier_segments = self._find_optimal_frontier_dp(
+                budget_tokens, scores, document_id
             )
+            frontier_nodes = list(set(seg.node_id for seg in frontier_segments))
+        else:
+            frontier_nodes = self._extract_frontier(coverage_map)
+            frontier_segments = None
+
+            # Step 6: If budget specified, ensure frontier fits within budget
+            if budget_tokens is not None:
+                frontier_nodes = self._enforce_budget_constraint(
+                    frontier_nodes, budget_tokens, scores
+                )
 
         # Update access history
         self._update_access_history(selected_ids, candidates)
@@ -646,19 +653,18 @@ class Retriever:
         if not root_node:
             return []
 
-        # We need a tokenizer for cost calculation
         import tiktoken
 
         tokenizer = tiktoken.get_encoding("cl100k_base")
 
-        # Initialize the memoization cache for this run
         self._memo_cache = {}
-
-        # This is the main call
         segments, quality = self._find_optimal_frontier_for_span(
             root_node, budget_tokens, scores, tokenizer
         )
-        logger.info(f"DP frontier generated with total quality {quality:.3f}")
+
+        logger.info(
+            f"DP frontier generated with total quality {quality:.3f} and {len(segments)} segments."
+        )
         return segments
 
     def _get_segment_cost(self, segment: "SummarySegment", tokenizer) -> int:
@@ -667,9 +673,8 @@ class Retriever:
         if not node or not node.text:
             return 0
 
-        # If it's a leaf or has no mid_offset, the segment cost is half the node's text
         if node.depth == 0 or node.mid_offset is None:
-            return len(tokenizer.encode(node.text)) // 2
+            return len(tokenizer.encode(node.text))
 
         if segment.side == "LEFT":
             text = node.text[: node.mid_offset]
@@ -683,9 +688,40 @@ class Retriever:
     ) -> float:
         """
         Calculates the quality of a segment.
-        The quality is the relevance score of the underlying node.
+        The quality is the sum of the relevance scores of the covered seeds.
         """
-        return scores.get(segment.node_id, 0.0)
+        segment_node = self.store.get_node(segment.node_id)
+        if not segment_node:
+            return 0.0
+
+        # Determine the span of the segment
+        child = self.store.get_child(segment.node_id, segment.side)
+        if not child:
+            # Fallback for leaves or missing children
+            if segment_node.depth == 0:
+                return scores.get(segment_node.id, 0.0)
+            return scores.get(segment_node.id, 0.0) / 2.0
+
+        segment_span_start = child.span_start
+        segment_span_end = child.span_end
+
+        # Find which seed nodes are covered by this segment's span.
+        seed_nodes = self.store.get_nodes(list(scores.keys()))
+        covered_seeds = self._get_nodes_in_span(
+            segment_span_start, segment_span_end, seed_nodes
+        )
+
+        return sum(scores.get(seed.id, 0.0) for seed in covered_seeds)
+
+    def _get_nodes_in_span(
+        self, span_start: int, span_end: int, nodes: list["TreeNode"]
+    ) -> list["TreeNode"]:
+        """Helper to find all nodes that are fully contained within a span."""
+        return [
+            node
+            for node in nodes
+            if node.span_start >= span_start and node.span_end <= span_end
+        ]
 
     def _split_budget_proportionally(
         self, budget: int, node: "TreeNode", scores: dict[str, float]
@@ -696,24 +732,37 @@ class Retriever:
         if not left_child or not right_child:
             return budget // 2, budget // 2
 
-        # To do this properly, we need to find all seed nodes in each subtree
-        # This is expensive. A simpler proxy is to use the score of the direct children.
-        relevance_left = scores.get(left_child.id, 0.0)
-        relevance_right = scores.get(right_child.id, 0.0)
+        # To do this properly, we need to find all seed nodes in each subtree.
+        # We can do this by checking the span of the seed nodes against the children's spans.
+        seed_nodes = self.store.get_nodes(list(scores.keys()))
 
+        seeds_left = self._get_nodes_in_span(
+            left_child.span_start, left_child.span_end, seed_nodes
+        )
+        seeds_right = self._get_nodes_in_span(
+            right_child.span_start, right_child.span_end, seed_nodes
+        )
+
+        relevance_left = sum(scores.get(s.id, 0.0) for s in seeds_left)
+        relevance_right = sum(scores.get(s.id, 0.0) for s in seeds_right)
         total_relevance = relevance_left + relevance_right
 
         if total_relevance == 0:
-            return budget // 2, budget // 2
+            # If no relevance info, split budget based on text length ratio
+            len_left = len(left_child.text) if left_child.text else 1
+            len_right = len(right_child.text) if right_child.text else 1
+            total_len = len_left + len_right
+            budget_l = int(budget * (len_left / total_len))
+        else:
+            budget_l = int(budget * (relevance_left / total_relevance))
 
-        budget_left = int(budget * (relevance_left / total_relevance))
-        budget_right = budget - budget_left
-        return budget_left, budget_right
+        budget_r = budget - budget_l
+        return budget_l, budget_r
 
     def _find_best_choice_for_side(
         self,
-        parent_node,
-        side: str,
+        parent_node: "TreeNode",
+        side: Literal["LEFT", "RIGHT"],
         budget_for_side: int,
         scores: dict[str, float],
         tokenizer,
@@ -721,42 +770,55 @@ class Retriever:
         """
         Chooses between the parent's low-res segment and a high-res frontier from the child.
         """
-        # Option 1 (Default): The parent's own low-resolution segment.
         frontier_1 = [SummarySegment(parent_node.id, side)]
         quality_1 = self._calculate_segment_quality(frontier_1[0], scores)
 
-        # Option 2 (Upgrade): Attempt to get a better frontier from the corresponding child.
         child_node = self.store.get_child(parent_node.id, side)
 
         frontier_2, quality_2 = self._find_optimal_frontier_for_span(
             child_node, budget_for_side, scores, tokenizer
         )
 
-        # Return the winning option.
+        logger.debug(
+            f"Node {parent_node.id} ({side}): Parent (q={quality_1:.3f}) vs Child (q={quality_2:.3f})"
+        )
+
         if quality_2 > quality_1:
+            logger.debug(f"--> Chose CHILD for {parent_node.id} ({side})")
             return (frontier_2, quality_2)
         else:
+            logger.debug(f"--> Chose PARENT for {parent_node.id} ({side})")
             return (frontier_1, quality_1)
 
     def _find_optimal_frontier_for_span_unmemoized(
-        self, node: "TreeNode", budget: int, scores: dict[str, float], tokenizer
+        self,
+        node: Optional["TreeNode"],
+        budget: int,
+        scores: dict[str, float],
+        tokenizer,
     ) -> tuple[list["SummarySegment"], float]:
         """
         Core recursive logic for finding the optimal frontier for a given node's span.
         """
-        # Base case 1: Node doesn't exist.
         if not node:
             return ([], 0.0)
 
-        # Base case 2: The node's own summary is too expensive.
+        logger.debug(
+            f"DP Span Search: node={node.id}, depth={node.depth}, budget={budget}"
+        )
+
+        # Heuristic check: if the cost of the node itself is over budget, fail fast.
         cost_of_this_node = self._get_segment_cost(
             SummarySegment(node.id, "LEFT"), tokenizer
         ) + self._get_segment_cost(SummarySegment(node.id, "RIGHT"), tokenizer)
         if budget < cost_of_this_node:
+            logger.debug(
+                f"--> Node {node.id} failed fast: cost {cost_of_this_node} > budget {budget}"
+            )
             return ([], 0.0)
 
-        # Decompose the problem into two independent "side" problems.
         budget_l, budget_r = self._split_budget_proportionally(budget, node, scores)
+        logger.debug(f"--> Split budget for {node.id}: L={budget_l}, R={budget_r}")
 
         best_frontier_left, best_quality_left = self._find_best_choice_for_side(
             node, "LEFT", budget_l, scores, tokenizer
@@ -765,18 +827,52 @@ class Retriever:
             node, "RIGHT", budget_r, scores, tokenizer
         )
 
-        # Combine the optimal solutions for both sides.
+        # If either side failed, we can't form a complete frontier.
+        if not best_frontier_left or not best_frontier_right:
+            return ([], 0.0)
+
         final_frontier = best_frontier_left + best_frontier_right
         final_quality = best_quality_left + best_quality_right
 
+        final_cost = sum(
+            self._get_segment_cost(seg, tokenizer) for seg in final_frontier
+        )
+        logger.debug(
+            f"--> Node {node.id}: Combined frontier has cost {final_cost} (budget {budget})"
+        )
+
+        if final_cost > budget:
+            logger.debug(
+                f"--> Node {node.id} combined frontier over budget, falling back to self."
+            )
+            quality = self._calculate_segment_quality(
+                SummarySegment(node.id, "LEFT"), scores
+            ) + self._calculate_segment_quality(
+                SummarySegment(node.id, "RIGHT"), scores
+            )
+            return (
+                [SummarySegment(node.id, "LEFT"), SummarySegment(node.id, "RIGHT")],
+                quality,
+            )
+
+        logger.debug(
+            f"--> Node {node.id} success, quality={final_quality:.3f}, num_segments={len(final_frontier)}"
+        )
         return (final_frontier, final_quality)
 
     def _find_optimal_frontier_for_span(
-        self, node: "TreeNode", budget: int, scores: dict[str, float], tokenizer
+        self,
+        node: Optional["TreeNode"],
+        budget: int,
+        scores: dict[str, float],
+        tokenizer,
     ) -> tuple[list["SummarySegment"], float]:
         """
         Memoization wrapper for the recursive frontier generation.
         """
+        if budget is None:  # Should not happen with DP, but for safety
+            budget = self.config.budget_tokens
+
         node_id = node.id if node else None
         cache_key = (node_id, budget)
 

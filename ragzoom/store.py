@@ -255,6 +255,28 @@ class Store:
                 self._add_to_cache(node)
             return node
 
+    def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
+        """Get multiple nodes by their IDs."""
+        # First, try to get as many as possible from the cache
+        cached_nodes: list[TreeNode] = [
+            node for nid in node_ids if (node := self._get_from_cache(nid)) is not None
+        ]
+        cached_ids = {node.id for node in cached_nodes}
+
+        # Then, get the rest from the database
+        ids_to_fetch = [nid for nid in node_ids if nid not in cached_ids]
+
+        db_nodes = []
+        if ids_to_fetch:
+            with self.SessionLocal() as session:
+                db_nodes = (
+                    session.query(TreeNode).filter(TreeNode.id.in_(ids_to_fetch)).all()
+                )
+                for node in db_nodes:
+                    self._add_to_cache(node)
+
+        return cached_nodes + db_nodes
+
     def update_node_access(self, node_id: str) -> None:
         """Update access time and count for a node."""
         with self.SessionLocal() as session:
@@ -406,12 +428,12 @@ class Store:
 
         return output
 
-    def get_pinned_nodes(self, max_depth: Optional[int] = None) -> list[TreeNode]:
-        """Get all pinned nodes up to a certain depth."""
+    def get_pinned_nodes(self, depth_max: Optional[int] = None) -> list[TreeNode]:
+        """Get nodes that are pinned (always included in coverage)."""
         with self.SessionLocal() as session:
             query = session.query(TreeNode).filter_by(is_pinned=1)
-            if max_depth is not None:
-                query = query.filter(TreeNode.depth <= max_depth)
+            if depth_max is not None:
+                query = query.filter(TreeNode.depth <= depth_max)
             return query.all()
 
     def pin_node(self, node_id: str) -> bool:
