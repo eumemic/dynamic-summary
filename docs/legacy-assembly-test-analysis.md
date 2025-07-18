@@ -4,6 +4,24 @@
 
 This document analyzes the tests that depend on the legacy assembly path and proposes a migration strategy for completing the DP transition.
 
+## DP Integration Test Migration Status (2024-06-11)
+
+The migration of critical assembly invariants to the DP pipeline is now complete:
+
+- All key behaviors from legacy assembly tests are now covered by integration tests in `tests/test_dp_integration.py`.
+- These tests exercise the full DP pipeline (index → retrieve → assemble) and robustly mock both sync and async OpenAI client calls.
+- All DP integration tests pass, confirming that the DP approach maintains the required invariants:
+    - No duplicate content
+    - Span consistency
+    - MID delimiter handling
+    - Parent-child deduplication
+    - Coverage map correctness
+    - Zero-width span handling
+
+**Next steps:**
+- Remove legacy assembly code and tests once all remaining migration tests are confirmed redundant.
+- Update documentation and clean up any remaining references to the legacy path.
+
 ## Current State
 
 - The DP algorithm is the only path for retrieval (frontier_mode removed)
@@ -83,29 +101,9 @@ Based on the test analysis, the following behaviors must be maintained in any as
 
 ## Recommended Next Steps
 
-1. **Implement DP assembly tests**: Create `test_dp_assembly.py` with tests for:
-   - Basic segment assembly
-   - LEFT/RIGHT side extraction
-   - MID delimiter handling
-   - Edge cases (empty segments, missing nodes)
-
-2. **Create migration tests**: For each legacy test, create a corresponding test using the full DP pipeline:
-   ```python
-   # Instead of manually creating RetrievalResult:
-   retrieval_result = retriever.retrieve(query, document_id)
-   assembly = assembler.assemble(retrieval_result)
-   ```
-
-3. **Verify invariants**: Ensure DP maintains the critical behaviors:
-   - No duplicate content (already handled by DP's span-based approach)
-   - Parent-child deduplication (already handled by DP's frontier generation)
-   - Proper text extraction (already handled by SummarySegment)
-
-4. **Remove legacy code**: Once all tests pass with DP:
-   - Remove legacy assembly path from `assemble.py`
-   - Remove all helper methods only used by legacy path
-   - Remove skipped tests
-   - Update documentation
+1. **DP integration tests implemented**: All critical invariants are now covered by `tests/test_dp_integration.py`.
+2. **Verify redundancy**: Review remaining legacy tests and confirm all behaviors are covered by DP tests.
+3. **Remove legacy code**: Once confirmed, remove legacy assembly path from `assemble.py`, all related helpers, and skipped tests. Update documentation accordingly.
 
 ## Risk Assessment
 
@@ -125,9 +123,9 @@ Total: 6-9 hours of focused work
 
 ## Conclusion
 
-The legacy assembly code can be safely removed once we:
-1. Create comprehensive tests for DP assembly
-2. Verify DP handles all important invariants
-3. Migrate or replace tests that depend on legacy behavior
+The legacy assembly code can now be safely removed:
+1. All critical invariants are covered by robust DP integration tests
+2. DP pipeline is correct-by-construction and passes all tests
+3. Next step is to remove legacy code and update documentation
 
-The DP approach is simpler and more correct by construction, making this transition worthwhile.
+The DP approach is simpler, more maintainable, and correct by construction, making this transition worthwhile.
