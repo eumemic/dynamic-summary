@@ -12,7 +12,7 @@ class TestDPFrontier:
     @pytest.fixture
     def setup_system(self):
         """Set up a complete system with DP mode enabled and a mock store."""
-        config = RagZoomConfig(frontier_mode="dp", leaf_tokens=100)
+        config = RagZoomConfig(leaf_tokens=100)
         store = SimpleMockStore(config=config)
         retriever = Retriever(config, store, tree_builder=None)
         assembler = Assembler(config, store)

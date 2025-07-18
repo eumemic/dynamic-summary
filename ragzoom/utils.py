@@ -7,7 +7,7 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
-    from ragzoom.store import Store, TreeNode
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -81,42 +81,3 @@ def format_token_count(tokens: int) -> str:
 def clean_mid_delimiter(text: str) -> str:
     """Remove <<<MID>>> delimiter from text."""
     return text.replace("<<<MID>>>", "").strip()
-
-
-def get_actual_node_text(
-    node: "TreeNode", store: "Store", frontier_set: set[str]
-) -> str:
-    """
-    Calculate the exact text that will be extracted for a given node
-    based on which of its children are also in the frontier.
-
-    This logic is moved from the Assembler to be reusable by the Retriever
-    for more accurate budget calculations.
-    """
-    # If node has no mid_offset, return full text
-    if not hasattr(node, "mid_offset") or node.mid_offset is None:
-        return clean_mid_delimiter(node.text)
-
-    # Get children
-    left_child, right_child = store.get_children(node.id)
-
-    left_in_frontier = left_child and left_child.id in frontier_set
-    right_in_frontier = right_child and right_child.id in frontier_set
-
-    # For parent nodes: if a child is in the frontier, it will handle its own text
-    # So we should only include the OTHER child's summary from the parent
-    if left_in_frontier and not right_in_frontier:
-        # Left child will output its own text, parent should only output right summary
-        return node.text[node.mid_offset :].strip()
-
-    elif right_in_frontier and not left_in_frontier:
-        # Right child will output its own text, parent should only output left summary
-        return node.text[: node.mid_offset].strip()
-
-    elif left_in_frontier and right_in_frontier:
-        # Both children in frontier - parent should output nothing
-        return ""
-
-    # If no children are in the frontier, the parent is a leaf of the frontier
-    # and should output its full summary.
-    return clean_mid_delimiter(node.text)

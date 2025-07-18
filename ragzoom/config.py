@@ -21,10 +21,6 @@ class RagZoomConfig(BaseSettings):
         default="truncate",
         description="Strategy for handling budget overflows ('truncate' or 'drop').",
     )
-    frontier_mode: str = Field(
-        default="legacy",
-        description="Frontier generation mode ('legacy' or 'dp').",
-    )
     leaf_tokens: int = Field(
         default=200, description="Target size for leaf chunks in tokens"
     )
