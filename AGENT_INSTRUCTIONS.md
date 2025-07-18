@@ -14,7 +14,8 @@ Before starting any work, review the following documents to understand the syste
 - **Developer Onboarding Guide:** `docs/developer-guide.md`
 - **Architecture Overview:** `docs/architecture.md`
 - **V2 Algorithm Design:** `docs/v2/dynamic-frontier-design.md`
-- **Project Implementation Details:** `@docs/project-brief.md`, `@docs/implementation-notes.md`, `@docs/testing-strategy.md`, `@docs/bug-investigations.md`
+- **Implementation Notes:** `docs/implementation-notes.md`
+- **Testing Strategy:** `docs/testing-strategy.md`
 
 ## 2. General Philosophy & Collaboration
 
