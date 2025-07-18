@@ -139,3 +139,48 @@ When you encounter references to two different frontier generation approaches in
 3. No post-processing corrections are needed
 
 The DP transition is NOT about replacing the entire retrieval system - it's about replacing the error-prone frontier extraction and budget management logic with a mathematically sound, single-pass algorithm.
+
+## Transition Progress
+
+### Phase 1: Remove frontier_mode flag (COMPLETED)
+- Removed `frontier_mode` from `RagZoomConfig` in `config.py`
+- Updated both occurrences in `retrieve.py` to always use DP path
+- Updated `test_dp_frontier.py` to not reference frontier_mode
+- All tests pass (137 passed, 4 skipped)
+
+### Phase 2: Identified Dead Code
+After removing the frontier_mode conditionals, the following methods are now dead code:
+
+**In retrieve.py:**
+- `_extract_frontier()` (line 342) - Legacy frontier extraction
+- `_enforce_budget_constraint()` (line 600) - Post-hoc budget trimming
+
+**In utils.py:**
+- `get_actual_node_text()` - Only used by `_enforce_budget_constraint`
+
+### Phase 3: Dead Code Removal (COMPLETED)
+Successfully removed:
+- `_extract_frontier()` from retrieve.py
+- `_enforce_budget_constraint()` from retrieve.py  
+- `get_actual_node_text()` from utils.py
+- Skipped `test_extract_frontier_logic` with note for future analysis
+
+All tests still pass (136 passed, 5 skipped).
+
+**Note:** `clean_mid_delimiter` in utils.py is still used (by assemble.py).
+
+### Phase 4: Analysis of assemble.py
+The `assemble()` method still has a conditional that routes between DP and legacy assembly based on whether `frontier_segments` is set. Since we always use DP now, this should always be set.
+
+**Potential dead code in assemble.py (lines 36-159):**
+- The entire legacy assembly path
+- `_remove_children_with_parents_in_frontier()`
+- `_sort_nodes_chronologically()`
+- `_apply_slope_cap()`
+- `_build_coverage_map()`
+- `_extract_node_text_with_span()`
+- `_has_span_overlap_detailed()`
+- `_apply_smoothing_pass()`
+- And potentially more helper methods
+
+**Action needed:** Verify that frontier_segments is always set, then remove the legacy assembly path.
