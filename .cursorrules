@@ -4,7 +4,7 @@ This file contains important, context-setting instructions for any AI agent work
 
 ## 0. First Thing's First
 
-**Your first action in any new session must be to read the `docs/agent-handoff.md` file.** It contains critical context, a summary of previous work, and guidance on the collaborative process for this project. Your last action before a session ends will be to update it.
+**Your first action in any new session must be to read the `docs/agent-handoff.md` file.** It contains critical context, a summary of previous work, and guidance on the collaborative process for this project. Do not update this file until the user explicitly signals that the session is over. This is a critical step to ensure a clean handoff to your successor.
 
 ## 1. Key Documents
 
