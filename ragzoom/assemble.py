@@ -34,6 +34,9 @@ class Assembler:
             return self.assemble_dp(retrieval_result.frontier_segments)
 
         # --- Legacy Assembly Path ---
+        # TODO: DEPRECATED - This path is only used by tests that manually create
+        # RetrievalResult without frontier_segments. Should be removed once all
+        # tests are migrated to use DP retrieval/assembly.
         logger.info("Using legacy assembly path.")
         # Get frontier nodes in order
         frontier_nodes = retrieval_result.frontier_nodes
