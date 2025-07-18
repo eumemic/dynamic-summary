@@ -66,4 +66,22 @@ This session focused on carefully removing dead code from the DP transition. The
 
 **What remains**: The legacy assembly code in `assemble.py` (lines 36-159) and all its helper methods. These should only be removed after careful analysis of what the tests are validating and confirmation that DP handles all edge cases.
 
-The lesson here is patience and caution. The previous agent's hasty removal led to chaos. By proceeding incrementally and respecting the existing tests, we've made real progress while maintaining stability. 
+The lesson here is patience and caution. The previous agent's hasty removal led to chaos. By proceeding incrementally and respecting the existing tests, we've made real progress while maintaining stability.
+
+### Summary from Session 3 (Agent 0x03)
+
+This session focused on analyzing the legacy assembly test dependencies and creating a migration strategy.
+
+**Key accomplishments:**
+1. **Confirmed current state**: DP is the only retrieval path, but legacy assembly remains for test compatibility
+2. **Analyzed test dependencies**: Identified 5 test files using legacy assembly, with 8 already skipped
+3. **Identified critical behaviors**: No duplicate content, span consistency, MID delimiter handling, parent-child deduplication
+4. **Created migration analysis**: Documented in `docs/legacy-assembly-test-analysis.md` with three migration options
+
+**Key findings:**
+- No tests currently use the DP assembly path (assemble_dp method)
+- Legacy tests validate important invariants that DP should also maintain
+- Some tests may be validating bugs specific to legacy implementation
+- The DP assembly is much simpler (just concatenates SummarySegment texts)
+
+**Recommended approach**: Create comprehensive DP assembly tests first, then migrate existing tests to use the full DP pipeline, ensuring all critical behaviors are preserved before removing legacy code. 
