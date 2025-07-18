@@ -138,27 +138,14 @@ class Retriever:
             cand[0]: 1.0 - cand[1] for cand in candidates
         }  # Convert distance to similarity
 
-        # Step 5: Extract frontier
-        if self.config.frontier_mode == "dp":
-            final_budget = (
-                budget_tokens
-                if budget_tokens is not None
-                else self.config.budget_tokens
-            )
-            frontier_segments = self.dp_generator.find_optimal_frontier(
-                final_budget, scores, document_id
-            )
-            frontier_nodes = list(set(seg.node_id for seg in frontier_segments))
-        else:
-            # Legacy frontier generation
-            frontier_nodes = self._extract_frontier(coverage_map)
-            frontier_segments = None
-
-            # Step 6: If budget specified, ensure frontier fits within budget
-            if budget_tokens is not None:
-                frontier_nodes = self._enforce_budget_constraint(
-                    frontier_nodes, budget_tokens, scores
-                )
+        # Step 5: Extract frontier using DP algorithm
+        final_budget = (
+            budget_tokens if budget_tokens is not None else self.config.budget_tokens
+        )
+        frontier_segments = self.dp_generator.find_optimal_frontier(
+            final_budget, scores, document_id
+        )
+        frontier_nodes = list(set(seg.node_id for seg in frontier_segments))
 
         # Update access history
         self._update_access_history(selected_ids, candidates)
@@ -168,9 +155,7 @@ class Retriever:
             scores=scores,
             coverage_map=coverage_map,
             frontier_nodes=frontier_nodes,
-            frontier_segments=(
-                frontier_segments if self.config.frontier_mode == "dp" else None
-            ),
+            frontier_segments=frontier_segments,
         )
 
     def retrieve(
@@ -256,26 +241,14 @@ class Retriever:
             cand[0]: 1.0 - cand[1] for cand in candidates
         }  # Convert distance to similarity
 
-        # Step 5: Extract frontier
-        if self.config.frontier_mode == "dp":
-            final_budget = (
-                budget_tokens
-                if budget_tokens is not None
-                else self.config.budget_tokens
-            )
-            frontier_segments = self.dp_generator.find_optimal_frontier(
-                final_budget, scores, document_id
-            )
-            frontier_nodes = list(set(seg.node_id for seg in frontier_segments))
-        else:
-            frontier_nodes = self._extract_frontier(coverage_map)
-            frontier_segments = None
-
-            # Step 6: If budget specified, ensure frontier fits within budget
-            if budget_tokens is not None:
-                frontier_nodes = self._enforce_budget_constraint(
-                    frontier_nodes, budget_tokens, scores
-                )
+        # Step 5: Extract frontier using DP algorithm
+        final_budget = (
+            budget_tokens if budget_tokens is not None else self.config.budget_tokens
+        )
+        frontier_segments = self.dp_generator.find_optimal_frontier(
+            final_budget, scores, document_id
+        )
+        frontier_nodes = list(set(seg.node_id for seg in frontier_segments))
 
         # Update access history
         self._update_access_history(selected_ids, candidates)
@@ -338,40 +311,6 @@ class Retriever:
             coverage_map[ancestor.id] = True
 
         return coverage_map
-
-    def _extract_frontier(self, coverage_map: dict[str, bool]) -> list[str]:
-        """Extract frontier nodes (covered nodes with uncovered children)."""
-        frontier = []
-
-        # Check each covered node
-        for node_id in coverage_map:
-            if not coverage_map.get(node_id):
-                continue
-
-            node = self.store.get_node(node_id)
-            if not node:
-                continue
-
-            # Get children
-            left_child, right_child = self.store.get_children(node_id)
-
-            # A node is NOT on the frontier if both of its children exist and are covered.
-            # In that case, the frontier passes down to its children.
-            left_covered = left_child and coverage_map.get(left_child.id)
-            right_covered = right_child and coverage_map.get(right_child.id)
-
-            if not left_covered or not right_covered:
-                frontier.append(node_id)
-
-        # Sort frontier by span_start for chronological order
-        frontier_nodes = []
-        for node_id in frontier:
-            node = self.store.get_node(node_id)
-            if node:
-                frontier_nodes.append((node.span_start, node_id))
-
-        frontier_nodes.sort()
-        return [node_id for _, node_id in frontier_nodes]
 
     def _update_access_history(
         self, selected_ids: list[str], candidates: list[tuple[str, float, dict]]
@@ -596,50 +535,3 @@ class Retriever:
         conservative_n_max = max(1, int(budget_tokens // safe_average_cost))
 
         return conservative_n_max
-
-    def _enforce_budget_constraint(
-        self, frontier_nodes: list[str], budget_tokens: int, scores: dict[str, float]
-    ) -> list[str]:
-        """Ensure frontier nodes fit within token budget.
-
-        Uses exact token calculation for each node to guarantee
-        the assembled result won't exceed budget.
-        """
-        import tiktoken
-
-        from ragzoom.utils import get_actual_node_text
-
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-        frontier_set = set(frontier_nodes)
-
-        # Calculate exact token cost for each frontier node
-        node_costs = []
-        for node_id in frontier_nodes:
-            node = self.store.get_node(node_id)
-            if not node:
-                continue
-
-            actual_text = get_actual_node_text(node, self.store, frontier_set)
-            token_cost = len(tokenizer.encode(actual_text))
-
-            node_costs.append((node_id, token_cost, scores.get(node_id, 0.0)))
-
-        # Sort by score (highest first) to keep best nodes
-        node_costs.sort(key=lambda x: x[2], reverse=True)
-
-        # Select nodes that fit within budget
-        selected = []
-        total_tokens = 0
-
-        for node_id, token_cost, score in node_costs:
-            if total_tokens + token_cost <= budget_tokens:
-                selected.append(node_id)
-                total_tokens += token_cost
-            else:
-                logger.info(
-                    f"Dropping node {node_id} (score={score:.3f}, cost={token_cost}) to stay within budget"
-                )
-
-        # Maintain chronological order
-        selected_set = set(selected)
-        return [nid for nid in frontier_nodes if nid in selected_set]
