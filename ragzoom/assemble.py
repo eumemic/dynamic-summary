@@ -167,6 +167,8 @@ class Assembler:
             return ""
 
         texts = [self._get_text_for_segment(seg) for seg in frontier_segments]
+        # Filter out empty texts to avoid extra newlines
+        texts = [t for t in texts if t]
         return "\n\n".join(texts)
 
     def _get_text_for_segment(self, segment: "SummarySegment") -> str:
@@ -183,11 +185,13 @@ class Assembler:
         if segment.side == "LEFT":
             return node.text[: node.mid_offset].strip()
         else:  # RIGHT
-            return node.text[node.mid_offset :].strip()
+            right_text = node.text[node.mid_offset :].strip()
+            # Clean the MID delimiter from RIGHT side
+            return self._clean_mid_delimiter(right_text)
 
     def _clean_mid_delimiter(self, text: str) -> str:
         """Remove <<<MID>>> delimiter from text."""
-        return text.replace("<<<MID>>>", "")
+        return text.replace("<<<MID>>>", "").strip()
 
     def _has_span_overlap_detailed(self, span, seen_items):
         """Check if span overlaps with any item in seen_items (includes depth/node info)."""
