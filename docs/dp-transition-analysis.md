@@ -184,3 +184,71 @@ The `assemble()` method still has a conditional that routes between DP and legac
 - And potentially more helper methods
 
 **Action needed:** Verify that frontier_segments is always set, then remove the legacy assembly path.
+
+### Phase 5: Discovered Test Dependencies (BLOCKER)
+When attempting to remove the legacy assembly path, discovered that multiple tests are directly testing the legacy assembly behavior:
+- `test_assembly_integration.py` - Tests that manually create RetrievalResult without frontier_segments
+- `test_assembly_ordering_bug.py` - Tests specific bugs in the legacy assembly
+- `test_budget_guarantee.py` - Tests budget enforcement with legacy assembly
+- `test_chunk_size_regression.py` - Also creates RetrievalResult without frontier_segments
+
+These tests create RetrievalResult objects manually without frontier_segments, which means they bypass the DP retrieval and test the legacy assembly directly.
+
+**Decision:** Keep the legacy assembly path for now but mark it as deprecated. This is safer than breaking existing tests that may be catching important edge cases. The complete removal of legacy assembly should be done in a separate phase after:
+1. Confirming that DP handles all these edge cases correctly
+2. Writing equivalent tests for DP assembly if needed
+3. Getting explicit approval to remove the legacy tests
+
+### Phase 6: Current State Summary
+- **Removed:** frontier_mode flag, legacy frontier extraction methods, dead utility functions
+- **Kept:** Legacy assembly path (marked as conditional based on frontier_segments)
+- **Tests:** All 136 tests pass, 8 skipped (includes 3 legacy assembly tests)
+- **Added:** Deprecation notice to legacy assembly path in assemble.py
+
+## Identified Legacy Assembly Methods
+
+These methods in `assemble.py` are only used by the legacy assembly path and can be removed once tests are migrated:
+
+1. **Main legacy assembly logic** (lines 36-159 in `assemble()`)
+2. **Helper methods:**
+   - `_remove_children_with_parents_in_frontier()` - Handles invalid frontiers
+   - `_sort_nodes_chronologically()` - Sorts by span_start
+   - `_apply_slope_cap()` - Enforces depth transition constraints
+   - `_build_coverage_map()` - Builds node coverage map
+   - `_extract_node_text_with_span()` - Extracts text with span info
+   - `_extract_node_text()` - Extracts text based on coverage
+   - `_has_span_overlap_detailed()` - Checks for span overlaps
+   - `_apply_smoothing_pass()` - Optional text smoothing
+   - `_find_ancestor_at_depth()` - Helper for slope cap
+   - `_find_intermediate_path()` - Helper for slope cap
+   - `_find_node_at_depth_in_span()` - Helper for slope cap
+   - `_smooth_boundary()` - Helper for smoothing pass
+   - `trim_frontier_to_budget()` - Budget enforcement
+   - `assemble_with_budget()` - Budget-aware assembly
+   - `_count_frontier_tokens()` - Token counting helper
+
+3. **Other methods used by both paths:**
+   - `_clean_mid_delimiter()` - Still used by DP path
+   - `get_token_count()` - General utility
+
+## For the Next Agent
+
+When you pick up this work:
+
+1. **Current state:** The DP algorithm is the default for retrieval, but legacy assembly code remains because tests depend on it.
+
+2. **What's been done:**
+   - Removed frontier_mode flag completely
+   - Removed legacy frontier extraction from retrieve.py
+   - Added deprecation notices
+   - Documented all legacy code that remains
+
+3. **What needs to be done:**
+   - Analyze which test behaviors in legacy assembly tests should be preserved
+   - Determine if DP assembly handles all edge cases (parent-child overlaps, slope capping, etc.)
+   - Either migrate tests to use full DP pipeline or confirm behaviors are covered
+   - Only then remove the legacy assembly code
+
+4. **Key insight:** The tests that manually create RetrievalResult are testing specific assembly behaviors, not the full system. Some may be testing bugs that only existed in the legacy code, while others may be testing important invariants that DP should also maintain.
+
+5. **Proceed with caution:** The previous attempt to hastily remove code led to chaos. Take time to understand what each test is validating before removing it.
