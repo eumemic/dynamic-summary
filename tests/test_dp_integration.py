@@ -142,7 +142,7 @@ class TestDPIntegration:
         query = "First chunk Second chunk"  # Query that should match the first half
         result = retriever.retrieve(query, document_id="doc1")
 
-        print("FRONTIER NODES:", result.frontier_nodes)
+        # Print frontier segments instead of nodes
         if (
             hasattr(result, "frontier_segments")
             and result.frontier_segments is not None
@@ -200,7 +200,9 @@ class TestDPIntegration:
         result = retriever.retrieve("test document", document_id="doc1")
 
         # Check frontier doesn't have both parent and child
-        frontier_nodes = [store.get_node(nid) for nid in result.frontier_nodes]
+        # Extract unique node IDs from segments
+        frontier_node_ids = list(set(seg.node_id for seg in result.frontier_segments))
+        frontier_nodes = [store.get_node(nid) for nid in frontier_node_ids]
         for i, node in enumerate(frontier_nodes):
             for j, other in enumerate(frontier_nodes):
                 if i != j:

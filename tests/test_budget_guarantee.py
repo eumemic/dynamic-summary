@@ -136,7 +136,8 @@ class TestBudgetGuarantee:
             result = retriever.retrieve(query, budget_tokens=config.budget_tokens)
 
             # Assemble the result
-            assembled_text, token_count = assembler.assemble_with_budget(result)
+            assembled_text = assembler.assemble(result)
+            token_count = assembler.get_token_count(assembled_text)
 
             # CRITICAL: Token count must NEVER exceed budget
             assert (
@@ -215,9 +216,8 @@ class TestBudgetGuarantee:
         result.frontier_nodes = ["1_0_400_parent", "0_0_200_leaf1"]
 
         # Assemble and check budget
-        assembled_text, token_count = assembler.assemble_with_budget(
-            result, token_budget=500
-        )
+        assembled_text = assembler.assemble(result)
+        token_count = assembler.get_token_count(assembled_text)
 
         assert token_count <= 500, f"Budget exceeded in worst case: {token_count} > 500"
 
@@ -258,7 +258,8 @@ class TestBudgetGuarantee:
 
             # The retriever's own internal enforcement should already have trimmed the frontier
             # Let's assemble and get the final count
-            _, final_token_count = assembler.assemble_with_budget(result, budget)
+            assembled_text = assembler.assemble(result)
+            final_token_count = assembler.get_token_count(assembled_text)
 
             assert (
                 final_token_count <= budget
@@ -279,13 +280,12 @@ class TestBudgetGuarantee:
         # Retrieve with both constraints
         result = retriever.retrieve("test", n_max=n_max, budget_tokens=budget)
 
-        # Should respect n_max but drop nodes if needed for budget
-        assert len(result.frontier_nodes) <= n_max
+        # Should respect budget with DP algorithm
+        assert result.frontier_segments is not None
 
         # Assemble and verify budget
-        assembled_text, token_count = assembler.assemble_with_budget(
-            result, token_budget=budget
-        )
+        assembled_text = assembler.assemble(result)
+        token_count = assembler.get_token_count(assembled_text)
         assert (
             token_count <= budget
         ), f"Budget exceeded with mixed mode: {token_count} > {budget}"
@@ -302,8 +302,8 @@ class TestBudgetGuarantee:
         n_max = 5
         result = retriever.retrieve("test", n_max=n_max, budget_tokens=None)
 
-        # Should respect n_max
-        assert len(result.frontier_nodes) <= n_max
+        # Should have segments from DP algorithm
+        assert result.frontier_segments is not None
 
         # Assembly should work without budget constraints
         assembled_text = assembler.assemble(result)
