@@ -261,6 +261,19 @@ def query(
         # Assemble
         summary, token_count = assembler.assemble_with_budget(result, token_budget)
 
+        # Segment-level tiling validation (new)
+        if validate and getattr(result, "frontier_segments", None):
+            from ragzoom.validate import validate_tiling
+
+            error = validate_tiling(
+                result.frontier_segments, ctx.obj["store"], document_id
+            )
+            if error:
+                click.echo(
+                    f"❌ Segment-level tiling validation failed: {error}", err=True
+                )
+                sys.exit(1)
+
         # Output summary
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY:")

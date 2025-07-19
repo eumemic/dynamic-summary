@@ -406,3 +406,66 @@ def validate_extraction_rule(
         )
 
     return None
+
+
+def validate_tiling(
+    segments, store: Store, document_id: str, original_text: Optional[str] = None
+) -> Optional[str]:
+    """Validate that a tiling of SummarySegments has no overlaps, no duplicates, and (optionally) covers the document."""
+    if not segments:
+        return "Tiling is empty"
+
+    # Build list of (segment, span_start, span_end)
+    seen_segments = set()
+    segment_spans = []
+    for seg in segments:
+        key = (seg.node_id, seg.side)
+        if key in seen_segments:
+            return f"Duplicate segment: node {seg.node_id} side {seg.side}"
+        seen_segments.add(key)
+        node = store.get_node(seg.node_id)
+        if not node:
+            return f"Node {seg.node_id} not found in store"
+        if node.depth == 0 or node.mid_offset is None:
+            # Leaf or unsplit node: full span
+            span_start, span_end = node.span_start, node.span_end
+        elif seg.side == "LEFT":
+            span_start, span_end = node.span_start, node.span_start + node.mid_offset
+        else:  # RIGHT
+            span_start, span_end = node.span_start + node.mid_offset, node.span_end
+        segment_spans.append((seg, span_start, span_end))
+
+    # Sort by span_start
+    segment_spans.sort(key=lambda x: x[1])
+
+    # Check for overlaps
+    for i in range(len(segment_spans) - 1):
+        _, start1, end1 = segment_spans[i]
+        _, start2, end2 = segment_spans[i + 1]
+        if end1 > start2:
+            return f"Overlapping segments: {segment_spans[i][0]} [{start1},{end1}) overlaps with {segment_spans[i+1][0]} [{start2},{end2})"
+
+    # Optionally, check for complete coverage
+    doc_nodes = store.get_all_nodes_for_document(document_id)
+    if doc_nodes:
+        doc_start = min(n.span_start for n in doc_nodes)
+        doc_end = max(n.span_end for n in doc_nodes)
+        if segment_spans[0][1] != doc_start:
+            return f"Tiling does not start at document start: {segment_spans[0][1]} != {doc_start}"
+        if segment_spans[-1][2] != doc_end:
+            return f"Tiling does not end at document end: {segment_spans[-1][2]} != {doc_end}"
+        # Check for gaps
+        for i in range(len(segment_spans) - 1):
+            if segment_spans[i][2] != segment_spans[i + 1][1]:
+                gap = segment_spans[i + 1][1] - segment_spans[i][2]
+                if gap > 0:
+                    if original_text:
+                        gap_text = original_text[
+                            segment_spans[i][2] : segment_spans[i + 1][1]
+                        ]
+                        if not gap_text.isspace():
+                            return f"Non-whitespace gap in tiling: {segment_spans[i][2]} to {segment_spans[i + 1][1]}"
+                    else:
+                        return f"Gap in tiling: {segment_spans[i][2]} to {segment_spans[i + 1][1]}"
+
+    return None  # Valid tiling
