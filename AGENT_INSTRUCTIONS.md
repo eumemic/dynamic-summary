@@ -277,3 +277,7 @@ ragzoom serve
   - Removed eviction-related methods and access history tracking
   - Removed `frontier_nodes` compatibility shim from RetrievalResult
   - All code now uses segment-based model with `frontier_segments`
+- **Fixed n_max constraint enforcement**: DP algorithm was using nodes outside the coverage tree
+  - Scores dictionary now filtered to only include nodes in coverage_map
+  - Ensures DP algorithm respects the n_max constraint properly
+  - With n_max=1, only 1 leaf node can appear in the tiling
