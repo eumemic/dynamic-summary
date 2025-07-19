@@ -355,6 +355,7 @@ def query(
                     ctx.obj["store"],
                     document_id,
                     width=actual_viz_width,
+                    coverage_map=result.coverage_map,
                 )
                 click.echo(tree_viz)
                 click.echo("-" * (terminal_width - 1))
