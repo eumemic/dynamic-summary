@@ -220,7 +220,6 @@ def documents(ctx):
 @click.option("--document-id", "-d", required=True, help="Document ID to query within")
 @click.option("--n-max", type=int, help="Max nodes to retrieve")
 @click.option("--token-budget", type=int, help="Token budget for summary")
-@click.option("--use-eviction", is_flag=True, help="Use sliding queue eviction")
 @click.option("--show-stats", is_flag=True, help="Show retrieval statistics")
 @click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.pass_context
@@ -230,7 +229,6 @@ def query(
     document_id: str,
     n_max: Optional[int],
     token_budget: Optional[int],
-    use_eviction: bool,
     show_stats: bool,
     validate: bool,
 ):
@@ -244,22 +242,17 @@ def query(
         retriever = ctx.obj["retriever"]
         assembler = ctx.obj["assembler"]
 
-        # Retrieve
-        if use_eviction:
-            result = retriever.retrieve_with_eviction(
-                query_text, token_budget, document_id=document_id
-            )
-        else:
-            # Pass both n_max and budget_tokens to support all three modes
-            result = retriever.retrieve(
-                query_text,
-                n_max=n_max,
-                budget_tokens=token_budget,
-                document_id=document_id,
-            )
+        # Retrieve - Pass both n_max and budget_tokens to support all three modes
+        result = retriever.retrieve(
+            query_text,
+            n_max=n_max,
+            budget_tokens=token_budget,
+            document_id=document_id,
+        )
 
         # Assemble
-        summary, token_count = assembler.assemble_with_budget(result, token_budget)
+        summary = assembler.assemble(result)
+        token_count = assembler.get_token_count(summary)
 
         # Segment-level tiling validation (new)
         if validate and getattr(result, "frontier_segments", None):
@@ -326,7 +319,10 @@ def query(
         if show_stats:
             click.echo("STATISTICS:")
             click.echo(f"  Nodes retrieved: {len(result.node_ids)}")
-            click.echo(f"  Frontier size: {len(result.frontier_nodes)}")
+            frontier_size = (
+                len(result.frontier_segments) if result.frontier_segments else 0
+            )
+            click.echo(f"  Frontier size: {frontier_size}")
             click.echo(f"  Token count: {token_count}")
             click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
 

@@ -25,7 +25,6 @@ class RetrievalResult:
     node_ids: list[str]
     scores: dict[str, float]
     coverage_map: dict[str, bool]
-    frontier_nodes: list[str]
     frontier_segments: Optional[list["Segment"]] = None
 
 
@@ -44,12 +43,6 @@ class Retriever:
         self.tree_builder = tree_builder
         self.client = OpenAI(api_key=config.openai_api_key)
         self.dp_generator = DynamicFrontierGenerator(config, store)
-
-        # Track access history for freshness scoring
-        self.access_history: dict[str, tuple[float, int]] = (
-            {}
-        )  # node_id -> (similarity, turns_ago)
-        self.current_turn = 0
 
         # Per-request cache to avoid double refresh
         self._refreshed_node_ids: set[str] = set()
@@ -141,16 +134,11 @@ class Retriever:
         frontier_segments = self.dp_generator.find_optimal_frontier(
             final_budget, scores, document_id
         )
-        frontier_nodes = list(set(seg.node_id for seg in frontier_segments))
-
-        # Update access history
-        self._update_access_history(selected_ids, candidates)
 
         return RetrievalResult(
             node_ids=selected_ids,
             scores=scores,
             coverage_map=coverage_map,
-            frontier_nodes=frontier_nodes,
             frontier_segments=frontier_segments,
         )
 
@@ -244,16 +232,11 @@ class Retriever:
         frontier_segments = self.dp_generator.find_optimal_frontier(
             final_budget, scores, document_id
         )
-        frontier_nodes = list(set(seg.node_id for seg in frontier_segments))
-
-        # Update access history
-        self._update_access_history(selected_ids, candidates)
 
         return RetrievalResult(
             node_ids=selected_ids,
             scores=scores,
             coverage_map=coverage_map,
-            frontier_nodes=frontier_nodes,
             frontier_segments=frontier_segments,
         )
 
@@ -307,198 +290,6 @@ class Retriever:
             coverage_map[ancestor.id] = True
 
         return coverage_map
-
-    def _update_access_history(
-        self, selected_ids: list[str], candidates: list[tuple[str, float, dict]]
-    ) -> None:
-        """Update access history for freshness scoring."""
-        self.current_turn += 1
-
-        # Update selected nodes
-        for node_id in selected_ids:
-            # Find similarity score
-            sim_score = 1.0
-            for cand in candidates:
-                if cand[0] == node_id:
-                    sim_score = 1.0 - cand[1]  # Convert distance to similarity
-                    break
-
-            self.access_history[node_id] = (sim_score, 0)
-
-        # Age existing entries
-        for node_id in list(self.access_history.keys()):
-            if node_id not in selected_ids:
-                sim, turns_ago = self.access_history[node_id]
-                self.access_history[node_id] = (sim, turns_ago + 1)
-
-                # Remove old entries based on TTL
-                if self.config.ttl_turns > 0 and turns_ago + 1 > self.config.ttl_turns:
-                    del self.access_history[node_id]
-
-    def get_priority_scores(self) -> dict[str, float]:
-        """Calculate priority scores for sliding queue eviction."""
-        priority_scores = {}
-
-        # Guard against div-by-zero if decay is 0
-        decay = self.config.freshness_decay
-        if decay <= 0 or decay > 1:
-            decay = 0.9  # Safe default
-            logger.warning(
-                f"Invalid freshness_decay {self.config.freshness_decay}, using 0.9"
-            )
-
-        for node_id, (similarity, turns_ago) in self.access_history.items():
-            # Priority = similarity * decay^turns_ago
-            priority = similarity * (decay**turns_ago)
-            # Clamp to [0, 1] range (similarity might be > 1 from Chroma)
-            priority = max(0.0, min(1.0, priority))
-            priority_scores[node_id] = priority
-
-        return priority_scores
-
-    async def retrieve_with_eviction_async(
-        self,
-        query: str,
-        token_budget: Optional[int] = None,
-        document_id: Optional[str] = None,
-    ) -> RetrievalResult:
-        """Async retrieve with sliding queue eviction to fit token budget."""
-        if token_budget is None:
-            token_budget = self.config.budget_tokens
-
-        # Initial retrieval
-        result = await self.retrieve_async(query, document_id=document_id)
-
-        # Calculate token usage
-        total_tokens = 0
-        node_tokens = {}
-
-        import tiktoken
-
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-
-        for node_id in result.frontier_nodes:
-            node = self.store.get_node(node_id)
-            if node:
-                tokens = len(tokenizer.encode(node.text))
-                node_tokens[node_id] = tokens
-                total_tokens += tokens
-
-        # If within budget, return as-is
-        if total_tokens <= token_budget:
-            return result
-
-        # Need eviction - get priority scores
-        priority_scores = self.get_priority_scores()
-
-        # Sort frontier nodes by priority (lowest first for eviction)
-        frontier_with_priority = []
-        for node_id in result.frontier_nodes:
-            priority = priority_scores.get(node_id, 0.0)
-            frontier_with_priority.append((priority, node_id))
-
-        frontier_with_priority.sort()
-
-        # Evict nodes until within budget
-        evicted = set()
-        for priority, node_id in frontier_with_priority:
-            if total_tokens <= token_budget:
-                break
-
-            if node_id in node_tokens:
-                total_tokens -= node_tokens[node_id]
-                evicted.add(node_id)
-
-        # Update frontier
-        result.frontier_nodes = [
-            nid for nid in result.frontier_nodes if nid not in evicted
-        ]
-
-        return result
-
-    def retrieve_with_eviction(
-        self,
-        query: str,
-        token_budget: Optional[int] = None,
-        document_id: Optional[str] = None,
-    ) -> RetrievalResult:
-        """Sync wrapper for retrieve_with_eviction_async."""
-        try:
-            # Try to get existing event loop
-            asyncio.get_running_loop()
-            # We're already in an async context
-            logger.warning(
-                "retrieve_with_eviction() called from async context; use retrieve_with_eviction_async() instead"
-            )
-            # Fall back to regular retrieve (without dirty refresh)
-            return self._retrieve_with_eviction_sync_only(
-                query, token_budget, document_id
-            )
-        except RuntimeError:
-            # No event loop, create one
-            return asyncio.run(
-                self.retrieve_with_eviction_async(query, token_budget, document_id)
-            )
-
-    def _retrieve_with_eviction_sync_only(
-        self,
-        query: str,
-        token_budget: Optional[int] = None,
-        document_id: Optional[str] = None,
-    ) -> RetrievalResult:
-        """Sync-only version of retrieve_with_eviction without dirty refresh."""
-        if token_budget is None:
-            token_budget = self.config.budget_tokens
-
-        # Initial retrieval (without dirty refresh)
-        result = self._retrieve_sync_only(query, document_id=document_id)
-
-        # Calculate token usage
-        total_tokens = 0
-        node_tokens = {}
-
-        import tiktoken
-
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-
-        for node_id in result.frontier_nodes:
-            node = self.store.get_node(node_id)
-            if node:
-                tokens = len(tokenizer.encode(node.text))
-                node_tokens[node_id] = tokens
-                total_tokens += tokens
-
-        # If within budget, return as-is
-        if total_tokens <= token_budget:
-            return result
-
-        # Need eviction - get priority scores
-        priority_scores = self.get_priority_scores()
-
-        # Sort frontier nodes by priority (lowest first for eviction)
-        frontier_with_priority = []
-        for node_id in result.frontier_nodes:
-            priority = priority_scores.get(node_id, 0.0)
-            frontier_with_priority.append((priority, node_id))
-
-        frontier_with_priority.sort()
-
-        # Evict nodes until within budget
-        evicted = set()
-        for priority, node_id in frontier_with_priority:
-            if total_tokens <= token_budget:
-                break
-
-            if node_id in node_tokens:
-                total_tokens -= node_tokens[node_id]
-                evicted.add(node_id)
-
-        # Update frontier
-        result.frontier_nodes = [
-            nid for nid in result.frontier_nodes if nid not in evicted
-        ]
-
-        return result
 
     def _calculate_conservative_n_max(
         self, budget_tokens: int, document_id: Optional[str] = None
