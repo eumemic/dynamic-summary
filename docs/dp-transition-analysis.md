@@ -205,6 +205,119 @@ These tests create RetrievalResult objects manually without frontier_segments, w
 - **Tests:** All 136 tests pass, 8 skipped (includes 3 legacy assembly tests)
 - **Added:** Deprecation notice to legacy assembly path in assemble.py
 
+## Critical Architectural Issue: Node-Based vs Segment-Based Data Model
+
+### The Fundamental Shift We Missed
+
+The DP transition involves more than just switching algorithms - it fundamentally changes the data model:
+
+1. **Legacy Model: Frontier of Nodes**
+   - A frontier is a list of complete TreeNode IDs
+   - Each node represents its entire text span
+   - Budget/validation/slope-cap all operate on whole nodes
+   - Simple but can't represent optimal tilings
+
+2. **DP Model: Tiling of Half-Nodes (Segments)**
+   - A tiling is a list of `SummarySegment` objects
+   - Each segment represents either the LEFT or RIGHT half of a node
+   - Allows fine-grained control over what text is included
+   - Can represent any possible tiling of the document
+
+### The Compatibility Shim Problem
+
+Currently, `retrieve.py` generates both:
+```python
+frontier_segments = dp_generator.find_optimal_frontier(...)  # Real tiling
+frontier_nodes = list(set(seg.node_id for seg in frontier_segments))  # Compatibility shim
+```
+
+This shim **actively hides bugs** because:
+- Validation only sees the deduplicated node IDs, not the actual segments
+- It can't detect when both LEFT and RIGHT of the same node are included
+- It can't detect parent-child overlaps in the segment list
+- Budget calculations on nodes don't match actual segment costs
+
+### Discovered Issues (via --show-stats output)
+
+Running a query with `--n-max 1` revealed:
+1. **Duplicate content**: The same leaf node appears twice (LEFT and RIGHT sides)
+2. **Overlapping spans**: Parent segments overlap with their children
+3. **Incoherent tiling**: High-resolution segments interspersed with low-resolution ones
+4. **Validation blindness**: `--validate` passes because it only checks node-level invariants
+
+### What's Still Using the Old Model
+
+1. **Validation (`validate.py`)**:
+   - `validate_frontier()` checks node spans, not segment spans
+   - Can't detect segment-level overlaps or duplicates
+
+2. **Budget Management (`assemble.py`)**:
+   - `trim_frontier_to_budget()` operates on nodes
+   - `_count_frontier_tokens()` counts node tokens, not segment tokens
+   - `assemble_with_budget()` uses node-based calculations
+
+3. **Slope Capping (`assemble.py`)**:
+   - `_apply_slope_cap()` works with node IDs and depths
+   - Doesn't understand that segments can have different costs
+
+4. **Tests**:
+   - Many tests create `RetrievalResult` with only `frontier_nodes`
+   - Test assertions check node-level properties
+
+### Required Changes for Full Segment-Based Architecture
+
+#### 1. Update RetrievalResult
+```python
+@dataclass
+class RetrievalResult:
+    node_ids: list[str]  # Keep for MMR results
+    scores: dict[str, float]
+    coverage_map: dict[str, bool]
+    segments: list[SummarySegment]  # Rename from frontier_segments
+    # DELETE: frontier_nodes - this is the harmful compatibility shim
+```
+
+#### 2. Create Segment-Aware Validation
+- Add `validate_tiling()` that checks segment-level invariants:
+  - No overlapping character spans between segments
+  - Complete coverage of the document span
+  - No duplicate segments
+  - Valid segment structure (LEFT/RIGHT with proper mid_offset)
+
+#### 3. Update Budget/Slope-Cap Logic
+- Rewrite to operate on `SummarySegment` objects
+- Calculate actual token costs per segment (not per node)
+- Apply constraints based on segment properties
+
+#### 4. Fix the DP Algorithm
+- Investigate why it's returning both parent and child segments for the same span
+- Ensure it generates a proper tiling (non-overlapping, complete coverage)
+- Fix the "disjointed zoom" issue for single-seed queries
+
+#### 5. Update All Downstream Code
+- Remove all references to `frontier_nodes`
+- Update tests to use segment-based assertions
+- Ensure assembly only processes segments
+
+### The Real Problem
+
+The current DP algorithm (`dynamic_frontier.py`) appears to have bugs:
+1. It's returning both parent and child segments for the same span
+2. It's including both LEFT and RIGHT of leaf nodes
+3. The tiling it produces isn't actually a valid tiling
+
+These bugs are hidden by the compatibility shim and node-based validation.
+
+### Immediate Next Steps
+
+1. **Add segment-level validation** to make bugs visible
+2. **Fix the DP algorithm** to produce valid tilings
+3. **Remove the compatibility shim** (`frontier_nodes`)
+4. **Update all downstream code** to be segment-aware
+5. **Migrate or remove** node-based tests
+
+Only after these steps can we safely remove the legacy assembly code.
+
 ## Identified Legacy Assembly Methods
 
 These methods in `assemble.py` are only used by the legacy assembly path and can be removed once tests are migrated:
