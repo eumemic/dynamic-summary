@@ -7,7 +7,7 @@ import tiktoken
 from openai import OpenAI
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.retrieve import RetrievalResult, SummarySegment
+from ragzoom.retrieve import RetrievalResult, Segment
 from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,8 @@ class Assembler:
             )
         return self.assemble_dp(retrieval_result.frontier_segments)
 
-    def assemble_dp(self, frontier_segments: list["SummarySegment"]) -> str:
-        """Assemble a frontier from a list of SummarySegments."""
+    def assemble_dp(self, frontier_segments: list["Segment"]) -> str:
+        """Assemble a frontier from a list of Segments."""
         if not frontier_segments:
             return ""
 
@@ -43,14 +43,14 @@ class Assembler:
         texts = [t for t in texts if t]
         return "\n\n".join(texts)
 
-    def _get_text_for_segment(self, segment: "SummarySegment") -> str:
-        """Extract the text for a single SummarySegment."""
+    def _get_text_for_segment(self, segment: "Segment") -> str:
+        """Extract the text for a single Segment."""
         node = self.store.get_node(segment.node_id)
         if not node or not node.text:
             return ""
 
-        # If it's a leaf or has no mid_offset, we can't split it.
-        # This shouldn't happen with the DP model, but as a fallback, return full text.
+        # If it's a leaf or has no mid_offset, return full text.
+        # These nodes should have side=None according to our invariant.
         if node.depth == 0 or node.mid_offset is None:
             return node.text
 

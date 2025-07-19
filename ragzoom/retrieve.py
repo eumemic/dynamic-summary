@@ -9,7 +9,7 @@ from openai import OpenAI
 from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.dynamic_frontier import DynamicFrontierGenerator, SummarySegment
+from ragzoom.dynamic_frontier import DynamicFrontierGenerator, Segment
 from ragzoom.store import Store
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ class RetrievalResult:
     scores: dict[str, float]
     coverage_map: dict[str, bool]
     frontier_nodes: list[str]
-    frontier_segments: Optional[list["SummarySegment"]] = None
+    frontier_segments: Optional[list["Segment"]] = None
 
 
 class Retriever:
@@ -53,10 +53,6 @@ class Retriever:
 
         # Per-request cache to avoid double refresh
         self._refreshed_node_ids: set[str] = set()
-
-        self._memo_cache: dict[
-            tuple[Optional[str], int], tuple[list[SummarySegment], float]
-        ] = {}
 
     def _get_query_embedding(self, query: str) -> list[float]:
         """Get embedding for query text."""

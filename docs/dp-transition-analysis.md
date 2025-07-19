@@ -204,7 +204,6 @@ These tests create RetrievalResult objects manually without frontier_segments, w
 - **Kept:** Legacy assembly path (marked as conditional based on frontier_segments)
 - **Tests:** All 136 tests pass, 8 skipped (includes 3 legacy assembly tests)
 - **Added:** Deprecation notice to legacy assembly path in assemble.py
-
 ## Critical Architectural Issue: Node-Based vs Segment-Based Data Model
 
 ### The Fundamental Shift We Missed
@@ -283,6 +282,7 @@ class RetrievalResult:
   - Complete coverage of the document span
   - No duplicate segments
   - Valid segment structure (LEFT/RIGHT with proper mid_offset)
+  - Note: Spans are in character coordinates, not token coordinates
 
 #### 3. Update Budget/Slope-Cap Logic
 - Rewrite to operate on `SummarySegment` objects
