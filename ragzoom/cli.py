@@ -2,6 +2,7 @@
 
 import json
 import logging
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
@@ -14,6 +15,7 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
+from ragzoom.tree_viz import build_ascii_tree
 
 # Load environment variables
 load_dotenv()
@@ -222,6 +224,11 @@ def documents(ctx):
 @click.option("--token-budget", type=int, help="Token budget for summary")
 @click.option("--show-stats", is_flag=True, help="Show retrieval statistics")
 @click.option("--validate", is_flag=True, help="Enable validation checks")
+@click.option(
+    "--viz-width",
+    type=int,
+    help="Override visualization width (defaults to terminal width)",
+)
 @click.pass_context
 def query(
     ctx,
@@ -231,6 +238,7 @@ def query(
     token_budget: Optional[int],
     show_stats: bool,
     validate: bool,
+    viz_width: Optional[int],
 ):
     """Query the system and get a summary."""
     # Set global validation flag
@@ -325,6 +333,31 @@ def query(
             click.echo(f"  Frontier size: {frontier_size}")
             click.echo(f"  Token count: {token_count}")
             click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
+
+            # Show ASCII tree visualization
+            if result.frontier_segments:
+                # Use provided width or detect terminal width
+                if viz_width:
+                    terminal_width = viz_width
+                    actual_viz_width = viz_width
+                else:
+                    # Get terminal width, with fallback to 120
+                    terminal_width = shutil.get_terminal_size(
+                        fallback=(120, 24)
+                    ).columns
+                    # Use width minus 1 to prevent wrapping on exact terminal width
+                    actual_viz_width = max(80, terminal_width - 1)
+
+                click.echo("\nTREE VISUALIZATION:")
+                click.echo("-" * (terminal_width - 1))
+                tree_viz = build_ascii_tree(
+                    result.frontier_segments,
+                    ctx.obj["store"],
+                    document_id,
+                    width=actual_viz_width,
+                )
+                click.echo(tree_viz)
+                click.echo("-" * (terminal_width - 1))
 
     except Exception as e:
         click.echo(f"❌ Error processing query: {e}", err=True)
