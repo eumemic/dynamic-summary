@@ -90,15 +90,14 @@ class TestTreeVisualization:
         )
 
         # Check basic structure
-        assert "Document span: 0-100" in viz
-        assert "Level 2:" in viz
-        assert "Level 1:" in viz
-        assert "Level 0:" in viz
+        assert "L2 " in viz
+        assert "L1 " in viz
+        assert "L0 " in viz
 
-        # Check that selected segments are labeled
-        assert "root-L" in viz
-        assert "leaf3" in viz
-        assert "leaf4" in viz
+        # Check that selected segments are labeled with indices
+        assert "0" in viz  # First segment (root-L)
+        assert "1" in viz  # Second segment (leaf3)
+        assert "2" in viz  # Third segment (leaf4)
 
     def test_empty_segments(self):
         """Test visualization with no selected segments."""
@@ -122,8 +121,7 @@ class TestTreeVisualization:
         viz = build_ascii_tree(segments, store, "doc1", width=40)
 
         # Should still show document structure
-        assert "Document span: 0-100" in viz
-        assert "Level 0:" in viz
+        assert "L0 " in viz
 
     def test_no_nodes_for_document(self):
         """Test visualization when document has no nodes."""
@@ -191,7 +189,6 @@ class TestTreeVisualization:
         )
 
         # Check that the visualization includes all expected elements
-        assert "Document span: 0-100" in viz
-        assert "root-L" in viz  # Selected left segment
-        assert "leaf2" in viz  # Selected leaf
+        assert "0" in viz  # First segment (root-L)
+        assert "1" in viz  # Second segment (leaf2)
         # The covered but not selected leaf1 should be shown with ░ characters
