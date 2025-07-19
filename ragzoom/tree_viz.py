@@ -52,21 +52,14 @@ def build_ascii_tree(
     selected_segments: set[tuple[str, Optional[str]]] = set()
     segment_labels: dict[tuple[str, Optional[str]], str] = {}
 
-    for seg in segments:
+    for idx, seg in enumerate(segments):
         key = (seg.node_id, seg.side)
         selected_segments.add(key)
-        # Create short label
-        if seg.side:
-            segment_labels[key] = f"{seg.node_id[:8]}-{seg.side[0]}"
-        else:
-            segment_labels[key] = f"{seg.node_id[:8]}"
+        # Use index as label
+        segment_labels[key] = str(idx)
 
     # Build the ASCII art
     lines = []
-
-    # Header
-    lines.append(f"Document span: {doc_start}-{doc_end} ({doc_span} chars)")
-    lines.append("")
 
     # Process each depth level from highest (root) to lowest (leaves)
     for depth in range(max_depth, -1, -1):
@@ -91,7 +84,7 @@ def build_ascii_tree(
             nodes_to_show = nodes_by_depth[depth]
 
         # Calculate the actual drawing width accounting for level prefix
-        level_prefix = f"Level {depth}: "
+        level_prefix = f"L{depth} "
         prefix_len = len(level_prefix)
         actual_width = width - prefix_len
 
@@ -220,12 +213,13 @@ def build_ascii_tree(
                             line[i] = "─"
 
         # Add the main line with level prefix
-        level_prefix = f"Level {depth}: "
+        level_prefix = f"L{depth} "
         lines.append(f"{level_prefix}{''.join(line)}")
 
-        # Add labels on a separate line if there are any
+        # Always add a label line for uniform spacing
+        label_line = [" "] * actual_width
+
         if labels_to_place:
-            label_line = [" "] * actual_width
             # Sort labels by position to handle overlaps
             labels_to_place.sort(key=lambda x: x[0])
 
@@ -254,8 +248,7 @@ def build_ascii_tree(
                             label_line[start + i] = char
                     last_end = start + len(label) - 1
 
-            # Add label line with spacing to align with level content
-            lines.append(f"{' ' * prefix_len}{''.join(label_line)}")
-            lines.append("")  # Empty line for spacing
+        # Add label line with spacing to align with level content
+        lines.append(f"{' ' * prefix_len}{''.join(label_line)}")
 
     return "\n".join(lines)

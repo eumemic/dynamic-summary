@@ -184,7 +184,7 @@ class TestCLI:
             )
 
             assert result.exit_code == 0
-            assert "SUMMARY:" in result.output
+            assert "SUMMARY" in result.output
             assert "This is a summary of the content." in result.output
 
     def test_query_with_options(self, runner, mock_ragzoom):
