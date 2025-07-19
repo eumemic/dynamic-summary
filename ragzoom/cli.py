@@ -265,7 +265,23 @@ def query(
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY:")
         click.echo("=" * 60)
-        click.echo(summary)
+        if show_stats and getattr(result, "frontier_segments", None):
+            store = ctx.obj["store"]
+            for segment in result.frontier_segments:
+                node = store.get_node(segment.node_id)
+                if node:
+                    span = f"{node.span_start}-{node.span_end}"
+                    level = node.depth
+                    side = segment.side
+                    click.echo(
+                        f"[SPAN: {span} | LEVEL: {level} | SIDE: {side} | NODE: {node.id[:8]}]"
+                    )
+                    # Get the segment text as in assembler._get_text_for_segment
+                    text = assembler._get_text_for_segment(segment)
+                    click.echo(text)
+                    click.echo("")
+        else:
+            click.echo(summary)
         click.echo("=" * 60 + "\n")
 
         # Show stats if requested
