@@ -41,8 +41,6 @@ class TestDPFrontier:
         )
 
         assert segments, "DP frontier should not be empty for single node tree"
-        assert len(segments) == 2
+        assert len(segments) == 1
         assert segments[0].node_id == "root"
-        assert segments[0].side == "LEFT"
-        assert segments[1].node_id == "root"
-        assert segments[1].side == "RIGHT"
+        assert segments[0].side is None  # Leaf nodes have side=None

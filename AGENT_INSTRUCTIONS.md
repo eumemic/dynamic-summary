@@ -94,6 +94,7 @@ Key settings in `RagZoomConfig`:
 3. **Tree Structure**: Left-balanced binary tree. Parents created only when both children exist. Tree may be ragged during incremental updates.
 4. **Token Counting**: Uses tiktoken with cl100k_base encoding throughout
 5. **Error Handling**: Store operations use database transactions. API calls have retry logic with exponential backoff.
+6. **Coordinate System**: All spans [span_start, span_end) are in CHARACTER coordinates, not token coordinates. This provides stable, verifiable positions in the original document.
 
 ## 5. Testing & Validation
 

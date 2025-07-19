@@ -4,11 +4,11 @@ import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
-from ragzoom.dynamic_frontier import SummarySegment
+from ragzoom.dynamic_frontier import Segment
 
 
 class TestDPAssembly:
-    """Test the DP assembly path that uses SummarySegments."""
+    """Test the DP assembly path that uses Segments."""
 
     @pytest.fixture
     def config(self):
@@ -117,27 +117,22 @@ class TestDPAssembly:
 
     def test_basic_dp_assembly(self, assembler, mock_nodes):
         """Test basic DP assembly with leaf segments."""
-        # For leaf nodes, we need both LEFT and RIGHT to get full text
+        # Leaf nodes now have side=None
         segments = [
-            SummarySegment(node_id="leaf1", side="LEFT"),
-            SummarySegment(node_id="leaf1", side="RIGHT"),
-            SummarySegment(node_id="leaf2", side="LEFT"),
-            SummarySegment(node_id="leaf2", side="RIGHT"),
+            Segment(node_id="leaf1", side=None),
+            Segment(node_id="leaf2", side=None),
         ]
 
         result = assembler.assemble_dp(segments)
 
-        # Leaf nodes return full text regardless of side
-        assert (
-            result
-            == "First chunk of text.\n\nFirst chunk of text.\n\nSecond chunk of text.\n\nSecond chunk of text."
-        )
+        # Leaf nodes return full text
+        assert result == "First chunk of text.\n\nSecond chunk of text."
 
     def test_left_side_extraction(self, assembler, mock_nodes):
         """Test extracting LEFT side of a node with MID delimiter."""
         segments = [
-            SummarySegment(node_id="left", side="LEFT"),
-            SummarySegment(node_id="leaf3", side="LEFT"),
+            Segment(node_id="left", side="LEFT"),
+            Segment(node_id="leaf3", side=None),
         ]
 
         result = assembler.assemble_dp(segments)
@@ -149,22 +144,22 @@ class TestDPAssembly:
     def test_right_side_extraction(self, assembler, mock_nodes):
         """Test extracting RIGHT side of a node with MID delimiter."""
         segments = [
-            SummarySegment(node_id="leaf1", side="RIGHT"),
-            SummarySegment(node_id="right", side="RIGHT"),
+            Segment(node_id="leaf1", side=None),
+            Segment(node_id="right", side="RIGHT"),
         ]
 
         result = assembler.assemble_dp(segments)
 
-        # Leaf returns full text, right returns text after <<<MID>>>
+        # Leaf returns full text, right returns text after <<<MID>>> (cleaned)
         assert result == "First chunk of text.\n\nSummary of fourth chunk."
 
     def test_mixed_sides_assembly(self, assembler, mock_nodes):
         """Test assembly with mixed LEFT/RIGHT segments."""
         segments = [
-            SummarySegment(node_id="left", side="LEFT"),
-            SummarySegment(node_id="left", side="RIGHT"),
-            SummarySegment(node_id="right", side="LEFT"),
-            SummarySegment(node_id="right", side="RIGHT"),
+            Segment(node_id="left", side="LEFT"),
+            Segment(node_id="left", side="RIGHT"),
+            Segment(node_id="right", side="LEFT"),
+            Segment(node_id="right", side="RIGHT"),
         ]
 
         result = assembler.assemble_dp(segments)
@@ -173,16 +168,16 @@ class TestDPAssembly:
         assert result == expected
 
     def test_leaf_node_handling(self, assembler, mock_nodes):
-        """Test that leaf nodes return full text regardless of side."""
-        # For leaf nodes, side should be ignored since they have no MID delimiter
+        """Test that leaf nodes use side=None."""
+        # Leaf nodes must have side=None
         segments = [
-            SummarySegment(node_id="leaf1", side="LEFT"),
-            SummarySegment(node_id="leaf2", side="RIGHT"),
+            Segment(node_id="leaf1", side=None),
+            Segment(node_id="leaf2", side=None),
         ]
 
         result = assembler.assemble_dp(segments)
 
-        # Should get full text regardless of side for leaf nodes
+        # Should get full text for leaf nodes
         assert result == "First chunk of text.\n\nSecond chunk of text."
 
     def test_empty_segments(self, assembler, mock_nodes):
@@ -196,9 +191,9 @@ class TestDPAssembly:
     def test_missing_node(self, assembler, mock_nodes):
         """Test handling when a segment references a missing node."""
         segments = [
-            SummarySegment(node_id="leaf1", side="LEFT"),
-            SummarySegment(node_id="missing", side="LEFT"),
-            SummarySegment(node_id="leaf3", side="LEFT"),
+            Segment(node_id="leaf1", side=None),
+            Segment(node_id="missing", side="LEFT"),
+            Segment(node_id="leaf3", side=None),
         ]
 
         result = assembler.assemble_dp(segments)
@@ -220,9 +215,9 @@ class TestDPAssembly:
         )
 
         segments = [
-            SummarySegment(node_id="leaf1", side="LEFT"),
-            SummarySegment(node_id="empty", side="LEFT"),
-            SummarySegment(node_id="leaf3", side="LEFT"),
+            Segment(node_id="leaf1", side=None),
+            Segment(node_id="empty", side="LEFT"),
+            Segment(node_id="leaf3", side=None),
         ]
 
         result = assembler.assemble_dp(segments)
@@ -247,33 +242,28 @@ class TestDPAssembly:
         )
 
         segments = [
-            SummarySegment(node_id="bad_internal", side="LEFT"),
-            SummarySegment(node_id="bad_internal", side="RIGHT"),
+            Segment(node_id="bad_internal", side=None),
         ]
 
         result = assembler.assemble_dp(segments)
 
-        # Should return full text as fallback
-        assert (
-            result == "Summary without MID delimiter\n\nSummary without MID delimiter"
-        )
+        # Should return full text since mid_offset is None
+        assert result == "Summary without MID delimiter"
 
     def test_complex_frontier_assembly(self, assembler, mock_nodes):
         """Test a complex frontier that resembles real DP output."""
         # Simulate a frontier that might come from DP algorithm
         segments = [
-            SummarySegment(node_id="left", side="LEFT"),
-            SummarySegment(node_id="leaf2", side="LEFT"),
-            SummarySegment(node_id="leaf2", side="RIGHT"),
-            SummarySegment(node_id="right", side="LEFT"),
-            SummarySegment(node_id="leaf4", side="LEFT"),
+            Segment(node_id="left", side="LEFT"),
+            Segment(node_id="leaf2", side=None),
+            Segment(node_id="right", side="LEFT"),
+            Segment(node_id="leaf4", side=None),
         ]
 
         result = assembler.assemble_dp(segments)
 
         expected = (
             "Summary of first half.\n\n"
-            "Second chunk of text.\n\n"
             "Second chunk of text.\n\n"
             "Summary of third chunk.\n\n"
             "Fourth chunk of text."
@@ -284,10 +274,10 @@ class TestDPAssembly:
         """Test that segment order is preserved in output."""
         # Segments in non-sequential order
         segments = [
-            SummarySegment(node_id="leaf3", side="LEFT"),
-            SummarySegment(node_id="leaf1", side="LEFT"),
-            SummarySegment(node_id="leaf4", side="LEFT"),
-            SummarySegment(node_id="leaf2", side="LEFT"),
+            Segment(node_id="leaf3", side=None),
+            Segment(node_id="leaf1", side=None),
+            Segment(node_id="leaf4", side=None),
+            Segment(node_id="leaf2", side=None),
         ]
 
         result = assembler.assemble_dp(segments)

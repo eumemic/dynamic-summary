@@ -283,7 +283,32 @@ def query(
             for segment in result.frontier_segments:
                 node = store.get_node(segment.node_id)
                 if node:
-                    span = f"{node.span_start}-{node.span_end}"
+                    # Calculate correct segment span
+                    if node.depth == 0 or node.mid_offset is None:
+                        # Leaf node: full span
+                        span_start, span_end = node.span_start, node.span_end
+                    else:
+                        # Internal node: segment span matches child span
+                        if segment.side == "LEFT":
+                            left_child = store.get_node(node.left_child_id)
+                            if left_child:
+                                span_start, span_end = (
+                                    left_child.span_start,
+                                    left_child.span_end,
+                                )
+                            else:
+                                span_start, span_end = node.span_start, node.span_end
+                        else:  # RIGHT
+                            right_child = store.get_node(node.right_child_id)
+                            if right_child:
+                                span_start, span_end = (
+                                    right_child.span_start,
+                                    right_child.span_end,
+                                )
+                            else:
+                                span_start, span_end = node.span_start, node.span_end
+
+                    span = f"{span_start}-{span_end}"
                     level = node.depth
                     side = segment.side
                     click.echo(
