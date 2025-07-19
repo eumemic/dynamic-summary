@@ -122,9 +122,10 @@ class Retriever:
         for node in pinned_nodes:
             coverage_map[node.id] = True
 
-        # Build scores map
+        # Build scores map - only include nodes in coverage map to ensure
+        # DP algorithm can only use nodes from the coverage tree
         scores = {
-            cand[0]: 1.0 - cand[1] for cand in candidates
+            cand[0]: 1.0 - cand[1] for cand in candidates if cand[0] in coverage_map
         }  # Convert distance to similarity
 
         # Step 5: Extract frontier using DP algorithm
@@ -220,9 +221,10 @@ class Retriever:
         for node in pinned_nodes:
             coverage_map[node.id] = True
 
-        # Build scores map
+        # Build scores map - only include nodes in coverage map to ensure
+        # DP algorithm can only use nodes from the coverage tree
         scores = {
-            cand[0]: 1.0 - cand[1] for cand in candidates
+            cand[0]: 1.0 - cand[1] for cand in candidates if cand[0] in coverage_map
         }  # Convert distance to similarity
 
         # Step 5: Extract frontier using DP algorithm
