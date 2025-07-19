@@ -73,7 +73,6 @@ class QueryRequest(BaseModel):
     document_id: str = Field(..., description="Document ID to query within")
     n_max: Optional[int] = Field(None, description="Override max nodes to retrieve")
     token_budget: Optional[int] = Field(None, description="Override token budget")
-    use_eviction: bool = Field(False, description="Use sliding queue eviction")
 
 
 class QueryResponse(BaseModel):
@@ -220,31 +219,27 @@ async def query(
 ):
     """Query the system."""
     try:
-        # Retrieve with or without eviction
-        if request.use_eviction:
-            # Use async version since we're in an async endpoint
-            retrieval_result = await service.retriever.retrieve_with_eviction_async(
-                request.query, request.token_budget, document_id=request.document_id
-            )
-        else:
-            # Use async version since we're in an async endpoint
-            retrieval_result = await service.retriever.retrieve_async(
-                request.query,
-                request.n_max,
-                request.token_budget,
-                document_id=request.document_id,
-            )
+        # Use async version since we're in an async endpoint
+        retrieval_result = await service.retriever.retrieve_async(
+            request.query,
+            request.n_max,
+            request.token_budget,
+            document_id=request.document_id,
+        )
 
         # Assemble summary
-        summary, token_count = service.assembler.assemble_with_budget(
-            retrieval_result, request.token_budget
-        )
+        summary = service.assembler.assemble(retrieval_result)
+        token_count = service.assembler.get_token_count(summary)
 
         return QueryResponse(
             summary=summary,
             token_count=token_count,
             nodes_retrieved=len(retrieval_result.node_ids),
-            frontier_size=len(retrieval_result.frontier_nodes),
+            frontier_size=(
+                len(retrieval_result.frontier_segments)
+                if retrieval_result.frontier_segments
+                else 0
+            ),
         )
     except Exception as e:
         logger.error(f"Error processing query: {e}")

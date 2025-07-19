@@ -380,28 +380,6 @@ class TestCLI:
         finally:
             os.unlink(temp_file)
 
-    def test_query_with_eviction(self, runner, mock_ragzoom):
-        """Test query with eviction mode."""
-        mock_ragzoom["retriever_instance"].retrieve_with_eviction.return_value = Mock(
-            node_ids=["node-1"], frontier_nodes=["node-1"], coverage_map={"node-1": 1.0}
-        )
-
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            result = runner.invoke(
-                cli, ["query", "Test query", "-d", "test-doc", "--use-eviction"]
-            )
-
-            assert result.exit_code == 0
-
-            # Verify retrieve_with_eviction was called with document_id
-            mock_ragzoom[
-                "retriever_instance"
-            ].retrieve_with_eviction.assert_called_once_with(
-                "Test query", None, document_id="test-doc"
-            )
-
-            assert "SUMMARY:" in result.output
-
     def test_clear_specific_document(self, runner, mock_ragzoom):
         """Test clearing a specific document."""
         # Mock document exists

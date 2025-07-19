@@ -62,24 +62,20 @@ RagZoom is an incremental, hierarchical RAG (Retrieval-Augmented Generation) mem
 **Retrieval (`retrieve.py`)**
 - MMR (Maximal Marginal Relevance) for diversity
 - Coverage map propagation (selected nodes + ancestors)
-- Frontier extraction (covered nodes with uncovered children)
-- Optional sliding queue eviction with freshness decay
-- Budget guarantee modes:
-  - Budget-only: Conservative n_max calculation to prevent overflow
-  - Budget + n_max: Intelligent node dropping to respect both constraints
-  - n_max-only: Traditional retrieval without budget enforcement
+- Frontier extraction using Dynamic Programming algorithm
+- Budget-respecting tilings constructed by DP algorithm
+- Returns frontier_segments (not nodes) for segment-based assembly
 
 **Assembly (`assemble.py`)**
-- Slope capping: ±1 depth transitions for coherence
-- Token budget enforcement with drop vs truncate strategies
+- Segment-based assembly (using frontier_segments from DP algorithm)
+- Handles leaf segments (side=None) and internal segments (LEFT/RIGHT)
+- No post-hoc budget enforcement (DP already respects budget)
 - Optional smoothing pass with transition markers
-- Lazy refresh of dirty nodes to maintain summary consistency
 
 ### Configuration
 
 Key settings in `RagZoomConfig`:
 - `budget_tokens`: Maximum tokens for final summary (default: 8000)
-- `budget_strategy`: Budget enforcement strategy: "drop" or "truncate" (default: "drop")
 - `leaf_tokens`: Target size for leaf chunks (default: 200)
 - `slope_cap_size`: Maximum depth difference between adjacent frontier nodes (default: 1)
 - `mmr_lambda`: Relevance vs diversity trade-off (default: 0.7)
@@ -275,3 +271,9 @@ ragzoom serve
   - Added `--document-id` parameter to `clear` command for targeted deletion
   - Added `--clear` flag to `index` command for atomic re-indexing
   - Updated API endpoints to require document_id in query requests
+- **Removed budget strategies and eviction**: With the DP algorithm producing correct-by-construction tilings:
+  - Removed `budget_strategy` configuration (obsolete with DP)
+  - Removed `assemble_with_budget()` and all budget trimming methods
+  - Removed eviction-related methods and access history tracking
+  - Removed `frontier_nodes` compatibility shim from RetrievalResult
+  - All code now uses segment-based model with `frontier_segments`
