@@ -83,8 +83,11 @@ class TestTreeVisualization:
             Segment(node_id="leaf4", side=None),
         ]
 
-        # Build visualization
-        viz = build_ascii_tree(segments, store, "doc1", width=40)
+        # Build visualization with coverage map
+        coverage_map = {"root": True, "left": True, "leaf1": True, "leaf2": True}
+        viz = build_ascii_tree(
+            segments, store, "doc1", width=40, coverage_map=coverage_map
+        )
 
         # Check basic structure
         assert "Document span: 0-100" in viz
@@ -130,3 +133,65 @@ class TestTreeVisualization:
         viz = build_ascii_tree(segments, store, "nonexistent", width=40)
 
         assert viz == "No nodes found for document"
+
+    def test_coverage_visualization(self):
+        """Test visualization with coverage map showing covered but not selected nodes."""
+        # Create a mock store with a simple tree
+        store = SimpleMockStore()
+
+        # Root node
+        store.add_node(
+            node_id="root",
+            text="Root left <<<MID>>> Root right",
+            depth=1,
+            span_start=0,
+            span_end=100,
+            parent_id=None,
+            document_id="doc1",
+            embedding=[0.5] * 384,
+            mid_offset=10,
+            left_child_id="leaf1",
+            right_child_id="leaf2",
+        )
+
+        # Leaf nodes
+        store.add_node(
+            node_id="leaf1",
+            text="Leaf 1 text",
+            depth=0,
+            span_start=0,
+            span_end=50,
+            parent_id="root",
+            document_id="doc1",
+            embedding=[0.5] * 384,
+        )
+
+        store.add_node(
+            node_id="leaf2",
+            text="Leaf 2 text",
+            depth=0,
+            span_start=50,
+            span_end=100,
+            parent_id="root",
+            document_id="doc1",
+            embedding=[0.5] * 384,
+        )
+
+        # Only the left segment of root is selected
+        segments = [
+            Segment(node_id="root", side="LEFT"),
+            Segment(node_id="leaf2", side=None),
+        ]
+
+        # Coverage map includes root and leaf1 (covered but not selected)
+        coverage_map = {"root": True, "leaf1": True, "leaf2": True}
+
+        viz = build_ascii_tree(
+            segments, store, "doc1", width=60, coverage_map=coverage_map
+        )
+
+        # Check that the visualization includes all expected elements
+        assert "Document span: 0-100" in viz
+        assert "root-L" in viz  # Selected left segment
+        assert "leaf2" in viz  # Selected leaf
+        # The covered but not selected leaf1 should be shown with ░ characters

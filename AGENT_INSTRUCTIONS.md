@@ -13,7 +13,7 @@ Before starting any work, review the following documents to understand the syste
 - **Project Brief:** `docs/architecture.md`
 - **Developer Onboarding Guide:** `docs/developer-guide.md`
 - **Architecture Overview:** `docs/architecture.md`
-- **V2 Algorithm Design:** `docs/v2/dynamic-frontier-design.md`
+- **V2 Algorithm Design:** `docs/v2/dynamic-frontier-design.md`, `docs/tiling-algorithm.md`
 - **Implementation Notes:** `docs/implementation-notes.md`
 - **Testing Strategy:** `docs/testing-strategy.md`
 

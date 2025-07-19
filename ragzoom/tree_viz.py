@@ -7,7 +7,11 @@ from ragzoom.store import Store, TreeNode
 
 
 def build_ascii_tree(
-    segments: list[Segment], store: Store, document_id: str, width: int = 120
+    segments: list[Segment],
+    store: Store,
+    document_id: str,
+    width: int = 120,
+    coverage_map: Optional[dict[str, bool]] = None,
 ) -> str:
     """Build an ASCII tree visualization showing the tiling structure.
 
@@ -16,6 +20,7 @@ def build_ascii_tree(
         store: Store instance to get node information
         document_id: Document ID to visualize
         width: Width of the ASCII art in characters
+        coverage_map: Optional dict of node IDs in the coverage tree
 
     Returns:
         ASCII art string showing the tree with highlighted segments
@@ -112,6 +117,9 @@ def build_ascii_tree(
             has_right_selected = (node.id, "RIGHT") in selected_segments
             has_none_selected = (node.id, None) in selected_segments  # For leaf nodes
 
+            # Check if node is in coverage map
+            is_covered = coverage_map and node.id in coverage_map
+
             # For leaf nodes
             if node.depth == 0:
                 if has_none_selected:
@@ -126,8 +134,13 @@ def build_ascii_tree(
                         labels_to_place.append(
                             (mid_pos, label, True)
                         )  # True = selected
+                elif is_covered:
+                    # Fill with '░' for covered but not selected leaf nodes
+                    for i in range(start_pos, min(end_pos, len(line))):
+                        if i < len(line):
+                            line[i] = "░"
                 else:
-                    # Draw borders for unselected leaf nodes
+                    # Draw borders for uncovered leaf nodes
                     if 0 <= start_pos < len(line):
                         line[start_pos] = "│"
                     if 0 <= end_pos - 1 < len(line):
@@ -159,6 +172,10 @@ def build_ascii_tree(
                             if label:
                                 label_pos = (start_pos + mid_pos) // 2
                                 labels_to_place.append((label_pos, label, True))
+                        elif is_covered:
+                            for i in range(start_pos, min(mid_pos, len(line))):
+                                if 0 <= i < len(line):
+                                    line[i] = "░"
                         else:
                             if 0 <= start_pos < len(line):
                                 line[start_pos] = "│"
@@ -178,6 +195,10 @@ def build_ascii_tree(
                             if label:
                                 label_pos = (mid_pos + end_pos) // 2
                                 labels_to_place.append((label_pos, label, True))
+                        elif is_covered:
+                            for i in range(mid_pos, min(end_pos, len(line))):
+                                if 0 <= i < len(line):
+                                    line[i] = "░"
                         else:
                             if 0 <= mid_pos < len(line):
                                 line[mid_pos] = "│"
