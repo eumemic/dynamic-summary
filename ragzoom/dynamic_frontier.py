@@ -14,11 +14,15 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class SummarySegment:
-    """Represents a segment of the summary, which is always a half-node."""
+class Segment:
+    """Represents a segment of the summary.
+
+    For internal nodes (depth > 0): side is "LEFT" or "RIGHT" (half-node).
+    For leaf nodes (depth == 0): side is None (full node).
+    """
 
     node_id: str
-    side: Literal["LEFT", "RIGHT"]
+    side: Optional[Literal["LEFT", "RIGHT"]]
 
 
 class DynamicFrontierGenerator:
@@ -29,12 +33,12 @@ class DynamicFrontierGenerator:
         self.store = store
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
         self._memo_cache: dict[
-            tuple[Optional[str], int], tuple[list[SummarySegment], float]
+            tuple[Optional[str], int], tuple[list[Segment], float]
         ] = {}
 
     def find_optimal_frontier(
         self, budget_tokens: int, scores: dict[str, float], document_id: Optional[str]
-    ) -> list["SummarySegment"]:
+    ) -> list["Segment"]:
         logger.info("Using DP frontier generation")
         root_node = self.store.get_root_node_for_document(document_id)
         if not root_node:
@@ -50,20 +54,22 @@ class DynamicFrontierGenerator:
         )
         return segments
 
-    def _get_segment_cost(self, segment: "SummarySegment") -> int:
+    def _get_segment_cost(self, segment: "Segment") -> int:
         node = self.store.get_node(segment.node_id)
         if not node or not node.text:
             return 0
         if node.depth == 0 or node.mid_offset is None:
+            # Leaf node - side should be None
             return len(self.tokenizer.encode(node.text))
+        # Internal node - side should be "LEFT" or "RIGHT"
         if segment.side == "LEFT":
             text = node.text[: node.mid_offset]
-        else:
+        else:  # segment.side == "RIGHT"
             text = node.text[node.mid_offset :]
         return len(self.tokenizer.encode(text.strip()))
 
     def _calculate_segment_quality(
-        self, segment: "SummarySegment", scores: dict[str, float]
+        self, segment: "Segment", scores: dict[str, float]
     ) -> float:
         base_score = scores.get(segment.node_id, 0.0)
         node = self.store.get_node(segment.node_id)
@@ -112,8 +118,8 @@ class DynamicFrontierGenerator:
         side: Literal["LEFT", "RIGHT"],
         budget_for_side: int,
         scores: dict[str, float],
-    ) -> tuple[list[SummarySegment], float]:
-        frontier_1 = [SummarySegment(parent_node.id, side)]
+    ) -> tuple[list[Segment], float]:
+        frontier_1 = [Segment(parent_node.id, side)]
         quality_1 = self._calculate_segment_quality(frontier_1[0], scores)
         child_node = self.store.get_child(parent_node.id, side)
         frontier_2, quality_2 = self._find_optimal_frontier_for_span(
@@ -126,12 +132,23 @@ class DynamicFrontierGenerator:
 
     def _find_optimal_frontier_for_span_unmemoized(
         self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
-    ) -> tuple[list[SummarySegment], float]:
+    ) -> tuple[list[Segment], float]:
         if not node:
             return ([], 0.0)
+
+        # NEW: leaf is indivisible
+        if node.depth == 0 or node.mid_offset is None:
+            seg = Segment(node.id, None)
+            cost = self._get_segment_cost(seg)
+            if budget < cost:
+                return ([], 0.0)  # cannot afford
+            quality = self._calculate_segment_quality(seg, scores)
+            return ([seg], quality)
+
+        # Internal node logic continues as before
         cost_of_this_node = self._get_segment_cost(
-            SummarySegment(node.id, "LEFT")
-        ) + self._get_segment_cost(SummarySegment(node.id, "RIGHT"))
+            Segment(node.id, "LEFT")
+        ) + self._get_segment_cost(Segment(node.id, "RIGHT"))
         if budget < cost_of_this_node:
             return ([], 0.0)
         budget_l, budget_r = self._split_budget_proportionally(budget, node, scores)
@@ -146,19 +163,17 @@ class DynamicFrontierGenerator:
         final_cost = sum(self._get_segment_cost(seg) for seg in final_frontier)
         if final_cost > budget:
             quality = self._calculate_segment_quality(
-                SummarySegment(node.id, "LEFT"), scores
-            ) + self._calculate_segment_quality(
-                SummarySegment(node.id, "RIGHT"), scores
-            )
+                Segment(node.id, "LEFT"), scores
+            ) + self._calculate_segment_quality(Segment(node.id, "RIGHT"), scores)
             return (
-                [SummarySegment(node.id, "LEFT"), SummarySegment(node.id, "RIGHT")],
+                [Segment(node.id, "LEFT"), Segment(node.id, "RIGHT")],
                 quality,
             )
         return (final_frontier, final_quality)
 
     def _find_optimal_frontier_for_span(
         self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
-    ) -> tuple[list[SummarySegment], float]:
+    ) -> tuple[list[Segment], float]:
         node_id = node.id if node else None
         cache_key = (node_id, budget)
         if cache_key in self._memo_cache:

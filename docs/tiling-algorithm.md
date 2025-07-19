@@ -4,7 +4,7 @@ The core of RagZoom's retrieval and assembly is a Dynamic Programming (DP) algor
 
 #### 1. Terminology
 
-*   **Span:** An interval `[start, end)` in the document's token coordinates.
+*   **Span:** An interval `[start, end)` in the document's character coordinates.
 *   **Segment:** A half-node, either `(node_id, LEFT)` or `(node_id, RIGHT)`. Each segment has a defined span. For a leaf node, both LEFT and RIGHT segments represent the full content of the node.
 *   **Tiling:** A gap-free, non-overlapping sequence of segments, ordered by their span start. A tiling has a span, which is the union of all of its segment spans. The purpose of the algorithm is to produce a tiling which spans the whole source document.
 *   **Coverage Tree:** The set of nodes consisting of the `n_max` most relevant leaf nodes (seed nodes) and all of their ancestors up to the root.
