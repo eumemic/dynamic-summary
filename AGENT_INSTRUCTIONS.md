@@ -118,6 +118,7 @@ Key settings in `RagZoomConfig`:
 - `test_validate.py` → `validate.py` (validation functions)
 - `test_indexing_fast.py` → fast versions of indexing tests using mock store
 - `test_incomplete_indexing.py` → slow integration tests for indexing edge cases
+- `test_tree_viz.py` → `tree_viz.py` (ASCII tree visualization)
 
 **Mock Store**: `tests/mock_store.py` provides SimpleMockStore for 4.5x faster unit tests
 - In-memory tree structure and state management
@@ -172,6 +173,8 @@ ragzoom index <file> --validate           # Enable validation checks
 # Query documents (document ID is REQUIRED)
 ragzoom query "search text" -d <doc-id>              # Query specific document
 ragzoom query "search text" -d <doc-id> --validate   # With validation checks
+ragzoom query "search text" -d <doc-id> --show-stats # Show stats and tree visualization
+ragzoom query "search text" -d <doc-id> --show-stats --viz-width 200  # Custom width
 
 # Document management
 ragzoom documents                         # List all indexed documents
@@ -281,3 +284,8 @@ ragzoom serve
   - Scores dictionary now filtered to only include nodes in coverage_map
   - Ensures DP algorithm respects the n_max constraint properly
   - With n_max=1, only 1 leaf node can appear in the tiling
+- **Added ASCII tree visualization**: Visual representation of the tiling structure when using --show-stats
+  - Shows document tree with selected segments highlighted
+  - Labels each segment with node ID and side (L/R)
+  - Automatically adapts to terminal width
+  - Can override width with --viz-width option
