@@ -277,11 +277,11 @@ def query(
 
         # Output summary
         click.echo("\n" + "=" * 60)
-        click.echo("SUMMARY:")
+        click.echo("SUMMARY")
         click.echo("=" * 60)
         if show_stats and getattr(result, "frontier_segments", None):
             store = ctx.obj["store"]
-            for segment in result.frontier_segments:
+            for idx, segment in enumerate(result.frontier_segments):
                 node = store.get_node(segment.node_id)
                 if node:
                     # Calculate correct segment span
@@ -313,28 +313,20 @@ def query(
                     level = node.depth
                     side = segment.side
                     click.echo(
-                        f"[SPAN: {span} | LEVEL: {level} | SIDE: {side} | NODE: {node.id[:8]}]"
+                        f"[{idx} | SPAN: {span} | LEVEL: {level} | SIDE: {side} | NODE: {node.id[:8]}]"
                     )
                     # Get the segment text as in assembler._get_text_for_segment
                     text = assembler._get_text_for_segment(segment)
                     click.echo(text)
-                    click.echo("")
+                    if idx < len(result.frontier_segments) - 1:
+                        click.echo("")
         else:
             click.echo(summary)
-        click.echo("=" * 60 + "\n")
+        click.echo("")
 
         # Show stats if requested
         if show_stats:
-            click.echo("STATISTICS:")
-            click.echo(f"  Nodes retrieved: {len(result.node_ids)}")
-            frontier_size = (
-                len(result.frontier_segments) if result.frontier_segments else 0
-            )
-            click.echo(f"  Frontier size: {frontier_size}")
-            click.echo(f"  Token count: {token_count}")
-            click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
-
-            # Show ASCII tree visualization
+            # Show ASCII tree visualization first
             if result.frontier_segments:
                 # Use provided width or detect terminal width
                 if viz_width:
@@ -348,8 +340,9 @@ def query(
                     # Use width minus 1 to prevent wrapping on exact terminal width
                     actual_viz_width = max(80, terminal_width - 1)
 
-                click.echo("\nTREE VISUALIZATION:")
-                click.echo("-" * (terminal_width - 1))
+                click.echo("=" * 60)
+                click.echo("VISUALIZATION")
+                click.echo("=" * 60)
                 tree_viz = build_ascii_tree(
                     result.frontier_segments,
                     ctx.obj["store"],
@@ -358,7 +351,19 @@ def query(
                     coverage_map=result.coverage_map,
                 )
                 click.echo(tree_viz)
-                click.echo("-" * (terminal_width - 1))
+                click.echo("")
+
+            # Show statistics after tree visualization
+            click.echo("=" * 60)
+            click.echo("STATISTICS")
+            click.echo("=" * 60)
+            click.echo(f"  Nodes retrieved: {len(result.node_ids)}")
+            frontier_size = (
+                len(result.frontier_segments) if result.frontier_segments else 0
+            )
+            click.echo(f"  Frontier size: {frontier_size}")
+            click.echo(f"  Token count: {token_count}")
+            click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
 
     except Exception as e:
         click.echo(f"❌ Error processing query: {e}", err=True)
