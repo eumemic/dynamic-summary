@@ -41,6 +41,9 @@ def build_ascii_tree(
 
     lines = []
 
+    # Add a top border spanning the full width
+    lines.append("─" * width)
+
     for depth in range(max_depth, -1, -1):
         if depth not in nodes_by_depth:
             continue
@@ -74,9 +77,13 @@ def build_ascii_tree(
 
         for node in nodes_to_show:
             start_pos = int((node.span_start - doc_start) * actual_width / doc_span)
-            end_pos = int((node.span_end - doc_start) * actual_width / doc_span)
-            start_pos = max(0, min(start_pos, actual_width - 1))
-            end_pos = max(start_pos + 1, min(end_pos, actual_width))
+            end_pos = max(
+                start_pos + 1,
+                min(
+                    int((node.span_end - doc_start) * actual_width / doc_span),
+                    actual_width,
+                ),
+            )
             if end_pos <= start_pos:
                 end_pos = start_pos + 1
             is_covered = coverage_map and node.id in coverage_map
@@ -133,7 +140,6 @@ def build_ascii_tree(
         # Convert pixels to characters
         line = ["█" if p == 1 else "░" if p == 0 else " " for p in pixels]
         lines.append(level_prefix + "".join(line))
-        # Label line (unchanged logic, but no border checks)
         label_line = [" "] * actual_width
         if label_spans:
             label_spans.sort(key=lambda x: x[0])
@@ -155,4 +161,9 @@ def build_ascii_tree(
                             label_line[start + i] = char
                     last_end = start + len(label) - 1
         lines.append(" " * prefix_len + "".join(label_line))
+        # Add horizontal border after each level except the last, spanning the full width
+        if depth > 0:
+            lines.append("─" * width)
+    # Add a bottom border spanning the full width
+    lines.append("─" * width)
     return "\n".join(lines)
