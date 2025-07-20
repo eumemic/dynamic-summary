@@ -27,10 +27,12 @@ class Segment:
 
 @dataclass
 class SegmentInfo:
-    """Extended segment information including token cost."""
+    """Extended segment information including token cost and span."""
 
     segment: Segment
     token_cost: int
+    span_start: int
+    span_end: int
 
 
 @dataclass
@@ -55,36 +57,28 @@ class DynamicFrontierGenerator:
         ] = {}
 
     def find_optimal_frontier(
-        self, budget_tokens: int, scores: dict[str, float], document_id: Optional[str]
+        self,
+        budget_tokens: int,
+        scores: dict[str, float],
+        document_id: Optional[str],
+        coverage_map: dict[str, bool],
     ) -> DPResult:
         logger.info("Using DP frontier generation")
         root_node = self.store.get_root_node_for_document(document_id)
         if not root_node:
-            return DPResult([], [], 0.0, {})
-
-        # Build coverage map from scores
-        coverage_nodes = self.store.get_nodes(list(scores.keys()))
-        coverage_map = {node.id: True for node in coverage_nodes}
-
-        # Add ancestors to coverage map
-        for node in coverage_nodes:
-            current = node
-            while current.parent_id:
-                coverage_map[current.parent_id] = True
-                current = self.store.get_node(current.parent_id)
-                if not current:
-                    break
+            return DPResult([], [], 0.0, coverage_map)
 
         self._memo_cache = {}
         segments, quality = self._find_optimal_frontier_for_span(
             root_node, budget_tokens, scores
         )
 
-        # Build segment infos with costs
+        # Build segment infos with costs and spans
         segment_infos = []
         for seg in segments:
             cost = self._get_segment_cost(seg)
-            segment_infos.append(SegmentInfo(seg, cost))
+            span_start, span_end = self._get_segment_span(seg)
+            segment_infos.append(SegmentInfo(seg, cost, span_start, span_end))
 
         logger.info(
             f"DP frontier generated with total quality {quality:.3f} and {len(segments)} segments."
@@ -112,6 +106,34 @@ class DynamicFrontierGenerator:
             # Remove the MID delimiter to match assembler behavior
             text = text.replace("<<<MID>>>", "")
         return len(self.tokenizer.encode(text.strip()))
+
+    def _get_segment_span(self, segment: "Segment") -> tuple[int, int]:
+        """Get the actual character span for a segment."""
+        node = self.store.get_node(segment.node_id)
+        if not node:
+            return (0, 0)
+
+        # For leaf nodes, the span is the node's span
+        if node.depth == 0 or segment.side is None:
+            return (node.span_start, node.span_end)
+
+        # For internal nodes, we need to determine the actual segment span
+        if segment.side == "LEFT":
+            # LEFT segment spans from node start to left child end
+            if node.left_child_id:
+                left_child = self.store.get_node(node.left_child_id)
+                if left_child:
+                    return (node.span_start, left_child.span_end)
+            # Fallback to half of node
+            return (node.span_start, (node.span_start + node.span_end) // 2)
+        else:  # RIGHT
+            # RIGHT segment spans from right child start to node end
+            if node.right_child_id:
+                right_child = self.store.get_node(node.right_child_id)
+                if right_child:
+                    return (right_child.span_start, node.span_end)
+            # Fallback to half of node
+            return ((node.span_start + node.span_end) // 2, node.span_end)
 
     def _calculate_segment_quality(
         self, segment: "Segment", scores: dict[str, float]

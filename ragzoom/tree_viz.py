@@ -67,10 +67,18 @@ class TokenPositionResolver(PositionResolver):
         segment_infos: list[SegmentInfo],
         coverage_map: dict[str, bool],
         store: Store,
+        tokenizer=None,
     ):
+        # Validate inputs
+        if not segment_infos:
+            raise ValueError("segment_infos cannot be empty")
+        if not coverage_map:
+            raise ValueError("coverage_map cannot be empty")
+
         self.store = store
         self.segment_infos = segment_infos
         self.coverage_map = coverage_map
+        self.tokenizer = tokenizer or tiktoken.get_encoding("cl100k_base")
 
         # Build segment lookup for quick access
         self.segment_lookup = {
@@ -78,29 +86,17 @@ class TokenPositionResolver(PositionResolver):
             for idx, info in enumerate(segment_infos)
         }
 
+        # Validate token costs are not null
+        for info in segment_infos:
+            if info.token_cost is None:
+                raise ValueError(f"Null token cost for segment {info.segment}")
+
         # Sort segments by their document order (left-to-right)
         # This ensures the token visualization matches document flow
         sorted_infos = []
         for idx, info in enumerate(segment_infos):
-            node = store.get_node(info.segment.node_id)
-            if node:
-                # Get the actual span start for this segment
-                if info.segment.side == "LEFT":
-                    seg_span_start = node.span_start
-                elif info.segment.side == "RIGHT":
-                    # For RIGHT segments, start after the midpoint
-                    if node.left_child_id:
-                        left_child = store.get_node(node.left_child_id)
-                        if left_child:
-                            seg_span_start = left_child.span_end
-                        else:
-                            seg_span_start = (node.span_start + node.span_end) // 2
-                    else:
-                        seg_span_start = (node.span_start + node.span_end) // 2
-                else:
-                    # Leaf node (side is None)
-                    seg_span_start = node.span_start
-                sorted_infos.append((seg_span_start, idx, info))
+            # Use the pre-computed span_start from SegmentInfo
+            sorted_infos.append((info.span_start, idx, info))
         sorted_infos.sort(key=lambda x: x[0])
 
         # Compute segment positions in document order
@@ -140,6 +136,7 @@ class TokenPositionResolver(PositionResolver):
 
             node = self.store.get_node(node_id)
             if not node:
+                # Handle missing node gracefully
                 node_costs[node_id] = 0.0
                 return 0.0
 
@@ -164,8 +161,9 @@ class TokenPositionResolver(PositionResolver):
                     if left_cost == 0.0 and node.left_child_id in self.coverage_map:
                         left_child = self.store.get_node(node.left_child_id)
                         if left_child and left_child.text:
-                            tokenizer = tiktoken.get_encoding("cl100k_base")
-                            left_cost = float(len(tokenizer.encode(left_child.text)))
+                            left_cost = float(
+                                len(self.tokenizer.encode(left_child.text))
+                            )
 
                 if (node_id, "RIGHT") in self.segment_lookup:
                     idx = self.segment_lookup[(node_id, "RIGHT")]
@@ -176,17 +174,16 @@ class TokenPositionResolver(PositionResolver):
                     if right_cost == 0.0 and node.right_child_id in self.coverage_map:
                         right_child = self.store.get_node(node.right_child_id)
                         if right_child and right_child.text:
-                            tokenizer = tiktoken.get_encoding("cl100k_base")
                             # For internal nodes, need to handle MID delimiter
                             if (
                                 right_child.depth > 0
                                 and right_child.mid_offset is not None
                             ):
                                 text = right_child.text.replace("<<<MID>>>", "")
-                                right_cost = float(len(tokenizer.encode(text)))
+                                right_cost = float(len(self.tokenizer.encode(text)))
                             else:
                                 right_cost = float(
-                                    len(tokenizer.encode(right_child.text))
+                                    len(self.tokenizer.encode(right_child.text))
                                 )
 
                 total_cost = left_cost + right_cost
@@ -263,14 +260,40 @@ def build_ascii_tree(
     coverage_map: Optional[dict[str, bool]] = None,
     seed_node_ids: Optional[set[str]] = None,
     position_resolver: Optional[PositionResolver] = None,
+    segment_infos: Optional[list[SegmentInfo]] = None,
+    use_token_coords: bool = False,
 ) -> str:
-    """Build an ASCII tree visualization showing the tiling structure (no node boundary markers)."""
+    """Build an ASCII tree visualization showing the tiling structure.
+
+    Args:
+        segments: List of segments to visualize
+        store: Store instance
+        document_id: Document to visualize
+        width: Terminal width for visualization
+        coverage_map: Optional dict of covered node IDs
+        seed_node_ids: Optional set of seed node IDs (marked with *)
+        position_resolver: Optional position resolver (deprecated, use use_token_coords)
+        segment_infos: Segment metadata including token costs (required if use_token_coords=True)
+        use_token_coords: If True, use token-based positioning; if False, use character-based
+    """
     all_nodes = store.get_all_nodes_for_document(document_id)
     if not all_nodes:
         return "No nodes found for document"
 
-    # Use character-based resolver by default
-    if position_resolver is None:
+    # Handle backward compatibility with position_resolver parameter
+    if position_resolver is not None:
+        # Use the provided resolver
+        pass
+    elif use_token_coords:
+        # Create token-based resolver
+        if not segment_infos:
+            raise ValueError("segment_infos required when use_token_coords=True")
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+        position_resolver = TokenPositionResolver(
+            segment_infos, coverage_map or {}, store, tokenizer
+        )
+    else:
+        # Default to character-based resolver
         position_resolver = CharacterPositionResolver(all_nodes, store)
 
     # Get coordinate space extent

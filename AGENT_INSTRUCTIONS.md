@@ -298,3 +298,9 @@ ragzoom serve
   - Created extensible PositionResolver interface for future coordinate systems
   - TokenPositionResolver integrates with DP algorithm to avoid redundant computation
   - Fixed coverage visualization and segment ordering bugs in token view
+- **Refactored tree visualization based on code review**:
+  - Removed coverage map duplication between retrieve.py and dynamic_frontier.py
+  - Fixed performance issue where TokenPositionResolver was creating new tokenizer instances
+  - Added segment spans (span_start, span_end) to SegmentInfo to simplify sorting logic
+  - Added input validation for empty segment_infos and null token costs
+  - Simplified build_ascii_tree API with use_token_coords boolean parameter
