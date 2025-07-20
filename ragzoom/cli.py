@@ -15,7 +15,10 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
-from ragzoom.tree_viz import build_ascii_tree
+from ragzoom.tree_viz import (
+    TokenPositionResolver,
+    build_ascii_tree,
+)
 
 # Load environment variables
 load_dotenv()
@@ -229,6 +232,12 @@ def documents(ctx):
     type=int,
     help="Override visualization width (defaults to terminal width)",
 )
+@click.option(
+    "--viz-coords",
+    type=click.Choice(["chars", "tokens"]),
+    default="chars",
+    help="Coordinate system for tree visualization (chars=source position, tokens=output budget)",
+)
 @click.pass_context
 def query(
     ctx,
@@ -239,6 +248,7 @@ def query(
     show_stats: bool,
     validate: bool,
     viz_width: Optional[int],
+    viz_coords: str,
 ):
     """Query the system and get a summary."""
     # Set global validation flag
@@ -346,6 +356,15 @@ def query(
                 click.echo("=" * 60)
                 click.echo("VISUALIZATION")
                 click.echo("=" * 60)
+
+                # Create appropriate position resolver
+                if viz_coords == "tokens":
+                    position_resolver = TokenPositionResolver(
+                        result.segment_infos, result.coverage_map, ctx.obj["store"]
+                    )
+                else:
+                    position_resolver = None  # Use default character-based
+
                 tree_viz = build_ascii_tree(
                     result.frontier_segments,
                     ctx.obj["store"],
@@ -353,6 +372,7 @@ def query(
                     width=actual_viz_width,
                     coverage_map=result.coverage_map,
                     seed_node_ids=set(result.node_ids),
+                    position_resolver=position_resolver,
                 )
                 click.echo(tree_viz)
                 click.echo("")

@@ -1,9 +1,258 @@
 """ASCII tree visualization for tiling display."""
 
+from abc import ABC, abstractmethod
 from typing import Optional
 
-from ragzoom.dynamic_frontier import Segment
+import tiktoken
+
+from ragzoom.dynamic_frontier import Segment, SegmentInfo
 from ragzoom.store import Store, TreeNode
+
+
+class PositionResolver(ABC):
+    """Abstract base class for coordinate system resolvers."""
+
+    @abstractmethod
+    def get_extent(self) -> float:
+        """Return the total extent of the coordinate space."""
+        pass
+
+    @abstractmethod
+    def get_segment_position(
+        self, segment: Segment, segment_index: int
+    ) -> tuple[float, float]:
+        """Return (start, end) position for a segment in the tiling."""
+        pass
+
+    @abstractmethod
+    def get_node_position(self, node: TreeNode) -> tuple[float, float]:
+        """Return (start, end) position for a covered but unselected node."""
+        pass
+
+
+class CharacterPositionResolver(PositionResolver):
+    """Character-based positioning (current default behavior)."""
+
+    def __init__(self, all_nodes: list[TreeNode], store: Store):
+        self.store = store
+        self.doc_start = min(node.span_start for node in all_nodes)
+        self.doc_end = max(node.span_end for node in all_nodes)
+
+    def get_extent(self) -> float:
+        return float(self.doc_end - self.doc_start)
+
+    def get_segment_position(
+        self, segment: Segment, segment_index: int
+    ) -> tuple[float, float]:
+        node = self.store.get_node(segment.node_id)
+        if not node:
+            return (0.0, 0.0)
+        return (
+            float(node.span_start - self.doc_start),
+            float(node.span_end - self.doc_start),
+        )
+
+    def get_node_position(self, node: TreeNode) -> tuple[float, float]:
+        return (
+            float(node.span_start - self.doc_start),
+            float(node.span_end - self.doc_start),
+        )
+
+
+class TokenPositionResolver(PositionResolver):
+    """Token-based positioning showing output budget allocation."""
+
+    def __init__(
+        self,
+        segment_infos: list[SegmentInfo],
+        coverage_map: dict[str, bool],
+        store: Store,
+    ):
+        self.store = store
+        self.segment_infos = segment_infos
+        self.coverage_map = coverage_map
+
+        # Build segment lookup for quick access
+        self.segment_lookup = {
+            (info.segment.node_id, info.segment.side): idx
+            for idx, info in enumerate(segment_infos)
+        }
+
+        # Sort segments by their document order (left-to-right)
+        # This ensures the token visualization matches document flow
+        sorted_infos = []
+        for idx, info in enumerate(segment_infos):
+            node = store.get_node(info.segment.node_id)
+            if node:
+                # Get the actual span start for this segment
+                if info.segment.side == "LEFT":
+                    seg_span_start = node.span_start
+                elif info.segment.side == "RIGHT":
+                    # For RIGHT segments, start after the midpoint
+                    if node.left_child_id:
+                        left_child = store.get_node(node.left_child_id)
+                        if left_child:
+                            seg_span_start = left_child.span_end
+                        else:
+                            seg_span_start = (node.span_start + node.span_end) // 2
+                    else:
+                        seg_span_start = (node.span_start + node.span_end) // 2
+                else:
+                    # Leaf node (side is None)
+                    seg_span_start = node.span_start
+                sorted_infos.append((seg_span_start, idx, info))
+        sorted_infos.sort(key=lambda x: x[0])
+
+        # Compute segment positions in document order
+        self.segment_positions = {}
+        current_pos = 0.0
+        for _, original_idx, info in sorted_infos:
+            self.segment_positions[original_idx] = (
+                current_pos,
+                current_pos + info.token_cost,
+            )
+            current_pos += info.token_cost
+        self.total_tokens = current_pos
+
+        # Compute positions for covered but unselected nodes
+        self.node_positions = {}
+        self._compute_node_positions()
+
+    def get_extent(self) -> float:
+        return self.total_tokens
+
+    def get_segment_position(
+        self, segment: Segment, segment_index: int
+    ) -> tuple[float, float]:
+        return self.segment_positions.get(segment_index, (0.0, 0.0))
+
+    def get_node_position(self, node: TreeNode) -> tuple[float, float]:
+        return self.node_positions.get(node.id, (0.0, 0.0))
+
+    def _compute_node_positions(self):
+        """Compute positions for all covered nodes based on selected descendants."""
+        # First pass: compute token costs for all nodes
+        node_costs = {}
+
+        def compute_cost(node_id: str) -> float:
+            if node_id in node_costs:
+                return node_costs[node_id]
+
+            node = self.store.get_node(node_id)
+            if not node:
+                node_costs[node_id] = 0.0
+                return 0.0
+
+            # Check if this node has selected segments
+            total_cost = 0.0
+
+            # Check for leaf segment
+            if (node_id, None) in self.segment_lookup:
+                idx = self.segment_lookup[(node_id, None)]
+                total_cost = self.segment_infos[idx].token_cost
+            else:
+                # Check for left/right segments
+                left_cost = 0.0
+                right_cost = 0.0
+
+                if (node_id, "LEFT") in self.segment_lookup:
+                    idx = self.segment_lookup[(node_id, "LEFT")]
+                    left_cost = self.segment_infos[idx].token_cost
+                elif node.left_child_id:
+                    left_cost = compute_cost(node.left_child_id)
+                    # If child is covered but has zero cost, use its full text cost
+                    if left_cost == 0.0 and node.left_child_id in self.coverage_map:
+                        left_child = self.store.get_node(node.left_child_id)
+                        if left_child and left_child.text:
+                            tokenizer = tiktoken.get_encoding("cl100k_base")
+                            left_cost = float(len(tokenizer.encode(left_child.text)))
+
+                if (node_id, "RIGHT") in self.segment_lookup:
+                    idx = self.segment_lookup[(node_id, "RIGHT")]
+                    right_cost = self.segment_infos[idx].token_cost
+                elif node.right_child_id:
+                    right_cost = compute_cost(node.right_child_id)
+                    # If child is covered but has zero cost, use its full text cost
+                    if right_cost == 0.0 and node.right_child_id in self.coverage_map:
+                        right_child = self.store.get_node(node.right_child_id)
+                        if right_child and right_child.text:
+                            tokenizer = tiktoken.get_encoding("cl100k_base")
+                            # For internal nodes, need to handle MID delimiter
+                            if (
+                                right_child.depth > 0
+                                and right_child.mid_offset is not None
+                            ):
+                                text = right_child.text.replace("<<<MID>>>", "")
+                                right_cost = float(len(tokenizer.encode(text)))
+                            else:
+                                right_cost = float(
+                                    len(tokenizer.encode(right_child.text))
+                                )
+
+                total_cost = left_cost + right_cost
+
+            node_costs[node_id] = total_cost
+            return total_cost
+
+        # Compute costs for all covered nodes
+        for node_id in self.coverage_map:
+            compute_cost(node_id)
+
+        # Second pass: compute positions
+        def compute_position(node_id: str) -> tuple[float, float]:
+            if node_id in self.node_positions:
+                return self.node_positions[node_id]
+
+            node = self.store.get_node(node_id)
+            if not node or node_costs.get(node_id, 0) == 0:
+                self.node_positions[node_id] = (0.0, 0.0)
+                return (0.0, 0.0)
+
+            # If this node has selected segments, use their positions
+            if (node_id, None) in self.segment_lookup:
+                idx = self.segment_lookup[(node_id, None)]
+                pos = self.segment_positions[idx]
+                self.node_positions[node_id] = pos
+                return pos
+
+            # For internal nodes, compute based on children
+            start_pos = float("inf")
+            end_pos = 0.0
+
+            # Check left side
+            if (node_id, "LEFT") in self.segment_lookup:
+                idx = self.segment_lookup[(node_id, "LEFT")]
+                seg_start, seg_end = self.segment_positions[idx]
+                start_pos = min(start_pos, seg_start)
+                end_pos = max(end_pos, seg_end)
+            elif node.left_child_id and node.left_child_id in self.coverage_map:
+                child_start, child_end = compute_position(node.left_child_id)
+                if child_end > child_start:  # Non-empty child
+                    start_pos = min(start_pos, child_start)
+                    end_pos = max(end_pos, child_end)
+
+            # Check right side
+            if (node_id, "RIGHT") in self.segment_lookup:
+                idx = self.segment_lookup[(node_id, "RIGHT")]
+                seg_start, seg_end = self.segment_positions[idx]
+                start_pos = min(start_pos, seg_start)
+                end_pos = max(end_pos, seg_end)
+            elif node.right_child_id and node.right_child_id in self.coverage_map:
+                child_start, child_end = compute_position(node.right_child_id)
+                if child_end > child_start:  # Non-empty child
+                    start_pos = min(start_pos, child_start)
+                    end_pos = max(end_pos, child_end)
+
+            # Handle case where no children have positions
+            if start_pos == float("inf"):
+                start_pos = 0.0
+
+            self.node_positions[node_id] = (start_pos, end_pos)
+            return (start_pos, end_pos)
+
+        # Compute positions for all covered nodes
+        for node_id in self.coverage_map:
+            compute_position(node_id)
 
 
 def build_ascii_tree(
@@ -13,15 +262,21 @@ def build_ascii_tree(
     width: int = 120,
     coverage_map: Optional[dict[str, bool]] = None,
     seed_node_ids: Optional[set[str]] = None,
+    position_resolver: Optional[PositionResolver] = None,
 ) -> str:
     """Build an ASCII tree visualization showing the tiling structure (no node boundary markers)."""
     all_nodes = store.get_all_nodes_for_document(document_id)
     if not all_nodes:
         return "No nodes found for document"
 
-    doc_start = min(node.span_start for node in all_nodes)
-    doc_end = max(node.span_end for node in all_nodes)
-    doc_span = doc_end - doc_start
+    # Use character-based resolver by default
+    if position_resolver is None:
+        position_resolver = CharacterPositionResolver(all_nodes, store)
+
+    # Get coordinate space extent
+    extent = position_resolver.get_extent()
+    if extent == 0:
+        return "Empty coordinate space"
 
     nodes_by_depth: dict[int, list[TreeNode]] = {}
     max_depth = 0
@@ -69,13 +324,13 @@ def build_ascii_tree(
                     pixels[i] = priority
 
         for node in nodes_to_show:
-            start_pos = int((node.span_start - doc_start) * actual_width / doc_span)
+            # Use resolver to get positions
+            node_start, node_end = position_resolver.get_node_position(node)
+
+            # Convert to pixel positions
+            start_pos = int(node_start * actual_width / extent)
             end_pos = max(
-                start_pos + 1,
-                min(
-                    int((node.span_end - doc_start) * actual_width / doc_span),
-                    actual_width,
-                ),
+                start_pos + 1, min(int(node_end * actual_width / extent), actual_width)
             )
             if end_pos <= start_pos:
                 end_pos = start_pos + 1
@@ -97,39 +352,81 @@ def build_ascii_tree(
                         label_spans.append((mid_pos, label, True))
             # Internal node
             elif node.left_child_id and node.right_child_id:
-                left_child = store.get_node(node.left_child_id)
-                right_child = store.get_node(node.right_child_id)
-                if left_child and right_child:
-                    mid_pos = int(
-                        (left_child.span_end - doc_start) * actual_width / doc_span
-                    )
-                    mid_pos = max(0, min(mid_pos, actual_width - 1))
-                    # Left segment
-                    left_priority = (
-                        1
-                        if (node.id, "LEFT") in selected_segments
-                        else 0 if is_covered else -1
-                    )
-                    if left_priority >= 0:
-                        paint(start_pos, mid_pos, left_priority)
-                    if (node.id, "LEFT") in selected_segments:
-                        label = segment_labels.get((node.id, "LEFT"), "")
-                        if label:
-                            label_pos = (start_pos + mid_pos) // 2
-                            label_spans.append((label_pos, label, True))
-                    # Right segment
-                    right_priority = (
-                        1
-                        if (node.id, "RIGHT") in selected_segments
-                        else 0 if is_covered else -1
-                    )
-                    if right_priority >= 0:
-                        paint(mid_pos, end_pos, right_priority)
-                    if (node.id, "RIGHT") in selected_segments:
-                        label = segment_labels.get((node.id, "RIGHT"), "")
-                        if label:
-                            label_pos = (mid_pos + end_pos) // 2
-                            label_spans.append((label_pos, label, True))
+                # For token coordinates, we need to handle segments differently
+                if isinstance(position_resolver, TokenPositionResolver):
+                    # First, if the node is covered, paint the entire node as covered
+                    if is_covered:
+                        paint(start_pos, end_pos, 0)
+
+                    # Then paint selected segments on top
+                    has_left = (node.id, "LEFT") in selected_segments
+                    has_right = (node.id, "RIGHT") in selected_segments
+
+                    if has_left or has_right:
+                        # Find the actual segment positions
+                        for idx, seg in enumerate(segments):
+                            if seg.node_id == node.id:
+                                seg_start, seg_end = (
+                                    position_resolver.get_segment_position(seg, idx)
+                                )
+                                seg_start_pos = int(seg_start * actual_width / extent)
+                                seg_end_pos = max(
+                                    seg_start_pos + 1,
+                                    min(
+                                        int(seg_end * actual_width / extent),
+                                        actual_width,
+                                    ),
+                                )
+
+                                if seg.side == "LEFT" and has_left:
+                                    paint(seg_start_pos, seg_end_pos, 1)
+                                    label = segment_labels.get((node.id, "LEFT"), "")
+                                    if label:
+                                        label_pos = (seg_start_pos + seg_end_pos) // 2
+                                        label_spans.append((label_pos, label, True))
+                                elif seg.side == "RIGHT" and has_right:
+                                    paint(seg_start_pos, seg_end_pos, 1)
+                                    label = segment_labels.get((node.id, "RIGHT"), "")
+                                    if label:
+                                        label_pos = (seg_start_pos + seg_end_pos) // 2
+                                        label_spans.append((label_pos, label, True))
+                else:
+                    # Character-based positioning - use the original logic
+                    left_child = store.get_node(node.left_child_id)
+                    right_child = store.get_node(node.right_child_id)
+                    if left_child and right_child:
+                        # Get left child's end position using resolver
+                        left_start, left_end = position_resolver.get_node_position(
+                            left_child
+                        )
+                        mid_pos = int(left_end * actual_width / extent)
+                        mid_pos = max(0, min(mid_pos, actual_width - 1))
+                        # Left segment
+                        left_priority = (
+                            1
+                            if (node.id, "LEFT") in selected_segments
+                            else 0 if is_covered else -1
+                        )
+                        if left_priority >= 0:
+                            paint(start_pos, mid_pos, left_priority)
+                        if (node.id, "LEFT") in selected_segments:
+                            label = segment_labels.get((node.id, "LEFT"), "")
+                            if label:
+                                label_pos = (start_pos + mid_pos) // 2
+                                label_spans.append((label_pos, label, True))
+                        # Right segment
+                        right_priority = (
+                            1
+                            if (node.id, "RIGHT") in selected_segments
+                            else 0 if is_covered else -1
+                        )
+                        if right_priority >= 0:
+                            paint(mid_pos, end_pos, right_priority)
+                        if (node.id, "RIGHT") in selected_segments:
+                            label = segment_labels.get((node.id, "RIGHT"), "")
+                            if label:
+                                label_pos = (mid_pos + end_pos) // 2
+                                label_spans.append((label_pos, label, True))
         # Convert pixels to characters
         line = ["█" if p == 1 else "░" if p == 0 else " " for p in pixels]
         lines.append(level_prefix + "".join(line))

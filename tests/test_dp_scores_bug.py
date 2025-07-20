@@ -105,9 +105,10 @@ class TestDPScoresBug:
         }
 
         # Run DP algorithm
-        segments = dp_generator.find_optimal_frontier(
+        dp_result = dp_generator.find_optimal_frontier(
             budget_tokens=10000, scores=scores, document_id="doc1"
         )
+        segments = dp_result.segments
 
         # Collect which nodes are used in the frontier
         nodes_in_frontier = {seg.node_id for seg in segments}
@@ -196,11 +197,12 @@ class TestDPScoresBug:
         )
 
         # This is what retriever.py does - passes ALL scores to DP
-        segments = dp_generator.find_optimal_frontier(
+        dp_result = dp_generator.find_optimal_frontier(
             budget_tokens=10000,
             scores=result.scores,  # BUG: includes leaf2 which isn't in coverage!
             document_id="doc1",
         )
+        segments = dp_result.segments
 
         # Check results
         leaf_segments = [s for s in segments if store.get_node(s.node_id).depth == 0]

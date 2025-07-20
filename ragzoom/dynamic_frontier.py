@@ -25,6 +25,24 @@ class Segment:
     side: Optional[Literal["LEFT", "RIGHT"]]
 
 
+@dataclass
+class SegmentInfo:
+    """Extended segment information including token cost."""
+
+    segment: Segment
+    token_cost: int
+
+
+@dataclass
+class DPResult:
+    """Complete result from DP frontier generation."""
+
+    segments: list[Segment]
+    segment_infos: list[SegmentInfo]
+    total_quality: float
+    coverage_map: dict[str, bool]
+
+
 class DynamicFrontierGenerator:
     """Generates a frontier using a dynamic programming approach."""
 
@@ -38,21 +56,46 @@ class DynamicFrontierGenerator:
 
     def find_optimal_frontier(
         self, budget_tokens: int, scores: dict[str, float], document_id: Optional[str]
-    ) -> list["Segment"]:
+    ) -> DPResult:
         logger.info("Using DP frontier generation")
         root_node = self.store.get_root_node_for_document(document_id)
         if not root_node:
-            return []
+            return DPResult([], [], 0.0, {})
+
+        # Build coverage map from scores
+        coverage_nodes = self.store.get_nodes(list(scores.keys()))
+        coverage_map = {node.id: True for node in coverage_nodes}
+
+        # Add ancestors to coverage map
+        for node in coverage_nodes:
+            current = node
+            while current.parent_id:
+                coverage_map[current.parent_id] = True
+                current = self.store.get_node(current.parent_id)
+                if not current:
+                    break
 
         self._memo_cache = {}
         segments, quality = self._find_optimal_frontier_for_span(
             root_node, budget_tokens, scores
         )
 
+        # Build segment infos with costs
+        segment_infos = []
+        for seg in segments:
+            cost = self._get_segment_cost(seg)
+            segment_infos.append(SegmentInfo(seg, cost))
+
         logger.info(
             f"DP frontier generated with total quality {quality:.3f} and {len(segments)} segments."
         )
-        return segments
+
+        return DPResult(
+            segments=segments,
+            segment_infos=segment_infos,
+            total_quality=quality,
+            coverage_map=coverage_map,
+        )
 
     def _get_segment_cost(self, segment: "Segment") -> int:
         node = self.store.get_node(segment.node_id)
@@ -66,6 +109,8 @@ class DynamicFrontierGenerator:
             text = node.text[: node.mid_offset]
         else:  # segment.side == "RIGHT"
             text = node.text[node.mid_offset :]
+            # Remove the MID delimiter to match assembler behavior
+            text = text.replace("<<<MID>>>", "")
         return len(self.tokenizer.encode(text.strip()))
 
     def _calculate_segment_quality(
