@@ -111,7 +111,7 @@ class Store:
 
         # LRU cache for hot nodes
         self.node_cache: dict[str, TreeNode] = {}
-        self.cache_order: deque[str] = deque(maxlen=1000)
+        self.cache_order: deque[str] = deque(maxlen=config.cache_size)
 
         # Cache expected embedding dimension for validation
         self._expected_embedding_dim = self._get_expected_embedding_dimension()

@@ -140,7 +140,7 @@ class TestDPIntegration:
         retriever.client.embeddings.create = sync_embedding
         retriever.client.chat.completions.create = sync_summary
         query = "First chunk Second chunk"  # Query that should match the first half
-        result = retriever.retrieve(query, document_id="doc1")
+        result = await retriever.retrieve_async(query, document_id="doc1")
 
         # Print frontier segments instead of nodes
         if (
@@ -197,7 +197,7 @@ class TestDPIntegration:
         retriever = Retriever(config, store, tree_builder)
         retriever.client.embeddings.create = sync_embedding
         retriever.client.chat.completions.create = sync_summary
-        result = retriever.retrieve("test document", document_id="doc1")
+        result = await retriever.retrieve_async("test document", document_id="doc1")
 
         # Check frontier doesn't have both parent and child
         # Extract unique node IDs from segments
@@ -242,14 +242,14 @@ class TestDPIntegration:
         retriever.client.embeddings.create = sync_embedding
         retriever.client.chat.completions.create = sync_summary
         # Query for first half
-        result1 = retriever.retrieve("AAAA BBBB", document_id="doc1")
+        result1 = await retriever.retrieve_async("AAAA BBBB", document_id="doc1")
         assembler = Assembler(config, store)
         assembled1 = assembler.assemble(result1)
         # Should contain content from first half
         assert "AAAA" in assembled1 or "first" in assembled1.lower()
 
         # Query for second half
-        result2 = retriever.retrieve("CCCC DDDD", document_id="doc1")
+        result2 = await retriever.retrieve_async("CCCC DDDD", document_id="doc1")
         assembled2 = assembler.assemble(result2)
 
         # Should contain content from second half
@@ -284,7 +284,7 @@ class TestDPIntegration:
         retriever = Retriever(config, store, tree_builder)
         retriever.client.embeddings.create = sync_embedding
         retriever.client.chat.completions.create = sync_summary
-        result = retriever.retrieve("Part one Part two", document_id="doc1")
+        result = await retriever.retrieve_async("Part one Part two", document_id="doc1")
 
         # Assemble
         assembler = Assembler(config, store)
@@ -322,7 +322,9 @@ class TestDPIntegration:
         retriever = Retriever(config, store, tree_builder)
         retriever.client.embeddings.create = sync_embedding
         retriever.client.chat.completions.create = sync_summary
-        result = retriever.retrieve("Sentence", document_id="doc1", budget_tokens=100)
+        result = await retriever.retrieve_async(
+            "Sentence", document_id="doc1", budget_tokens=100
+        )
 
         # Assemble
         assembler = Assembler(config, store)

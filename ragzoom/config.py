@@ -56,17 +56,6 @@ class RagZoomConfig(BaseSettings):
         default=150, description="Max tokens per smoothing operation"
     )
 
-    # Pinning and eviction
-    pin_depth_max: int = Field(
-        default=2, description="Deepest level a node may be permanently pinned"
-    )
-    ttl_turns: int = Field(
-        default=0, description="Working-set eviction TTL (0=disabled, use score queue)"
-    )
-    freshness_decay: float = Field(
-        default=0.9, description="Decay factor for freshness in priority calculation"
-    )
-
     # Storage configuration
     openai_api_key: str = Field(..., description="OpenAI API key")
     chroma_persist_directory: str = Field(
@@ -94,6 +83,18 @@ class RagZoomConfig(BaseSettings):
 
     # Operational settings
     log_level: str = Field(default="INFO", description="Logging level")
+    cache_size: int = Field(
+        default=1000, description="Maximum number of nodes in LRU cache"
+    )
+    embedding_batch_size: int = Field(
+        default=100, description="Batch size for embedding API calls"
+    )
+    dirty_refresh_limit: int = Field(
+        default=10, description="Maximum dirty nodes to refresh per retrieval"
+    )
+    pin_depth_max: int = Field(
+        default=2, description="Deepest level a node may be permanently pinned"
+    )
 
     @field_validator("mmr_lambda")
     @classmethod
@@ -101,14 +102,6 @@ class RagZoomConfig(BaseSettings):
         """Ensure MMR lambda is between 0 and 1."""
         if not 0 <= v <= 1:
             raise ValueError("mmr_lambda must be between 0 and 1")
-        return v
-
-    @field_validator("freshness_decay")
-    @classmethod
-    def validate_freshness_decay(cls, v: float) -> float:
-        """Ensure freshness decay is between 0 and 1."""
-        if not 0 < v <= 1:
-            raise ValueError("freshness_decay must be between 0 and 1")
         return v
 
     @field_validator("adjacent_context_tokens")
