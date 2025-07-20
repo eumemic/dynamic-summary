@@ -176,7 +176,7 @@ ragzoom query "search text" -d <doc-id>              # Query specific document
 ragzoom query "search text" -d <doc-id> --validate   # With validation checks
 ragzoom query "search text" -d <doc-id> --show-stats # Show stats and tree visualization
 ragzoom query "search text" -d <doc-id> --show-stats --viz-width 200  # Custom width
-ragzoom query "search text" -d <doc-id> --show-stats --viz-coords tokens  # Token-based visualization
+ragzoom query "search text" -d <doc-id> --show-stats --viz-coords output-tokens  # Token-based visualization
 
 # Document management
 ragzoom documents                         # List all indexed documents
@@ -292,9 +292,9 @@ ragzoom serve
   - Automatically adapts to terminal width
   - Can override width with --viz-width option
 - **Implemented parameterizable coordinate systems for tree visualization**:
-  - Added `--viz-coords` option to query command with choices ["chars", "tokens"]
-  - Character-based (default): Shows coverage chronologically in source document
-  - Token-based: Shows token budget allocation in output summary
+  - Added `--viz-coords` option to query command with choices ["source-chars", "output-tokens"]
+  - Source character-based: Shows coverage chronologically in source document
+  - Output token-based (default): Shows token budget allocation in output summary
   - Created extensible PositionResolver interface for future coordinate systems
   - TokenPositionResolver integrates with DP algorithm to avoid redundant computation
   - Fixed coverage visualization and segment ordering bugs in token view

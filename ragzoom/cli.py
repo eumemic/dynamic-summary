@@ -231,9 +231,9 @@ def documents(ctx):
 )
 @click.option(
     "--viz-coords",
-    type=click.Choice(["chars", "tokens"]),
-    default="chars",
-    help="Coordinate system for tree visualization (chars=source position, tokens=output budget)",
+    type=click.Choice(["source-chars", "output-tokens"]),
+    default="output-tokens",
+    help="Coordinate system for tree visualization (source-chars=source position, output-tokens=output budget)",
 )
 @click.pass_context
 def query(
@@ -362,7 +362,7 @@ def query(
                     coverage_map=result.coverage_map,
                     seed_node_ids=set(result.node_ids),
                     segment_infos=result.segment_infos,
-                    use_token_coords=(viz_coords == "tokens"),
+                    use_token_coords=(viz_coords == "output-tokens"),
                 )
                 click.echo(tree_viz)
                 click.echo("")
