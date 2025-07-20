@@ -305,7 +305,7 @@ class TreeBuilder:
             )
 
             # Get embeddings in batches
-            batch_size = 100  # Process 100 at a time for efficiency
+            batch_size = self.config.embedding_batch_size
             all_embeddings = []
 
             for i in range(0, len(chunks), batch_size):

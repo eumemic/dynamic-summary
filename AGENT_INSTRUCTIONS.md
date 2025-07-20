@@ -244,7 +244,7 @@ ragzoom serve
 
 - Unified async implementation for tree building (removed sync version)
 - Added global progress tracking across all indexing operations  
-- Fixed priority score clamping for eviction (must be in [0,1] range)
+- ~Fixed priority score clamping for eviction (must be in [0,1] range)~ (eviction removed)
 - Improved test mocking for AsyncOpenAI client
 - Added comprehensive git hooks for testing
 - Added complete test coverage for CLI and progress modules
@@ -260,7 +260,7 @@ ragzoom serve
 - **Enhanced slope cap handling**: Re-apply slope cap after budget trimming to prevent "bridge node" violations
 - **Fixed post-slope-cap budget overflow**: Added second budget check and trim after slope cap re-application
 - **Added embedding dimension validation**: Validates embeddings match expected dimensions, preventing runtime errors
-- **Fixed cache eviction after refresh**: Ensures refreshed nodes are properly re-added to LRU cache
+- **Fixed cache handling after refresh**: Ensures refreshed nodes are properly re-added to LRU cache
 - **Added empty frontier guard**: Falls back to root node when budget trimming leaves empty frontier
 - **Implemented async retrieval**: Added retrieve_async() with proper sync wrappers for FastAPI compatibility
 - **Fixed ChromaDB test configuration**: Tests now use tempfile.TemporaryDirectory() instead of ":memory:" which ChromaDB doesn't support
@@ -304,3 +304,9 @@ ragzoom serve
   - Added segment spans (span_start, span_end) to SegmentInfo to simplify sorting logic
   - Added input validation for empty segment_infos and null token costs
   - Simplified build_ascii_tree API with use_token_coords boolean parameter
+- **Major code cleanup and simplification**:
+  - Removed dead code: RateLimiter, openai_rate_limiter, with_rate_limit from utils.py
+  - Removed unused ValidationError class from validate.py
+  - Removed eviction-related configuration (pin_depth_max, ttl_turns, freshness_decay)
+  - Simplified retrieve() to just wrap retrieve_async(), removed _retrieve_sync_only duplicate
+  - Made hardcoded values configurable: cache_size, embedding_batch_size, dirty_refresh_limit
