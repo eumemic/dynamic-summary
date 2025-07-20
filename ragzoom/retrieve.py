@@ -9,7 +9,7 @@ from openai import OpenAI
 from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.dynamic_frontier import DynamicFrontierGenerator, Segment
+from ragzoom.dynamic_frontier import DynamicFrontierGenerator, Segment, SegmentInfo
 from ragzoom.store import Store
 
 if TYPE_CHECKING:
@@ -26,6 +26,7 @@ class RetrievalResult:
     scores: dict[str, float]
     coverage_map: dict[str, bool]
     frontier_segments: Optional[list["Segment"]] = None
+    segment_infos: Optional[list["SegmentInfo"]] = None
 
 
 class Retriever:
@@ -132,15 +133,16 @@ class Retriever:
         final_budget = (
             budget_tokens if budget_tokens is not None else self.config.budget_tokens
         )
-        frontier_segments = self.dp_generator.find_optimal_frontier(
+        dp_result = self.dp_generator.find_optimal_frontier(
             final_budget, scores, document_id
         )
 
         return RetrievalResult(
             node_ids=selected_ids,
             scores=scores,
-            coverage_map=coverage_map,
-            frontier_segments=frontier_segments,
+            coverage_map=dp_result.coverage_map,  # Use DP's coverage map
+            frontier_segments=dp_result.segments,
+            segment_infos=dp_result.segment_infos,
         )
 
     def retrieve(
@@ -231,15 +233,16 @@ class Retriever:
         final_budget = (
             budget_tokens if budget_tokens is not None else self.config.budget_tokens
         )
-        frontier_segments = self.dp_generator.find_optimal_frontier(
+        dp_result = self.dp_generator.find_optimal_frontier(
             final_budget, scores, document_id
         )
 
         return RetrievalResult(
             node_ids=selected_ids,
             scores=scores,
-            coverage_map=coverage_map,
-            frontier_segments=frontier_segments,
+            coverage_map=dp_result.coverage_map,  # Use DP's coverage map
+            frontier_segments=dp_result.segments,
+            segment_infos=dp_result.segment_infos,
         )
 
     async def _refresh_dirty_nodes_async(self, limit: int = 10) -> None:
