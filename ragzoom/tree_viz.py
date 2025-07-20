@@ -324,9 +324,6 @@ def build_ascii_tree(
 
     lines = []
 
-    # Add a top border spanning the full width
-    lines.append("─" * width)
-
     for depth in range(max_depth, -1, -1):
         if depth not in nodes_by_depth:
             continue
@@ -474,9 +471,4 @@ def build_ascii_tree(
                             label_line[start + i] = char
                     last_end = start + len(label) - 1
         lines.append(" " * prefix_len + "".join(label_line))
-        # Add horizontal border after each level except the last, spanning the full width
-        if depth > 0:
-            lines.append("─" * width)
-    # Add a bottom border spanning the full width
-    lines.append("─" * width)
     return "\n".join(lines)
