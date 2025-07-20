@@ -52,19 +52,7 @@ def build_ascii_tree(
     for depth in range(max_depth, -1, -1):
         if depth not in nodes_by_depth:
             continue
-        nodes_to_show = []
-        if len(nodes_by_depth[depth]) > 30:
-            for node in nodes_by_depth[depth]:
-                if (
-                    (node.id, "LEFT") in selected_segments
-                    or (node.id, "RIGHT") in selected_segments
-                    or (node.id, None) in selected_segments
-                ):
-                    nodes_to_show.append(node)
-            if not nodes_to_show:
-                continue
-        else:
-            nodes_to_show = nodes_by_depth[depth]
+        nodes_to_show = nodes_by_depth[depth]
 
         level_prefix = f"L{depth} "
         prefix_len = len(level_prefix)
