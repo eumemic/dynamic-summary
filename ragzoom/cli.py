@@ -312,8 +312,11 @@ def query(
                     span = f"{span_start}-{span_end}"
                     level = node.depth
                     side = segment.side
+                    # Add asterisk to index if this is a seed node
+                    is_seed = segment.node_id in result.node_ids
+                    idx_str = f"{idx}*" if is_seed else str(idx)
                     click.echo(
-                        f"[{idx} | SPAN: {span} | LEVEL: {level} | SIDE: {side} | NODE: {node.id[:8]}]"
+                        f"[{idx_str} | SPAN: {span} | LEVEL: {level} | SIDE: {side} | NODE: {node.id[:8]}]"
                     )
                     # Get the segment text as in assembler._get_text_for_segment
                     text = assembler._get_text_for_segment(segment)
@@ -349,6 +352,7 @@ def query(
                     document_id,
                     width=actual_viz_width,
                     coverage_map=result.coverage_map,
+                    seed_node_ids=set(result.node_ids),
                 )
                 click.echo(tree_viz)
                 click.echo("")
