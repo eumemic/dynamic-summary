@@ -15,10 +15,7 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
-from ragzoom.tree_viz import (
-    TokenPositionResolver,
-    build_ascii_tree,
-)
+from ragzoom.tree_viz import build_ascii_tree
 
 # Load environment variables
 load_dotenv()
@@ -324,9 +321,9 @@ def query(
                     side = segment.side
                     # Add asterisk to index if this is a seed node
                     is_seed = segment.node_id in result.node_ids
-                    idx_str = f"{idx}*" if is_seed else str(idx)
+                    idx_str = f"{idx}{'*' if is_seed else ' '}"
                     click.echo(
-                        f"[{idx_str} | SPAN: {span} | LEVEL: {level} | SIDE: {side} | NODE: {node.id[:8]}]"
+                        f"[{idx_str}| SPAN: {span} | LEVEL: {level} | SIDE: {side} | NODE: {node.id[:8]}]"
                     )
                     # Get the segment text as in assembler._get_text_for_segment
                     text = assembler._get_text_for_segment(segment)
@@ -357,14 +354,6 @@ def query(
                 click.echo("VISUALIZATION")
                 click.echo("=" * 60)
 
-                # Create appropriate position resolver
-                if viz_coords == "tokens":
-                    position_resolver = TokenPositionResolver(
-                        result.segment_infos, result.coverage_map, ctx.obj["store"]
-                    )
-                else:
-                    position_resolver = None  # Use default character-based
-
                 tree_viz = build_ascii_tree(
                     result.frontier_segments,
                     ctx.obj["store"],
@@ -372,7 +361,8 @@ def query(
                     width=actual_viz_width,
                     coverage_map=result.coverage_map,
                     seed_node_ids=set(result.node_ids),
-                    position_resolver=position_resolver,
+                    segment_infos=result.segment_infos,
+                    use_token_coords=(viz_coords == "tokens"),
                 )
                 click.echo(tree_viz)
                 click.echo("")

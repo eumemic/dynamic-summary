@@ -134,13 +134,13 @@ class Retriever:
             budget_tokens if budget_tokens is not None else self.config.budget_tokens
         )
         dp_result = self.dp_generator.find_optimal_frontier(
-            final_budget, scores, document_id
+            final_budget, scores, document_id, coverage_map
         )
 
         return RetrievalResult(
             node_ids=selected_ids,
             scores=scores,
-            coverage_map=dp_result.coverage_map,  # Use DP's coverage map
+            coverage_map=coverage_map,  # Use the original coverage map
             frontier_segments=dp_result.segments,
             segment_infos=dp_result.segment_infos,
         )
@@ -234,13 +234,13 @@ class Retriever:
             budget_tokens if budget_tokens is not None else self.config.budget_tokens
         )
         dp_result = self.dp_generator.find_optimal_frontier(
-            final_budget, scores, document_id
+            final_budget, scores, document_id, coverage_map
         )
 
         return RetrievalResult(
             node_ids=selected_ids,
             scores=scores,
-            coverage_map=dp_result.coverage_map,  # Use DP's coverage map
+            coverage_map=coverage_map,  # Use the original coverage map
             frontier_segments=dp_result.segments,
             segment_infos=dp_result.segment_infos,
         )
