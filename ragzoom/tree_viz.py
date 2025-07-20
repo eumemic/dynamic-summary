@@ -12,6 +12,7 @@ def build_ascii_tree(
     document_id: str,
     width: int = 120,
     coverage_map: Optional[dict[str, bool]] = None,
+    seed_node_ids: Optional[set[str]] = None,
 ) -> str:
     """Build an ASCII tree visualization showing the tiling structure (no node boundary markers)."""
     all_nodes = store.get_all_nodes_for_document(document_id)
@@ -37,7 +38,11 @@ def build_ascii_tree(
     for idx, seg in enumerate(segments):
         key = (seg.node_id, seg.side)
         selected_segments.add(key)
-        segment_labels[key] = str(idx)
+        # Add asterisk to label if this is a seed node
+        label = str(idx)
+        if seed_node_ids and seg.node_id in seed_node_ids:
+            label += "*"
+        segment_labels[key] = label
 
     lines = []
 
