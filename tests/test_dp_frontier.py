@@ -36,9 +36,10 @@ class TestDPFrontier:
         store.set_mock_scores({"root": 1.0})
 
         # We need to manually call the DP generator for now
-        segments = dp_generator.find_optimal_frontier(
+        dp_result = dp_generator.find_optimal_frontier(
             1000, {"root": 1.0}, "test-doc-single"
         )
+        segments = dp_result.segments
 
         assert segments, "DP frontier should not be empty for single node tree"
         assert len(segments) == 1

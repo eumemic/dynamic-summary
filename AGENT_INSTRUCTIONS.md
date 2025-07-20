@@ -119,6 +119,7 @@ Key settings in `RagZoomConfig`:
 - `test_indexing_fast.py` → fast versions of indexing tests using mock store
 - `test_incomplete_indexing.py` → slow integration tests for indexing edge cases
 - `test_tree_viz.py` → `tree_viz.py` (ASCII tree visualization)
+- `test_position_resolvers.py` → position resolver classes in `tree_viz.py` (coordinate systems)
 
 **Mock Store**: `tests/mock_store.py` provides SimpleMockStore for 4.5x faster unit tests
 - In-memory tree structure and state management
@@ -175,6 +176,7 @@ ragzoom query "search text" -d <doc-id>              # Query specific document
 ragzoom query "search text" -d <doc-id> --validate   # With validation checks
 ragzoom query "search text" -d <doc-id> --show-stats # Show stats and tree visualization
 ragzoom query "search text" -d <doc-id> --show-stats --viz-width 200  # Custom width
+ragzoom query "search text" -d <doc-id> --show-stats --viz-coords tokens  # Token-based visualization
 
 # Document management
 ragzoom documents                         # List all indexed documents
@@ -289,3 +291,10 @@ ragzoom serve
   - Labels each segment with node ID and side (L/R)
   - Automatically adapts to terminal width
   - Can override width with --viz-width option
+- **Implemented parameterizable coordinate systems for tree visualization**:
+  - Added `--viz-coords` option to query command with choices ["chars", "tokens"]
+  - Character-based (default): Shows coverage chronologically in source document
+  - Token-based: Shows token budget allocation in output summary
+  - Created extensible PositionResolver interface for future coordinate systems
+  - TokenPositionResolver integrates with DP algorithm to avoid redundant computation
+  - Fixed coverage visualization and segment ordering bugs in token view
