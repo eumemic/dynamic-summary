@@ -8,12 +8,6 @@ from ragzoom.store import Store, TreeNode
 logger = logging.getLogger(__name__)
 
 
-class ValidationError(Exception):
-    """Raised when validation fails."""
-
-    pass
-
-
 # Global flag to control validation
 _validate_enabled = False
 
@@ -105,8 +99,8 @@ def validate_chunk_sizes(
         target_tokens: Target size in tokens (RAGZOOM_LEAF_TOKENS)
         tolerance: Acceptable deviation (default 20%)
 
-    Raises:
-        ValidationError: If chunks are significantly over/under sized
+    Returns:
+        Error message if invalid, None if valid
     """
     from tiktoken import get_encoding
 
@@ -161,8 +155,8 @@ def validate_tree_structure(
         store: Storage instance
         document_id: Document to validate
 
-    Raises:
-        ValidationError: If tree structure is invalid
+    Returns:
+        Error message if invalid, None if valid
     """
     # Get all nodes for document
     with store.SessionLocal() as session:

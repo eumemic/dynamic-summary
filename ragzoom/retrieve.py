@@ -155,97 +155,13 @@ class Retriever:
         """Synchronous wrapper for retrieve_async.
 
         Creates a new event loop if needed to run the async version.
+        For async contexts, use retrieve_async directly.
         """
-        try:
-            # Try to get existing event loop
-            asyncio.get_running_loop()
-            # We're already in an async context, can't use asyncio.run
-            logger.warning(
-                "retrieve() called from async context; use retrieve_async() instead"
-            )
-            # Fall back to sync-only refresh (skip dirty node refresh)
-            return self._retrieve_sync_only(query, n_max, budget_tokens, document_id)
-        except RuntimeError:
-            # No event loop, create one
-            return asyncio.run(
-                self.retrieve_async(query, n_max, budget_tokens, document_id)
-            )
-
-    def _retrieve_sync_only(
-        self,
-        query: str,
-        n_max: Optional[int] = None,
-        budget_tokens: Optional[int] = None,
-        document_id: Optional[str] = None,
-    ) -> RetrievalResult:
-        """Synchronous retrieval without dirty node refresh.
-
-        Used as fallback when called from async context.
-        """
-        # Same logic as retrieve_async but without the await
-        # Determine which mode we're in
-        if budget_tokens is not None and n_max is None:
-            # Mode 1: Budget only - calculate conservative n_max
-            n_max = self._calculate_conservative_n_max(budget_tokens, document_id)
-            logger.info(
-                f"Budget-only mode: calculated conservative n_max={n_max} for budget={budget_tokens}"
-            )
-        elif budget_tokens is not None and n_max is not None:
-            # Mode 2: Budget + n_max - will enforce both constraints
-            logger.info(f"Mixed mode: n_max={n_max}, budget={budget_tokens}")
-        elif n_max is None:
-            # Mode 3: n_max only (using default)
-            n_max = self.config.n_max
-            logger.info(f"n_max-only mode: using n_max={n_max}")
-
-        # Get query embedding
-        query_embedding = self._get_query_embedding(query)
-
-        # Step 1: Initial retrieval (2 * n_max candidates)
-        k_candidates = int(n_max * self.config.mmr_k_multiplier)
-
-        # Filter by document_id if provided
-        where_filter = {"document_id": document_id} if document_id else None
-        candidates = self.store.search_similar(
-            query_embedding, k_candidates, where=where_filter
+        return asyncio.run(
+            self.retrieve_async(query, n_max, budget_tokens, document_id)
         )
 
-        # Step 2: Apply MMR to get diverse n_max results
-        selected_ids = self.store.compute_mmr_diverse_results(
-            query_embedding, candidates, self.config.mmr_lambda, n_max
-        )
-
-        # Step 3: Build coverage map (selected + ancestors)
-        coverage_map = self._build_coverage_map(selected_ids)
-
-        # Step 4: Apply pinned nodes
-        pinned_nodes = self.store.get_pinned_nodes(self.config.pin_depth_max)
-        for node in pinned_nodes:
-            coverage_map[node.id] = True
-
-        # Build scores map - only include nodes in coverage map to ensure
-        # DP algorithm can only use nodes from the coverage tree
-        scores = {
-            cand[0]: 1.0 - cand[1] for cand in candidates if cand[0] in coverage_map
-        }  # Convert distance to similarity
-
-        # Step 5: Extract frontier using DP algorithm
-        final_budget = (
-            budget_tokens if budget_tokens is not None else self.config.budget_tokens
-        )
-        dp_result = self.dp_generator.find_optimal_frontier(
-            final_budget, scores, document_id, coverage_map
-        )
-
-        return RetrievalResult(
-            node_ids=selected_ids,
-            scores=scores,
-            coverage_map=coverage_map,  # Use the original coverage map
-            frontier_segments=dp_result.segments,
-            segment_infos=dp_result.segment_infos,
-        )
-
-    async def _refresh_dirty_nodes_async(self, limit: int = 10) -> None:
+    async def _refresh_dirty_nodes_async(self, limit: Optional[int] = None) -> None:
         """Refresh dirty nodes by re-summarizing them asynchronously."""
         if not self.tree_builder:
             logger.warning(
@@ -258,11 +174,14 @@ class Retriever:
             return
 
         # Filter out already-refreshed nodes and apply limit
+        effective_limit = (
+            limit if limit is not None else self.config.dirty_refresh_limit
+        )
         nodes_to_refresh = []
         for node in dirty_nodes:
             if node.id not in self._refreshed_node_ids and node.depth > 0:
                 nodes_to_refresh.append(node.id)
-                if len(nodes_to_refresh) >= limit:
+                if len(nodes_to_refresh) >= effective_limit:
                     break
 
         if not nodes_to_refresh:
