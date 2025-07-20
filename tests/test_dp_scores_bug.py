@@ -105,8 +105,13 @@ class TestDPScoresBug:
         }
 
         # Run DP algorithm
+        # Note: DP now takes coverage_map as parameter
+        coverage_map = {node: True for node in coverage_tree}
         dp_result = dp_generator.find_optimal_frontier(
-            budget_tokens=10000, scores=scores, document_id="doc1"
+            budget_tokens=10000,
+            scores=scores,
+            document_id="doc1",
+            coverage_map=coverage_map,
         )
         segments = dp_result.segments
 
@@ -201,6 +206,7 @@ class TestDPScoresBug:
             budget_tokens=10000,
             scores=result.scores,  # BUG: includes leaf2 which isn't in coverage!
             document_id="doc1",
+            coverage_map=result.coverage_map,
         )
         segments = dp_result.segments
 

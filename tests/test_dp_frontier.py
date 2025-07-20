@@ -36,8 +36,9 @@ class TestDPFrontier:
         store.set_mock_scores({"root": 1.0})
 
         # We need to manually call the DP generator for now
+        coverage_map = {"root": True}
         dp_result = dp_generator.find_optimal_frontier(
-            1000, {"root": 1.0}, "test-doc-single"
+            1000, {"root": 1.0}, "test-doc-single", coverage_map
         )
         segments = dp_result.segments
 

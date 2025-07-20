@@ -77,8 +77,8 @@ class TestPositionResolvers:
         """Test token-based position resolver."""
         # Create segments with token costs
         segment_infos = [
-            SegmentInfo(Segment("left", None), 100),
-            SegmentInfo(Segment("root", "RIGHT"), 50),
+            SegmentInfo(Segment("left", None), 100, 0, 500),
+            SegmentInfo(Segment("root", "RIGHT"), 50, 500, 1000),
         ]
 
         coverage_map = {"left": True, "root": True, "right": True}
@@ -157,9 +157,9 @@ class TestPositionResolvers:
         """Test token resolver with more complex tree structure."""
         # Create a more complex tree with partial selections
         segment_infos = [
-            SegmentInfo(Segment("leaf1", None), 80),
-            SegmentInfo(Segment("parent2", "LEFT"), 60),
-            SegmentInfo(Segment("leaf4", None), 90),
+            SegmentInfo(Segment("leaf1", None), 80, 0, 100),
+            SegmentInfo(Segment("parent2", "LEFT"), 60, 200, 300),
+            SegmentInfo(Segment("leaf4", None), 90, 300, 400),
         ]
 
         coverage_map = {
