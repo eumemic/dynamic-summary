@@ -144,7 +144,7 @@ class Retriever:
         nodes: dict[str, TreeNode] = {}
         for node_id in coverage_map:
             node = self.store.get_node(node_id)
-            if node:
+            if node is not None:
                 nodes[node_id] = node
 
         return RetrievalResult(
