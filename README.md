@@ -203,8 +203,8 @@ ragzoom/
 
 # Run tests
 pytest                      # All tests
-./test_quick.sh            # Quick test runner
-./test_quick.sh splitter   # Test specific module
+./scripts/test_quick.sh            # Quick test runner
+./scripts/test_quick.sh splitter   # Test specific module
 
 # Format code
 black ragzoom/ tests/
