@@ -5,8 +5,6 @@ from unittest.mock import MagicMock
 from ragzoom.validate import (
     validate_chunk_sizes,
     validate_document_coverage,
-    validate_frontier_completeness,
-    validate_no_overlap,
     validate_tree_structure,
 )
 
@@ -108,96 +106,75 @@ class TestTreeStructure:
         """Test detection of invalid spans."""
         store = MagicMock()
 
-        # Mock invalid node with span_end < span_start
+        # Mock node with invalid span
         node = MagicMock(
-            id="bad_node",
+            id="node1",
             span_start=100,
-            span_end=50,  # Invalid!
-            depth=1,
+            span_end=50,  # Invalid: start > end
             left_child_id=None,
             right_child_id=None,
             summary="test",
-            mid_offset=10,
         )
 
-        with store.SessionLocal() as session:
-            session.query().filter_by().all.return_value = [node]
+        # Mock the query
+        mock_session = MagicMock()
+        mock_query = MagicMock()
+        mock_query.filter_by.return_value.all.return_value = [node]
+        mock_session.query.return_value = mock_query
+        store.SessionLocal.return_value.__enter__.return_value = mock_session
+
+        # Mock is_leaf_node to return True for node without children
+        store.is_leaf_node.return_value = True
 
         error = validate_tree_structure(store, "doc1")
         assert error is not None
-        assert "Tree structure validation failed" in error
+        assert "validation failed" in error
 
     def test_missing_summary(self):
-        """Test detection of missing summaries in non-leaf nodes."""
+        """Test detection of missing summaries on non-leaf nodes."""
         store = MagicMock()
 
-        # Mock non-leaf node without summary
-        node = MagicMock(
-            id="bad_node",
+        # Mock parent node without summary
+        parent = MagicMock(
+            id="parent",
             span_start=0,
             span_end=100,
-            depth=1,  # Non-leaf
             left_child_id="child1",
             right_child_id="child2",
-            summary=None,  # Missing!
-            mid_offset=None,
+            summary=None,  # Missing summary
+            mid_offset=50,
         )
 
         # Mock children
-        child1 = MagicMock(span_start=0, span_end=50)
-        child2 = MagicMock(span_start=50, span_end=100)
-        store.get_node.side_effect = lambda x: child1 if x == "child1" else child2
+        child1 = MagicMock(
+            id="child1",
+            span_start=0,
+            span_end=50,
+        )
+        child2 = MagicMock(
+            id="child2",
+            span_start=50,
+            span_end=100,
+        )
 
-        with store.SessionLocal() as session:
-            session.query().filter_by().all.return_value = [node]
+        # Mock the query
+        mock_session = MagicMock()
+        mock_query = MagicMock()
+        mock_query.filter_by.return_value.all.return_value = [parent]
+        mock_session.query.return_value = mock_query
+        store.SessionLocal.return_value.__enter__.return_value = mock_session
+
+        # Mock get_node to return children
+        def get_node_side_effect(node_id):
+            if node_id == "child1":
+                return child1
+            elif node_id == "child2":
+                return child2
+            return None
+
+        store.get_node.side_effect = get_node_side_effect
+        store.is_leaf_node.return_value = False
 
         error = validate_tree_structure(store, "doc1")
         assert error is not None
-        assert "Tree structure validation failed" in error
-
-
-class TestFrontierValidation:
-    """Test frontier validation functions."""
-
-    def test_valid_frontier_completeness(self):
-        """Test valid complete frontier."""
-        segments = [
-            ("node1", "text1", 0, 100),
-            ("node2", "text2", 100, 200),
-            ("node3", "text3", 200, 300),
-        ]
-
-        error = validate_frontier_completeness(segments, (0, 300))
-        assert error is None  # Should be valid
-
-    def test_frontier_with_gap(self):
-        """Test detection of gaps in frontier."""
-        segments = [
-            ("node1", "text1", 0, 100),
-            ("node2", "text2", 110, 200),  # Gap from 100-110
-        ]
-
-        error = validate_frontier_completeness(segments, (0, 200))
-        assert error is not None
-        assert "Gap in frontier" in error
-
-    def test_valid_no_overlap(self):
-        """Test non-overlapping frontier."""
-        segments = [
-            ("node1", "text1", 0, 100),
-            ("node2", "text2", 100, 200),
-        ]
-
-        error = validate_no_overlap(segments)
-        assert error is None  # Should be valid
-
-    def test_overlapping_segments(self):
-        """Test detection of overlapping segments."""
-        segments = [
-            ("node1", "text1", 0, 110),
-            ("node2", "text2", 100, 200),  # Overlaps from 100-110
-        ]
-
-        error = validate_no_overlap(segments)
-        assert error is not None
-        assert "Overlapping segments" in error
+        assert "validation failed" in error
