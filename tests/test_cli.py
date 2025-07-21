@@ -245,7 +245,7 @@ class TestCLI:
 
                 # Verify uvicorn was called with correct parameters
                 mock_uvicorn.assert_called_once_with(
-                    "ragzoom.api:app", host="0.0.0.0", port=8080, reload=False
+                    "ragzoom.api:app", host="127.0.0.1", port=8080, reload=False
                 )
 
     def test_documents_command(self, runner, mock_ragzoom):

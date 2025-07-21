@@ -450,7 +450,9 @@ def status(ctx: click.Context) -> None:
 
 
 @cli.command()
-@click.option("--host", default="0.0.0.0", help="Host to bind to")
+@click.option(
+    "--host", default="127.0.0.1", help="Host to bind to"
+)  # nosec B104 - secure default
 @click.option("--port", default=8000, help="Port to bind to")
 @click.option("--reload", is_flag=True, help="Enable auto-reload")
 def serve(host: str, port: int, reload: bool) -> None:
