@@ -25,12 +25,11 @@ class TestDPFrontier:
 
         # Manually create a single-node tree
         store.add_node(
-            "root",
-            "single node",
-            [0.1] * 1536,
-            0,
-            0,
-            100,
+            node_id="root",
+            text="single node",
+            embedding=[0.1] * 1536,
+            span_start=0,
+            span_end=100,
             document_id="test-doc-single",
         )
         store.set_mock_scores({"root": 1.0})

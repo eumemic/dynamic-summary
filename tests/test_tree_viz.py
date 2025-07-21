@@ -17,7 +17,6 @@ class TestTreeVisualization:
         store.add_node(
             node_id="root",
             text="Root left <<<MID>>> Root right",
-            depth=2,
             span_start=0,
             span_end=100,
             parent_id=None,
@@ -32,7 +31,6 @@ class TestTreeVisualization:
         store.add_node(
             node_id="left",
             text="Left content",
-            depth=1,
             span_start=0,
             span_end=50,
             parent_id="root",
@@ -46,7 +44,6 @@ class TestTreeVisualization:
         store.add_node(
             node_id="right",
             text="Right content",
-            depth=1,
             span_start=50,
             span_end=100,
             parent_id="root",
@@ -68,7 +65,6 @@ class TestTreeVisualization:
             store.add_node(
                 node_id=node_id,
                 text=f"Leaf {i} text",
-                depth=0,
                 span_start=start,
                 span_end=end,
                 parent_id=parent,
@@ -90,9 +86,9 @@ class TestTreeVisualization:
         )
 
         # Check basic structure
-        assert "L2 " in viz
-        assert "L1 " in viz
-        assert "L0 " in viz
+        assert "H2 " in viz
+        assert "H1 " in viz
+        assert "H0 " in viz
 
         # Check that selected segments are labeled with indices
         assert "0" in viz  # First segment (root-L)
@@ -107,7 +103,6 @@ class TestTreeVisualization:
         store.add_node(
             node_id="root",
             text="Root",
-            depth=0,
             span_start=0,
             span_end=100,
             parent_id=None,
@@ -121,7 +116,7 @@ class TestTreeVisualization:
         viz = build_ascii_tree(segments, store, "doc1", width=40)
 
         # Should still show document structure
-        assert "L0 " in viz
+        assert "H0 " in viz
 
     def test_no_nodes_for_document(self):
         """Test visualization when document has no nodes."""
@@ -141,7 +136,6 @@ class TestTreeVisualization:
         store.add_node(
             node_id="root",
             text="Root left <<<MID>>> Root right",
-            depth=1,
             span_start=0,
             span_end=100,
             parent_id=None,
@@ -156,7 +150,6 @@ class TestTreeVisualization:
         store.add_node(
             node_id="leaf1",
             text="Leaf 1 text",
-            depth=0,
             span_start=0,
             span_end=50,
             parent_id="root",
@@ -167,7 +160,6 @@ class TestTreeVisualization:
         store.add_node(
             node_id="leaf2",
             text="Leaf 2 text",
-            depth=0,
             span_start=50,
             span_end=100,
             parent_id="root",

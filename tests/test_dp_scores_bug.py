@@ -25,7 +25,6 @@ class TestDPScoresBug:
         store.add_node(
             node_id="root",
             text="Root summary <<<MID>>> of document",
-            depth=2,
             span_start=0,
             span_end=1000,
             parent_id=None,
@@ -40,7 +39,6 @@ class TestDPScoresBug:
         store.add_node(
             node_id="node_a",
             text="Node A left <<<MID>>> Node A right",
-            depth=1,
             span_start=0,
             span_end=500,
             parent_id="root",
@@ -54,7 +52,6 @@ class TestDPScoresBug:
         store.add_node(
             node_id="node_b",
             text="Node B left <<<MID>>> Node B right",
-            depth=1,
             span_start=500,
             span_end=1000,
             parent_id="root",
@@ -75,7 +72,6 @@ class TestDPScoresBug:
             store.add_node(
                 node_id=node_id,
                 text=f"Leaf {node_id} content",
-                depth=0,
                 span_start=start,
                 span_end=end,
                 parent_id=parent,
@@ -137,7 +133,11 @@ class TestDPScoresBug:
         leaf_violations = []
         for seg in segments:
             node = store.get_node(seg.node_id)
-            if node and node.depth == 0 and seg.node_id not in coverage_tree:
+            if (
+                node
+                and store.is_leaf_node(seg.node_id)
+                and seg.node_id not in coverage_tree
+            ):
                 leaf_violations.append(seg.node_id)
 
         print(f"Leaf nodes outside coverage tree: {leaf_violations}")
@@ -153,7 +153,6 @@ class TestDPScoresBug:
         store.add_node(
             node_id="root",
             text="Root",
-            depth=1,
             span_start=0,
             span_end=1000,
             parent_id=None,
@@ -164,7 +163,6 @@ class TestDPScoresBug:
         store.add_node(
             node_id="leaf1",
             text="Leaf 1",
-            depth=0,
             span_start=0,
             span_end=500,
             parent_id="root",
@@ -174,7 +172,6 @@ class TestDPScoresBug:
         store.add_node(
             node_id="leaf2",
             text="Leaf 2",
-            depth=0,
             span_start=500,
             span_end=1000,
             parent_id="root",
@@ -211,7 +208,7 @@ class TestDPScoresBug:
         segments = dp_result.segments
 
         # Check results
-        leaf_segments = [s for s in segments if store.get_node(s.node_id).depth == 0]
+        leaf_segments = [s for s in segments if store.is_leaf_node(s.node_id)]
         leaf_node_ids = {s.node_id for s in leaf_segments}
 
         print(f"\nSelected nodes: {result.node_ids}")

@@ -139,7 +139,7 @@ class TestMidDelimiter:
 
         # Call method
         await tree_builder._process_node_pair(
-            "left_id", "Left text", "right_id", "Right text", None, None, 1, "doc_id"
+            "left_id", "Left text", "right_id", "Right text", None, None, "doc_id"
         )
 
         # Check that add_node was called with mid_offset
@@ -167,21 +167,21 @@ class TestMidDelimiter:
         node1.span_end = 100
         node1.mid_offset = None
         node1.text = "First text"
-        node1.depth = 0  # Add depth for sorting
+        node1.depth = 0
 
         node2 = MagicMock()  # Exact same span as node1
         node2.span_start = 0
         node2.span_end = 100
         node2.mid_offset = None
         node2.text = "Duplicate span text"
-        node2.depth = 0  # Add depth for sorting
+        node2.depth = 0
 
         node3 = MagicMock()  # Different span
         node3.span_start = 200
         node3.span_end = 300
         node3.mid_offset = None
         node3.text = "Third text"
-        node3.depth = 0  # Add depth for sorting
+        node3.depth = 0
 
         # Mock get_node to return the correct nodes for sorting and processing
         def mock_get_node(node_id):

@@ -10,7 +10,7 @@ from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.dynamic_frontier import DynamicFrontierGenerator, Segment, SegmentInfo
-from ragzoom.store import Store
+from ragzoom.store import Store, TreeNode
 
 if TYPE_CHECKING:
     from ragzoom.index import TreeBuilder
@@ -27,6 +27,9 @@ class RetrievalResult:
     coverage_map: dict[str, bool]
     frontier_segments: Optional[list["Segment"]] = None
     segment_infos: Optional[list["SegmentInfo"]] = None
+    nodes: Optional[dict[str, "TreeNode"]] = (
+        None  # Pre-loaded nodes to avoid redundant loading
+    )
 
 
 class Retriever:
@@ -137,12 +140,20 @@ class Retriever:
             final_budget, scores, document_id, coverage_map
         )
 
+        # Load all nodes in coverage map to avoid redundant loading later
+        nodes = {}
+        for node_id in coverage_map:
+            node = self.store.get_node(node_id)
+            if node:
+                nodes[node_id] = node
+
         return RetrievalResult(
             node_ids=selected_ids,
             scores=scores,
             coverage_map=coverage_map,  # Use the original coverage map
             frontier_segments=dp_result.segments,
             segment_infos=dp_result.segment_infos,
+            nodes=nodes,
         )
 
     def retrieve(
@@ -179,7 +190,9 @@ class Retriever:
         )
         nodes_to_refresh = []
         for node in dirty_nodes:
-            if node.id not in self._refreshed_node_ids and node.depth > 0:
+            if node.id not in self._refreshed_node_ids and not self.store.is_leaf_node(
+                node.id
+            ):
                 nodes_to_refresh.append(node.id)
                 if len(nodes_to_refresh) >= effective_limit:
                     break

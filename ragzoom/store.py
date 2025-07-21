@@ -40,7 +40,6 @@ class TreeNode(Base):
     )
     left_child_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     right_child_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    depth: Mapped[int] = mapped_column(Integer, nullable=False)
     span_start: Mapped[int] = mapped_column(Integer, nullable=False)
     span_end: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -186,7 +185,6 @@ class Store:
         node_id: str,
         text: str,
         embedding: Union[list[float], np.ndarray],
-        depth: int,
         span_start: int,
         span_end: int,
         parent_id: Optional[str] = None,
@@ -206,7 +204,6 @@ class Store:
                 parent_id=parent_id,
                 left_child_id=left_child_id,
                 right_child_id=right_child_id,
-                depth=depth,
                 span_start=span_start,
                 span_end=span_end,
                 text=text,
@@ -228,7 +225,6 @@ class Store:
             embeddings=cast(Any, [embedding_array]),
             metadatas=[
                 {
-                    "depth": depth,
                     "span_start": span_start,
                     "span_end": span_end,
                     "parent_id": parent_id or "",
@@ -431,15 +427,26 @@ class Store:
     def get_pinned_nodes(self, depth_max: Optional[int] = None) -> list[TreeNode]:
         """Get nodes that are pinned (always included in coverage)."""
         with self.SessionLocal() as session:
-            query = session.query(TreeNode).filter_by(is_pinned=1)
+            pinned_nodes = session.query(TreeNode).filter_by(is_pinned=1).all()
+
             if depth_max is not None:
-                query = query.filter(TreeNode.depth <= depth_max)
-            return query.all()
+                # Filter by calculated depth
+                filtered_nodes = []
+                for node in pinned_nodes:
+                    if self.get_node_depth(node.id) <= depth_max:
+                        filtered_nodes.append(node)
+                return filtered_nodes
+
+            return pinned_nodes
 
     def pin_node(self, node_id: str) -> bool:
         """Pin a node if it's within allowed depth."""
         node = self.get_node(node_id)
-        if not node or node.depth > self.config.pin_depth_max:
+        if not node:
+            return False
+
+        node_depth = self.get_node_depth(node_id)
+        if node_depth > self.config.pin_depth_max:
             return False
 
         # Check if already pinned
@@ -485,6 +492,70 @@ class Store:
                 # For now, let's return all nodes, but this could be memory intensive
                 logger.warning("No document_id provided, returning all nodes in store.")
                 return session.query(TreeNode).all()
+
+    def get_node_depth(self, node_id: str) -> int:
+        """Calculate depth of a node (distance from root).
+
+        Returns 0 for root nodes, incrementing by 1 for each level down.
+        This follows the standard tree convention where root is at depth 0.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            raise ValueError(f"Node {node_id} not found")
+
+        depth = 0
+        current_id = node.parent_id
+
+        while current_id:
+            depth += 1
+            parent = self.get_node(current_id)
+            if not parent:
+                break
+            current_id = parent.parent_id
+
+        return depth
+
+    def get_node_height(self, node_id: str) -> int:
+        """Calculate height of a node (distance to furthest leaf).
+
+        Returns 0 for leaf nodes, incrementing by 1 for each level up.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            raise ValueError(f"Node {node_id} not found")
+
+        # If it's a leaf node (no children), height is 0
+        if not node.left_child_id and not node.right_child_id:
+            return 0
+
+        # Otherwise, height is 1 + max height of children
+        max_child_height = 0
+
+        if node.left_child_id:
+            left_height = self.get_node_height(node.left_child_id)
+            max_child_height = max(max_child_height, left_height)
+
+        if node.right_child_id:
+            right_height = self.get_node_height(node.right_child_id)
+            max_child_height = max(max_child_height, right_height)
+
+        return 1 + max_child_height
+
+    def is_leaf_node(self, node_id: str) -> bool:
+        """Check if a node is a leaf (has no children)."""
+        node = self.get_node(node_id)
+        if not node:
+            raise ValueError(f"Node {node_id} not found")
+
+        return not node.left_child_id and not node.right_child_id
+
+    def is_root_node(self, node_id: str) -> bool:
+        """Check if a node is a root (has no parent)."""
+        node = self.get_node(node_id)
+        if not node:
+            raise ValueError(f"Node {node_id} not found")
+
+        return node.parent_id is None
 
     def compute_mmr_diverse_results(
         self,
@@ -632,10 +703,11 @@ class Store:
                     )
                 )
                 if result.fetchone():
-                    # Table exists, check if mid_offset column exists
+                    # Table exists, check columns
                     result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
                     columns = [row[1] for row in result.fetchall()]
 
+                    # Migration 1: Add mid_offset column if missing
                     if "mid_offset" not in columns:
                         # Add the missing column (with proper error handling)
                         try:
@@ -653,6 +725,73 @@ class Store:
                                 raise
                     else:
                         logger.debug("mid_offset column already exists")
+
+                    # Migration 2: Drop depth column if present
+                    if "depth" in columns:
+                        logger.info("Found deprecated depth column, dropping it...")
+                        try:
+                            # SQLite doesn't support DROP COLUMN directly in older versions
+                            # We need to recreate the table without the depth column
+                            conn.execute(text("BEGIN TRANSACTION"))
+
+                            # Create new table without depth column
+                            conn.execute(
+                                text(
+                                    """
+                                CREATE TABLE tree_nodes_new (
+                                    id VARCHAR NOT NULL PRIMARY KEY,
+                                    parent_id VARCHAR,
+                                    left_child_id VARCHAR,
+                                    right_child_id VARCHAR,
+                                    span_start INTEGER NOT NULL,
+                                    span_end INTEGER NOT NULL,
+                                    text TEXT NOT NULL,
+                                    summary TEXT,
+                                    mid_offset INTEGER,
+                                    is_dirty INTEGER DEFAULT 0,
+                                    is_pinned INTEGER DEFAULT 0,
+                                    last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                    access_count INTEGER DEFAULT 0,
+                                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                    document_id VARCHAR,
+                                    FOREIGN KEY(parent_id) REFERENCES tree_nodes (id),
+                                    FOREIGN KEY(document_id) REFERENCES documents (id)
+                                )
+                            """
+                                )
+                            )
+
+                            # Copy data from old table (excluding depth column)
+                            conn.execute(
+                                text(
+                                    """
+                                INSERT INTO tree_nodes_new
+                                SELECT id, parent_id, left_child_id, right_child_id,
+                                       span_start, span_end, text, summary, mid_offset,
+                                       is_dirty, is_pinned, last_accessed, access_count,
+                                       created_at, document_id
+                                FROM tree_nodes
+                            """
+                                )
+                            )
+
+                            # Drop old table and rename new one
+                            conn.execute(text("DROP TABLE tree_nodes"))
+                            conn.execute(
+                                text("ALTER TABLE tree_nodes_new RENAME TO tree_nodes")
+                            )
+
+                            conn.execute(text("COMMIT"))
+                            logger.info(
+                                "Successfully dropped depth column from tree_nodes table"
+                            )
+
+                            # Also clean up ChromaDB metadata
+                            self._clean_chromadb_metadata()
+                        except Exception as e:
+                            conn.execute(text("ROLLBACK"))
+                            logger.error(f"Failed to drop depth column: {e}")
+                            raise
                 else:
                     logger.debug(
                         "tree_nodes table does not exist yet, will be created by SQLAlchemy"
@@ -661,6 +800,56 @@ class Store:
             logger.debug(
                 f"Migration check failed (this is normal for new databases): {e}"
             )
+
+    def _clean_chromadb_metadata(self):
+        """Clean up deprecated fields from ChromaDB metadata."""
+        try:
+            logger.info("Cleaning up ChromaDB metadata...")
+
+            # Get all entries from ChromaDB
+            results = self.collection.get(include=["metadatas"])
+
+            if not results or not results.get("ids"):
+                logger.debug("No ChromaDB entries to clean")
+                return
+
+            ids = results["ids"]
+            metadatas = results["metadatas"]
+
+            # Check if any entries have the deprecated 'depth' field
+            needs_update = []
+            updated_metadatas = []
+
+            for i, (node_id, metadata) in enumerate(zip(ids, metadatas)):
+                if metadata and "depth" in metadata:
+                    needs_update.append(node_id)
+                    # Create new metadata without depth field
+                    new_metadata = {k: v for k, v in metadata.items() if k != "depth"}
+                    updated_metadatas.append(new_metadata)
+
+            if needs_update:
+                logger.info(
+                    f"Updating {len(needs_update)} ChromaDB entries to remove depth field"
+                )
+                # Update entries in batches
+                batch_size = 100
+                for i in range(0, len(needs_update), batch_size):
+                    batch_ids = needs_update[i : i + batch_size]
+                    batch_metadatas = updated_metadatas[i : i + batch_size]
+
+                    # ChromaDB update requires updating with the same data but new metadata
+                    self.collection.update(ids=batch_ids, metadatas=batch_metadatas)
+
+                logger.info(
+                    f"Successfully cleaned {len(needs_update)} ChromaDB entries"
+                )
+            else:
+                logger.debug("No ChromaDB entries need cleaning")
+
+        except Exception as e:
+            logger.warning(f"Failed to clean ChromaDB metadata: {e}")
+            # Don't fail the migration if ChromaDB cleanup fails
+            # This is a one-time cleanup that's not critical
 
     def close(self):
         """Close database connections and cleanup resources."""

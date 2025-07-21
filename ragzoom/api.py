@@ -168,12 +168,12 @@ async def index_document(
                 .first()
             )
 
-        tree_depth = root.depth if root else 0
+        tree_height = service.store.get_node_height(root.id) if root else 0
 
         return IndexDocumentResponse(
             document_id=document_id,
             chunks_created=len(doc_leaves),
-            tree_depth=tree_depth,
+            tree_depth=tree_height,
         )
     except Exception as e:
         logger.error(f"Error indexing document: {e}")
@@ -305,7 +305,7 @@ async def get_status(service: RagZoomService = Depends(get_ragzoom_service)):
         return SystemStatusResponse(
             total_nodes=all_nodes,
             leaf_nodes=len(leaf_nodes),
-            tree_depth=root.depth if root else 0,
+            tree_depth=service.store.get_node_height(root.id) if root else 0,
             pinned_nodes=len(pinned),
             config=service.config.model_dump(),
         )
