@@ -1,5 +1,6 @@
 """Pytest configuration and fixtures for RagZoom tests."""
 
+import os
 import tempfile
 from collections.abc import Generator
 from unittest.mock import MagicMock
@@ -9,6 +10,10 @@ import pytest
 from ragzoom.config import RagZoomConfig
 from ragzoom.store import Store
 from tests.mock_store import SimpleMockStore
+
+# Set default OPENAI_API_KEY for tests if not already set
+if "OPENAI_API_KEY" not in os.environ:
+    os.environ["OPENAI_API_KEY"] = "test-key-for-tests"
 
 
 def pytest_addoption(parser):
@@ -33,6 +38,15 @@ def pytest_configure(config):
         "markers", "integration: mark test as integration test requiring real Store"
     )
     config.addinivalue_line("markers", "slow: mark test as slow running")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_api_key():
+    """Ensure OPENAI_API_KEY is set for all tests."""
+    if "OPENAI_API_KEY" not in os.environ:
+        os.environ["OPENAI_API_KEY"] = "test-key-for-tests"
+    yield
+    # Don't clean up - let other tests use it
 
 
 def pytest_collection_modifyitems(config, items):
