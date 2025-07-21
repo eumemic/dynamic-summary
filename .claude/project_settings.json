@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'if [[ \"$TOOL_PARAM_file_path\" == *.py ]]; then echo \"🔍 Type checking Python file: $TOOL_PARAM_file_path\" && if command -v dmypy &> /dev/null; then dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs; else mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs; fi; fi'"
+          }
+        ]
+      }
+    ]
+  }
+}
