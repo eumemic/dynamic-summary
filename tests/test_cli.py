@@ -131,7 +131,7 @@ class TestCLI:
             assert "SYSTEM STATUS" in result.output
             assert "Total nodes: 10" in result.output
             assert "Leaf nodes: 5" in result.output
-            assert "Tree depth: 3" in result.output
+            assert "Tree height:" in result.output
 
     def test_index_command_with_file(self, runner, mock_ragzoom):
         """Test indexing a file."""

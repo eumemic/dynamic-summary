@@ -62,7 +62,6 @@ class SimpleMockStore:
         node_id: str,
         text: str,
         embedding: list[float],
-        depth: int,
         span_start: int,
         span_end: int,
         parent_id: Optional[str] = None,
@@ -87,7 +86,6 @@ class SimpleMockStore:
         node = SimpleNamespace(
             id=node_id,
             text=text,
-            depth=depth,
             span_start=span_start,
             span_end=span_end,
             parent_id=parent_id,
@@ -199,9 +197,9 @@ class SimpleMockStore:
         if document_id:
             candidates = [n for n in candidates if n.document_id == document_id]
 
-        # Return the one with highest depth (root in RagZoom's inverted convention)
+        # Return any root node (there should only be one per document)
         if candidates:
-            return max(candidates, key=lambda x: x.depth)
+            return candidates[0]
         return None
 
     def get_root_node_for_document(
@@ -240,6 +238,63 @@ class SimpleMockStore:
 
         # Return node objects, not just IDs
         return [self.nodes[aid] for aid in ancestor_ids if aid in self.nodes]
+
+    def get_node_depth(self, node_id: str) -> int:
+        """Calculate depth of a node (distance from root)."""
+        node = self.get_node(node_id)
+        if not node:
+            raise ValueError(f"Node {node_id} not found")
+
+        depth = 0
+        current_id = node.parent_id
+
+        while current_id:
+            depth += 1
+            parent = self.get_node(current_id)
+            if not parent:
+                break
+            current_id = parent.parent_id
+
+        return depth
+
+    def get_node_height(self, node_id: str) -> int:
+        """Calculate height of a node (distance to furthest leaf)."""
+        node = self.get_node(node_id)
+        if not node:
+            raise ValueError(f"Node {node_id} not found")
+
+        # If it's a leaf node (no children), height is 0
+        if not node.left_child_id and not node.right_child_id:
+            return 0
+
+        # Otherwise, height is 1 + max height of children
+        max_child_height = 0
+
+        if node.left_child_id:
+            left_height = self.get_node_height(node.left_child_id)
+            max_child_height = max(max_child_height, left_height)
+
+        if node.right_child_id:
+            right_height = self.get_node_height(node.right_child_id)
+            max_child_height = max(max_child_height, right_height)
+
+        return 1 + max_child_height
+
+    def is_leaf_node(self, node_id: str) -> bool:
+        """Check if a node is a leaf (has no children)."""
+        node = self.get_node(node_id)
+        if not node:
+            raise ValueError(f"Node {node_id} not found")
+
+        return not node.left_child_id and not node.right_child_id
+
+    def is_root_node(self, node_id: str) -> bool:
+        """Check if a node is a root (has no parent)."""
+        node = self.get_node(node_id)
+        if not node:
+            raise ValueError(f"Node {node_id} not found")
+
+        return node.parent_id is None
 
     def get_all_nodes_for_document(
         self, document_id: Optional[str]
@@ -285,7 +340,7 @@ class SimpleMockStore:
             for node_id, score in self.mock_scores.items():
                 if node_id in eligible_nodes:
                     metadata = {
-                        "depth": self.nodes[node_id].depth,
+                        "depth": self.get_node_depth(node_id),
                         "span_start": self.nodes[node_id].span_start,
                         "span_end": self.nodes[node_id].span_end,
                     }
@@ -293,15 +348,24 @@ class SimpleMockStore:
                         (node_id, 1.0 - score, metadata)
                     )  # Convert score to distance
         else:
-            # Fallback to old mock behavior if no scores are set
-            for i, node_id in enumerate(eligible_nodes[:n_results]):
-                score = 0.9 - (i * 0.05)
+            # Calculate similarity based on embeddings
+            for node_id in eligible_nodes:
+                node_embedding = self.embeddings.get(
+                    node_id, [0.5] * len(query_embedding)
+                )
+                # Simple similarity: compare first element
+                similarity = 1.0 - abs(query_embedding[0] - node_embedding[0])
+                distance = 1.0 - similarity
                 metadata = {
-                    "depth": self.nodes[node_id].depth,
+                    "depth": self.get_node_depth(node_id),
                     "span_start": self.nodes[node_id].span_start,
                     "span_end": self.nodes[node_id].span_end,
                 }
-                results.append((node_id, 1.0 - score, metadata))
+                results.append((node_id, distance, metadata))
+
+            # Sort by distance (ascending) and take top n_results
+            results.sort(key=lambda x: x[1])
+            results = results[:n_results]
 
         return results
 
@@ -332,13 +396,13 @@ class SimpleMockStore:
         self.mock_scores = scores
 
     def get_pinned_nodes(
-        self, max_depth: Optional[int] = None
+        self, depth_max: Optional[int] = None
     ) -> list[SimpleNamespace]:
         """Get all pinned nodes."""
         pinned = [self.nodes[nid] for nid in self.pinned_nodes if nid in self.nodes]
 
-        if max_depth is not None:
-            pinned = [n for n in pinned if n.depth <= max_depth]
+        if depth_max is not None:
+            pinned = [n for n in pinned if self.get_node_depth(n.id) <= depth_max]
 
         return pinned
 

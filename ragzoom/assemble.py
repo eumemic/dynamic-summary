@@ -8,7 +8,7 @@ from openai import OpenAI
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.retrieve import RetrievalResult, Segment
-from ragzoom.store import Store
+from ragzoom.store import Store, TreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -31,27 +31,40 @@ class Assembler:
             raise ValueError(
                 "DP assembly requires frontier_segments. Legacy assembly is no longer supported."
             )
-        return self.assemble_dp(retrieval_result.frontier_segments)
+        return self.assemble_dp(
+            retrieval_result.frontier_segments, retrieval_result.nodes
+        )
 
-    def assemble_dp(self, frontier_segments: list["Segment"]) -> str:
+    def assemble_dp(
+        self,
+        frontier_segments: list["Segment"],
+        nodes: Optional[dict[str, "TreeNode"]] = None,
+    ) -> str:
         """Assemble a frontier from a list of Segments."""
         if not frontier_segments:
             return ""
 
-        texts = [self._get_text_for_segment(seg) for seg in frontier_segments]
+        texts = [self._get_text_for_segment(seg, nodes) for seg in frontier_segments]
         # Filter out empty texts to avoid extra newlines
         texts = [t for t in texts if t]
         return "\n\n".join(texts)
 
-    def _get_text_for_segment(self, segment: "Segment") -> str:
+    def _get_text_for_segment(
+        self, segment: "Segment", nodes: Optional[dict[str, "TreeNode"]] = None
+    ) -> str:
         """Extract the text for a single Segment."""
-        node = self.store.get_node(segment.node_id)
+        # Use pre-loaded nodes if available, otherwise fall back to store
+        if nodes and segment.node_id in nodes:
+            node = nodes[segment.node_id]
+        else:
+            node = self.store.get_node(segment.node_id)
+
         if not node or not node.text:
             return ""
 
         # If it's a leaf or has no mid_offset, return full text.
         # These nodes should have side=None according to our invariant.
-        if node.depth == 0 or node.mid_offset is None:
+        if self.store.is_leaf_node(node.id) or node.mid_offset is None:
             return node.text
 
         if segment.side == "LEFT":
@@ -77,59 +90,72 @@ class Assembler:
 
         path = []
 
+        # Get heights for comparison
+        start_height = self.store.get_node_height(start_id)
+        end_height = self.store.get_node_height(end_id)
+
         # Handle both upward and downward transitions
-        if start_node.depth > end_node.depth:
+        if start_height > end_height:
             # Going up (toward root)
             current_id = start_id
-            current_depth = start_node.depth
+            current_height = start_height
 
-            while current_depth > end_node.depth + 1:
+            while current_height > end_height + 1:
                 node = self.store.get_node(current_id)
                 if not node or not node.parent_id:
                     break
 
                 parent = self.store.get_node(node.parent_id)
                 if parent:
-                    path.append((parent.id, parent.depth))
+                    parent_height = self.store.get_node_height(parent.id)
+                    path.append((parent.id, parent_height))
                     current_id = parent.id
-                    current_depth = parent.depth
+                    current_height = parent_height
                 else:
                     break
 
-        elif start_node.depth < end_node.depth:
+        elif start_height < end_height:
             # Going down (toward leaves) - need to find a path
             # Try to find nodes at intermediate depths in the same span range
             target_span_start = end_node.span_start
             target_span_end = end_node.span_end
-            current_depth = start_node.depth
 
-            # Search for nodes at intermediate depths that cover the target span
-            for depth in range(current_depth + 1, end_node.depth):
-                # Find a node at this depth that overlaps with target span
-                intermediate = self._find_node_at_depth_in_span(
-                    depth, target_span_start, target_span_end
+            # Search for nodes at intermediate heights that cover the target span
+            for target_height in range(start_height + 1, end_height):
+                # Find a node at this height that overlaps with target span
+                intermediate = self._find_node_at_height_in_span(
+                    target_height, target_span_start, target_span_end
                 )
                 if intermediate:
-                    path.append((intermediate.id, intermediate.depth))
+                    intermediate_height = self.store.get_node_height(intermediate.id)
+                    path.append((intermediate.id, intermediate_height))
 
         return path
 
-    def _find_node_at_depth_in_span(self, depth: int, span_start: int, span_end: int):
-        """Find a node at given depth that overlaps with the span."""
+    def _find_node_at_height_in_span(
+        self, target_height: int, span_start: int, span_end: int
+    ):
+        """Find a node at given height that overlaps with the span."""
         with self.store.SessionLocal() as session:
-            # Query for nodes at target depth that overlap the span
+            # Query for nodes that overlap the span
             from ragzoom.store import TreeNode
 
-            node = (
+            # Get all nodes that overlap the span
+            candidates = (
                 session.query(TreeNode)
                 .filter(
-                    TreeNode.depth == depth,
                     TreeNode.span_start < span_end,
                     TreeNode.span_end > span_start,
                 )
-                .first()
+                .all()
             )
-            return node
+
+            # Find the first node with the target height
+            for node in candidates:
+                if self.store.get_node_height(node.id) == target_height:
+                    return node
+
+            return None
 
     def _apply_smoothing_pass(self, frontier_nodes: list[str], texts: list[str]) -> str:
         """Apply smoothing pass to improve coherence at boundaries."""

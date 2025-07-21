@@ -95,7 +95,7 @@ class DynamicFrontierGenerator:
         node = self.store.get_node(segment.node_id)
         if not node or not node.text:
             return 0
-        if node.depth == 0 or node.mid_offset is None:
+        if self.store.is_leaf_node(node.id) or node.mid_offset is None:
             # Leaf node - side should be None
             return len(self.tokenizer.encode(node.text))
         # Internal node - side should be "LEFT" or "RIGHT"
@@ -114,7 +114,7 @@ class DynamicFrontierGenerator:
             return (0, 0)
 
         # For leaf nodes, the span is the node's span
-        if node.depth == 0 or segment.side is None:
+        if self.store.is_leaf_node(node.id) or segment.side is None:
             return (node.span_start, node.span_end)
 
         # For internal nodes, we need to determine the actual segment span
@@ -140,7 +140,7 @@ class DynamicFrontierGenerator:
     ) -> float:
         base_score = scores.get(segment.node_id, 0.0)
         node = self.store.get_node(segment.node_id)
-        if node and node.depth > 0:
+        if node and not self.store.is_leaf_node(segment.node_id):
             return base_score / 2.0
         return base_score
 
@@ -204,7 +204,7 @@ class DynamicFrontierGenerator:
             return ([], 0.0)
 
         # NEW: leaf is indivisible
-        if node.depth == 0 or node.mid_offset is None:
+        if self.store.is_leaf_node(node.id) or node.mid_offset is None:
             seg = Segment(node.id, None)
             cost = self._get_segment_cost(seg)
             if budget < cost:
