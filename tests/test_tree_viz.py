@@ -1,6 +1,6 @@
 """Tests for tree visualization functionality."""
 
-from ragzoom.dynamic_frontier import Segment
+from ragzoom.dynamic_tiling import Segment
 from ragzoom.tree_viz import build_ascii_tree
 from tests.mock_store import SimpleMockStore
 
