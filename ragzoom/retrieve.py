@@ -143,9 +143,9 @@ class Retriever:
         # Load all nodes in coverage map to avoid redundant loading later
         nodes: dict[str, TreeNode] = {}
         for node_id in coverage_map:
-            node = self.store.get_node(node_id)
-            if node is not None:
-                nodes[node_id] = node
+            maybe_node = self.store.get_node(node_id)
+            if maybe_node is not None:
+                nodes[node_id] = maybe_node
 
         return RetrievalResult(
             node_ids=selected_ids,
