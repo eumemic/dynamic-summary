@@ -16,8 +16,7 @@ def set_validation_enabled(enabled: bool) -> None:
     """Set global validation flag."""
     global _validate_enabled
     _validate_enabled = enabled
-    if enabled:
-        logger.info("🔍 Validation enabled")
+    # Don't log when enabling validation - we only want to see errors
 
 
 def validate(validation_fn: Callable[[], Optional[str]], context: str = "") -> None:
@@ -83,9 +82,7 @@ def validate_document_coverage(
                 f"{next_node.id} starts at {next_node.span_start}"
             )
 
-    logger.info(
-        f"✓ Document coverage validated: {len(sorted_leaves)} leaf nodes cover entire document"
-    )
+    # Success - no need to log
     return None
 
 
@@ -138,11 +135,7 @@ def validate_chunk_sizes(
         for node_id, tokens in undersized[:5]:  # Show first 5
             logger.warning(f"  {node_id}: {tokens} tokens")
 
-    if not oversized and not undersized:
-        logger.info(
-            f"✓ Chunk sizes validated: all within ±{int(tolerance*100)}% of {target_tokens} tokens"
-        )
-
+    # Success - no need to log
     return None  # No errors
 
 
@@ -248,7 +241,7 @@ def validate_tree_structure(
             logger.error(error)
         return f"Tree structure validation failed with {len(errors)} errors"
 
-    logger.info(f"✓ Tree structure validated: {len(nodes)} nodes")
+    # Success - no need to log
     return None
 
 
@@ -362,7 +355,7 @@ def validate_no_overlap(
                 f"overlaps with {next_seg[0]} [{next_seg[2]}, {next_seg[3]})"
             )
 
-    logger.info("✓ No overlap validated: all frontier segments are non-overlapping")
+    # Success - no need to log
     return None
 
 
