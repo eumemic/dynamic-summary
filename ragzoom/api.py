@@ -82,7 +82,7 @@ class QueryResponse(BaseModel):
     summary: str
     token_count: int
     nodes_retrieved: int
-    frontier_size: int
+    tiling_size: int
 
 
 class PinNodeRequest(BaseModel):
@@ -237,10 +237,8 @@ async def query(
             summary=summary,
             token_count=token_count,
             nodes_retrieved=len(retrieval_result.node_ids),
-            frontier_size=(
-                len(retrieval_result.frontier_segments)
-                if retrieval_result.frontier_segments
-                else 0
+            tiling_size=(
+                len(retrieval_result.tiling) if retrieval_result.tiling else 0
             ),
         )
     except Exception as e:
