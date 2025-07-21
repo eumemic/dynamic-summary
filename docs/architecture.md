@@ -25,6 +25,8 @@ A `Segment` can be:
 - **For leaf nodes**: The entire node (side = None)
 - **For internal nodes**: Either the LEFT or RIGHT half, split at the `<<<MID>>>` delimiter
 
+For an in-depth explanation of how tilings are generated using the Dynamic Programming algorithm, see [The Tiling Algorithm: Deep Dive](deep-dives/tiling-algorithm.md).
+
 ## 2. System Components
 
 The system is composed of several key modules that work together.
@@ -36,7 +38,7 @@ The system is composed of several key modules that work together.
     -   **ChromaDB (`chromadb`):** Stores vector embeddings of the node summaries for efficient semantic search.
     -   **LRU Cache**: In-memory cache for frequently accessed nodes (default: 1000 nodes).
 
--   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent's segments or recurse into children for higher detail. Budget is split proportionally based on relevance scores.
+-   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent's segments or recurse into children for higher detail. Budget is split proportionally based on relevance scores. For a comprehensive technical deep dive into this algorithm, see [The Tiling Algorithm: Deep Dive](deep-dives/tiling-algorithm.md).
 
 -   **`ragzoom.retrieve.Retriever`**: Orchestrates the querying process. It takes a user query, generates an embedding, and uses the `Store` to find relevant "seed" nodes via vector search. It applies MMR (Maximal Marginal Relevance) for diversity, then invokes the `DynamicTilingGenerator` to build the final tiling based on these seed nodes and the budget.
 
