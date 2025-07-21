@@ -44,6 +44,8 @@ Our test suite is organized to balance thoroughness with development speed:
 - **Slow Tests**: Tests taking >5 seconds (marked with `@pytest.mark.slow`)
 - **Concurrency Tests**: Thread safety and parallel operation tests
 
+For the complete list of test markers and pytest configuration options, see [API Reference - Testing](api-reference.md#testing).
+
 ### 3.2. Running Tests
 
 ```bash
@@ -141,6 +143,8 @@ If you're using Claude Code (claude.ai/code), the project includes intelligent h
   🧹 Linting...
   ✅ All checks passed!
 ```
+
+For comprehensive Claude Code agent instructions and collaboration guidelines, see [CLAUDE.md](../CLAUDE.md) (symlinked to AGENT_INSTRUCTIONS.md).
 
 ### 4.4. Debugging Type Errors
 
@@ -262,6 +266,8 @@ If tests are running slowly:
 4. **Keep Tests Fast**: Target <1 second per unit test
 5. **Document Complex Logic**: Add docstrings for non-obvious algorithms
 6. **Check Coverage**: Aim for >80% coverage on new code
+
+For architectural principles like "Correct-by-Construction" and system design philosophy, see [Architecture](architecture.md#key-design-principles).
 
 ## 10. Getting Help
 
