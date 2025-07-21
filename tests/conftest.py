@@ -11,7 +11,11 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.store import Store
 from tests.mock_store import SimpleMockStore
 
-# Set default OPENAI_API_KEY for tests if not already set
+# Set default API keys for tests if not already set
+# RagZoomConfig expects RAGZOOM_OPENAI_API_KEY due to env_prefix="RAGZOOM_"
+if "RAGZOOM_OPENAI_API_KEY" not in os.environ:
+    os.environ["RAGZOOM_OPENAI_API_KEY"] = "test-key-for-tests"
+# Also set OPENAI_API_KEY for any code that uses it directly
 if "OPENAI_API_KEY" not in os.environ:
     os.environ["OPENAI_API_KEY"] = "test-key-for-tests"
 
@@ -42,7 +46,11 @@ def pytest_configure(config):
 
 @pytest.fixture(scope="session", autouse=True)
 def ensure_api_key():
-    """Ensure OPENAI_API_KEY is set for all tests."""
+    """Ensure API keys are set for all tests."""
+    # RagZoomConfig expects RAGZOOM_OPENAI_API_KEY due to env_prefix="RAGZOOM_"
+    if "RAGZOOM_OPENAI_API_KEY" not in os.environ:
+        os.environ["RAGZOOM_OPENAI_API_KEY"] = "test-key-for-tests"
+    # Also set OPENAI_API_KEY for any code that uses it directly
     if "OPENAI_API_KEY" not in os.environ:
         os.environ["OPENAI_API_KEY"] = "test-key-for-tests"
     yield
