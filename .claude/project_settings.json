@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'json=$(cat); file_path=$(echo \"$json\" | jq -r .tool_input.file_path); if [[ \"$file_path\" == *.py ]]; then echo \"🔍 Checking Python file: $file_path\" && cd \"$(echo \"$json\" | jq -r .cwd)\" && echo \"  📝 Type checking...\" && (if command -v dmypy &> /dev/null; then dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs; else mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs; fi) && echo \"  🧹 Linting...\" && ruff check \"$file_path\"; fi'"
+          }
+        ]
+      }
+    ]
+  }
+}

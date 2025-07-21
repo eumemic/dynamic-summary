@@ -22,12 +22,16 @@ This minimizes CI churn by avoiding multiple push-triggered builds.
    - If ANY failures or issues exist, immediately proceed to fixing (skip monitoring)
 
 2. **Monitoring Loop** (only if no issues):
-   - Check every 30 seconds for:
-     - Failed builds → STOP monitoring, fix immediately
-     - New review comments → STOP monitoring, address immediately
-     - Build completion → Proceed to final push
-   - Show "⏳ Monitoring... (no changes)" if nothing new
-   - **IMPORTANT**: Always use 30-second intervals. NEVER increase the delay between checks, even for long-running builds
+   - Use `gh pr checks <PR#> --watch --fail-fast` to monitor CI status
+   - This command will:
+     - Update check status every 10 seconds automatically
+     - Exit immediately when ANY check fails (--fail-fast)
+     - Show live status of all checks in parallel
+   - If a check fails:
+     - The command exits automatically
+     - STOP monitoring, fix the failure immediately
+   - Also check for new review comments separately
+   - **IMPORTANT**: The fail-fast flag ensures we detect and fix issues as soon as they occur
 
 3. **Issue Resolution Mode**:
    - **When you detect ANY issue, STOP monitoring immediately**

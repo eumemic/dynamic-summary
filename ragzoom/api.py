@@ -1,7 +1,7 @@
 """FastAPI routes for RagZoom REST interface."""
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -19,15 +19,16 @@ logger = logging.getLogger(__name__)
 class RagZoomService:
     """Service container for RagZoom components."""
 
-    def __init__(self):
-        self.config = RagZoomConfig()
+    def __init__(self) -> None:
+        # RagZoomConfig will read from environment automatically due to pydantic_settings
+        self.config = RagZoomConfig()  # Will use RAGZOOM_OPENAI_API_KEY from env
         self.store = Store(self.config)
         # Each service gets its own OpenAI client to avoid thread issues
         self.tree_builder = TreeBuilder(self.config, self.store)
         self.retriever = Retriever(self.config, self.store, self.tree_builder)
         self.assembler = Assembler(self.config, self.store)
 
-    def close(self):
+    def close(self) -> None:
         """Close store connections and cleanup resources."""
         if hasattr(self, "store"):
             self.store.close()
@@ -98,8 +99,7 @@ class UpdateConfigRequest(BaseModel):
     mmr_lambda: Optional[float] = None
     slope_cap: Optional[bool] = None
     smoothing_pass_enabled: Optional[bool] = None
-    ttl_turns: Optional[int] = None
-    freshness_decay: Optional[float] = None
+    # Deprecated fields removed - ttl_turns and freshness_decay no longer exist
 
 
 class SystemStatusResponse(BaseModel):
@@ -130,7 +130,7 @@ class DocumentsResponse(BaseModel):
 
 # Routes
 @app.get("/")
-async def root():
+async def root() -> dict[str, str]:
     """Root endpoint."""
     return {"message": "RagZoom API", "version": "0.1.0"}
 
@@ -139,7 +139,7 @@ async def root():
 async def index_document(
     request: IndexDocumentRequest,
     service: RagZoomService = Depends(get_ragzoom_service),
-):
+) -> IndexDocumentResponse:
     """Index a new document."""
     try:
         # Add document to tree - use async version directly since we're in an async endpoint
@@ -181,7 +181,9 @@ async def index_document(
 
 
 @app.get("/documents", response_model=DocumentsResponse)
-async def list_documents(service: RagZoomService = Depends(get_ragzoom_service)):
+async def list_documents(
+    service: RagZoomService = Depends(get_ragzoom_service),
+) -> DocumentsResponse:
     """List all indexed documents."""
     try:
         documents = []
@@ -216,7 +218,7 @@ async def list_documents(service: RagZoomService = Depends(get_ragzoom_service))
 @app.post("/query", response_model=QueryResponse)
 async def query(
     request: QueryRequest, service: RagZoomService = Depends(get_ragzoom_service)
-):
+) -> QueryResponse:
     """Query the system."""
     try:
         # Use async version since we're in an async endpoint
@@ -249,7 +251,7 @@ async def query(
 @app.post("/pin")
 async def pin_node(
     request: PinNodeRequest, service: RagZoomService = Depends(get_ragzoom_service)
-):
+) -> dict[str, str]:
     """Pin a node."""
     try:
         success = service.store.pin_node(request.node_id)
@@ -267,7 +269,7 @@ async def pin_node(
 @app.patch("/config")
 async def update_config(
     request: UpdateConfigRequest, service: RagZoomService = Depends(get_ragzoom_service)
-):
+) -> dict[str, str]:
     """Update configuration dynamically."""
     try:
         # Update only provided fields
@@ -281,10 +283,7 @@ async def update_config(
             service.config.slope_cap = request.slope_cap
         if request.smoothing_pass_enabled is not None:
             service.config.smoothing_pass_enabled = request.smoothing_pass_enabled
-        if request.ttl_turns is not None:
-            service.config.ttl_turns = request.ttl_turns
-        if request.freshness_decay is not None:
-            service.config.freshness_decay = request.freshness_decay
+        # Remove deprecated fields - ttl_turns and freshness_decay no longer exist
 
         return {"message": "Configuration updated successfully"}
     except Exception as e:
@@ -293,7 +292,9 @@ async def update_config(
 
 
 @app.get("/status", response_model=SystemStatusResponse)
-async def get_status(service: RagZoomService = Depends(get_ragzoom_service)):
+async def get_status(
+    service: RagZoomService = Depends(get_ragzoom_service),
+) -> SystemStatusResponse:
     """Get system status."""
     try:
         # Gather stats
@@ -315,10 +316,17 @@ async def get_status(service: RagZoomService = Depends(get_ragzoom_service)):
 
 
 @app.post("/recompute")
-async def recompute_summaries(service: RagZoomService = Depends(get_ragzoom_service)):
+async def recompute_summaries(
+    service: RagZoomService = Depends(get_ragzoom_service),
+) -> dict[str, Any]:
     """Recompute summaries for dirty nodes."""
     try:
-        count = service.tree_builder.recompute_dirty_summaries()
+        # Get dirty nodes first
+        dirty_nodes = service.store.get_dirty_nodes()
+        node_ids = [node.id for node in dirty_nodes]
+
+        # Refresh them using the async method
+        count = await service.tree_builder.refresh_nodes_async(node_ids)
         return {
             "message": "Summaries recomputed",
             "nodes_updated": count,
@@ -330,7 +338,7 @@ async def recompute_summaries(service: RagZoomService = Depends(get_ragzoom_serv
 
 # Health check
 @app.get("/health")
-async def health_check():
+async def health_check() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "healthy"}
 
@@ -346,4 +354,6 @@ if __name__ == "__main__":
     )
 
     # Run server
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        app, host="127.0.0.1", port=8000
+    )  # nosec B104 - bind to localhost only for security
