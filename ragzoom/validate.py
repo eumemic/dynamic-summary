@@ -3,6 +3,7 @@
 import logging
 from typing import Callable, Optional
 
+from ragzoom.dynamic_frontier import Segment
 from ragzoom.store import Store, TreeNode
 
 logger = logging.getLogger(__name__)
@@ -396,7 +397,10 @@ def validate_extraction_rule(
 
 
 def validate_tiling(
-    segments, store: Store, document_id: str, original_text: Optional[str] = None
+    segments: list[Segment],
+    store: Store,
+    document_id: str,
+    original_text: Optional[str] = None,
 ) -> Optional[str]:
     """Validate that a tiling of Segments has no overlaps, no duplicates, and (optionally) covers the document."""
     if not segments:
@@ -426,11 +430,15 @@ def validate_tiling(
                 return f"Node {seg.node_id} is internal (is_leaf={is_leaf}, mid_offset={node.mid_offset}) but segment has side={seg.side}, expected LEFT or RIGHT"
             # For internal nodes, segment spans match child spans
             if seg.side == "LEFT":
+                if node.left_child_id is None:
+                    return f"Node {seg.node_id} has no left child ID"
                 left_child = store.get_node(node.left_child_id)
                 if not left_child:
                     return f"Node {seg.node_id} has no left child"
                 span_start, span_end = left_child.span_start, left_child.span_end
             else:  # RIGHT
+                if node.right_child_id is None:
+                    return f"Node {seg.node_id} has no right child ID"
                 right_child = store.get_node(node.right_child_id)
                 if not right_child:
                     return f"Node {seg.node_id} has no right child"
