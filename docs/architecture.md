@@ -4,6 +4,8 @@
 
 This document provides a high-level overview of the RagZoom system, its core components, and the flow of data during indexing and querying.
 
+> **Migration Note**: As of January 2025, RagZoom has completed its transition from the legacy "Zoom-Lens" algorithm to a modern Dynamic Programming approach. This migration eliminated ~5,400 lines of legacy code while maintaining all functionality. The system now uses a single, well-tested algorithmic path documented in detail below.
+
 ## 1. Core Concepts
 
 ### 1.1. The Node Tree
