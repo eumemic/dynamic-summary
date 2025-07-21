@@ -9,13 +9,11 @@ Welcome to the RagZoom documentation! This guide will help you understand, use, 
 - **[Architecture](./architecture.md)** - System design, components, and data flow
 - **[Developer Guide](./developer-guide.md)** - Setup, development workflow, testing, and debugging
 - **[API Reference](./api-reference.md)** - CLI commands, REST endpoints, and configuration
-- **[Agent Handoff](./agent-handoff.md)** - AI agent collaboration guide and session history
 - **[Vision](./vision.md)** - Future plans and long-term project vision
 
 ### Technical Deep-Dives
 
 - **[Tiling Algorithm](./deep-dives/tiling-algorithm.md)** - Detailed explanation of the Dynamic Programming algorithm
-- **[Tree Visualization](./deep-dives/tree-visualization.md)** - How the ASCII tree visualization system works
 
 ### Historical Archive
 
@@ -54,9 +52,7 @@ For a comprehensive understanding:
 | Testing strategy and markers | [Developer Guide - Testing](./developer-guide.md#testing-strategy) |
 | DP algorithm details | [Tiling Algorithm](./deep-dives/tiling-algorithm.md) |
 | Implementation status | [Tiling Algorithm - What's NOT Implemented](./deep-dives/tiling-algorithm.md#whats-not-implemented) |
-| Tree visualization | [Tree Visualization](./deep-dives/tree-visualization.md) |
 | Future features | [Vision](./vision.md) |
-| AI agent collaboration | [Agent Handoff](./agent-handoff.md) |
 
 ## 📝 Documentation Standards
 
