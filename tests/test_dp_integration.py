@@ -198,8 +198,8 @@ class TestDPIntegration:
 
         # Check tiling doesn't have both parent and child
         # Extract unique node IDs from segments
-        frontier_node_ids = list(set(seg.node_id for seg in result.tiling))
-        tiling_nodes = [store.get_node(nid) for nid in frontier_node_ids]
+        tiling_node_ids = list(set(seg.node_id for seg in result.tiling))
+        tiling_nodes = [store.get_node(nid) for nid in tiling_node_ids]
         for i, node in enumerate(tiling_nodes):
             for j, other in enumerate(tiling_nodes):
                 if i != j:

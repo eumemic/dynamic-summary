@@ -164,7 +164,7 @@ mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
 | `store.py` | `test_store.py` | Database operations, caching |
 | `index.py` | `test_indexing_fast.py` | Tree building logic |
 | `retrieve.py` | `test_retrieve.py` | Query processing |
-| `dynamic_frontier.py` | `test_dp_*.py` | DP algorithm variants |
+| `dynamic_tiling.py` | `test_dp_*.py` | DP algorithm variants |
 | `assemble.py` | `test_dp_assembly.py` | Summary assembly |
 | `api.py` | `test_api_*.py`, `test_concurrency.py` | REST endpoints |
 
