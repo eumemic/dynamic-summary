@@ -2,10 +2,6 @@
 
 This file contains comprehensive instructions for any AI agent working on this repository.
 
-## 0. First Thing's First
-
-**Your first action in any new session must be to read the `docs/agent-handoff.md` file.** It contains critical context, a summary of previous work, and guidance on the collaborative process for this project. Do not update this file until the user explicitly signals that the session is over. This is a critical step to ensure a clean handoff to your successor.
-
 ## 1. Agent Philosophy & Collaboration
 
 - **Be Zen, Not Flustered:** When you get stuck in a loop or a series of failures, stop. Take a step back, breathe, and rethink the problem from first principles. There is always a logical solution.
