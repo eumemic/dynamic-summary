@@ -63,8 +63,8 @@ run_mypy() {
         dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
         local result=$?
         if [ $result -ne 0 ]; then
-            echo "[Mypy] ⚠️  Type checking found issues (non-blocking)"
-            return 0  # Don't fail on type errors for now
+            echo "[Mypy] ❌ Failed! Type errors found"
+            return $result  # Return the actual error code
         else
             echo "[Mypy] ✅ Passed!"
             return 0
@@ -75,8 +75,8 @@ run_mypy() {
         mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
         local result=$?
         if [ $result -ne 0 ]; then
-            echo "[Mypy] ⚠️  Type checking found issues (non-blocking)"
-            return 0  # Don't fail on type errors for now
+            echo "[Mypy] ❌ Failed! Type errors found"
+            return $result  # Return the actual error code
         else
             echo "[Mypy] ✅ Passed!"
             return 0
@@ -132,7 +132,10 @@ if [ -f "$tmpdir/black.result" ] && [ "$(cat "$tmpdir/black.result")" -ne 0 ]; t
     failed=1
 fi
 
-# Note: mypy is non-blocking, so we don't check its result for failure
+# Check mypy results
+if [ -f "$tmpdir/mypy.result" ] && [ "$(cat "$tmpdir/mypy.result")" -ne 0 ]; then
+    failed=1
+fi
 
 echo ""
 if [ $failed -eq 0 ]; then
