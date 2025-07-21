@@ -118,7 +118,7 @@ The pre-commit hook is defined in `scripts/git-hooks/pre-commit` and is the guar
 ### 4.2. Running Checks Manually
 
 You can and should run these checks yourself as you code:
--   **Run all fast tests:** `./test_quick.sh`
+-   **Run all fast tests:** `./scripts/test_quick.sh`
 -   **Run the full test suite (including slow/integration tests):** `pytest`
 -   **Auto-format your code:** `black ragzoom/ tests/`
 -   **Auto-fix linting issues:** `ruff check ragzoom/ tests/ --fix`
