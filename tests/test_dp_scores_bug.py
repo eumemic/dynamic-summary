@@ -1,7 +1,7 @@
 """Test demonstrating the DP algorithm uses scores outside coverage tree."""
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.dynamic_frontier import DynamicFrontierGenerator
+from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.retrieve import RetrievalResult
 from tests.mock_store import SimpleMockStore
 
@@ -83,7 +83,7 @@ class TestDPScoresBug:
         config = RagZoomConfig(
             openai_api_key="test-key", budget_tokens=10000  # Large budget
         )
-        dp_generator = DynamicFrontierGenerator(config, store)
+        dp_generator = DynamicTilingGenerator(config, store)
 
         # Simulate the bug scenario:
         # 1. Coverage tree contains only a1 and its ancestors
@@ -103,7 +103,7 @@ class TestDPScoresBug:
         # Run DP algorithm
         # Note: DP now takes coverage_map as parameter
         coverage_map = {node: True for node in coverage_tree}
-        dp_result = dp_generator.find_optimal_frontier(
+        dp_result = dp_generator.find_optimal_tiling(
             budget_tokens=10000,
             scores=scores,
             document_id="doc1",
@@ -182,7 +182,7 @@ class TestDPScoresBug:
         store.nodes["root"].right_child_id = "leaf2"
 
         config = RagZoomConfig(openai_api_key="test-key", budget_tokens=10000)
-        dp_generator = DynamicFrontierGenerator(config, store)
+        dp_generator = DynamicTilingGenerator(config, store)
 
         # Create a RetrievalResult that mimics the bug:
         # - node_ids has only 1 selected node
@@ -195,11 +195,11 @@ class TestDPScoresBug:
                 "root": 0.5,
             },
             coverage_map={"leaf1": True, "root": True},  # Only selected + ancestors
-            frontier_segments=None,
+            tiling=None,
         )
 
         # This is what retriever.py does - passes ALL scores to DP
-        dp_result = dp_generator.find_optimal_frontier(
+        dp_result = dp_generator.find_optimal_tiling(
             budget_tokens=10000,
             scores=result.scores,  # BUG: includes leaf2 which isn't in coverage!
             document_id="doc1",

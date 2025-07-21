@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 from ragzoom.validate import (
     validate_chunk_sizes,
     validate_document_coverage,
-    validate_frontier_completeness,
     validate_no_overlap,
+    validate_tiling_completeness,
     validate_tree_structure,
 )
 
@@ -156,33 +156,33 @@ class TestTreeStructure:
         assert "Tree structure validation failed" in error
 
 
-class TestFrontierValidation:
-    """Test frontier validation functions."""
+class TestTilingValidation:
+    """Test tiling validation functions."""
 
-    def test_valid_frontier_completeness(self):
-        """Test valid complete frontier."""
+    def test_valid_tiling_completeness(self):
+        """Test valid complete tiling."""
         segments = [
             ("node1", "text1", 0, 100),
             ("node2", "text2", 100, 200),
             ("node3", "text3", 200, 300),
         ]
 
-        error = validate_frontier_completeness(segments, (0, 300))
+        error = validate_tiling_completeness(segments, (0, 300))
         assert error is None  # Should be valid
 
-    def test_frontier_with_gap(self):
-        """Test detection of gaps in frontier."""
+    def test_tiling_with_gap(self):
+        """Test detection of gaps in tiling."""
         segments = [
             ("node1", "text1", 0, 100),
             ("node2", "text2", 110, 200),  # Gap from 100-110
         ]
 
-        error = validate_frontier_completeness(segments, (0, 200))
+        error = validate_tiling_completeness(segments, (0, 200))
         assert error is not None
-        assert "Gap in frontier" in error
+        assert "Gap in tiling" in error
 
     def test_valid_no_overlap(self):
-        """Test non-overlapping frontier."""
+        """Test non-overlapping tiling."""
         segments = [
             ("node1", "text1", 0, 100),
             ("node2", "text2", 100, 200),

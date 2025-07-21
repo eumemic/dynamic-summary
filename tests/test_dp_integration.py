@@ -143,11 +143,8 @@ class TestDPIntegration:
         result = await retriever.retrieve_async(query, document_id="doc1")
 
         # Print frontier segments instead of nodes
-        if (
-            hasattr(result, "frontier_segments")
-            and result.frontier_segments is not None
-        ):
-            print("FRONTIER SEGMENTS:", result.frontier_segments)
+        if hasattr(result, "tiling") and result.tiling is not None:
+            print("FRONTIER SEGMENTS:", result.tiling)
 
         # Assemble the result
         assembler = Assembler(config, store)
@@ -201,7 +198,7 @@ class TestDPIntegration:
 
         # Check frontier doesn't have both parent and child
         # Extract unique node IDs from segments
-        frontier_node_ids = list(set(seg.node_id for seg in result.frontier_segments))
+        frontier_node_ids = list(set(seg.node_id for seg in result.tiling))
         frontier_nodes = [store.get_node(nid) for nid in frontier_node_ids]
         for i, node in enumerate(frontier_nodes):
             for j, other in enumerate(frontier_nodes):

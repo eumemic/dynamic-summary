@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 import tiktoken
 
-from ragzoom.dynamic_frontier import Segment, SegmentInfo
+from ragzoom.dynamic_tiling import Segment, SegmentInfo
 from ragzoom.store import Store, TreeNode
 
 
