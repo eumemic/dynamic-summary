@@ -34,6 +34,8 @@ jobs:
           pip install -r requirements-dev.txt
           
       - name: Run fast tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
           pytest tests/ -m "not slow and not integration" -n 8 --no-header -v
 
@@ -64,6 +66,8 @@ jobs:
           pip install -r requirements-dev.txt
           
       - name: Run slow tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
           pytest tests/ -m "slow" -n 4 --no-header -v
 
@@ -94,6 +98,8 @@ jobs:
           pip install -r requirements-dev.txt
           
       - name: Run integration tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
           pytest tests/ -m "integration" -n 4 --no-header -v
 
@@ -195,6 +201,8 @@ jobs:
           pip install pytest-cov
           
       - name: Run tests with coverage
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
           pytest tests/ -n 8 --cov=ragzoom --cov-report=term --cov-report=html --no-header
           
@@ -234,6 +242,8 @@ jobs:
           pip install -r requirements-dev.txt
           
       - name: Run fast tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
           pytest tests/ -m "not slow and not integration" -n 8 --no-header -q
 
