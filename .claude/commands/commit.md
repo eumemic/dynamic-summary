@@ -9,6 +9,7 @@ Clean up any temporary files, remove ephemeral debugging code, and create well-o
    - **CRITICAL**: Never commit directly to `master` or `main` branches
    - If on master/main, create and switch to a feature branch first:
      - Use descriptive branch names like `fix-mypy-errors`, `add-user-auth`, etc.
+     - If unsure about the branch name, ask the user what feature you're about to work on
      - Run `git checkout -b <branch-name>` to create and switch to the new branch
    - Only proceed with commits after confirming you're on a feature branch
 
