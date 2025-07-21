@@ -223,7 +223,11 @@ def documents(ctx):
 @click.option("--document-id", "-d", required=True, help="Document ID to query within")
 @click.option("--n-max", type=int, help="Max nodes to retrieve")
 @click.option("--token-budget", type=int, help="Token budget for summary")
-@click.option("--show-stats", is_flag=True, help="Show retrieval statistics")
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Show debug information including retrieval statistics",
+)
 @click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.option(
     "--viz-width",
@@ -243,7 +247,7 @@ def query(
     document_id: str,
     n_max: Optional[int],
     token_budget: Optional[int],
-    show_stats: bool,
+    debug: bool,
     validate: bool,
     viz_width: Optional[int],
     viz_coords: str,
@@ -287,7 +291,7 @@ def query(
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY")
         click.echo("=" * 60)
-        if show_stats and getattr(result, "frontier_segments", None):
+        if debug and getattr(result, "frontier_segments", None):
             store = ctx.obj["store"]
             for idx, segment in enumerate(result.frontier_segments):
                 node = store.get_node(segment.node_id)
@@ -335,8 +339,8 @@ def query(
             click.echo(summary)
         click.echo("")
 
-        # Show stats if requested
-        if show_stats:
+        # Show debug info if requested
+        if debug:
             # Show ASCII tree visualization first
             if result.frontier_segments:
                 # Use provided width or detect terminal width
