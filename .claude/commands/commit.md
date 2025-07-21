@@ -7,8 +7,10 @@ Clean up any temporary files, remove ephemeral debugging code, and create well-o
 1. **Check Current Branch**:
    - Run `git branch --show-current` to see the current branch
    - **CRITICAL**: Never commit directly to `master` or `main` branches
-   - If on master/main, create and switch to a feature branch first:
-     - Use descriptive branch names like `fix-mypy-errors`, `add-user-auth`, etc.
+   - If on master/main, ALWAYS ask the user what feature you're about to work on before creating a branch:
+     - Don't assume the scope based on recent changes
+     - Get clarification on the broader feature/initiative being worked on
+     - Use descriptive branch names based on the user's response
      - Run `git checkout -b <branch-name>` to create and switch to the new branch
    - Only proceed with commits after confirming you're on a feature branch
 
