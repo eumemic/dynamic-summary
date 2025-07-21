@@ -103,8 +103,6 @@ class DynamicTilingGenerator:
             text = node.text[: node.mid_offset]
         else:  # segment.side == "RIGHT"
             text = node.text[node.mid_offset :]
-            # Remove the MID delimiter to match assembler behavior
-            text = text.replace("<<<MID>>>", "")
         return len(self.tokenizer.encode(text.strip()))
 
     def _get_segment_span(self, segment: "Segment") -> tuple[int, int]:
