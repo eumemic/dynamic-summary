@@ -158,7 +158,7 @@ class TestMidDelimiter:
         if not for the exact span deduplication logic."""
         # Create mock retrieval result
         retrieval_result = MagicMock(spec=RetrievalResult)
-        retrieval_result.frontier_nodes = ["node1", "node2", "node3"]
+        # Note: frontier_nodes field no longer exists, test uses legacy assembly
         retrieval_result.coverage_map = set()
 
         # Mock nodes - node1 and node2 have EXACT same span
