@@ -62,7 +62,13 @@ This minimizes CI churn by avoiding multiple push-triggered builds.
      - Push once to minimize CI runs
    - If new issues appear after push, repeat the cycle
 
-6. **Stop Conditions**:
+6. **Final Dashboard**:
+   - When presenting the final status (whether success or current state):
+     - Include a direct link to the PR for easy access
+     - Format: `PR #N: https://github.com/owner/repo/pull/N`
+   - This allows the user to quickly navigate to the PR
+
+7. **Stop Conditions**:
    - User explicitly asks to stop
    - PR is merged or closed
    - All builds complete with all issues resolved
@@ -103,6 +109,8 @@ Resuming monitoring to wait for build completion...
 Pushing all commits to remote...
 
 ✅ All issues resolved. PR is ready for review.
+
+PR #9: https://github.com/eumemic/dynamic-summary/pull/9
 ```
 
 ## BAD Example (what NOT to do):

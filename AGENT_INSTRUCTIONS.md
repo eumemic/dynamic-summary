@@ -38,7 +38,12 @@ For detailed understanding of the core tiling algorithm:
 
 @include docs/deep-dives/tiling-algorithm.md
 
-## 7. Quick Reference
+## 7. Custom Claude Commands
+
+Custom slash commands (e.g., `/monitor-pr`) are stored in `.claude/commands/` as markdown files.
+To modify: edit `.claude/commands/<command-name>.md`
+
+## 8. Quick Reference
 
 ### Key Commands
 ```bash
