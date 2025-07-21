@@ -579,7 +579,7 @@ def export(ctx, input_file: str, output_file: str, format: str):
             # Text format
             lines = []
             for node in sorted(nodes_data, key=lambda x: (x["depth"], x["span_start"])):
-                indent = "  " * node["depth"]
+                indent = "  " * node["height"]
                 leaf_marker = "🍃" if node["is_leaf"] else "📁"
                 lines.append(
                     f"{indent}{leaf_marker} {node['id'][:8]}... [{node['span_start']}-{node['span_end']}]"
