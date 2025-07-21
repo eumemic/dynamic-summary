@@ -49,8 +49,11 @@ For a comprehensive understanding:
 |------------------------------|------------|
 | System components and design | [Architecture](./architecture.md) |
 | CLI commands and options | [API Reference](./api-reference.md) |
+| Configuration parameters | [API Reference - Configuration](./api-reference.md#configuration-parameters) |
 | Running tests | [Developer Guide](./developer-guide.md) |
+| Testing strategy and markers | [Developer Guide - Testing](./developer-guide.md#testing-strategy) |
 | DP algorithm details | [Tiling Algorithm](./deep-dives/tiling-algorithm.md) |
+| Implementation status | [Tiling Algorithm - What's NOT Implemented](./deep-dives/tiling-algorithm.md#whats-not-implemented) |
 | Tree visualization | [Tree Visualization](./deep-dives/tree-visualization.md) |
 | Future features | [Vision](./vision.md) |
 | AI agent collaboration | [Agent Handoff](./agent-handoff.md) |
