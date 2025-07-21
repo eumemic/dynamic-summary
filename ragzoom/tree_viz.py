@@ -1,7 +1,7 @@
 """ASCII tree visualization for tiling display."""
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Optional
 
 import tiktoken
 
@@ -67,7 +67,7 @@ class TokenPositionResolver(PositionResolver):
         segment_infos: list[SegmentInfo],
         coverage_map: dict[str, bool],
         store: Store,
-        tokenizer=None,
+        tokenizer: Any = None,
     ):
         # Validate inputs
         if not segment_infos:
@@ -111,7 +111,7 @@ class TokenPositionResolver(PositionResolver):
         self.total_tokens = current_pos
 
         # Compute positions for covered but unselected nodes
-        self.node_positions = {}
+        self.node_positions: dict[str, tuple[float, float]] = {}
         self._compute_node_positions()
 
     def get_extent(self) -> float:
@@ -125,10 +125,10 @@ class TokenPositionResolver(PositionResolver):
     def get_node_position(self, node: TreeNode) -> tuple[float, float]:
         return self.node_positions.get(node.id, (0.0, 0.0))
 
-    def _compute_node_positions(self):
+    def _compute_node_positions(self) -> None:
         """Compute positions for all covered nodes based on selected descendants."""
         # First pass: compute token costs for all nodes
-        node_costs = {}
+        node_costs: dict[str, float] = {}
 
         def compute_cost(node_id: str) -> float:
             if node_id in node_costs:
@@ -358,7 +358,7 @@ def build_ascii_tree(
         pixels: list[int] = [-1] * actual_width
         label_spans = []  # (start, end, label, is_selected)
 
-        def paint(lo: int, hi: int, priority: int):
+        def paint(lo: int, hi: int, priority: int) -> None:
             lo = max(0, min(lo, actual_width - 1))
             hi = max(lo + 1, min(hi, actual_width))
             for i in range(lo, hi):

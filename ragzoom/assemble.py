@@ -54,6 +54,7 @@ class Assembler:
     ) -> str:
         """Extract the text for a single Segment."""
         # Use pre-loaded nodes if available, otherwise fall back to store
+        node: Optional[TreeNode]
         if nodes and segment.node_id in nodes:
             node = nodes[segment.node_id]
         else:

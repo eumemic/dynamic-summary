@@ -35,10 +35,11 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 
 @click.group()
 @click.pass_context
-def cli(ctx):
+def cli(ctx: click.Context) -> None:
     """RagZoom: Incremental, hierarchical RAG memory system."""
     # Initialize shared components
-    config = RagZoomConfig()
+    # RagZoomConfig will read from environment automatically due to pydantic_settings
+    config = RagZoomConfig()  # Will use RAGZOOM_OPENAI_API_KEY from env
     store = Store(config)
 
     ctx.ensure_object(dict)
@@ -64,14 +65,14 @@ def cli(ctx):
 @click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.pass_context
 def index(
-    ctx,
+    ctx: click.Context,
     file_path: str,
     document_id: Optional[str],
     clear: bool,
     no_progress: bool,
     max_concurrent: int,
     validate: bool,
-):
+) -> None:
     """Index a document from file."""
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
@@ -149,22 +150,26 @@ def index(
 
         # Run validation checks
         from ragzoom.validate import (
-            validate,
+            validate as run_validate,
+        )
+        from ragzoom.validate import (
             validate_chunk_sizes,
             validate_document_coverage,
             validate_tree_structure,
         )
 
         # Validations will run only if --validate was passed
-        validate(
+        run_validate(
             lambda: validate_document_coverage(text, doc_leaves), "document coverage"
         )
 
-        validate(
+        run_validate(
             lambda: validate_chunk_sizes(doc_leaves, config.leaf_tokens), "chunk sizes"
         )
 
-        validate(lambda: validate_tree_structure(store, doc_id, text), "tree structure")
+        run_validate(
+            lambda: validate_tree_structure(store, doc_id, text), "tree structure"
+        )
 
     except Exception as e:
         click.echo(f"❌ Error indexing document: {e}", err=True)
@@ -173,7 +178,7 @@ def index(
 
 @cli.command()
 @click.pass_context
-def documents(ctx):
+def documents(ctx: click.Context) -> None:
     """List all indexed documents."""
     try:
         store = ctx.obj["store"]
@@ -242,7 +247,7 @@ def documents(ctx):
 )
 @click.pass_context
 def query(
-    ctx,
+    ctx: click.Context,
     query_text: str,
     document_id: str,
     n_max: Optional[int],
@@ -251,7 +256,7 @@ def query(
     validate: bool,
     viz_width: Optional[int],
     viz_coords: str,
-):
+) -> None:
     """Query the system and get a summary."""
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
@@ -393,7 +398,7 @@ def query(
 @cli.command()
 @click.argument("node_id")
 @click.pass_context
-def pin(ctx, node_id: str):
+def pin(ctx: click.Context, node_id: str) -> None:
     """Pin a node to always include it."""
     try:
         store = ctx.obj["store"]
@@ -412,7 +417,7 @@ def pin(ctx, node_id: str):
 
 @cli.command()
 @click.pass_context
-def status(ctx):
+def status(ctx: click.Context) -> None:
     """Show system status."""
     try:
         store = ctx.obj["store"]
@@ -445,10 +450,12 @@ def status(ctx):
 
 
 @cli.command()
-@click.option("--host", default="0.0.0.0", help="Host to bind to")
+@click.option(
+    "--host", default="127.0.0.1", help="Host to bind to"
+)  # nosec B104 - secure default
 @click.option("--port", default=8000, help="Port to bind to")
 @click.option("--reload", is_flag=True, help="Enable auto-reload")
-def serve(host: str, port: int, reload: bool):
+def serve(host: str, port: int, reload: bool) -> None:
     """Start the REST API server."""
     try:
         import uvicorn
@@ -469,7 +476,7 @@ def serve(host: str, port: int, reload: bool):
 @click.option("--document-id", "-d", help="Clear only a specific document")
 @click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
-def clear(ctx, document_id: Optional[str], confirm: bool):
+def clear(ctx: click.Context, document_id: Optional[str], confirm: bool) -> None:
     """Clear data from the database.
 
     Without --document-id, clears all data.
@@ -546,7 +553,7 @@ def clear(ctx, document_id: Optional[str], confirm: bool):
 @click.argument("output_file", type=click.Path())
 @click.option("--format", type=click.Choice(["json", "text"]), default="text")
 @click.pass_context
-def export(ctx, input_file: str, output_file: str, format: str):
+def export(ctx: click.Context, input_file: str, output_file: str, format: str) -> None:
     """Export tree structure to file."""
     try:
         store = ctx.obj["store"]
@@ -579,7 +586,7 @@ def export(ctx, input_file: str, output_file: str, format: str):
             # Text format
             lines = []
             for node in sorted(nodes_data, key=lambda x: (x["depth"], x["span_start"])):
-                indent = "  " * node["depth"]
+                indent = "  " * node["height"]
                 leaf_marker = "🍃" if node["is_leaf"] else "📁"
                 lines.append(
                     f"{indent}{leaf_marker} {node['id'][:8]}... [{node['span_start']}-{node['span_end']}]"
