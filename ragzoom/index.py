@@ -410,7 +410,7 @@ class TreeBuilder:
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
 
-        # Use consistent token budget for all levels
+        # Use consistent token budget for all heights
         # Target tokens for the summary (guidance for LLM, not hard limit)
         target_tokens = self.config.leaf_tokens
 
@@ -496,11 +496,11 @@ class TreeBuilder:
         # Calculate total tree height (distance from root to furthest leaf)
         # Note: This is used for progress tracking estimation
 
-        current_level = 0  # Track level for logging
+        current_height = 1  # Track height for logging (leaves are at height 0)
         while len(current_level_ids) > 1:
             next_level_ids = []
             next_level_texts = []
-            current_level += 1
+            # Note: current_height will be incremented after processing this height
 
             # Process pairs concurrently
             tasks = []
@@ -545,7 +545,7 @@ class TreeBuilder:
                 tasks.append(task)
                 pair_info.append((i, i + 1))
 
-            # If there's an odd node at the end, promote it to next level
+            # If there's an odd node at the end, promote it to next height
             if nodes_to_pair < len(current_level_ids):
                 next_level_ids.append(current_level_ids[-1])
                 next_level_texts.append(current_level_texts[-1])
@@ -553,16 +553,15 @@ class TreeBuilder:
             # Process all pairs concurrently
             if tasks:
                 # Always log tree building progress with cumulative elapsed time
-                level_from_root = current_level
                 if overall_start_time:
                     elapsed = time.time() - overall_start_time
                     mins, secs = divmod(int(elapsed), 60)
                     logger.info(
-                        f"Building tree level {level_from_root}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
+                        f"Building tree height {current_height}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
                     )
                 else:
                     logger.info(
-                        f"Building tree level {level_from_root}: processing {len(tasks)} node pairs"
+                        f"Building tree height {current_height}: processing {len(tasks)} node pairs"
                     )
 
                 # Track completion count
@@ -583,7 +582,7 @@ class TreeBuilder:
                         elapsed = time.time() - overall_start_time
                         mins, secs = divmod(int(elapsed), 60)
                         logger.info(
-                            f"  Completed {completed_count}/{len(tasks)} pairs at level {current_level} [{mins}m {secs}s elapsed total]"
+                            f"  Completed {completed_count}/{len(tasks)} pairs at height {current_height} [{mins}m {secs}s elapsed total]"
                         )
 
                     return result
@@ -602,7 +601,7 @@ class TreeBuilder:
                     group_results = await asyncio.gather(*group)
                     results.extend(group_results)
 
-                # Add the parent nodes to next level
+                # Add the parent nodes to next height
                 # IMPORTANT: We already added any odd node to next_level_ids above,
                 # so now we insert the new parent nodes BEFORE it to maintain order
                 if nodes_to_pair < len(current_level_ids):
@@ -626,6 +625,7 @@ class TreeBuilder:
 
             current_level_ids = next_level_ids
             current_level_texts = next_level_texts
+            current_height += 1
 
         # Return root node ID
         if current_level_ids:
@@ -633,11 +633,11 @@ class TreeBuilder:
                 elapsed = time.time() - overall_start_time
                 mins, secs = divmod(int(elapsed), 60)
                 logger.info(
-                    f"Tree building complete. Root node at level 0 with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]"
+                    f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]"
                 )
             else:
                 logger.info(
-                    f"Tree building complete. Root node at level 0 with ID: {current_level_ids[0][:8]}..."
+                    f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}..."
                 )
         return current_level_ids[0] if current_level_ids else ""
 
