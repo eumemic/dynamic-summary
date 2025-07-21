@@ -111,13 +111,13 @@ class TestDPScoresBug:
         )
         segments = dp_result.segments
 
-        # Collect which nodes are used in the frontier
-        nodes_in_frontier = {seg.node_id for seg in segments}
+        # Collect which nodes are used in the tiling
+        nodes_in_tiling = {seg.node_id for seg in segments}
         print(f"\nCoverage tree: {coverage_tree}")
-        print(f"Nodes in frontier: {nodes_in_frontier}")
+        print(f"Nodes in tiling: {nodes_in_tiling}")
 
         # Check if any nodes are outside coverage tree
-        violations = nodes_in_frontier - coverage_tree
+        violations = nodes_in_tiling - coverage_tree
 
         # The bug: DP uses nodes outside coverage tree because they have scores
         assert len(violations) > 0, (
@@ -214,11 +214,11 @@ class TestDPScoresBug:
         print(f"\nSelected nodes: {result.node_ids}")
         print(f"Coverage map: {list(result.coverage_map.keys())}")
         print(f"Scores include: {list(result.scores.keys())}")
-        print(f"Leaf nodes in frontier: {leaf_node_ids}")
+        print(f"Leaf nodes in tiling: {leaf_node_ids}")
 
-        # The bug: leaf2 can appear in frontier even though it's not in coverage
+        # The bug: leaf2 can appear in tiling even though it's not in coverage
         if "leaf2" in leaf_node_ids:
-            print("\nBUG CONFIRMED: leaf2 is in frontier but not in coverage map!")
+            print("\nBUG CONFIRMED: leaf2 is in tiling but not in coverage map!")
             assert "leaf2" not in result.coverage_map
             assert "leaf2" not in result.node_ids
             assert "leaf2" in result.scores  # But it has a score!

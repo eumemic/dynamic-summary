@@ -59,25 +59,25 @@ class TestRetriever:
             node_id, (None, None)
         )
 
-        # Case 1: P1 is covered, but its children are not. P1 is the frontier.
+        # Case 1: P1 is covered, but its children are not. P1 is the tiling.
         coverage_map = {"P1": True}
         frontier = retriever._extract_frontier(coverage_map)
         assert frontier == ["P1"]
 
-        # Case 2: P1 and C1 are covered. C2 is not. Frontier is C1 and P1.
-        # P1 is still on the frontier because it's not fully represented by its covered children.
+        # Case 2: P1 and C1 are covered. C2 is not. Tiling is C1 and P1.
+        # P1 is still on the tiling because it's not fully represented by its covered children.
         coverage_map = {"P1": True, "C1": True}
         frontier = retriever._extract_frontier(coverage_map)
         assert sorted(frontier) == sorted(["C1", "P1"])
 
         # Case 3: P1, C1, C2 are covered. GC1, GC2 are not.
-        # P1 is no longer on the frontier. C1 and C2 are.
+        # P1 is no longer on the tiling. C1 and C2 are.
         coverage_map = {"P1": True, "C1": True, "C2": True}
         frontier = retriever._extract_frontier(coverage_map)
         assert sorted(frontier) == sorted(["C1", "C2"])
 
         # Case 4: Full branch is covered.
-        # Frontier is the deepest covered nodes: C1, GC1, GC2
+        # Tiling is the deepest covered nodes: C1, GC1, GC2
         coverage_map = {"P1": True, "C1": True, "C2": True, "GC1": True, "GC2": True}
         frontier = retriever._extract_frontier(coverage_map)
         assert sorted(frontier) == sorted(["C1", "GC1", "GC2"])

@@ -135,15 +135,15 @@ class TestNMaxFix:
             f"Coverage: {expected_coverage}"
         )
 
-        # Verify frontier only uses nodes from coverage tree
+        # Verify tiling only uses nodes from coverage tree
         if result.tiling:
-            frontier_nodes = {seg.node_id for seg in result.tiling}
-            assert frontier_nodes.issubset(expected_coverage), (
-                f"Frontier contains nodes outside coverage tree! "
-                f"Frontier: {frontier_nodes}, Coverage: {expected_coverage}"
+            tiling_nodes = {seg.node_id for seg in result.tiling}
+            assert tiling_nodes.issubset(expected_coverage), (
+                f"Tiling contains nodes outside coverage tree! "
+                f"Tiling: {tiling_nodes}, Coverage: {expected_coverage}"
             )
 
-            # Count leaf nodes in frontier
+            # Count leaf nodes in tiling
             leaf_count = sum(
                 1 for seg in result.tiling if store.is_leaf_node(seg.node_id)
             )
@@ -303,7 +303,7 @@ The dragons all left. Peace returned."""
                 len(result.node_ids) == 1
             ), f"Expected 1 node, got {len(result.node_ids)}"
 
-        # Get frontier segments
+        # Get tiling segments
         assert result.tiling is not None
         segments = result.tiling
 
