@@ -3,6 +3,7 @@
 import hashlib
 import logging
 from collections import deque
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Optional, Union, cast
 
@@ -817,8 +818,12 @@ class Store:
             metadatas = results["metadatas"]
 
             # Check if any entries have the deprecated 'depth' field
-            needs_update = []
-            updated_metadatas = []
+            needs_update: list[str] = []
+            updated_metadatas: list[Mapping[str, str | int | float | bool | None]] = []
+
+            # Handle case where metadatas might be None
+            if metadatas is None:
+                return
 
             for i, (node_id, metadata) in enumerate(zip(ids, metadatas)):
                 if metadata and "depth" in metadata:
@@ -857,9 +862,9 @@ class Store:
             self.engine.dispose()
         # ChromaDB PersistentClient doesn't have a close method, but we can help GC
         if hasattr(self, "collection"):
-            self.collection = None
+            del self.collection
         if hasattr(self, "chroma_client"):
-            self.chroma_client = None
+            del self.chroma_client
 
     @staticmethod
     def compute_content_hash(content: str) -> str:

@@ -141,7 +141,7 @@ class Retriever:
         )
 
         # Load all nodes in coverage map to avoid redundant loading later
-        nodes = {}
+        nodes: dict[str, TreeNode] = {}
         for node_id in coverage_map:
             node = self.store.get_node(node_id)
             if node:
