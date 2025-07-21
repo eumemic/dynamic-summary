@@ -18,11 +18,11 @@ Merge the current PR, delete the branch, and return to master with the latest ch
    - Use `gh pr merge` with the `--merge` strategy (not squash or rebase)
    - Include the `--delete-branch` flag to clean up the branch
    - This will merge the PR and delete both local and remote branches
+   - Run `git fetch --prune` immediately to clean up any stale remote branch references
 
-4. **Clean Up and Update**:
+4. **Return to Master**:
    - Switch to master branch
    - Pull the latest changes
-   - Run `git fetch --prune` to clean up any stale remote branch references
 
 5. **Confirm Success**:
    - Show the user the merge commit
@@ -40,11 +40,11 @@ gh pr checks <PR#>
 
 # Merge and cleanup
 gh pr merge <PR#> --merge --delete-branch
+git fetch --prune
 
 # Return to master
 git checkout master
 git pull
-git fetch --prune
 
 # Confirm
 git log --oneline -5
