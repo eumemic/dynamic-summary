@@ -24,7 +24,7 @@ RagZoom's vision spans three horizons:
 - **Streaming Assembly**: Stream segments as they're generated
 
 ### Algorithm Refinements
-- **Implement Slope Cap**: Add the two-pass post-processing for smoother transitions
+- **Implement Slope Cap**: Add the two-pass post-processing for smoother transitions. See [Tiling Algorithm - Slope Cap](deep-dives/tiling-algorithm.md#slope-cap-enforcement) for current implementation status.
 - **Budget Hints**: Guide DP algorithm with expected budget distributions
 - **Quality Metrics**: Better scoring functions for segment selection
 
@@ -109,7 +109,7 @@ Current AI agents suffer from session amnesia - each conversation starts fresh, 
 
 ## Mass-Based Algorithm Evolution
 
-**STATUS: ASPIRATIONAL** - Not yet implemented
+**STATUS: ASPIRATIONAL** - Not yet implemented. See [Tiling Algorithm - Mass-Based Relevance](deep-dives/tiling-algorithm.md#mass-based-relevance-propagation) for current implementation status.
 
 The next major algorithmic leap involves "mass-based" relevance propagation:
 

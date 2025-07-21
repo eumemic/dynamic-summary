@@ -403,7 +403,7 @@ result = retriever.retrieve("query", document_id="my-doc")
 
 ### Configuration Parameters
 
-All parameters can be set via environment variables with the `RAGZOOM_` prefix.
+All parameters can be set via environment variables with the `RAGZOOM_` prefix. For an overview of how these parameters affect system behavior, see [Architecture - Configuration](architecture.md#configuration).
 
 #### Core Parameters
 
