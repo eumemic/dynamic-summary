@@ -10,6 +10,11 @@
       "description": "Check code style before writing",
       "enabled": true,
       "file_pattern": "*.py"
+    },
+    "user_prompt_submit": {
+      "command": "echo '🤔 CRITICAL THINKING: Investigate first to answer questions yourself. BUT push back if: 1) something feels wrong/missing critical info, 2) conflicts with your understanding, OR 3) you see a better way to accomplish the goal!'",
+      "description": "Remind Claude to investigate first, but suggest better approaches when appropriate",
+      "enabled": true
     }
   }
 }
