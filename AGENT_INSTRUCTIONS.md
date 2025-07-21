@@ -40,7 +40,7 @@ For detailed understanding of the core tiling algorithm:
 
 ## 7. Custom Claude Commands
 
-Custom slash commands (e.g., `/monitor-pr`) are stored in `.claude/commands/` as markdown files.
+Custom slash commands (e.g., `/push`) are stored in `.claude/commands/` as markdown files.
 To modify: edit `.claude/commands/<command-name>.md`
 
 ## 8. Quick Reference
