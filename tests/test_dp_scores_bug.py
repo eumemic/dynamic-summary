@@ -1,7 +1,7 @@
 """Test demonstrating the DP algorithm uses scores outside coverage tree."""
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.dynamic_frontier import DynamicFrontierGenerator
+from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.retrieve import RetrievalResult
 from tests.mock_store import SimpleMockStore
 
@@ -83,7 +83,7 @@ class TestDPScoresBug:
         config = RagZoomConfig(
             openai_api_key="test-key", budget_tokens=10000  # Large budget
         )
-        dp_generator = DynamicFrontierGenerator(config, store)
+        dp_generator = DynamicTilingGenerator(config, store)
 
         # Simulate the bug scenario:
         # 1. Coverage tree contains only a1 and its ancestors
@@ -103,7 +103,7 @@ class TestDPScoresBug:
         # Run DP algorithm
         # Note: DP now takes coverage_map as parameter
         coverage_map = {node: True for node in coverage_tree}
-        dp_result = dp_generator.find_optimal_frontier(
+        dp_result = dp_generator.find_optimal_tiling(
             budget_tokens=10000,
             scores=scores,
             document_id="doc1",
@@ -111,13 +111,13 @@ class TestDPScoresBug:
         )
         segments = dp_result.segments
 
-        # Collect which nodes are used in the frontier
-        nodes_in_frontier = {seg.node_id for seg in segments}
+        # Collect which nodes are used in the tiling
+        nodes_in_tiling = {seg.node_id for seg in segments}
         print(f"\nCoverage tree: {coverage_tree}")
-        print(f"Nodes in frontier: {nodes_in_frontier}")
+        print(f"Nodes in tiling: {nodes_in_tiling}")
 
         # Check if any nodes are outside coverage tree
-        violations = nodes_in_frontier - coverage_tree
+        violations = nodes_in_tiling - coverage_tree
 
         # The bug: DP uses nodes outside coverage tree because they have scores
         assert len(violations) > 0, (
@@ -182,7 +182,7 @@ class TestDPScoresBug:
         store.nodes["root"].right_child_id = "leaf2"
 
         config = RagZoomConfig(openai_api_key="test-key", budget_tokens=10000)
-        dp_generator = DynamicFrontierGenerator(config, store)
+        dp_generator = DynamicTilingGenerator(config, store)
 
         # Create a RetrievalResult that mimics the bug:
         # - node_ids has only 1 selected node
@@ -195,11 +195,11 @@ class TestDPScoresBug:
                 "root": 0.5,
             },
             coverage_map={"leaf1": True, "root": True},  # Only selected + ancestors
-            frontier_segments=None,
+            tiling=None,
         )
 
         # This is what retriever.py does - passes ALL scores to DP
-        dp_result = dp_generator.find_optimal_frontier(
+        dp_result = dp_generator.find_optimal_tiling(
             budget_tokens=10000,
             scores=result.scores,  # BUG: includes leaf2 which isn't in coverage!
             document_id="doc1",
@@ -214,11 +214,11 @@ class TestDPScoresBug:
         print(f"\nSelected nodes: {result.node_ids}")
         print(f"Coverage map: {list(result.coverage_map.keys())}")
         print(f"Scores include: {list(result.scores.keys())}")
-        print(f"Leaf nodes in frontier: {leaf_node_ids}")
+        print(f"Leaf nodes in tiling: {leaf_node_ids}")
 
-        # The bug: leaf2 can appear in frontier even though it's not in coverage
+        # The bug: leaf2 can appear in tiling even though it's not in coverage
         if "leaf2" in leaf_node_ids:
-            print("\nBUG CONFIRMED: leaf2 is in frontier but not in coverage map!")
+            print("\nBUG CONFIRMED: leaf2 is in tiling but not in coverage map!")
             assert "leaf2" not in result.coverage_map
             assert "leaf2" not in result.node_ids
             assert "leaf2" in result.scores  # But it has a score!

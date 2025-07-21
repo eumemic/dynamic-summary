@@ -86,7 +86,7 @@ class TestCLI:
             retriever_instance = Mock()
             retriever_instance.retrieve.return_value = Mock(
                 node_ids=["node-1", "node-2"],
-                frontier_nodes=["node-1", "node-2"],
+                tiling=None,  # Updated field name
                 coverage_map={"node-1": 1.0, "node-2": 1.0},
             )
             mock_retriever.return_value = retriever_instance

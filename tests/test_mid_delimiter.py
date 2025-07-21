@@ -7,7 +7,6 @@ import pytest
 from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.retrieve import RetrievalResult
 from ragzoom.store import Store
 
 
@@ -149,57 +148,3 @@ class TestMidDelimiter:
         assert (
             call_kwargs["mid_offset"] == 5
         )  # Position of <<<MID>>> in "Left <<<MID>>> Right"
-
-    @pytest.mark.skip(
-        reason="Legacy assembler test, will be removed with DP implementation"
-    )
-    def test_assembly_with_exact_span_deduplication(self, assembler):
-        """Test that the assembler correctly handles frontiers that would have overlaps
-        if not for the exact span deduplication logic."""
-        # Create mock retrieval result
-        retrieval_result = MagicMock(spec=RetrievalResult)
-        retrieval_result.frontier_nodes = ["node1", "node2", "node3"]
-        retrieval_result.coverage_map = set()
-
-        # Mock nodes - node1 and node2 have EXACT same span
-        node1 = MagicMock()
-        node1.span_start = 0
-        node1.span_end = 100
-        node1.mid_offset = None
-        node1.text = "First text"
-        node1.depth = 0
-
-        node2 = MagicMock()  # Exact same span as node1
-        node2.span_start = 0
-        node2.span_end = 100
-        node2.mid_offset = None
-        node2.text = "Duplicate span text"
-        node2.depth = 0
-
-        node3 = MagicMock()  # Different span
-        node3.span_start = 200
-        node3.span_end = 300
-        node3.mid_offset = None
-        node3.text = "Third text"
-        node3.depth = 0
-
-        # Mock get_node to return the correct nodes for sorting and processing
-        def mock_get_node(node_id):
-            if node_id == "node1":
-                return node1
-            elif node_id == "node2":
-                return node2
-            elif node_id == "node3":
-                return node3
-            return None
-
-        assembler.store.get_node.side_effect = mock_get_node
-        # Mock get_children to return no children (these are leaf nodes)
-        assembler.store.get_children.return_value = (None, None)
-        assembler.config.slope_cap = False
-        assembler.config.smoothing_pass_enabled = False
-
-        result = assembler.assemble(retrieval_result)
-
-        # Should only include node1 and node3 (node2 has exact same span as node1)
-        assert result == "First text\n\nThird text"
