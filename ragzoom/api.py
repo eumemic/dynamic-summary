@@ -1,7 +1,6 @@
 """FastAPI routes for RagZoom REST interface."""
 
 import logging
-import os
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -21,7 +20,8 @@ class RagZoomService:
     """Service container for RagZoom components."""
 
     def __init__(self) -> None:
-        self.config = RagZoomConfig(openai_api_key=os.environ.get("OPENAI_API_KEY", ""))
+        # RagZoomConfig will read from environment automatically due to pydantic_settings
+        self.config = RagZoomConfig()  # Will use RAGZOOM_OPENAI_API_KEY from env
         self.store = Store(self.config)
         # Each service gets its own OpenAI client to avoid thread issues
         self.tree_builder = TreeBuilder(self.config, self.store)
