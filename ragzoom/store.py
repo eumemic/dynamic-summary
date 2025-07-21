@@ -642,11 +642,6 @@ class Store:
         with self.SessionLocal() as session:
             return session.query(Document).filter_by(file_path=file_path).first()
 
-    def get_document_by_hash(self, content_hash: str) -> Optional[Document]:
-        """Get a document by content hash."""
-        with self.SessionLocal() as session:
-            return session.query(Document).filter_by(content_hash=content_hash).first()
-
     def add_document(
         self,
         document_id: str,

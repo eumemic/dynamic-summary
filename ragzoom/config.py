@@ -32,22 +32,22 @@ class RagZoomConfig(BaseSettings):
 
     # Slope cap and smoothing
     slope_cap: bool = Field(
-        default=True, description="Forbid depth jumps > 1 level in frontier"
+        default=True, description="Forbid depth jumps > 1 level in tiling"
     )
     slope_cap_size: int = Field(
         default=1,
-        description="Maximum depth difference allowed between adjacent frontier nodes",
+        description="Maximum depth difference allowed between adjacent tiling nodes",
     )
     adjacent_context_tokens: int = Field(
         default=75, description="Tokens from prev/next chunks for summarization context"
     )
     smoothing_pass_enabled: bool = Field(
-        default=False, description="Enable smoothing pass for frontier joins"
+        default=False, description="Enable smoothing pass for tiling joins"
     )
 
     # Validation
     validate_pipeline: bool = Field(
-        default=False, description="Enable validation checks for frontier invariants"
+        default=False, description="Enable validation checks for tiling invariants"
     )
     smoothing_model: str = Field(
         default="gpt-3.5-turbo", description="Model for smoothing pass"

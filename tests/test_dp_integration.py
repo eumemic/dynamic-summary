@@ -142,12 +142,9 @@ class TestDPIntegration:
         query = "First chunk Second chunk"  # Query that should match the first half
         result = await retriever.retrieve_async(query, document_id="doc1")
 
-        # Print frontier segments instead of nodes
-        if (
-            hasattr(result, "frontier_segments")
-            and result.frontier_segments is not None
-        ):
-            print("FRONTIER SEGMENTS:", result.frontier_segments)
+        # Print tiling segments instead of nodes
+        if hasattr(result, "tiling") and result.tiling is not None:
+            print("TILING SEGMENTS:", result.tiling)
 
         # Assemble the result
         assembler = Assembler(config, store)
@@ -175,7 +172,7 @@ class TestDPIntegration:
     async def test_parent_child_deduplication(
         self, config, store, mock_openai, monkeypatch
     ):
-        """Test that DP frontier doesn't include both parent and child."""
+        """Test that DP tiling doesn't include both parent and child."""
         mock_client, mock_async_client = mock_openai
 
         # Create a simple document
@@ -199,12 +196,12 @@ class TestDPIntegration:
         retriever.client.chat.completions.create = sync_summary
         result = await retriever.retrieve_async("test document", document_id="doc1")
 
-        # Check frontier doesn't have both parent and child
+        # Check tiling doesn't have both parent and child
         # Extract unique node IDs from segments
-        frontier_node_ids = list(set(seg.node_id for seg in result.frontier_segments))
-        frontier_nodes = [store.get_node(nid) for nid in frontier_node_ids]
-        for i, node in enumerate(frontier_nodes):
-            for j, other in enumerate(frontier_nodes):
+        tiling_node_ids = list(set(seg.node_id for seg in result.tiling))
+        tiling_nodes = [store.get_node(nid) for nid in tiling_node_ids]
+        for i, node in enumerate(tiling_nodes):
+            for j, other in enumerate(tiling_nodes):
                 if i != j:
                     # Check if one is ancestor of the other
                     if (
@@ -212,7 +209,7 @@ class TestDPIntegration:
                         or node.right_child_id == other.id
                     ):
                         pytest.fail(
-                            f"Frontier contains both parent {node.id} and child {other.id}"
+                            f"Tiling contains both parent {node.id} and child {other.id}"
                         )
 
     @pytest.mark.asyncio
@@ -247,7 +244,7 @@ class TestDPIntegration:
         assembled1 = assembler.assemble(result1)
         # Should contain content from first half
         # Note: This test might be flaky due to how the tree is built with very small chunks
-        # The frontier selection depends on the exact tree structure which can vary
+        # The tiling selection depends on the exact tree structure which can vary
         assert assembled1  # Just check we got something back
 
         # Query for second half

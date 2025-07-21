@@ -1,6 +1,6 @@
 """Tests for position resolvers in tree visualization."""
 
-from ragzoom.dynamic_frontier import Segment, SegmentInfo
+from ragzoom.dynamic_tiling import Segment, SegmentInfo
 from ragzoom.store import TreeNode
 from ragzoom.tree_viz import CharacterPositionResolver, TokenPositionResolver
 from tests.mock_store import SimpleMockStore

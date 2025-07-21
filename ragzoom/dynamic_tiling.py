@@ -37,7 +37,7 @@ class SegmentInfo:
 
 @dataclass
 class DPResult:
-    """Complete result from DP frontier generation."""
+    """Complete result from DP tiling generation."""
 
     segments: list[Segment]
     segment_infos: list[SegmentInfo]
@@ -45,8 +45,8 @@ class DPResult:
     coverage_map: dict[str, bool]
 
 
-class DynamicFrontierGenerator:
-    """Generates a frontier using a dynamic programming approach."""
+class DynamicTilingGenerator:
+    """Generates a tiling using a dynamic programming approach."""
 
     def __init__(self, config: RagZoomConfig, store: Store):
         self.config = config
@@ -56,20 +56,20 @@ class DynamicFrontierGenerator:
             tuple[Optional[str], int], tuple[list[Segment], float]
         ] = {}
 
-    def find_optimal_frontier(
+    def find_optimal_tiling(
         self,
         budget_tokens: int,
         scores: dict[str, float],
         document_id: Optional[str],
         coverage_map: dict[str, bool],
     ) -> DPResult:
-        logger.info("Using DP frontier generation")
+        logger.info("Using DP tiling generation")
         root_node = self.store.get_root_node_for_document(document_id)
         if not root_node:
             return DPResult([], [], 0.0, coverage_map)
 
         self._memo_cache = {}
-        segments, quality = self._find_optimal_frontier_for_span(
+        segments, quality = self._find_optimal_tiling_for_span(
             root_node, budget_tokens, scores
         )
 
@@ -81,7 +81,7 @@ class DynamicFrontierGenerator:
             segment_infos.append(SegmentInfo(seg, cost, span_start, span_end))
 
         logger.info(
-            f"DP frontier generated with total quality {quality:.3f} and {len(segments)} segments."
+            f"DP tiling generated with total quality {quality:.3f} and {len(segments)} segments."
         )
 
         return DPResult(
@@ -103,8 +103,6 @@ class DynamicFrontierGenerator:
             text = node.text[: node.mid_offset]
         else:  # segment.side == "RIGHT"
             text = node.text[node.mid_offset :]
-            # Remove the MID delimiter to match assembler behavior
-            text = text.replace("<<<MID>>>", "")
         return len(self.tokenizer.encode(text.strip()))
 
     def _get_segment_span(self, segment: "Segment") -> tuple[int, int]:
@@ -186,18 +184,18 @@ class DynamicFrontierGenerator:
         budget_for_side: int,
         scores: dict[str, float],
     ) -> tuple[list[Segment], float]:
-        frontier_1 = [Segment(parent_node.id, side)]
-        quality_1 = self._calculate_segment_quality(frontier_1[0], scores)
+        tiling_1 = [Segment(parent_node.id, side)]
+        quality_1 = self._calculate_segment_quality(tiling_1[0], scores)
         child_node = self.store.get_child(parent_node.id, side)
-        frontier_2, quality_2 = self._find_optimal_frontier_for_span(
+        tiling_2, quality_2 = self._find_optimal_tiling_for_span(
             child_node, budget_for_side, scores
         )
-        if frontier_2 and quality_2 > quality_1:
-            return (frontier_2, quality_2)
+        if tiling_2 and quality_2 > quality_1:
+            return (tiling_2, quality_2)
         else:
-            return (frontier_1, quality_1)
+            return (tiling_1, quality_1)
 
-    def _find_optimal_frontier_for_span_unmemoized(
+    def _find_optimal_tiling_for_span_unmemoized(
         self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
     ) -> tuple[list[Segment], float]:
         if not node:
@@ -219,15 +217,15 @@ class DynamicFrontierGenerator:
         if budget < cost_of_this_node:
             return ([], 0.0)
         budget_l, budget_r = self._split_budget_proportionally(budget, node, scores)
-        best_frontier_left, best_quality_left = self._find_best_choice_for_side(
+        best_tiling_left, best_quality_left = self._find_best_choice_for_side(
             node, "LEFT", budget_l, scores
         )
-        best_frontier_right, best_quality_right = self._find_best_choice_for_side(
+        best_tiling_right, best_quality_right = self._find_best_choice_for_side(
             node, "RIGHT", budget_r, scores
         )
-        final_frontier = best_frontier_left + best_frontier_right
+        final_tiling = best_tiling_left + best_tiling_right
         final_quality = best_quality_left + best_quality_right
-        final_cost = sum(self._get_segment_cost(seg) for seg in final_frontier)
+        final_cost = sum(self._get_segment_cost(seg) for seg in final_tiling)
         if final_cost > budget:
             quality = self._calculate_segment_quality(
                 Segment(node.id, "LEFT"), scores
@@ -236,15 +234,15 @@ class DynamicFrontierGenerator:
                 [Segment(node.id, "LEFT"), Segment(node.id, "RIGHT")],
                 quality,
             )
-        return (final_frontier, final_quality)
+        return (final_tiling, final_quality)
 
-    def _find_optimal_frontier_for_span(
+    def _find_optimal_tiling_for_span(
         self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
     ) -> tuple[list[Segment], float]:
         node_id = node.id if node else None
         cache_key = (node_id, budget)
         if cache_key in self._memo_cache:
             return self._memo_cache[cache_key]
-        result = self._find_optimal_frontier_for_span_unmemoized(node, budget, scores)
+        result = self._find_optimal_tiling_for_span_unmemoized(node, budget, scores)
         self._memo_cache[cache_key] = result
         return result
