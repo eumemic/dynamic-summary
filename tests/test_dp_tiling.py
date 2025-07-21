@@ -7,7 +7,7 @@ from tests.mock_store import SimpleMockStore
 
 
 class TestDPFrontier:
-    """Tests for the new DP-based frontier generation."""
+    """Tests for the new DP-based tiling generation."""
 
     @pytest.fixture
     def setup_system(self):
@@ -36,12 +36,12 @@ class TestDPFrontier:
 
         # We need to manually call the DP generator for now
         coverage_map = {"root": True}
-        dp_result = dp_generator.find_optimal_frontier(
+        dp_result = dp_generator.find_optimal_tiling(
             1000, {"root": 1.0}, "test-doc-single", coverage_map
         )
         segments = dp_result.segments
 
-        assert segments, "DP frontier should not be empty for single node tree"
+        assert segments, "DP tiling should not be empty for single node tree"
         assert len(segments) == 1
         assert segments[0].node_id == "root"
         assert segments[0].side is None  # Leaf nodes have side=None

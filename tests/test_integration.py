@@ -152,8 +152,8 @@ class TestIntegration:
         result = retriever.retrieve(query)
 
         assert len(result.node_ids) > 0
-        assert result.frontier_segments is not None
-        assert len(result.frontier_segments) > 0
+        assert result.tiling is not None
+        assert len(result.tiling) > 0
 
         # Assemble summary
         summary = assembler.assemble(result)

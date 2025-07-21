@@ -45,8 +45,8 @@ This session was foundational. We began by tackling a subtle but critical bug in
 Our initial fixes were flawed and revealed deeper issues in the design. Through a collaborative process of design, testing, and refinement—and after navigating some frustrating environment and tooling issues (segfaults from a corrupted ChromaDB, confusing `mypy` errors)—we arrived at a much more robust solution.
 
 The key accomplishments were:
-1.  **Architectural Redesign:** We designed a new, "correct-by-construction" frontier generation algorithm based on dynamic programming. This replaces a brittle, multi-stage process with a single, principled, recursive pass. The design is captured in `docs/v2/dynamic-frontier-design.md`.
-2.  **Implementation & Refactoring:** We successfully implemented the core of this new DP algorithm, placing it behind a `frontier_mode` feature flag. This involved refactoring the logic into a new `ragzoom/dynamic_frontier.py` module and creating a comprehensive, fast, mock-based test suite in `tests/test_dp_frontier.py`.
+1.  **Architectural Redesign:** We designed a new, "correct-by-construction" tiling generation algorithm based on dynamic programming. This replaces a brittle, multi-stage process with a single, principled, recursive pass. The design is captured in `docs/v2/dynamic-frontier-design.md` (now archived).
+2.  **Implementation & Refactoring:** We successfully implemented the core of this new DP algorithm, placing it behind a `frontier_mode` feature flag. This involved refactoring the logic into a new `ragzoom/dynamic_frontier.py` module (note: still uses legacy "frontier" naming) and creating a comprehensive, fast, mock-based test suite in `tests/test_dp_frontier.py`.
 3.  **Process Improvement:** We improved the developer experience by making the pre-commit hook auto-fix and stage linting issues.
 4.  **Codified Wisdom:** We created the `docs/architecture.md` and `docs/developer-guide.md` documents, as well as the `.cursorrules` file, to capture our learnings for future agents.
 
@@ -59,7 +59,7 @@ This session focused on carefully removing dead code from the DP transition. The
 **Key accomplishments:**
 1. **Removed frontier_mode flag**: Successfully removed the configuration flag and all conditional code that checked it
 2. **Removed dead retrieval code**: Deleted `_extract_frontier()`, `_enforce_budget_constraint()`, and `get_actual_node_text()` 
-3. **Discovered test dependencies**: Found that many tests directly test legacy assembly behavior by creating RetrievalResult objects without frontier_segments
+3. **Discovered test dependencies**: Found that many tests directly test legacy assembly behavior by creating RetrievalResult objects without tiling segments
 4. **Made the safe decision**: Kept the legacy assembly path but marked it as deprecated, avoiding the chaos of the previous attempt
 
 **Critical insight**: The tests that manually create RetrievalResult objects are testing specific assembly behaviors, not the full system. Breaking these tests could mean losing coverage of important edge cases that the DP algorithm should also handle.

@@ -4,7 +4,7 @@ import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
-from ragzoom.dynamic_frontier import Segment
+from ragzoom.dynamic_tiling import Segment
 
 
 class TestDPAssembly:

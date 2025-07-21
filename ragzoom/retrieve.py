@@ -9,7 +9,7 @@ from openai import OpenAI
 from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.dynamic_frontier import DynamicFrontierGenerator, Segment, SegmentInfo
+from ragzoom.dynamic_tiling import DynamicTilingGenerator, Segment, SegmentInfo
 from ragzoom.store import Store, TreeNode
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ class RetrievalResult:
     node_ids: list[str]
     scores: dict[str, float]
     coverage_map: dict[str, bool]
-    frontier_segments: Optional[list["Segment"]] = None
+    tiling: Optional[list["Segment"]] = None
     segment_infos: Optional[list["SegmentInfo"]] = None
     nodes: Optional[dict[str, "TreeNode"]] = (
         None  # Pre-loaded nodes to avoid redundant loading
@@ -46,7 +46,7 @@ class Retriever:
         self.store = store
         self.tree_builder = tree_builder
         self.client = OpenAI(api_key=config.openai_api_key)
-        self.dp_generator = DynamicFrontierGenerator(config, store)
+        self.dp_generator = DynamicTilingGenerator(config, store)
 
         # Per-request cache to avoid double refresh
         self._refreshed_node_ids: set[str] = set()
@@ -132,11 +132,11 @@ class Retriever:
             cand[0]: 1.0 - cand[1] for cand in candidates if cand[0] in coverage_map
         }  # Convert distance to similarity
 
-        # Step 5: Extract frontier using DP algorithm
+        # Step 5: Extract tiling using DP algorithm
         final_budget = (
             budget_tokens if budget_tokens is not None else self.config.budget_tokens
         )
-        dp_result = self.dp_generator.find_optimal_frontier(
+        dp_result = self.dp_generator.find_optimal_tiling(
             final_budget, scores, document_id, coverage_map
         )
 
@@ -151,7 +151,7 @@ class Retriever:
             node_ids=selected_ids,
             scores=scores,
             coverage_map=coverage_map,  # Use the original coverage map
-            frontier_segments=dp_result.segments,
+            tiling=dp_result.segments,
             segment_infos=dp_result.segment_infos,
             nodes=nodes,
         )

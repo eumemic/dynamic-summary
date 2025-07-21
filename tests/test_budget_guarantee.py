@@ -278,7 +278,7 @@ class TestBudgetGuarantee:
         result = retriever.retrieve("test", n_max=n_max, budget_tokens=budget)
 
         # Should respect budget with DP algorithm
-        assert result.frontier_segments is not None
+        assert result.tiling is not None
 
         # Assemble and verify budget
         assembled_text = assembler.assemble(result)
@@ -300,7 +300,7 @@ class TestBudgetGuarantee:
         result = retriever.retrieve("test", n_max=n_max, budget_tokens=None)
 
         # Should have segments from DP algorithm
-        assert result.frontier_segments is not None
+        assert result.tiling is not None
 
         # Assembly should work without budget constraints
         assembled_text = assembler.assemble(result)

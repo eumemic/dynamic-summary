@@ -82,7 +82,7 @@ ragzoom query "neural networks" -d my-doc -n 10 -b 4000
 # Debug mode with visualization
 ragzoom query "transformer architecture" -d my-doc --debug
 
-# Validate frontier coverage
+# Validate tiling coverage
 ragzoom query "attention mechanism" -d my-doc --validate
 ```
 
@@ -421,7 +421,7 @@ All parameters can be set via environment variables with the `RAGZOOM_` prefix.
 | `mmr_lambda` | float | 0.7 | MMR diversity parameter (0=diverse, 1=relevant) |
 | `mmr_consideration_penalty` | float | 0.8 | Penalty for already selected content |
 
-#### Frontier Parameters
+#### Tiling Parameters
 
 | Parameter | Type | Default | Description | Status |
 |-----------|------|---------|-------------|---------|
