@@ -101,37 +101,6 @@ class TextSplitter:
         # Reconstruct chunks with ALL gaps filled
         return self._reconstruct_chunks_with_whitespace(text, raw_chunks)
 
-    def split_documents(self, documents: list[dict]) -> list[dict]:
-        """Split documents into chunks with metadata preserved."""
-        all_chunks = []
-
-        for doc in documents:
-            chunks = self.split_text(doc["text"])
-
-            # Calculate character positions for each chunk
-            current_pos = 0
-            for i, chunk in enumerate(chunks):
-                chunk_start = doc["text"].find(chunk, current_pos)
-                chunk_end = chunk_start + len(chunk)
-
-                all_chunks.append(
-                    {
-                        "text": chunk,
-                        "metadata": {
-                            **doc.get("metadata", {}),
-                            "chunk_index": i,
-                            "chunk_start": chunk_start,
-                            "chunk_end": chunk_end,
-                            "source_doc_id": doc.get("id", "unknown"),
-                        },
-                    }
-                )
-
-                # Move to the end of the current chunk (no overlap)
-                current_pos = chunk_end
-
-        return all_chunks
-
     def get_adjacent_context(
         self, chunks: list[str], chunk_index: int
     ) -> tuple[Optional[str], Optional[str]]:
