@@ -1,27 +1,38 @@
-# /monitor-pr
+# /push
 
-Monitor the current PR for build status changes and new comments, taking action on issues that need to be addressed.
+Push code to remote, create PR if needed, then monitor for build status and comments.
 
 ## Workflow Overview
 
-**CRITICAL**: The workflow must follow this sequence:
-1. **STOP monitoring** as soon as any failure or actionable issue is detected
-2. **FIX all known issues** before resuming monitoring
-3. **COMMIT incrementally** as you fix issues (but DO NOT push)
-4. **Use built-in todo tracking** to manage all identified issues
-5. **RESUME monitoring** only after all issues are fixed
-6. **PUSH everything** only after build completes successfully
+**The workflow follows this sequence**:
+1. **PUSH** current commits to remote
+2. **CREATE PR** if on a feature branch without an existing PR
+3. **MONITOR** the PR for build failures and review comments
+4. **FIX** any issues immediately when detected
+5. **COMMIT** fixes incrementally (but don't push yet)
+6. **PUSH** all fixes after build completes successfully
 
-This minimizes CI churn by avoiding multiple push-triggered builds.
+This minimizes CI churn by batching fixes before pushing.
 
 ## Instructions:
 
-1. **Initial Check**:
-   - Identify the current branch and associated PR number
+1. **Push Code**:
+   - Push current branch to remote with `git push`
+   - If branch not tracked, use `git push -u origin <branch-name>`
+
+2. **Create PR (if needed)**:
+   - Check if PR already exists for current branch
+   - If not, create PR with `gh pr create`
+   - **IMPORTANT**: Reference any related GitHub issues in PR body (e.g., "Fixes #123")
+   - Use descriptive title and comprehensive body
+   - Include test plan and summary of changes
+
+3. **Initial PR Check**:
+   - Get PR number and status
    - Check CI build status and existing comments
    - If ANY failures or issues exist, immediately proceed to fixing (skip monitoring)
 
-2. **Monitoring Loop** (only if no issues):
+4. **Monitoring Loop** (only if no issues):
    - Use `gh pr checks <PR#> --watch --fail-fast` to monitor CI status
    - This command will:
      - Update check status every 10 seconds automatically
@@ -33,7 +44,7 @@ This minimizes CI churn by avoiding multiple push-triggered builds.
    - Also check for new review comments separately
    - **IMPORTANT**: The fail-fast flag ensures we detect and fix issues as soon as they occur
 
-3. **Issue Resolution Mode**:
+5. **Issue Resolution Mode**:
    - **When you detect ANY issue, STOP monitoring immediately**
    - Use built-in todo tracking to record ALL known issues:
      - CI failures (check logs thoroughly)
@@ -42,7 +53,7 @@ This minimizes CI churn by avoiding multiple push-triggered builds.
    - Fix ALL issues before returning to monitoring
    - Commit fixes incrementally but DO NOT push yet
    
-4. **Fix Priority**:
+6. **Fix Priority**:
    - **Automatically fix**:
      - Build failures
      - Test failures
@@ -56,19 +67,19 @@ This minimizes CI churn by avoiding multiple push-triggered builds.
      - Style preferences
      - Non-blocking suggestions
 
-5. **Completion and Push**:
+7. **Completion and Push**:
    - Once build completes AND all issues are fixed:
      - Review all commits made during fixes
      - Push once to minimize CI runs
    - If new issues appear after push, repeat the cycle
 
-6. **Final Dashboard**:
+8. **Final Dashboard**:
    - When presenting the final status (whether success or current state):
      - Include a direct link to the PR for easy access
      - Format: `PR #N: https://github.com/owner/repo/pull/N`
    - This allows the user to quickly navigate to the PR
 
-7. **Stop Conditions**:
+9. **Stop Conditions**:
    - User explicitly asks to stop
    - PR is merged or closed
    - All builds complete with all issues resolved
@@ -76,13 +87,23 @@ This minimizes CI churn by avoiding multiple push-triggered builds.
 ## Correct Flow Example:
 
 ```
-User: /monitor-pr
-Assistant: Checking PR #9 status...
+User: /push
+Assistant: Pushing current branch to remote...
+
+$ git push
+✅ Successfully pushed to origin/feature-branch
+
+Checking for existing PR...
+No PR found. Creating new PR...
+
+$ gh pr create --title "Add new feature X" --body "..."
+✅ Created PR #9: https://github.com/owner/repo/pull/9
+
+Checking PR #9 status...
 
 ❌ Found issues that need fixing:
-- CI Build: Failed (Postgres pull error)
-- Claude Review: Completed (found docs-lint.py bug)
-- Broken import in orchestrator/CLAUDE.md
+- CI Build: Failed (test failure in test_feature.py)
+- Claude Review: Completed (found import issue)
 
 Stopping monitoring to fix all issues...
 
