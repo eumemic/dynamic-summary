@@ -239,9 +239,9 @@ class TestDPAssembly:
         # Should return full text since mid_offset is None
         assert result == "Summary without MID delimiter"
 
-    def test_complex_frontier_assembly(self, assembler, mock_nodes):
-        """Test a complex frontier that resembles real DP output."""
-        # Simulate a frontier that might come from DP algorithm
+    def test_complex_tiling_assembly(self, assembler, mock_nodes):
+        """Test a complex tiling that resembles real DP output."""
+        # Simulate a tiling that might come from DP algorithm
         segments = [
             Segment(node_id="left", side="LEFT"),
             Segment(node_id="leaf2", side=None),

@@ -45,8 +45,8 @@ This session was foundational. We began by tackling a subtle but critical bug in
 Our initial fixes were flawed and revealed deeper issues in the design. Through a collaborative process of design, testing, and refinement—and after navigating some frustrating environment and tooling issues (segfaults from a corrupted ChromaDB, confusing `mypy` errors)—we arrived at a much more robust solution.
 
 The key accomplishments were:
-1.  **Architectural Redesign:** We designed a new, "correct-by-construction" tiling generation algorithm based on dynamic programming. This replaces a brittle, multi-stage process with a single, principled, recursive pass. The design is captured in `docs/v2/dynamic-frontier-design.md` (now archived).
-2.  **Implementation & Refactoring:** We successfully implemented the core of this new DP algorithm, placing it behind a `frontier_mode` feature flag. This involved refactoring the logic into a new `ragzoom/dynamic_frontier.py` module (note: still uses legacy "frontier" naming) and creating a comprehensive, fast, mock-based test suite in `tests/test_dp_frontier.py`.
+1.  **Architectural Redesign:** We designed a new, "correct-by-construction" tiling generation algorithm based on dynamic programming. This replaces a brittle, multi-stage process with a single, principled, recursive pass. The design is captured in `docs/v2/dynamic-tiling-design.md` (now archived).
+2.  **Implementation & Refactoring:** We successfully implemented the core of this new DP algorithm, placing it behind a `tiling_mode` feature flag. This involved refactoring the logic into a new `ragzoom/dynamic_tiling.py` module and creating a comprehensive, fast, mock-based test suite in `tests/test_dp_tiling.py`.
 3.  **Process Improvement:** We improved the developer experience by making the pre-commit hook auto-fix and stage linting issues.
 4.  **Codified Wisdom:** We created the `docs/architecture.md` and `docs/developer-guide.md` documents, as well as the `.cursorrules` file, to capture our learnings for future agents.
 
