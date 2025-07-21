@@ -20,7 +20,7 @@ This document provides a comprehensive technical explanation of RagZoom's Dynami
 
 The original RagZoom algorithm used a multi-stage corrective pipeline that was brittle and error-prone:
 
-1. Extract frontier using greedy top-down walk
+1. Extract tiling using greedy top-down walk
 2. Trim to budget (potentially breaking coverage)
 3. Apply slope cap (potentially exceeding budget)
 4. Re-trim if needed
@@ -53,7 +53,7 @@ This is why patterns like "Summary → Leaf A → Summary → Leaf C → Summary
 
 ## Algorithm Overview
 
-The DP algorithm treats frontier generation as an optimization problem:
+The DP algorithm treats tiling generation as an optimization problem:
 
 > Given a tree node and token budget, find the tiling that maximizes total quality (relevance score) while staying within the budget.
 
