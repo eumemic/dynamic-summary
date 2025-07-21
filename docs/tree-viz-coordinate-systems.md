@@ -586,14 +586,14 @@ def build_ascii_tree(
 def query(
     text: str,
     document_id: str,
-    show_stats: bool,
+    debug: bool,
     validate: bool,
     viz_width: int,
     viz_coords: str,
 ):
     # ... existing code ...
     
-    if show_stats:
+    if debug:
         # ... existing stats code ...
         
         # Create appropriate position resolver
