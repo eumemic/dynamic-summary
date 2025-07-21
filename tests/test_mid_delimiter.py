@@ -154,11 +154,11 @@ class TestMidDelimiter:
         reason="Legacy assembler test, will be removed with DP implementation"
     )
     def test_assembly_with_exact_span_deduplication(self, assembler):
-        """Test that the assembler correctly handles frontiers that would have overlaps
+        """Test that the assembler correctly handles tilings that would have overlaps
         if not for the exact span deduplication logic."""
         # Create mock retrieval result
         retrieval_result = MagicMock(spec=RetrievalResult)
-        # Note: frontier_nodes field no longer exists, test uses legacy assembly
+        # Note: tiling_nodes field no longer exists, test uses legacy assembly
         retrieval_result.coverage_map = set()
 
         # Mock nodes - node1 and node2 have EXACT same span

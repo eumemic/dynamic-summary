@@ -6,7 +6,7 @@ from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
 
-class TestDPFrontier:
+class TestDPTiling:
     """Tests for the new DP-based tiling generation."""
 
     @pytest.fixture

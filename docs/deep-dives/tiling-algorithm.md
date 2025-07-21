@@ -178,7 +178,7 @@ The v2 design documents describe a more sophisticated "mass-based" system where 
 Here's the complete pseudocode matching the actual implementation:
 
 ```python
-class DynamicFrontierGenerator:
+class DynamicTilingGenerator:
     def __init__(self, store, config):
         self.store = store
         self.config = config

@@ -57,8 +57,8 @@ We are now poised to complete the refactoring by implementing the final post-pro
 This session focused on carefully removing dead code from the DP transition. The user warned me about a previous attempt that became "a huge mess" when an agent started chaotically changing the core DP algorithm to make tests pass.
 
 **Key accomplishments:**
-1. **Removed frontier_mode flag**: Successfully removed the configuration flag and all conditional code that checked it
-2. **Removed dead retrieval code**: Deleted `_extract_frontier()`, `_enforce_budget_constraint()`, and `get_actual_node_text()` 
+1. **Removed tiling_mode flag**: Successfully removed the configuration flag and all conditional code that checked it
+2. **Removed dead retrieval code**: Deleted legacy methods `_extract_frontier()`, `_enforce_budget_constraint()`, and `get_actual_node_text()` 
 3. **Discovered test dependencies**: Found that many tests directly test legacy assembly behavior by creating RetrievalResult objects without tiling segments
 4. **Made the safe decision**: Kept the legacy assembly path but marked it as deprecated, avoiding the chaos of the previous attempt
 
