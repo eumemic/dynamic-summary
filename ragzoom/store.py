@@ -319,7 +319,8 @@ class Store:
         with self.SessionLocal() as session:
             node = session.query(TreeNode).filter_by(id=node_id).first()
             if node:
-                # Use cast to handle the nullable text field
+                # Use cast to handle the nullable text field - this is safe because we always
+                # pass a non-null text parameter when updating summaries for internal nodes
                 node.text = cast(str, text)
                 node.summary = text  # These are the same for internal nodes
                 if mid_offset is not None:
