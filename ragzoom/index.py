@@ -1,4 +1,9 @@
-"""Tree building and indexing functionality for RagZoom."""
+"""Tree building and indexing functionality for RagZoom.
+
+Note: Throughout this module, info-level logging is suppressed when show_progress=True
+to prevent log messages from disrupting the progress bar display. This is why you'll see
+`if not show_progress:` conditions before logger.info() calls.
+"""
 
 import asyncio
 import logging
@@ -212,10 +217,18 @@ class TreeBuilder:
                 document_id = self._generate_node_id()
 
         # Split into chunks
-        if show_progress:
-            logger.info("Splitting document into chunks...")
         chunks = self.splitter.split_text(text)
-        logger.info(f"Split document into {len(chunks)} chunks")
+
+        # Create progress tracker early so we can use it for logging
+        # When progress bar is active, we suppress info logs to avoid disrupting the display
+        progress = (
+            GlobalProgressTracker(len(chunks), show_progress) if show_progress else None
+        )
+
+        # Log only when progress bar is not active to avoid display issues
+        if not show_progress:
+            logger.info("Splitting document into chunks...")
+            logger.info(f"Split document into {len(chunks)} chunks")
 
         # Early validation: Check chunk sizes immediately after splitting
         from ragzoom.validate import validate, validate_chunk_sizes
@@ -231,16 +244,15 @@ class TreeBuilder:
             "early chunk size validation",
         )
 
-        # Create progress tracker
-        progress = GlobalProgressTracker(len(chunks), show_progress)
-        async_progress = AsyncProgressWrapper(progress)
+        # Create async wrapper for progress (tracker already created above)
+        async_progress = AsyncProgressWrapper(progress) if progress else None
 
         # Track overall start time for cumulative elapsed time
         overall_start_time = time.time()
 
         try:
             # Create leaf nodes with batch embeddings
-            if show_progress and len(chunks) > 100:
+            if not show_progress and len(chunks) > 100:
                 logger.info("Preparing chunk data...")
 
             leaf_ids: list[str] = []
@@ -314,7 +326,7 @@ class TreeBuilder:
                 batch_end = min(i + batch_size, len(chunks))
 
                 # Show which batch we're processing with cumulative elapsed time
-                if show_progress:
+                if not show_progress:
                     elapsed = time.time() - overall_start_time
                     mins, secs = divmod(int(elapsed), 60)
                     logger.info(
@@ -325,7 +337,8 @@ class TreeBuilder:
                 all_embeddings.extend(batch_embeddings)
 
                 # Update progress for embeddings
-                await async_progress.update(len(batch_texts))
+                if async_progress:
+                    await async_progress.update(len(batch_texts))
 
             # Store all leaf nodes
             for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
@@ -364,14 +377,16 @@ class TreeBuilder:
             if root_id:
                 total_elapsed = time.time() - overall_start_time
                 mins, secs = divmod(int(total_elapsed), 60)
-                logger.info(
-                    f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
-                )
+                if not show_progress:
+                    logger.info(
+                        f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
+                    )
 
             return document_id
         finally:
             # Always close progress
-            progress.close()
+            if progress:
+                progress.close()
 
     def add_document(
         self,
@@ -552,17 +567,20 @@ class TreeBuilder:
 
             # Process all pairs concurrently
             if tasks:
-                # Always log tree building progress with cumulative elapsed time
-                if overall_start_time:
-                    elapsed = time.time() - overall_start_time
-                    mins, secs = divmod(int(elapsed), 60)
-                    logger.info(
-                        f"Building tree height {current_height}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
-                    )
-                else:
-                    logger.info(
-                        f"Building tree height {current_height}: processing {len(tasks)} node pairs"
-                    )
+                # Log tree building progress only when no progress bar
+                if not (
+                    progress and progress.tracker and progress.tracker.show_progress
+                ):
+                    if overall_start_time:
+                        elapsed = time.time() - overall_start_time
+                        mins, secs = divmod(int(elapsed), 60)
+                        logger.info(
+                            f"Building tree height {current_height}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
+                        )
+                    else:
+                        logger.info(
+                            f"Building tree height {current_height}: processing {len(tasks)} node pairs"
+                        )
 
                 # Track completion count
                 completed_count = 0
@@ -579,11 +597,16 @@ class TreeBuilder:
                     # Log batch completion every 10 tasks
                     completed_count += 1
                     if completed_count % 10 == 0 and overall_start_time:
-                        elapsed = time.time() - overall_start_time
-                        mins, secs = divmod(int(elapsed), 60)
-                        logger.info(
-                            f"  Completed {completed_count}/{len(tasks)} pairs at height {current_height} [{mins}m {secs}s elapsed total]"
-                        )
+                        if not (
+                            progress
+                            and progress.tracker
+                            and progress.tracker.show_progress
+                        ):
+                            elapsed = time.time() - overall_start_time
+                            mins, secs = divmod(int(elapsed), 60)
+                            logger.info(
+                                f"  Completed {completed_count}/{len(tasks)} pairs at height {current_height} [{mins}m {secs}s elapsed total]"
+                            )
 
                     return result
 
@@ -632,13 +655,19 @@ class TreeBuilder:
             if overall_start_time:
                 elapsed = time.time() - overall_start_time
                 mins, secs = divmod(int(elapsed), 60)
-                logger.info(
-                    f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]"
-                )
+                if not (
+                    progress and progress.tracker and progress.tracker.show_progress
+                ):
+                    logger.info(
+                        f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]"
+                    )
             else:
-                logger.info(
-                    f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}..."
-                )
+                if not (
+                    progress and progress.tracker and progress.tracker.show_progress
+                ):
+                    logger.info(
+                        f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}..."
+                    )
         return current_level_ids[0] if current_level_ids else ""
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
