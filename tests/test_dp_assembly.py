@@ -69,40 +69,40 @@ class TestDPAssembly:
             document_id="doc1",
         )
 
-        # Internal nodes with MID delimiters
+        # Internal nodes (MID delimiter stripped, only offset stored)
         store.add_node(
             node_id="left",
-            text="Summary of first half. <<<MID>>> Summary of second half.",
+            text="Summary of first half. Summary of second half.",
             embedding=[0.15] * 1536,
             span_start=0,
             span_end=41,
             left_child_id="leaf1",
             right_child_id="leaf2",
-            mid_offset=23,  # Position of <<<MID>>>
+            mid_offset=23,  # Position where <<<MID>>> was
             document_id="doc1",
         )
 
         store.add_node(
             node_id="right",
-            text="Summary of third chunk. <<<MID>>> Summary of fourth chunk.",
+            text="Summary of third chunk. Summary of fourth chunk.",
             embedding=[0.35] * 1536,
             span_start=41,
             span_end=82,
             left_child_id="leaf3",
             right_child_id="leaf4",
-            mid_offset=24,  # Position of <<<MID>>>
+            mid_offset=24,  # Position where <<<MID>>> was
             document_id="doc1",
         )
 
         store.add_node(
             node_id="root",
-            text="Overall document summary. <<<MID>>> More summary content.",
+            text="Overall document summary. More summary content.",
             embedding=[0.25] * 1536,
             span_start=0,
             span_end=82,
             left_child_id="left",
             right_child_id="right",
-            mid_offset=26,  # Position of <<<MID>>>
+            mid_offset=26,  # Position where <<<MID>>> was
             document_id="doc1",
         )
 
@@ -128,7 +128,7 @@ class TestDPAssembly:
 
         result = assembler.assemble_dp(segments)
 
-        # Should get left half of "left" node (before <<<MID>>>)
+        # Should get left half of "left" node (before mid_offset)
         # Leaf nodes return full text regardless of side
         assert result == "Summary of first half.\n\nThird chunk of text."
 
@@ -141,7 +141,7 @@ class TestDPAssembly:
 
         result = assembler.assemble_dp(segments)
 
-        # Leaf returns full text, right returns text after <<<MID>>> (cleaned)
+        # Leaf returns full text, right returns text after mid_offset
         assert result == "First chunk of text.\n\nSummary of fourth chunk."
 
     def test_mixed_sides_assembly(self, assembler, mock_nodes):

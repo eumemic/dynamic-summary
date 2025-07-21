@@ -69,13 +69,7 @@ class Assembler:
         if segment.side == "LEFT":
             return node.text[: node.mid_offset].strip()
         else:  # RIGHT
-            right_text = node.text[node.mid_offset :].strip()
-            # Clean the MID delimiter from RIGHT side
-            return self._clean_mid_delimiter(right_text)
-
-    def _clean_mid_delimiter(self, text: str) -> str:
-        """Remove <<<MID>>> delimiter from text."""
-        return text.replace("<<<MID>>>", "").strip()
+            return node.text[node.mid_offset :].strip()
 
     def _find_intermediate_path(
         self, start_id: str, end_id: str

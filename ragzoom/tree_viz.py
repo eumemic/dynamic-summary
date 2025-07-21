@@ -174,17 +174,9 @@ class TokenPositionResolver(PositionResolver):
                     if right_cost == 0.0 and node.right_child_id in self.coverage_map:
                         right_child = self.store.get_node(node.right_child_id)
                         if right_child and right_child.text:
-                            # For internal nodes, need to handle MID delimiter
-                            if (
-                                not self.store.is_leaf_node(right_child.id)
-                                and right_child.mid_offset is not None
-                            ):
-                                text = right_child.text.replace("<<<MID>>>", "")
-                                right_cost = float(len(self.tokenizer.encode(text)))
-                            else:
-                                right_cost = float(
-                                    len(self.tokenizer.encode(right_child.text))
-                                )
+                            right_cost = float(
+                                len(self.tokenizer.encode(right_child.text))
+                            )
 
                 total_cost = left_cost + right_cost
 
