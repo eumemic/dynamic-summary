@@ -174,7 +174,6 @@ jobs:
       - name: Run MyPy
         run: |
           mypy ragzoom/ --ignore-missing-imports --no-error-summary --check-untyped-defs
-        continue-on-error: true  # MyPy warnings shouldn't fail the build
 
   # Test coverage report
   coverage:
@@ -270,4 +269,3 @@ jobs:
       - name: Run Bandit
         run: |
           bandit -r ragzoom/ -ll -f github
-        continue-on-error: true  # Security warnings shouldn't fail the build
