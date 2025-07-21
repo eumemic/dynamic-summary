@@ -209,7 +209,7 @@ class TestBudgetGuarantee:
         # This tests the <<<MID>>> extraction logic
         result = retriever.retrieve("first leaf", n_max=2, budget_tokens=500)
 
-        # Note: Cannot force a specific tiling anymore since frontier_nodes field no longer exists
+        # Note: Cannot force a specific tiling anymore since tiling field is computed by DP
         # This test may need to be redesigned to work with the new tiling-based approach
 
         # Assemble and check budget
