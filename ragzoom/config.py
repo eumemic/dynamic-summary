@@ -57,7 +57,7 @@ class RagZoomConfig(BaseSettings):
     )
 
     # Storage configuration
-    openai_api_key: str = Field(..., description="OpenAI API key")
+    openai_api_key: str = Field(default="", description="OpenAI API key")
     chroma_persist_directory: str = Field(
         default="./chroma_db", description="Directory for Chroma persistence"
     )
