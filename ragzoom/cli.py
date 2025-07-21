@@ -35,7 +35,7 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 
 @click.group()
 @click.pass_context
-def cli(ctx):
+def cli(ctx: click.Context) -> None:
     """RagZoom: Incremental, hierarchical RAG memory system."""
     # Initialize shared components
     config = RagZoomConfig()
@@ -64,14 +64,14 @@ def cli(ctx):
 @click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.pass_context
 def index(
-    ctx,
+    ctx: click.Context,
     file_path: str,
     document_id: Optional[str],
     clear: bool,
     no_progress: bool,
     max_concurrent: int,
     validate: bool,
-):
+) -> None:
     """Index a document from file."""
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
