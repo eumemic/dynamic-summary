@@ -113,6 +113,8 @@ Key configuration parameters that affect system behavior:
 | `slope_cap_size` | 1 | Maximum depth difference | **NOT IMPLEMENTED** |
 | `enable_smoothing` | False | Add transitions between segments | **NOT IMPLEMENTED** |
 
+For complete configuration documentation including all parameters and environment variables, see [API Reference - Configuration](api-reference.md#configuration-parameters).
+
 ## 6. Implementation Status
 
 ### Currently Implemented
@@ -157,4 +159,11 @@ Key configuration parameters that affect system behavior:
 1. **Streaming Assembly**: Stream segments as they're computed
 2. **Parallel DP Evaluation**: Compute left/right subproblems concurrently
 3. **Pre-computed Tilings**: Cache common budget allocations
-4. **Multi-document Queries**: Extend to handle cross-document retrieval 
+4. **Multi-document Queries**: Extend to handle cross-document retrieval
+
+## 10. See Also
+
+- [Tiling Algorithm Deep Dive](deep-dives/tiling-algorithm.md) - Comprehensive technical explanation of the DP algorithm
+- [Developer Guide](developer-guide.md) - Development environment setup and best practices
+- [API Reference](api-reference.md) - Complete CLI and Python API documentation
+- [Vision Document](vision.md) - Future features and architectural evolution 
