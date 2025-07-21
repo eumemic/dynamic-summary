@@ -136,8 +136,8 @@ class TestNMaxFix:
         )
 
         # Verify frontier only uses nodes from coverage tree
-        if result.frontier_segments:
-            frontier_nodes = {seg.node_id for seg in result.frontier_segments}
+        if result.tiling:
+            frontier_nodes = {seg.node_id for seg in result.tiling}
             assert frontier_nodes.issubset(expected_coverage), (
                 f"Frontier contains nodes outside coverage tree! "
                 f"Frontier: {frontier_nodes}, Coverage: {expected_coverage}"
@@ -145,7 +145,7 @@ class TestNMaxFix:
 
             # Count leaf nodes in frontier
             leaf_count = sum(
-                1 for seg in result.frontier_segments if store.is_leaf_node(seg.node_id)
+                1 for seg in result.tiling if store.is_leaf_node(seg.node_id)
             )
             assert leaf_count <= 1, f"Expected at most 1 leaf node, got {leaf_count}"
 
@@ -304,8 +304,8 @@ The dragons all left. Peace returned."""
             ), f"Expected 1 node, got {len(result.node_ids)}"
 
         # Get frontier segments
-        assert result.frontier_segments is not None
-        segments = result.frontier_segments
+        assert result.tiling is not None
+        segments = result.tiling
 
         # Count leaf segments
         leaf_segments = []

@@ -280,12 +280,10 @@ def query(
         token_count = assembler.get_token_count(summary)
 
         # Segment-level tiling validation (new)
-        if validate and getattr(result, "frontier_segments", None):
+        if validate and getattr(result, "tiling", None):
             from ragzoom.validate import validate_tiling
 
-            error = validate_tiling(
-                result.frontier_segments, ctx.obj["store"], document_id
-            )
+            error = validate_tiling(result.tiling, ctx.obj["store"], document_id)
             if error:
                 click.echo(
                     f"❌ Segment-level tiling validation failed: {error}", err=True
@@ -296,9 +294,9 @@ def query(
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY")
         click.echo("=" * 60)
-        if debug and getattr(result, "frontier_segments", None):
+        if debug and getattr(result, "tiling", None):
             store = ctx.obj["store"]
-            for idx, segment in enumerate(result.frontier_segments):
+            for idx, segment in enumerate(result.tiling):
                 node = store.get_node(segment.node_id)
                 if node:
                     # Calculate correct segment span
@@ -338,7 +336,7 @@ def query(
                     # Get the segment text as in assembler._get_text_for_segment
                     text = assembler._get_text_for_segment(segment)
                     click.echo(text)
-                    if idx < len(result.frontier_segments) - 1:
+                    if idx < len(result.tiling) - 1:
                         click.echo("")
         else:
             click.echo(summary)
@@ -347,7 +345,7 @@ def query(
         # Show debug info if requested
         if debug:
             # Show ASCII tree visualization first
-            if result.frontier_segments:
+            if result.tiling:
                 # Use provided width or detect terminal width
                 if viz_width:
                     terminal_width = viz_width
@@ -365,7 +363,7 @@ def query(
                 click.echo("=" * 60)
 
                 tree_viz = build_ascii_tree(
-                    result.frontier_segments,
+                    result.tiling,
                     ctx.obj["store"],
                     document_id,
                     width=actual_viz_width,
@@ -383,10 +381,8 @@ def query(
             click.echo("STATISTICS")
             click.echo("=" * 60)
             click.echo(f"  Nodes retrieved: {len(result.node_ids)}")
-            frontier_size = (
-                len(result.frontier_segments) if result.frontier_segments else 0
-            )
-            click.echo(f"  Frontier size: {frontier_size}")
+            tiling_size = len(result.tiling) if result.tiling else 0
+            click.echo(f"  Tiling size: {tiling_size}")
             click.echo(f"  Token count: {token_count}")
             click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
 

@@ -1,4 +1,4 @@
-"""Assembly logic for creating coherent summaries from frontier nodes."""
+"""Assembly logic for creating coherent summaries from tiling nodes."""
 
 import logging
 from typing import Optional
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class Assembler:
-    """Assembles frontier nodes into coherent summary with optional smoothing."""
+    """Assembles tiling nodes into coherent summary with optional smoothing."""
 
     def __init__(self, config: RagZoomConfig, store: Store):
         """Initialize assembler."""
@@ -25,26 +25,24 @@ class Assembler:
 
     def assemble(self, retrieval_result: RetrievalResult) -> str:
         """
-        Assemble frontier nodes into final summary using the DP-based assembly path only.
+        Assemble tiling nodes into final summary using the DP-based assembly path only.
         """
-        if retrieval_result.frontier_segments is None:
+        if retrieval_result.tiling is None:
             raise ValueError(
-                "DP assembly requires frontier_segments. Legacy assembly is no longer supported."
+                "DP assembly requires tiling. Legacy assembly is no longer supported."
             )
-        return self.assemble_dp(
-            retrieval_result.frontier_segments, retrieval_result.nodes
-        )
+        return self.assemble_dp(retrieval_result.tiling, retrieval_result.nodes)
 
     def assemble_dp(
         self,
-        frontier_segments: list["Segment"],
+        tiling: list["Segment"],
         nodes: Optional[dict[str, "TreeNode"]] = None,
     ) -> str:
-        """Assemble a frontier from a list of Segments."""
-        if not frontier_segments:
+        """Assemble a tiling from a list of Segments."""
+        if not tiling:
             return ""
 
-        texts = [self._get_text_for_segment(seg, nodes) for seg in frontier_segments]
+        texts = [self._get_text_for_segment(seg, nodes) for seg in tiling]
         # Filter out empty texts to avoid extra newlines
         texts = [t for t in texts if t]
         return "\n\n".join(texts)
@@ -158,7 +156,7 @@ class Assembler:
 
             return None
 
-    def _apply_smoothing_pass(self, frontier_nodes: list[str], texts: list[str]) -> str:
+    def _apply_smoothing_pass(self, tiling_nodes: list[str], texts: list[str]) -> str:
         """Apply smoothing pass to improve coherence at boundaries."""
         if len(texts) <= 1:
             return "\n\n".join(texts)

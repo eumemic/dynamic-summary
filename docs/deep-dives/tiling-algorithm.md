@@ -60,7 +60,7 @@ The DP algorithm treats frontier generation as an optimization problem:
 ### Recursive Structure
 
 ```
-find_optimal_frontier(node, budget):
+find_optimal_tiling(node, budget):
     if node is leaf:
         return [(node, None)], node.quality
     
@@ -70,8 +70,8 @@ find_optimal_frontier(node, budget):
     
     # Try option 2: Recurse into children
     left_budget, right_budget = split_budget_proportionally(budget, node)
-    left_segments, left_quality = find_optimal_frontier(node.left, left_budget)
-    right_segments, right_quality = find_optimal_frontier(node.right, right_budget)
+    left_segments, left_quality = find_optimal_tiling(node.left, left_budget)
+    right_segments, right_quality = find_optimal_tiling(node.right, right_budget)
     
     child_segments = left_segments + right_segments
     child_quality = left_quality + right_quality
@@ -185,7 +185,7 @@ class DynamicFrontierGenerator:
         self._memo_cache = {}
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
     
-    def find_optimal_frontier(self, budget_tokens, scores, document_id, coverage_map):
+    def find_optimal_tiling(self, budget_tokens, scores, document_id, coverage_map):
         root = store.get_root_node_for_document(document_id)
         segments, quality = self._find_optimal_for_span(root, budget_tokens, scores)
         return build_result(segments, quality, coverage_map)

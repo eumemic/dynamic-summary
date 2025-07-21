@@ -3,7 +3,7 @@
 import logging
 from typing import Callable, Optional
 
-from ragzoom.dynamic_frontier import Segment
+from ragzoom.dynamic_tiling import Segment
 from ragzoom.store import Store, TreeNode
 
 logger = logging.getLogger(__name__)
@@ -246,39 +246,39 @@ def validate_tree_structure(
     return None
 
 
-def validate_frontier_completeness(
-    frontier_segments: list[tuple[str, str, int, int]],
+def validate_tiling_completeness(
+    tiling_segments: list[tuple[str, str, int, int]],
     document_span: tuple[int, int],
     original_text: Optional[str] = None,
 ) -> Optional[str]:
-    """Validate that frontier provides complete coverage with no gaps.
+    """Validate that tiling provides complete coverage with no gaps.
 
     Args:
-        frontier_segments: List of (node_id, text, span_start, span_end) tuples
+        tiling_segments: List of (node_id, text, span_start, span_end) tuples
         document_span: (start, end) of entire document
         original_text: Original document text to check if gaps are whitespace
 
     Returns:
         Error message if invalid, None if valid
     """
-    if not frontier_segments:
-        return "Frontier is empty"
+    if not tiling_segments:
+        return "Tiling is empty"
 
     # First check if segments are properly ordered
-    for i in range(len(frontier_segments) - 1):
-        current = frontier_segments[i]
-        next_seg = frontier_segments[i + 1]
+    for i in range(len(tiling_segments) - 1):
+        current = tiling_segments[i]
+        next_seg = tiling_segments[i + 1]
         if current[2] > next_seg[2]:  # span_start of current > span_start of next
             return (
-                f"Frontier segments out of order: segment {i} starts at {current[2]}, "
+                f"Tiling segments out of order: segment {i} starts at {current[2]}, "
                 f"segment {i+1} starts at {next_seg[2]}"
             )
 
     # Sort by span_start (in case caller didn't sort)
-    sorted_segments = sorted(frontier_segments, key=lambda x: x[2])
+    sorted_segments = sorted(tiling_segments, key=lambda x: x[2])
 
     # Log segment details for debugging
-    logger.debug(f"Validating frontier with {len(sorted_segments)} segments:")
+    logger.debug(f"Validating tiling with {len(sorted_segments)} segments:")
     for i, (node_id, text, start, end) in enumerate(sorted_segments[:5]):
         logger.debug(f"  Segment {i}: [{start}, {end}) - {node_id}")
     if len(sorted_segments) > 5:
@@ -286,16 +286,14 @@ def validate_frontier_completeness(
 
     # Check coverage starts at document start
     if sorted_segments[0][2] != document_span[0]:
-        return (
-            f"Frontier starts at {sorted_segments[0][2]}, expected {document_span[0]}"
-        )
+        return f"Tiling starts at {sorted_segments[0][2]}, expected {document_span[0]}"
 
     # Check coverage ends at document end
     if sorted_segments[-1][3] != document_span[1]:
         logger.debug(
             f"Last segment: [{sorted_segments[-1][2]}, {sorted_segments[-1][3]})"
         )
-        return f"Frontier ends at {sorted_segments[-1][3]}, expected {document_span[1]}"
+        return f"Tiling ends at {sorted_segments[-1][3]}, expected {document_span[1]}"
 
     # Check for gaps
     for i in range(len(sorted_segments) - 1):
@@ -309,13 +307,13 @@ def validate_frontier_completeness(
                 gap_text = original_text[current[3] : next_seg[2]]
                 if gap_text.isspace():
                     logger.debug(
-                        f"Allowing whitespace gap in frontier: [{current[3]}, {next_seg[2]}) "
+                        f"Allowing whitespace gap in tiling: [{current[3]}, {next_seg[2]}) "
                         f"contains {repr(gap_text)}"
                     )
                     continue
 
             # Show details about the gap
-            gap_info = f"Gap in frontier: segment {i} ends at {current[3]}, segment {i+1} starts at {next_seg[2]}"
+            gap_info = f"Gap in tiling: segment {i} ends at {current[3]}, segment {i+1} starts at {next_seg[2]}"
             if gap > 0:
                 gap_info += f" (gap of {gap} chars)"
                 if original_text:
@@ -327,24 +325,24 @@ def validate_frontier_completeness(
             return gap_info
 
     logger.info(
-        f"✓ Frontier completeness validated: {len(sorted_segments)} segments cover document"
+        f"✓ Tiling completeness validated: {len(sorted_segments)} segments cover document"
     )
     return None
 
 
 def validate_no_overlap(
-    frontier_segments: list[tuple[str, str, int, int]],
+    tiling_segments: list[tuple[str, str, int, int]],
 ) -> Optional[str]:
-    """Validate that frontier segments don't overlap.
+    """Validate that tiling segments don't overlap.
 
     Args:
-        frontier_segments: List of (node_id, text, span_start, span_end) tuples
+        tiling_segments: List of (node_id, text, span_start, span_end) tuples
 
     Returns:
         Error message if invalid, None if valid
     """
     # Sort by span_start
-    sorted_segments = sorted(frontier_segments, key=lambda x: x[2])
+    sorted_segments = sorted(tiling_segments, key=lambda x: x[2])
 
     for i in range(len(sorted_segments) - 1):
         current = sorted_segments[i]
