@@ -189,7 +189,7 @@ ragzoom/
 ├── store.py         # SQLite + Chroma storage layer
 ├── index.py         # Tree building and summarization
 ├── retrieve.py      # MMR-based retrieval logic
-├── assemble.py      # Frontier assembly with slope-cap
+├── assemble.py      # Tiling assembly
 ├── config.py        # Pydantic configuration
 ├── api.py           # FastAPI REST endpoints
 └── cli.py           # Click CLI interface
