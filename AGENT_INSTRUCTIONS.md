@@ -13,9 +13,9 @@ Before starting any work, review the following documents to understand the syste
 - **Project Brief:** `docs/architecture.md`
 - **Developer Onboarding Guide:** `docs/developer-guide.md`
 - **Architecture Overview:** `docs/architecture.md`
-- **V2 Algorithm Design:** `docs/v2/dynamic-frontier-design.md`, `docs/tiling-algorithm.md`
-- **Implementation Notes:** `docs/implementation-notes.md`
-- **Testing Strategy:** `docs/testing-strategy.md`
+- **Tiling Algorithm Design:** `docs/deep-dives/tiling-algorithm.md`
+- **API Reference:** `docs/api-reference.md`
+- **Vision Document:** `docs/vision.md`
 
 ## 2. General Philosophy & Collaboration
 
@@ -35,18 +35,18 @@ RagZoom is a hierarchical RAG system that builds binary trees from documents: le
 
 - **Design First:** Before implementing any large initiative, work with the user to create a well-thought-out design proposal, including rationale and pseudocode.
 - **Clarity Before Code:** Do not start implementing until you have a design with no major gaps or open questions. Ask the user to clarify any ambiguities.
-- **"Correct-by-Construction":** The central architectural principle of this system is to be "correct-by-construction". Avoid multi-stage, corrective pipelines that patch up errors. Design algorithms that produce a valid final state in a single, principled pass. Refer to the DP implementation in `ragzoom/dynamic_frontier.py` as the canonical example.
+- **"Correct-by-Construction":** The central architectural principle of this system is to be "correct-by-construction". Avoid multi-stage, corrective pipelines that patch up errors. Design algorithms that produce a valid final state in a single, principled pass. Refer to the DP implementation in `ragzoom/dynamic_tiling.py` as the canonical example.
 
 ### Core Architecture
 
-**Flow**: Index (split → embed → build tree) → Retrieve (search → MMR → DP frontier) → Assemble (segments → summary)
+**Flow**: Index (split → embed → build tree) → Retrieve (search → MMR → DP tiling) → Assemble (segments → summary)
 
 **Key Files**:
 - `store.py`: SQLite + ChromaDB + LRU cache
 - `index.py`: Async tree building with progress tracking
-- `retrieve.py`: MMR diversity + DP frontier extraction  
+- `retrieve.py`: MMR diversity + DP tiling extraction  
 - `assemble.py`: Segment-based assembly (no budget trimming needed)
-- `dynamic_frontier.py`: DP algorithm for correct-by-construction tilings
+- `dynamic_tiling.py`: DP algorithm for correct-by-construction tilings
 
 **Key Config** (`RagZoomConfig`): `budget_tokens=8000`, `leaf_tokens=200`, `slope_cap_size=1`, `mmr_lambda=0.7`
 
