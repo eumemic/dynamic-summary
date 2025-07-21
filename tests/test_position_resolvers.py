@@ -15,7 +15,6 @@ class TestPositionResolvers:
         nodes = [
             TreeNode(
                 id="root",
-                depth=1,
                 span_start=0,
                 span_end=1000,
                 text="Root summary",
@@ -29,7 +28,6 @@ class TestPositionResolvers:
             ),
             TreeNode(
                 id="left",
-                depth=0,
                 span_start=0,
                 span_end=500,
                 text="Left leaf text",
@@ -43,7 +41,6 @@ class TestPositionResolvers:
             ),
             TreeNode(
                 id="right",
-                depth=0,
                 span_start=500,
                 span_end=1000,
                 text="Right leaf text",
@@ -88,7 +85,6 @@ class TestPositionResolvers:
         store.nodes = {
             "root": TreeNode(
                 id="root",
-                depth=1,
                 span_start=0,
                 span_end=1000,
                 text="Root summary",
@@ -102,7 +98,6 @@ class TestPositionResolvers:
             ),
             "left": TreeNode(
                 id="left",
-                depth=0,
                 span_start=0,
                 span_end=500,
                 text="Left leaf text",
@@ -116,7 +111,6 @@ class TestPositionResolvers:
             ),
             "right": TreeNode(
                 id="right",
-                depth=0,
                 span_start=500,
                 span_end=1000,
                 text="Right leaf text",
@@ -176,7 +170,6 @@ class TestPositionResolvers:
         store.nodes = {
             "root": TreeNode(
                 id="root",
-                depth=2,
                 span_start=0,
                 span_end=400,
                 parent_id=None,
@@ -190,7 +183,6 @@ class TestPositionResolvers:
             ),
             "parent1": TreeNode(
                 id="parent1",
-                depth=1,
                 span_start=0,
                 span_end=200,
                 parent_id="root",
@@ -204,7 +196,6 @@ class TestPositionResolvers:
             ),
             "parent2": TreeNode(
                 id="parent2",
-                depth=1,
                 span_start=200,
                 span_end=400,
                 parent_id="root",
@@ -218,7 +209,6 @@ class TestPositionResolvers:
             ),
             "leaf1": TreeNode(
                 id="leaf1",
-                depth=0,
                 span_start=0,
                 span_end=100,
                 parent_id="parent1",
@@ -232,7 +222,6 @@ class TestPositionResolvers:
             ),
             "leaf2": TreeNode(
                 id="leaf2",
-                depth=0,
                 span_start=100,
                 span_end=200,
                 parent_id="parent1",
@@ -246,7 +235,6 @@ class TestPositionResolvers:
             ),
             "leaf3": TreeNode(
                 id="leaf3",
-                depth=0,
                 span_start=200,
                 span_end=300,
                 parent_id="parent2",
@@ -260,7 +248,6 @@ class TestPositionResolvers:
             ),
             "leaf4": TreeNode(
                 id="leaf4",
-                depth=0,
                 span_start=300,
                 span_end=400,
                 parent_id="parent2",

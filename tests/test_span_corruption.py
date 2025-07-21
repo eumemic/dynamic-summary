@@ -81,21 +81,22 @@ class TestSpanCorruption:
             # Check for invalid spans
             corrupt_nodes = []
             for node in all_nodes:
+                node_depth = store.get_node_depth(node.id)
                 if node.span_end < node.span_start:
                     corrupt_nodes.append(
                         {
                             "id": node.id,
-                            "depth": node.depth,
+                            "depth": node_depth,
                             "span_start": node.span_start,
                             "span_end": node.span_end,
                         }
                     )
-                elif node.span_start == node.span_end and node.depth > 0:
+                elif node.span_start == node.span_end and node_depth > 0:
                     # Zero-width spans for non-leaf nodes are also invalid
                     corrupt_nodes.append(
                         {
                             "id": node.id,
-                            "depth": node.depth,
+                            "depth": node_depth,
                             "span_start": node.span_start,
                             "span_end": node.span_end,
                         }
@@ -154,9 +155,10 @@ class TestSpanCorruption:
             all_nodes = session.query(TreeNode).filter_by(document_id=doc_id).all()
 
             for node in all_nodes:
-                if node.depth not in nodes_by_depth:
-                    nodes_by_depth[node.depth] = []
-                nodes_by_depth[node.depth].append(node)
+                node_depth = store.get_node_depth(node.id)
+                if node_depth not in nodes_by_depth:
+                    nodes_by_depth[node_depth] = []
+                nodes_by_depth[node_depth].append(node)
 
             # Sort nodes by span_start within each depth
             for depth in nodes_by_depth:
@@ -187,7 +189,8 @@ class TestSpanCorruption:
 
             # Check all parent nodes have valid spans
             for node in all_nodes:
-                if node.depth > 0:
+                node_depth = store.get_node_depth(node.id)
+                if node_depth > 0:
                     assert (
                         node.span_end >= node.span_start
-                    ), f"Node at depth {node.depth} has invalid span: ({node.span_start}, {node.span_end})"
+                    ), f"Node at depth {node_depth} has invalid span: ({node.span_start}, {node.span_end})"

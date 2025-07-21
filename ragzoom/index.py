@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import math
 import time
 import uuid
 from datetime import datetime
@@ -334,7 +333,6 @@ class TreeBuilder:
                     node_id=cast(str, data["id"]),
                     text=cast(str, data["text"]),
                     embedding=embedding,
-                    depth=0,
                     span_start=cast(int, data["span_start"]),
                     span_end=cast(int, data["span_end"]),
                     document_id=document_id,
@@ -407,7 +405,6 @@ class TreeBuilder:
         right_text: str,
         prev_context: Optional[str],
         next_context: Optional[str],
-        current_depth: int,
         document_id: Optional[str],
     ) -> tuple[str, str, list[float]]:
         """Process a single node pair - generate summary and embedding."""
@@ -442,7 +439,6 @@ class TreeBuilder:
             node_id=parent_id,
             text=cleaned_summary,
             embedding=embedding,
-            depth=current_depth,
             span_start=left_node.span_start,
             span_end=right_node.span_end,
             left_child_id=left_id,
@@ -496,17 +492,15 @@ class TreeBuilder:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
         current_level_ids = leaf_ids
         current_level_texts = leaf_texts
-        current_depth = 0
 
-        # Calculate total tree height (depth from root to leaves)
-        total_tree_height = (
-            math.ceil(math.log2(len(leaf_ids))) if len(leaf_ids) > 1 else 0
-        )
+        # Calculate total tree height (distance from root to furthest leaf)
+        # Note: This is used for progress tracking estimation
 
+        current_level = 0  # Track level for logging
         while len(current_level_ids) > 1:
             next_level_ids = []
             next_level_texts = []
-            current_depth += 1
+            current_level += 1
 
             # Process pairs concurrently
             tasks = []
@@ -546,7 +540,6 @@ class TreeBuilder:
                     right_text,
                     prev_context,
                     next_context,
-                    current_depth,
                     document_id,
                 )
                 tasks.append(task)
@@ -560,7 +553,7 @@ class TreeBuilder:
             # Process all pairs concurrently
             if tasks:
                 # Always log tree building progress with cumulative elapsed time
-                level_from_root = total_tree_height - current_depth
+                level_from_root = current_level
                 if overall_start_time:
                     elapsed = time.time() - overall_start_time
                     mins, secs = divmod(int(elapsed), 60)
@@ -590,7 +583,7 @@ class TreeBuilder:
                         elapsed = time.time() - overall_start_time
                         mins, secs = divmod(int(elapsed), 60)
                         logger.info(
-                            f"  Completed {completed_count}/{len(tasks)} pairs at level {total_tree_height - current_depth} [{mins}m {secs}s elapsed total]"
+                            f"  Completed {completed_count}/{len(tasks)} pairs at level {current_level} [{mins}m {secs}s elapsed total]"
                         )
 
                     return result
@@ -678,7 +671,7 @@ class TreeBuilder:
         for node_id in node_ids:
             try:
                 node = self.store.get_node(node_id)
-                if not node or node.depth == 0:
+                if not node or self.store.is_leaf_node(node_id):
                     # Skip leaf nodes - they don't have summaries
                     continue
 

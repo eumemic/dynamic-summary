@@ -180,8 +180,8 @@ def validate_tree_structure(
         # Check parent-child relationships
         if node.left_child_id or node.right_child_id:
             # Parent node checks
-            if node.depth == 0:
-                errors.append(f"Node {node.id}: Leaf node (depth 0) has children")
+            if store.is_leaf_node(node.id):
+                errors.append(f"Node {node.id}: Leaf node has children")
 
             if node.left_child_id:
                 left_child = store.get_node(node.left_child_id)
@@ -233,7 +233,7 @@ def validate_tree_structure(
                             )
 
         # Validate summaries for non-leaf nodes
-        if node.depth > 0:
+        if not store.is_leaf_node(node.id):
             if not node.summary:
                 errors.append(f"Node {node.id}: Non-leaf node missing summary")
 
@@ -422,14 +422,15 @@ def validate_tiling(
             return f"Node {seg.node_id} not found in store"
 
         # Validate side invariant
-        if node.depth == 0 or node.mid_offset is None:
+        is_leaf = store.is_leaf_node(node.id)
+        if is_leaf or node.mid_offset is None:
             if seg.side is not None:
-                return f"Node {seg.node_id} is a leaf (depth={node.depth}, mid_offset={node.mid_offset}) but segment has side={seg.side}, expected None"
+                return f"Node {seg.node_id} is a leaf (is_leaf={is_leaf}, mid_offset={node.mid_offset}) but segment has side={seg.side}, expected None"
             # Leaf or unsplit node: full span
             span_start, span_end = node.span_start, node.span_end
         else:
             if seg.side not in {"LEFT", "RIGHT"}:
-                return f"Node {seg.node_id} is internal (depth={node.depth}, mid_offset={node.mid_offset}) but segment has side={seg.side}, expected LEFT or RIGHT"
+                return f"Node {seg.node_id} is internal (is_leaf={is_leaf}, mid_offset={node.mid_offset}) but segment has side={seg.side}, expected LEFT or RIGHT"
             # For internal nodes, segment spans match child spans
             if seg.side == "LEFT":
                 left_child = store.get_node(node.left_child_id)

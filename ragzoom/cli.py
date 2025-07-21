@@ -144,7 +144,8 @@ def index(
         click.echo("✅ Document indexed successfully!")
         click.echo(f"   Document ID: {doc_id}")
         click.echo(f"   Chunks created: {len(doc_leaves)}")
-        click.echo(f"   Tree depth: {root.depth if root else 0}")
+        tree_height = store.get_node_height(root.id) if root else 0
+        click.echo(f"   Tree height: {tree_height}")
 
         # Run validation checks
         from ragzoom.validate import (
@@ -292,7 +293,7 @@ def query(
                 node = store.get_node(segment.node_id)
                 if node:
                     # Calculate correct segment span
-                    if node.depth == 0 or node.mid_offset is None:
+                    if store.is_leaf_node(node.id) or node.mid_offset is None:
                         # Leaf node: full span
                         span_start, span_end = node.span_start, node.span_end
                     else:
@@ -317,13 +318,13 @@ def query(
                                 span_start, span_end = node.span_start, node.span_end
 
                     span = f"{span_start}-{span_end}"
-                    level = node.depth
+                    height = store.get_node_height(node.id)
                     side = segment.side
                     # Add asterisk to index if this is a seed node
                     is_seed = segment.node_id in result.node_ids
                     idx_str = f"{idx}{'*' if is_seed else ' '}"
                     click.echo(
-                        f"[{idx_str}| SPAN: {span} | LEVEL: {level} | SIDE: {side} | NODE: {node.id[:8]}]"
+                        f"[{idx_str}| SPAN: {span} | HEIGHT: {height} | SIDE: {side} | NODE: {node.id[:8]}]"
                     )
                     # Get the segment text as in assembler._get_text_for_segment
                     text = assembler._get_text_for_segment(segment)
@@ -363,6 +364,7 @@ def query(
                     seed_node_ids=set(result.node_ids),
                     segment_infos=result.segment_infos,
                     use_token_coords=(viz_coords == "output-tokens"),
+                    preloaded_nodes=result.nodes,
                 )
                 click.echo(tree_viz)
                 click.echo("")
@@ -422,7 +424,8 @@ def status(ctx):
         click.echo("=" * 40)
         click.echo(f"Total nodes: {all_nodes}")
         click.echo(f"Leaf nodes: {len(leaf_nodes)}")
-        click.echo(f"Tree depth: {root.depth if root else 0}")
+        tree_height = store.get_node_height(root.id) if root else 0
+        click.echo(f"Tree height: {tree_height}")
         click.echo(f"Pinned nodes: {len(pinned)}")
         click.echo("\nCONFIGURATION:")
         click.echo("=" * 40)
@@ -554,7 +557,7 @@ def export(ctx, input_file: str, output_file: str, format: str):
                 node_dict = {
                     "id": node.id,
                     "parent_id": node.parent_id,
-                    "depth": node.depth,
+                    "height": store.get_node_height(node.id),
                     "span_start": node.span_start,
                     "span_end": node.span_end,
                     "is_leaf": node.summary is None,

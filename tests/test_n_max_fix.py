@@ -25,7 +25,6 @@ class TestNMaxFix:
         store.add_node(
             node_id="root",
             text="Root summary <<<MID>>> document",
-            depth=2,
             span_start=0,
             span_end=1000,
             parent_id=None,
@@ -39,7 +38,6 @@ class TestNMaxFix:
         store.add_node(
             node_id="nodeA",
             text="Node A <<<MID>>> content",
-            depth=1,
             span_start=0,
             span_end=500,
             parent_id="root",
@@ -53,7 +51,6 @@ class TestNMaxFix:
         store.add_node(
             node_id="nodeB",
             text="Node B <<<MID>>> content",
-            depth=1,
             span_start=500,
             span_end=1000,
             parent_id="root",
@@ -76,7 +73,6 @@ class TestNMaxFix:
             store.add_node(
                 node_id=nid,
                 text=f"Leaf {i} with dragon content",
-                depth=0,
                 span_start=start,
                 span_end=end,
                 parent_id=parent,
@@ -149,9 +145,7 @@ class TestNMaxFix:
 
             # Count leaf nodes in frontier
             leaf_count = sum(
-                1
-                for seg in result.frontier_segments
-                if store.get_node(seg.node_id).depth == 0
+                1 for seg in result.frontier_segments if store.is_leaf_node(seg.node_id)
             )
             assert leaf_count <= 1, f"Expected at most 1 leaf node, got {leaf_count}"
 
@@ -317,7 +311,7 @@ The dragons all left. Peace returned."""
         leaf_segments = []
         for seg in segments:
             node = store.get_node(seg.node_id)
-            if node and node.depth == 0:
+            if node and store.is_leaf_node(seg.node_id):
                 leaf_segments.append(seg)
 
         # With fix in place, should have at most 1 leaf segment

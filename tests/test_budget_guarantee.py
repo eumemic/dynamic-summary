@@ -163,7 +163,6 @@ class TestBudgetGuarantee:
         store.add_node(
             node_id="1_0_400_parent",
             text=parent_text,
-            depth=1,
             span_start=0,
             span_end=400,
             parent_id=None,
@@ -176,7 +175,6 @@ class TestBudgetGuarantee:
         store.add_node(
             node_id="0_0_200_leaf1",
             text=leaf1_text,
-            depth=0,
             span_start=0,
             span_end=200,
             parent_id="1_0_400_parent",
@@ -187,7 +185,6 @@ class TestBudgetGuarantee:
         store.add_node(
             node_id="0_200_400_leaf2",
             text=leaf2_text,
-            depth=0,
             span_start=200,
             span_end=400,
             parent_id="1_0_400_parent",

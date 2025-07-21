@@ -176,7 +176,7 @@ class TokenPositionResolver(PositionResolver):
                         if right_child and right_child.text:
                             # For internal nodes, need to handle MID delimiter
                             if (
-                                right_child.depth > 0
+                                not self.store.is_leaf_node(right_child.id)
                                 and right_child.mid_offset is not None
                             ):
                                 text = right_child.text.replace("<<<MID>>>", "")
@@ -262,6 +262,7 @@ def build_ascii_tree(
     position_resolver: Optional[PositionResolver] = None,
     segment_infos: Optional[list[SegmentInfo]] = None,
     use_token_coords: bool = False,
+    preloaded_nodes: Optional[dict[str, "TreeNode"]] = None,
 ) -> str:
     """Build an ASCII tree visualization showing the tiling structure.
 
@@ -276,9 +277,27 @@ def build_ascii_tree(
         segment_infos: Segment metadata including token costs (required if use_token_coords=True)
         use_token_coords: If True, use token-based positioning; if False, use character-based
     """
-    all_nodes = store.get_all_nodes_for_document(document_id)
-    if not all_nodes:
-        return "No nodes found for document"
+    # Use pre-loaded nodes if available
+    if preloaded_nodes:
+        all_nodes = [
+            node for node in preloaded_nodes.values() if node.document_id == document_id
+        ]
+        if not all_nodes:
+            return "No nodes found in preloaded nodes"
+    elif coverage_map:
+        # Load only nodes that are in the coverage map
+        all_nodes = []
+        for node_id in coverage_map:
+            node = store.get_node(node_id)
+            if node and node.document_id == document_id:
+                all_nodes.append(node)
+        if not all_nodes:
+            return "No nodes found in coverage map"
+    else:
+        # Fallback to all nodes only if no coverage map provided
+        all_nodes = store.get_all_nodes_for_document(document_id)
+        if not all_nodes:
+            return "No nodes found for document"
 
     # Handle backward compatibility with position_resolver parameter
     if position_resolver is not None:
@@ -301,15 +320,17 @@ def build_ascii_tree(
     if extent == 0:
         return "Empty coordinate space"
 
-    nodes_by_depth: dict[int, list[TreeNode]] = {}
-    max_depth = 0
+    # Group nodes by height (distance to furthest leaf)
+    nodes_by_height: dict[int, list[TreeNode]] = {}
+    max_height = 0
     for node in all_nodes:
-        if node.depth not in nodes_by_depth:
-            nodes_by_depth[node.depth] = []
-        nodes_by_depth[node.depth].append(node)
-        max_depth = max(max_depth, node.depth)
-    for depth in nodes_by_depth:
-        nodes_by_depth[depth].sort(key=lambda n: n.span_start)
+        height = store.get_node_height(node.id)
+        if height not in nodes_by_height:
+            nodes_by_height[height] = []
+        nodes_by_height[height].append(node)
+        max_height = max(max_height, height)
+    for height in nodes_by_height:
+        nodes_by_height[height].sort(key=lambda n: n.span_start)
 
     selected_segments: set[tuple[str, Optional[str]]] = set()
     segment_labels: dict[tuple[str, Optional[str]], str] = {}
@@ -324,12 +345,13 @@ def build_ascii_tree(
 
     lines = []
 
-    for depth in range(max_depth, -1, -1):
-        if depth not in nodes_by_depth:
+    # Iterate from root (max height) down to leaves (height 0)
+    for height in range(max_height, -1, -1):
+        if height not in nodes_by_height:
             continue
-        nodes_to_show = nodes_by_depth[depth]
+        nodes_to_show = nodes_by_height[height]
 
-        level_prefix = f"L{depth} "
+        level_prefix = f"H{height} "
         prefix_len = len(level_prefix)
         actual_width = width - prefix_len
         # Priority array: -1 = blank, 0 = covered, 1 = selected
@@ -356,7 +378,7 @@ def build_ascii_tree(
                 end_pos = start_pos + 1
             is_covered = coverage_map and node.id in coverage_map
             # Leaf node
-            if node.depth == 0:
+            if store.is_leaf_node(node.id):
                 char_priority = (
                     1
                     if (node.id, None) in selected_segments

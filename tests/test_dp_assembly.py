@@ -14,9 +14,7 @@ class TestDPAssembly:
     def config(self):
         """Create test configuration."""
         return RagZoomConfig(
-            openai_api_key="test-key",
-            slope_cap=True,
-            budget_tokens=1000,
+            openai_api_key="test-key", slope_cap=True, budget_tokens=1000
         )
 
     @pytest.fixture
@@ -39,7 +37,6 @@ class TestDPAssembly:
             node_id="leaf1",
             text="First chunk of text.",
             embedding=[0.1] * 1536,
-            depth=0,
             span_start=0,
             span_end=20,
             document_id="doc1",
@@ -49,7 +46,6 @@ class TestDPAssembly:
             node_id="leaf2",
             text="Second chunk of text.",
             embedding=[0.2] * 1536,
-            depth=0,
             span_start=20,
             span_end=41,
             document_id="doc1",
@@ -59,7 +55,6 @@ class TestDPAssembly:
             node_id="leaf3",
             text="Third chunk of text.",
             embedding=[0.3] * 1536,
-            depth=0,
             span_start=41,
             span_end=61,
             document_id="doc1",
@@ -69,7 +64,6 @@ class TestDPAssembly:
             node_id="leaf4",
             text="Fourth chunk of text.",
             embedding=[0.4] * 1536,
-            depth=0,
             span_start=61,
             span_end=82,
             document_id="doc1",
@@ -80,7 +74,6 @@ class TestDPAssembly:
             node_id="left",
             text="Summary of first half. <<<MID>>> Summary of second half.",
             embedding=[0.15] * 1536,
-            depth=1,
             span_start=0,
             span_end=41,
             left_child_id="leaf1",
@@ -93,7 +86,6 @@ class TestDPAssembly:
             node_id="right",
             text="Summary of third chunk. <<<MID>>> Summary of fourth chunk.",
             embedding=[0.35] * 1536,
-            depth=1,
             span_start=41,
             span_end=82,
             left_child_id="leaf3",
@@ -106,7 +98,6 @@ class TestDPAssembly:
             node_id="root",
             text="Overall document summary. <<<MID>>> More summary content.",
             embedding=[0.25] * 1536,
-            depth=2,
             span_start=0,
             span_end=82,
             left_child_id="left",
@@ -208,7 +199,6 @@ class TestDPAssembly:
             node_id="empty",
             text="",
             embedding=[0.5] * 1536,
-            depth=0,
             span_start=82,
             span_end=82,
             document_id="doc1",
@@ -232,7 +222,6 @@ class TestDPAssembly:
             node_id="bad_internal",
             text="Summary without MID delimiter",
             embedding=[0.6] * 1536,
-            depth=1,
             span_start=82,
             span_end=100,
             left_child_id="leaf1",
