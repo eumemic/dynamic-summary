@@ -268,4 +268,4 @@ jobs:
         
       - name: Run Bandit
         run: |
-          bandit -r ragzoom/ -ll -f github
+          bandit -r ragzoom/ -ll
