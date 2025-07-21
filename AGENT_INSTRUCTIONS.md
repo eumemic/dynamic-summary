@@ -174,9 +174,9 @@ ragzoom index <file> --validate           # Enable validation checks
 # Query documents (document ID is REQUIRED)
 ragzoom query "search text" -d <doc-id>              # Query specific document
 ragzoom query "search text" -d <doc-id> --validate   # With validation checks
-ragzoom query "search text" -d <doc-id> --show-stats # Show stats and tree visualization
-ragzoom query "search text" -d <doc-id> --show-stats --viz-width 200  # Custom width
-ragzoom query "search text" -d <doc-id> --show-stats --viz-coords output-tokens  # Token-based visualization
+ragzoom query "search text" -d <doc-id> --debug # Show debug info and tree visualization
+ragzoom query "search text" -d <doc-id> --debug --viz-width 200  # Custom width
+ragzoom query "search text" -d <doc-id> --debug --viz-coords output-tokens  # Token-based visualization
 
 # Document management
 ragzoom documents                         # List all indexed documents
