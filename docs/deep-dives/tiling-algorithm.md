@@ -35,7 +35,7 @@ Each stage could introduce bugs, and the interactions between stages made the sy
 - **Span**: An interval `[start, end)` in the document's character coordinates
 - **Segment**: A portion of a node that can be included in the output
   - For leaf nodes (depth = 0): The entire node is one segment, `side = None`
-  - For internal nodes (depth > 0): Split into two segments at the `<<<MID>>>` delimiter
+  - For internal nodes (depth > 0): Split into two segments at the mid_offset position
     - Left segment: `(node_id, "LEFT")` 
     - Right segment: `(node_id, "RIGHT")`
 - **Tiling**: A sequence of segments that:
@@ -158,8 +158,8 @@ This ensures the budget constraint is never violated.
 Uses tiktoken with cl100k_base encoding to count actual tokens for each segment:
 
 - Leaf segments: Count tokens in full text
-- Left segments: Count tokens from start to `<<<MID>>>`
-- Right segments: Count tokens from `<<<MID>>>` to end
+- Left segments: Count tokens from start to mid_offset
+- Right segments: Count tokens from mid_offset to end
 
 ## What's NOT Implemented
 
