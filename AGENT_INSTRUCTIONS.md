@@ -20,6 +20,7 @@ This file contains comprehensive instructions for any AI agent working on this r
 
 ## 3. Version Control & Collaboration Rules
 
+- **Never Commit to Master:** Always ensure you're on a feature branch before committing. Check with `git branch --show-current`. If on master/main, ALWAYS ask the user what feature you're about to work on before creating a branch - don't assume the scope.
 - **No Unauthorized Commits:** Never commit code unless explicitly directed to by the user.
 - **Atomic Commits:** When asked to commit, group changes into small, logical, atomic commits with clear messages. Do not lump unrelated changes together.
 - **Don't Deprecate, Delete:** Do not leave old code paths behind a feature flag or comment them out. Remove them. The git history will preserve them if we ever need to look back.
