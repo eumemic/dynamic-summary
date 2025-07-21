@@ -44,7 +44,7 @@ For detailed understanding of the core tiling algorithm:
 ```bash
 # Testing
 pytest tests/ -m "not slow and not integration" -n 8  # Fast tests only
-./test_quick.sh                                        # Quick test runner
+./scripts/test_quick.sh                                # Quick test runner
 
 # Type checking & linting  
 dmypy run -- ragzoom/        # Fast type checking with daemon
