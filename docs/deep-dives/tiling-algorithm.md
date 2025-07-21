@@ -62,13 +62,22 @@ The DP algorithm treats tiling generation as an optimization problem:
 ```
 find_optimal_tiling(node, budget):
     if node is leaf:
-        return [(node, None)], node.quality
+        # Leaf nodes are indivisible - include full node or nothing
+        if node_cost <= budget:
+            return [(node, None)], node.quality
+        else:
+            return [], 0.0
     
-    # Try option 1: Use parent's segments
-    parent_segments = get_parent_segments(node)
-    parent_quality = node.quality
+    # Internal node: Try using this node's segments
+    parent_cost = cost(LEFT segment) + cost(RIGHT segment)
+    if parent_cost > budget:
+        return [], 0.0
     
-    # Try option 2: Recurse into children
+    # Option 1: Use this node's segments
+    parent_segments = [(node, "LEFT"), (node, "RIGHT")]
+    parent_quality = node.quality  # Note: actually uses half score per segment
+    
+    # Option 2: Recurse into children
     left_budget, right_budget = split_budget_proportionally(budget, node)
     left_segments, left_quality = find_optimal_tiling(node.left, left_budget)
     right_segments, right_quality = find_optimal_tiling(node.right, right_budget)
@@ -76,8 +85,11 @@ find_optimal_tiling(node, budget):
     child_segments = left_segments + right_segments
     child_quality = left_quality + right_quality
     
+    # Check if child solution exceeds budget due to independent subproblems
+    child_cost = sum(cost(seg) for seg in child_segments)
+    
     # Choose better option
-    if child_quality > parent_quality AND fits_in_budget(child_segments, budget):
+    if child_cost <= budget and child_quality > parent_quality:
         return child_segments, child_quality
     else:
         return parent_segments, parent_quality
