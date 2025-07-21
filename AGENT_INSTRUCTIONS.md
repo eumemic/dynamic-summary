@@ -22,7 +22,6 @@ This file contains comprehensive instructions for any AI agent working on this r
 
 - **No Unauthorized Commits:** Never commit code unless explicitly directed to by the user.
 - **Atomic Commits:** When asked to commit, group changes into small, logical, atomic commits with clear messages. Do not lump unrelated changes together.
-- **Pre-commit is Mandatory:** The pre-commit hook (`scripts/git-hooks/pre-commit`) is the guardian of code quality. **You must never bypass it with `--no-verify` without explicit permission.** The hook is configured to auto-fix trivial issues; any remaining errors must be fixed manually.
 - **Don't Deprecate, Delete:** Do not leave old code paths behind a feature flag or comment them out. Remove them. The git history will preserve them if we ever need to look back.
 
 ## 4. System Architecture & Technical Documentation
