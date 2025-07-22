@@ -156,8 +156,9 @@ The example showing 100-token chunks achieving the same granularity as 200-token
 
 ## Common Misconceptions Addressed
 
-### "This will exponentially increase API costs"
-**False**. The increase is linear, not exponential. If you halve chunk size, you get 2x more nodes total. More importantly, chunk size is user-configurable - users who want the same API costs can keep their current chunk size.
+### "This will increase API costs"
+
+API *call* count may increase with smaller chunks, but token costs (what you actually pay for) remain constant.
 
 ### "We lose semantic boundaries without <<<MID>>>"
 **False**. The current system already splits at arbitrary token boundaries for leaf nodes. The `<<<MID>>>` delimiter is placed by the LLM in its generated summary, not at natural content boundaries. Both systems have the same level of semantic awareness.
@@ -167,6 +168,19 @@ The example showing 100-token chunks achieving the same granularity as 200-token
 
 ### "Users will struggle with configuration"
 **False**. Users already configure chunk size via `RAGZOOM_LEAF_TOKENS`. This doesn't add any new configuration burden.
+
+### "The summarization process becomes more complex"
+**False**. It becomes simpler:
+- Old: "Summarize these two chunks and insert <<<MID>>> between them"
+- New: "Summarize this chunk"
+
+The target token size remains the same. There's no "overflow" or complexity - just simpler prompts.
+
+### "Performance will degrade"
+**False**. The system behaves identically to the current one. In fact, we could make it 100% backward compatible by simply using `effective_chunk_size = RAGZOOM_LEAF_TOKENS / 2` internally. No performance changes whatsoever.
+
+### "Visualization will lose left/right distinction"
+**False**. Visualization simply shifts from coloring segments to coloring nodes. Left child = left color, right child = right color. The visual distinction remains.
 
 ## Migration Strategy
 
@@ -251,6 +265,7 @@ This is a clean-break implementation - no backward compatibility with existing s
    - Remove LEFT/RIGHT segment creation logic
    - Simplify `_get_text_for_segment()` to always return full node text
    - Remove span calculation for half-nodes
+   - Quality scoring: Use full node scores (no more half-scores for segments)
 
 2. **Update Algorithm Tests**
    - Update `test_dp_assembly.py` to remove LEFT/RIGHT tests
@@ -294,8 +309,8 @@ This is a clean-break implementation - no backward compatibility with existing s
 
 1. **Unit Tests First**: Update lowest-level tests (models, store) before integration tests
 2. **Validation Suite**: Run comprehensive validation on test documents
-3. **Performance Testing**: Verify no performance regressions
-4. **Integration Testing**: Test full indexing and retrieval workflows
+3. **Integration Testing**: Test full indexing and retrieval workflows
+4. **Functional Equivalence**: Verify that using half the chunk size produces identical results to the old system
 
 ### Risk Mitigation
 
