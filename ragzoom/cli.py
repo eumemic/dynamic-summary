@@ -283,7 +283,9 @@ def query(
         if validate and getattr(result, "tiling", None):
             from ragzoom.validate import validate_tiling
 
-            error = validate_tiling(result.tiling, ctx.obj["store"], document_id)
+            error = validate_tiling(
+                result.tiling, ctx.obj["store"], document_id, budget_tokens=token_budget
+            )
             if error:
                 click.echo(
                     f"❌ Segment-level tiling validation failed: {error}", err=True
