@@ -4,6 +4,8 @@
 
 This proposal outlines a simplification of the RagZoom architecture by eliminating the `Segment` abstraction and the associated `<<<MID>>>` delimiter system. Instead of treating internal nodes as splittable into LEFT/RIGHT segments, we propose treating all nodes as atomic units. Users can achieve their desired granularity by configuring the chunk size during indexing.
 
+**Key Point**: This change maintains all current capabilities while significantly reducing complexity. The Dynamic Programming algorithm continues to guarantee perfect tiling (no gaps, no overlaps) under the token budget.
+
 ## Current State
 
 ### Segment-Based Architecture
@@ -59,6 +61,8 @@ All nodes become atomic units - they are either included in full or not at all.
 ### Achieving Equivalent Granularity
 
 The key insight: **granularity comes from chunk size, not from segment splitting**.
+
+**Important**: The DP algorithm ensures perfect tiling (complete coverage, no gaps, no overlaps) in both systems. It never includes both a parent and its children - it chooses one or the other.
 
 Current system with 200-token chunks:
 ```
@@ -150,25 +154,30 @@ The example showing 100-token chunks achieving the same granularity as 200-token
 2. **Indexing Cost**: More nodes mean more summarization API calls (though parallelism helps)
 3. **Loss of Sub-Node Precision**: Can't include just half of a parent's summary (must include whole node or recurse to children)
 
+## Common Misconceptions Addressed
+
+### "This will exponentially increase API costs"
+**False**. The increase is linear, not exponential. If you halve chunk size, you get 2x more nodes total. More importantly, chunk size is user-configurable - users who want the same API costs can keep their current chunk size.
+
+### "We lose semantic boundaries without <<<MID>>>"
+**False**. The current system already splits at arbitrary token boundaries for leaf nodes. The `<<<MID>>>` delimiter is placed by the LLM in its generated summary, not at natural content boundaries. Both systems have the same level of semantic awareness.
+
+### "This creates overlap between parent and child nodes"
+**False**. The DP algorithm guarantees perfect tiling with no gaps and no overlaps. It never includes both a parent and its children in the same tiling - it chooses one or the other. This property is maintained in both systems.
+
+### "Users will struggle with configuration"
+**False**. Users already configure chunk size via `RAGZOOM_LEAF_TOKENS`. This doesn't add any new configuration burden.
+
 ## Migration Strategy
 
-### Phase 1: Dual Mode Support
+Since this is a clean-break implementation with no existing production data to migrate, the strategy is simple:
 
-1. Add configuration flag: `use_segment_abstraction` (default: true)
-2. Implement unified node indexing alongside current system
-3. Both modes produce compatible output
+1. **Development**: Implement all changes on a feature branch
+2. **Testing**: Thoroughly test the new implementation
+3. **Deployment**: Merge to main branch when ready
+4. **Documentation**: Update all docs to reflect the new architecture
 
-### Phase 2: Migration Tools
-
-1. Provide tool to re-index documents in unified mode
-2. Add compatibility layer for reading old segment-based trees
-3. Gradually migrate existing documents
-
-### Phase 3: Deprecation
-
-1. Switch default to unified mode
-2. Mark segment-based code as deprecated
-3. Eventually remove segment abstraction entirely
+No dual-mode support or data migration is needed.
 
 ## Implementation Checklist
 
@@ -188,6 +197,120 @@ The example showing 100-token chunks achieving the same granularity as 200-token
 2. **Performance**: Indexing time should remain reasonable despite more nodes
 3. **Coverage**: No gaps in document coverage
 4. **Budget Compliance**: Token budgets still respected
+
+## FAQ
+
+### Q: How do I get the same granularity as before?
+**A**: Use smaller chunks. If you previously used 200-token chunks and relied on segments for finer control, try 100-token chunks. The granularity is equivalent, just structured differently in the tree.
+
+### Q: Won't this create huge API costs?
+**A**: Only if you choose smaller chunks. API costs scale linearly (not exponentially) with chunk count. Keep your current chunk size for the same costs, or adjust based on your needs.
+
+### Q: What about documents with natural section boundaries?
+**A**: The text splitter can be enhanced to respect section boundaries (e.g., chapters, paragraphs) while staying near the target chunk size. This is orthogonal to the segment elimination.
+
+### Q: How does this affect retrieval quality?
+**A**: Retrieval quality should be equivalent or better. The DP algorithm still finds optimal tilings, and simpler code means fewer bugs and edge cases.
+
+## Detailed Implementation Roadmap
+
+### Overview
+This is a clean-break implementation - no backward compatibility with existing segment-based trees. Any existing indexed documents will need to be re-indexed.
+
+### Phase 1: Data Model Changes (Foundation)
+**Goal**: Update the core data structures
+
+1. **Update SQLite Schema** (`ragzoom/store.py`)
+   - Remove `mid_offset` column from `TreeNode` table definition
+   - Update `add_node()` and `update_summary()` to remove `mid_offset` parameter
+   - No migration needed - just change the schema directly
+
+2. **Remove Segment Classes** (`ragzoom/dynamic_tiling.py`)
+   - Delete `Segment` class
+   - Delete `SegmentInfo` class  
+   - Update `DPResult` to store node IDs directly instead of Segments
+
+### Phase 2: Tree Building Simplification
+**Goal**: Remove <<<MID>>> delimiter from indexing
+
+1. **Update TreeBuilder** (`ragzoom/index.py`)
+   - Remove <<<MID>>> from summarization prompt
+   - Remove delimiter detection and retry logic
+   - Remove `mid_offset` calculation
+   - Simplify `_process_node_pair()` to just store summaries
+
+2. **Update Tests**
+   - Remove `tests/test_mid_delimiter.py` entirely
+   - Update indexing tests to not expect <<<MID>>>
+
+### Phase 3: Algorithm Simplification
+**Goal**: Make DP algorithm work with atomic nodes
+
+1. **Simplify DynamicTilingGenerator** (`ragzoom/dynamic_tiling.py`)
+   - Update `_find_optimal_tiling_for_span()` to work with whole nodes
+   - Remove LEFT/RIGHT segment creation logic
+   - Simplify `_get_text_for_segment()` to always return full node text
+   - Remove span calculation for half-nodes
+
+2. **Update Algorithm Tests**
+   - Update `test_dp_assembly.py` to remove LEFT/RIGHT tests
+   - Update `test_dp_integration.py` for atomic nodes
+
+### Phase 4: Assembly and Presentation
+**Goal**: Simplify text assembly and visualization
+
+1. **Simplify Assembler** (`ragzoom/assemble.py`)
+   - Remove segment-based text extraction
+   - Simple concatenation of node content
+   - Remove Segment import
+
+2. **Update Visualization** (`ragzoom/tree_viz.py`)
+   - Remove segment side handling
+   - Simplify node lookup logic
+
+3. **Update CLI** (`ragzoom/cli.py`)
+   - Remove segment side from debug output
+   - Simplify tiling display
+
+### Phase 5: Validation and Cleanup
+**Goal**: Remove segment-specific validation and clean up
+
+1. **Update Validation** (`ragzoom/validate.py`)
+   - Remove `mid_offset` validation
+   - Remove segment span calculations
+   - Simplify to whole-node validation
+
+2. **Documentation Updates**
+   - Update `docs/architecture.md`
+   - Update `docs/deep-dives/tiling-algorithm.md`
+   - Update docstrings throughout
+
+3. **Final Cleanup**
+   - Remove any remaining segment references
+   - Update all remaining tests
+   - Remove migration code after confirming working
+
+### Testing Strategy
+
+1. **Unit Tests First**: Update lowest-level tests (models, store) before integration tests
+2. **Validation Suite**: Run comprehensive validation on test documents
+3. **Performance Testing**: Verify no performance regressions
+4. **Integration Testing**: Test full indexing and retrieval workflows
+
+### Risk Mitigation
+
+1. **Branch Strategy**: Develop on feature branch with frequent commits
+2. **Test Coverage**: Ensure all changes have corresponding test updates
+3. **Manual Testing**: Test with various document types and chunk sizes
+4. **Rollback Plan**: Keep original branch intact until fully validated
+
+### Success Criteria
+
+1. All tests pass with simplified model
+2. Indexing and retrieval work correctly
+3. No performance degradation
+4. Code complexity metrics improve
+5. Documentation is fully updated
 
 ## Conclusion
 
