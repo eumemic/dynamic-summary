@@ -251,8 +251,20 @@ def validate_tiling(
     store: Store,
     document_id: str,
     original_text: Optional[str] = None,
+    budget_tokens: Optional[int] = None,
 ) -> Optional[str]:
-    """Validate that a tiling of Segments has no overlaps, no duplicates, and (optionally) covers the document."""
+    """Validate that a tiling of Segments has no overlaps, no duplicates, and (optionally) covers the document.
+
+    Args:
+        segments: List of segments in the tiling
+        store: Store instance
+        document_id: Document ID
+        original_text: Optional original text for gap validation
+        budget_tokens: Optional token budget to validate against
+
+    Returns:
+        Error message if invalid, None if valid
+    """
     if not segments:
         return "Tiling is empty"
 
@@ -327,5 +339,48 @@ def validate_tiling(
                             return f"Non-whitespace gap in tiling: {segment_spans[i][2]} to {segment_spans[i + 1][1]}"
                     else:
                         return f"Gap in tiling: {segment_spans[i][2]} to {segment_spans[i + 1][1]}"
+
+    # Check budget compliance if budget is provided
+    if budget_tokens is not None:
+        import tiktoken
+
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+
+        total_tokens = 0
+        for seg in segments:
+            node = store.get_node(seg.node_id)
+            if not node or not node.text:
+                continue
+
+            # Calculate token cost based on segment type
+            if seg.side is None:
+                # Full node (leaf or internal without side)
+                tokens = len(tokenizer.encode(node.text))
+            elif seg.side == "LEFT":
+                # Left half of internal node
+                if node.mid_offset is not None:
+                    text = node.text[: node.mid_offset]
+                    tokens = len(tokenizer.encode(text.strip()))
+                else:
+                    # Fallback if no mid_offset
+                    tokens = len(tokenizer.encode(node.text)) // 2
+            elif seg.side == "RIGHT":
+                # Right half of internal node
+                if node.mid_offset is not None:
+                    text = node.text[node.mid_offset :]
+                    tokens = len(tokenizer.encode(text.strip()))
+                else:
+                    # Fallback if no mid_offset
+                    tokens = len(tokenizer.encode(node.text)) // 2
+            else:
+                # Should not happen
+                tokens = 0
+
+            total_tokens += tokens
+
+        if total_tokens > budget_tokens:
+            return (
+                f"Tiling exceeds budget: {total_tokens} tokens > {budget_tokens} budget"
+            )
 
     return None  # Valid tiling
