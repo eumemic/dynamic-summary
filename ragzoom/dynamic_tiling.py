@@ -45,6 +45,26 @@ class DPResult:
     coverage_map: dict[str, bool]
 
 
+@dataclass
+class Tiling:
+    """Represents a tiling with its segments and token-weighted relevance score."""
+
+    segments: list[Segment]
+    relevance_tokens: float  # Total relevance score weighted by token count
+
+    def __add__(self, other: "Tiling") -> "Tiling":
+        """Concatenate two tilings."""
+        return Tiling(
+            segments=self.segments + other.segments,
+            relevance_tokens=self.relevance_tokens + other.relevance_tokens,
+        )
+
+    @classmethod
+    def empty(cls) -> "Tiling":
+        """Create an empty tiling."""
+        return cls(segments=[], relevance_tokens=0.0)
+
+
 class DynamicTilingGenerator:
     """Generates a tiling using a dynamic programming approach."""
 
@@ -52,9 +72,7 @@ class DynamicTilingGenerator:
         self.config = config
         self.store = store
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
-        self._memo_cache: dict[
-            tuple[Optional[str], int], tuple[list[Segment], float]
-        ] = {}
+        self._memo_cache: dict[tuple[Optional[str], int], Tiling] = {}
 
     def find_optimal_tiling(
         self,
@@ -69,25 +87,23 @@ class DynamicTilingGenerator:
             return DPResult([], [], 0.0, coverage_map)
 
         self._memo_cache = {}
-        segments, quality = self._find_optimal_tiling_for_span(
-            root_node, budget_tokens, scores
-        )
+        tiling = self._find_optimal_tiling_for_span(root_node, budget_tokens, scores)
 
         # Build segment infos with costs and spans
         segment_infos = []
-        for seg in segments:
+        for seg in tiling.segments:
             cost = self._get_segment_cost(seg)
             span_start, span_end = self._get_segment_span(seg)
             segment_infos.append(SegmentInfo(seg, cost, span_start, span_end))
 
         logger.info(
-            f"DP tiling generated with total quality {quality:.3f} and {len(segments)} segments."
+            f"DP tiling generated with total quality {tiling.relevance_tokens:.3f} and {len(tiling.segments)} segments."
         )
 
         return DPResult(
-            segments=segments,
+            segments=tiling.segments,
             segment_infos=segment_infos,
-            total_quality=quality,
+            total_quality=tiling.relevance_tokens,
             coverage_map=coverage_map,
         )
 
@@ -133,47 +149,27 @@ class DynamicTilingGenerator:
             # Fallback to half of node
             return ((node.span_start + node.span_end) // 2, node.span_end)
 
-    def _calculate_segment_quality(
-        self, segment: "Segment", scores: dict[str, float]
-    ) -> float:
-        base_score = scores.get(segment.node_id, 0.0)
-        node = self.store.get_node(segment.node_id)
-        if node and not self.store.is_leaf_node(segment.node_id):
-            return base_score / 2.0
-        return base_score
-
-    def _get_nodes_in_span(
-        self, span_start: int, span_end: int, nodes: list["TreeNode"]
-    ) -> list["TreeNode"]:
-        return [
-            node
-            for node in nodes
-            if node.span_start >= span_start and node.span_end <= span_end
-        ]
-
     def _split_budget_proportionally(
         self, budget: int, node: "TreeNode", scores: dict[str, float]
     ) -> tuple[int, int]:
         left_child, right_child = self.store.get_children(node.id)
         if not left_child or not right_child:
             return budget // 2, budget // 2
-        seed_nodes = self.store.get_nodes(list(scores.keys()))
-        seeds_left = self._get_nodes_in_span(
-            left_child.span_start, left_child.span_end, seed_nodes
-        )
-        seeds_right = self._get_nodes_in_span(
-            right_child.span_start, right_child.span_end, seed_nodes
-        )
-        relevance_left = sum(scores.get(s.id, 0.0) for s in seeds_left)
-        relevance_right = sum(scores.get(s.id, 0.0) for s in seeds_right)
+
+        # Since we now have scores for all nodes, just look them up directly
+        relevance_left = scores.get(left_child.id, 0.0)
+        relevance_right = scores.get(right_child.id, 0.0)
         total_relevance = relevance_left + relevance_right
+
         if total_relevance == 0:
+            # Fall back to text length-based allocation
             len_left = len(left_child.text) if left_child.text else 1
             len_right = len(right_child.text) if right_child.text else 1
             total_len = len_left + len_right
             budget_l = int(budget * (len_left / total_len))
         else:
             budget_l = int(budget * (relevance_left / total_relevance))
+
         budget_r = budget - budget_l
         return budget_l, budget_r
 
@@ -183,62 +179,69 @@ class DynamicTilingGenerator:
         side: Literal["LEFT", "RIGHT"],
         budget_for_side: int,
         scores: dict[str, float],
-    ) -> tuple[list[Segment], float]:
-        tiling_1 = [Segment(parent_node.id, side)]
-        quality_1 = self._calculate_segment_quality(tiling_1[0], scores)
+    ) -> Tiling:
+        seg = Segment(parent_node.id, side)
+        cost = self._get_segment_cost(seg)
+        relevance = scores.get(parent_node.id, 0.0)
+        tiling_1 = Tiling(segments=[seg], relevance_tokens=relevance * cost)
+
         child_node = self.store.get_child(parent_node.id, side)
-        tiling_2, quality_2 = self._find_optimal_tiling_for_span(
+        tiling_2 = self._find_optimal_tiling_for_span(
             child_node, budget_for_side, scores
         )
-        if tiling_2 and quality_2 > quality_1:
-            return (tiling_2, quality_2)
+
+        # Choose the tiling with higher relevance-tokens
+        if tiling_2.relevance_tokens > tiling_1.relevance_tokens:
+            return tiling_2
         else:
-            return (tiling_1, quality_1)
+            return tiling_1
 
     def _find_optimal_tiling_for_span_unmemoized(
         self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
-    ) -> tuple[list[Segment], float]:
+    ) -> Tiling:
         if not node:
-            return ([], 0.0)
+            return Tiling.empty()
 
         # NEW: leaf is indivisible
         if self.store.is_leaf_node(node.id) or node.mid_offset is None:
             seg = Segment(node.id, None)
             cost = self._get_segment_cost(seg)
             if budget < cost:
-                return ([], 0.0)  # cannot afford
-            quality = self._calculate_segment_quality(seg, scores)
-            return ([seg], quality)
+                return Tiling.empty()  # cannot afford
+            relevance = scores.get(node.id, 0.0)
+            return Tiling(segments=[seg], relevance_tokens=relevance * cost)
 
         # Internal node logic continues as before
         cost_of_this_node = self._get_segment_cost(
             Segment(node.id, "LEFT")
         ) + self._get_segment_cost(Segment(node.id, "RIGHT"))
         if budget < cost_of_this_node:
-            return ([], 0.0)
+            return Tiling.empty()
         budget_l, budget_r = self._split_budget_proportionally(budget, node, scores)
-        best_tiling_left, best_quality_left = self._find_best_choice_for_side(
+        best_tiling_left = self._find_best_choice_for_side(
             node, "LEFT", budget_l, scores
         )
-        best_tiling_right, best_quality_right = self._find_best_choice_for_side(
+        best_tiling_right = self._find_best_choice_for_side(
             node, "RIGHT", budget_r, scores
         )
         final_tiling = best_tiling_left + best_tiling_right
-        final_quality = best_quality_left + best_quality_right
-        final_cost = sum(self._get_segment_cost(seg) for seg in final_tiling)
+        final_cost = sum(self._get_segment_cost(seg) for seg in final_tiling.segments)
         if final_cost > budget:
-            quality = self._calculate_segment_quality(
-                Segment(node.id, "LEFT"), scores
-            ) + self._calculate_segment_quality(Segment(node.id, "RIGHT"), scores)
-            return (
-                [Segment(node.id, "LEFT"), Segment(node.id, "RIGHT")],
-                quality,
+            # Fall back to using this node's segments
+            left_seg = Segment(node.id, "LEFT")
+            right_seg = Segment(node.id, "RIGHT")
+            left_cost = self._get_segment_cost(left_seg)
+            right_cost = self._get_segment_cost(right_seg)
+            relevance = scores.get(node.id, 0.0)
+            return Tiling(
+                segments=[left_seg, right_seg],
+                relevance_tokens=relevance * (left_cost + right_cost),
             )
-        return (final_tiling, final_quality)
+        return final_tiling
 
     def _find_optimal_tiling_for_span(
         self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
-    ) -> tuple[list[Segment], float]:
+    ) -> Tiling:
         node_id = node.id if node else None
         cache_key = (node_id, budget)
         if cache_key in self._memo_cache:

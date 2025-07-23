@@ -75,12 +75,13 @@ class TestNMaxFix:
             )
 
         # Mock the search_similar to return all leaves as candidates
+        # Note: search_similar now returns (id, similarity, metadata) tuples
         store.search_similar = Mock(
             return_value=[
-                ("leaf1", 0.1),
-                ("leaf2", 0.1),
-                ("leaf3", 0.1),
-                ("leaf4", 0.1),
+                ("leaf1", 0.9, {}),  # High similarity, empty metadata
+                ("leaf2", 0.9, {}),
+                ("leaf3", 0.9, {}),
+                ("leaf4", 0.9, {}),
             ]
         )
 
