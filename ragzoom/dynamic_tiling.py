@@ -73,6 +73,7 @@ class DynamicTilingGenerator:
         self.store = store
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
         self._memo_cache: dict[tuple[Optional[str], int], Tiling] = {}
+        self._subtree_relevance_cache: dict[str, float] = {}
 
     def find_optimal_tiling(
         self,
@@ -87,6 +88,7 @@ class DynamicTilingGenerator:
             return DPResult([], [], 0.0, coverage_map)
 
         self._memo_cache = {}
+        self._subtree_relevance_cache = {}
         tiling = self._find_optimal_tiling_for_span(root_node, budget_tokens, scores)
 
         # Build segment infos with costs and spans
@@ -149,6 +151,32 @@ class DynamicTilingGenerator:
             # Fallback to half of node
             return ((node.span_start + node.span_end) // 2, node.span_end)
 
+    def _get_subtree_relevance(
+        self, node: "TreeNode", scores: dict[str, float]
+    ) -> float:
+        """Recursively sum all relevance scores in a subtree with memoization."""
+        if node.id in self._subtree_relevance_cache:
+            return self._subtree_relevance_cache[node.id]
+
+        # Get this node's score
+        node_score = scores.get(node.id, 0.0)
+        total = node_score
+
+        # Add children's scores recursively
+        left_child, right_child = self.store.get_children(node.id)
+        left_subtree_score = 0.0
+        right_subtree_score = 0.0
+
+        if left_child:
+            left_subtree_score = self._get_subtree_relevance(left_child, scores)
+            total += left_subtree_score
+        if right_child:
+            right_subtree_score = self._get_subtree_relevance(right_child, scores)
+            total += right_subtree_score
+
+        self._subtree_relevance_cache[node.id] = total
+        return total
+
     def _split_budget_proportionally(
         self, budget: int, node: "TreeNode", scores: dict[str, float]
     ) -> tuple[int, int]:
@@ -156,20 +184,35 @@ class DynamicTilingGenerator:
         if not left_child or not right_child:
             return budget // 2, budget // 2
 
-        # Since we now have scores for all nodes, just look them up directly
-        relevance_left = scores.get(left_child.id, 0.0)
-        relevance_right = scores.get(right_child.id, 0.0)
+        # Calculate minimum coverage cost for each side
+        min_left = self._get_segment_cost(Segment(node.id, "LEFT"))
+        min_right = self._get_segment_cost(Segment(node.id, "RIGHT"))
+        min_total = min_left + min_right
+
+        # If budget can't even cover minimum, split proportionally by min costs
+        if budget <= min_total:
+            budget_l = int(budget * (min_left / min_total))
+            budget_r = budget - budget_l
+            return budget_l, budget_r
+
+        # Reserve minimum for each side, then allocate the rest
+        available = budget - min_total
+
+        # Compute total relevance mass in each subtree
+        relevance_left = self._get_subtree_relevance(left_child, scores)
+        relevance_right = self._get_subtree_relevance(right_child, scores)
         total_relevance = relevance_left + relevance_right
 
         if total_relevance == 0:
-            # Fall back to text length-based allocation
+            # Fall back to text length-based allocation for the available budget
             len_left = len(left_child.text) if left_child.text else 1
             len_right = len(right_child.text) if right_child.text else 1
             total_len = len_left + len_right
-            budget_l = int(budget * (len_left / total_len))
+            extra_left = int(available * (len_left / total_len))
         else:
-            budget_l = int(budget * (relevance_left / total_relevance))
+            extra_left = int(available * (relevance_left / total_relevance))
 
+        budget_l = min_left + extra_left
         budget_r = budget - budget_l
         return budget_l, budget_r
 
@@ -225,18 +268,6 @@ class DynamicTilingGenerator:
             node, "RIGHT", budget_r, scores
         )
         final_tiling = best_tiling_left + best_tiling_right
-        final_cost = sum(self._get_segment_cost(seg) for seg in final_tiling.segments)
-        if final_cost > budget:
-            # Fall back to using this node's segments
-            left_seg = Segment(node.id, "LEFT")
-            right_seg = Segment(node.id, "RIGHT")
-            left_cost = self._get_segment_cost(left_seg)
-            right_cost = self._get_segment_cost(right_seg)
-            relevance = scores.get(node.id, 0.0)
-            return Tiling(
-                segments=[left_seg, right_seg],
-                relevance_tokens=relevance * (left_cost + right_cost),
-            )
         return final_tiling
 
     def _find_optimal_tiling_for_span(
