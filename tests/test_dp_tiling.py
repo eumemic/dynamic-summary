@@ -42,5 +42,5 @@ class TestDPTiling:
         tiling = dp_result.tiling
 
         assert tiling, "DP tiling should not be empty for single node tree"
-        assert len(tiling) == 1
-        assert tiling[0] == "root"
+        assert len(tiling.node_ids) == 1
+        assert tiling.node_ids[0] == "root"

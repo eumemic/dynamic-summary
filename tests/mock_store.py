@@ -66,7 +66,6 @@ class SimpleMockStore:
         span_end: int,
         parent_id: Optional[str] = None,
         summary: Optional[str] = None,
-        mid_offset: Optional[int] = None,
         document_id: Optional[str] = None,
         left_child_id: Optional[str] = None,
         right_child_id: Optional[str] = None,
@@ -90,7 +89,6 @@ class SimpleMockStore:
             span_end=span_end,
             parent_id=parent_id,
             summary=summary,
-            mid_offset=mid_offset,
             document_id=document_id,
             left_child_id=left_child_id,
             right_child_id=right_child_id,
@@ -411,14 +409,12 @@ class SimpleMockStore:
         node_id: str,
         text: str,
         embedding: list[float],
-        mid_offset: Optional[int] = None,
     ) -> None:
         """Update a node's summary."""
         node = self.nodes.get(node_id)
         if node:
             node.summary = text
             node.text = text
-            node.mid_offset = mid_offset
             node.is_dirty = False
             self.embeddings[node_id] = embedding
             self.dirty_nodes.discard(node_id)
