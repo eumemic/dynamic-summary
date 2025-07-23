@@ -199,29 +199,14 @@ class DynamicTilingGenerator:
             self._nodes.get(node.right_child_id) if node.right_child_id else None
         )
 
-        # If no children in our coverage map, use this node
-        if not left_child and not right_child:
-            return option1
-
-        # If only one child, compare with recursing to that child
-        if left_child and not right_child:
-            child_tiling = self._find_optimal_tiling_for_span(
-                left_child, budget, scores
-            )
-            return (
-                child_tiling
-                if child_tiling.relevance_tokens > option1.relevance_tokens
-                else option1
-            )
-
-        if right_child and not left_child:
-            child_tiling = self._find_optimal_tiling_for_span(
-                right_child, budget, scores
-            )
-            return (
-                child_tiling
-                if child_tiling.relevance_tokens > option1.relevance_tokens
-                else option1
+        # CRITICAL: Coverage tree must be complete - internal nodes must have both children
+        if not left_child or not right_child:
+            # This violates the tree completeness invariant
+            missing_child = "left" if not left_child else "right"
+            raise ValueError(
+                f"Coverage tree is incomplete: node {node.id} is missing its {missing_child} child. "
+                f"The coverage tree must be a complete binary tree to maintain full document coverage. "
+                f"This usually means the retriever needs to include siblings when building the coverage tree."
             )
 
         # Both children exist - split budget proportionally

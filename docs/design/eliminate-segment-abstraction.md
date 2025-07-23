@@ -327,6 +327,45 @@ This is a clean-break implementation - no backward compatibility with existing s
 4. Code complexity metrics improve
 5. Documentation is fully updated
 
+## Critical Discovery: Tree Completeness Requirements
+
+### The Issue
+
+During implementation, we discovered a critical assumption in the node-based DP algorithm that wasn't immediately apparent: **the coverage tree must be a complete binary tree**. This means every internal node must have both children present in the coverage tree.
+
+### Why This Matters
+
+In the segment-based system, a parent node could contribute partial coverage through its LEFT or RIGHT segment even without both children. However, in the node-based system:
+
+1. Nodes are atomic - included in full or not at all
+2. To maintain coverage when recursing, we need both children
+3. If only one child is present, we either:
+   - Use the parent (potentially low relevance)
+   - Recurse to one child (breaking coverage)
+
+### Example
+
+When running `ragzoom query "" -d smoke_test.txt --n-max 1`:
+- Only one leaf node is selected (e.g., span 639-811 out of 0-1670)
+- Its ancestors are added, creating a path to root
+- But siblings at each level are missing
+- The DP algorithm can't maintain full document coverage
+
+### Requirements
+
+1. **Indexed Tree**: Must be a full binary tree (every internal node has exactly 2 children)
+2. **Coverage Tree**: Must be a complete binary subtree of the indexed tree
+3. **Retriever**: Must ensure coverage tree completeness by including siblings
+
+### Implementation Notes
+
+- Add validation in DP algorithm to detect incomplete coverage trees
+- Modify retriever to include siblings when building coverage trees
+- Add validation during indexing to ensure full binary trees
+- This maintains the perfect tiling guarantee (no gaps, no overlaps)
+
 ## Conclusion
 
 Eliminating the segment abstraction significantly simplifies RagZoom's architecture while maintaining all functional capabilities. By adjusting chunk size, we achieve the same granularity through a cleaner, more intuitive model. The migration path allows for gradual adoption and validation of the new approach.
+
+The discovery of the tree completeness requirement reinforces the importance of maintaining strict invariants in the data structure. With proper validation and coverage tree construction, the node-based system provides the same guarantees as the segment-based system while being conceptually simpler.
