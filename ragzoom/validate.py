@@ -333,3 +333,49 @@ def validate_tiling(
             )
 
     return None  # Valid tiling
+
+
+def validate_tree_is_full(store: Store, document_id: str) -> Optional[str]:
+    """Validate that the indexed tree is a full binary tree.
+
+    A full binary tree means every internal node has exactly 2 children.
+    This is required for the DP algorithm to maintain coverage guarantees.
+
+    Args:
+        store: Storage instance
+        document_id: Document to validate
+
+    Returns:
+        Error message if invalid, None if valid
+    """
+    nodes = store.get_all_nodes_for_document(document_id)
+    if not nodes:
+        return "No nodes found for document"
+
+    # A single-node tree is a full binary tree by definition
+    if len(nodes) == 1:
+        return None
+
+    # Check each node
+    for node in nodes:
+        # Check if this is an internal node (has at least one child)
+        has_left = node.left_child_id is not None
+        has_right = node.right_child_id is not None
+
+        if has_left or has_right:
+            # This is an internal node - it must have both children
+            if not (has_left and has_right):
+                missing = "right" if has_left else "left"
+                return (
+                    f"Tree is not full: internal node {node.id} is missing its {missing} child. "
+                    f"Every internal node must have exactly 2 children."
+                )
+
+        # Also verify that child references are valid
+        if has_left and not any(n.id == node.left_child_id for n in nodes):
+            return f"Invalid tree: node {node.id} references non-existent left child {node.left_child_id}"
+
+        if has_right and not any(n.id == node.right_child_id for n in nodes):
+            return f"Invalid tree: node {node.id} references non-existent right child {node.right_child_id}"
+
+    return None  # Tree is full
