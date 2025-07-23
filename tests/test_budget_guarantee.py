@@ -283,21 +283,94 @@ class TestBudgetGuarantee:
             token_count <= budget
         ), f"Budget exceeded with mixed mode: {token_count} > {budget}"
 
-    def test_n_max_only_mode(self, setup_system):
+    def test_n_max_only_mode(self):
         """Test n_max only mode (no budget enforcement)."""
-        config, store, tree_builder, retriever, assembler = setup_system
+        from unittest.mock import Mock, patch
 
-        # Create a document
-        document = "Test content. " * 200
-        tree_builder.add_document(document, "test-doc")
+        from tests.mock_store import SimpleMockStore
 
-        # Retrieve with only n_max (no budget)
-        n_max = 5
-        result = retriever.retrieve("test", n_max=n_max, budget_tokens=None)
+        # Mock OpenAI clients
+        with (
+            patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
+            patch("ragzoom.assemble.OpenAI") as mock_assemble_client,
+        ):
 
-        # Should have segments from DP algorithm
-        assert result.tiling is not None
+            # Setup sync mock for retrieval
+            mock_embeddings = Mock()
+            mock_embeddings.create = Mock(
+                return_value=Mock(data=[Mock(embedding=[0.5] * 384)])
+            )
 
-        # Assembly should work without budget constraints
-        assembled_text = assembler.assemble(result)
-        assert len(assembled_text) > 0
+            instance_retrieve = Mock()
+            instance_retrieve.embeddings = mock_embeddings
+            mock_retrieve_client.return_value = instance_retrieve
+
+            # Setup for assembler
+            instance_assemble = Mock()
+            instance_assemble.embeddings = mock_embeddings
+            mock_assemble_client.return_value = instance_assemble
+
+            config = RagZoomConfig(
+                budget_tokens=1000, leaf_tokens=200, openai_api_key="test-key"
+            )
+            store = SimpleMockStore(config=config)
+            retriever = Retriever(config, store, tree_builder=None)
+            assembler = Assembler(config, store)
+
+            # Create a simple tree structure
+            # Root
+            store.add_node(
+                node_id="root",
+                text="Root summary of the document",
+                span_start=0,
+                span_end=2800,
+                parent_id=None,
+                document_id="test-doc",
+                embedding=[0.1] * 384,
+                left_child_id="leaf1",
+                right_child_id="leaf2",
+            )
+
+            # Leaf nodes
+            store.add_node(
+                node_id="leaf1",
+                text="Test content. " * 100,  # ~200 tokens
+                span_start=0,
+                span_end=1400,
+                parent_id="root",
+                document_id="test-doc",
+                embedding=[0.9] * 384,  # High similarity to query
+            )
+
+            store.add_node(
+                node_id="leaf2",
+                text="Other content. " * 100,  # ~200 tokens
+                span_start=1400,
+                span_end=2800,
+                parent_id="root",
+                document_id="test-doc",
+                embedding=[0.2] * 384,  # Low similarity
+            )
+
+            # Set up mock scores to simulate search results
+            store.set_mock_scores(
+                {
+                    "leaf1": 0.9,  # High score for "test" query
+                    "leaf2": 0.2,
+                    "root": 0.5,
+                }
+            )
+
+            # Retrieve with only n_max (no budget)
+            n_max = 5
+            result = retriever.retrieve(
+                "test", n_max=n_max, budget_tokens=None, document_id="test-doc"
+            )
+
+            # Should have nodes from DP algorithm
+            assert result.tiling is not None
+            assert len(result.tiling) > 0
+
+            # Assembly should work without budget constraints
+            assembled_text = assembler.assemble(result)
+            assert len(assembled_text) > 0
