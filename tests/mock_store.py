@@ -159,18 +159,6 @@ class SimpleMockStore:
 
         return left, right
 
-    def get_child(self, node_id: str, side: str) -> Optional[SimpleNamespace]:
-        """Get the left or right child of a node."""
-        parent = self.nodes.get(node_id)
-        if not parent:
-            return None
-
-        child_id = parent.left_child_id if side == "LEFT" else parent.right_child_id
-        if not child_id:
-            return None
-
-        return self.nodes.get(child_id)
-
     def get_nodes(self, node_ids: list[str]) -> list[SimpleNamespace]:
         """Get multiple nodes by their IDs."""
         return [self.nodes[nid] for nid in node_ids if nid in self.nodes]
