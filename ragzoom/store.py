@@ -355,18 +355,29 @@ class Store:
         return left, right
 
     def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
-        """Get all ancestors of given nodes."""
-        ancestors = set()
-        to_process = list(node_ids)
+        """Get all ancestors of given nodes using batch loading for efficiency."""
+        all_ancestors = set()
+        current_level = set(node_ids)
 
-        while to_process:
-            node_id = to_process.pop()
-            node = self.get_node(node_id)
-            if node and node.parent_id and node.parent_id not in ancestors:
-                ancestors.add(node.parent_id)
-                to_process.append(node.parent_id)
+        # Keep going until we've reached all roots
+        while current_level:
+            # Batch load all nodes at current level
+            nodes_at_level = self.get_nodes(list(current_level))
 
-        return [node for aid in ancestors if (node := self.get_node(aid)) is not None]
+            # Collect parent IDs for next level
+            next_level = set()
+            for node in nodes_at_level:
+                if node.parent_id and node.parent_id not in all_ancestors:
+                    all_ancestors.add(node.parent_id)
+                    next_level.add(node.parent_id)
+
+            # Move up to next level
+            current_level = next_level
+
+        # Batch load all ancestors and return
+        if all_ancestors:
+            return self.get_nodes(list(all_ancestors))
+        return []
 
     def search_similar(
         self,

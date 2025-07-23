@@ -177,11 +177,13 @@ class Retriever:
             )
 
         # Load all nodes in coverage map to avoid redundant loading later
+        # Use batch loading for efficiency
         nodes: dict[str, TreeNode] = {}
-        for node_id in coverage_map:
-            maybe_node = self.store.get_node(node_id)
-            if maybe_node is not None:
-                nodes[node_id] = maybe_node
+        node_ids_to_load = list(coverage_map.keys())
+        if node_ids_to_load:
+            loaded_nodes = self.store.get_nodes(node_ids_to_load)
+            for node in loaded_nodes:
+                nodes[node.id] = node
 
         # Find the root node in the coverage map
         root_id = None
@@ -270,7 +272,12 @@ class Retriever:
             logger.error(f"Error during async refresh: {e}")
 
     def _build_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
-        """Build coverage map including selected nodes and their ancestors."""
+        """Build coverage map including selected nodes and their ancestors.
+
+        CRITICAL: To maintain the tree completeness invariant required by the DP algorithm,
+        we must ensure the coverage tree is complete - every internal node has both children.
+        This means including siblings of selected nodes and their descendants.
+        """
         coverage_map = {}
 
         # Mark selected nodes as covered
@@ -282,6 +289,51 @@ class Retriever:
         ancestors = self.store.get_ancestors(selected_ids)
         for ancestor in ancestors:
             coverage_map[ancestor.id] = True
+
+        # CRITICAL: Ensure coverage tree is complete by including necessary siblings
+        # When a node is in coverage, its sibling must also be included (if parent is in coverage)
+        # This ensures every internal node in the coverage tree has both children
+
+        # First, load all nodes we currently have in coverage for efficiency
+        nodes_to_load = list(coverage_map.keys())
+        loaded_nodes = {}
+        if nodes_to_load:
+            batch_nodes = self.store.get_nodes(nodes_to_load)
+            for node in batch_nodes:
+                loaded_nodes[node.id] = node
+
+        # Now check for siblings that need to be added
+        new_nodes_needed = set()
+        for node_id in coverage_map:
+            node = loaded_nodes.get(node_id)
+            if not node or not node.parent_id:
+                continue
+
+            # If this node's parent is in coverage, the sibling must also be included
+            if node.parent_id in coverage_map:
+                parent = loaded_nodes.get(node.parent_id)
+                if not parent:
+                    # Parent not loaded yet, add to batch
+                    new_nodes_needed.add(node.parent_id)
+                else:
+                    # Check if siblings need to be added
+                    if (
+                        parent.left_child_id
+                        and parent.left_child_id not in coverage_map
+                    ):
+                        new_nodes_needed.add(parent.left_child_id)
+                    if (
+                        parent.right_child_id
+                        and parent.right_child_id not in coverage_map
+                    ):
+                        new_nodes_needed.add(parent.right_child_id)
+
+        # Batch load any new nodes needed
+        if new_nodes_needed:
+            new_nodes_list = list(new_nodes_needed)
+            additional_nodes = self.store.get_nodes(new_nodes_list)
+            for node in additional_nodes:
+                coverage_map[node.id] = True
 
         return coverage_map
 
