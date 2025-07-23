@@ -45,7 +45,7 @@ class Retriever:
         self.store = store
         self.tree_builder = tree_builder
         self.client = OpenAI(api_key=config.openai_api_key)
-        self.dp_generator = DynamicTilingGenerator(store, config)
+        self.dp_generator = DynamicTilingGenerator(config, store)
 
         # Per-request cache to avoid double refresh
         self._refreshed_node_ids: set[str] = set()
@@ -125,11 +125,45 @@ class Retriever:
         for node in pinned_nodes:
             coverage_map[node.id] = True
 
-        # Build scores map - only include nodes in coverage map to ensure
-        # DP algorithm can only use nodes from the coverage tree
-        scores = {
-            cand[0]: 1.0 - cand[1] for cand in candidates if cand[0] in coverage_map
-        }  # Convert distance to similarity
+        # Build scores map - compute similarity for ALL nodes in coverage map
+        scores = {}
+
+        # First, add scores for the candidate nodes (already have similarities)
+        for node_id, similarity, _ in candidates:
+            if node_id in coverage_map:
+                scores[node_id] = similarity
+
+        # Then, compute similarities for all other nodes in coverage map
+        nodes_needing_scores = set(coverage_map.keys()) - set(scores.keys())
+        if nodes_needing_scores:
+            # Get embeddings and compute similarities for ancestors
+            for node_id in nodes_needing_scores:
+                ancestor_node: Optional[TreeNode] = self.store.get_node(node_id)
+                if ancestor_node is not None:
+                    # Get node's embedding from Chroma
+                    try:
+                        result = self.store.collection.get(
+                            ids=[node_id], include=["embeddings"]
+                        )
+                        embeddings = result.get("embeddings")
+                        if embeddings is not None and len(embeddings) > 0:
+                            node_embedding = embeddings[0]
+                            # Compute cosine similarity
+                            import numpy as np
+
+                            query_vec = np.array(query_embedding)
+                            node_vec = np.array(node_embedding)
+                            # Cosine similarity = dot product of normalized vectors
+                            similarity = float(
+                                np.dot(query_vec, node_vec)
+                                / (np.linalg.norm(query_vec) * np.linalg.norm(node_vec))
+                            )
+                            scores[node_id] = max(0.0, min(1.0, similarity))
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to get embedding for node {node_id}: {e}"
+                        )
+                        scores[node_id] = 0.0
 
         # Step 5: Extract tiling using DP algorithm
         final_budget = (
@@ -150,7 +184,7 @@ class Retriever:
             node_ids=selected_ids,
             scores=scores,
             coverage_map=coverage_map,  # Use the original coverage map
-            tiling=dp_result.tiling,
+            tiling=dp_result.tiling.node_ids,
             nodes=nodes,
         )
 
