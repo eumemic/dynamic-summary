@@ -387,7 +387,10 @@ class Store:
         n_results: int,
         where: Optional[dict] = None,
     ) -> list[tuple[str, float, dict]]:
-        """Search for similar nodes using Chroma."""
+        """Search for similar nodes using Chroma.
+
+        Returns list of (id, similarity, metadata) tuples where similarity is in [0, 1].
+        """
         # Convert to numpy array if needed
         query_array = np.array(query_embedding, dtype=np.float32)
         results = self.collection.query(
@@ -396,7 +399,7 @@ class Store:
             where=where,
         )
 
-        # Return list of (id, distance, metadata) tuples
+        # Return list of (id, similarity, metadata) tuples
         output = []
         ids = results.get("ids")
         distances = results.get("distances")
@@ -404,10 +407,18 @@ class Store:
 
         if ids and distances and metadatas and len(ids) > 0:
             for i in range(len(ids[0])):
+                # Convert cosine distance to similarity
+                # Cosine distance ranges from 0 to 2, where 0 is identical
+                # Similarity = 1 - (distance / 2) to map to [0, 1]
+                distance = float(distances[0][i])
+                similarity = 1.0 - (distance / 2.0)
+                # Ensure similarity is in valid range [0, 1]
+                similarity = max(0.0, min(1.0, similarity))
+
                 output.append(
                     (
                         ids[0][i],
-                        float(distances[0][i]),
+                        similarity,
                         (
                             dict(metadatas[0][i])
                             if isinstance(metadatas[0][i], dict)

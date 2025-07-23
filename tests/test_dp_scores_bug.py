@@ -80,7 +80,7 @@ class TestDPScoresBug:
         config = RagZoomConfig(
             openai_api_key="test-key", budget_tokens=10000  # Large budget
         )
-        dp_generator = DynamicTilingGenerator(store, config)
+        dp_generator = DynamicTilingGenerator(config, store)
 
         # Simulate the bug scenario:
         # 1. Coverage tree contains only a1 and its ancestors
@@ -109,7 +109,7 @@ class TestDPScoresBug:
         tiling = dp_result.tiling
 
         # Collect which nodes are used in the tiling
-        nodes_in_tiling = set(tiling)
+        nodes_in_tiling = set(tiling.node_ids)
         print(f"\nCoverage tree: {coverage_tree}")
         print(f"Nodes in tiling: {nodes_in_tiling}")
 
@@ -128,7 +128,7 @@ class TestDPScoresBug:
 
         # Specifically check for leaf nodes outside coverage
         leaf_violations = []
-        for node_id in tiling:
+        for node_id in tiling.node_ids:
             node = store.get_node(node_id)
             if node and store.is_leaf_node(node_id) and node_id not in coverage_tree:
                 leaf_violations.append(node_id)
@@ -174,7 +174,7 @@ class TestDPScoresBug:
         store.nodes["root"].right_child_id = "leaf2"
 
         config = RagZoomConfig(openai_api_key="test-key", budget_tokens=10000)
-        dp_generator = DynamicTilingGenerator(store, config)
+        dp_generator = DynamicTilingGenerator(config, store)
 
         # Create a RetrievalResult that mimics the bug:
         # - node_ids has only 1 selected node
@@ -200,7 +200,9 @@ class TestDPScoresBug:
         tiling = dp_result.tiling
 
         # Check results
-        leaf_node_ids = {node_id for node_id in tiling if store.is_leaf_node(node_id)}
+        leaf_node_ids = {
+            node_id for node_id in tiling.node_ids if store.is_leaf_node(node_id)
+        }
 
         print(f"\nSelected nodes: {result.node_ids}")
         print(f"Coverage map: {list(result.coverage_map.keys())}")
