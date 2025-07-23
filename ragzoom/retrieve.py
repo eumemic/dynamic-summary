@@ -272,69 +272,41 @@ class Retriever:
             logger.error(f"Error during async refresh: {e}")
 
     def _build_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
-        """Build coverage map including selected nodes and their ancestors.
+        """Build a full coverage map including selected nodes, their ancestors, and all required children for fullness."""
+        if not selected_ids:
+            return {}
 
-        CRITICAL: To maintain the tree completeness invariant required by the DP algorithm,
-        we must ensure the coverage tree is complete - every internal node has both children.
-        This means including siblings of selected nodes and their descendants.
-        """
-        coverage_map = {}
-
-        # Mark selected nodes as covered
+        # Mark selected nodes as covered and update access
+        coverage_map = {node_id: True for node_id in selected_ids}
         for node_id in selected_ids:
-            coverage_map[node_id] = True
             self.store.update_node_access(node_id)
 
-        # Get and mark ancestors
+        # Add all ancestors
         ancestors = self.store.get_ancestors(selected_ids)
         for ancestor in ancestors:
             coverage_map[ancestor.id] = True
 
-        # CRITICAL: Ensure coverage tree is complete by including necessary siblings
-        # When a node is in coverage, its sibling must also be included (if parent is in coverage)
-        # This ensures every internal node in the coverage tree has both children
-
-        # First, load all nodes we currently have in coverage for efficiency
-        nodes_to_load = list(coverage_map.keys())
-        loaded_nodes = {}
-        if nodes_to_load:
-            batch_nodes = self.store.get_nodes(nodes_to_load)
-            for node in batch_nodes:
-                loaded_nodes[node.id] = node
-
-        # Now check for siblings that need to be added
-        new_nodes_needed = set()
-        for node_id in coverage_map:
-            node = loaded_nodes.get(node_id)
-            if not node or not node.parent_id:
-                continue
-
-            # If this node's parent is in coverage, the sibling must also be included
-            if node.parent_id in coverage_map:
-                parent = loaded_nodes.get(node.parent_id)
-                if not parent:
-                    # Parent not loaded yet, add to batch
-                    new_nodes_needed.add(node.parent_id)
-                else:
-                    # Check if siblings need to be added
-                    if (
-                        parent.left_child_id
-                        and parent.left_child_id not in coverage_map
+        # Iteratively ensure fullness: every internal node in the coverage set must have both children (if any)
+        while True:
+            nodes_in_coverage = self.store.get_nodes(list(coverage_map.keys()))
+            new_nodes_added = False
+            for node in nodes_in_coverage:
+                # If node is in coverage and is an internal node in the main tree, ensure both children are present
+                left = node.left_child_id
+                right = node.right_child_id
+                if left or right:
+                    # If either child is present in the coverage set, both must be
+                    if (left and left in coverage_map) or (
+                        right and right in coverage_map
                     ):
-                        new_nodes_needed.add(parent.left_child_id)
-                    if (
-                        parent.right_child_id
-                        and parent.right_child_id not in coverage_map
-                    ):
-                        new_nodes_needed.add(parent.right_child_id)
-
-        # Batch load any new nodes needed
-        if new_nodes_needed:
-            new_nodes_list = list(new_nodes_needed)
-            additional_nodes = self.store.get_nodes(new_nodes_list)
-            for node in additional_nodes:
-                coverage_map[node.id] = True
-
+                        if left and left not in coverage_map:
+                            coverage_map[left] = True
+                            new_nodes_added = True
+                        if right and right not in coverage_map:
+                            coverage_map[right] = True
+                            new_nodes_added = True
+            if not new_nodes_added:
+                break
         return coverage_map
 
     def _calculate_conservative_n_max(
