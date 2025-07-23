@@ -47,9 +47,6 @@ class TreeNode(Base):
     summary: Mapped[Optional[str]] = mapped_column(
         Text, nullable=True
     )  # NULL for leaf nodes
-    mid_offset: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True
-    )  # Position of <<<MID>>> delimiter in parent summaries
     is_dirty: Mapped[int] = mapped_column(
         Integer, default=0
     )  # Boolean flag for re-summarization
@@ -192,7 +189,6 @@ class Store:
         left_child_id: Optional[str] = None,
         right_child_id: Optional[str] = None,
         summary: Optional[str] = None,
-        mid_offset: Optional[int] = None,
         document_id: Optional[str] = None,
     ) -> TreeNode:
         """Add a node to both SQLite and Chroma."""
@@ -209,7 +205,6 @@ class Store:
                 span_end=span_end,
                 text=text,
                 summary=summary,
-                mid_offset=mid_offset,
                 document_id=document_id,
             )
             session.add(node)
@@ -310,7 +305,6 @@ class Store:
         node_id: str,
         text: str,
         embedding: Union[list[float], np.ndarray],
-        mid_offset: Optional[int] = None,
     ) -> None:
         """Update node summary and clear dirty flag."""
         # Validate embedding dimension
@@ -323,8 +317,6 @@ class Store:
                 # pass a non-null text parameter when updating summaries for internal nodes
                 node.text = cast(str, text)
                 node.summary = text  # These are the same for internal nodes
-                if mid_offset is not None:
-                    node.mid_offset = mid_offset
                 node.is_dirty = 0
                 session.commit()
 
@@ -704,26 +696,7 @@ class Store:
                     result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
                     columns = [row[1] for row in result.fetchall()]
 
-                    # Migration 1: Add mid_offset column if missing
-                    if "mid_offset" not in columns:
-                        # Add the missing column (with proper error handling)
-                        try:
-                            conn.execute(
-                                text(
-                                    "ALTER TABLE tree_nodes ADD COLUMN mid_offset INTEGER"
-                                )
-                            )
-                            conn.commit()
-                            logger.info("Added mid_offset column to tree_nodes table")
-                        except Exception as e:
-                            if "duplicate column" in str(e).lower():
-                                logger.debug("mid_offset column already exists")
-                            else:
-                                raise
-                    else:
-                        logger.debug("mid_offset column already exists")
-
-                    # Migration 2: Drop depth column if present
+                    # Migration: Drop depth column if present
                     if "depth" in columns:
                         logger.info("Found deprecated depth column, dropping it...")
                         try:
@@ -744,7 +717,6 @@ class Store:
                                     span_end INTEGER NOT NULL,
                                     text TEXT NOT NULL,
                                     summary TEXT,
-                                    mid_offset INTEGER,
                                     is_dirty INTEGER DEFAULT 0,
                                     is_pinned INTEGER DEFAULT 0,
                                     last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -764,7 +736,7 @@ class Store:
                                     """
                                 INSERT INTO tree_nodes_new
                                 SELECT id, parent_id, left_child_id, right_child_id,
-                                       span_start, span_end, text, summary, mid_offset,
+                                       span_start, span_end, text, summary,
                                        is_dirty, is_pinned, last_accessed, access_count,
                                        created_at, document_id
                                 FROM tree_nodes

@@ -9,7 +9,7 @@ from openai import OpenAI
 from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.dynamic_tiling import DynamicTilingGenerator, Segment, SegmentInfo
+from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.store import Store, TreeNode
 
 if TYPE_CHECKING:
@@ -25,8 +25,7 @@ class RetrievalResult:
     node_ids: list[str]
     scores: dict[str, float]
     coverage_map: dict[str, bool]
-    tiling: Optional[list["Segment"]] = None
-    segment_infos: Optional[list["SegmentInfo"]] = None
+    tiling: Optional[list[str]] = None  # List of node IDs in the tiling
     nodes: Optional[dict[str, "TreeNode"]] = (
         None  # Pre-loaded nodes to avoid redundant loading
     )
@@ -46,7 +45,7 @@ class Retriever:
         self.store = store
         self.tree_builder = tree_builder
         self.client = OpenAI(api_key=config.openai_api_key)
-        self.dp_generator = DynamicTilingGenerator(config, store)
+        self.dp_generator = DynamicTilingGenerator(store, config)
 
         # Per-request cache to avoid double refresh
         self._refreshed_node_ids: set[str] = set()
@@ -151,8 +150,7 @@ class Retriever:
             node_ids=selected_ids,
             scores=scores,
             coverage_map=coverage_map,  # Use the original coverage map
-            tiling=dp_result.segments,
-            segment_infos=dp_result.segment_infos,
+            tiling=dp_result.tiling,
             nodes=nodes,
         )
 
