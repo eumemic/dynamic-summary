@@ -354,19 +354,6 @@ class Store:
         right = self.get_node(node.right_child_id) if node.right_child_id else None
         return left, right
 
-    def get_child(self, node_id: str, side: str) -> Optional[TreeNode]:
-        """Get the left or right child of a node."""
-        with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
-            if not node:
-                return None
-
-            child_id = node.left_child_id if side == "LEFT" else node.right_child_id
-            if not child_id:
-                return None
-
-            return session.query(TreeNode).filter_by(id=child_id).first()
-
     def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
         """Get all ancestors of given nodes."""
         ancestors = set()
