@@ -353,7 +353,11 @@ def validate_tree_is_full(store: Store, document_id: str) -> Optional[str]:
         return "No nodes found for document"
 
     # A single-node tree is a full binary tree by definition
+    # BUT only if that single node has no children
     if len(nodes) == 1:
+        node = nodes[0]
+        if node.left_child_id is not None or node.right_child_id is not None:
+            return f"Invalid tree: node {node.id} references non-existent children"
         return None
 
     # Check each node
@@ -371,11 +375,13 @@ def validate_tree_is_full(store: Store, document_id: str) -> Optional[str]:
                     f"Every internal node must have exactly 2 children."
                 )
 
-        # Also verify that child references are valid
-        if has_left and not any(n.id == node.left_child_id for n in nodes):
-            return f"Invalid tree: node {node.id} references non-existent left child {node.left_child_id}"
+            # Also verify that child references are valid
+            if has_left:
+                if not any(n.id == node.left_child_id for n in nodes):
+                    return f"Invalid tree: node {node.id} references non-existent left child {node.left_child_id}"
 
-        if has_right and not any(n.id == node.right_child_id for n in nodes):
-            return f"Invalid tree: node {node.id} references non-existent right child {node.right_child_id}"
+            if has_right:
+                if not any(n.id == node.right_child_id for n in nodes):
+                    return f"Invalid tree: node {node.id} references non-existent right child {node.right_child_id}"
 
     return None  # Tree is full
