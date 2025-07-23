@@ -36,8 +36,19 @@ class TestDPTiling:
 
         # We need to manually call the DP generator for now
         coverage_map = {"root": True}
+
+        # Load nodes from coverage map
+        nodes = {}
+        for node_id in coverage_map:
+            node = store.get_node(node_id)
+            if node:
+                nodes[node_id] = node
+
+        # Find root node
+        root_id = "root"  # We know it's root in this test
+
         dp_result = dp_generator.find_optimal_tiling(
-            1000, {"root": 1.0}, "test-doc-single", coverage_map
+            1000, {"root": 1.0}, nodes, root_id
         )
         tiling = dp_result.tiling
 

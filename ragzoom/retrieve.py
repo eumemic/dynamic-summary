@@ -45,7 +45,7 @@ class Retriever:
         self.store = store
         self.tree_builder = tree_builder
         self.client = OpenAI(api_key=config.openai_api_key)
-        self.dp_generator = DynamicTilingGenerator(config, store)
+        self.dp_generator = DynamicTilingGenerator(config)
 
         # Per-request cache to avoid double refresh
         self._refreshed_node_ids: set[str] = set()
@@ -165,13 +165,16 @@ class Retriever:
                         )
                         scores[node_id] = 0.0
 
-        # Step 5: Extract tiling using DP algorithm
-        final_budget = (
-            budget_tokens if budget_tokens is not None else self.config.budget_tokens
-        )
-        dp_result = self.dp_generator.find_optimal_tiling(
-            final_budget, scores, document_id, coverage_map
-        )
+        # Handle empty coverage map case
+        if not coverage_map:
+            # No nodes selected, return empty result
+            return RetrievalResult(
+                node_ids=selected_ids,
+                scores=scores,
+                coverage_map=coverage_map,
+                tiling=[],
+                nodes={},
+            )
 
         # Load all nodes in coverage map to avoid redundant loading later
         nodes: dict[str, TreeNode] = {}
@@ -179,6 +182,28 @@ class Retriever:
             maybe_node = self.store.get_node(node_id)
             if maybe_node is not None:
                 nodes[node_id] = maybe_node
+
+        # Find the root node in the coverage map
+        root_id = None
+        for node_id, node in nodes.items():
+            # Check if this node has no parent in the coverage map
+            if node.parent_id is None or node.parent_id not in nodes:
+                root_id = node_id
+                break
+
+        if not root_id:
+            # No root found - this should never happen as coverage map should include all ancestors
+            raise ValueError(
+                f"No root node found in coverage map. Coverage map has {len(nodes)} nodes but none have no parent in the map."
+            )
+
+        # Step 5: Extract tiling using DP algorithm
+        final_budget = (
+            budget_tokens if budget_tokens is not None else self.config.budget_tokens
+        )
+        dp_result = self.dp_generator.find_optimal_tiling(
+            final_budget, scores, nodes, root_id
+        )
 
         return RetrievalResult(
             node_ids=selected_ids,
