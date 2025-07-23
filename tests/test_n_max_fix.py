@@ -18,39 +18,36 @@ class TestNMaxFix:
         # Build a simple tree
         store.add_node(
             node_id="root",
-            text="Root summary <<<MID>>> document",
+            text="Root summary document",
             span_start=0,
             span_end=1000,
             parent_id=None,
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=13,
             left_child_id="nodeA",
             right_child_id="nodeB",
         )
 
         store.add_node(
             node_id="nodeA",
-            text="Node A <<<MID>>> content",
+            text="Node A content",
             span_start=0,
             span_end=500,
             parent_id="root",
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=7,
             left_child_id="leaf1",
             right_child_id="leaf2",
         )
 
         store.add_node(
             node_id="nodeB",
-            text="Node B <<<MID>>> content",
+            text="Node B content",
             span_start=500,
             span_end=1000,
             parent_id="root",
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=7,
             left_child_id="leaf3",
             right_child_id="leaf4",
         )
@@ -131,7 +128,7 @@ class TestNMaxFix:
 
         # Verify tiling only uses nodes from coverage tree
         if result.tiling:
-            tiling_nodes = {seg.node_id for seg in result.tiling}
+            tiling_nodes = set(result.tiling)  # tiling is now a list of node IDs
             assert tiling_nodes.issubset(expected_coverage), (
                 f"Tiling contains nodes outside coverage tree! "
                 f"Tiling: {tiling_nodes}, Coverage: {expected_coverage}"
@@ -139,6 +136,6 @@ class TestNMaxFix:
 
             # Count leaf nodes in tiling
             leaf_count = sum(
-                1 for seg in result.tiling if store.is_leaf_node(seg.node_id)
+                1 for node_id in result.tiling if store.is_leaf_node(node_id)
             )
             assert leaf_count <= 1, f"Expected at most 1 leaf node, got {leaf_count}"

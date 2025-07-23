@@ -1,6 +1,5 @@
 """Tests for tree visualization functionality."""
 
-from ragzoom.dynamic_tiling import Segment
 from ragzoom.tree_viz import build_ascii_tree
 from tests.mock_store import SimpleMockStore
 
@@ -9,20 +8,19 @@ class TestTreeVisualization:
     """Test tree visualization functionality."""
 
     def test_basic_tree_visualization(self):
-        """Test basic tree visualization with selected segments."""
+        """Test basic tree visualization with selected nodes."""
         # Create a mock store with a simple tree
         store = SimpleMockStore()
 
-        # Root node
+        # Root node (no mid_offset in new design)
         store.add_node(
             node_id="root",
-            text="Root left <<<MID>>> Root right",
+            text="Root summary",
             span_start=0,
             span_end=100,
             parent_id=None,
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=10,
             left_child_id="left",
             right_child_id="right",
         )
@@ -72,17 +70,20 @@ class TestTreeVisualization:
                 embedding=[0.5] * 384,
             )
 
-        # Create segments for visualization
-        segments = [
-            Segment(node_id="root", side="LEFT"),
-            Segment(node_id="leaf3", side=None),
-            Segment(node_id="leaf4", side=None),
-        ]
+        # Create tiling (list of node IDs)
+        tiling = ["left", "leaf3", "leaf4"]
 
         # Build visualization with coverage map
-        coverage_map = {"root": True, "left": True, "leaf1": True, "leaf2": True}
+        coverage_map = {
+            "root": True,
+            "left": True,
+            "leaf1": True,
+            "leaf2": True,
+            "leaf3": True,
+            "leaf4": True,
+        }
         viz = build_ascii_tree(
-            segments, store, "doc1", width=40, coverage_map=coverage_map
+            tiling, store, "doc1", width=40, coverage_map=coverage_map
         )
 
         # Check basic structure
@@ -90,13 +91,13 @@ class TestTreeVisualization:
         assert "H1 " in viz
         assert "H0 " in viz
 
-        # Check that selected segments are labeled with indices
-        assert "0" in viz  # First segment (root-L)
-        assert "1" in viz  # Second segment (leaf3)
-        assert "2" in viz  # Third segment (leaf4)
+        # Check that selected nodes are labeled with indices
+        assert "0" in viz  # First node (left)
+        assert "1" in viz  # Second node (leaf3)
+        assert "2" in viz  # Third node (leaf4)
 
-    def test_empty_segments(self):
-        """Test visualization with no selected segments."""
+    def test_empty_tiling(self):
+        """Test visualization with no selected nodes."""
         store = SimpleMockStore()
 
         # Add a single node
@@ -110,10 +111,10 @@ class TestTreeVisualization:
             embedding=[0.5] * 384,
         )
 
-        # Empty segments list
-        segments = []
+        # Empty tiling list
+        tiling = []
 
-        viz = build_ascii_tree(segments, store, "doc1", width=40)
+        viz = build_ascii_tree(tiling, store, "doc1", width=40)
 
         # Should still show document structure
         assert "H0 " in viz
@@ -121,9 +122,9 @@ class TestTreeVisualization:
     def test_no_nodes_for_document(self):
         """Test visualization when document has no nodes."""
         store = SimpleMockStore()
-        segments = []
+        tiling = []
 
-        viz = build_ascii_tree(segments, store, "nonexistent", width=40)
+        viz = build_ascii_tree(tiling, store, "nonexistent", width=40)
 
         assert viz == "No nodes found for document"
 
@@ -135,13 +136,12 @@ class TestTreeVisualization:
         # Root node
         store.add_node(
             node_id="root",
-            text="Root left <<<MID>>> Root right",
+            text="Root summary",
             span_start=0,
             span_end=100,
             parent_id=None,
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=10,
             left_child_id="leaf1",
             right_child_id="leaf2",
         )
@@ -167,20 +167,112 @@ class TestTreeVisualization:
             embedding=[0.5] * 384,
         )
 
-        # Only the left segment of root is selected
-        segments = [
-            Segment(node_id="root", side="LEFT"),
-            Segment(node_id="leaf2", side=None),
-        ]
+        # Only leaf2 is selected
+        tiling = ["leaf2"]
 
-        # Coverage map includes root and leaf1 (covered but not selected)
+        # Coverage map includes all nodes
         coverage_map = {"root": True, "leaf1": True, "leaf2": True}
 
         viz = build_ascii_tree(
-            segments, store, "doc1", width=60, coverage_map=coverage_map
+            tiling, store, "doc1", width=60, coverage_map=coverage_map
         )
 
-        # Check that the visualization includes all expected elements
-        assert "0" in viz  # First segment (root-L)
-        assert "1" in viz  # Second segment (leaf2)
-        # The covered but not selected leaf1 should be shown with ░ characters
+        # Check that the visualization includes expected elements
+        assert "0" in viz  # First node (leaf2)
+        # The covered but not selected nodes should be shown with ░ characters
+
+    def test_mixed_height_tiling(self):
+        """Test visualization with nodes at different heights."""
+        store = SimpleMockStore()
+
+        # Create a deeper tree
+        # Root (H3)
+        store.add_node(
+            node_id="root",
+            text="Root",
+            span_start=0,
+            span_end=100,
+            document_id="doc1",
+            embedding=[0.5] * 384,
+            left_child_id="l1",
+            right_child_id="r1",
+        )
+
+        # Height 2
+        store.add_node(
+            node_id="l1",
+            text="L1",
+            span_start=0,
+            span_end=50,
+            document_id="doc1",
+            embedding=[0.5] * 384,
+            left_child_id="l2",
+            right_child_id="r2",
+        )
+
+        store.add_node(
+            node_id="r1",
+            text="R1",
+            span_start=50,
+            span_end=100,
+            document_id="doc1",
+            embedding=[0.5] * 384,
+            left_child_id="l3",
+            right_child_id="r3",
+        )
+
+        # Height 1
+        for node_id, start, end in [
+            ("l2", 0, 25),
+            ("r2", 25, 50),
+            ("l3", 50, 75),
+            ("r3", 75, 100),
+        ]:
+            store.add_node(
+                node_id=node_id,
+                text=node_id,
+                span_start=start,
+                span_end=end,
+                document_id="doc1",
+                embedding=[0.5] * 384,
+                left_child_id=f"{node_id}_l",
+                right_child_id=f"{node_id}_r",
+            )
+
+        # Height 0 (leaves)
+        for i, (node_id, start, end) in enumerate(
+            [
+                ("l2_l", 0, 12),
+                ("l2_r", 12, 25),
+                ("r2_l", 25, 37),
+                ("r2_r", 37, 50),
+                ("l3_l", 50, 62),
+                ("l3_r", 62, 75),
+                ("r3_l", 75, 87),
+                ("r3_r", 87, 100),
+            ]
+        ):
+            store.add_node(
+                node_id=node_id,
+                text=f"Leaf {i}",
+                span_start=start,
+                span_end=end,
+                document_id="doc1",
+                embedding=[0.5] * 384,
+            )
+
+        # Mixed height tiling
+        tiling = ["l1", "l3", "r3_r"]
+
+        viz = build_ascii_tree(tiling, store, "doc1", width=80)
+
+        # Should show all heights
+        assert "H3 " in viz
+        assert "H2 " in viz
+        assert "H1 " in viz
+        assert "H0 " in viz
+
+        # Check labels
+        assert "0" in viz  # l1
+        assert "1" in viz  # l3
+        assert "2" in viz  # r3_r

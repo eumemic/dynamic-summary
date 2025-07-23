@@ -35,7 +35,7 @@ class TestBudgetGuarantee:
                     return Mock(data=[Mock(embedding=[0.1] * 384)])
 
             async def mock_chat_create(*args, **kwargs):
-                # Generate predictable summaries with <<<MID>>> delimiter
+                # Generate predictable summaries
                 messages = kwargs.get("messages", [])
                 content = messages[-1]["content"] if messages else ""
 
@@ -44,9 +44,7 @@ class TestBudgetGuarantee:
                     return Mock(
                         choices=[
                             Mock(
-                                message=Mock(
-                                    content="Short left summary. <<<MID>>> Short right summary."
-                                )
+                                message=Mock(content="Short summary of both children.")
                             )
                         ]
                     )
@@ -55,7 +53,7 @@ class TestBudgetGuarantee:
                         choices=[
                             Mock(
                                 message=Mock(
-                                    content="This is the left half summary text. <<<MID>>> This is the right half summary text."
+                                    content="This is the combined summary text for both children."
                                 )
                             )
                         ]
@@ -158,8 +156,8 @@ class TestBudgetGuarantee:
         leaf1_text = "First leaf content. " * 40  # ~200 tokens
         leaf2_text = "Second leaf content. " * 40  # ~200 tokens
 
-        # Create parent first with <<<MID>>> delimiter
-        parent_text = "Summary of first leaf. <<<MID>>> Summary of second leaf."
+        # Create parent node
+        parent_text = "Summary of first and second leaves."
         store.add_node(
             node_id="1_0_400_parent",
             text=parent_text,
@@ -168,7 +166,6 @@ class TestBudgetGuarantee:
             parent_id=None,
             document_id="test-doc",
             embedding=[0.15] * 384,
-            mid_offset=len("Summary of first leaf. "),
         )
 
         # Then create children pointing to parent
@@ -205,8 +202,7 @@ class TestBudgetGuarantee:
         # Update children to point to parent
         # Note: Store doesn't have update_node_parent, nodes already have parent_id set
 
-        # Worst case: retriever selects parent + one child
-        # This tests the <<<MID>>> extraction logic
+        # Test that retriever respects budget even with parent + child nodes
         result = retriever.retrieve("first leaf", n_max=2, budget_tokens=500)
 
         # Note: Cannot force a specific tiling anymore since tiling field is computed by DP
