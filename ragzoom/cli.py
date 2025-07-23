@@ -307,7 +307,7 @@ def query(
                     is_seed = node_id in result.node_ids
                     idx_str = f"{idx}{'*' if is_seed else ' '}"
                     click.echo(
-                        f"[{idx_str}| SPAN: {span} | HEIGHT: {height} | NODE: {node.id[:8]}]"
+                        f"[{idx_str}| SPAN: {span} | HEIGHT: {height} | NODE: {node.id}]"
                     )
                     # Get the node text
                     text = node.text
