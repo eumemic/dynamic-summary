@@ -24,13 +24,12 @@ class TestDPScoresBug:
         # Root
         store.add_node(
             node_id="root",
-            text="Root summary <<<MID>>> of document",
+            text="Root summary of document",
             span_start=0,
             span_end=1000,
             parent_id=None,
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=12,
             left_child_id="node_a",
             right_child_id="node_b",
         )
@@ -38,26 +37,24 @@ class TestDPScoresBug:
         # Internal nodes
         store.add_node(
             node_id="node_a",
-            text="Node A left <<<MID>>> Node A right",
+            text="Node A summary",
             span_start=0,
             span_end=500,
             parent_id="root",
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=12,
             left_child_id="a1",
             right_child_id="a2",
         )
 
         store.add_node(
             node_id="node_b",
-            text="Node B left <<<MID>>> Node B right",
+            text="Node B summary",
             span_start=500,
             span_end=1000,
             parent_id="root",
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=12,
             left_child_id="b1",
             right_child_id="b2",
         )
@@ -83,7 +80,7 @@ class TestDPScoresBug:
         config = RagZoomConfig(
             openai_api_key="test-key", budget_tokens=10000  # Large budget
         )
-        dp_generator = DynamicTilingGenerator(config, store)
+        dp_generator = DynamicTilingGenerator(store, config)
 
         # Simulate the bug scenario:
         # 1. Coverage tree contains only a1 and its ancestors
@@ -109,10 +106,10 @@ class TestDPScoresBug:
             document_id="doc1",
             coverage_map=coverage_map,
         )
-        segments = dp_result.segments
+        tiling = dp_result.tiling
 
         # Collect which nodes are used in the tiling
-        nodes_in_tiling = {seg.node_id for seg in segments}
+        nodes_in_tiling = set(tiling)
         print(f"\nCoverage tree: {coverage_tree}")
         print(f"Nodes in tiling: {nodes_in_tiling}")
 
@@ -131,14 +128,10 @@ class TestDPScoresBug:
 
         # Specifically check for leaf nodes outside coverage
         leaf_violations = []
-        for seg in segments:
-            node = store.get_node(seg.node_id)
-            if (
-                node
-                and store.is_leaf_node(seg.node_id)
-                and seg.node_id not in coverage_tree
-            ):
-                leaf_violations.append(seg.node_id)
+        for node_id in tiling:
+            node = store.get_node(node_id)
+            if node and store.is_leaf_node(node_id) and node_id not in coverage_tree:
+                leaf_violations.append(node_id)
 
         print(f"Leaf nodes outside coverage tree: {leaf_violations}")
 
@@ -158,7 +151,6 @@ class TestDPScoresBug:
             parent_id=None,
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=10,
         )
         store.add_node(
             node_id="leaf1",
@@ -182,7 +174,7 @@ class TestDPScoresBug:
         store.nodes["root"].right_child_id = "leaf2"
 
         config = RagZoomConfig(openai_api_key="test-key", budget_tokens=10000)
-        dp_generator = DynamicTilingGenerator(config, store)
+        dp_generator = DynamicTilingGenerator(store, config)
 
         # Create a RetrievalResult that mimics the bug:
         # - node_ids has only 1 selected node
@@ -205,11 +197,10 @@ class TestDPScoresBug:
             document_id="doc1",
             coverage_map=result.coverage_map,
         )
-        segments = dp_result.segments
+        tiling = dp_result.tiling
 
         # Check results
-        leaf_segments = [s for s in segments if store.is_leaf_node(s.node_id)]
-        leaf_node_ids = {s.node_id for s in leaf_segments}
+        leaf_node_ids = {node_id for node_id in tiling if store.is_leaf_node(node_id)}
 
         print(f"\nSelected nodes: {result.node_ids}")
         print(f"Coverage map: {list(result.coverage_map.keys())}")

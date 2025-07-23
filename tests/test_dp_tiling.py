@@ -39,9 +39,8 @@ class TestDPTiling:
         dp_result = dp_generator.find_optimal_tiling(
             1000, {"root": 1.0}, "test-doc-single", coverage_map
         )
-        segments = dp_result.segments
+        tiling = dp_result.tiling
 
-        assert segments, "DP tiling should not be empty for single node tree"
-        assert len(segments) == 1
-        assert segments[0].node_id == "root"
-        assert segments[0].side is None  # Leaf nodes have side=None
+        assert tiling, "DP tiling should not be empty for single node tree"
+        assert len(tiling) == 1
+        assert tiling[0] == "root"

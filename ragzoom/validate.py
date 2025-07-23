@@ -3,7 +3,6 @@
 import logging
 from typing import Callable, Optional
 
-from ragzoom.dynamic_tiling import Segment
 from ragzoom.store import Store, TreeNode
 
 logger = logging.getLogger(__name__)
@@ -231,12 +230,6 @@ def validate_tree_structure(
             if not node.summary:
                 errors.append(f"Node {node.id}: Non-leaf node missing summary")
 
-            # For non-leaf nodes, a valid mid_offset is required.
-            if node.mid_offset is None or node.mid_offset < 0:
-                errors.append(
-                    f"Node {node.id}: Invalid or missing mid_offset: {node.mid_offset}"
-                )
-
     if errors:
         for error in errors[:10]:  # Show first 10 errors
             logger.error(error)
@@ -247,16 +240,16 @@ def validate_tree_structure(
 
 
 def validate_tiling(
-    segments: list[Segment],
+    tiling: list[str],  # List of node IDs
     store: Store,
     document_id: str,
     original_text: Optional[str] = None,
     budget_tokens: Optional[int] = None,
 ) -> Optional[str]:
-    """Validate that a tiling of Segments has no overlaps, no duplicates, and (optionally) covers the document.
+    """Validate that a tiling has no overlaps, no duplicates, and (optionally) covers the document.
 
     Args:
-        segments: List of segments in the tiling
+        tiling: List of node IDs in the tiling
         store: Store instance
         document_id: Document ID
         original_text: Optional original text for gap validation
@@ -265,80 +258,58 @@ def validate_tiling(
     Returns:
         Error message if invalid, None if valid
     """
-    if not segments:
+    if not tiling:
         return "Tiling is empty"
 
-    # Build list of (segment, span_start, span_end)
-    seen_segments = set()
-    segment_spans = []
-    for seg in segments:
-        key = (seg.node_id, seg.side)
-        if key in seen_segments:
-            return f"Duplicate segment: node {seg.node_id} side {seg.side}"
-        seen_segments.add(key)
-        node = store.get_node(seg.node_id)
+    # Build list of (node_id, span_start, span_end)
+    seen_nodes = set()
+    node_spans = []
+    for node_id in tiling:
+        if node_id in seen_nodes:
+            return f"Duplicate node: {node_id}"
+        seen_nodes.add(node_id)
+        node = store.get_node(node_id)
         if not node:
-            return f"Node {seg.node_id} not found in store"
+            return f"Node {node_id} not found in store"
 
-        # Validate side invariant
-        is_leaf = store.is_leaf_node(node.id)
-        if is_leaf or node.mid_offset is None:
-            if seg.side is not None:
-                return f"Node {seg.node_id} is a leaf (is_leaf={is_leaf}, mid_offset={node.mid_offset}) but segment has side={seg.side}, expected None"
-            # Leaf or unsplit node: full span
-            span_start, span_end = node.span_start, node.span_end
-        else:
-            if seg.side not in {"LEFT", "RIGHT"}:
-                return f"Node {seg.node_id} is internal (is_leaf={is_leaf}, mid_offset={node.mid_offset}) but segment has side={seg.side}, expected LEFT or RIGHT"
-            # For internal nodes, segment spans match child spans
-            if seg.side == "LEFT":
-                if node.left_child_id is None:
-                    return f"Node {seg.node_id} has no left child ID"
-                left_child = store.get_node(node.left_child_id)
-                if not left_child:
-                    return f"Node {seg.node_id} has no left child"
-                span_start, span_end = left_child.span_start, left_child.span_end
-            else:  # RIGHT
-                if node.right_child_id is None:
-                    return f"Node {seg.node_id} has no right child ID"
-                right_child = store.get_node(node.right_child_id)
-                if not right_child:
-                    return f"Node {seg.node_id} has no right child"
-                span_start, span_end = right_child.span_start, right_child.span_end
-        segment_spans.append((seg, span_start, span_end))
+        # Get node span
+        span_start, span_end = node.span_start, node.span_end
+        node_spans.append((node_id, span_start, span_end))
 
     # Sort by span_start
-    segment_spans.sort(key=lambda x: x[1])
+    node_spans.sort(key=lambda x: x[1])
 
     # Check for overlaps
-    for i in range(len(segment_spans) - 1):
-        _, start1, end1 = segment_spans[i]
-        _, start2, end2 = segment_spans[i + 1]
+    for i in range(len(node_spans) - 1):
+        node_id1, start1, end1 = node_spans[i]
+        node_id2, start2, end2 = node_spans[i + 1]
         if end1 > start2:
-            return f"Overlapping segments: {segment_spans[i][0]} [{start1},{end1}) overlaps with {segment_spans[i+1][0]} [{start2},{end2})"
+            return f"Overlapping nodes: {node_id1} [{start1},{end1}) overlaps with {node_id2} [{start2},{end2})"
 
     # Optionally, check for complete coverage
     doc_nodes = store.get_all_nodes_for_document(document_id)
     if doc_nodes:
         doc_start = min(n.span_start for n in doc_nodes)
         doc_end = max(n.span_end for n in doc_nodes)
-        if segment_spans[0][1] != doc_start:
-            return f"Tiling does not start at document start: {segment_spans[0][1]} != {doc_start}"
-        if segment_spans[-1][2] != doc_end:
-            return f"Tiling does not end at document end: {segment_spans[-1][2]} != {doc_end}"
+        if node_spans[0][1] != doc_start:
+            return f"Tiling does not start at document start: {node_spans[0][1]} != {doc_start}"
+        if node_spans[-1][2] != doc_end:
+            return (
+                f"Tiling does not end at document end: {node_spans[-1][2]} != {doc_end}"
+            )
         # Check for gaps
-        for i in range(len(segment_spans) - 1):
-            if segment_spans[i][2] != segment_spans[i + 1][1]:
-                gap = segment_spans[i + 1][1] - segment_spans[i][2]
+        for i in range(len(node_spans) - 1):
+            if node_spans[i][2] != node_spans[i + 1][1]:
+                gap = node_spans[i + 1][1] - node_spans[i][2]
                 if gap > 0:
                     if original_text:
                         gap_text = original_text[
-                            segment_spans[i][2] : segment_spans[i + 1][1]
+                            node_spans[i][2] : node_spans[i + 1][1]
                         ]
                         if not gap_text.isspace():
-                            return f"Non-whitespace gap in tiling: {segment_spans[i][2]} to {segment_spans[i + 1][1]}"
+                            return f"Non-whitespace gap in tiling: {node_spans[i][2]} to {node_spans[i + 1][1]}"
                     else:
-                        return f"Gap in tiling: {segment_spans[i][2]} to {segment_spans[i + 1][1]}"
+                        return f"Gap in tiling: {node_spans[i][2]} to {node_spans[i + 1][1]}"
 
     # Check budget compliance if budget is provided
     if budget_tokens is not None:
@@ -347,35 +318,13 @@ def validate_tiling(
         tokenizer = tiktoken.get_encoding("cl100k_base")
 
         total_tokens = 0
-        for seg in segments:
-            node = store.get_node(seg.node_id)
+        for node_id in tiling:
+            node = store.get_node(node_id)
             if not node or not node.text:
                 continue
 
-            # Calculate token cost based on segment type
-            if seg.side is None:
-                # Full node (leaf or internal without side)
-                tokens = len(tokenizer.encode(node.text))
-            elif seg.side == "LEFT":
-                # Left half of internal node
-                if node.mid_offset is not None:
-                    text = node.text[: node.mid_offset]
-                    tokens = len(tokenizer.encode(text.strip()))
-                else:
-                    # Fallback if no mid_offset
-                    tokens = len(tokenizer.encode(node.text)) // 2
-            elif seg.side == "RIGHT":
-                # Right half of internal node
-                if node.mid_offset is not None:
-                    text = node.text[node.mid_offset :]
-                    tokens = len(tokenizer.encode(text.strip()))
-                else:
-                    # Fallback if no mid_offset
-                    tokens = len(tokenizer.encode(node.text)) // 2
-            else:
-                # Should not happen
-                tokens = 0
-
+            # For atomic nodes, just count the full text
+            tokens = len(tokenizer.encode(node.text))
             total_tokens += tokens
 
         if total_tokens > budget_tokens:
