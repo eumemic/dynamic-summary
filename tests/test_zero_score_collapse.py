@@ -67,12 +67,26 @@ def test_zero_score_collapse_empty_result():
     }
     coverage_map = {"root": True, "parent": True, "leaf": True}
 
-    generator = DynamicTilingGenerator(config, store)
+    generator = DynamicTilingGenerator(config)
+
+    # Load nodes from coverage map
+    nodes = {}
+    for node_id in coverage_map:
+        node = store.get_node(node_id)
+        if node:
+            nodes[node_id] = node
+
+    # Find root node
+    root_id = None
+    for node_id, node in nodes.items():
+        if node.parent_id is None or node.parent_id not in nodes:
+            root_id = node_id
+            break
 
     # Get actual token costs
-    leaf = store.get_node("leaf")
-    parent = store.get_node("parent")
-    root = store.get_node("root")
+    leaf = nodes["leaf"]
+    parent = nodes["parent"]
+    root = nodes["root"]
 
     leaf_cost = generator._get_node_cost(leaf)
     parent_cost = generator._get_node_cost(parent)
@@ -85,7 +99,7 @@ def test_zero_score_collapse_empty_result():
 
     # Test with budget that can't fit leaf but can fit parent
     budget = leaf_cost - 1  # Just under leaf cost
-    result = generator.find_optimal_tiling(budget, scores, "test-doc", coverage_map)
+    result = generator.find_optimal_tiling(budget, scores, nodes, root_id)
 
     print(f"\nWith budget {budget}:")
     print(f"  Tiling: {result.tiling.node_ids}")
@@ -204,14 +218,28 @@ def test_zero_score_collapse_to_root():
         "leaf": True,
     }
 
-    generator = DynamicTilingGenerator(config, store)
+    generator = DynamicTilingGenerator(config)
+
+    # Load nodes from coverage map
+    nodes = {}
+    for node_id in coverage_map:
+        node = store.get_node(node_id)
+        if node:
+            nodes[node_id] = node
+
+    # Find root node
+    root_id = None
+    for node_id, node in nodes.items():
+        if node.parent_id is None or node.parent_id not in nodes:
+            root_id = node_id
+            break
 
     # Get token costs
-    leaf = store.get_node("leaf")
-    level3 = store.get_node("level3")
-    level2 = store.get_node("level2")
-    level1 = store.get_node("level1")
-    root = store.get_node("root")
+    leaf = nodes["leaf"]
+    level3 = nodes["level3"]
+    level2 = nodes["level2"]
+    level1 = nodes["level1"]
+    root = nodes["root"]
 
     leaf_cost = generator._get_node_cost(leaf)
     level3_cost = generator._get_node_cost(level3)
@@ -228,7 +256,7 @@ def test_zero_score_collapse_to_root():
 
     # Test with budget just under level3 (should use level2, but will collapse to root)
     budget = level3_cost - 1
-    result = generator.find_optimal_tiling(budget, scores, "test-doc", coverage_map)
+    result = generator.find_optimal_tiling(budget, scores, nodes, root_id)
 
     print(f"\nWith budget {budget} (just under level3's {level3_cost}):")
     print(f"  Result tiling: {result.tiling.node_ids}")

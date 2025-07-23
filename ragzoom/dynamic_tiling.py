@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Optional
 import tiktoken
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.store import Store
 from ragzoom.tiling import Tiling
 
 if TYPE_CHECKING:
@@ -37,34 +36,37 @@ class DPResult:
 class DynamicTilingGenerator:
     """Generates a tiling using a dynamic programming approach."""
 
-    def __init__(self, config: RagZoomConfig, store: Store):
+    def __init__(self, config: RagZoomConfig):
         self.config = config
-        self.store = store
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
         self._memo_cache: dict[tuple[Optional[str], int], Tiling] = {}
         self._subtree_relevance_cache: dict[str, float] = {}
+        self._nodes: dict[str, TreeNode] = {}  # Will be set per tiling request
 
     def find_optimal_tiling(
         self,
         budget_tokens: int,
         scores: dict[str, float],
-        document_id: Optional[str],
-        coverage_map: dict[str, bool],
+        nodes: dict[str, "TreeNode"],
+        root_id: str,
     ) -> DPResult:
         logger.info("Using DP tiling generation")
-        root_node = self.store.get_root_node_for_document(document_id)
-        if not root_node:
-            return DPResult(Tiling.empty(), [], 0.0, coverage_map)
 
+        if not nodes or root_id not in nodes:
+            return DPResult(Tiling.empty(), [], 0.0, {})
+
+        self._nodes = nodes
         self._memo_cache = {}
         self._subtree_relevance_cache = {}
+
+        root_node = nodes[root_id]
         tiling = self._find_optimal_tiling_for_span(root_node, budget_tokens, scores)
 
         # Build node infos with costs and spans
         node_infos = []
         for node_id in tiling.node_ids:
-            node = self.store.get_node(node_id)
-            if node:
+            if node_id in nodes:
+                node = nodes[node_id]
                 cost = self._get_node_cost(node)
                 node_infos.append(
                     NodeInfo(node_id, cost, node.span_start, node.span_end)
@@ -73,6 +75,9 @@ class DynamicTilingGenerator:
         logger.info(
             f"DP tiling generated with total quality {tiling.relevance_tokens:.3f} and {len(tiling.node_ids)} nodes."
         )
+
+        # Build coverage map from nodes dict
+        coverage_map = {node_id: True for node_id in nodes}
 
         return DPResult(
             tiling=tiling,
@@ -99,11 +104,13 @@ class DynamicTilingGenerator:
         total = node_score
 
         # Add children's scores recursively
-        left_child, right_child = self.store.get_children(node.id)
-
-        if left_child:
+        # Only traverse children that exist in our nodes dict
+        if node.left_child_id and node.left_child_id in self._nodes:
+            left_child = self._nodes[node.left_child_id]
             total += self._get_subtree_relevance(left_child, scores)
-        if right_child:
+
+        if node.right_child_id and node.right_child_id in self._nodes:
+            right_child = self._nodes[node.right_child_id]
             total += self._get_subtree_relevance(right_child, scores)
 
         self._subtree_relevance_cache[node.id] = total
@@ -113,7 +120,12 @@ class DynamicTilingGenerator:
         self, budget: int, node: "TreeNode", scores: dict[str, float]
     ) -> tuple[int, int]:
         """Split budget between left and right children based on their relevance."""
-        left_child, right_child = self.store.get_children(node.id)
+        # Get children from our nodes dict
+        left_child = self._nodes.get(node.left_child_id) if node.left_child_id else None
+        right_child = (
+            self._nodes.get(node.right_child_id) if node.right_child_id else None
+        )
+
         if not left_child or not right_child:
             return budget // 2, budget // 2
 
@@ -165,8 +177,15 @@ class DynamicTilingGenerator:
         node_relevance = scores.get(node.id, 0.0)
         node_quality = node_relevance * node_cost
 
+        # Check if this is a leaf node (no children in our nodes dict)
+        is_leaf = True
+        if node.left_child_id and node.left_child_id in self._nodes:
+            is_leaf = False
+        if node.right_child_id and node.right_child_id in self._nodes:
+            is_leaf = False
+
         # For leaf nodes, we can only use the whole node
-        if self.store.is_leaf_node(node.id):
+        if is_leaf:
             return Tiling(node_ids=[node.id], relevance_tokens=node_quality)
 
         # For internal nodes, we have two options:
@@ -174,9 +193,13 @@ class DynamicTilingGenerator:
         option1 = Tiling(node_ids=[node.id], relevance_tokens=node_quality)
 
         # Option 2: Recurse to children
-        left_child, right_child = self.store.get_children(node.id)
+        # Get children from our nodes dict
+        left_child = self._nodes.get(node.left_child_id) if node.left_child_id else None
+        right_child = (
+            self._nodes.get(node.right_child_id) if node.right_child_id else None
+        )
 
-        # If no children, use this node
+        # If no children in our coverage map, use this node
         if not left_child and not right_child:
             return option1
 
