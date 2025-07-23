@@ -88,17 +88,8 @@ class TreeBuilder:
         target_tokens: int,
         prev_context: Optional[str] = None,
         next_context: Optional[str] = None,
-        attempt: int = 1,
-    ) -> tuple[str, Optional[int]]:
-        """Summarize text using LLM with <<<MID>>> delimiter."""
-        # Maximum retry attempts to get delimiter
-        max_attempts = 3
-        if attempt > max_attempts:
-            logger.error(
-                f"Failed to get <<<MID>>> delimiter after {max_attempts} attempts"
-            )
-            raise ValueError("LLM consistently failing to include required delimiter")
-
+    ) -> str:
+        """Summarize text using LLM."""
         # Build prompt with adjacent context (trim to avoid token explosion)
         prompt_parts = []
 
@@ -126,10 +117,7 @@ class TreeBuilder:
             prompt_parts.append(f"Next context: {trimmed_next}...")
 
         prompt_parts.append(
-            f"\nSummarize the two halves above in ≤{target_tokens} tokens total. "
-            "CRITICAL: You MUST insert exactly the token <<<MID>>> at the point where the second half begins. "
-            "This delimiter is required for proper text processing. "
-            "Format: [summary of first half] <<<MID>>> [summary of second half]. "
+            f"\nSummarize the content above in ≤{target_tokens} tokens total. "
             "Use third-person past tense, no pronouns, keep all proper names. "
             "Focus on key events, facts, and themes."
         )
@@ -150,33 +138,11 @@ class TreeBuilder:
                 content = response.choices[0].message.content
                 summary = content.strip() if content else ""
 
-                # Check if summary exceeds target length
-                # actual_tokens = len(self.splitter.tokenizer.encode(summary))
-                # if actual_tokens > target_tokens:
-                #     logger.warning(f"Summary exceeded target length: got {actual_tokens} tokens, target was {target_tokens} tokens")
-
-                # Find <<<MID>>> delimiter position
-                mid_offset = summary.find("<<<MID>>>")
-
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
                 raise
 
-        # Check for delimiter outside semaphore to avoid deadlock
-        if mid_offset == -1:
-            logger.warning(
-                f"No <<<MID>>> delimiter found in summary (attempt {attempt}/{max_attempts}), retrying..."
-            )
-            return await self._summarize_text(
-                left_text,
-                right_text,
-                target_tokens,
-                prev_context,
-                next_context,
-                attempt + 1,
-            )
-
-        return summary, mid_offset
+        return summary
 
     async def _add_document_impl(
         self,
@@ -429,16 +395,13 @@ class TreeBuilder:
         # Target tokens for the summary (guidance for LLM, not hard limit)
         target_tokens = self.config.leaf_tokens
 
-        # Generate summary with <<<MID>>> delimiter (async)
-        summary_with_delimiter, mid_offset = await self._summarize_text(
+        # Generate summary (async)
+        summary = await self._summarize_text(
             left_text, right_text, target_tokens, prev_context, next_context
         )
 
-        # Clean the delimiter from the text before storing
-        cleaned_summary = summary_with_delimiter.replace("<<<MID>>>", "").strip()
-
-        # Get embedding for the cleaned summary
-        embedding = await self._get_embedding(cleaned_summary)
+        # Get embedding for the summary
+        embedding = await self._get_embedding(summary)
 
         # Store the node data
         left_node = self.store.get_node(left_id)
@@ -452,14 +415,13 @@ class TreeBuilder:
 
         self.store.add_node(
             node_id=parent_id,
-            text=cleaned_summary,
+            text=summary,
             embedding=embedding,
             span_start=left_node.span_start,
             span_end=right_node.span_end,
             left_child_id=left_id,
             right_child_id=right_id,
-            summary=cleaned_summary,
-            mid_offset=mid_offset,
+            summary=summary,
             document_id=document_id,
         )
 
@@ -478,23 +440,11 @@ class TreeBuilder:
             # Skip gap check in early validation - we'll check it properly in final validation
             # where we have access to the original text to verify if gaps are just whitespace
 
-            # Check summary has MID delimiter (on the original text)
-            if "<<<MID>>>" not in summary_with_delimiter:
-                return f"Parent node {parent_id} missing <<<MID>>> delimiter in summary"
-
-            # Check mid_offset is valid
-            if (
-                mid_offset is None
-                or mid_offset < 0
-                or mid_offset >= len(summary_with_delimiter)
-            ):
-                return f"Parent node {parent_id} has invalid mid_offset: {mid_offset}"
-
             return None
 
         validate(check_parent_structure, f"tree structure for parent {parent_id}")
 
-        return parent_id, cleaned_summary, embedding
+        return parent_id, summary, embedding
 
     async def _build_tree_from_leaves(
         self,
@@ -711,7 +661,7 @@ class TreeBuilder:
                     continue
 
                 # Re-summarize with fresh content
-                summary, mid_offset = await self._summarize_text(
+                summary = await self._summarize_text(
                     left_child.text,
                     right_child.text,
                     target_tokens=self.config.leaf_tokens,
@@ -723,7 +673,7 @@ class TreeBuilder:
                 embedding = await self._get_embedding(summary)
 
                 # Update the node
-                self.store.update_summary(node_id, summary, embedding, mid_offset)
+                self.store.update_summary(node_id, summary, embedding)
                 refreshed_count += 1
 
                 logger.info(f"Refreshed node {node_id} with new summary")

@@ -198,7 +198,7 @@ class TestDPIntegration:
 
         # Check tiling doesn't have both parent and child
         # Extract unique node IDs from segments
-        tiling_node_ids = list(set(seg.node_id for seg in result.tiling))
+        tiling_node_ids = list(set(result.tiling))  # tiling is now a list of node IDs
         tiling_nodes = [store.get_node(nid) for nid in tiling_node_ids]
         for i, node in enumerate(tiling_nodes):
             for j, other in enumerate(tiling_nodes):

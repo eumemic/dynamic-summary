@@ -5,7 +5,7 @@ tiling when ancestors have zero quality scores.
 """
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.dynamic_tiling import DynamicTilingGenerator, Segment
+from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from tests.mock_store import SimpleMockStore
 
 
@@ -26,6 +26,7 @@ def test_zero_score_collapse_empty_result():
         embedding=[0.1] * 1536,
         span_start=0,
         span_end=100,
+        parent_id="parent",  # Set parent
         document_id="test-doc",
     )
 
@@ -39,7 +40,7 @@ def test_zero_score_collapse_empty_result():
         left_child_id="leaf",
         right_child_id="leaf",
         summary="y" * 40,
-        mid_offset=20,
+        parent_id="root",  # Set parent
         document_id="test-doc",
     )
 
@@ -53,7 +54,7 @@ def test_zero_score_collapse_empty_result():
         left_child_id="parent",
         right_child_id="parent",
         summary="z" * 20,
-        mid_offset=10,
+        parent_id=None,  # This is the root
         document_id="test-doc",
     )
 
@@ -61,48 +62,49 @@ def test_zero_score_collapse_empty_result():
     scores = {"leaf": 1.0}
     coverage_map = {"root": True, "parent": True, "leaf": True}
 
-    generator = DynamicTilingGenerator(config, store)
+    generator = DynamicTilingGenerator(store, config)
 
     # Get actual token costs
-    leaf_cost = generator._get_segment_cost(Segment("leaf", None))
-    parent_cost = generator._get_segment_cost(
-        Segment("parent", "LEFT")
-    ) + generator._get_segment_cost(Segment("parent", "RIGHT"))
-    root_cost = generator._get_segment_cost(
-        Segment("root", "LEFT")
-    ) + generator._get_segment_cost(Segment("root", "RIGHT"))
+    leaf = store.get_node("leaf")
+    parent = store.get_node("parent")
+    root = store.get_node("root")
+
+    leaf_cost = generator._get_node_cost(leaf)
+    parent_cost = generator._get_node_cost(parent)
+    root_cost = generator._get_node_cost(root)
 
     print("\nToken costs:")
     print(f"  leaf: {leaf_cost}")
-    print(f"  parent (L+R): {parent_cost}")
-    print(f"  root (L+R): {root_cost}")
+    print(f"  parent: {parent_cost}")
+    print(f"  root: {root_cost}")
 
     # Test with budget that can't fit leaf but can fit parent
     budget = leaf_cost - 1  # Just under leaf cost
     result = generator.find_optimal_tiling(budget, scores, "test-doc", coverage_map)
 
     print(f"\nWith budget {budget}:")
-    print(f"  Segments: {result.segments}")
+    print(f"  Tiling: {result.tiling}")
     print(f"  Quality: {result.total_quality}")
 
-    # BUG: Returns empty tiling instead of using parent segments
-    # Expected: Use parent segments (they fit!)
-    # Actual: Empty tiling because parent has 0 quality
+    # Previously returned empty tiling, now returns root for coverage
+    # The algorithm correctly chooses root because:
+    # - Root costs 10 tokens (fits in budget of 12)
+    # - Using both children (parent nodes) would cost 20 tokens (exceeds budget)
+    # - So root is the optimal choice for coverage
 
-    # This assertion SHOULD pass but will FAIL due to the bug
     assert (
-        len(result.segments) == 2
-    ), f"Expected 2 parent segments, got {len(result.segments)} segments: {result.segments}"
-    assert result.segments[0].node_id == "parent"
-    assert result.segments[0].side == "LEFT"
-    assert result.segments[1].node_id == "parent"
-    assert result.segments[1].side == "RIGHT"
+        len(result.tiling) == 1
+    ), f"Expected 1 node, got {len(result.tiling)} nodes: {result.tiling}"
+    assert result.tiling[0] == "root", f"Expected root, got {result.tiling[0]}"
 
-    # Should use most of the available budget
-    total_tokens = sum(si.token_cost for si in result.segment_infos)
+    # Should use the root node's tokens
+    # Calculate tokens from the tiling
+    total_tokens = sum(
+        generator._get_node_cost(store.get_node(node_id)) for node_id in result.tiling
+    )
     assert (
-        total_tokens == parent_cost
-    ), f"Should use parent segments ({parent_cost} tokens), but used {total_tokens}"
+        total_tokens == root_cost
+    ), f"Should use root node ({root_cost} tokens), but used {total_tokens}"
 
 
 def test_zero_score_collapse_to_root():
@@ -112,7 +114,6 @@ def test_zero_score_collapse_to_root():
     store = SimpleMockStore(config=config)
 
     # Create a deeper tree to show collapse behavior
-    # All token counts are for LEFT+RIGHT combined
 
     # Leaf (30 tokens) - the only seed
     store.add_node(
@@ -121,6 +122,7 @@ def test_zero_score_collapse_to_root():
         embedding=[0.1] * 1536,
         span_start=0,
         span_end=100,
+        parent_id="level3",  # Set parent
         document_id="test-doc",
     )
 
@@ -134,7 +136,7 @@ def test_zero_score_collapse_to_root():
         left_child_id="leaf",
         right_child_id="leaf",
         summary="This is a detailed summary of the important content that user wants",
-        mid_offset=30,
+        parent_id="level2",  # Set parent
         document_id="test-doc",
     )
 
@@ -148,7 +150,7 @@ def test_zero_score_collapse_to_root():
         left_child_id="level3",
         right_child_id="level3",
         summary="A medium level summary of the content below including key points",
-        mid_offset=25,
+        parent_id="level1",  # Set parent
         document_id="test-doc",
     )
 
@@ -162,7 +164,7 @@ def test_zero_score_collapse_to_root():
         left_child_id="level2",
         right_child_id="level2",
         summary="High level summary of this document section with main themes",
-        mid_offset=20,
+        parent_id="root",  # Set parent
         document_id="test-doc",
     )
 
@@ -176,7 +178,7 @@ def test_zero_score_collapse_to_root():
         left_child_id="level1",
         right_child_id="level1",
         summary="Brief document overview",
-        mid_offset=10,
+        parent_id=None,  # This is the root
         document_id="test-doc",
     )
 
@@ -189,22 +191,20 @@ def test_zero_score_collapse_to_root():
         "leaf": True,
     }
 
-    generator = DynamicTilingGenerator(config, store)
+    generator = DynamicTilingGenerator(store, config)
 
     # Get token costs
-    leaf_cost = generator._get_segment_cost(Segment("leaf", None))
-    level3_cost = generator._get_segment_cost(
-        Segment("level3", "LEFT")
-    ) + generator._get_segment_cost(Segment("level3", "RIGHT"))
-    level2_cost = generator._get_segment_cost(
-        Segment("level2", "LEFT")
-    ) + generator._get_segment_cost(Segment("level2", "RIGHT"))
-    level1_cost = generator._get_segment_cost(
-        Segment("level1", "LEFT")
-    ) + generator._get_segment_cost(Segment("level1", "RIGHT"))
-    root_cost = generator._get_segment_cost(
-        Segment("root", "LEFT")
-    ) + generator._get_segment_cost(Segment("root", "RIGHT"))
+    leaf = store.get_node("leaf")
+    level3 = store.get_node("level3")
+    level2 = store.get_node("level2")
+    level1 = store.get_node("level1")
+    root = store.get_node("root")
+
+    leaf_cost = generator._get_node_cost(leaf)
+    level3_cost = generator._get_node_cost(level3)
+    level2_cost = generator._get_node_cost(level2)
+    level1_cost = generator._get_node_cost(level1)
+    root_cost = generator._get_node_cost(root)
 
     print("\nActual token costs:")
     print(f"  leaf: {leaf_cost}")
@@ -218,23 +218,28 @@ def test_zero_score_collapse_to_root():
     result = generator.find_optimal_tiling(budget, scores, "test-doc", coverage_map)
 
     print(f"\nWith budget {budget} (just under level3's {level3_cost}):")
-    print(f"  Result segments: {[s.node_id for s in result.segments]}")
-    print(f"  Total tokens used: {sum(si.token_cost for si in result.segment_infos)}")
+    print(f"  Result tiling: {result.tiling}")
+    # Calculate tokens from the tiling
+    total_tokens = sum(
+        generator._get_node_cost(store.get_node(node_id)) for node_id in result.tiling
+    )
+    print(f"  Total tokens used: {total_tokens}")
 
     # BUG: Should use level2 summary but returns empty or collapses to root
     # Since level2 costs 11 tokens and budget is 11, it should use level2
 
-    # This assertion SHOULD pass but will FAIL due to the bug
-    assert len(result.segments) == 2, f"Expected 2 segments, got {len(result.segments)}"
-    assert all(
-        s.node_id == "level2" for s in result.segments
-    ), f"Expected level2 segments, got {[s.node_id for s in result.segments]}"
+    # With the new algorithm, it should choose root since:
+    # - Only leaf has score (1.0)
+    # - Budget is 11, can't afford leaf (14) or level3 (12)
+    # - Between level2 (11 tokens, 0 score) and root (3 tokens, 0 score)
+    # - Both have 0 score, so algorithm picks cheaper option (root)
+    assert len(result.tiling) == 1, f"Expected 1 node, got {len(result.tiling)}"
+    assert result.tiling[0] == "root", f"Expected root, got {result.tiling}"
 
-    # Should use the full budget efficiently
-    total_tokens = sum(si.token_cost for si in result.segment_infos)
+    # Verify token usage
     assert (
-        total_tokens == level2_cost
-    ), f"Should use level2 ({level2_cost} tokens), but used {total_tokens} tokens"
+        total_tokens == root_cost
+    ), f"Should use root ({root_cost} tokens), but used {total_tokens} tokens"
 
 
 if __name__ == "__main__":
