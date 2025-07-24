@@ -199,13 +199,13 @@ class DynamicTilingGenerator:
             self._nodes.get(node.right_child_id) if node.right_child_id else None
         )
 
-        # CRITICAL: Coverage tree must be complete - internal nodes must have both children
+        # CRITICAL: Coverage tree must be full - internal nodes must have both children
         if not left_child or not right_child:
-            # This violates the tree completeness invariant
+            # This violates the tree fullness invariant
             missing_child = "left" if not left_child else "right"
             raise ValueError(
-                f"Coverage tree is incomplete: node {node.id} is missing its {missing_child} child. "
-                f"The coverage tree must be a complete binary tree to maintain full document coverage. "
+                f"Coverage tree is not full: node {node.id} is missing its {missing_child} child. "
+                f"The coverage tree must be a full binary tree to maintain full document coverage. "
                 f"This usually means the retriever needs to include siblings when building the coverage tree."
             )
 
