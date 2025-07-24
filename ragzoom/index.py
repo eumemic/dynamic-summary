@@ -93,7 +93,11 @@ class TreeBuilder:
         # Build prompt with adjacent context (trim to avoid token explosion)
         prompt_parts = []
 
-        if prev_context:
+        # Process adjacent context if needed
+        trimmed_prev = None
+        trimmed_next = None
+
+        if prev_context and self.config.adjacent_context_tokens > 0:
             # Trim prev_context to adjacent_context_tokens
             prev_tokens = self.splitter.tokenizer.encode(prev_context)
             if len(prev_tokens) > self.config.adjacent_context_tokens:
@@ -101,12 +105,8 @@ class TreeBuilder:
                 trimmed_prev = self.splitter.tokenizer.decode(context_tokens)
             else:
                 trimmed_prev = prev_context
-            prompt_parts.append(f"Previous context: ...{trimmed_prev}")
 
-        prompt_parts.append(f"[FIRST HALF]\n{left_text}")
-        prompt_parts.append(f"[SECOND HALF]\n{right_text}")
-
-        if next_context:
+        if next_context and self.config.adjacent_context_tokens > 0:
             # Trim next_context to adjacent_context_tokens
             next_tokens = self.splitter.tokenizer.encode(next_context)
             if len(next_tokens) > self.config.adjacent_context_tokens:
@@ -114,13 +114,43 @@ class TreeBuilder:
                 trimmed_next = self.splitter.tokenizer.decode(context_tokens)
             else:
                 trimmed_next = next_context
-            prompt_parts.append(f"Next context: {trimmed_next}...")
 
-        prompt_parts.append(
-            f"\nSummarize the content above in ≤{target_tokens} tokens total. "
-            "Use third-person past tense, no pronouns, keep all proper names. "
-            "Focus on key events, facts, and themes."
-        )
+        # Build the summarization prompt
+        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> and <FOLLOWING_TEXT> content as context (when provided - these may be omitted if there is no preceding/following context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary and your summary should flow smoothly into the <FOLLOWING_TEXT>.
+
+CRITICAL REQUIREMENTS:
+- Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
+- The summary should be ≤{target_tokens} tokens in total
+- Make the summary as information-dense as possible while filling out (but not exceeding) the token limit
+- The summary should cover the full scope of the content from start to end, but abstract over minor details and omit verbal flourishes to stay within the token limit
+- Focus on key events, facts, and themes ONLY from the provided text
+- Do NOT include any concrete information from BEFORE the <SUMMARIZE_TEXT> tag or AFTER the </SUMMARIZE_TEXT> tag in the summary
+- Do NOT complete a sentence that is cut off with information from outside the <SUMMARIZE_TEXT> block
+- Do NOT infer or imagine details not present in the text
+- If the text references something without explaining it, do NOT try to explain it
+- IMPORTANT: Match voice and tense of the text you are summarizing! If you are summarizing a text written in the past tense, the summary MUST be in past tense
+- Try to match the tone and style of the text, as if the summary were written by the same author
+- Respond ONLY with your best attempt at a summary, do not break the fourth wall, say you can't summarize it, etc.
+
+Here's the content to summarize:"""
+
+        prompt_parts.append(instruction)
+
+        # Add preceding context if available
+        if prev_context and self.config.adjacent_context_tokens > 0 and trimmed_prev:
+            prompt_parts.append(
+                f"\n<PRECEDING_TEXT>\n...{trimmed_prev.strip()}\n</PRECEDING_TEXT>"
+            )
+
+        # Add the content to summarize (concatenated)
+        combined_text = f"{left_text} {right_text}".strip()
+        prompt_parts.append(f"\n<SUMMARIZE_TEXT>\n{combined_text}\n</SUMMARIZE_TEXT>")
+
+        # Add following context if available
+        if next_context and self.config.adjacent_context_tokens > 0 and trimmed_next:
+            prompt_parts.append(
+                f"\n<FOLLOWING_TEXT>\n{trimmed_next.strip()}...\n</FOLLOWING_TEXT>"
+            )
 
         full_prompt = "\n\n".join(prompt_parts)
 
@@ -129,7 +159,10 @@ class TreeBuilder:
                 response = await self.client.chat.completions.create(
                     model=self.config.summary_model,
                     messages=[
-                        {"role": "system", "content": "You are a precise summarizer."},
+                        {
+                            "role": "system",
+                            "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
+                        },
                         {"role": "user", "content": full_prompt},
                     ],
                     temperature=self.config.summary_temperature,
@@ -408,6 +441,31 @@ class TreeBuilder:
             left_text, right_text, target_tokens, prev_context, next_context
         )
 
+        # Validate summary faithfulness if validation is enabled
+        # Note: For internal nodes, left_text and right_text are summaries from children,
+        # not original text. The validation checks that the parent summary only contains
+        # information from these child summaries.
+        # from ragzoom.validate import validate_summary_faithfulness
+        #
+        # validation_error = await validate_summary_faithfulness(
+        #     summary, left_text, right_text, self.client
+        # )
+        # if validation_error:
+        #     # Create a comprehensive error message
+        #     error_msg = f"\n{'='*80}\nSUMMARY VALIDATION FAILED\n{'='*80}\n"
+        #     error_msg += f"Parent of: {left_id} (left), {right_id} (right)\n"
+        #     error_msg += f"Reason: {validation_error}\n"
+        #     error_msg += f"{'-'*80}\n"
+        #     error_msg += f"Generated summary:\n{summary}\n"
+        #     error_msg += f"{'-'*80}\n"
+        #     error_msg += f"Left child:\n{left_text}\n"
+        #     error_msg += f"{'-'*80}\n"
+        #     error_msg += f"Right child:\n{right_text}\n"
+        #     error_msg += f"{'='*80}"
+        #
+        #     logger.error(error_msg)
+        #     raise ValueError(validation_error)
+
         # Get embedding for the summary
         embedding = await self._get_embedding(summary)
 
@@ -506,6 +564,7 @@ class TreeBuilder:
                     )
 
                 # Create async task
+
                 task = self._process_node_pair(
                     left_id,
                     left_text,

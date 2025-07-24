@@ -24,15 +24,54 @@ class TextSplitter:
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=config.leaf_tokens,
             chunk_overlap=0,  # No overlap - RagZoom needs sequential chunks
-            separators=["\n\n", "\n", ". ", " ", ""],
+            separators=[
+                "\n\n",  # Paragraph breaks
+                r"(?<=[.!?])\s+",  # After sentence-ending punctuation
+                "\n",  # Line breaks
+                " ",  # Spaces
+                "",  # Any character
+            ],
             length_function=self._token_length,
-            is_separator_regex=False,
+            is_separator_regex=True,  # Enable regex for better sentence detection
             keep_separator="end",  # Keep separator at end of chunk to avoid gaps
         )
 
     def _token_length(self, text: str) -> int:
         """Calculate token length of text."""
         return len(self.tokenizer.encode(text))
+
+    def _preprocess_text(self, text: str) -> str:
+        """Remove formatting line breaks while preserving semantic breaks.
+
+        Replaces single newlines that don't follow punctuation with spaces.
+        Preserves newlines after sentence-ending punctuation and paragraph breaks.
+        """
+        # First, protect paragraph breaks by replacing \n\n with a placeholder
+        paragraph_marker = "\x00PARAGRAPH\x00"
+        text = text.replace("\n\n", paragraph_marker)
+
+        # Process each newline
+        import re
+
+        # Pattern: any character followed by newline
+        pattern = r"(.)\n"
+
+        def replace_newline(match: re.Match[str]) -> str:
+            char_before = match.group(1)
+            # Only keep newlines after sentence-ending punctuation
+            if char_before in ".!?":
+                # Keep the newline after sentence boundaries
+                return match.group(0)
+            else:
+                # Replace newline with space for everything else
+                return char_before + " "
+
+        text = re.sub(pattern, replace_newline, text)
+
+        # Restore paragraph breaks
+        text = text.replace(paragraph_marker, "\n\n")
+
+        return text
 
     def _reconstruct_chunks_with_whitespace(
         self, original_text: str, raw_chunks: list[str]
