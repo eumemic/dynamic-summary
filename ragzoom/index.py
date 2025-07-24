@@ -88,21 +88,16 @@ class TreeBuilder:
         target_tokens: int,
         prev_context: Optional[str] = None,
         next_context: Optional[str] = None,
-        attempt: int = 1,
-    ) -> tuple[str, Optional[int]]:
-        """Summarize text using LLM with <<<MID>>> delimiter."""
-        # Maximum retry attempts to get delimiter
-        max_attempts = 3
-        if attempt > max_attempts:
-            logger.error(
-                f"Failed to get <<<MID>>> delimiter after {max_attempts} attempts"
-            )
-            raise ValueError("LLM consistently failing to include required delimiter")
-
+    ) -> str:
+        """Summarize text using LLM."""
         # Build prompt with adjacent context (trim to avoid token explosion)
         prompt_parts = []
 
-        if prev_context:
+        # Process adjacent context if needed
+        trimmed_prev = None
+        trimmed_next = None
+
+        if prev_context and self.config.adjacent_context_tokens > 0:
             # Trim prev_context to adjacent_context_tokens
             prev_tokens = self.splitter.tokenizer.encode(prev_context)
             if len(prev_tokens) > self.config.adjacent_context_tokens:
@@ -110,12 +105,8 @@ class TreeBuilder:
                 trimmed_prev = self.splitter.tokenizer.decode(context_tokens)
             else:
                 trimmed_prev = prev_context
-            prompt_parts.append(f"Previous context: ...{trimmed_prev}")
 
-        prompt_parts.append(f"[FIRST HALF]\n{left_text}")
-        prompt_parts.append(f"[SECOND HALF]\n{right_text}")
-
-        if next_context:
+        if next_context and self.config.adjacent_context_tokens > 0:
             # Trim next_context to adjacent_context_tokens
             next_tokens = self.splitter.tokenizer.encode(next_context)
             if len(next_tokens) > self.config.adjacent_context_tokens:
@@ -123,16 +114,43 @@ class TreeBuilder:
                 trimmed_next = self.splitter.tokenizer.decode(context_tokens)
             else:
                 trimmed_next = next_context
-            prompt_parts.append(f"Next context: {trimmed_next}...")
 
-        prompt_parts.append(
-            f"\nSummarize the two halves above in ≤{target_tokens} tokens total. "
-            "CRITICAL: You MUST insert exactly the token <<<MID>>> at the point where the second half begins. "
-            "This delimiter is required for proper text processing. "
-            "Format: [summary of first half] <<<MID>>> [summary of second half]. "
-            "Use third-person past tense, no pronouns, keep all proper names. "
-            "Focus on key events, facts, and themes."
-        )
+        # Build the summarization prompt
+        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> and <FOLLOWING_TEXT> content as context (when provided - these may be omitted if there is no preceding/following context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary and your summary should flow smoothly into the <FOLLOWING_TEXT>.
+
+CRITICAL REQUIREMENTS:
+- Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
+- The summary should be ≤{target_tokens} tokens in total
+- Make the summary as information-dense as possible while filling out (but not exceeding) the token limit
+- The summary should cover the full scope of the content from start to end, but abstract over minor details and omit verbal flourishes to stay within the token limit
+- Focus on key events, facts, and themes ONLY from the provided text
+- Do NOT include any concrete information from BEFORE the <SUMMARIZE_TEXT> tag or AFTER the </SUMMARIZE_TEXT> tag in the summary
+- Do NOT complete a sentence that is cut off with information from outside the <SUMMARIZE_TEXT> block
+- Do NOT infer or imagine details not present in the text
+- If the text references something without explaining it, do NOT try to explain it
+- IMPORTANT: Match voice and tense of the text you are summarizing! If you are summarizing a text written in the past tense, the summary MUST be in past tense
+- Try to match the tone and style of the text, as if the summary were written by the same author
+- Respond ONLY with your best attempt at a summary, do not break the fourth wall, say you can't summarize it, etc.
+
+Here's the content to summarize:"""
+
+        prompt_parts.append(instruction)
+
+        # Add preceding context if available
+        if prev_context and self.config.adjacent_context_tokens > 0 and trimmed_prev:
+            prompt_parts.append(
+                f"\n<PRECEDING_TEXT>\n...{trimmed_prev.strip()}\n</PRECEDING_TEXT>"
+            )
+
+        # Add the content to summarize (concatenated)
+        combined_text = f"{left_text} {right_text}".strip()
+        prompt_parts.append(f"\n<SUMMARIZE_TEXT>\n{combined_text}\n</SUMMARIZE_TEXT>")
+
+        # Add following context if available
+        if next_context and self.config.adjacent_context_tokens > 0 and trimmed_next:
+            prompt_parts.append(
+                f"\n<FOLLOWING_TEXT>\n{trimmed_next.strip()}...\n</FOLLOWING_TEXT>"
+            )
 
         full_prompt = "\n\n".join(prompt_parts)
 
@@ -141,7 +159,10 @@ class TreeBuilder:
                 response = await self.client.chat.completions.create(
                     model=self.config.summary_model,
                     messages=[
-                        {"role": "system", "content": "You are a precise summarizer."},
+                        {
+                            "role": "system",
+                            "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
+                        },
                         {"role": "user", "content": full_prompt},
                     ],
                     temperature=self.config.summary_temperature,
@@ -150,33 +171,11 @@ class TreeBuilder:
                 content = response.choices[0].message.content
                 summary = content.strip() if content else ""
 
-                # Check if summary exceeds target length
-                # actual_tokens = len(self.splitter.tokenizer.encode(summary))
-                # if actual_tokens > target_tokens:
-                #     logger.warning(f"Summary exceeded target length: got {actual_tokens} tokens, target was {target_tokens} tokens")
-
-                # Find <<<MID>>> delimiter position
-                mid_offset = summary.find("<<<MID>>>")
-
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
                 raise
 
-        # Check for delimiter outside semaphore to avoid deadlock
-        if mid_offset == -1:
-            logger.warning(
-                f"No <<<MID>>> delimiter found in summary (attempt {attempt}/{max_attempts}), retrying..."
-            )
-            return await self._summarize_text(
-                left_text,
-                right_text,
-                target_tokens,
-                prev_context,
-                next_context,
-                attempt + 1,
-            )
-
-        return summary, mid_offset
+        return summary
 
     async def _add_document_impl(
         self,
@@ -373,6 +372,14 @@ class TreeBuilder:
                 leaf_ids, chunks, document_id, async_progress, overall_start_time
             )
 
+            # Final validation: ensure tree is full
+            from ragzoom.validate import validate, validate_tree_is_full
+
+            validate(
+                lambda: validate_tree_is_full(self.store, document_id),
+                "tree fullness check",
+            )
+
             # Final completion logging with total elapsed time
             if root_id:
                 total_elapsed = time.time() - overall_start_time
@@ -429,16 +436,38 @@ class TreeBuilder:
         # Target tokens for the summary (guidance for LLM, not hard limit)
         target_tokens = self.config.leaf_tokens
 
-        # Generate summary with <<<MID>>> delimiter (async)
-        summary_with_delimiter, mid_offset = await self._summarize_text(
+        # Generate summary (async)
+        summary = await self._summarize_text(
             left_text, right_text, target_tokens, prev_context, next_context
         )
 
-        # Clean the delimiter from the text before storing
-        cleaned_summary = summary_with_delimiter.replace("<<<MID>>>", "").strip()
+        # Validate summary faithfulness if validation is enabled
+        # Note: For internal nodes, left_text and right_text are summaries from children,
+        # not original text. The validation checks that the parent summary only contains
+        # information from these child summaries.
+        # from ragzoom.validate import validate_summary_faithfulness
+        #
+        # validation_error = await validate_summary_faithfulness(
+        #     summary, left_text, right_text, self.client
+        # )
+        # if validation_error:
+        #     # Create a comprehensive error message
+        #     error_msg = f"\n{'='*80}\nSUMMARY VALIDATION FAILED\n{'='*80}\n"
+        #     error_msg += f"Parent of: {left_id} (left), {right_id} (right)\n"
+        #     error_msg += f"Reason: {validation_error}\n"
+        #     error_msg += f"{'-'*80}\n"
+        #     error_msg += f"Generated summary:\n{summary}\n"
+        #     error_msg += f"{'-'*80}\n"
+        #     error_msg += f"Left child:\n{left_text}\n"
+        #     error_msg += f"{'-'*80}\n"
+        #     error_msg += f"Right child:\n{right_text}\n"
+        #     error_msg += f"{'='*80}"
+        #
+        #     logger.error(error_msg)
+        #     raise ValueError(validation_error)
 
-        # Get embedding for the cleaned summary
-        embedding = await self._get_embedding(cleaned_summary)
+        # Get embedding for the summary
+        embedding = await self._get_embedding(summary)
 
         # Store the node data
         left_node = self.store.get_node(left_id)
@@ -452,14 +481,12 @@ class TreeBuilder:
 
         self.store.add_node(
             node_id=parent_id,
-            text=cleaned_summary,
+            text=summary,
             embedding=embedding,
             span_start=left_node.span_start,
             span_end=right_node.span_end,
             left_child_id=left_id,
             right_child_id=right_id,
-            summary=cleaned_summary,
-            mid_offset=mid_offset,
             document_id=document_id,
         )
 
@@ -478,23 +505,11 @@ class TreeBuilder:
             # Skip gap check in early validation - we'll check it properly in final validation
             # where we have access to the original text to verify if gaps are just whitespace
 
-            # Check summary has MID delimiter (on the original text)
-            if "<<<MID>>>" not in summary_with_delimiter:
-                return f"Parent node {parent_id} missing <<<MID>>> delimiter in summary"
-
-            # Check mid_offset is valid
-            if (
-                mid_offset is None
-                or mid_offset < 0
-                or mid_offset >= len(summary_with_delimiter)
-            ):
-                return f"Parent node {parent_id} has invalid mid_offset: {mid_offset}"
-
             return None
 
         validate(check_parent_structure, f"tree structure for parent {parent_id}")
 
-        return parent_id, cleaned_summary, embedding
+        return parent_id, summary, embedding
 
     async def _build_tree_from_leaves(
         self,
@@ -548,6 +563,7 @@ class TreeBuilder:
                     )
 
                 # Create async task
+
                 task = self._process_node_pair(
                     left_id,
                     left_text,
@@ -711,7 +727,7 @@ class TreeBuilder:
                     continue
 
                 # Re-summarize with fresh content
-                summary, mid_offset = await self._summarize_text(
+                summary = await self._summarize_text(
                     left_child.text,
                     right_child.text,
                     target_tokens=self.config.leaf_tokens,
@@ -723,7 +739,7 @@ class TreeBuilder:
                 embedding = await self._get_embedding(summary)
 
                 # Update the node
-                self.store.update_summary(node_id, summary, embedding, mid_offset)
+                self.store.update_summary(node_id, summary, embedding)
                 refreshed_count += 1
 
                 logger.info(f"Refreshed node {node_id} with new summary")
