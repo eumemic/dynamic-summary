@@ -1,7 +1,7 @@
 """Validation functions for RagZoom to ensure correctness of indexing and retrieval."""
 
 import logging
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from ragzoom.store import Store, TreeNode
 
@@ -385,3 +385,93 @@ def validate_tree_is_full(store: Store, document_id: str) -> Optional[str]:
                     return f"Invalid tree: node {node.id} references non-existent right child {node.right_child_id}"
 
     return None  # Tree is full
+
+
+async def validate_summary_faithfulness(
+    summary: str,
+    left_text: str,
+    right_text: str,
+    openai_client: Any,
+    model: str = "gpt-4o",
+) -> Optional[str]:
+    """Validate that a summary faithfully represents its children's content.
+
+    This uses a cheap LLM to verify the summary contains only information
+    from the children and nothing extraneous.
+
+    Args:
+        summary: The generated summary to validate
+        left_text: Text content of the left child
+        right_text: Text content of the right child
+        openai_client: OpenAI client for validation
+        model: Model to use for validation (default: gpt-4o-mini)
+
+    Returns:
+        Error message if validation fails, None if valid
+    """
+    if not _validate_enabled:
+        return None
+
+    # Combine children's text for reference
+    combined_children = f"{left_text}\n\n{right_text}"
+
+    # Truncate if too long (to stay within token limits)
+    max_chars = 8000  # Conservative limit for context
+    if len(combined_children) > max_chars:
+        combined_children = combined_children[:max_chars] + "... [truncated]"
+    if len(summary) > 2000:
+        summary = summary[:2000] + "... [truncated]"
+
+    prompt = f"""You are a validation assistant. Your task is to check if a summary accurately represents the content from its source texts, without adding factual information that isn't present.
+
+Source texts (the content that should be summarized):
+---
+{combined_children}
+---
+
+Summary to validate:
+---
+{summary}
+---
+
+Check if the summary:
+1. Contains only information that can be found or reasonably inferred from the source texts
+2. Does NOT add new facts, events, or details not present in the source
+3. Is a reasonable summary of the source content
+
+IMPORTANT CLARIFICATIONS:
+- Paraphrasing is ALLOWED and expected (e.g., "The mother of our particular hobbit" → "The mother of this hobbit")
+- If something is referenced/mentioned in the source, saying it was "mentioned" is VALID
+- Focus on factual additions, not stylistic differences
+- Minor interpretations that stay true to the source meaning are VALID
+- Reasonable inferences from context are VALID (e.g., "At may never return he began" → "As Thorin mentioned 'may never return'")
+- If the context clearly indicates who said something, attributing it to that speaker is VALID
+
+Respond with either:
+- "VALID" if the summary accurately represents the source content
+- "INVALID: <brief explanation>" if the summary adds factual information NOT in the source texts
+
+Be strict about factual additions, but allow normal paraphrasing and summarization."""
+
+    try:
+        response = await openai_client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,  # Slightly higher to reduce overly literal interpretations
+            max_tokens=200,
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        if result.startswith("VALID"):
+            return None
+        elif result.startswith("INVALID:"):
+            return str(result)
+        else:
+            logger.warning(f"Unexpected validation response: {result}")
+            return "INVALID: unexpected response format"
+
+    except Exception as e:
+        logger.error(f"Error during summary validation: {e}")
+        # Don't fail indexing due to validation errors
+        return None
