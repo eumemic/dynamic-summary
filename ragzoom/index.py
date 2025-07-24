@@ -487,7 +487,6 @@ Here's the content to summarize:"""
             span_end=right_node.span_end,
             left_child_id=left_id,
             right_child_id=right_id,
-            summary=summary,
             document_id=document_id,
         )
 

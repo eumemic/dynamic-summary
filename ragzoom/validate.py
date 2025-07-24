@@ -225,10 +225,9 @@ def validate_tree_structure(
                                 f"right starts at {right_child.span_start}"
                             )
 
-        # Validate summaries for non-leaf nodes
-        if not store.is_leaf_node(node.id):
-            if not node.summary:
-                errors.append(f"Node {node.id}: Non-leaf node missing summary")
+        # Validate text content for all nodes
+        if not node.text:
+            errors.append(f"Node {node.id}: Missing text content")
 
     if errors:
         for error in errors[:10]:  # Show first 10 errors

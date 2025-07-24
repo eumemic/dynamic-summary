@@ -14,7 +14,7 @@ from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store
+from ragzoom.store import Store, TreeNode
 from ragzoom.tree_viz import build_ascii_tree
 
 # Load environment variables
@@ -124,12 +124,11 @@ def index(
 
         # Get leaf nodes for this specific document
         with store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
-
             doc_leaves = (
                 session.query(TreeNode)
-                .filter_by(
-                    document_id=doc_id, summary=None  # Leaf nodes have no summary
+                .filter_by(document_id=doc_id)
+                .filter(
+                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
                 )
                 .all()
             )
@@ -206,7 +205,11 @@ def documents(ctx: click.Context) -> None:
                 )
                 leaf_count = (
                     session.query(TreeNode)
-                    .filter_by(document_id=doc.id, summary=None)
+                    .filter_by(document_id=doc.id)
+                    .filter(
+                        TreeNode.left_child_id.is_(None),
+                        TreeNode.right_child_id.is_(None),
+                    )
                     .count()
                 )
 
@@ -542,7 +545,7 @@ def export(ctx: click.Context, input_file: str, output_file: str, format: str) -
                     "height": store.get_node_height(node.id),
                     "span_start": node.span_start,
                     "span_end": node.span_end,
-                    "is_leaf": node.summary is None,
+                    "is_leaf": store.is_leaf_node(node.id),
                     "text_preview": (
                         node.text[:100] + "..." if len(node.text) > 100 else node.text
                     ),
