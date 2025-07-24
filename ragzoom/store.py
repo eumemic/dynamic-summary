@@ -224,7 +224,9 @@ class Store:
                     "span_start": span_start,
                     "span_end": span_end,
                     "parent_id": parent_id or "",
-                    "is_leaf": 1 if summary is None else 0,
+                    "is_leaf": (
+                        1 if (left_child_id is None and right_child_id is None) else 0
+                    ),
                     "document_id": document_id
                     or "",  # ChromaDB doesn't accept None values
                 }
@@ -316,7 +318,6 @@ class Store:
                 # Use cast to handle the nullable text field - this is safe because we always
                 # pass a non-null text parameter when updating summaries for internal nodes
                 node.text = cast(str, text)
-                node.summary = text  # These are the same for internal nodes
                 node.is_dirty = 0
                 session.commit()
 
@@ -468,7 +469,13 @@ class Store:
     def get_leaf_nodes(self) -> list[TreeNode]:
         """Get all leaf nodes (nodes without children)."""
         with self.SessionLocal() as session:
-            return session.query(TreeNode).filter_by(summary=None).all()
+            return (
+                session.query(TreeNode)
+                .filter(
+                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
+                )
+                .all()
+            )
 
     def get_root_node(self) -> Optional[TreeNode]:
         """Get the root node (node with no parent)."""
