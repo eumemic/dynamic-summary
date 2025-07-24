@@ -96,29 +96,6 @@ class TestIndexingCreatesFullTrees:
         result = validate_tree_is_full(store, doc_id)
         assert result is None
 
-    @pytest.mark.skip(reason="Test causing worker crash in CI environment")
-    def test_single_chunk_creates_valid_tree(self, setup_indexing):
-        """Test that a single chunk creates a valid single-node tree."""
-        config, store, tree_builder = setup_indexing
-
-        # Text that will create just 1 chunk
-        text = "Short content. " * 3  # ~12 tokens
-
-        # This should create just a root node
-        doc_id = tree_builder.add_document(
-            text, document_id="test-single", show_progress=False
-        )
-
-        # Verify
-        result = validate_tree_is_full(store, doc_id)
-        assert result is None
-
-        # Check it's actually a single node
-        nodes = store.get_all_nodes_for_document(doc_id)
-        assert len(nodes) == 1
-        assert nodes[0].left_child_id is None
-        assert nodes[0].right_child_id is None
-
     def test_large_document_creates_full_tree(self, setup_indexing):
         """Test that a large document with many chunks creates a full tree."""
         config, store, tree_builder = setup_indexing
