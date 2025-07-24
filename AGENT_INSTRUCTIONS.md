@@ -44,7 +44,11 @@ For detailed understanding of the core tiling algorithm:
 Custom slash commands (e.g., `/push`) are stored in `.claude/commands/` as markdown files.
 To modify: edit `.claude/commands/<command-name>.md`
 
-## 8. Quick Reference
+## 8. Git Worktrees for Parallel Development
+
+This repository supports git worktrees in the `worktrees/` directory for parallel development. The user will use the `/branch` command to create a new worktree and the `/merge` command will automatically clean up worktrees after merging.
+
+## 9. Quick Reference
 
 ### Key Commands
 ```bash

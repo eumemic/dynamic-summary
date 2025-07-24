@@ -66,3 +66,6 @@ Thumbs.db
 # mypy daemon
 .dmypy.json
 .mypy_cache/
+
+# Git worktrees
+worktrees/
