@@ -46,6 +46,7 @@ class TestCLI:
             store_instance.get_root_node.return_value = Mock(depth=3)
             store_instance.get_pinned_nodes.return_value = []
             store_instance.collection.count.return_value = 10
+            store_instance.get_node_height.return_value = 3
 
             # Mock SessionLocal for database queries
             mock_session = Mock()
@@ -59,14 +60,27 @@ class TestCLI:
                     span_end=(i + 1) * 100,
                     text=f"text-{i}",
                     summary=None,
+                    left_child_id=None,
+                    right_child_id=None,
                 )
                 for i in range(5)
             ]
-            mock_query.filter_by.return_value.all.return_value = leaf_nodes
 
-            # Mock root node query
-            root_node = Mock(id="root", depth=3, parent_id=None)
-            mock_query.filter_by.return_value.first.return_value = root_node
+            # Set up chained query mocks for filter pattern
+            mock_filter_result = Mock()
+            mock_filter_result.all.return_value = leaf_nodes
+            mock_filter_result.count.return_value = len(leaf_nodes)
+            mock_filter_result.first.return_value = Mock(
+                id="root", depth=3, parent_id=None
+            )
+
+            # Handle both filter_by().filter() chain and just filter_by()
+            mock_query.filter_by.return_value.filter.return_value = mock_filter_result
+            mock_query.filter_by.return_value.all.return_value = leaf_nodes
+            mock_query.filter_by.return_value.first.return_value = Mock(
+                id="root", depth=3, parent_id=None
+            )
+            mock_query.filter_by.return_value.count.return_value = 10
 
             mock_session.query.return_value = mock_query
             mock_context_manager = Mock()

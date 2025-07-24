@@ -156,8 +156,9 @@ async def index_document(
 
             doc_leaves = (
                 session.query(TreeNode)
-                .filter_by(
-                    document_id=document_id, summary=None  # Leaf nodes have no summary
+                .filter_by(document_id=document_id)
+                .filter(
+                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
                 )
                 .all()
             )

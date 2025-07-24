@@ -9,7 +9,7 @@ from openai import OpenAI
 from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.dynamic_tiling import DynamicTilingGenerator, Segment, SegmentInfo
+from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.store import Store, TreeNode
 
 if TYPE_CHECKING:
@@ -25,8 +25,7 @@ class RetrievalResult:
     node_ids: list[str]
     scores: dict[str, float]
     coverage_map: dict[str, bool]
-    tiling: Optional[list["Segment"]] = None
-    segment_infos: Optional[list["SegmentInfo"]] = None
+    tiling: Optional[list[str]] = None  # List of node IDs in the tiling
     nodes: Optional[dict[str, "TreeNode"]] = (
         None  # Pre-loaded nodes to avoid redundant loading
     )
@@ -46,7 +45,7 @@ class Retriever:
         self.store = store
         self.tree_builder = tree_builder
         self.client = OpenAI(api_key=config.openai_api_key)
-        self.dp_generator = DynamicTilingGenerator(config, store)
+        self.dp_generator = DynamicTilingGenerator(config)
 
         # Per-request cache to avoid double refresh
         self._refreshed_node_ids: set[str] = set()
@@ -126,33 +125,93 @@ class Retriever:
         for node in pinned_nodes:
             coverage_map[node.id] = True
 
-        # Build scores map - only include nodes in coverage map to ensure
-        # DP algorithm can only use nodes from the coverage tree
-        scores = {
-            cand[0]: 1.0 - cand[1] for cand in candidates if cand[0] in coverage_map
-        }  # Convert distance to similarity
+        # Build scores map - compute similarity for ALL nodes in coverage map
+        scores = {}
+
+        # First, add scores for the candidate nodes (already have similarities)
+        for node_id, similarity, _ in candidates:
+            if node_id in coverage_map:
+                scores[node_id] = similarity
+
+        # Then, compute similarities for all other nodes in coverage map
+        nodes_needing_scores = set(coverage_map.keys()) - set(scores.keys())
+        if nodes_needing_scores:
+            # Get embeddings and compute similarities for ancestors
+            for node_id in nodes_needing_scores:
+                ancestor_node: Optional[TreeNode] = self.store.get_node(node_id)
+                if ancestor_node is not None:
+                    # Get node's embedding from Chroma
+                    try:
+                        result = self.store.collection.get(
+                            ids=[node_id], include=["embeddings"]
+                        )
+                        embeddings = result.get("embeddings")
+                        if embeddings is not None and len(embeddings) > 0:
+                            node_embedding = embeddings[0]
+                            # Compute cosine similarity
+                            import numpy as np
+
+                            query_vec = np.array(query_embedding)
+                            node_vec = np.array(node_embedding)
+                            # Cosine similarity = dot product of normalized vectors
+                            similarity = float(
+                                np.dot(query_vec, node_vec)
+                                / (np.linalg.norm(query_vec) * np.linalg.norm(node_vec))
+                            )
+                            scores[node_id] = max(0.0, min(1.0, similarity))
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to get embedding for node {node_id}: {e}"
+                        )
+                        scores[node_id] = 0.0
+
+        # Handle empty coverage map case
+        if not coverage_map:
+            # No nodes selected, return empty result
+            return RetrievalResult(
+                node_ids=selected_ids,
+                scores=scores,
+                coverage_map=coverage_map,
+                tiling=[],
+                nodes={},
+            )
+
+        # Load all nodes in coverage map to avoid redundant loading later
+        # Use batch loading for efficiency
+        nodes: dict[str, TreeNode] = {}
+        node_ids_to_load = list(coverage_map.keys())
+        if node_ids_to_load:
+            loaded_nodes = self.store.get_nodes(node_ids_to_load)
+            for node in loaded_nodes:
+                nodes[node.id] = node
+
+        # Find the root node in the coverage map
+        root_id = None
+        for node_id, node in nodes.items():
+            # Check if this node has no parent in the coverage map
+            if node.parent_id is None or node.parent_id not in nodes:
+                root_id = node_id
+                break
+
+        if not root_id:
+            # No root found - this should never happen as coverage map should include all ancestors
+            raise ValueError(
+                f"No root node found in coverage map. Coverage map has {len(nodes)} nodes but none have no parent in the map."
+            )
 
         # Step 5: Extract tiling using DP algorithm
         final_budget = (
             budget_tokens if budget_tokens is not None else self.config.budget_tokens
         )
         dp_result = self.dp_generator.find_optimal_tiling(
-            final_budget, scores, document_id, coverage_map
+            final_budget, scores, nodes, root_id
         )
-
-        # Load all nodes in coverage map to avoid redundant loading later
-        nodes: dict[str, TreeNode] = {}
-        for node_id in coverage_map:
-            maybe_node = self.store.get_node(node_id)
-            if maybe_node is not None:
-                nodes[node_id] = maybe_node
 
         return RetrievalResult(
             node_ids=selected_ids,
             scores=scores,
             coverage_map=coverage_map,  # Use the original coverage map
-            tiling=dp_result.segments,
-            segment_infos=dp_result.segment_infos,
+            tiling=dp_result.tiling.node_ids,
             nodes=nodes,
         )
 
@@ -213,19 +272,41 @@ class Retriever:
             logger.error(f"Error during async refresh: {e}")
 
     def _build_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
-        """Build coverage map including selected nodes and their ancestors."""
-        coverage_map = {}
+        """Build a full coverage map including selected nodes, their ancestors, and all required children for fullness."""
+        if not selected_ids:
+            return {}
 
-        # Mark selected nodes as covered
+        # Mark selected nodes as covered and update access
+        coverage_map = {node_id: True for node_id in selected_ids}
         for node_id in selected_ids:
-            coverage_map[node_id] = True
             self.store.update_node_access(node_id)
 
-        # Get and mark ancestors
+        # Add all ancestors
         ancestors = self.store.get_ancestors(selected_ids)
         for ancestor in ancestors:
             coverage_map[ancestor.id] = True
 
+        # Iteratively ensure fullness: every internal node in the coverage set must have both children (if any)
+        while True:
+            nodes_in_coverage = self.store.get_nodes(list(coverage_map.keys()))
+            new_nodes_added = False
+            for node in nodes_in_coverage:
+                # If node is in coverage and is an internal node in the main tree, ensure both children are present
+                left = node.left_child_id
+                right = node.right_child_id
+                if left or right:
+                    # If either child is present in the coverage set, both must be
+                    if (left and left in coverage_map) or (
+                        right and right in coverage_map
+                    ):
+                        if left and left not in coverage_map:
+                            coverage_map[left] = True
+                            new_nodes_added = True
+                        if right and right not in coverage_map:
+                            coverage_map[right] = True
+                            new_nodes_added = True
+            if not new_nodes_added:
+                break
         return coverage_map
 
     def _calculate_conservative_n_max(
