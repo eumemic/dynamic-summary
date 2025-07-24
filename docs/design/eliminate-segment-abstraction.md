@@ -195,16 +195,16 @@ No dual-mode support or data migration is needed.
 
 ## Implementation Checklist
 
-- [ ] Update `TreeNode` model to remove `mid_offset` field
-- [ ] Remove the legacy `summary` field from `TreeNode` (redundant with `text` field for internal nodes)
-- [ ] Modify `TreeBuilder` to remove `<<<MID>>>` delimiter prompt and parsing logic
-- [ ] Remove `Segment` class entirely
-- [ ] Simplify `DynamicTilingGenerator` to work with whole nodes only
-- [ ] Simplify `Assembler` to just concatenate node content
-- [ ] Update prompt templates to remove `<<<MID>>>` instructions
-- [ ] Update tests for new structure
-- [ ] Add feature flag for gradual rollout
-- [ ] Create migration tools for existing indexed documents
+- [x] Update `TreeNode` model to remove `mid_offset` field
+- [x] Remove the legacy `summary` field from `TreeNode` (redundant with `text` field for internal nodes)
+- [x] Modify `TreeBuilder` to remove `<<<MID>>>` delimiter prompt and parsing logic
+- [x] Remove `Segment` class entirely
+- [x] Simplify `DynamicTilingGenerator` to work with whole nodes only
+- [x] Simplify `Assembler` to just concatenate node content
+- [x] Update prompt templates to remove `<<<MID>>>` instructions
+- [x] Update tests for new structure
+- [ ] Add feature flag for gradual rollout (not needed - clean break)
+- [ ] Create migration tools for existing indexed documents (not needed - clean break)
 
 ## Validation Criteria
 
