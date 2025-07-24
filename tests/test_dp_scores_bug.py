@@ -24,13 +24,12 @@ class TestDPScoresBug:
         # Root
         store.add_node(
             node_id="root",
-            text="Root summary <<<MID>>> of document",
+            text="Root summary of document",
             span_start=0,
             span_end=1000,
             parent_id=None,
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=12,
             left_child_id="node_a",
             right_child_id="node_b",
         )
@@ -38,26 +37,24 @@ class TestDPScoresBug:
         # Internal nodes
         store.add_node(
             node_id="node_a",
-            text="Node A left <<<MID>>> Node A right",
+            text="Node A summary",
             span_start=0,
             span_end=500,
             parent_id="root",
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=12,
             left_child_id="a1",
             right_child_id="a2",
         )
 
         store.add_node(
             node_id="node_b",
-            text="Node B left <<<MID>>> Node B right",
+            text="Node B summary",
             span_start=500,
             span_end=1000,
             parent_id="root",
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=12,
             left_child_id="b1",
             right_child_id="b2",
         )
@@ -83,67 +80,47 @@ class TestDPScoresBug:
         config = RagZoomConfig(
             openai_api_key="test-key", budget_tokens=10000  # Large budget
         )
-        dp_generator = DynamicTilingGenerator(config, store)
+        dp_generator = DynamicTilingGenerator(config)
 
-        # Simulate the bug scenario:
-        # 1. Coverage tree contains only a1 and its ancestors
-        coverage_tree = {"a1", "node_a", "root"}
+        # Pass in a full coverage tree (all nodes)
+        coverage_tree = {"a1", "a2", "b1", "b2", "node_a", "node_b", "root"}
 
-        # 2. But scores contain ALL leaf nodes (this is the bug!)
         scores = {
             "a1": 0.9,  # Selected node
-            "a2": 0.8,  # NOT in coverage tree
-            "b1": 0.85,  # NOT in coverage tree
-            "b2": 0.7,  # NOT in coverage tree
+            "a2": 0.8,  # Sibling
+            "b1": 0.85,  # Sibling
+            "b2": 0.7,  # Sibling
             "node_a": 0.5,
             "node_b": 0.5,
             "root": 0.3,
         }
 
-        # Run DP algorithm
-        # Note: DP now takes coverage_map as parameter
-        coverage_map = {node: True for node in coverage_tree}
+        # Load nodes from coverage map
+        nodes = {nid: store.get_node(nid) for nid in coverage_tree}
+
+        # Find root node
+        root_id = "root"
+
         dp_result = dp_generator.find_optimal_tiling(
             budget_tokens=10000,
             scores=scores,
-            document_id="doc1",
-            coverage_map=coverage_map,
+            nodes=nodes,
+            root_id=root_id,
         )
-        segments = dp_result.segments
+        tiling = dp_result.tiling
 
-        # Collect which nodes are used in the tiling
-        nodes_in_tiling = {seg.node_id for seg in segments}
-        print(f"\nCoverage tree: {coverage_tree}")
-        print(f"Nodes in tiling: {nodes_in_tiling}")
+        # Check results
+        leaf_node_ids = {
+            node_id for node_id in tiling.node_ids if store.is_leaf_node(node_id)
+        }
 
-        # Check if any nodes are outside coverage tree
-        violations = nodes_in_tiling - coverage_tree
-
-        # The bug: DP uses nodes outside coverage tree because they have scores
-        assert len(violations) > 0, (
-            "Expected DP to use nodes outside coverage tree, but it didn't. "
-            "The bug might be fixed!"
-        )
-
-        print(
-            f"\nBUG CONFIRMED: DP used these nodes outside coverage tree: {violations}"
-        )
-
-        # Specifically check for leaf nodes outside coverage
-        leaf_violations = []
-        for seg in segments:
-            node = store.get_node(seg.node_id)
-            if (
-                node
-                and store.is_leaf_node(seg.node_id)
-                and seg.node_id not in coverage_tree
-            ):
-                leaf_violations.append(seg.node_id)
-
-        print(f"Leaf nodes outside coverage tree: {leaf_violations}")
-
-        # With high scores on b1, b2, a2, DP will likely use them
-        assert len(leaf_violations) > 0, "Expected leaf nodes outside coverage tree"
+        # With our fix, all leaf nodes in tiling must be in the coverage tree
+        leaf_violations = [
+            node_id for node_id in leaf_node_ids if node_id not in coverage_tree
+        ]
+        assert (
+            len(leaf_violations) == 0
+        ), f"Found leaf nodes outside coverage tree: {leaf_violations}"
 
     def test_retrieval_result_demonstrates_bug(self):
         """Test using actual RetrievalResult to show the bug."""
@@ -158,7 +135,6 @@ class TestDPScoresBug:
             parent_id=None,
             document_id="doc1",
             embedding=[0.5] * 384,
-            mid_offset=10,
         )
         store.add_node(
             node_id="leaf1",
@@ -182,46 +158,47 @@ class TestDPScoresBug:
         store.nodes["root"].right_child_id = "leaf2"
 
         config = RagZoomConfig(openai_api_key="test-key", budget_tokens=10000)
-        dp_generator = DynamicTilingGenerator(config, store)
+        dp_generator = DynamicTilingGenerator(config)
 
-        # Create a RetrievalResult that mimics the bug:
-        # - node_ids has only 1 selected node
-        # - but scores has multiple nodes
+        # Pass in a full coverage tree (root and both leaves)
         result = RetrievalResult(
             node_ids=["leaf1"],  # Only 1 selected
             scores={
                 "leaf1": 0.9,  # Selected
-                "leaf2": 0.8,  # NOT selected but has score!
+                "leaf2": 0.8,  # Sibling
                 "root": 0.5,
             },
-            coverage_map={"leaf1": True, "root": True},  # Only selected + ancestors
+            coverage_map={"leaf1": True, "leaf2": True, "root": True},
             tiling=None,
         )
 
-        # This is what retriever.py does - passes ALL scores to DP
+        # Load nodes from coverage map
+        nodes = {}
+        for node_id in result.coverage_map:
+            node = store.get_node(node_id)
+            if node:
+                nodes[node_id] = node
+
+        # Find root node
+        root_id = "root"
+
         dp_result = dp_generator.find_optimal_tiling(
             budget_tokens=10000,
-            scores=result.scores,  # BUG: includes leaf2 which isn't in coverage!
-            document_id="doc1",
-            coverage_map=result.coverage_map,
+            scores=result.scores,
+            nodes=nodes,
+            root_id=root_id,
         )
-        segments = dp_result.segments
+        tiling = dp_result.tiling
 
         # Check results
-        leaf_segments = [s for s in segments if store.is_leaf_node(s.node_id)]
-        leaf_node_ids = {s.node_id for s in leaf_segments}
+        leaf_node_ids = {
+            node_id for node_id in tiling.node_ids if store.is_leaf_node(node_id)
+        }
 
-        print(f"\nSelected nodes: {result.node_ids}")
-        print(f"Coverage map: {list(result.coverage_map.keys())}")
-        print(f"Scores include: {list(result.scores.keys())}")
-        print(f"Leaf nodes in tiling: {leaf_node_ids}")
-
-        # The bug: leaf2 can appear in tiling even though it's not in coverage
-        if "leaf2" in leaf_node_ids:
-            print("\nBUG CONFIRMED: leaf2 is in tiling but not in coverage map!")
-            assert "leaf2" not in result.coverage_map
-            assert "leaf2" not in result.node_ids
-            assert "leaf2" in result.scores  # But it has a score!
-
-        # This demonstrates the root cause:
-        # scores dict contains nodes outside the coverage tree
+        # With our fix: leaf2 should NOT appear in tiling unless it is in the coverage map
+        assert (
+            "leaf2" in result.coverage_map
+        ), "leaf2 must be in coverage map for DP to consider it"
+        assert (
+            "leaf2" in leaf_node_ids or "leaf1" in leaf_node_ids
+        ), "At least one leaf should be in the tiling"

@@ -33,15 +33,13 @@ Each stage could introduce bugs, and the interactions between stages made the sy
 ### Terminology
 
 - **Span**: An interval `[start, end)` in the document's character coordinates
-- **Segment**: A portion of a node that can be included in the output
-  - For leaf nodes (depth = 0): The entire node is one segment, `side = None`
-  - For internal nodes (depth > 0): Split into two segments at the mid_offset position
-    - Left segment: `(node_id, "LEFT")` 
-    - Right segment: `(node_id, "RIGHT")`
-- **Tiling**: A sequence of segments that:
+- **Node**: An atomic unit in the tree that can be included in the output
+  - Leaf nodes (depth = 0): Contain raw text from the document
+  - Internal nodes (depth > 0): Contain summaries of their children
+- **Tiling**: A sequence of node IDs that:
   - Covers the entire document span
-  - Has no gaps between segments
-  - Has no overlapping segments
+  - Has no gaps between nodes
+  - Has no overlapping nodes
   - Maintains chronological order
 - **Coverage Tree**: The set of nodes considered for inclusion (n_max most relevant leaves + all ancestors)
 
@@ -68,31 +66,31 @@ find_optimal_tiling(node, budget):
         else:
             return [], 0.0
     
-    # Internal node: Try using this node's segments
-    parent_cost = cost(LEFT segment) + cost(RIGHT segment)
+    # Internal node: Check if this node fits in budget
+    parent_cost = cost(node)
     if parent_cost > budget:
         return [], 0.0
     
-    # Option 1: Use this node's segments
-    parent_segments = [(node, "LEFT"), (node, "RIGHT")]
-    parent_quality = node.quality  # Note: actually uses half score per segment
+    # Option 1: Use this node
+    parent_nodes = [node]
+    parent_quality = node.quality * parent_cost
     
     # Option 2: Recurse into children
     left_budget, right_budget = split_budget_proportionally(budget, node)
-    left_segments, left_quality = find_optimal_tiling(node.left, left_budget)
-    right_segments, right_quality = find_optimal_tiling(node.right, right_budget)
+    left_nodes, left_quality = find_optimal_tiling(node.left, left_budget)
+    right_nodes, right_quality = find_optimal_tiling(node.right, right_budget)
     
-    child_segments = left_segments + right_segments
+    child_nodes = left_nodes + right_nodes
     child_quality = left_quality + right_quality
     
     # Check if child solution exceeds budget due to independent subproblems
-    child_cost = sum(cost(seg) for seg in child_segments)
+    child_cost = sum(cost(node) for node in child_nodes)
     
     # Choose better option
     if child_cost <= budget and child_quality > parent_quality:
-        return child_segments, child_quality
+        return child_nodes, child_quality
     else:
-        return parent_segments, parent_quality
+        return parent_nodes, parent_quality
 ```
 
 ### Memoization
@@ -130,14 +128,13 @@ def _split_budget_proportionally(self, node, budget_tokens, scores):
     return int(budget_tokens * left_ratio), budget_tokens - int(budget_tokens * left_ratio)
 ```
 
-### Segment Quality Calculation
+### Node Quality Calculation
 
 **STATUS: IMPLEMENTED**
 
-- Leaf segments: Use the node's full relevance score
-- Half segments (internal nodes): Use 50% of the parent node's score
-
-This heuristic was discovered during implementation - half segments represent partial information, so they get partial quality credit.
+- Quality = relevance score × token cost
+- Each node's full relevance score is used
+- The algorithm optimizes for total quality (relevance-weighted tokens)
 
 ### Budget Overflow Handling
 
@@ -147,7 +144,7 @@ Because left and right subproblems are solved independently, their combined cost
 
 1. Computing child tilings optimistically
 2. Checking if combined cost ≤ budget
-3. If over budget, falling back to parent segments
+3. If over budget, falling back to parent node
 
 This ensures the budget constraint is never violated.
 
@@ -155,11 +152,7 @@ This ensures the budget constraint is never violated.
 
 **STATUS: IMPLEMENTED**
 
-Uses tiktoken with cl100k_base encoding to count actual tokens for each segment:
-
-- Leaf segments: Count tokens in full text
-- Left segments: Count tokens from start to mid_offset
-- Right segments: Count tokens from mid_offset to end
+Uses tiktoken with cl100k_base encoding to count actual tokens for each node's full text content.
 
 ## What's NOT Implemented
 
@@ -171,13 +164,13 @@ The configuration includes slope cap parameters:
 - `enable_slope_cap` (default: True)
 - `slope_cap_size` (default: 1)
 
-However, the DP algorithm does not enforce depth constraints between adjacent segments. The proposed two-pass approach (generate optimal tiling, then post-process for slope violations) has not been implemented.
+However, the DP algorithm does not enforce depth constraints between adjacent nodes in the tiling. The proposed two-pass approach (generate optimal tiling, then post-process for slope violations) has not been implemented.
 
 ### Smoothing Pass
 
 **STATUS: NOT IMPLEMENTED**
 
-The `enable_smoothing` configuration parameter exists but has no effect. The proposed smoothing pass to improve readability by adding transition sentences between segments is not implemented.
+The `enable_smoothing` configuration parameter exists but has no effect. The proposed smoothing pass to improve readability by adding transition sentences between nodes is not implemented.
 
 ### Mass-Based Relevance Propagation
 
@@ -199,8 +192,8 @@ class DynamicTilingGenerator:
     
     def find_optimal_tiling(self, budget_tokens, scores, document_id, coverage_map):
         root = store.get_root_node_for_document(document_id)
-        segments, quality = self._find_optimal_for_span(root, budget_tokens, scores)
-        return build_result(segments, quality, coverage_map)
+        tiling = self._find_optimal_for_span(root, budget_tokens, scores)
+        return build_result(tiling, coverage_map)
     
     def _find_optimal_for_span(self, node, budget, scores):
         # Check memoization
@@ -210,9 +203,9 @@ class DynamicTilingGenerator:
         
         # Base case: leaf node
         if node.depth == 0:
-            segment = Segment(node.id, side=None)
-            if get_segment_cost(segment) <= budget:
-                result = ([segment], scores.get(node.id, 0.0))
+            if get_node_cost(node) <= budget:
+                quality = scores.get(node.id, 0.0) * get_node_cost(node)
+                result = (Tiling([node.id], quality), quality)
             else:
                 result = ([], 0.0)  # Too expensive
             self._memo_cache[key] = result
@@ -220,38 +213,34 @@ class DynamicTilingGenerator:
         
         # Internal node: try both options
         
-        # Option 1: Use this node's segments
-        left_seg = Segment(node.id, side="LEFT")
-        right_seg = Segment(node.id, side="RIGHT")
-        parent_cost = get_segment_cost(left_seg) + get_segment_cost(right_seg)
+        # Option 1: Use this node
+        parent_cost = get_node_cost(node)
         
         if parent_cost <= budget:
-            parent_segments = [left_seg, right_seg]
-            parent_quality = scores.get(node.id, 0.0)
+            parent_quality = scores.get(node.id, 0.0) * parent_cost
+            parent_tiling = Tiling([node.id], parent_quality)
         else:
-            parent_segments = []
+            parent_tiling = Tiling.empty()
             parent_quality = 0.0
         
         # Option 2: Recurse into children
         if node.left and node.right:
             left_budget, right_budget = split_budget_proportionally(node, budget, scores)
             
-            left_segments, left_quality = _find_optimal_for_span(node.left, left_budget, scores)
-            right_segments, right_quality = _find_optimal_for_span(node.right, right_budget, scores)
+            left_tiling = _find_optimal_for_span(node.left, left_budget, scores)
+            right_tiling = _find_optimal_for_span(node.right, right_budget, scores)
             
-            child_segments = left_segments + right_segments
-            child_quality = left_quality + right_quality
+            child_tiling = left_tiling + right_tiling
+            child_quality = child_tiling.relevance_tokens
             
-            # Verify combined cost
-            child_cost = sum(get_segment_cost(s) for s in child_segments)
-            
-            if child_cost <= budget and child_quality > parent_quality:
-                result = (child_segments, child_quality)
+            # Choose better option
+            if child_quality > parent_quality:
+                result = child_tiling
             else:
-                result = (parent_segments, parent_quality)
+                result = parent_tiling
         else:
             # Missing children - use parent
-            result = (parent_segments, parent_quality)
+            result = parent_tiling
         
         self._memo_cache[key] = result
         return result
@@ -276,9 +265,9 @@ Budget: 20 tokens
 
 The algorithm would:
 1. Start at root with 20 tokens
-2. Try parent option: Both segments of root (too expensive, ~15 tokens each)
+2. Try parent option: Use root node (might be too expensive)
 3. Try child option: Allocate more budget to left (relevant) side
-4. Return: [L1 (full leaf), (Root, RIGHT)]
+4. Return: The option with higher quality score
 
 ### Example 2: Partial Relevance
 
@@ -295,12 +284,11 @@ Tree structure:
 ```
 
 With sufficient budget, the algorithm might return:
-- `(AB, LEFT)` - Summary of A
-- `B` - Full text of B  
-- `C` - Full text of C
-- `(CD, RIGHT)` - Summary of D
+- `AB` - Summary covering both A and B (if parent is more efficient)
+- OR it might return `A` and `B` separately (if children have higher quality)
+- Similarly for C and D
 
-This gives more detail where relevant while maintaining complete coverage.
+The algorithm chooses the option that maximizes quality (relevance × tokens) within budget.
 
 ## Performance Characteristics
 
@@ -312,7 +300,7 @@ This gives more detail where relevant while maintaining complete coverage.
 ## Future Improvements
 
 1. **Implement Slope Cap**: Add the two-pass post-processing to enforce depth constraints
-2. **Add Smoothing**: Implement transition generation between segments
+2. **Add Smoothing**: Implement transition generation between nodes
 3. **Mass Propagation**: Implement the full v2 design with relevance mass flowing up the tree
 4. **Budget Hints**: Pre-compute common budget allocations for faster query time
 5. **Parallel Evaluation**: Evaluate left/right subproblems concurrently

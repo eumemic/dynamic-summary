@@ -47,9 +47,6 @@ class TreeNode(Base):
     summary: Mapped[Optional[str]] = mapped_column(
         Text, nullable=True
     )  # NULL for leaf nodes
-    mid_offset: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True
-    )  # Position of <<<MID>>> delimiter in parent summaries
     is_dirty: Mapped[int] = mapped_column(
         Integer, default=0
     )  # Boolean flag for re-summarization
@@ -192,7 +189,6 @@ class Store:
         left_child_id: Optional[str] = None,
         right_child_id: Optional[str] = None,
         summary: Optional[str] = None,
-        mid_offset: Optional[int] = None,
         document_id: Optional[str] = None,
     ) -> TreeNode:
         """Add a node to both SQLite and Chroma."""
@@ -209,7 +205,6 @@ class Store:
                 span_end=span_end,
                 text=text,
                 summary=summary,
-                mid_offset=mid_offset,
                 document_id=document_id,
             )
             session.add(node)
@@ -229,7 +224,9 @@ class Store:
                     "span_start": span_start,
                     "span_end": span_end,
                     "parent_id": parent_id or "",
-                    "is_leaf": 1 if summary is None else 0,
+                    "is_leaf": (
+                        1 if (left_child_id is None and right_child_id is None) else 0
+                    ),
                     "document_id": document_id
                     or "",  # ChromaDB doesn't accept None values
                 }
@@ -310,7 +307,6 @@ class Store:
         node_id: str,
         text: str,
         embedding: Union[list[float], np.ndarray],
-        mid_offset: Optional[int] = None,
     ) -> None:
         """Update node summary and clear dirty flag."""
         # Validate embedding dimension
@@ -322,9 +318,6 @@ class Store:
                 # Use cast to handle the nullable text field - this is safe because we always
                 # pass a non-null text parameter when updating summaries for internal nodes
                 node.text = cast(str, text)
-                node.summary = text  # These are the same for internal nodes
-                if mid_offset is not None:
-                    node.mid_offset = mid_offset
                 node.is_dirty = 0
                 session.commit()
 
@@ -362,32 +355,30 @@ class Store:
         right = self.get_node(node.right_child_id) if node.right_child_id else None
         return left, right
 
-    def get_child(self, node_id: str, side: str) -> Optional[TreeNode]:
-        """Get the left or right child of a node."""
-        with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
-            if not node:
-                return None
-
-            child_id = node.left_child_id if side == "LEFT" else node.right_child_id
-            if not child_id:
-                return None
-
-            return session.query(TreeNode).filter_by(id=child_id).first()
-
     def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
-        """Get all ancestors of given nodes."""
-        ancestors = set()
-        to_process = list(node_ids)
+        """Get all ancestors of given nodes using batch loading for efficiency."""
+        all_ancestors = set()
+        current_level = set(node_ids)
 
-        while to_process:
-            node_id = to_process.pop()
-            node = self.get_node(node_id)
-            if node and node.parent_id and node.parent_id not in ancestors:
-                ancestors.add(node.parent_id)
-                to_process.append(node.parent_id)
+        # Keep going until we've reached all roots
+        while current_level:
+            # Batch load all nodes at current level
+            nodes_at_level = self.get_nodes(list(current_level))
 
-        return [node for aid in ancestors if (node := self.get_node(aid)) is not None]
+            # Collect parent IDs for next level
+            next_level = set()
+            for node in nodes_at_level:
+                if node.parent_id and node.parent_id not in all_ancestors:
+                    all_ancestors.add(node.parent_id)
+                    next_level.add(node.parent_id)
+
+            # Move up to next level
+            current_level = next_level
+
+        # Batch load all ancestors and return
+        if all_ancestors:
+            return self.get_nodes(list(all_ancestors))
+        return []
 
     def search_similar(
         self,
@@ -395,7 +386,10 @@ class Store:
         n_results: int,
         where: Optional[dict] = None,
     ) -> list[tuple[str, float, dict]]:
-        """Search for similar nodes using Chroma."""
+        """Search for similar nodes using Chroma.
+
+        Returns list of (id, similarity, metadata) tuples where similarity is in [0, 1].
+        """
         # Convert to numpy array if needed
         query_array = np.array(query_embedding, dtype=np.float32)
         results = self.collection.query(
@@ -404,7 +398,7 @@ class Store:
             where=where,
         )
 
-        # Return list of (id, distance, metadata) tuples
+        # Return list of (id, similarity, metadata) tuples
         output = []
         ids = results.get("ids")
         distances = results.get("distances")
@@ -412,10 +406,18 @@ class Store:
 
         if ids and distances and metadatas and len(ids) > 0:
             for i in range(len(ids[0])):
+                # Convert cosine distance to similarity
+                # Cosine distance ranges from 0 to 2, where 0 is identical
+                # Similarity = 1 - (distance / 2) to map to [0, 1]
+                distance = float(distances[0][i])
+                similarity = 1.0 - (distance / 2.0)
+                # Ensure similarity is in valid range [0, 1]
+                similarity = max(0.0, min(1.0, similarity))
+
                 output.append(
                     (
                         ids[0][i],
-                        float(distances[0][i]),
+                        similarity,
                         (
                             dict(metadatas[0][i])
                             if isinstance(metadatas[0][i], dict)
@@ -467,7 +469,13 @@ class Store:
     def get_leaf_nodes(self) -> list[TreeNode]:
         """Get all leaf nodes (nodes without children)."""
         with self.SessionLocal() as session:
-            return session.query(TreeNode).filter_by(summary=None).all()
+            return (
+                session.query(TreeNode)
+                .filter(
+                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
+                )
+                .all()
+            )
 
     def get_root_node(self) -> Optional[TreeNode]:
         """Get the root node (node with no parent)."""
@@ -704,26 +712,7 @@ class Store:
                     result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
                     columns = [row[1] for row in result.fetchall()]
 
-                    # Migration 1: Add mid_offset column if missing
-                    if "mid_offset" not in columns:
-                        # Add the missing column (with proper error handling)
-                        try:
-                            conn.execute(
-                                text(
-                                    "ALTER TABLE tree_nodes ADD COLUMN mid_offset INTEGER"
-                                )
-                            )
-                            conn.commit()
-                            logger.info("Added mid_offset column to tree_nodes table")
-                        except Exception as e:
-                            if "duplicate column" in str(e).lower():
-                                logger.debug("mid_offset column already exists")
-                            else:
-                                raise
-                    else:
-                        logger.debug("mid_offset column already exists")
-
-                    # Migration 2: Drop depth column if present
+                    # Migration: Drop depth column if present
                     if "depth" in columns:
                         logger.info("Found deprecated depth column, dropping it...")
                         try:
@@ -744,7 +733,6 @@ class Store:
                                     span_end INTEGER NOT NULL,
                                     text TEXT NOT NULL,
                                     summary TEXT,
-                                    mid_offset INTEGER,
                                     is_dirty INTEGER DEFAULT 0,
                                     is_pinned INTEGER DEFAULT 0,
                                     last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -764,7 +752,7 @@ class Store:
                                     """
                                 INSERT INTO tree_nodes_new
                                 SELECT id, parent_id, left_child_id, right_child_id,
-                                       span_start, span_end, text, summary, mid_offset,
+                                       span_start, span_end, text, summary,
                                        is_dirty, is_pinned, last_accessed, access_count,
                                        created_at, document_id
                                 FROM tree_nodes

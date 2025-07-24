@@ -33,14 +33,10 @@ class TestDirtyRefresh:
                     return Mock(data=[Mock(embedding=[0.1] * 384)])
 
             async def mock_chat_create(*args, **kwargs):
-                # Return fresh summary with MID delimiter
+                # Return fresh summary
                 return Mock(
                     choices=[
-                        Mock(
-                            message=Mock(
-                                content="Fresh left summary. <<<MID>>> Fresh right summary."
-                            )
-                        )
+                        Mock(message=Mock(content="Fresh summary of both children."))
                     ]
                 )
 
@@ -120,15 +116,14 @@ class TestDirtyRefresh:
         # Add parent node with old summary
         store.add_node(
             "parent1",
-            "Old parent summary. <<<MID>>> Old right summary.",
+            "Old parent summary.",
             [0.15] * 384,
             1,
             0,
             200,
             left_child_id="leaf1",
             right_child_id="leaf2",
-            summary="Old parent summary. <<<MID>>> Old right summary.",
-            mid_offset=len("Old parent summary. "),
+            summary="Old parent summary.",
             document_id="test-doc",
         )
 
@@ -162,9 +157,8 @@ class TestDirtyRefresh:
 
         # Verify the summary was updated
         parent = store.get_node("parent1")
-        assert "Fresh left summary" in parent.text
-        assert "Fresh right summary" in parent.text
-        assert parent.mid_offset == len("Fresh left summary. ")
+        assert "Fresh summary" in parent.text
+        assert parent.text == "Fresh summary of both children."
 
         # Verify API was called
         mock_chat.completions.create.assert_called_once()
@@ -200,7 +194,7 @@ class TestDirtyRefresh:
 
         # Verify node was refreshed
         parent = store.get_node("parent1")
-        assert "Fresh left summary" in parent.text
+        assert "Fresh summary" in parent.text
         assert parent.is_dirty == 0
 
     def test_no_double_refresh(self, setup_system):
