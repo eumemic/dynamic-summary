@@ -258,10 +258,9 @@ Query a document.
 ```json
 {
   "summary": "Machine learning is...",
-  "segments": [
+  "nodes": [
     {
       "node_id": "3_100_200_abc123",
-      "side": "LEFT",
       "text": "...",
       "span_start": 100,
       "span_end": 200
