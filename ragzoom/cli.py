@@ -14,7 +14,7 @@ from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store
+from ragzoom.store import Store, TreeNode
 from ragzoom.tree_viz import build_ascii_tree
 
 # Load environment variables
@@ -124,12 +124,11 @@ def index(
 
         # Get leaf nodes for this specific document
         with store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
-
             doc_leaves = (
                 session.query(TreeNode)
-                .filter_by(
-                    document_id=doc_id, summary=None  # Leaf nodes have no summary
+                .filter_by(document_id=doc_id)
+                .filter(
+                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
                 )
                 .all()
             )
@@ -206,7 +205,11 @@ def documents(ctx: click.Context) -> None:
                 )
                 leaf_count = (
                     session.query(TreeNode)
-                    .filter_by(document_id=doc.id, summary=None)
+                    .filter_by(document_id=doc.id)
+                    .filter(
+                        TreeNode.left_child_id.is_(None),
+                        TreeNode.right_child_id.is_(None),
+                    )
                     .count()
                 )
 
@@ -279,15 +282,15 @@ def query(
         summary = assembler.assemble(result)
         token_count = assembler.get_token_count(summary)
 
-        # Segment-level tiling validation (new)
+        # Tiling validation
         if validate and getattr(result, "tiling", None):
             from ragzoom.validate import validate_tiling
 
-            error = validate_tiling(result.tiling, ctx.obj["store"], document_id)
+            error = validate_tiling(
+                result.tiling, ctx.obj["store"], document_id, budget_tokens=token_budget
+            )
             if error:
-                click.echo(
-                    f"❌ Segment-level tiling validation failed: {error}", err=True
-                )
+                click.echo(f"❌ Tiling validation failed: {error}", err=True)
                 sys.exit(1)
 
         # Output summary
@@ -296,45 +299,21 @@ def query(
         click.echo("=" * 60)
         if debug and getattr(result, "tiling", None):
             store = ctx.obj["store"]
-            for idx, segment in enumerate(result.tiling):
-                node = store.get_node(segment.node_id)
+            for idx, node_id in enumerate(result.tiling):
+                node = store.get_node(node_id)
                 if node:
-                    # Calculate correct segment span
-                    if store.is_leaf_node(node.id) or node.mid_offset is None:
-                        # Leaf node: full span
-                        span_start, span_end = node.span_start, node.span_end
-                    else:
-                        # Internal node: segment span matches child span
-                        if segment.side == "LEFT":
-                            left_child = store.get_node(node.left_child_id)
-                            if left_child:
-                                span_start, span_end = (
-                                    left_child.span_start,
-                                    left_child.span_end,
-                                )
-                            else:
-                                span_start, span_end = node.span_start, node.span_end
-                        else:  # RIGHT
-                            right_child = store.get_node(node.right_child_id)
-                            if right_child:
-                                span_start, span_end = (
-                                    right_child.span_start,
-                                    right_child.span_end,
-                                )
-                            else:
-                                span_start, span_end = node.span_start, node.span_end
-
+                    # Node span is always the full span
+                    span_start, span_end = node.span_start, node.span_end
                     span = f"{span_start}-{span_end}"
                     height = store.get_node_height(node.id)
-                    side = segment.side
                     # Add asterisk to index if this is a seed node
-                    is_seed = segment.node_id in result.node_ids
+                    is_seed = node_id in result.node_ids
                     idx_str = f"{idx}{'*' if is_seed else ' '}"
                     click.echo(
-                        f"[{idx_str}| SPAN: {span} | HEIGHT: {height} | SIDE: {side} | NODE: {node.id[:8]}]"
+                        f"[{idx_str}| SPAN: {span} | HEIGHT: {height} | NODE: {node.id}]"
                     )
-                    # Get the segment text as in assembler._get_text_for_segment
-                    text = assembler._get_text_for_segment(segment)
+                    # Get the node text
+                    text = node.text
                     click.echo(text)
                     if idx < len(result.tiling) - 1:
                         click.echo("")
@@ -369,7 +348,6 @@ def query(
                     width=actual_viz_width,
                     coverage_map=result.coverage_map,
                     seed_node_ids=set(result.node_ids),
-                    segment_infos=result.segment_infos,
                     use_token_coords=(viz_coords == "output-tokens"),
                     preloaded_nodes=result.nodes,
                 )
@@ -567,7 +545,7 @@ def export(ctx: click.Context, input_file: str, output_file: str, format: str) -
                     "height": store.get_node_height(node.id),
                     "span_start": node.span_start,
                     "span_end": node.span_end,
-                    "is_leaf": node.summary is None,
+                    "is_leaf": store.is_leaf_node(node.id),
                     "text_preview": (
                         node.text[:100] + "..." if len(node.text) > 100 else node.text
                     ),
