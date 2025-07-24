@@ -328,11 +328,11 @@ This is a clean-break implementation - no backward compatibility with existing s
 4. Code complexity metrics improve
 5. Documentation is fully updated
 
-## Critical Discovery: Tree Completeness Requirements
+## Critical Discovery: Tree Fullness Requirements
 
 ### The Issue
 
-During implementation, we discovered a critical assumption in the node-based DP algorithm that wasn't immediately apparent: **the coverage tree must be a complete binary tree**. This means every internal node must have both children present in the coverage tree.
+During implementation, we discovered a critical assumption in the node-based DP algorithm that wasn't immediately apparent: **the coverage tree must be a full binary tree**. This means every internal node must have either zero children (leaf) or exactly two children - no node can have just one child present in the coverage tree.
 
 ### Why This Matters
 
@@ -355,12 +355,12 @@ When running `ragzoom query "" -d smoke_test.txt --n-max 1`:
 ### Requirements
 
 1. **Indexed Tree**: Must be a full binary tree (every internal node has exactly 2 children)
-2. **Coverage Tree**: Must be a complete binary subtree of the indexed tree
-3. **Retriever**: Must ensure coverage tree completeness by including siblings
+2. **Coverage Tree**: Must be a full binary subtree of the indexed tree
+3. **Retriever**: Must ensure coverage tree fullness by including siblings
 
 ### Implementation Notes
 
-- Add validation in DP algorithm to detect incomplete coverage trees
+- Add validation in DP algorithm to detect non-full coverage trees
 - Modify retriever to include siblings when building coverage trees
 - Add validation during indexing to ensure full binary trees
 - This maintains the perfect tiling guarantee (no gaps, no overlaps)
