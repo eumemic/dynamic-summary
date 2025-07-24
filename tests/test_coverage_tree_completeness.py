@@ -8,7 +8,7 @@ from tests.mock_store import SimpleMockStore
 
 
 class TestCoverageTreeCompleteness:
-    """Tests that ensure coverage trees are complete binary trees."""
+    """Tests that ensure coverage trees are full binary trees."""
 
     @pytest.fixture
     def setup_incomplete_tree(self):
@@ -140,7 +140,7 @@ class TestCoverageTreeCompleteness:
 
         # Try to run DP algorithm - should raise error
         with pytest.raises(
-            ValueError, match="Coverage tree is incomplete.*missing.*child"
+            ValueError, match="Coverage tree is not full.*missing.*child"
         ):
             dp_generator.find_optimal_tiling(
                 budget_tokens=1000,
