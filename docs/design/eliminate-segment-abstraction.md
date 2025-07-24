@@ -196,6 +196,7 @@ No dual-mode support or data migration is needed.
 ## Implementation Checklist
 
 - [ ] Update `TreeNode` model to remove `mid_offset` field
+- [ ] Remove the legacy `summary` field from `TreeNode` (redundant with `text` field for internal nodes)
 - [ ] Modify `TreeBuilder` to remove `<<<MID>>>` delimiter prompt and parsing logic
 - [ ] Remove `Segment` class entirely
 - [ ] Simplify `DynamicTilingGenerator` to work with whole nodes only
@@ -364,8 +365,80 @@ When running `ragzoom query "" -d smoke_test.txt --n-max 1`:
 - Add validation during indexing to ensure full binary trees
 - This maintains the perfect tiling guarantee (no gaps, no overlaps)
 
+## Critical Discovery: LLM Hallucination in Hierarchical Summarization
+
+### The Issue
+
+During validation testing, we discovered that LLMs (specifically GPT-4o) add extraneous information when summarizing node pairs, even when given explicit instructions to only use the provided text. This occurs even with:
+- Zero adjacent context (`RAGZOOM_ADJACENT_CONTEXT_TOKENS=0`)
+- Clear prompt instructions to only summarize the provided content
+- Isolated API calls with no shared state
+
+### Example
+
+When summarizing these two adjacent chunks:
+- **Left child**: "Armed with the decoded information, Sarah convinced her best friend Tom to join her on an adventure..."
+- **Right child**: "At the lighthouse, they met its keeper, Captain Morris..."
+
+The generated summary incorrectly included: "Sarah found the book in her grandmother's attic" - information from an earlier chapter not present in either child.
+
+### Investigation Results
+
+1. **No code bug found**: The summarization calls are properly isolated with only the two child texts being passed
+2. **No context leakage**: Adjacent context was set to 0, confirming no surrounding text was included
+3. **Pattern matching hypothesis**: The LLM appears to be filling in common narrative patterns (e.g., "found in grandmother's attic" is a common story trope)
+
+### Validation Solution
+
+We implemented a validation check using a cheaper model (gpt-4o-mini) that:
+1. Runs immediately after each summary is generated
+2. Verifies the summary contains ONLY information from the child texts
+3. Fails fast if extraneous information is detected
+4. Logs the full context for debugging
+
+### Implications
+
+This discovery highlights a fundamental challenge with using LLMs for hierarchical summarization:
+- LLMs tend to "complete the narrative" rather than strictly summarize
+- They may add contextually plausible but hallucinated details
+- Strict validation is essential to maintain data integrity
+
+### Future Work
+
+1. Experiment with stronger prompting techniques
+2. Test different models that may follow instructions more literally
+3. Consider post-processing to remove extraneous details
+4. Investigate few-shot examples in the prompt
+
+## Critical Bug Fix: Python -0 Slice Behavior
+
+### The Bug
+
+When `RAGZOOM_ADJACENT_CONTEXT_TOKENS` was set to 0, the code attempted to get the last 0 tokens using:
+```python
+context_tokens = prev_tokens[-0:]  # Bug: this returns the entire list!
+```
+
+In Python, `-0` equals `0`, so `list[-0:]` is equivalent to `list[0:]` which returns the **entire list**, not an empty slice.
+
+### Impact
+
+This bug meant that setting `RAGZOOM_ADJACENT_CONTEXT_TOKENS=0` actually included **all** adjacent context, not none. This explained why LLMs had access to information from other parts of the document even when adjacent context was supposedly disabled.
+
+### The Fix
+
+Check explicitly for `adjacent_context_tokens > 0` before including context:
+```python
+if prev_context and self.config.adjacent_context_tokens > 0:
+    # Only include context if tokens > 0
+```
+
+This ensures that when adjacent context is disabled, no context is included in the summarization prompts.
+
 ## Conclusion
 
 Eliminating the segment abstraction significantly simplifies RagZoom's architecture while maintaining all functional capabilities. By adjusting chunk size, we achieve the same granularity through a cleaner, more intuitive model. The migration path allows for gradual adoption and validation of the new approach.
 
 The discovery of the tree completeness requirement reinforces the importance of maintaining strict invariants in the data structure. With proper validation and coverage tree construction, the node-based system provides the same guarantees as the segment-based system while being conceptually simpler.
+
+The LLM hallucination issue demonstrates the importance of validation at every step of the hierarchical summarization process. While LLMs are powerful, they require careful constraints and verification to ensure they operate within the bounds of the provided data.
