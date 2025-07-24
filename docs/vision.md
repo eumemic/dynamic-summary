@@ -21,12 +21,12 @@ RagZoom's vision spans three horizons:
 ### Performance Optimizations
 - **Smarter Caching**: Pre-compute common budget allocations
 - **Parallel DP Evaluation**: Solve left/right subproblems concurrently
-- **Streaming Assembly**: Stream segments as they're generated
+- **Streaming Assembly**: Stream nodes as they're generated
 
 ### Algorithm Refinements
 - **Implement Slope Cap**: Add the two-pass post-processing for smoother transitions. See [Tiling Algorithm - Slope Cap](deep-dives/tiling-algorithm.md#slope-cap-enforcement) for current implementation status.
 - **Budget Hints**: Guide DP algorithm with expected budget distributions
-- **Quality Metrics**: Better scoring functions for segment selection
+- **Quality Metrics**: Better scoring functions for node selection
 
 ### Developer Experience
 - **Debugging Tools**: Visualize DP decisions and budget allocation

@@ -131,18 +131,17 @@ class TestTreeStructure:
         assert "validation failed" in error
 
     def test_missing_summary(self):
-        """Test detection of missing summaries on non-leaf nodes."""
+        """Test detection of missing text content on nodes."""
         store = MagicMock()
 
-        # Mock parent node without summary
+        # Mock parent node without text
         parent = MagicMock(
             id="parent",
             span_start=0,
             span_end=100,
             left_child_id="child1",
             right_child_id="child2",
-            summary=None,  # Missing summary
-            mid_offset=50,
+            text=None,  # Missing text content
         )
 
         # Mock children

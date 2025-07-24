@@ -142,9 +142,9 @@ class TestDPIntegration:
         query = "First chunk Second chunk"  # Query that should match the first half
         result = await retriever.retrieve_async(query, document_id="doc1")
 
-        # Print tiling segments instead of nodes
+        # Print tiling nodes
         if hasattr(result, "tiling") and result.tiling is not None:
-            print("TILING SEGMENTS:", result.tiling)
+            print("TILING NODES:", result.tiling)
 
         # Assemble the result
         assembler = Assembler(config, store)
@@ -197,8 +197,8 @@ class TestDPIntegration:
         result = await retriever.retrieve_async("test document", document_id="doc1")
 
         # Check tiling doesn't have both parent and child
-        # Extract unique node IDs from segments
-        tiling_node_ids = list(set(seg.node_id for seg in result.tiling))
+        # Extract unique node IDs from tiling
+        tiling_node_ids = list(set(result.tiling))  # tiling is now a list of node IDs
         tiling_nodes = [store.get_node(nid) for nid in tiling_node_ids]
         for i, node in enumerate(tiling_nodes):
             for j, other in enumerate(tiling_nodes):

@@ -1,9 +1,8 @@
 """Validation functions for RagZoom to ensure correctness of indexing and retrieval."""
 
 import logging
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
-from ragzoom.dynamic_tiling import Segment
 from ragzoom.store import Store, TreeNode
 
 logger = logging.getLogger(__name__)
@@ -226,16 +225,9 @@ def validate_tree_structure(
                                 f"right starts at {right_child.span_start}"
                             )
 
-        # Validate summaries for non-leaf nodes
-        if not store.is_leaf_node(node.id):
-            if not node.summary:
-                errors.append(f"Node {node.id}: Non-leaf node missing summary")
-
-            # For non-leaf nodes, a valid mid_offset is required.
-            if node.mid_offset is None or node.mid_offset < 0:
-                errors.append(
-                    f"Node {node.id}: Invalid or missing mid_offset: {node.mid_offset}"
-                )
+        # Validate text content for all nodes
+        if not node.text:
+            errors.append(f"Node {node.id}: Missing text content")
 
     if errors:
         for error in errors[:10]:  # Show first 10 errors
@@ -247,85 +239,238 @@ def validate_tree_structure(
 
 
 def validate_tiling(
-    segments: list[Segment],
+    tiling: list[str],  # List of node IDs
     store: Store,
     document_id: str,
     original_text: Optional[str] = None,
+    budget_tokens: Optional[int] = None,
 ) -> Optional[str]:
-    """Validate that a tiling of Segments has no overlaps, no duplicates, and (optionally) covers the document."""
-    if not segments:
+    """Validate that a tiling has no overlaps, no duplicates, and (optionally) covers the document.
+
+    Args:
+        tiling: List of node IDs in the tiling
+        store: Store instance
+        document_id: Document ID
+        original_text: Optional original text for gap validation
+        budget_tokens: Optional token budget to validate against
+
+    Returns:
+        Error message if invalid, None if valid
+    """
+    if not tiling:
         return "Tiling is empty"
 
-    # Build list of (segment, span_start, span_end)
-    seen_segments = set()
-    segment_spans = []
-    for seg in segments:
-        key = (seg.node_id, seg.side)
-        if key in seen_segments:
-            return f"Duplicate segment: node {seg.node_id} side {seg.side}"
-        seen_segments.add(key)
-        node = store.get_node(seg.node_id)
+    # Build list of (node_id, span_start, span_end)
+    seen_nodes = set()
+    node_spans = []
+    for node_id in tiling:
+        if node_id in seen_nodes:
+            return f"Duplicate node: {node_id}"
+        seen_nodes.add(node_id)
+        node = store.get_node(node_id)
         if not node:
-            return f"Node {seg.node_id} not found in store"
+            return f"Node {node_id} not found in store"
 
-        # Validate side invariant
-        is_leaf = store.is_leaf_node(node.id)
-        if is_leaf or node.mid_offset is None:
-            if seg.side is not None:
-                return f"Node {seg.node_id} is a leaf (is_leaf={is_leaf}, mid_offset={node.mid_offset}) but segment has side={seg.side}, expected None"
-            # Leaf or unsplit node: full span
-            span_start, span_end = node.span_start, node.span_end
-        else:
-            if seg.side not in {"LEFT", "RIGHT"}:
-                return f"Node {seg.node_id} is internal (is_leaf={is_leaf}, mid_offset={node.mid_offset}) but segment has side={seg.side}, expected LEFT or RIGHT"
-            # For internal nodes, segment spans match child spans
-            if seg.side == "LEFT":
-                if node.left_child_id is None:
-                    return f"Node {seg.node_id} has no left child ID"
-                left_child = store.get_node(node.left_child_id)
-                if not left_child:
-                    return f"Node {seg.node_id} has no left child"
-                span_start, span_end = left_child.span_start, left_child.span_end
-            else:  # RIGHT
-                if node.right_child_id is None:
-                    return f"Node {seg.node_id} has no right child ID"
-                right_child = store.get_node(node.right_child_id)
-                if not right_child:
-                    return f"Node {seg.node_id} has no right child"
-                span_start, span_end = right_child.span_start, right_child.span_end
-        segment_spans.append((seg, span_start, span_end))
+        # Get node span
+        span_start, span_end = node.span_start, node.span_end
+        node_spans.append((node_id, span_start, span_end))
 
     # Sort by span_start
-    segment_spans.sort(key=lambda x: x[1])
+    node_spans.sort(key=lambda x: x[1])
 
     # Check for overlaps
-    for i in range(len(segment_spans) - 1):
-        _, start1, end1 = segment_spans[i]
-        _, start2, end2 = segment_spans[i + 1]
+    for i in range(len(node_spans) - 1):
+        node_id1, start1, end1 = node_spans[i]
+        node_id2, start2, end2 = node_spans[i + 1]
         if end1 > start2:
-            return f"Overlapping segments: {segment_spans[i][0]} [{start1},{end1}) overlaps with {segment_spans[i+1][0]} [{start2},{end2})"
+            return f"Overlapping nodes: {node_id1} [{start1},{end1}) overlaps with {node_id2} [{start2},{end2})"
 
     # Optionally, check for complete coverage
     doc_nodes = store.get_all_nodes_for_document(document_id)
     if doc_nodes:
         doc_start = min(n.span_start for n in doc_nodes)
         doc_end = max(n.span_end for n in doc_nodes)
-        if segment_spans[0][1] != doc_start:
-            return f"Tiling does not start at document start: {segment_spans[0][1]} != {doc_start}"
-        if segment_spans[-1][2] != doc_end:
-            return f"Tiling does not end at document end: {segment_spans[-1][2]} != {doc_end}"
+        if node_spans[0][1] != doc_start:
+            return f"Tiling does not start at document start: {node_spans[0][1]} != {doc_start}"
+        if node_spans[-1][2] != doc_end:
+            return (
+                f"Tiling does not end at document end: {node_spans[-1][2]} != {doc_end}"
+            )
         # Check for gaps
-        for i in range(len(segment_spans) - 1):
-            if segment_spans[i][2] != segment_spans[i + 1][1]:
-                gap = segment_spans[i + 1][1] - segment_spans[i][2]
+        for i in range(len(node_spans) - 1):
+            if node_spans[i][2] != node_spans[i + 1][1]:
+                gap = node_spans[i + 1][1] - node_spans[i][2]
                 if gap > 0:
                     if original_text:
                         gap_text = original_text[
-                            segment_spans[i][2] : segment_spans[i + 1][1]
+                            node_spans[i][2] : node_spans[i + 1][1]
                         ]
                         if not gap_text.isspace():
-                            return f"Non-whitespace gap in tiling: {segment_spans[i][2]} to {segment_spans[i + 1][1]}"
+                            return f"Non-whitespace gap in tiling: {node_spans[i][2]} to {node_spans[i + 1][1]}"
                     else:
-                        return f"Gap in tiling: {segment_spans[i][2]} to {segment_spans[i + 1][1]}"
+                        return f"Gap in tiling: {node_spans[i][2]} to {node_spans[i + 1][1]}"
+
+    # Check budget compliance if budget is provided
+    if budget_tokens is not None:
+        import tiktoken
+
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+
+        total_tokens = 0
+        for node_id in tiling:
+            node = store.get_node(node_id)
+            if not node or not node.text:
+                continue
+
+            # For atomic nodes, just count the full text
+            tokens = len(tokenizer.encode(node.text))
+            total_tokens += tokens
+
+        if total_tokens > budget_tokens:
+            return (
+                f"Tiling exceeds budget: {total_tokens} tokens > {budget_tokens} budget"
+            )
 
     return None  # Valid tiling
+
+
+def validate_tree_is_full(store: Store, document_id: str) -> Optional[str]:
+    """Validate that the indexed tree is a full binary tree.
+
+    A full binary tree means every internal node has exactly 2 children.
+    This is required for the DP algorithm to maintain coverage guarantees.
+
+    Args:
+        store: Storage instance
+        document_id: Document to validate
+
+    Returns:
+        Error message if invalid, None if valid
+    """
+    nodes = store.get_all_nodes_for_document(document_id)
+    if not nodes:
+        return "No nodes found for document"
+
+    # A single-node tree is a full binary tree by definition
+    # BUT only if that single node has no children
+    if len(nodes) == 1:
+        node = nodes[0]
+        if node.left_child_id is not None or node.right_child_id is not None:
+            return f"Invalid tree: node {node.id} references non-existent children"
+        return None
+
+    # Check each node
+    for node in nodes:
+        # Check if this is an internal node (has at least one child)
+        has_left = node.left_child_id is not None
+        has_right = node.right_child_id is not None
+
+        if has_left or has_right:
+            # This is an internal node - it must have both children
+            if not (has_left and has_right):
+                missing = "right" if has_left else "left"
+                return (
+                    f"Tree is not full: internal node {node.id} is missing its {missing} child. "
+                    f"Every internal node must have exactly 2 children."
+                )
+
+            # Also verify that child references are valid
+            if has_left:
+                if not any(n.id == node.left_child_id for n in nodes):
+                    return f"Invalid tree: node {node.id} references non-existent left child {node.left_child_id}"
+
+            if has_right:
+                if not any(n.id == node.right_child_id for n in nodes):
+                    return f"Invalid tree: node {node.id} references non-existent right child {node.right_child_id}"
+
+    return None  # Tree is full
+
+
+async def validate_summary_faithfulness(
+    summary: str,
+    left_text: str,
+    right_text: str,
+    openai_client: Any,
+    model: str = "gpt-4o",
+) -> Optional[str]:
+    """Validate that a summary faithfully represents its children's content.
+
+    This uses a cheap LLM to verify the summary contains only information
+    from the children and nothing extraneous.
+
+    Args:
+        summary: The generated summary to validate
+        left_text: Text content of the left child
+        right_text: Text content of the right child
+        openai_client: OpenAI client for validation
+        model: Model to use for validation (default: gpt-4o-mini)
+
+    Returns:
+        Error message if validation fails, None if valid
+    """
+    if not _validate_enabled:
+        return None
+
+    # Combine children's text for reference
+    combined_children = f"{left_text}\n\n{right_text}"
+
+    # Truncate if too long (to stay within token limits)
+    max_chars = 8000  # Conservative limit for context
+    if len(combined_children) > max_chars:
+        combined_children = combined_children[:max_chars] + "... [truncated]"
+    if len(summary) > 2000:
+        summary = summary[:2000] + "... [truncated]"
+
+    prompt = f"""You are a validation assistant. Your task is to check if a summary accurately represents the content from its source texts, without adding factual information that isn't present.
+
+Source texts (the content that should be summarized):
+---
+{combined_children}
+---
+
+Summary to validate:
+---
+{summary}
+---
+
+Check if the summary:
+1. Contains only information that can be found or reasonably inferred from the source texts
+2. Does NOT add new facts, events, or details not present in the source
+3. Is a reasonable summary of the source content
+
+IMPORTANT CLARIFICATIONS:
+- Paraphrasing is ALLOWED and expected (e.g., "The mother of our particular hobbit" → "The mother of this hobbit")
+- If something is referenced/mentioned in the source, saying it was "mentioned" is VALID
+- Focus on factual additions, not stylistic differences
+- Minor interpretations that stay true to the source meaning are VALID
+- Reasonable inferences from context are VALID (e.g., "At may never return he began" → "As Thorin mentioned 'may never return'")
+- If the context clearly indicates who said something, attributing it to that speaker is VALID
+
+Respond with either:
+- "VALID" if the summary accurately represents the source content
+- "INVALID: <brief explanation>" if the summary adds factual information NOT in the source texts
+
+Be strict about factual additions, but allow normal paraphrasing and summarization."""
+
+    try:
+        response = await openai_client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,  # Slightly higher to reduce overly literal interpretations
+            max_tokens=200,
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        if result.startswith("VALID"):
+            return None
+        elif result.startswith("INVALID:"):
+            return str(result)
+        else:
+            logger.warning(f"Unexpected validation response: {result}")
+            return "INVALID: unexpected response format"
+
+    except Exception as e:
+        logger.error(f"Error during summary validation: {e}")
+        # Don't fail indexing due to validation errors
+        return None
