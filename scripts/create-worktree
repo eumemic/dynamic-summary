@@ -1,0 +1,63 @@
+#!/bin/bash
+set -euo pipefail
+
+# Find the highest existing worktree-N number
+WORKTREES_DIR="worktrees"
+mkdir -p "$WORKTREES_DIR"
+
+# Find highest numbered worktree
+HIGHEST=0
+for dir in "$WORKTREES_DIR"/worktree-*; do
+    if [[ -d "$dir" ]]; then
+        NUM=$(basename "$dir" | sed 's/worktree-//')
+        if [[ "$NUM" =~ ^[0-9]+$ ]] && (( NUM > HIGHEST )); then
+            HIGHEST=$NUM
+        fi
+    fi
+done
+
+# Increment for new worktree
+NEXT=$((HIGHEST + 1))
+WORKTREE_NAME="worktree-$NEXT"
+WORKTREE_PATH="$WORKTREES_DIR/$WORKTREE_NAME"
+
+# Ensure we're on master and up to date
+echo "Updating master branch..."
+git checkout master
+git pull
+
+# Create the worktree with its own tracking branch
+echo "Creating $WORKTREE_NAME..."
+
+# First check if this worktree is already registered
+if git worktree list | grep -q "$WORKTREE_PATH"; then
+    echo "Worktree already registered at $WORKTREE_PATH, cleaning up..."
+    git worktree remove "$WORKTREE_PATH" --force 2>/dev/null || true
+fi
+
+# Check if branch already exists
+if git show-ref --verify --quiet "refs/heads/$WORKTREE_NAME"; then
+    echo "Branch $WORKTREE_NAME already exists, using existing branch..."
+    git worktree add "$WORKTREE_PATH" "$WORKTREE_NAME"
+else
+    git worktree add -b "$WORKTREE_NAME" "$WORKTREE_PATH" master
+fi
+
+# Symlink .env if it exists
+if [[ -f .env ]]; then
+    echo "Symlinking .env..."
+    ln -s "../../.env" "$WORKTREE_PATH/.env"
+fi
+
+# Symlink venv if it exists
+if [[ -d venv ]]; then
+    echo "Symlinking venv..."
+    ln -s "../../venv" "$WORKTREE_PATH/venv"
+fi
+
+echo ""
+echo "✅ Worktree created at: $WORKTREE_PATH"
+echo ""
+echo "To start working in this isolated workspace:"
+echo "  cd $WORKTREE_PATH"
+echo "  claude"

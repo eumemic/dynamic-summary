@@ -1,152 +1,87 @@
+---
+allowed-tools: Bash, Read, Edit, MultiEdit, Grep
+description: Push code, create PR, monitor CI, fix issues
+argument-hint: [PR title]
+---
+
 # /push
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
-Push code to remote, create PR if needed, then monitor for build status and comments.
+## Context
+- Current branch: !`git branch --show-current`
+- Unpushed commits: !`git cherry -v origin/$(git branch --show-current) 2>/dev/null | wc -l | tr -d ' '` commits
+- Existing PR: !`gh pr view --json number,state 2>/dev/null | jq -r '"#" + (.number|tostring) + " (" + .state + ")"' || echo "No PR"`
 
-## Workflow Overview
+Arguments: "$ARGUMENTS"
 
-**The workflow follows this sequence**:
-1. **PUSH** current commits to remote
-2. **CREATE PR** if on a feature branch without an existing PR
-3. **MONITOR** the PR for build failures and review comments
-4. **FIX** any issues immediately when detected
-5. **COMMIT** fixes incrementally (but don't push yet)
-6. **PUSH** all fixes after build completes successfully
+Push code, create PR if needed, monitor CI, and fix issues proactively.
 
-This minimizes CI churn by batching fixes before pushing.
+## Core Intent
 
-## Instructions:
+Get code through CI successfully with minimal back-and-forth. Push, monitor, fix issues immediately, batch fixes to avoid CI churn.
 
-1. **Push Code**:
-   - Push current branch to remote with `git push`
-   - If branch not tracked, use `git push -u origin <branch-name>`
+## Workflow
 
-2. **Create PR (if needed)**:
-   - Check if PR already exists for current branch
-   - If not, create PR with `gh pr create`
-   - **IMPORTANT**: Reference any related GitHub issues in PR body (e.g., "Fixes #123")
-   - Use descriptive title and comprehensive body
-   - Include test plan and summary of changes
+1. **Push**: Current branch to remote
+2. **Create PR**: If needed, reference related issues (e.g., "Fixes #123")
+3. **Monitor**: Watch CI status with `gh pr checks --watch --fail-fast`
+4. **Fix Immediately**: When issues found:
+   - Stop monitoring
+   - Fix ALL issues (CI failures, review comments)
+   - Commit fixes locally (don't push yet)
+5. **Push Once**: After build completes successfully, push all fixes together
 
-3. **Initial PR Check**:
-   - Get PR number and status
-   - Check CI build status and existing comments
-   - If ANY failures or issues exist, immediately proceed to fixing (skip monitoring)
+## Key Principles
 
-4. **Monitoring Loop** (only if no issues):
-   - Use `gh pr checks <PR#> --watch --fail-fast` to monitor CI status
-   - This command will:
-     - Update check status every 10 seconds automatically
-     - Exit immediately when ANY check fails (--fail-fast)
-     - Show live status of all checks in parallel
-   - If a check fails:
-     - The command exits automatically
-     - STOP monitoring, fix the failure immediately
-   - Also check for new review comments separately
-   - **IMPORTANT**: The fail-fast flag ensures we detect and fix issues as soon as they occur
+- **Fail fast**: `--fail-fast` flag exits on first CI failure
+- **Batch fixes**: Multiple commits locally, one push to minimize CI runs
+- **Be proactive**: Auto-fix build/test/lint issues
+- **Ask first**: For style preferences and non-blocking suggestions
 
-5. **Issue Resolution Mode**:
-   - **When you detect ANY issue, STOP monitoring immediately**
-   - Use built-in todo tracking to record ALL known issues:
-     - CI failures (check logs thoroughly)
-     - Review comments requiring fixes
-     - Linting/formatting issues
-   - Fix ALL issues before returning to monitoring
-   - Commit fixes incrementally but DO NOT push yet
-   
-6. **Fix Priority**:
-   - **Automatically fix**:
-     - Build failures
-     - Test failures
-     - Linting/formatting issues
-     - Missing dependencies
-     - Broken imports
-   
-   - **Ask before fixing**:
-     - Minor "nits" from reviewers
-     - Refactoring suggestions
-     - Style preferences
-     - Non-blocking suggestions
+## Issue Priority
 
-7. **Completion and Push**:
-   - Once build completes AND all issues are fixed:
-     - Review all commits made during fixes
-     - Push once to minimize CI runs
-   - If new issues appear after push, repeat the cycle
+**Auto-fix**: Build failures, test failures, linting, missing imports
+**Ask first**: Reviewer nits, refactoring suggestions, style preferences
 
-8. **Final Dashboard**:
-   - When presenting the final status (whether success or current state):
-     - Include a direct link to the PR for easy access
-     - Format: `PR #N: https://github.com/owner/repo/pull/N`
-   - This allows the user to quickly navigate to the PR
+## Final Output
 
-9. **Stop Conditions**:
-   - User explicitly asks to stop
-   - PR is merged or closed
-   - All builds complete with all issues resolved
+When complete, always include:
+```
+✅ PR ready for review
+PR #N: https://github.com/owner/repo/pull/N
+```
 
-## Correct Flow Example:
+## Examples
 
 ```
-User: /push
-Assistant: Pushing current branch to remote...
-
 $ git push
-✅ Successfully pushed to origin/feature-branch
+✅ Pushed to origin/feature-branch
 
-Checking for existing PR...
-No PR found. Creating new PR...
+Creating PR...
+✅ PR #42: https://github.com/owner/repo/pull/42
 
-$ gh pr create --title "Add new feature X" --body "..."
-✅ Created PR #9: https://github.com/owner/repo/pull/9
+Monitoring CI...
+❌ Build failed: missing import
 
-Checking PR #9 status...
+Fixing import issue...
+✅ Fixed and committed locally
 
-❌ Found issues that need fixing:
-- CI Build: Failed (test failure in test_feature.py)
-- Claude Review: Completed (found import issue)
+Waiting for build completion...
+✅ Build passed!
 
-Stopping monitoring to fix all issues...
+Pushing fixes...
+✅ All issues resolved
 
-Using todo tracking to manage issues...
-
-Fixing broken import in orchestrator/CLAUDE.md...
-[Makes fix and commits]
-✅ Todo #1 completed
-
-Analyzing CI failure... 
-[Investigates and fixes]
-[Commits fix]
-✅ Todo #2 completed
-
-All issues fixed and committed locally.
-Resuming monitoring to wait for build completion...
-
-[30s later]
-⏳ Monitoring... (build still running)
-
-[30s later]
-✅ Build completed successfully!
-
-Pushing all commits to remote...
-
-✅ All issues resolved. PR is ready for review.
-
-PR #9: https://github.com/eumemic/dynamic-summary/pull/9
+PR #42: https://github.com/owner/repo/pull/42
 ```
 
-## BAD Example (what NOT to do):
+Remember: Fix fast, push once. The goal is a green build with minimal CI runs.
 
-```
-❌ WRONG: See failure → Continue monitoring → Fix later
-❌ WRONG: Fix one issue → Push → Fix another → Push again
-❌ WRONG: See review comment → Ignore and keep monitoring
-```
+## Retrospective
+After pushing, reflect on three levels:
+1. **Command**: Did this minimize CI churn effectively?
+2. **Conformance**: Is the fail-fast approach clear?
+3. **Meta**: Should commands include more CI/CD best practices?
 
-## Implementation Notes:
-
-- Use built-in todo tracking (TodoWrite) to manage all issues
-- Track all issues before starting fixes
-- Commit incrementally as fixes are completed
-- Only push after all issues resolved and build completes
-- Maintain issue state between monitoring cycles
-- Be proactive with all actionable feedback
+ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.

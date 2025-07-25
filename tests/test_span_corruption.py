@@ -59,11 +59,11 @@ class TestSpanCorruption:
             )
         )
 
-        # Mock summaries with <<<MID>>> delimiter
+        # Mock summaries
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
                 choices=[
-                    Mock(message=Mock(content="Left summary <<<MID>>> Right summary"))
+                    Mock(message=Mock(content="Summary of left and right content"))
                 ]
             )
         )
@@ -139,7 +139,7 @@ class TestSpanCorruption:
         # Mock summaries
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
-                choices=[Mock(message=Mock(content="Summary <<<MID>>> Summary"))]
+                choices=[Mock(message=Mock(content="Summary of the content"))]
             )
         )
 
