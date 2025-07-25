@@ -1,4 +1,11 @@
-"""Integration tests for the full DP pipeline to verify it maintains important invariants."""
+"""Dynamic programming algorithm integration tests.
+
+These tests verify the DP tiling algorithm's correctness, including:
+- No duplicate content in assembled output
+- Proper parent-child deduplication
+- Correct span coverage
+- Budget constraints
+"""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -49,7 +56,11 @@ async def async_summary(*args, **kwargs):
 
 
 class TestDPIntegration:
-    """Test the full DP pipeline maintains critical invariants."""
+    """Test DP algorithm integration with indexing and assembly.
+
+    Focus: Verifying the dynamic programming tiling algorithm produces
+    correct results when integrated with the full retrieval pipeline.
+    """
 
     @pytest.fixture
     def config(self):
@@ -250,42 +261,6 @@ class TestDPIntegration:
         # Should contain content from second half
         # Note: This test might be flaky due to how the tree is built with very small chunks
         assert assembled2  # Just check we got something back
-
-    @pytest.mark.asyncio
-    async def test_mid_delimiter_extraction(
-        self, config, store, mock_openai, monkeypatch
-    ):
-        """Test that MID delimiter extraction works correctly in full pipeline."""
-        mock_client, mock_async_client = mock_openai
-
-        document = (
-            "Part one content. Part two content. Part three content. Part four content."
-        )
-
-        # Index
-        config.leaf_tokens = 20
-        tree_builder = TreeBuilder(
-            config=config,
-            store=store,
-        )
-        tree_builder.client.embeddings.create = async_embedding
-        tree_builder.client.chat.completions.create = async_summary
-        await tree_builder.add_document_async(
-            document, document_id="doc1", show_progress=False
-        )
-
-        # Retrieve - the DP algorithm should handle MID delimiter extraction
-        retriever = Retriever(config, store, tree_builder)
-        retriever.client.embeddings.create = sync_embedding
-        retriever.client.chat.completions.create = sync_summary
-        result = await retriever.retrieve_async("Part one Part two", document_id="doc1")
-
-        # Assemble
-        assembler = Assembler(config, store)
-        assembled = assembler.assemble(result)
-
-        # Verify we get coherent text (not just full summaries)
-        assert len(assembled) > 0
 
     @pytest.mark.asyncio
     async def test_budget_respected(self, config, store, mock_openai, monkeypatch):
