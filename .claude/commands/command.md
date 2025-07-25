@@ -53,7 +53,12 @@ Arguments: "$ARGUMENTS"
 [Clear outcome and essential constraints. Trust the agent to figure out the how.]
 
 ## Retrospective
-After completing this task, reflect: Did this command prepare you effectively? Were there false starts or confusion that better strategic guidance could have prevented? Suggest improvements that would help future agents tackling similar problems (generic insights, not specifics of your task).
+After completing this task, reflect on three levels:
+1. **Command Improvement**: How could this specific command guide future agents better?
+2. **Rubric Conformance**: Does this command follow the /command design principles well?
+3. **Meta Evolution**: Should the /command rubric itself evolve based on your experience?
+
+Focus on generic insights that apply broadly, not specifics of your task.
 ```
 
 ## Example
@@ -83,15 +88,12 @@ Arguments: "$ARGUMENTS"
 Modernize the specified module while maintaining its behavior. Focus on clarity, testability, and alignment with project patterns. Think carefully about the module's role before making structural changes.
 
 ## Retrospective
-After refactoring, reflect on this command's guidance. Did it help you avoid common refactoring pitfalls? Were there general patterns or considerations missing that would help future refactoring tasks? Share insights that apply broadly, not just to the specific module you worked on.
+After refactoring, reflect on three levels:
+1. **Command**: Could this command better prepare agents for common refactoring challenges?
+2. **Conformance**: Does it provide enough strategic guidance while maintaining autonomy?
+3. **Meta**: Did you discover patterns that suggest new design principles for commands?
 ```
 
-## Good vs Bad Retrospective Feedback
+ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.
 
-❌ **Too Specific**: "Add note about checking UserService.js for dependencies"
-✅ **Generic Insight**: "Add guidance to map all service dependencies before refactoring"
-
-❌ **Too Specific**: "Mention the login() function needs special handling"  
-✅ **Generic Insight**: "Emphasize checking authentication flows aren't broken"
-
-Remember: Commands improve through usage. Each retrospective makes them better for everyone.
+Remember: This three-level reflection creates evolutionary pressure at both tactical (command) and strategic (design philosophy) levels.
