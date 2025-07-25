@@ -4,7 +4,11 @@ import pytest
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.validate import set_validation_enabled, validate_tree_is_left_balanced
+from ragzoom.validate import (
+    set_validation_enabled,
+    validate_equal_leaf_depth,
+    validate_tree_is_left_balanced,
+)
 from tests.mock_store import SimpleMockStore
 
 
@@ -29,8 +33,11 @@ class TestIndexingCreatesLeftBalancedTrees:
         async def mock_get_batch_embeddings(texts):
             return [[0.1] * 1536 for _ in texts]
 
-        async def mock_summarize_text(left, right, target, prev, next):
-            return f"Summary of: {left[:20]}... and {right[:20]}..."
+        async def mock_summarize_text(left, right, target, prev_context, next_context):
+            if right:  # Two children
+                return f"Summary of: {left[:20]}... and {right[:20]}..."
+            else:  # Single child
+                return f"Summary of: {left[:20]}..."
 
         tree_builder._get_embedding = mock_get_embedding
         tree_builder._get_embeddings_batch = mock_get_batch_embeddings
@@ -71,6 +78,10 @@ class TestIndexingCreatesLeftBalancedTrees:
         result = validate_tree_is_left_balanced(store, doc_id)
         assert result is None
 
+        # Verify all leaves are at the same depth
+        result = validate_equal_leaf_depth(store, doc_id)
+        assert result is None
+
     def test_odd_number_of_chunks_creates_valid_tree(self, setup_indexing):
         """Test that indexing with odd number of chunks creates a valid left-balanced tree."""
         config, store, tree_builder = setup_indexing
@@ -83,10 +94,10 @@ class TestIndexingCreatesLeftBalancedTrees:
         # This should create a left-balanced tree like:
         #      root
         #     /    \
-        #    P1     L3
-        #   /  \
-        #  L1  L2
-        # (Still happens to be full in this case)
+        #    P1     P2
+        #   /  \     |
+        #  L1  L2   L3
+        # P2 has only a left child (L3)
 
         # Index the document
         doc_id = tree_builder.add_document(
@@ -95,6 +106,10 @@ class TestIndexingCreatesLeftBalancedTrees:
 
         # Verify it's left-balanced
         result = validate_tree_is_left_balanced(store, doc_id)
+        assert result is None
+
+        # Verify all leaves are at the same depth
+        result = validate_equal_leaf_depth(store, doc_id)
         assert result is None
 
     def test_large_document_creates_valid_tree(self, setup_indexing):
@@ -114,6 +129,10 @@ class TestIndexingCreatesLeftBalancedTrees:
         result = validate_tree_is_left_balanced(store, doc_id)
         assert result is None
 
+        # Verify all leaves are at the same depth
+        result = validate_equal_leaf_depth(store, doc_id)
+        assert result is None
+
         # Check we have multiple leaf nodes (exact count depends on tokenization)
         nodes = store.get_all_nodes_for_document(doc_id)
         leaf_nodes = [
@@ -131,3 +150,57 @@ class TestIndexingCreatesLeftBalancedTrees:
             # In a left-balanced tree, if there's a right child, there must be a left child
             if node.right_child_id is not None:
                 assert node.left_child_id is not None
+
+    def test_power_of_two_plus_one_chunks_creates_valid_tree(self, setup_indexing):
+        """Test that indexing with 2^n + 1 chunks creates a valid tree with equal leaf depth."""
+        config, store, tree_builder = setup_indexing
+
+        # Create text that will produce exactly 5 chunks (2^2 + 1)
+        # Each chunk should be around 50 tokens based on config
+        chunks = []
+        for i in range(5):
+            # Create distinct content for each chunk to ensure proper splitting
+            chunk_text = f"This is chunk number {i}. " * 12  # ~48 tokens
+            chunks.append(chunk_text)
+
+        text = " ".join(chunks)
+
+        # Expected tree structure:
+        #         root
+        #        /    \
+        #       P3     P4
+        #      /  \     |
+        #     P1   P2   L5
+        #    / \   / \
+        #   L1 L2 L3 L4
+
+        # Index the document
+        doc_id = tree_builder.add_document(
+            text, document_id="test-2n-plus-1", show_progress=False
+        )
+
+        # Verify it's left-balanced
+        result = validate_tree_is_left_balanced(store, doc_id)
+        assert result is None
+
+        # Verify all leaves are at the same depth
+        result = validate_equal_leaf_depth(store, doc_id)
+        assert result is None
+
+        # Verify we have exactly 5 leaf nodes
+        nodes = store.get_all_nodes_for_document(doc_id)
+        leaf_nodes = [
+            n for n in nodes if n.left_child_id is None and n.right_child_id is None
+        ]
+        # Due to tokenization, we might not get exactly 5 chunks, but verify structure
+        assert len(leaf_nodes) >= 3  # Should have multiple chunks
+
+        # Find nodes with only one child (left child)
+        single_child_nodes = [
+            n for n in nodes if n.left_child_id is not None and n.right_child_id is None
+        ]
+        # With odd number of chunks, we should have at least one single-child node
+        if len(leaf_nodes) % 2 == 1:
+            assert (
+                len(single_child_nodes) > 0
+            ), "Expected single-child nodes for odd number of leaves"
