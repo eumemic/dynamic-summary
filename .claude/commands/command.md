@@ -1,64 +1,97 @@
+---
+allowed-tools: Write
+description: Create a new custom Claude command following best practices
+argument-hint: <command-name> <purpose>
+---
+
 # /command
 
 Arguments: "$ARGUMENTS"
 
-Create a new custom Claude command following best practices for clarity, conciseness, and effectiveness.
+Create a new custom Claude command. Use extended thinking to anticipate what the executing agent will need to succeed.
 
-## Command Design Principles
+## Design Principles
 
-1. **Tight & Information-Dense**: Every word should add value. No fluff or repetitive instructions.
-2. **Trust Agent Intelligence**: Don't micromanage. State intent clearly and let the agent think creatively.
-3. **Crystal Clear Intent**: The user's goal and desired outcome must be unmistakable.
-4. **Action-Oriented**: Commands should drive specific, valuable actions.
-5. **Context-Aware**: Use conversation history and codebase state intelligently.
+1. **YAML Frontmatter**: Security and UX through tool restrictions and metadata
+2. **Dynamic Context**: Use `!` for bash output, `@` for file contents  
+3. **Strategic Preparation**: Do the hard thinking upfront about approach and necessary context
+4. **Guided Autonomy**: Provide mental models and key insights, not step-by-step instructions
+5. **Argument Hints**: Use `[brackets]` for optional arguments, `<angles>` for required
+6. **Continuous Improvement**: Include retrospective to evolve commands based on usage
 
-## Process
+## Key Questions to Consider
 
-1. **Parse Request**: Extract command name and purpose from arguments (if provided) or infer from conversation context
-2. **Design Command**: 
-   - Single clear purpose
-   - Minimal required context ($ARGUMENTS pattern)
-   - Specific, measurable outcome
-3. **Write Command File**:
-   - Location: `.claude/commands/{name}.md`
-   - Structure: Purpose → Process → Principles → Examples
-   - Length: Aim for <100 lines unless complexity demands more
-4. **Test & Refine**: Run the command to ensure it works as intended
+When designing a command, think deeply about:
+- What mental model or framework helps approach this problem?
+- What context is crucial to gather before starting?
+- What constraints or invariants must be maintained?
+- Where should the agent pause and think carefully?
+- What does success look like?
 
 ## Command Template
 
 ```markdown
-# /{name}
+---
+allowed-tools: [Specify only needed tools]
+description: [Brief description for autocomplete]
+argument-hint: [optional args] or <required args>
+---
 
+# /command-name
+
+## Context
+[Dynamic context using ! and @ prefixes]
+- Current state: !`relevant command`
+- Key files: @important/file.md
+
+## Strategic Guidance
+[Key insights that prepare the agent for success. Think: what would you tell someone about to tackle this problem? What approach works best? What should they understand first?]
+
+## Task
 Arguments: "$ARGUMENTS"
 
-{One-line purpose statement. What problem does this solve?}
+[Clear outcome and essential constraints. Trust the agent to figure out the how.]
 
-## Core Intent
-
-{2-3 sentences on why this command exists and when to use it}
-
-## Process
-
-{Numbered steps, each one clear and actionable}
-
-## Key Principles
-
-{Bullet points of crucial guidelines, not obvious things}
-
-## Examples
-
-{1-2 concise examples showing input → output}
-
-{Optional: One-line reminder of the key value prop}
+## Retrospective
+After completing this task, reflect: Did this command prepare you effectively? Were there false starts or confusion that better strategic guidance could have prevented? Suggest improvements that would help future agents tackling similar problems (generic insights, not specifics of your task).
 ```
 
-## Examples
+## Example
 
-Input: "command for finding dead code"
-→ Creates `/deadcode` command that searches for unused functions, imports, and files
+Input: "refactor-module clean up and modernize old code"
+→ Creates:
+```markdown
+---
+allowed-tools: Read, Write, Edit, Grep, Bash(npm test:*)
+description: Refactor module to modern patterns
+argument-hint: <module name>
+---
 
-Input: "command benchmark to run performance tests"  
-→ Creates `/benchmark` command that profiles critical paths and compares against baselines
+# /refactor-module
 
-Remember: Great commands are tools that developers reach for repeatedly. Make them sharp, focused, and reliable.
+## Context
+- Module structure: !`find $1 -name "*.js" -o -name "*.ts" | head -20`
+- Test coverage: !`npm test -- --coverage $1 2>&1 | grep -A5 "File.*%"`
+- Dependencies: @package.json
+
+## Strategic Guidance
+Before refactoring, understand the module's public API and how it's used throughout the codebase. Maintain backward compatibility unless explicitly breaking. Modern patterns are good, but consistency with the codebase is better. Run tests frequently - they're your safety net.
+
+## Task
+Arguments: "$ARGUMENTS"
+
+Modernize the specified module while maintaining its behavior. Focus on clarity, testability, and alignment with project patterns. Think carefully about the module's role before making structural changes.
+
+## Retrospective
+After refactoring, reflect on this command's guidance. Did it help you avoid common refactoring pitfalls? Were there general patterns or considerations missing that would help future refactoring tasks? Share insights that apply broadly, not just to the specific module you worked on.
+```
+
+## Good vs Bad Retrospective Feedback
+
+❌ **Too Specific**: "Add note about checking UserService.js for dependencies"
+✅ **Generic Insight**: "Add guidance to map all service dependencies before refactoring"
+
+❌ **Too Specific**: "Mention the login() function needs special handling"  
+✅ **Generic Insight**: "Emphasize checking authentication flows aren't broken"
+
+Remember: Commands improve through usage. Each retrospective makes them better for everyone.
