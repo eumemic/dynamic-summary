@@ -16,8 +16,9 @@ Create a new custom Claude command. Use extended thinking to anticipate what the
 2. **Dynamic Context**: Use `!` for bash output, `@` for file contents  
 3. **Strategic Preparation**: Do the hard thinking upfront about approach and necessary context
 4. **Guided Autonomy**: Provide mental models and key insights, not step-by-step instructions
-5. **Argument Hints**: Use `[brackets]` for optional arguments, `<angles>` for required
-6. **Continuous Improvement**: Include retrospective to evolve commands based on usage
+5. **Information Density**: Be concise. Every line costs tokens. Pack maximum insight into minimum words
+6. **Argument Hints**: Use `[brackets]` for optional arguments, `<angles>` for required
+7. **Continuous Improvement**: Include retrospective to evolve commands based on usage
 
 ## Key Questions to Consider
 
@@ -27,6 +28,7 @@ When designing a command, think deeply about:
 - What constraints or invariants must be maintained?
 - Where should the agent pause and think carefully?
 - What does success look like?
+- How can I convey this in the fewest possible words?
 
 ## Command Template
 
