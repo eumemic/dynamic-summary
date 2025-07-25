@@ -34,17 +34,13 @@ def sync_summary(*args, **kwargs):
         messages = args[0]
     content = messages[1]["content"] if messages and len(messages) > 1 else ""
     if "First chunk" in content and "Second chunk" in content:
-        summary = (
-            "Summary of first two chunks. <<<MID>>> Combined content of chunks 1 and 2."
-        )
+        summary = "Summary of first two chunks. Combined content of chunks 1 and 2."
     elif "Third chunk" in content and "Fourth chunk" in content:
-        summary = (
-            "Summary of last two chunks. <<<MID>>> Combined content of chunks 3 and 4."
-        )
+        summary = "Summary of last two chunks. Combined content of chunks 3 and 4."
     elif "Summary of first" in content and "Summary of last" in content:
-        summary = "Overall document summary. <<<MID>>> Complete document overview."
+        summary = "Overall document summary. Complete document overview."
     else:
-        summary = "Generic summary. <<<MID>>> Generic content."
+        summary = "Generic summary of the content."
     return MagicMock(choices=[MagicMock(message=MagicMock(content=summary))])
 
 
@@ -93,15 +89,17 @@ class TestDPIntegration:
                 messages = args[0]
             content = messages[1]["content"] if messages and len(messages) > 1 else ""
             if "First chunk" in content and "Second chunk" in content:
-                summary = "Summary of first two chunks. <<<MID>>> Combined content of chunks 1 and 2."
-            elif "Third chunk" in content and "Fourth chunk" in content:
-                summary = "Summary of last two chunks. <<<MID>>> Combined content of chunks 3 and 4."
-            elif "Summary of first" in content and "Summary of last" in content:
                 summary = (
-                    "Overall document summary. <<<MID>>> Complete document overview."
+                    "Summary of first two chunks. Combined content of chunks 1 and 2."
                 )
+            elif "Third chunk" in content and "Fourth chunk" in content:
+                summary = (
+                    "Summary of last two chunks. Combined content of chunks 3 and 4."
+                )
+            elif "Summary of first" in content and "Summary of last" in content:
+                summary = "Overall document summary. Complete document overview."
             else:
-                summary = "Generic summary. <<<MID>>> Generic content."
+                summary = "Generic summary of the content."
             return MagicMock(choices=[MagicMock(message=MagicMock(content=summary))])
 
         mock_client = MagicMock()
@@ -165,8 +163,6 @@ class TestDPIntegration:
         # Verify we have content from the document
         assert "First chunk" in assembled
         assert "Second chunk" in assembled
-        # Verify no MID delimiters in output
-        assert "<<<MID>>>" not in assembled
 
     @pytest.mark.asyncio
     async def test_parent_child_deduplication(
@@ -287,9 +283,6 @@ class TestDPIntegration:
         # Assemble
         assembler = Assembler(config, store)
         assembled = assembler.assemble(result)
-
-        # Verify MID delimiter is not in output
-        assert "<<<MID>>>" not in assembled
 
         # Verify we get coherent text (not just full summaries)
         assert len(assembled) > 0

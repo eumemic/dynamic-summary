@@ -29,9 +29,7 @@ class TestWhitespaceReconstruction:
             async def mock_chat_create(*args, **kwargs):
                 return Mock(
                     choices=[
-                        Mock(
-                            message=Mock(content="Summary left <<<MID>>> Summary right")
-                        )
+                        Mock(message=Mock(content="Summary of left and right content"))
                     ]
                 )
 
