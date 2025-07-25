@@ -1,82 +1,52 @@
+---
+allowed-tools: Bash
+description: Merge PR and clean up branch/worktree
+argument-hint: [PR number]
+---
+
 # /merge
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
-Merge the current PR, delete the branch, and return to master with the latest changes.
+## Context
+- Current branch: !`git branch --show-current`
+- PR status: !`gh pr view --json state,statusCheckRollup -q '.state + " / " + .statusCheckRollup.state' 2>/dev/null || echo "No PR"`
 
-## Instructions:
+## Strategic Guidance
+Merging completes the feature cycle. Use regular merge (not squash) to preserve commit history. The branch cleanup is automatic. This keeps your workspace tidy.
 
-1. **Identify Current PR**:
-   - Get the current branch name
-   - Find the associated PR number
-   - Verify the PR exists and is open
+## Task
+Arguments: "$ARGUMENTS"
 
-2. **Check PR Status**:
-   - Ensure all CI checks have passed
-   - Verify there are no requested changes or unresolved review comments
-   - If any checks are failing or issues exist, stop and report to user
+Merge the current PR, clean up branch, return to master.
 
-3. **Merge the PR**:
-   - Use `gh pr merge` with the `--merge` strategy (not squash or rebase)
-   - Include the `--delete-branch` flag to clean up the branch
-   - This will merge the PR and delete both local and remote branches
-   - Run `git fetch --prune` immediately to clean up any stale remote branch references
+## Process
 
-4. **Check for Worktree**:
-   - Run `git worktree list` to check if currently in a worktree
-   - If in a worktree, store the worktree path for cleanup
+1. **Verify Ready**: Check CI passed, no review blockers
+2. **Merge**: `gh pr merge --merge --delete-branch`
+3. **Clean Remote**: `git fetch --prune`
+4. **Return to Base Branch**:
+   ```bash
+   # Detect if we're in a worktree
+   WORKTREE_BRANCH=$(git worktree list --porcelain | grep -A1 "worktree $(pwd)" | grep "branch" | cut -d' ' -f3 | sed 's|refs/heads/||')
+   if [[ "$WORKTREE_BRANCH" =~ ^worktree-[0-9]+$ ]]; then
+     # In a worktree slot, return to the worktree branch
+     git checkout "$WORKTREE_BRANCH" && git pull origin master
+   else
+     # In main repo, return to master
+     git checkout master && git pull
+   fi
+   ```
 
-5. **Return to Root Directory**:
-   - If in a worktree, change to the repository root directory
-   - Switch to master branch
-   - Pull the latest changes
+## Error Handling
+- No PR found → "Create PR first with /push"
+- CI failing → Show failures, stop
+- Already on master → "Switch to feature branch first"
 
-6. **Clean Up Worktree**:
-   - If was in a worktree, remove it: `git worktree remove [worktree-path]`
-   - Confirm worktree removal
+## Retrospective
+After merging, reflect on three levels:
+1. **Command**: Did this handle the full merge workflow smoothly?
+2. **Conformance**: Is the merge process clear enough?
+3. **Meta**: Should commands assume more git/GitHub knowledge?
 
-7. **Confirm Success**:
-   - Show the user the merge commit
-   - Confirm we're on master and up to date
-   - If worktree was removed, confirm cleanup
-
-## Example Flow:
-
-```bash
-# Get current branch and PR
-git branch --show-current
-gh pr list --head <branch> --json number
-
-# Check PR status
-gh pr checks <PR#>
-
-# Check if in worktree
-git worktree list
-
-# Merge and cleanup
-gh pr merge <PR#> --merge --delete-branch
-git fetch --prune
-
-# Return to root/master
-cd /path/to/repo/root  # if in worktree
-git checkout master
-git pull
-
-# Remove worktree if applicable
-git worktree remove worktrees/<name>
-
-# Confirm
-git log --oneline -5
-git worktree list
-```
-
-## Error Handling:
-
-- If no PR is found for the current branch, inform the user
-- If CI checks are failing, stop and show the failing checks
-- If merge conflicts exist, inform the user they need to be resolved first
-- If the user is already on master, inform them they need to be on a feature branch
-
-## Notes:
-
-- This command assumes the user wants a regular merge (not squash or rebase)
-- The `--delete-branch` flag in `gh pr merge` handles both local and remote branch deletion
-- The `git fetch --prune` ensures any stale remote references are cleaned up
+ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.

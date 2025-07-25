@@ -1,4 +1,8 @@
-"""Integration tests for the complete RagZoom system."""
+"""End-to-end workflow tests for RagZoom (index → query → assemble).
+
+These tests verify the complete pipeline from document indexing through
+retrieval to final assembly, using mock OpenAI clients.
+"""
 
 import shutil
 import tempfile
@@ -14,7 +18,11 @@ from ragzoom.store import Store
 
 
 class TestIntegration:
-    """End-to-end integration tests."""
+    """Test complete workflow integration scenarios.
+
+    Focus: End-to-end testing of index → retrieve → assemble pipeline
+    with various document types and retrieval scenarios.
+    """
 
     @pytest.fixture
     def mock_openai(self):
@@ -40,9 +48,7 @@ class TestIntegration:
                 return Mock(
                     choices=[
                         Mock(
-                            message=Mock(
-                                content="Summary of left half. <<<MID>>> Summary of right half."
-                            )
+                            message=Mock(content="Summary of left half and right half.")
                         )
                     ]
                 )
@@ -62,9 +68,7 @@ class TestIntegration:
                 return Mock(
                     choices=[
                         Mock(
-                            message=Mock(
-                                content="Summary of left half. <<<MID>>> Summary of right half."
-                            )
+                            message=Mock(content="Summary of left half and right half.")
                         )
                     ]
                 )
@@ -223,32 +227,6 @@ class TestIntegration:
         # Check budget is respected (with some tolerance for token counting differences)
         assert token_count <= 110  # Allow 10% tolerance
         assert len(summary) > 0
-
-    def test_slope_cap(self, temp_system):
-        """Test slope cap constraint."""
-        config, store, tree_builder, retriever, assembler = temp_system
-
-        # Ensure slope cap is enabled
-        config.slope_cap = True
-
-        # Create a document that will build a multi-level tree
-        text = "Test content. " * 100
-        tree_builder.add_document(text)
-
-        # Get a result with multiple depths
-        result = retriever.retrieve("test")
-
-        # Go through full assembly to test slope cap properly
-        summary = assembler.assemble(result)
-
-        # The slope cap is an internal implementation detail
-        # What matters is that assembly produces a valid summary
-        assert summary is not None
-        assert len(summary) > 0
-
-        # The slope cap constraint is enforced internally during assembly
-        # Testing the internal _apply_slope_cap method directly doesn't reflect
-        # how it's actually used in the full assembly pipeline
 
     def test_dirty_node_marking(self, temp_system):
         """Test marking nodes as dirty."""

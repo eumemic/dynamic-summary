@@ -40,22 +40,42 @@ class SimpleMockStore:
     def _setup_session_mock(self):
         """Setup mock session for compatibility with tests using SessionLocal."""
         mock_session = MagicMock()
-        mock_query = MagicMock()
 
-        # Make query chainable
-        mock_query.filter_by.return_value = mock_query
-        mock_query.filter.return_value = mock_query
-        mock_query.all.return_value = []
-        mock_query.first.return_value = None
-        mock_query.count.return_value = 0
+        # Create a proper query mock that can handle filter_by and update nodes
+        def create_query_mock(model_class):
+            query_mock = MagicMock()
 
-        mock_session.query.return_value = mock_query
+            def filter_by_impl(**kwargs):
+                # Handle TreeNode queries
+                if "id" in kwargs:
+                    node_id = kwargs["id"]
+                    # Return a mock that will find our node
+                    result_mock = MagicMock()
+
+                    def first_impl():
+                        # Return the actual node from our store
+                        if node_id in self.nodes:
+                            return self.nodes[node_id]
+                        return None
+
+                    result_mock.first = first_impl
+                    return result_mock
+                return query_mock
+
+            query_mock.filter_by = filter_by_impl
+            query_mock.filter = MagicMock(return_value=query_mock)
+            query_mock.all = MagicMock(return_value=[])
+            query_mock.first = MagicMock(return_value=None)
+            query_mock.count = MagicMock(return_value=0)
+
+            return query_mock
+
+        mock_session.query = create_query_mock
+        mock_session.commit = MagicMock()  # No-op for commits
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=None)
 
         self.SessionLocal = MagicMock(return_value=mock_session)
-        self._mock_session = mock_session
-        self._mock_query = mock_query
 
     def add_node(
         self,
@@ -490,6 +510,5 @@ class SimpleMockStore:
             mock_result.filter_by = mock_filter_by  # Make it chainable
             return mock_result
 
-        self._mock_query.filter_by = mock_filter_by
-        self._mock_query.all.return_value = all_nodes
-        self._mock_query.count.return_value = len(all_nodes)
+        # No longer needed with the new session mock implementation
+        pass

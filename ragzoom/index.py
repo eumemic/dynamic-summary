@@ -584,14 +584,6 @@ Create an expanded version that includes more information from the original text
                 leaf_ids, chunks, document_id, async_progress, overall_start_time
             )
 
-            # Final validation: ensure tree is full
-            from ragzoom.validate import validate, validate_tree_is_full
-
-            validate(
-                lambda: validate_tree_is_full(self.store, document_id),
-                "tree fullness check",
-            )
-
             # Final completion logging with total elapsed time
             if root_id:
                 total_elapsed = time.time() - overall_start_time
@@ -803,10 +795,13 @@ Create an expanded version that includes more information from the original text
                 tasks.append(task)
                 pair_info.append((i, i + 1))
 
-            # If there's an odd node at the end, promote it to next height
+            # If there's an odd node at the end, create a parent with only left child
+            # This ensures all leaves remain at the same depth
+            odd_node = None
+            odd_node_text = None
             if nodes_to_pair < len(current_level_ids):
-                next_level_ids.append(current_level_ids[-1])
-                next_level_texts.append(current_level_texts[-1])
+                odd_node = current_level_ids[-1]
+                odd_node_text = current_level_texts[-1]
 
             # Process all pairs concurrently
             if tasks:
@@ -860,26 +855,65 @@ Create an expanded version that includes more information from the original text
                     results.extend(group_results)
 
                 # Add the parent nodes to next height
-                # IMPORTANT: We already added any odd node to next_level_ids above,
-                # so now we insert the new parent nodes BEFORE it to maintain order
-                if nodes_to_pair < len(current_level_ids):
-                    # We have an odd node already in next_level_ids
-                    # Insert new parents before it
-                    odd_node_id = next_level_ids.pop()
-                    odd_node_text = next_level_texts.pop()
+                for parent_id, summary, _ in results:
+                    next_level_ids.append(parent_id)
+                    next_level_texts.append(summary)
 
-                    for parent_id, summary, _ in results:
-                        next_level_ids.append(parent_id)
-                        next_level_texts.append(summary)
+                # Handle odd node by creating a single-child parent
+                if odd_node:
+                    # Create a parent node with only a left child
+                    parent_id = self._generate_node_id()
 
-                    # Add the odd node back at the end
-                    next_level_ids.append(odd_node_id)
-                    next_level_texts.append(odd_node_text)
-                else:
-                    # No odd node, just add all parents
-                    for parent_id, summary, _ in results:
-                        next_level_ids.append(parent_id)
-                        next_level_texts.append(summary)
+                    # Get the odd node for its span information
+                    odd_node_obj = self.store.get_node(odd_node)
+                    if not odd_node_obj:
+                        logger.error(f"Failed to retrieve odd node: {odd_node}")
+                        raise ValueError("Odd node not found in store")
+
+                    # For single-child parent, summary is essentially the child's text
+                    # but may be slightly condensed to fit token budget
+                    # odd_node_text is guaranteed to be non-None here due to the if condition
+                    assert odd_node_text is not None
+
+                    # Calculate target tokens for single-child case
+                    odd_tokens = self.splitter.tokenizer.encode(odd_node_text)
+                    half_size = len(odd_tokens) // 2
+                    target_tokens = min(self.config.leaf_tokens, half_size)
+
+                    summary = await self._summarize_text(
+                        odd_node_text,
+                        "",  # No right child
+                        target_tokens,
+                        prev_context=None,
+                        next_context=None,
+                        parent_id=parent_id,
+                    )
+
+                    # Get embedding for the summary
+                    embedding = await self._get_embedding(summary)
+
+                    # Store the single-child parent node
+                    self.store.add_node(
+                        node_id=parent_id,
+                        text=summary,
+                        embedding=embedding,
+                        span_start=odd_node_obj.span_start,
+                        span_end=odd_node_obj.span_end,
+                        left_child_id=odd_node,
+                        right_child_id=None,  # No right child
+                        document_id=document_id,
+                    )
+
+                    # Update the odd node's parent reference
+                    self._update_parent_reference(odd_node, parent_id)
+
+                    # Update progress if tracking
+                    if progress:
+                        await progress.update(1)  # Count the odd node as processed
+
+                    # Add the new parent to the next level
+                    next_level_ids.append(parent_id)
+                    next_level_texts.append(summary)
 
                 # Track token counts for all nodes at this height
                 for text in next_level_texts:

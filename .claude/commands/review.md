@@ -1,154 +1,75 @@
+---
+allowed-tools: Read, Grep, Bash, Task
+description: Review code for architecture, correctness, and maintainability
+argument-hint: [file/PR/commit]
+---
+
 # /review
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
-Scope: $ARGUMENTS
+## Context
+- Current branch: !`git branch --show-current`
+- Changed files: !`git diff --name-status HEAD~ 2>/dev/null | head -10 || git status --porcelain | head -10`
 
-If no scope provided above, use ONLY THE FIRST applicable condition below:
-- If the git working directory is dirty, scope = the uncommitted files
-- Else if on a feature branch, scope = changes since `master`
-- Otherwise, scope = the complete current state of the repository
+Arguments: "$ARGUMENTS"
 
-_Note: default to changes on this branch since `master` if no scope provided_
+Review code changes with focus on architecture, correctness, and maintainability.
 
-Perform a comprehensive review of the changes in the above scope with both deep architectural analysis and implementation quality checks.
+## Strategic Guidance
 
-## Phase 1: Deep Architectural Review (DO THIS FIRST!)
+Look beyond syntax to question design decisions. Think carefully about the architecture - trace data flows, understand component relationships. Is this the simplest solution? Could we achieve the same with less code? What would a new developer think?
 
-Start by asking the hard questions before getting lost in details:
+## Review Focus
 
-1. **Challenge every new component**:
-   - For each new file/class/module: Why does this exist? What simpler alternative did we reject?
-   - Are there multiple entry points or ways to start the same service? Why?
-   - Count similar files: Are there multiple indexing scripts? Multiple servers? Multiple configs?
-   - Draw the data flow - are there unnecessary middlemen or wrappers?
-   - What would break if we deleted this component?
+1. **Architecture First**
+   - Why does each new component exist?
+   - Could services/functions be combined or eliminated?
+   - Is the data flow unnecessarily complex?
+   - Are we solving the actual problem or one we created?
 
-2. **Quantify the complexity**:
-   - How many lines of code are being added for this feature?
-   - How many files have similar/overlapping functionality? 
-   - What's the ratio of boilerplate to actual business logic?
-   - Could the same functionality be achieved with significantly less code?
+2. **Code Quality**
+   - Consistency with existing patterns
+   - Dead code (unused functions, imports, variables)
+   - Error handling and edge cases
+   - Security vulnerabilities
+   - Performance issues
 
-3. **Analyze key architectural elements**:
-   - **Entry points**: Are there multiple ways to start the same service? Why?
-   - **APIs/Interfaces**: Is each API endpoint solving a real user need or just connecting internal components?
-   - **Service boundaries**: Could any services be combined or eliminated?
-   - **Data flow**: Trace requests through the system - look for unnecessary hops
+3. **Maintainability**
+   - Clear naming and purpose
+   - Appropriate documentation
+   - Test coverage
+   - Configuration management
 
-4. **Question the solution approach**:
-   - Are we solving the user's actual problem or a problem we created?
-   - Is this the simplest thing that could possibly work?
-   - What would a new developer think this code does?
-   - Could we achieve the same result with existing code?
+## Key Questions
 
-5. **Apply the "5 Whys" to major design decisions**:
-   - Example: Why do we need this HTTP API? → To trigger reindexing
-   - Why can't we use docker exec? → We can, actually...
-   - Why spawn subprocesses? → We could import functions directly
-   - Keep asking until you reach the core requirement
+- What simpler alternative did we reject and why?
+- Could this functionality use existing code?
+- What's the ratio of boilerplate to business logic?
+- Are there multiple ways to do the same thing?
 
-6. **Look for architectural code smells**:
-   - Two files/components doing almost the same thing
-   - Wrappers that just call other wrappers
-   - Abstractions with only one implementation
-   - Configuration that's only used in one place
-   - "Just in case" features with no current use
+## Output Format
 
-## Phase 2: Implementation Review (AFTER architecture review)
+**🏗️ Architecture Issues**
+[Big picture problems, unnecessary complexity]
 
-Now examine the tactical details:
+**✅ Good Practices**
+[Positive patterns to acknowledge]
 
-1. **Get the full diff**:
-   - Run `git diff master...HEAD` to see all changes in this branch
-   - Look at the complete picture, not just individual files
+**⚠️ Code Issues**
+- Critical: [Must fix - bugs, security]
+- Important: [Should fix - consistency, docs]
+- Minor: [Nice to fix - style]
 
-2. **Check for inconsistencies**:
-   - Naming conventions across files (variables, functions, classes)
-   - API endpoint patterns and response formats
-   - Error handling approaches
-   - Import styles (absolute vs relative)
-   - Code formatting and structure
+**🎯 Summary**
+[Overall assessment and key actions]
 
-3. **Look for code issues**:
-   - Duplicate or redundant code that could be refactored
-   - **Dead code detection** (actively search for these):
-     * Functions/methods that are defined but never called
-     * Use grep to verify: if a function is only found in its definition, it's dead
-     * Imports that are never used
-     * Classes that are never instantiated
-     * Variables assigned but never read
-     * Files that aren't imported anywhere
-   - Missing error handling or edge cases
-   - Potential race conditions or async issues
-   - Security vulnerabilities (exposed secrets, unsafe operations)
-   - Performance problems (N+1 queries, inefficient algorithms)
+Remember: Great code is simple code. Question every abstraction.
 
-4. **Verify documentation**:
-   - All new features/utilities are documented in CLAUDE.md files
-   - Essential commands are updated if new scripts were added
-   - API endpoints have proper docstrings
-   - Complex logic has explanatory comments
-   - TODOs are tracked in docs/todos.md
+## Retrospective
+After reviewing, reflect on three levels:
+1. **Command**: Did this promote architecture-first thinking?
+2. **Conformance**: Is the output format helpful without being rigid?
+3. **Meta**: Should commands include more emphasis on simplicity metrics?
 
-5. **Check CLAUDE.md invariants compliance**:
-   - Validate that all rules specified in CLAUDE.md files and linked docs are followed
-   - Particularly docs/global-invariants.md
-
-6. **Review architecture decisions**:
-   - Changes align with the service's stated purpose
-   - No violation of service boundaries
-   - Consistent with existing patterns
-   - Proper separation of concerns
-
-7. **Test coverage**:
-   - New functionality has tests or clear test plans
-   - Existing tests weren't broken
-   - Edge cases are considered
-
-8. **Dependencies and configuration**:
-   - New dependencies are justified and documented
-   - Environment variables follow UPPER_SNAKE_CASE
-   - Docker configurations are consistent
-   - No hardcoded values that should be configurable
-   - **Check configuration consistency**:
-     * Are the same values (models, ports, paths) defined in multiple places?
-     * Do Docker env vars match code defaults?
-     * Is there a single source of truth for settings?
-
-9. **User experience**:
-   - Error messages are helpful and actionable
-   - APIs return appropriate status codes
-   - Performance impact is considered
-   - Backward compatibility is maintained
-
-10. **Final checklist**:
-    - No temporary debugging code left behind
-    - No commented-out code without explanation
-    - Secrets/keys are not exposed
-    - File permissions are appropriate
-    - Line endings are consistent
-
-## Output Format:
-
-### 🏗️ Architecture & Design Issues
-Start with the big picture findings from Phase 1:
-- Unnecessary complexity or overengineering
-- Simpler alternatives that were overlooked
-- Components that could be removed or combined
-
-### ✅ Good Practices Found
-- List positive patterns and well-implemented features
-
-### ⚠️ Implementation Issues
-- **Critical**: Must fix before merge (bugs, security, breaking changes)
-- **Important**: Should fix (inconsistencies, missing docs, tech debt)  
-- **Minor**: Nice to fix (style issues, small improvements)
-
-### 📝 Recommendations
-- Specific suggestions for simplification
-- Refactoring opportunities
-- Future considerations
-
-### 🎯 Summary
-- Overall assessment of PR readiness
-- Key action items before merge
-- Most impactful improvements to make
+ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.
