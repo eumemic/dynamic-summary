@@ -424,6 +424,7 @@ Here's the content to summarize:"""
         document_id: Optional[str] = None,
         file_path: Optional[str] = None,
         show_progress: bool = True,
+        debug: bool = False,
     ) -> str:
         """Add a document to the tree, creating leaf nodes."""
         # Compute content hash
@@ -607,7 +608,7 @@ Here's the content to summarize:"""
 
             # Build tree from leaves
             root_id = await self._build_tree_from_leaves(
-                leaf_ids, chunks, document_id, async_progress, overall_start_time
+                leaf_ids, chunks, document_id, async_progress, overall_start_time, debug
             )
 
             # Final completion logging with total elapsed time
@@ -630,10 +631,11 @@ Here's the content to summarize:"""
         document_id: Optional[str] = None,
         file_path: Optional[str] = None,
         show_progress: bool = True,
+        debug: bool = False,
     ) -> str:
         """Sync wrapper for add_document."""
         return asyncio.run(
-            self.add_document_async(text, document_id, file_path, show_progress)
+            self.add_document_async(text, document_id, file_path, show_progress, debug)
         )
 
     async def add_document_async(
@@ -642,10 +644,11 @@ Here's the content to summarize:"""
         document_id: Optional[str] = None,
         file_path: Optional[str] = None,
         show_progress: bool = True,
+        debug: bool = False,
     ) -> str:
         """Async version of add_document - called by sync wrapper."""
         return await self._add_document_impl(
-            text, document_id, file_path, show_progress
+            text, document_id, file_path, show_progress, debug
         )
 
     async def _process_node_pair(
@@ -747,6 +750,7 @@ Here's the content to summarize:"""
         document_id: Optional[str] = None,
         progress: Optional[AsyncProgressWrapper] = None,
         overall_start_time: Optional[float] = None,
+        debug: bool = False,
     ) -> str:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
         current_level_ids = leaf_ids
@@ -957,18 +961,19 @@ Here's the content to summarize:"""
                     f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}..."
                 )
 
-            # Log token usage statistics
-            logger.info("\nToken usage statistics by tree height:")
-            for height in sorted(token_stats.keys()):
-                counts = token_stats[height]
-                if counts:
-                    avg_tokens = sum(counts) / len(counts)
-                    min_tokens = min(counts)
-                    max_tokens = max(counts)
-                    logger.info(
-                        f"  Height {height}: avg {avg_tokens:.0f} tokens, "
-                        f"min {min_tokens}, max {max_tokens} ({len(counts)} nodes)"
-                    )
+            # Log token usage statistics if debug is enabled
+            if debug:
+                logger.info("\nToken usage statistics by tree height:")
+                for height in sorted(token_stats.keys()):
+                    counts = token_stats[height]
+                    if counts:
+                        avg_tokens = sum(counts) / len(counts)
+                        min_tokens = min(counts)
+                        max_tokens = max(counts)
+                        logger.info(
+                            f"  Height {height}: avg {avg_tokens:.0f} tokens, "
+                            f"min {min_tokens}, max {max_tokens} ({len(counts)} nodes)"
+                        )
 
         return current_level_ids[0] if current_level_ids else ""
 
