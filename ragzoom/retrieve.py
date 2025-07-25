@@ -295,15 +295,19 @@ class Retriever:
                 left = node.left_child_id
                 right = node.right_child_id
                 if left or right:
-                    # If either child is present in the coverage set, both must be
-                    if (left and left in coverage_map) or (
-                        right and right in coverage_map
-                    ):
-                        if left and left not in coverage_map:
-                            coverage_map[left] = True
-                            new_nodes_added = True
+                    # If a child is present in the coverage set, include its sibling if it exists
+                    # This maintains fullness for nodes that have both children
+                    if left and left in coverage_map:
+                        # Left child is in coverage
                         if right and right not in coverage_map:
+                            # Include right sibling if it exists
                             coverage_map[right] = True
+                            new_nodes_added = True
+                    elif right and right in coverage_map:
+                        # Right child is in coverage (shouldn't happen in left-balanced tree)
+                        if left and left not in coverage_map:
+                            # Include left sibling if it exists
+                            coverage_map[left] = True
                             new_nodes_added = True
             if not new_nodes_added:
                 break
