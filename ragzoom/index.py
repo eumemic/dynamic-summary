@@ -48,6 +48,22 @@ class TreeBuilder:
         """Get embedding for text using OpenAI."""
         async with self.semaphore:
             try:
+                # Check token count before embedding
+                tokens = self.splitter.tokenizer.encode(text)
+                token_count = len(tokens)
+
+                # Hard limit at 8000 tokens to leave margin for API overhead
+                if token_count > 8000:
+                    logger.error(
+                        f"Text exceeds embedding token limit: {token_count} tokens "
+                        f"(limit: 8000). First 200 chars: {text[:200]}..."
+                    )
+                    raise ValueError(
+                        f"Text too large for embedding: {token_count} tokens exceeds "
+                        f"limit of 8000. This is likely due to summary size growth "
+                        f"at higher tree levels."
+                    )
+
                 response = await self.client.embeddings.create(
                     model=self.config.embedding_model,
                     input=text,
@@ -88,6 +104,7 @@ class TreeBuilder:
         target_tokens: int,
         prev_context: Optional[str] = None,
         next_context: Optional[str] = None,
+        parent_id: Optional[str] = None,
     ) -> str:
         """Summarize text using LLM."""
         # Build prompt with adjacent context (trim to avoid token explosion)
@@ -116,13 +133,16 @@ class TreeBuilder:
                 trimmed_next = next_context
 
         # Build the summarization prompt
-        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> and <FOLLOWING_TEXT> content as context (when provided - these may be omitted if there is no preceding/following context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary and your summary should flow smoothly into the <FOLLOWING_TEXT>.
+        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags, using the <PRECEDING_TEXT> and <FOLLOWING_TEXT> content as context (when provided - these may be omitted if there is no preceding/following context).
 
 CRITICAL REQUIREMENTS:
 - Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
-- The summary should be ≤{target_tokens} tokens in total
-- Make the summary as information-dense as possible while filling out (but not exceeding) the token limit
-- The summary should cover the full scope of the content from start to end, but abstract over minor details and omit verbal flourishes to stay within the token limit
+- Your summary should be approximately {target_tokens} tokens (aim for 90-100% of this target)
+- The summary MUST NOT exceed {target_tokens} tokens. This is a HARD LIMIT.
+- IMPORTANT: Use as close to {target_tokens} tokens as possible. Do not be overly brief.
+- Include as much detail and information as will fit within the token budget
+- Make the summary as information-dense as possible, preserving names, numbers, and specific details
+- The summary should attempt to cover the full scope of the content from start to end, but abstract over details as necessary to stay under the token limit
 - Focus on key events, facts, and themes ONLY from the provided text
 - Do NOT include any concrete information from BEFORE the <SUMMARIZE_TEXT> tag or AFTER the </SUMMARIZE_TEXT> tag in the summary
 - Do NOT complete a sentence that is cut off with information from outside the <SUMMARIZE_TEXT> block
@@ -156,20 +176,103 @@ Here's the content to summarize:"""
 
         async with self.semaphore:
             try:
+                # Build initial messages for conversation
+                messages: list[dict[str, Any]] = [
+                    {
+                        "role": "system",
+                        "content": f"You are a precise summarizer who creates detailed summaries of approximately {target_tokens} tokens. You ONLY use information explicitly provided in the input text. You NEVER add context or details from outside the given text. Aim to use 90-100% of the available token budget.",
+                    },
+                    {"role": "user", "content": full_prompt},
+                ]
+
                 response = await self.client.chat.completions.create(
                     model=self.config.summary_model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
-                        },
-                        {"role": "user", "content": full_prompt},
-                    ],
+                    messages=messages,  # type: ignore
                     temperature=self.config.summary_temperature,
                     # No max_tokens limit - let LLM decide based on prompt instructions
                 )
                 content = response.choices[0].message.content
                 summary = content.strip() if content else ""
+
+                # Add assistant's response to conversation history
+                messages.append({"role": "assistant", "content": summary})
+
+                # Check if summary exceeds token limit
+                summary_tokens = self.splitter.tokenizer.encode(summary)
+                retry_count = 0
+                max_retries = 3
+
+                while (
+                    len(summary_tokens) > target_tokens * 1.2
+                    and retry_count < max_retries
+                ):
+                    retry_count += 1
+
+                    # Calculate overage percentage
+                    overage_pct = (
+                        (len(summary_tokens) - target_tokens) / target_tokens
+                    ) * 100
+                    reduction_needed = (
+                        (len(summary_tokens) - target_tokens) / len(summary_tokens)
+                    ) * 100
+
+                    node_info = f"[{parent_id}] " if parent_id else ""
+                    logger.info(
+                        f"{node_info}Summary exceeded target: {len(summary_tokens)} tokens "
+                        f"(target: {target_tokens}, {overage_pct:.0f}% over). "
+                        f"Retry {retry_count}/{max_retries} - Requesting {reduction_needed:.0f}% reduction."
+                    )
+
+                    # Build retry prompt with specific guidance based on overage
+                    if overage_pct <= 50:
+                        guidance = "Trim less essential details, descriptive passages, and minor events."
+                    elif overage_pct <= 100:
+                        guidance = "Focus only on major plot points and key character actions. Remove all minor details."
+                    else:
+                        guidance = "Provide only the most critical events. Use extremely concise language."
+
+                    retry_prompt = f"""Your summary was {len(summary_tokens)} tokens, which is {overage_pct:.0f}% over the limit of {target_tokens} tokens.
+
+Please reduce it by at least {reduction_needed:.0f}% to get under {target_tokens} tokens.
+
+{guidance}
+
+Create a shortened version that preserves the most important information while strictly staying under {target_tokens} tokens."""
+
+                    # Add retry request to conversation
+                    messages.append({"role": "user", "content": retry_prompt})
+
+                    retry_response = await self.client.chat.completions.create(
+                        model=self.config.summary_model,
+                        messages=messages,  # type: ignore
+                        temperature=self.config.summary_temperature,
+                        max_tokens=int(
+                            target_tokens * 1.5
+                        ),  # Hard limit with some margin
+                    )
+                    retry_content = retry_response.choices[0].message.content
+                    summary = retry_content.strip() if retry_content else summary
+
+                    # Add assistant's response to conversation
+                    messages.append({"role": "assistant", "content": summary})
+
+                    # Re-check token count
+                    summary_tokens = self.splitter.tokenizer.encode(summary)
+
+                # Log final result
+                if retry_count > 0:
+                    final_tokens = len(summary_tokens)
+                    node_info = f"[{parent_id}] " if parent_id else ""
+                    if final_tokens <= target_tokens * 1.2:
+                        logger.info(
+                            f"{node_info}Summary successful after {retry_count} retries: "
+                            f"{final_tokens} tokens (target: {target_tokens})"
+                        )
+                    else:
+                        logger.warning(
+                            f"{node_info}Summary still over limit after {max_retries} retries: "
+                            f"{final_tokens} tokens (target: {target_tokens}). Continuing with best effort."
+                        )
 
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
@@ -438,7 +541,7 @@ Here's the content to summarize:"""
 
         # Generate summary (async)
         summary = await self._summarize_text(
-            left_text, right_text, target_tokens, prev_context, next_context
+            left_text, right_text, target_tokens, prev_context, next_context, parent_id
         )
 
         # Validate summary faithfulness if validation is enabled
@@ -526,11 +629,23 @@ Here's the content to summarize:"""
         # Calculate total tree height (distance from root to furthest leaf)
         # Note: This is used for progress tracking estimation
 
+        # Track token usage statistics by height
+        token_stats: dict[int, list[int]] = {}
+
+        # Record leaf node token counts (height 0)
+        token_stats[0] = []
+        for text in leaf_texts:
+            tokens = self.splitter.tokenizer.encode(text)
+            token_stats[0].append(len(tokens))
+
         current_height = 1  # Track height for logging (leaves are at height 0)
         while len(current_level_ids) > 1:
             next_level_ids = []
             next_level_texts = []
             # Note: current_height will be incremented after processing this height
+
+            # Initialize token stats for this height
+            token_stats[current_height] = []
 
             # Process pairs concurrently
             tasks = []
@@ -662,6 +777,11 @@ Here's the content to summarize:"""
                         next_level_ids.append(parent_id)
                         next_level_texts.append(summary)
 
+                # Track token counts for all nodes at this height
+                for text in next_level_texts:
+                    tokens = self.splitter.tokenizer.encode(text)
+                    token_stats[current_height].append(len(tokens))
+
             current_level_ids = next_level_ids
             current_level_texts = next_level_texts
             current_height += 1
@@ -684,6 +804,21 @@ Here's the content to summarize:"""
                     logger.info(
                         f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}..."
                     )
+
+            # Log token usage statistics
+            if not (progress and progress.tracker and progress.tracker.show_progress):
+                logger.info("\nToken usage statistics by tree height:")
+                for height in sorted(token_stats.keys()):
+                    counts = token_stats[height]
+                    if counts:
+                        avg_tokens = sum(counts) / len(counts)
+                        min_tokens = min(counts)
+                        max_tokens = max(counts)
+                        logger.info(
+                            f"  Height {height}: avg {avg_tokens:.0f} tokens, "
+                            f"min {min_tokens}, max {max_tokens} ({len(counts)} nodes)"
+                        )
+
         return current_level_ids[0] if current_level_ids else ""
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
@@ -733,6 +868,7 @@ Here's the content to summarize:"""
                     target_tokens=self.config.leaf_tokens,
                     prev_context="",
                     next_context="",
+                    parent_id=node_id,
                 )
 
                 # Get new embedding
