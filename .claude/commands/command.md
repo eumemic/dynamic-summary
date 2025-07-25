@@ -60,7 +60,7 @@ After completing this task, reflect on three levels:
 2. **Rubric Conformance**: Does this command follow the /command design principles well?
 3. **Meta Evolution**: Should the /command rubric itself evolve based on your experience?
 
-Focus on generic insights that apply broadly, not specifics of your task.
+ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.
 ```
 
 ## Example
@@ -94,8 +94,8 @@ After refactoring, reflect on three levels:
 1. **Command**: Could this command better prepare agents for common refactoring challenges?
 2. **Conformance**: Does it provide enough strategic guidance while maintaining autonomy?
 3. **Meta**: Did you discover patterns that suggest new design principles for commands?
-```
 
 ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.
+```
 
 Remember: This three-level reflection creates evolutionary pressure at both tactical (command) and strategic (design philosophy) levels.
