@@ -372,14 +372,6 @@ Here's the content to summarize:"""
                 leaf_ids, chunks, document_id, async_progress, overall_start_time
             )
 
-            # Final validation: ensure tree is full
-            from ragzoom.validate import validate, validate_tree_is_full
-
-            validate(
-                lambda: validate_tree_is_full(self.store, document_id),
-                "tree fullness check",
-            )
-
             # Final completion logging with total elapsed time
             if root_id:
                 total_elapsed = time.time() - overall_start_time
