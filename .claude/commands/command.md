@@ -40,6 +40,9 @@ argument-hint: [optional args] or <required args>
 ---
 
 # /command-name
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
+
 
 ## Context
 [Dynamic context using ! and @ prefixes]
@@ -75,6 +78,8 @@ argument-hint: <module name>
 ---
 
 # /refactor-module
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
 ## Context
 - Module structure: !`find $1 -name "*.js" -o -name "*.ts" | head -20`

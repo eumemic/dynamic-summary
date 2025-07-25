@@ -5,6 +5,8 @@ argument-hint: [focus area]
 ---
 
 # RagZoom Expert Mode
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
 ## Context
 - Project structure: !`find . -name "*.py" -path "*/ragzoom/*" | head -10 | sed 's|^\./||'`
