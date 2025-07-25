@@ -5,6 +5,8 @@ argument-hint: [commit message]
 ---
 
 # /commit
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
 ## Context
 - Current branch: !`git branch --show-current`
@@ -21,7 +23,10 @@ Clean up debug code, update docs, and create well-organized commits.
 
 ## Process
 
-1. **Safety Check**: Never commit to master. If on master, ask what feature we're working on.
+1. **Safety Check**: Never commit to master. If on master:
+   - Infer branch name from changes (e.g., "feature/auth-system")
+   - Ask: "Create branch 'feature/auth-system'? (or provide different name)"
+   - Create branch: `git checkout -b <branch-name>`
 
 2. **Cleanup**:
    - Remove debug prints/console.logs
