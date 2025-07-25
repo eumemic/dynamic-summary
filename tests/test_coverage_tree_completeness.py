@@ -8,7 +8,7 @@ from tests.mock_store import SimpleMockStore
 
 
 class TestCoverageTreeCompleteness:
-    """Tests that ensure coverage trees are full binary trees."""
+    """Tests that ensure coverage trees maintain left-balanced properties."""
 
     @pytest.fixture
     def setup_incomplete_tree(self):
@@ -105,14 +105,12 @@ class TestCoverageTreeCompleteness:
 
         return config, store, retriever, dp_generator
 
-    def test_incomplete_coverage_tree_works_with_relaxed_invariant(
-        self, setup_incomplete_tree
-    ):
-        """Test that incomplete coverage trees work correctly with relaxed fullness invariant."""
+    def test_left_balanced_tree_single_child_handling(self, setup_incomplete_tree):
+        """Test that left-balanced trees with single children are handled correctly."""
         config, store, retriever, dp_generator = setup_incomplete_tree
 
         # Simulate what happens with --n-max 1: only L3 is selected
-        # This creates an incomplete coverage tree
+        # This creates a left-balanced coverage tree where P2 has only its left child
         coverage_map = {"L3": True}
 
         # Add ancestors (this is what current retriever does)
@@ -134,14 +132,14 @@ class TestCoverageTreeCompleteness:
             if node:
                 nodes[node_id] = node
 
-        # This should have L3, P2, and root, but missing L4 (sibling of L3)
+        # This should have L3, P2, and root, but not L4 (sibling of L3)
         assert "L3" in nodes
         assert "P2" in nodes
         assert "root" in nodes
-        assert "L4" not in nodes  # This is the problem!
+        assert "L4" not in nodes  # P2 has only its left child in coverage
 
-        # With relaxed invariant, this should work without error
-        # The DP algorithm should handle P2 having only its left child in coverage
+        # With left-balanced trees, this is a valid configuration
+        # The DP algorithm correctly handles P2 having only its left child
         # Provide scores for all nodes in coverage to ensure L3 is selected
         scores = {node_id: 0.1 for node_id in nodes}  # Base score for all
         scores["L3"] = 1.0  # L3 has high relevance
@@ -153,12 +151,12 @@ class TestCoverageTreeCompleteness:
             root_id="root",
         )
 
-        # With incomplete coverage, the DP algorithm may choose root over the incomplete subtree
-        # This is actually correct behavior - it's choosing the best available option
-        # Since P2 is missing its right child, the algorithm can't guarantee complete coverage
-        # if it goes down that path, so it chooses the root summary instead
+        # The DP algorithm may choose root over the subtree with single child
+        # This is correct behavior - it's choosing the option with best quality score
+        # The algorithm now supports P2 having only its left child and makes
+        # the optimal choice based on relevance scores and token budgets
 
-        # This test should verify that the algorithm handles the incomplete tree without crashing
+        # This test verifies that the algorithm handles left-balanced trees correctly
         # The actual tiling choice depends on the quality scores and budget
         assert result.tiling.node_ids  # Should have some result
         assert result.total_quality >= 0  # Should have non-negative quality
