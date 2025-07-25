@@ -129,9 +129,7 @@ class TestChunkSizeRegression:
         # Mock summaries with mid delimiters - needs to be async
         async def mock_chat_completion(*args, **kwargs):
             response = MagicMock()
-            response.choices[0].message.content = (
-                "Summary part 1 <<<MID>>> Summary part 2"
-            )
+            response.choices[0].message.content = "Summary of part 1 and part 2"
             return response
 
         mock_async_client.chat.completions.create.side_effect = mock_chat_completion
