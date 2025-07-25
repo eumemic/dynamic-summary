@@ -5,6 +5,8 @@ argument-hint: [feature to test]
 ---
 
 # /test
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
 ## Context
 - Test commands: !`grep -E "^(test|check):" Makefile package.json pyproject.toml 2>/dev/null | head -5 || echo "No standard test commands found"`

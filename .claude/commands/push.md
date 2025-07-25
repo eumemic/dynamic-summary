@@ -5,6 +5,8 @@ argument-hint: [PR title]
 ---
 
 # /push
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
 ## Context
 - Current branch: !`git branch --show-current`
