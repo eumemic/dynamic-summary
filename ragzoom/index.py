@@ -1,9 +1,4 @@
-"""Tree building and indexing functionality for RagZoom.
-
-Note: Throughout this module, info-level logging is suppressed when show_progress=True
-to prevent log messages from disrupting the progress bar display. This is why you'll see
-`if not show_progress:` conditions before logger.info() calls.
-"""
+"""Tree building and indexing functionality for RagZoom."""
 
 import asyncio
 import logging
@@ -220,68 +215,116 @@ Here's the content to summarize:"""
                 # Add assistant's response to conversation history
                 messages.append({"role": "assistant", "content": summary})
 
-                # Check if summary exceeds token limit
+                # Check if summary needs correction (over or under target)
                 summary_tokens = self.splitter.tokenizer.encode(summary)
                 retry_count = 0
                 max_retries = 3
                 original_target = target_tokens
                 best_summary = summary
                 best_token_count = len(summary_tokens)
+                best_distance_from_target = abs(best_token_count - original_target)
 
-                while (
-                    len(summary_tokens) > original_target * 1.2
-                    and retry_count < max_retries
-                ):
-                    retry_count += 1
-
-                    # Progressive target reduction: 95%, 90%, 85%
-                    adjusted_target = int(original_target * (1.0 - 0.05 * retry_count))
-
-                    # Calculate detailed metrics
+                # Retry if more than 20% away from target (over or under)
+                while retry_count < max_retries:
                     current_tokens = len(summary_tokens)
-                    overage_pct = (
-                        (current_tokens - adjusted_target) / adjusted_target
-                    ) * 100
-                    excess_tokens = current_tokens - adjusted_target
-                    reduction_pct = (excess_tokens / current_tokens) * 100
-
-                    node_info = f"[{parent_id}] " if parent_id else ""
-                    logger.info(
-                        f"{node_info}Summary exceeded target: {current_tokens} tokens "
-                        f"(adjusted target: {adjusted_target}, {overage_pct:.0f}% over). "
-                        f"Retry {retry_count}/{max_retries} - Need to cut {excess_tokens} tokens."
+                    deviation_pct = (
+                        abs((current_tokens - original_target) / original_target) * 100
                     )
 
-                    # Build retry prompt with specific guidance based on overage
-                    if overage_pct <= 50:
-                        guidance = "Trim less essential details, descriptive passages, and minor events."
-                    elif overage_pct <= 100:
-                        guidance = "Focus only on major plot points and key character actions. Remove all minor details."
-                    else:
-                        guidance = "Provide only the most critical events. Use extremely concise language."
+                    # Stop if within 20% of target
+                    if deviation_pct <= 20:
+                        break
+                    retry_count += 1
+                    node_info = f"[{parent_id}] " if parent_id else ""
 
-                    retry_prompt = f"""Your previous summary was {current_tokens} tokens.
+                    # Determine if we're over or under target
+                    is_over_target = current_tokens > original_target
+
+                    # Progressive target adjustment only for over-target cases
+                    if is_over_target:
+                        adjusted_target = int(
+                            original_target * (1.0 - 0.05 * retry_count)
+                        )
+                    else:
+                        adjusted_target = original_target
+
+                    # Calculate detailed metrics
+                    if is_over_target:
+                        deviation = current_tokens - adjusted_target
+                        deviation_pct = (deviation / adjusted_target) * 100
+                        change_pct = (deviation / current_tokens) * 100
+
+                        actual_deviation_pct = (
+                            (current_tokens - original_target) / original_target
+                        ) * 100
+                        logger.info(
+                            f"{node_info}Summary over target: {current_tokens} tokens "
+                            f"(actual target: {original_target}, {actual_deviation_pct:.0f}% over). "
+                            f"Retry {retry_count}/{max_retries} - Asking LLM to target {adjusted_target} tokens."
+                        )
+
+                        # Build reduction prompt
+                        if deviation_pct <= 50:
+                            guidance = "Trim less essential details, descriptive passages, and minor events."
+                        elif deviation_pct <= 100:
+                            guidance = "Focus only on major plot points and key character actions. Remove all minor details."
+                        else:
+                            guidance = "Provide only the most critical events. Use extremely concise language."
+
+                        retry_prompt = f"""Your previous summary was {current_tokens} tokens.
 The target is {adjusted_target} tokens.
-You are {overage_pct:.0f}% over target ({excess_tokens} tokens too many).
+You are {deviation_pct:.0f}% over target ({deviation} tokens too many).
 
 To fix this:
-- Remove {excess_tokens} tokens from your {current_tokens} token summary
-- That's a {reduction_pct:.0f}% reduction from your current length
+- Remove {deviation} tokens from your {current_tokens} token summary
+- That's a {change_pct:.0f}% reduction from your current length
 
 {guidance}
 
 Create a shortened version that preserves the most important information while strictly staying under {adjusted_target} tokens."""
+                    else:
+                        # Under target - request expansion
+                        deficit = original_target - current_tokens
+                        deficit_pct = (deficit / original_target) * 100
+                        expansion_pct = (deficit / current_tokens) * 100
+
+                        logger.info(
+                            f"{node_info}Summary under target: {current_tokens} tokens "
+                            f"(target: {original_target}, {deficit_pct:.0f}% under). "
+                            f"Retry {retry_count}/{max_retries} - Can add {deficit} more tokens."
+                        )
+
+                        # Build expansion prompt
+                        if deficit_pct <= 30:
+                            guidance = "Add more specific details, exact names, numbers, and dates from the original text."
+                        elif deficit_pct <= 50:
+                            guidance = "Include additional context, supporting details, and important descriptive elements you previously omitted."
+                        else:
+                            guidance = "Significantly expand your summary by including much more detail from the original text. Add complete sequences of events, full character actions, and comprehensive descriptions."
+
+                        retry_prompt = f"""Your previous summary was {current_tokens} tokens.
+The target is {original_target} tokens.
+You are {deficit_pct:.0f}% under target (can add {deficit} more tokens).
+
+To fix this:
+- Add {deficit} tokens to your {current_tokens} token summary
+- That's a {expansion_pct:.0f}% expansion from your current length
+
+{guidance}
+
+Create an expanded version that includes more information from the original text while staying close to {original_target} tokens."""
 
                     # Add retry request to conversation
                     messages.append({"role": "user", "content": retry_prompt})
 
+                    # Use original target for max_tokens to ensure we don't artificially limit
                     retry_response = await self.client.chat.completions.create(
                         model=self.config.summary_model,
                         messages=messages,  # type: ignore
                         temperature=self.config.summary_temperature,
                         max_tokens=int(
-                            adjusted_target * 1.5
-                        ),  # Hard limit with some margin
+                            original_target * 1.5
+                        ),  # Hard limit based on actual target with margin
                     )
                     retry_content = retry_response.choices[0].message.content
                     summary = retry_content.strip() if retry_content else summary
@@ -293,48 +336,55 @@ Create a shortened version that preserves the most important information while s
                     new_tokens = self.splitter.tokenizer.encode(summary)
                     new_token_count = len(new_tokens)
 
-                    # Track best attempt (fewest tokens)
-                    if new_token_count < best_token_count:
+                    # Track best attempt (closest to target without exceeding)
+                    new_distance = abs(new_token_count - original_target)
+
+                    # Update best if: closer to target AND doesn't exceed target
+                    # OR if current best exceeds target and new one is shorter
+                    if (
+                        new_token_count <= original_target
+                        and new_distance < best_distance_from_target
+                    ) or (
+                        best_token_count > original_target
+                        and new_token_count < best_token_count
+                    ):
                         best_summary = summary
                         best_token_count = new_token_count
+                        best_distance_from_target = new_distance
 
-                        # If we made progress but still over, use this as new input
-                        if (
-                            new_token_count > original_target * 1.2
-                            and new_token_count < current_tokens
-                        ):
-                            logger.info(
-                                f"{node_info}Made progress: {current_tokens} -> {new_token_count} tokens. "
-                                f"Using shorter version for next retry."
-                            )
-                            summary_tokens = new_tokens
-                        else:
-                            # Either hit target or no progress
-                            summary_tokens = new_tokens
-                    else:
-                        # No improvement, stop trying
                         logger.info(
-                            f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens. "
-                            f"Using best attempt so far ({best_token_count} tokens)."
+                            f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
+                            f"(target: {original_target}, distance: {new_distance})"
                         )
-                        summary = best_summary
-                        summary_tokens = self.splitter.tokenizer.encode(best_summary)
-                        break
+                    else:
+                        logger.info(
+                            f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
+                            f"(best so far: {best_token_count} tokens, distance: {best_distance_from_target})"
+                        )
+
+                    # Always use the best summary for the next iteration
+                    summary = best_summary
+                    summary_tokens = self.splitter.tokenizer.encode(best_summary)
 
                 # Log final result
+                final_tokens = best_token_count
+                node_info = f"[{parent_id}] " if parent_id else ""
+                utilization_pct = (final_tokens / original_target) * 100
+
                 if retry_count > 0:
-                    final_tokens = len(summary_tokens)
-                    node_info = f"[{parent_id}] " if parent_id else ""
-                    if final_tokens <= original_target * 1.2:
-                        logger.info(
-                            f"{node_info}Summary successful after {retry_count} retries: "
-                            f"{final_tokens} tokens (original target: {original_target})"
-                        )
-                    else:
-                        logger.warning(
-                            f"{node_info}Summary still over limit after {max_retries} retries: "
-                            f"{final_tokens} tokens (original target: {original_target}). Continuing with best effort."
-                        )
+                    logger.info(
+                        f"{node_info}Summary corrected after {retry_count} retries: "
+                        f"{final_tokens} tokens (target: {original_target}, {utilization_pct:.0f}% utilization)"
+                    )
+                else:
+                    # Log initial result even if no retries needed
+                    logger.info(
+                        f"{node_info}Summary complete: {final_tokens} tokens "
+                        f"(target: {original_target}, {utilization_pct:.0f}% utilization)"
+                    )
+
+                # Use the best summary
+                summary = best_summary
 
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
@@ -389,10 +439,8 @@ Create a shortened version that preserves the most important information while s
             GlobalProgressTracker(len(chunks), show_progress) if show_progress else None
         )
 
-        # Log only when progress bar is not active to avoid display issues
-        if not show_progress:
-            logger.info("Splitting document into chunks...")
-            logger.info(f"Split document into {len(chunks)} chunks")
+        logger.info("Splitting document into chunks...")
+        logger.info(f"Split document into {len(chunks)} chunks")
 
         # Early validation: Check chunk sizes immediately after splitting
         from ragzoom.validate import validate, validate_chunk_sizes
@@ -416,7 +464,7 @@ Create a shortened version that preserves the most important information while s
 
         try:
             # Create leaf nodes with batch embeddings
-            if not show_progress and len(chunks) > 100:
+            if len(chunks) > 100:
                 logger.info("Preparing chunk data...")
 
             leaf_ids: list[str] = []
@@ -490,12 +538,11 @@ Create a shortened version that preserves the most important information while s
                 batch_end = min(i + batch_size, len(chunks))
 
                 # Show which batch we're processing with cumulative elapsed time
-                if not show_progress:
-                    elapsed = time.time() - overall_start_time
-                    mins, secs = divmod(int(elapsed), 60)
-                    logger.info(
-                        f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]"
-                    )
+                elapsed = time.time() - overall_start_time
+                mins, secs = divmod(int(elapsed), 60)
+                logger.info(
+                    f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]"
+                )
 
                 batch_embeddings = await self._get_embeddings_batch(batch_texts)
                 all_embeddings.extend(batch_embeddings)
@@ -549,10 +596,9 @@ Create a shortened version that preserves the most important information while s
             if root_id:
                 total_elapsed = time.time() - overall_start_time
                 mins, secs = divmod(int(total_elapsed), 60)
-                if not show_progress:
-                    logger.info(
-                        f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
-                    )
+                logger.info(
+                    f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
+                )
 
             return document_id
         finally:
@@ -764,20 +810,17 @@ Create a shortened version that preserves the most important information while s
 
             # Process all pairs concurrently
             if tasks:
-                # Log tree building progress only when no progress bar
-                if not (
-                    progress and progress.tracker and progress.tracker.show_progress
-                ):
-                    if overall_start_time:
-                        elapsed = time.time() - overall_start_time
-                        mins, secs = divmod(int(elapsed), 60)
-                        logger.info(
-                            f"Building tree height {current_height}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
-                        )
-                    else:
-                        logger.info(
-                            f"Building tree height {current_height}: processing {len(tasks)} node pairs"
-                        )
+                # Log tree building progress
+                if overall_start_time:
+                    elapsed = time.time() - overall_start_time
+                    mins, secs = divmod(int(elapsed), 60)
+                    logger.info(
+                        f"Building tree height {current_height}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
+                    )
+                else:
+                    logger.info(
+                        f"Building tree height {current_height}: processing {len(tasks)} node pairs"
+                    )
 
                 # Track completion count
                 completed_count = 0
@@ -794,16 +837,11 @@ Create a shortened version that preserves the most important information while s
                     # Log batch completion every 10 tasks
                     completed_count += 1
                     if completed_count % 10 == 0 and overall_start_time:
-                        if not (
-                            progress
-                            and progress.tracker
-                            and progress.tracker.show_progress
-                        ):
-                            elapsed = time.time() - overall_start_time
-                            mins, secs = divmod(int(elapsed), 60)
-                            logger.info(
-                                f"  Completed {completed_count}/{len(tasks)} pairs at height {current_height} [{mins}m {secs}s elapsed total]"
-                            )
+                        elapsed = time.time() - overall_start_time
+                        mins, secs = divmod(int(elapsed), 60)
+                        logger.info(
+                            f"  Completed {completed_count}/{len(tasks)} pairs at height {current_height} [{mins}m {secs}s elapsed total]"
+                        )
 
                     return result
 
@@ -857,33 +895,26 @@ Create a shortened version that preserves the most important information while s
             if overall_start_time:
                 elapsed = time.time() - overall_start_time
                 mins, secs = divmod(int(elapsed), 60)
-                if not (
-                    progress and progress.tracker and progress.tracker.show_progress
-                ):
-                    logger.info(
-                        f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]"
-                    )
+                logger.info(
+                    f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]"
+                )
             else:
-                if not (
-                    progress and progress.tracker and progress.tracker.show_progress
-                ):
-                    logger.info(
-                        f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}..."
-                    )
+                logger.info(
+                    f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}..."
+                )
 
             # Log token usage statistics
-            if not (progress and progress.tracker and progress.tracker.show_progress):
-                logger.info("\nToken usage statistics by tree height:")
-                for height in sorted(token_stats.keys()):
-                    counts = token_stats[height]
-                    if counts:
-                        avg_tokens = sum(counts) / len(counts)
-                        min_tokens = min(counts)
-                        max_tokens = max(counts)
-                        logger.info(
-                            f"  Height {height}: avg {avg_tokens:.0f} tokens, "
-                            f"min {min_tokens}, max {max_tokens} ({len(counts)} nodes)"
-                        )
+            logger.info("\nToken usage statistics by tree height:")
+            for height in sorted(token_stats.keys()):
+                counts = token_stats[height]
+                if counts:
+                    avg_tokens = sum(counts) / len(counts)
+                    min_tokens = min(counts)
+                    max_tokens = max(counts)
+                    logger.info(
+                        f"  Height {height}: avg {avg_tokens:.0f} tokens, "
+                        f"min {min_tokens}, max {max_tokens} ({len(counts)} nodes)"
+                    )
 
         return current_level_ids[0] if current_level_ids else ""
 
