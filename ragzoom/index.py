@@ -107,6 +107,19 @@ class TreeBuilder:
         parent_id: Optional[str] = None,
     ) -> str:
         """Summarize text using LLM."""
+        # Check if combined text is already under target
+        combined_text = f"{left_text} {right_text}".strip()
+        combined_tokens = self.splitter.tokenizer.encode(combined_text)
+        current_token_count = len(combined_tokens)
+
+        if current_token_count <= target_tokens:
+            node_info = f"[{parent_id}] " if parent_id else ""
+            logger.info(
+                f"{node_info}Combined text already under target: {current_token_count} tokens "
+                f"(target: {target_tokens}). Skipping summarization."
+            )
+            return combined_text
+
         # Build prompt with adjacent context (trim to avoid token explosion)
         prompt_parts = []
 
@@ -132,8 +145,18 @@ class TreeBuilder:
             else:
                 trimmed_next = next_context
 
+        # Calculate compression stats for the prompt
+        tokens_to_remove = current_token_count - target_tokens
+        compression_ratio = (tokens_to_remove / current_token_count) * 100
+
         # Build the summarization prompt
         instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags, using the <PRECEDING_TEXT> and <FOLLOWING_TEXT> content as context (when provided - these may be omitted if there is no preceding/following context).
+
+TOKEN REQUIREMENTS:
+- The content to summarize is {current_token_count} tokens
+- Your target is {target_tokens} tokens
+- This means you need to compress {current_token_count} tokens into {target_tokens} tokens
+- That's a {compression_ratio:.0f}% compression (remove {tokens_to_remove} tokens)
 
 CRITICAL REQUIREMENTS:
 - Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
@@ -201,26 +224,32 @@ Here's the content to summarize:"""
                 summary_tokens = self.splitter.tokenizer.encode(summary)
                 retry_count = 0
                 max_retries = 3
+                original_target = target_tokens
+                best_summary = summary
+                best_token_count = len(summary_tokens)
 
                 while (
-                    len(summary_tokens) > target_tokens * 1.2
+                    len(summary_tokens) > original_target * 1.2
                     and retry_count < max_retries
                 ):
                     retry_count += 1
 
-                    # Calculate overage percentage
+                    # Progressive target reduction: 95%, 90%, 85%
+                    adjusted_target = int(original_target * (1.0 - 0.05 * retry_count))
+
+                    # Calculate detailed metrics
+                    current_tokens = len(summary_tokens)
                     overage_pct = (
-                        (len(summary_tokens) - target_tokens) / target_tokens
+                        (current_tokens - adjusted_target) / adjusted_target
                     ) * 100
-                    reduction_needed = (
-                        (len(summary_tokens) - target_tokens) / len(summary_tokens)
-                    ) * 100
+                    excess_tokens = current_tokens - adjusted_target
+                    reduction_pct = (excess_tokens / current_tokens) * 100
 
                     node_info = f"[{parent_id}] " if parent_id else ""
                     logger.info(
-                        f"{node_info}Summary exceeded target: {len(summary_tokens)} tokens "
-                        f"(target: {target_tokens}, {overage_pct:.0f}% over). "
-                        f"Retry {retry_count}/{max_retries} - Requesting {reduction_needed:.0f}% reduction."
+                        f"{node_info}Summary exceeded target: {current_tokens} tokens "
+                        f"(adjusted target: {adjusted_target}, {overage_pct:.0f}% over). "
+                        f"Retry {retry_count}/{max_retries} - Need to cut {excess_tokens} tokens."
                     )
 
                     # Build retry prompt with specific guidance based on overage
@@ -231,13 +260,17 @@ Here's the content to summarize:"""
                     else:
                         guidance = "Provide only the most critical events. Use extremely concise language."
 
-                    retry_prompt = f"""Your summary was {len(summary_tokens)} tokens, which is {overage_pct:.0f}% over the limit of {target_tokens} tokens.
+                    retry_prompt = f"""Your previous summary was {current_tokens} tokens.
+The target is {adjusted_target} tokens.
+You are {overage_pct:.0f}% over target ({excess_tokens} tokens too many).
 
-Please reduce it by at least {reduction_needed:.0f}% to get under {target_tokens} tokens.
+To fix this:
+- Remove {excess_tokens} tokens from your {current_tokens} token summary
+- That's a {reduction_pct:.0f}% reduction from your current length
 
 {guidance}
 
-Create a shortened version that preserves the most important information while strictly staying under {target_tokens} tokens."""
+Create a shortened version that preserves the most important information while strictly staying under {adjusted_target} tokens."""
 
                     # Add retry request to conversation
                     messages.append({"role": "user", "content": retry_prompt})
@@ -247,7 +280,7 @@ Create a shortened version that preserves the most important information while s
                         messages=messages,  # type: ignore
                         temperature=self.config.summary_temperature,
                         max_tokens=int(
-                            target_tokens * 1.5
+                            adjusted_target * 1.5
                         ),  # Hard limit with some margin
                     )
                     retry_content = retry_response.choices[0].message.content
@@ -257,21 +290,50 @@ Create a shortened version that preserves the most important information while s
                     messages.append({"role": "assistant", "content": summary})
 
                     # Re-check token count
-                    summary_tokens = self.splitter.tokenizer.encode(summary)
+                    new_tokens = self.splitter.tokenizer.encode(summary)
+                    new_token_count = len(new_tokens)
+
+                    # Track best attempt (fewest tokens)
+                    if new_token_count < best_token_count:
+                        best_summary = summary
+                        best_token_count = new_token_count
+
+                        # If we made progress but still over, use this as new input
+                        if (
+                            new_token_count > original_target * 1.2
+                            and new_token_count < current_tokens
+                        ):
+                            logger.info(
+                                f"{node_info}Made progress: {current_tokens} -> {new_token_count} tokens. "
+                                f"Using shorter version for next retry."
+                            )
+                            summary_tokens = new_tokens
+                        else:
+                            # Either hit target or no progress
+                            summary_tokens = new_tokens
+                    else:
+                        # No improvement, stop trying
+                        logger.info(
+                            f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens. "
+                            f"Using best attempt so far ({best_token_count} tokens)."
+                        )
+                        summary = best_summary
+                        summary_tokens = self.splitter.tokenizer.encode(best_summary)
+                        break
 
                 # Log final result
                 if retry_count > 0:
                     final_tokens = len(summary_tokens)
                     node_info = f"[{parent_id}] " if parent_id else ""
-                    if final_tokens <= target_tokens * 1.2:
+                    if final_tokens <= original_target * 1.2:
                         logger.info(
                             f"{node_info}Summary successful after {retry_count} retries: "
-                            f"{final_tokens} tokens (target: {target_tokens})"
+                            f"{final_tokens} tokens (original target: {original_target})"
                         )
                     else:
                         logger.warning(
                             f"{node_info}Summary still over limit after {max_retries} retries: "
-                            f"{final_tokens} tokens (target: {target_tokens}). Continuing with best effort."
+                            f"{final_tokens} tokens (original target: {original_target}). Continuing with best effort."
                         )
 
             except Exception as e:
@@ -535,9 +597,13 @@ Create a shortened version that preserves the most important information while s
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
 
-        # Use consistent token budget for all heights
-        # Target tokens for the summary (guidance for LLM, not hard limit)
-        target_tokens = self.config.leaf_tokens
+        # Calculate target tokens: min of leaf_tokens or half the combined text size
+        combined_text = f"{left_text} {right_text}".strip()
+        combined_tokens = self.splitter.tokenizer.encode(combined_text)
+        half_size = len(combined_tokens) // 2
+
+        # Use the smaller of leaf_tokens or half the original size
+        target_tokens = min(self.config.leaf_tokens, half_size)
 
         # Generate summary (async)
         summary = await self._summarize_text(
@@ -861,11 +927,17 @@ Create a shortened version that preserves the most important information while s
                     logger.warning(f"Node {node_id} missing children, skipping refresh")
                     continue
 
+                # Calculate target tokens for refresh
+                combined_text = f"{left_child.text} {right_child.text}".strip()
+                combined_tokens = self.splitter.tokenizer.encode(combined_text)
+                half_size = len(combined_tokens) // 2
+                target_tokens = min(self.config.leaf_tokens, half_size)
+
                 # Re-summarize with fresh content
                 summary = await self._summarize_text(
                     left_child.text,
                     right_child.text,
-                    target_tokens=self.config.leaf_tokens,
+                    target_tokens=target_tokens,
                     prev_context="",
                     next_context="",
                     parent_id=node_id,
