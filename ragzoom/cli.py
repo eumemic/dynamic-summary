@@ -154,6 +154,7 @@ def index(
         from ragzoom.validate import (
             validate_chunk_sizes,
             validate_document_coverage,
+            validate_equal_leaf_depth,
             validate_tree_structure,
         )
 
@@ -168,6 +169,10 @@ def index(
 
         run_validate(
             lambda: validate_tree_structure(store, doc_id, text), "tree structure"
+        )
+
+        run_validate(
+            lambda: validate_equal_leaf_depth(store, doc_id), "equal leaf depth"
         )
 
     except Exception as e:

@@ -438,6 +438,79 @@ def validate_tree_is_left_balanced(store: Store, document_id: str) -> Optional[s
     return None  # Tree is left-balanced
 
 
+def validate_equal_leaf_depth(store: Store, document_id: str) -> Optional[str]:
+    """Validate that all leaf nodes are at the same (maximal) depth.
+
+    This ensures consistent abstraction levels across the tree and prevents
+    mixing of raw text and summaries at different heights.
+
+    Args:
+        store: Storage instance
+        document_id: Document to validate
+
+    Returns:
+        Error message if invalid, None if valid
+    """
+    nodes = store.get_all_nodes_for_document(document_id)
+    if not nodes:
+        return "No nodes found for document"
+
+    # Build node lookup and identify leaf nodes
+    node_lookup = {node.id: node for node in nodes}
+    leaf_nodes = []
+
+    for node in nodes:
+        # A node is a leaf if it has no children
+        if node.left_child_id is None and node.right_child_id is None:
+            leaf_nodes.append(node)
+
+    if not leaf_nodes:
+        return "No leaf nodes found"
+
+    # Find root node (node with no parent)
+    root_node = None
+    for node in nodes:
+        if node.parent_id is None:
+            root_node = node
+            break
+
+    if not root_node:
+        return "No root node found"
+
+    # Calculate depth for each leaf node
+    def get_depth(node_id: str) -> int:
+        """Calculate depth from node to root."""
+        depth = 0
+        current_id = node_id
+        while current_id != root_node.id:
+            node = node_lookup.get(current_id)
+            if not node or not node.parent_id:
+                return -1  # Invalid tree structure
+            current_id = node.parent_id
+            depth += 1
+        return depth
+
+    # Get depths of all leaf nodes
+    leaf_depths = []
+    for leaf in leaf_nodes:
+        depth = get_depth(leaf.id)
+        if depth == -1:
+            return f"Invalid tree structure: leaf node {leaf.id} cannot reach root"
+        leaf_depths.append((leaf.id, depth))
+
+    # Check if all depths are the same
+    if leaf_depths:
+        first_depth = leaf_depths[0][1]
+        for leaf_id, depth in leaf_depths:
+            if depth != first_depth:
+                return (
+                    f"Leaf nodes at different depths: {leaf_depths[0][0]} at depth {first_depth}, "
+                    f"{leaf_id} at depth {depth}. All leaves should be at the same depth."
+                )
+
+    return None  # All leaves at same depth
+
+
 async def validate_summary_faithfulness(
     summary: str,
     left_text: str,

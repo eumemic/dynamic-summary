@@ -32,7 +32,8 @@ For an in-depth explanation of how tilings are generated using the Dynamic Progr
 The RagZoom system maintains several critical invariants to ensure correct operation:
 
 - **Left-Balanced Tree Requirement**: Trees must be left-balanced, where internal nodes have either one left child or two children. Parent spans must equal the union of child spans to maintain complete document coverage.
-- **Coverage Tree Completeness**: When building a coverage tree for retrieval, the system must include siblings to maintain coverage completeness. If a node is selected, its sibling must also be included to ensure the parent can be used as a fallback option.
+- **Equal Leaf Depth**: All leaf nodes must be at the same (maximal) depth from the root. This ensures consistent abstraction levels throughout the tree and prevents mixing raw text with summaries at different heights. When there's an odd number of nodes at any level, a single-child parent is created rather than promoting the odd node.
+- **Coverage Tree Completeness**: When building a coverage tree for retrieval, the system must include siblings to maintain coverage completeness. If a node is selected, its sibling must also be included (if it exists) to ensure the parent can be used as a fallback option.
 - **Span Coverage Invariant**: Every parent node's span must equal the union of its children's spans, ensuring no gaps in document coverage.
 
 ## 2. System Components
