@@ -9,7 +9,7 @@ Create a new git worktree and branch for feature development, then change to tha
 ## Instructions:
 
 1. **Determine Branch Name**:
-   - If $ARGUMENTS provided: Use them to generate a descriptive branch name
+   - If arguments provided: Use them to generate a descriptive branch name
    - If no arguments: Analyze the conversation context to infer what feature/fix is being worked on
    - Follow naming conventions:
      - `feature/` for new features
