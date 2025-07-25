@@ -1,3 +1,9 @@
+---
+allowed-tools: Read, Write, Edit, MultiEdit, Grep, Bash, Task
+description: Implement features with correctness and maintainability
+argument-hint: <feature/fix description>
+---
+
 # /implement
 
 Arguments: "$ARGUMENTS"
@@ -46,3 +52,11 @@ Arguments: "fix memory leak"
 → Use `/diagnose` first if needed, implement fix, verify with memory profiling
 
 Remember: Great code fits naturally into the codebase and can be understood by future developers.
+
+## Retrospective
+After implementing, reflect on three levels:
+1. **Command**: Did this provide the right balance of guidance and autonomy?
+2. **Conformance**: Are the consultation triggers clear and actionable?
+3. **Meta**: Should commands emphasize testing strategies more prominently?
+
+ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.
