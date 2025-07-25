@@ -272,7 +272,7 @@ class Retriever:
             logger.error(f"Error during async refresh: {e}")
 
     def _build_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
-        """Build a full coverage map including selected nodes, their ancestors, and all required children for fullness."""
+        """Build a coverage map including selected nodes, their ancestors, and all required siblings to maintain the coverage property."""
         if not selected_ids:
             return {}
 
@@ -286,7 +286,7 @@ class Retriever:
         for ancestor in ancestors:
             coverage_map[ancestor.id] = True
 
-        # Iteratively ensure fullness: every internal node in the coverage set must have both children (if any)
+        # Iteratively ensure coverage: if a child is in the coverage set, include its sibling (if exists) so parent span equals union of children spans
         while True:
             nodes_in_coverage = self.store.get_nodes(list(coverage_map.keys()))
             new_nodes_added = False
@@ -296,7 +296,7 @@ class Retriever:
                 right = node.right_child_id
                 if left or right:
                     # If a child is present in the coverage set, include its sibling if it exists
-                    # This maintains fullness for nodes that have both children
+                    # This maintains the coverage property
                     if left and left in coverage_map:
                         # Left child is in coverage
                         if right and right not in coverage_map:
@@ -304,9 +304,9 @@ class Retriever:
                             coverage_map[right] = True
                             new_nodes_added = True
                     elif right and right in coverage_map:
-                        # Right child is in coverage (shouldn't happen in left-balanced tree)
+                        # Right child is in coverage
                         if left and left not in coverage_map:
-                            # Include left sibling if it exists
+                            # Include left sibling (must exist in left-balanced tree)
                             coverage_map[left] = True
                             new_nodes_added = True
             if not new_nodes_added:
