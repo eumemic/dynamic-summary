@@ -1,17 +1,20 @@
+---
+allowed-tools: Read, Grep, Bash, Task
+description: Review code for architecture, correctness, and maintainability
+argument-hint: [file/PR/commit]
+---
+
 # /review
+
+## Context
+- Current branch: !`git branch --show-current`
+- Changed files: !`git diff --name-status HEAD~ 2>/dev/null | head -10 || git status --porcelain | head -10`
 
 Arguments: "$ARGUMENTS"
 
 Review code changes with focus on architecture, correctness, and maintainability.
 
-## Scope
-
-Use arguments if provided, otherwise:
-- If working directory dirty → uncommitted changes
-- If on feature branch → diff against master
-- Otherwise → complete repository state
-
-## Core Intent
+## Strategic Guidance
 
 Look beyond syntax to question design decisions. Think carefully about the architecture - trace data flows, understand component relationships. Is this the simplest solution? Could we achieve the same with less code? What would a new developer think?
 
@@ -60,3 +63,11 @@ Look beyond syntax to question design decisions. Think carefully about the archi
 [Overall assessment and key actions]
 
 Remember: Great code is simple code. Question every abstraction.
+
+## Retrospective
+After reviewing, reflect on three levels:
+1. **Command**: Did this promote architecture-first thinking?
+2. **Conformance**: Is the output format helpful without being rigid?
+3. **Meta**: Should commands include more emphasis on simplicity metrics?
+
+ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.
