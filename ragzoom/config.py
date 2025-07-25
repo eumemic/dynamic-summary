@@ -45,6 +45,19 @@ class RagZoomConfig(BaseSettings):
         default=False, description="Enable smoothing pass for tiling joins"
     )
 
+    # Summary correction parameters
+    summary_deviation_threshold: float = Field(
+        default=0.2,
+        description="Max deviation from target before retry (0.2 = 20%)",
+    )
+    summary_max_retries: int = Field(
+        default=3, description="Maximum retries for summary correction"
+    )
+    summary_reduction_factors: list[float] = Field(
+        default=[0.95, 0.90, 0.85],
+        description="Progressive reduction factors for over-target summaries",
+    )
+
     # Validation
     validate_pipeline: bool = Field(
         default=False, description="Enable validation checks for tiling invariants"
