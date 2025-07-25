@@ -5,6 +5,8 @@ argument-hint: [issue description]
 ---
 
 # /issue
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
 ## Context
 - Available labels: !`gh label list --json name -q '.[].name' | head -20 | tr '\n' ', ' | sed 's/,$//'`
