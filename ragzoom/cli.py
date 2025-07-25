@@ -63,6 +63,11 @@ def cli(ctx: click.Context) -> None:
     help="Maximum concurrent API requests (default: 10)",
 )
 @click.option("--validate", is_flag=True, help="Enable validation checks")
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Show debug information including token usage statistics",
+)
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -72,6 +77,7 @@ def index(
     no_progress: bool,
     max_concurrent: int,
     validate: bool,
+    debug: bool,
 ) -> None:
     """Index a document from file."""
     # Set global validation flag
@@ -117,6 +123,7 @@ def index(
             document_id=document_id,
             file_path=str(path.absolute()),
             show_progress=not no_progress,
+            debug=debug,
         )
 
         # Get stats
@@ -174,6 +181,12 @@ def index(
         run_validate(
             lambda: validate_equal_leaf_depth(store, doc_id), "equal leaf depth"
         )
+
+        # Show debug hint if enabled
+        if debug:
+            click.echo(
+                "\n💡 Debug information (including token usage statistics) logged to stderr"
+            )
 
     except Exception as e:
         click.echo(f"❌ Error indexing document: {e}", err=True)
