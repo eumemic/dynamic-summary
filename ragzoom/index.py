@@ -92,6 +92,174 @@ class TreeBuilder:
                 logger.error(f"Error getting batch embeddings: {e}")
                 raise
 
+    def _calculate_target_tokens(self, text: str) -> int:
+        """Calculate target tokens as min of leaf_tokens or half the text size."""
+        tokens = self.splitter.tokenizer.encode(text)
+        half_size = len(tokens) // 2
+        return min(self.config.leaf_tokens, half_size)
+
+    async def _retry_summary_correction(
+        self,
+        initial_summary: str,
+        target_tokens: int,
+        parent_id: Optional[str] = None,
+    ) -> str:
+        """Retry summary correction to get closer to target token count."""
+        summary = initial_summary
+        summary_tokens = self.splitter.tokenizer.encode(summary)
+        best_summary = summary
+        best_token_count = len(summary_tokens)
+        best_distance_from_target = abs(best_token_count - target_tokens)
+
+        node_info = f"[{parent_id}] " if parent_id else ""
+
+        for retry_count in range(1, self.config.summary_max_retries + 1):
+            current_tokens = len(summary_tokens)
+            deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
+
+            # Stop if within threshold
+            if deviation_pct <= self.config.summary_deviation_threshold:
+                break
+
+            is_over_target = current_tokens > target_tokens
+
+            if is_over_target:
+                # Progressive reduction for over-target
+                if retry_count <= len(self.config.summary_reduction_factors):
+                    adjusted_target = int(
+                        target_tokens
+                        * self.config.summary_reduction_factors[retry_count - 1]
+                    )
+                else:
+                    adjusted_target = int(target_tokens * 0.8)  # Fallback
+
+                deviation = current_tokens - adjusted_target
+                deviation_pct_display = (deviation / adjusted_target) * 100
+                change_pct = (deviation / current_tokens) * 100
+
+                actual_deviation_pct = (
+                    (current_tokens - target_tokens) / target_tokens
+                ) * 100
+                logger.info(
+                    f"{node_info}Summary over target: {current_tokens} tokens "
+                    f"(actual target: {target_tokens}, {actual_deviation_pct:.0f}% over). "
+                    f"Retry {retry_count}/{self.config.summary_max_retries} - "
+                    f"Asking LLM to target {adjusted_target} tokens."
+                )
+
+                # Build reduction prompt
+                if deviation_pct_display <= 50:
+                    guidance = "Trim less essential details, descriptive passages, and minor events."
+                elif deviation_pct_display <= 100:
+                    guidance = "Focus only on major plot points and key character actions. Remove all minor details."
+                else:
+                    guidance = "Provide only the most critical events. Use extremely concise language."
+
+                prompt = f"""Please revise this summary to be shorter.
+
+Current summary ({current_tokens} tokens):
+{summary}
+
+Target: {adjusted_target} tokens (you are {deviation_pct_display:.0f}% over target)
+To fix this, remove approximately {change_pct:.0f}% of the content.
+
+{guidance}
+
+Provide ONLY the shortened summary, with no preamble or explanation."""
+            else:
+                # Under target - request expansion
+                deficit = target_tokens - current_tokens
+                deficit_pct = (deficit / target_tokens) * 100
+                expansion_pct = (deficit / current_tokens) * 100
+
+                logger.info(
+                    f"{node_info}Summary under target: {current_tokens} tokens "
+                    f"(target: {target_tokens}, {deficit_pct:.0f}% under). "
+                    f"Retry {retry_count}/{self.config.summary_max_retries} - "
+                    f"Can add {deficit} more tokens."
+                )
+
+                # Build expansion prompt
+                if deficit_pct <= 30:
+                    guidance = (
+                        "Add more specific details, exact names, numbers, and dates."
+                    )
+                elif deficit_pct <= 50:
+                    guidance = "Include additional context, supporting details, and important descriptive elements."
+                else:
+                    guidance = "Significantly expand by including much more detail. Add complete sequences of events, full character actions, and comprehensive descriptions."
+
+                prompt = f"""Please expand this summary with more detail.
+
+Current summary ({current_tokens} tokens):
+{summary}
+
+Target: {target_tokens} tokens (you can add {deficit} more tokens)
+To fix this, expand by approximately {expansion_pct:.0f}%.
+
+{guidance}
+
+Provide ONLY the expanded summary, with no preamble or explanation."""
+
+            # Make retry request
+            try:
+                retry_response = await self.client.chat.completions.create(
+                    model=self.config.summary_model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": f"You are a precise editor who adjusts text length to meet specific token targets. Target: approximately {target_tokens} tokens.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=self.config.summary_temperature,
+                    max_tokens=int(target_tokens * 1.5),  # Safety margin
+                )
+
+                content = retry_response.choices[0].message.content
+                if not content:
+                    logger.warning(f"{node_info}Empty response from LLM during retry")
+                    continue
+
+                summary = content.strip()
+
+                # Check new token count
+                new_tokens = self.splitter.tokenizer.encode(summary)
+                new_token_count = len(new_tokens)
+                new_distance = abs(new_token_count - target_tokens)
+
+                # Update best if improved
+                if (
+                    new_token_count <= target_tokens
+                    and new_distance < best_distance_from_target
+                ) or (
+                    best_token_count > target_tokens
+                    and new_token_count < best_token_count
+                ):
+                    best_summary = summary
+                    best_token_count = new_token_count
+                    best_distance_from_target = new_distance
+
+                    logger.info(
+                        f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
+                        f"(target: {target_tokens}, distance: {new_distance})"
+                    )
+                else:
+                    logger.info(
+                        f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
+                        f"(best so far: {best_token_count} tokens)"
+                    )
+
+                # Use best for next iteration
+                summary = best_summary
+                summary_tokens = self.splitter.tokenizer.encode(best_summary)
+
+            except Exception as e:
+                logger.error(f"{node_info}Error during retry {retry_count}: {e}")
+                break
+
+        return best_summary
+
     async def _summarize_text(
         self,
         left_text: str,
@@ -210,181 +378,39 @@ Here's the content to summarize:"""
                     # No max_tokens limit - let LLM decide based on prompt instructions
                 )
                 content = response.choices[0].message.content
-                summary = content.strip() if content else ""
+                if not content:
+                    raise ValueError("Empty response from LLM")
 
-                # Add assistant's response to conversation history
-                messages.append({"role": "assistant", "content": summary})
+                summary = content.strip()
+                if not summary:
+                    raise ValueError("Summary is empty after stripping whitespace")
 
-                # Check if summary needs correction (over or under target)
+                # Check if summary needs correction
                 summary_tokens = self.splitter.tokenizer.encode(summary)
-                retry_count = 0
-                max_retries = 3
-                original_target = target_tokens
-                best_summary = summary
-                best_token_count = len(summary_tokens)
-                best_distance_from_target = abs(best_token_count - original_target)
+                current_tokens = len(summary_tokens)
+                deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
 
-                # Retry if more than 20% away from target (over or under)
-                while retry_count < max_retries:
-                    current_tokens = len(summary_tokens)
-                    deviation_pct = (
-                        abs((current_tokens - original_target) / original_target) * 100
-                    )
-
-                    # Stop if within 20% of target
-                    if deviation_pct <= 20:
-                        break
-                    retry_count += 1
-                    node_info = f"[{parent_id}] " if parent_id else ""
-
-                    # Determine if we're over or under target
-                    is_over_target = current_tokens > original_target
-
-                    # Progressive target adjustment only for over-target cases
-                    if is_over_target:
-                        adjusted_target = int(
-                            original_target * (1.0 - 0.05 * retry_count)
-                        )
-                    else:
-                        adjusted_target = original_target
-
-                    # Calculate detailed metrics
-                    if is_over_target:
-                        deviation = current_tokens - adjusted_target
-                        deviation_pct = (deviation / adjusted_target) * 100
-                        change_pct = (deviation / current_tokens) * 100
-
-                        actual_deviation_pct = (
-                            (current_tokens - original_target) / original_target
-                        ) * 100
-                        logger.info(
-                            f"{node_info}Summary over target: {current_tokens} tokens "
-                            f"(actual target: {original_target}, {actual_deviation_pct:.0f}% over). "
-                            f"Retry {retry_count}/{max_retries} - Asking LLM to target {adjusted_target} tokens."
-                        )
-
-                        # Build reduction prompt
-                        if deviation_pct <= 50:
-                            guidance = "Trim less essential details, descriptive passages, and minor events."
-                        elif deviation_pct <= 100:
-                            guidance = "Focus only on major plot points and key character actions. Remove all minor details."
-                        else:
-                            guidance = "Provide only the most critical events. Use extremely concise language."
-
-                        retry_prompt = f"""Your previous summary was {current_tokens} tokens.
-The target is {adjusted_target} tokens.
-You are {deviation_pct:.0f}% over target ({deviation} tokens too many).
-
-To fix this:
-- Remove {deviation} tokens from your {current_tokens} token summary
-- That's a {change_pct:.0f}% reduction from your current length
-
-{guidance}
-
-Create a shortened version that preserves the most important information while strictly staying under {adjusted_target} tokens."""
-                    else:
-                        # Under target - request expansion
-                        deficit = original_target - current_tokens
-                        deficit_pct = (deficit / original_target) * 100
-                        expansion_pct = (deficit / current_tokens) * 100
-
-                        logger.info(
-                            f"{node_info}Summary under target: {current_tokens} tokens "
-                            f"(target: {original_target}, {deficit_pct:.0f}% under). "
-                            f"Retry {retry_count}/{max_retries} - Can add {deficit} more tokens."
-                        )
-
-                        # Build expansion prompt
-                        if deficit_pct <= 30:
-                            guidance = "Add more specific details, exact names, numbers, and dates from the original text."
-                        elif deficit_pct <= 50:
-                            guidance = "Include additional context, supporting details, and important descriptive elements you previously omitted."
-                        else:
-                            guidance = "Significantly expand your summary by including much more detail from the original text. Add complete sequences of events, full character actions, and comprehensive descriptions."
-
-                        retry_prompt = f"""Your previous summary was {current_tokens} tokens.
-The target is {original_target} tokens.
-You are {deficit_pct:.0f}% under target (can add {deficit} more tokens).
-
-To fix this:
-- Add {deficit} tokens to your {current_tokens} token summary
-- That's a {expansion_pct:.0f}% expansion from your current length
-
-{guidance}
-
-Create an expanded version that includes more information from the original text while staying close to {original_target} tokens."""
-
-                    # Add retry request to conversation
-                    messages.append({"role": "user", "content": retry_prompt})
-
-                    # Use original target for max_tokens to ensure we don't artificially limit
-                    retry_response = await self.client.chat.completions.create(
-                        model=self.config.summary_model,
-                        messages=messages,  # type: ignore
-                        temperature=self.config.summary_temperature,
-                        max_tokens=int(
-                            original_target * 1.5
-                        ),  # Hard limit based on actual target with margin
-                    )
-                    retry_content = retry_response.choices[0].message.content
-                    summary = retry_content.strip() if retry_content else summary
-
-                    # Add assistant's response to conversation
-                    messages.append({"role": "assistant", "content": summary})
-
-                    # Re-check token count
-                    new_tokens = self.splitter.tokenizer.encode(summary)
-                    new_token_count = len(new_tokens)
-
-                    # Track best attempt (closest to target without exceeding)
-                    new_distance = abs(new_token_count - original_target)
-
-                    # Update best if: closer to target AND doesn't exceed target
-                    # OR if current best exceeds target and new one is shorter
-                    if (
-                        new_token_count <= original_target
-                        and new_distance < best_distance_from_target
-                    ) or (
-                        best_token_count > original_target
-                        and new_token_count < best_token_count
-                    ):
-                        best_summary = summary
-                        best_token_count = new_token_count
-                        best_distance_from_target = new_distance
-
-                        logger.info(
-                            f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
-                            f"(target: {original_target}, distance: {new_distance})"
-                        )
-                    else:
-                        logger.info(
-                            f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
-                            f"(best so far: {best_token_count} tokens, distance: {best_distance_from_target})"
-                        )
-
-                    # Always use the best summary for the next iteration
-                    summary = best_summary
-                    summary_tokens = self.splitter.tokenizer.encode(best_summary)
-
-                # Log final result
-                final_tokens = best_token_count
                 node_info = f"[{parent_id}] " if parent_id else ""
-                utilization_pct = (final_tokens / original_target) * 100
 
-                if retry_count > 0:
+                # Use retry correction if deviation exceeds threshold
+                if deviation_pct > self.config.summary_deviation_threshold:
+                    summary = await self._retry_summary_correction(
+                        summary, target_tokens, parent_id
+                    )
+                    # Re-calculate final tokens for logging
+                    final_tokens = len(self.splitter.tokenizer.encode(summary))
+                    utilization_pct = (final_tokens / target_tokens) * 100
                     logger.info(
-                        f"{node_info}Summary corrected after {retry_count} retries: "
-                        f"{final_tokens} tokens (target: {original_target}, {utilization_pct:.0f}% utilization)"
+                        f"{node_info}Summary corrected: {final_tokens} tokens "
+                        f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
                     )
                 else:
-                    # Log initial result even if no retries needed
+                    # Log initial result
+                    utilization_pct = (current_tokens / target_tokens) * 100
                     logger.info(
-                        f"{node_info}Summary complete: {final_tokens} tokens "
-                        f"(target: {original_target}, {utilization_pct:.0f}% utilization)"
+                        f"{node_info}Summary complete: {current_tokens} tokens "
+                        f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
                     )
-
-                # Use the best summary
-                summary = best_summary
 
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
@@ -635,13 +661,9 @@ Create an expanded version that includes more information from the original text
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
 
-        # Calculate target tokens: min of leaf_tokens or half the combined text size
+        # Calculate target tokens
         combined_text = f"{left_text} {right_text}".strip()
-        combined_tokens = self.splitter.tokenizer.encode(combined_text)
-        half_size = len(combined_tokens) // 2
-
-        # Use the smaller of leaf_tokens or half the original size
-        target_tokens = min(self.config.leaf_tokens, half_size)
+        target_tokens = self._calculate_target_tokens(combined_text)
 
         # Generate summary (async)
         summary = await self._summarize_text(
@@ -876,9 +898,7 @@ Create an expanded version that includes more information from the original text
                     assert odd_node_text is not None
 
                     # Calculate target tokens for single-child case
-                    odd_tokens = self.splitter.tokenizer.encode(odd_node_text)
-                    half_size = len(odd_tokens) // 2
-                    target_tokens = min(self.config.leaf_tokens, half_size)
+                    target_tokens = self._calculate_target_tokens(odd_node_text)
 
                     summary = await self._summarize_text(
                         odd_node_text,
@@ -994,9 +1014,7 @@ Create an expanded version that includes more information from the original text
 
                 # Calculate target tokens for refresh
                 combined_text = f"{left_child.text} {right_child.text}".strip()
-                combined_tokens = self.splitter.tokenizer.encode(combined_text)
-                half_size = len(combined_tokens) // 2
-                target_tokens = min(self.config.leaf_tokens, half_size)
+                target_tokens = self._calculate_target_tokens(combined_text)
 
                 # Re-summarize with fresh content
                 summary = await self._summarize_text(
