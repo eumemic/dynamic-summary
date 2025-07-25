@@ -1,4 +1,14 @@
+---
+allowed-tools: Bash, Read, Write, Edit
+description: Thoroughly test features and clean up artifacts
+argument-hint: [feature to test]
+---
+
 # /test
+
+## Context
+- Test commands: !`grep -E "^(test|check):" Makefile package.json pyproject.toml 2>/dev/null | head -5 || echo "No standard test commands found"`
+- Recent test files: !`find . -name "*test*" -type f -mtime -7 | grep -E "\.(py|js|ts)$" | head -5`
 
 Arguments: "$ARGUMENTS"
 
@@ -51,3 +61,11 @@ Arguments: (none, after implementing auth)
 → Test login/logout, invalid credentials, session expiry, concurrent sessions, permission checks
 
 Remember: Test destructively but clean up completely. The goal is finding issues, not fixing them.
+
+## Retrospective
+After testing, reflect on three levels:
+1. **Command**: Did this help find issues systematically?
+2. **Conformance**: Is the cleanup emphasis strong enough?
+3. **Meta**: Should commands include more specific test scenario templates?
+
+ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.

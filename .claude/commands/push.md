@@ -1,4 +1,15 @@
+---
+allowed-tools: Bash, Read, Edit, MultiEdit, Grep
+description: Push code, create PR, monitor CI, fix issues
+argument-hint: [PR title]
+---
+
 # /push
+
+## Context
+- Current branch: !`git branch --show-current`
+- Unpushed commits: !`git cherry -v origin/$(git branch --show-current) 2>/dev/null | wc -l | tr -d ' '` commits
+- Existing PR: !`gh pr view --json number,state 2>/dev/null | jq -r '"#" + (.number|tostring) + " (" + .state + ")"' || echo "No PR"`
 
 Arguments: "$ARGUMENTS"
 
@@ -64,3 +75,11 @@ PR #42: https://github.com/owner/repo/pull/42
 ```
 
 Remember: Fix fast, push once. The goal is a green build with minimal CI runs.
+
+## Retrospective
+After pushing, reflect on three levels:
+1. **Command**: Did this minimize CI churn effectively?
+2. **Conformance**: Is the fail-fast approach clear?
+3. **Meta**: Should commands include more CI/CD best practices?
+
+ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.
