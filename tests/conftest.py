@@ -159,7 +159,7 @@ def mock_openai_client():
     mock_summary_response.choices = [MagicMock()]
     mock_summary_response.choices[0].message = MagicMock()
     mock_summary_response.choices[0].message.content = (
-        "Summary left <<<MID>>> Summary right"
+        "Summary of left and right content"
     )
 
     mock_client.chat.completions.create = MagicMock(return_value=mock_summary_response)
@@ -189,7 +189,7 @@ def mock_openai_async_client():
     mock_summary_response.choices = [MagicMock()]
     mock_summary_response.choices[0].message = MagicMock()
     mock_summary_response.choices[0].message.content = (
-        "Summary left <<<MID>>> Summary right"
+        "Summary of left and right content"
     )
 
     mock_client.chat.completions.create = AsyncMock(return_value=mock_summary_response)

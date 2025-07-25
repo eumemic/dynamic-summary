@@ -40,9 +40,7 @@ class TestIntegration:
                 return Mock(
                     choices=[
                         Mock(
-                            message=Mock(
-                                content="Summary of left half. <<<MID>>> Summary of right half."
-                            )
+                            message=Mock(content="Summary of left half and right half.")
                         )
                     ]
                 )
@@ -62,9 +60,7 @@ class TestIntegration:
                 return Mock(
                     choices=[
                         Mock(
-                            message=Mock(
-                                content="Summary of left half. <<<MID>>> Summary of right half."
-                            )
+                            message=Mock(content="Summary of left half and right half.")
                         )
                     ]
                 )
