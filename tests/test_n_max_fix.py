@@ -141,6 +141,6 @@ class TestNMaxFix:
             leaf_count = sum(
                 1 for node_id in result.tiling if store.is_leaf_node(node_id)
             )
-            # Since we have to include leaf2 for tree fullness, the DP algorithm
+            # Since we have to include leaf2 to maintain coverage property, the DP algorithm
             # might choose to use both leaves instead of their parent
             assert leaf_count <= 2, f"Expected at most 2 leaf nodes, got {leaf_count}"
