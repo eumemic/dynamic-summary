@@ -71,7 +71,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
-          pytest tests/ -m "slow" -n 4 --no-header -v
+          pytest tests/ -m "slow" -n 4 --no-header -v || [ $? -eq 5 ]
 
   # Integration tests only
   test-integration:
@@ -104,7 +104,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
-          pytest tests/ -m "integration" -n 4 --no-header -v
+          pytest tests/ -m "integration" -n 4 --no-header -v || [ $? -eq 5 ]
 
   # Linting with Ruff
   lint:
