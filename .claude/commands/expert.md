@@ -1,6 +1,6 @@
 # RagZoom Expert Mode
 
-Focus area: $ARGUMENTS
+Arguments: "$ARGUMENTS"
 
 _Note: If no focus area is specified above, use conversation context to determine the area of expertise. If this is a fresh session, become an expert in the entire codebase._
 
