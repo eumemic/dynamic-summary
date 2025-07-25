@@ -20,13 +20,23 @@ Merge the current PR, delete the branch, and return to master with the latest ch
    - This will merge the PR and delete both local and remote branches
    - Run `git fetch --prune` immediately to clean up any stale remote branch references
 
-4. **Return to Master**:
+4. **Check for Worktree**:
+   - Run `git worktree list` to check if currently in a worktree
+   - If in a worktree, store the worktree path for cleanup
+
+5. **Return to Root Directory**:
+   - If in a worktree, change to the repository root directory
    - Switch to master branch
    - Pull the latest changes
 
-5. **Confirm Success**:
+6. **Clean Up Worktree**:
+   - If was in a worktree, remove it: `git worktree remove [worktree-path]`
+   - Confirm worktree removal
+
+7. **Confirm Success**:
    - Show the user the merge commit
    - Confirm we're on master and up to date
+   - If worktree was removed, confirm cleanup
 
 ## Example Flow:
 
@@ -38,16 +48,24 @@ gh pr list --head <branch> --json number
 # Check PR status
 gh pr checks <PR#>
 
+# Check if in worktree
+git worktree list
+
 # Merge and cleanup
 gh pr merge <PR#> --merge --delete-branch
 git fetch --prune
 
-# Return to master
+# Return to root/master
+cd /path/to/repo/root  # if in worktree
 git checkout master
 git pull
 
+# Remove worktree if applicable
+git worktree remove worktrees/<name>
+
 # Confirm
 git log --oneline -5
+git worktree list
 ```
 
 ## Error Handling:
