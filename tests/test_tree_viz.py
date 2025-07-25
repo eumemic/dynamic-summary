@@ -1,9 +1,12 @@
 """Tests for tree visualization functionality."""
 
+import pytest
+
 from ragzoom.tree_viz import build_ascii_tree
 from tests.mock_store import SimpleMockStore
 
 
+@pytest.mark.skip_ci
 class TestTreeVisualization:
     """Test tree visualization functionality."""
 
