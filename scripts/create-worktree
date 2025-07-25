@@ -43,6 +43,10 @@ else
     git worktree add -b "$WORKTREE_NAME" "$WORKTREE_PATH" master
 fi
 
+# Set up branch to track master
+echo "Setting up $WORKTREE_NAME to track origin/master..."
+git -C "$WORKTREE_PATH" branch --set-upstream-to=origin/master "$WORKTREE_NAME"
+
 # Symlink .env if it exists
 if [[ -f .env ]]; then
     echo "Symlinking .env..."
