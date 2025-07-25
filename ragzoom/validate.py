@@ -386,6 +386,58 @@ def validate_tree_is_full(store: Store, document_id: str) -> Optional[str]:
     return None  # Tree is full
 
 
+def validate_tree_is_left_balanced(store: Store, document_id: str) -> Optional[str]:
+    """Validate that the indexed tree is left-balanced.
+
+    A left-balanced tree means internal nodes have either:
+    1. Only a left child (no right child), or
+    2. Both left and right children
+
+    No node can have only a right child without a left child.
+
+    Args:
+        store: Storage instance
+        document_id: Document to validate
+
+    Returns:
+        Error message if invalid, None if valid
+    """
+    nodes = store.get_all_nodes_for_document(document_id)
+    if not nodes:
+        return "No nodes found for document"
+
+    # A single-node tree is valid
+    if len(nodes) == 1:
+        node = nodes[0]
+        if node.left_child_id is not None or node.right_child_id is not None:
+            return f"Invalid tree: node {node.id} references non-existent children"
+        return None
+
+    # Build a set of valid node IDs for quick lookup
+    node_ids = {node.id for node in nodes}
+
+    # Check each node
+    for node in nodes:
+        has_left = node.left_child_id is not None
+        has_right = node.right_child_id is not None
+
+        # Check invalid state: right child without left child
+        if has_right and not has_left:
+            return (
+                f"Tree is not left-balanced: node {node.id} has a right child but no left child. "
+                f"In a left-balanced tree, nodes must have a left child before having a right child."
+            )
+
+        # Verify child references are valid
+        if has_left and node.left_child_id not in node_ids:
+            return f"Invalid tree: node {node.id} references non-existent left child {node.left_child_id}"
+
+        if has_right and node.right_child_id not in node_ids:
+            return f"Invalid tree: node {node.id} references non-existent right child {node.right_child_id}"
+
+    return None  # Tree is left-balanced
+
+
 async def validate_summary_faithfulness(
     summary: str,
     left_text: str,

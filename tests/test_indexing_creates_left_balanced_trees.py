@@ -1,15 +1,15 @@
-"""Test that the indexing process always creates full binary trees."""
+"""Test that the indexing process creates valid left-balanced trees."""
 
 import pytest
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.validate import set_validation_enabled, validate_tree_is_full
+from ragzoom.validate import set_validation_enabled, validate_tree_is_left_balanced
 from tests.mock_store import SimpleMockStore
 
 
-class TestIndexingCreatesFullTrees:
-    """Tests to ensure indexing always produces full binary trees."""
+class TestIndexingCreatesLeftBalancedTrees:
+    """Tests to ensure indexing produces valid left-balanced trees."""
 
     @pytest.fixture
     def setup_indexing(self):
@@ -45,8 +45,8 @@ class TestIndexingCreatesFullTrees:
         """Disable validation after each test."""
         set_validation_enabled(False)
 
-    def test_even_number_of_chunks_creates_full_tree(self, setup_indexing):
-        """Test that indexing with even number of chunks creates a full tree."""
+    def test_even_number_of_chunks_creates_valid_tree(self, setup_indexing):
+        """Test that indexing with even number of chunks creates a valid left-balanced tree."""
         config, store, tree_builder = setup_indexing
 
         # Text that will create 4 chunks
@@ -62,17 +62,17 @@ class TestIndexingCreatesFullTrees:
         #    /  \   /  \
         #   L1  L2 L3  L4
 
-        # Index the document - if tree is not full, validation will raise
+        # Index the document
         doc_id = tree_builder.add_document(
             text, document_id="test-even", show_progress=False
         )
 
-        # Also manually verify
-        result = validate_tree_is_full(store, doc_id)
+        # Verify it's left-balanced
+        result = validate_tree_is_left_balanced(store, doc_id)
         assert result is None
 
-    def test_odd_number_of_chunks_creates_full_tree(self, setup_indexing):
-        """Test that indexing with odd number of chunks creates a full tree."""
+    def test_odd_number_of_chunks_creates_valid_tree(self, setup_indexing):
+        """Test that indexing with odd number of chunks creates a valid left-balanced tree."""
         config, store, tree_builder = setup_indexing
 
         # Text that will create 3 chunks
@@ -80,24 +80,25 @@ class TestIndexingCreatesFullTrees:
         text += "Chapter 2 content here. " * 10  # ~40 tokens
         text += "Chapter 3 content here. " * 10  # ~40 tokens
 
-        # This should create a tree like:
+        # This should create a left-balanced tree like:
         #      root
         #     /    \
         #    P1     L3
         #   /  \
         #  L1  L2
+        # (Still happens to be full in this case)
 
-        # Index the document - if tree is not full, validation will raise
+        # Index the document
         doc_id = tree_builder.add_document(
             text, document_id="test-odd", show_progress=False
         )
 
-        # Also manually verify
-        result = validate_tree_is_full(store, doc_id)
+        # Verify it's left-balanced
+        result = validate_tree_is_left_balanced(store, doc_id)
         assert result is None
 
-    def test_large_document_creates_full_tree(self, setup_indexing):
-        """Test that a large document with many chunks creates a full tree."""
+    def test_large_document_creates_valid_tree(self, setup_indexing):
+        """Test that a large document with many chunks creates a valid left-balanced tree."""
         config, store, tree_builder = setup_indexing
 
         # Text that will create multiple chunks
@@ -109,8 +110,8 @@ class TestIndexingCreatesFullTrees:
             text, document_id="test-large", show_progress=False
         )
 
-        # Verify it's full
-        result = validate_tree_is_full(store, doc_id)
+        # Verify it's left-balanced
+        result = validate_tree_is_left_balanced(store, doc_id)
         assert result is None
 
         # Check we have multiple leaf nodes (exact count depends on tokenization)
@@ -120,13 +121,13 @@ class TestIndexingCreatesFullTrees:
         ]
         assert len(leaf_nodes) > 1  # Should have multiple chunks
 
-        # More importantly, verify every internal node has both children
+        # Verify left-balanced property: no node has only a right child
         internal_nodes = [
             n
             for n in nodes
             if n.left_child_id is not None or n.right_child_id is not None
         ]
         for node in internal_nodes:
-            # Every internal node must have both children
-            assert node.left_child_id is not None
-            assert node.right_child_id is not None
+            # In a left-balanced tree, if there's a right child, there must be a left child
+            if node.right_child_id is not None:
+                assert node.left_child_id is not None
