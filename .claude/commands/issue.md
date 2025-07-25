@@ -1,26 +1,32 @@
+---
+allowed-tools: Bash
+description: Create GitHub issue from current context
+argument-hint: [issue description]
+---
+
 # /issue
 
+## Context
+- Available labels: !`gh label list --json name -q '.[].name' | head -20 | tr '\n' ', ' | sed 's/,$//'`
+- Recent issues: !`gh issue list --limit 3 --json number,title -q '.[] | "#" + (.number|tostring) + ": " + .title'`
+
+## Strategic Guidance
+Capture issues in the moment of discovery. The best bug report is written while the context is fresh. Include code locations and error messages, but trust future readers to investigate details.
+
+## Task
 Arguments: "$ARGUMENTS"
 
-Capture a GitHub issue without interrupting current work. Use conversation context to create a concise, actionable issue.
-
-## Core Intent
-
-When developers discover bugs or think of features while coding, they need to quickly document them without losing focus. Create a GitHub issue that captures the essence of the discovery with just enough context to be actionable later.
+Create a concise, actionable issue from current context without disrupting flow.
 
 ## Process
 
-1. **Understand**: What issue did the user discover? Use arguments (if provided) combined with conversation context
-2. **Extract context**: Current files, functions, error messages from conversation
-3. **Check labels**: Run `gh label list` to see available labels
-4. **Create missing labels**: If needed, create appropriate label with `gh label create` (e.g., "tech-debt", "refactor", "performance")
-5. **Create issue**:
-   - Title: Action-oriented, specific (e.g., "Fix tree traversal at boundary conditions")
-   - Body: Essential context only - what/where/why, reproduction steps for bugs
-   - Labels: Type (bug/enhancement/feature/tech-debt) + any obvious tags
-6. **Confirm**: Show title and one-line summary, get user approval
-7. **Submit**: `gh issue create`, return issue URL
-8. **Continue**: Let user resume their work
+1. **Parse**: Extract issue from args + conversation context
+2. **Shape**: 
+   - Title: Action-oriented ("Fix X" not "X is broken")
+   - Body: What/where/why + code locations
+   - Labels: Pick from available or create if needed
+3. **Confirm**: "Create issue: [title]?"
+4. **Submit**: `gh issue create --title "..." --body "..." --label "..."`
 
 ## Key Principles
 
@@ -49,3 +55,11 @@ Input: "lots of dead code in dirty node marking"
    Label: tech-debt
 
 Remember: Quick capture beats perfect documentation. A good issue points someone in the right direction, not holds their hand.
+
+## Retrospective
+After creating the issue, reflect on three levels:
+1. **Command**: Did this enable quick, effective issue capture?
+2. **Conformance**: Is the brevity principle well-balanced?
+3. **Meta**: Should commands include more GitHub-specific patterns?
+
+ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.

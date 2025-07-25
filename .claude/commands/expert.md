@@ -1,4 +1,14 @@
+---
+allowed-tools: Read, Grep, Bash, Task
+description: Develop deep expertise in codebase or specific area
+argument-hint: [focus area]
+---
+
 # RagZoom Expert Mode
+
+## Context
+- Project structure: !`find . -name "*.py" -path "*/ragzoom/*" | head -10 | sed 's|^\./||'`
+- Key modules: !`ls ragzoom/*.py 2>/dev/null | grep -v __pycache__ | head -8`
 
 Arguments: "$ARGUMENTS"
 
