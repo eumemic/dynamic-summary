@@ -5,6 +5,8 @@ argument-hint: <problem description>
 ---
 
 # /diagnose
+# This command was created with the `/command` command. If you are making changes to this
+# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
 Arguments: "$ARGUMENTS"
 
