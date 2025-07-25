@@ -25,9 +25,17 @@ Merge the current PR, clean up branch, return to master.
 1. **Verify Ready**: Check CI passed, no review blockers
 2. **Merge**: `gh pr merge --merge --delete-branch`
 3. **Clean Remote**: `git fetch --prune`
-4. **Return to Master**:
+4. **Return to Base Branch**:
    ```bash
-   git checkout master && git pull
+   # Detect if we're in a worktree
+   WORKTREE_BRANCH=$(git worktree list --porcelain | grep -A1 "worktree $(pwd)" | grep "branch" | cut -d' ' -f3 | sed 's|refs/heads/||')
+   if [[ "$WORKTREE_BRANCH" =~ ^worktree-[0-9]+$ ]]; then
+     # In a worktree slot, return to the worktree branch
+     git checkout "$WORKTREE_BRANCH" && git pull origin master
+   else
+     # In main repo, return to master
+     git checkout master && git pull
+   fi
    ```
 
 ## Error Handling

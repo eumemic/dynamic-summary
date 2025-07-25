@@ -23,10 +23,11 @@ Clean up debug code, update docs, and create well-organized commits.
 
 ## Process
 
-1. **Safety Check**: Never commit to master. If on master:
-   - Infer branch name from changes (e.g., "feature/auth-system")
-   - Ask: "Create branch 'feature/auth-system'? (or provide different name)"
-   - Create branch: `git checkout -b <branch-name>`
+1. **Safety Check**: Never commit to master or worktree branches. 
+   - If on master or worktree-N:
+     - Infer branch name from changes (e.g., "feature/auth-system")
+     - Ask: "Create branch 'feature/auth-system'? (or provide different name)"
+     - Create branch: `git checkout -b <branch-name>`
 
 2. **Cleanup**:
    - Remove debug prints/console.logs
