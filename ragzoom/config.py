@@ -89,9 +89,6 @@ class RagZoomConfig(BaseSettings):
     embedding_batch_size: int = Field(
         default=100, description="Batch size for embedding API calls"
     )
-    dirty_refresh_limit: int = Field(
-        default=10, description="Maximum dirty nodes to refresh per retrieval"
-    )
     pin_depth_max: int = Field(
         default=2, description="Deepest level a node may be permanently pinned"
     )
