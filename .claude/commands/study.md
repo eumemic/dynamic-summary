@@ -4,7 +4,7 @@ description: Develop deep expertise in codebase or specific area
 argument-hint: [focus area]
 ---
 
-# RagZoom Expert Mode
+# RagZoom Study Mode
 # This command was created with the `/command` command. If you are making changes to this
 # file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
