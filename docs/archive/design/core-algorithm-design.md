@@ -171,7 +171,7 @@ The algorithm is designed to have bounded costs. The prompt size is geometricall
 
   * **Hit Overflow**: If the initial set of covered nodes exceeds the token budget, the `ensure_budget()` loop guarantees the final context size fits by evicting the lowest-priority nodes.
   * **All Hits Evicted**: In the unlikely event that all relevant hits are evicted to meet the budget, the system falls back to a baseline context consisting of the root synopsis and the last K leaf chunks, ensuring some context is always provided.
-  * **Edit/Delete Operations**: If a leaf node is edited or deleted, its entire parent chain is marked as "dirty." A background, asynchronous process is triggered to re-summarize the affected nodes up the tree.
+  * **Edit/Delete Operations**: If a leaf node is edited or deleted, its entire parent chain is marked as "dirty." A background, asynchronous process is triggered to re-summarize the affected nodes up the tree. (Note: Not implemented in current version)
 
 ### 4.3. Minimal Testing Checklist
 

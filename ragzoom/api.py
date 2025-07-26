@@ -314,27 +314,6 @@ async def get_status(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/recompute")
-async def recompute_summaries(
-    service: RagZoomService = Depends(get_ragzoom_service),
-) -> dict[str, Any]:
-    """Recompute summaries for dirty nodes."""
-    try:
-        # Get dirty nodes first
-        dirty_nodes = service.store.get_dirty_nodes()
-        node_ids = [node.id for node in dirty_nodes]
-
-        # Refresh them using the async method
-        count = await service.tree_builder.refresh_nodes_async(node_ids)
-        return {
-            "message": "Summaries recomputed",
-            "nodes_updated": count,
-        }
-    except Exception as e:
-        logger.error(f"Error recomputing summaries: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 # Health check
 @app.get("/health")
 async def health_check() -> dict[str, str]:

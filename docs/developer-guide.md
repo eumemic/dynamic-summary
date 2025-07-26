@@ -179,7 +179,7 @@ mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
 The `SimpleMockStore` provides:
 - In-memory tree operations (4.5x faster)
 - Basic vector search simulation
-- State tracking (dirty nodes, pinning)
+- State tracking (pinning)
 - No external dependencies
 
 ### 6.2. Parallel Test Execution

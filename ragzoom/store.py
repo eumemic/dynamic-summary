@@ -47,9 +47,6 @@ class TreeNode(Base):
     summary: Mapped[Optional[str]] = mapped_column(
         Text, nullable=True
     )  # NULL for leaf nodes
-    is_dirty: Mapped[int] = mapped_column(
-        Integer, default=0
-    )  # Boolean flag for re-summarization
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     access_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -280,35 +277,13 @@ class Store:
                 node.access_count += 1
                 session.commit()
 
-    def mark_dirty_upward(self, node_id: str) -> None:
-        """Mark a node and all ancestors as dirty (needs re-summarization)."""
-        with self.SessionLocal() as session:
-            current_id: Optional[str] = node_id
-            marked_ids = []
-            while current_id:
-                node = session.query(TreeNode).filter_by(id=current_id).first()
-                if not node:
-                    break
-                node.is_dirty = 1
-                marked_ids.append(current_id)
-                current_id = node.parent_id
-            session.commit()
-
-            # Invalidate cache for modified nodes
-            for node_id in marked_ids:
-                if node_id in self.node_cache:
-                    del self.node_cache[node_id]
-                    # Only remove from cache_order if it exists
-                    if node_id in self.cache_order:
-                        self.cache_order.remove(node_id)
-
     def update_summary(
         self,
         node_id: str,
         text: str,
         embedding: Union[list[float], np.ndarray],
     ) -> None:
-        """Update node summary and clear dirty flag."""
+        """Update node summary."""
         # Validate embedding dimension
         self._validate_embedding_dimension(embedding)
 
@@ -318,7 +293,6 @@ class Store:
                 # Use cast to handle the nullable text field - this is safe because we always
                 # pass a non-null text parameter when updating summaries for internal nodes
                 node.text = cast(str, text)
-                node.is_dirty = 0
                 session.commit()
 
                 # Update in vector store
@@ -337,11 +311,6 @@ class Store:
                         self.cache_order.remove(node_id)
                 # Re-add to cache with fresh data
                 self._add_to_cache(node)
-
-    def get_dirty_nodes(self) -> list[TreeNode]:
-        """Get all nodes marked as dirty."""
-        with self.SessionLocal() as session:
-            return session.query(TreeNode).filter_by(is_dirty=1).all()
 
     def get_children(
         self, node_id: str
@@ -733,7 +702,6 @@ class Store:
                                     span_end INTEGER NOT NULL,
                                     text TEXT NOT NULL,
                                     summary TEXT,
-                                    is_dirty INTEGER DEFAULT 0,
                                     is_pinned INTEGER DEFAULT 0,
                                     last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
                                     access_count INTEGER DEFAULT 0,
@@ -753,7 +721,7 @@ class Store:
                                 INSERT INTO tree_nodes_new
                                 SELECT id, parent_id, left_child_id, right_child_id,
                                        span_start, span_end, text, summary,
-                                       is_dirty, is_pinned, last_accessed, access_count,
+                                       is_pinned, last_accessed, access_count,
                                        created_at, document_id
                                 FROM tree_nodes
                             """

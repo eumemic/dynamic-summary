@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MMR (Maximal Marginal Relevance) diversity for comprehensive results
 - Slope-capped transitions (±1 level) for coherent summaries
 - Strict token budget management with configurable limits
-- Incremental updates with efficient dirty node tracking
+- Incremental updates with efficient document growth
 - Node pinning for always-included content
 - Sliding queue eviction with freshness decay
 - Optional smoothing pass for enhanced coherence

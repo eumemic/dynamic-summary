@@ -112,7 +112,6 @@ All spans use character coordinates (not tokens) for stability and verifiability
   - Batch embedding requests (up to 100 texts per API call)
   - Progress tracking with optional progress bars
 - **Retrieval**: Uses synchronous OpenAI client as queries are typically single-threaded
-  - Async dirty node refresh before retrieval
   - Pre-loads all nodes in coverage map to minimize database queries
 
 ### 4.4. Document Isolation
