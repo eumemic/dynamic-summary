@@ -17,6 +17,15 @@ from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
 
+# Optional tqdm import for progress bar text output
+try:
+    from tqdm import tqdm
+
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+    tqdm = None
+
 
 class TreeBuilder:
     """Tree builder with concurrent processing."""
@@ -103,8 +112,13 @@ class TreeBuilder:
         initial_summary: str,
         target_tokens: int,
         parent_id: Optional[str] = None,
-    ) -> str:
-        """Retry summary correction to get closer to target token count."""
+        debug: bool = False,
+    ) -> tuple[str, int]:
+        """Retry summary correction to get closer to target token count.
+
+        Returns:
+            tuple: (best_summary, actual_retry_count)
+        """
         summary = initial_summary
         summary_tokens = self.splitter.tokenizer.encode(summary)
         best_summary = summary
@@ -112,6 +126,7 @@ class TreeBuilder:
         best_distance_from_target = abs(best_token_count - target_tokens)
 
         node_info = f"[{parent_id}] " if parent_id else ""
+        actual_retries = 0
 
         for retry_count in range(1, self.config.summary_max_retries + 1):
             current_tokens = len(summary_tokens)
@@ -119,7 +134,7 @@ class TreeBuilder:
 
             # Stop if within threshold
             if deviation_pct <= self.config.summary_deviation_threshold:
-                break
+                return best_summary, actual_retries
 
             is_over_target = current_tokens > target_tokens
 
@@ -140,12 +155,13 @@ class TreeBuilder:
                 actual_deviation_pct = (
                     (current_tokens - target_tokens) / target_tokens
                 ) * 100
-                logger.info(
-                    f"{node_info}Summary over target: {current_tokens} tokens "
-                    f"(actual target: {target_tokens}, {actual_deviation_pct:.0f}% over). "
-                    f"Retry {retry_count}/{self.config.summary_max_retries} - "
-                    f"Asking LLM to target {adjusted_target} tokens."
-                )
+                if debug:
+                    logger.info(
+                        f"{node_info}Summary over target: {current_tokens} tokens "
+                        f"(actual target: {target_tokens}, {actual_deviation_pct:.0f}% over). "
+                        f"Retry {retry_count}/{self.config.summary_max_retries} - "
+                        f"Asking LLM to target {adjusted_target} tokens."
+                    )
 
                 # Build reduction prompt
                 if deviation_pct_display <= 50:
@@ -172,12 +188,13 @@ Provide ONLY the shortened summary, with no preamble or explanation."""
                 deficit_pct = (deficit / target_tokens) * 100
                 expansion_pct = (deficit / current_tokens) * 100
 
-                logger.info(
-                    f"{node_info}Summary under target: {current_tokens} tokens "
-                    f"(target: {target_tokens}, {deficit_pct:.0f}% under). "
-                    f"Retry {retry_count}/{self.config.summary_max_retries} - "
-                    f"Can add {deficit} more tokens."
-                )
+                if debug:
+                    logger.info(
+                        f"{node_info}Summary under target: {current_tokens} tokens "
+                        f"(target: {target_tokens}, {deficit_pct:.0f}% under). "
+                        f"Retry {retry_count}/{self.config.summary_max_retries} - "
+                        f"Can add {deficit} more tokens."
+                    )
 
                 # Build expansion prompt
                 if deficit_pct <= 30:
@@ -222,6 +239,7 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                     continue
 
                 summary = content.strip()
+                actual_retries = retry_count  # Track that we performed this retry
 
                 # Check new token count
                 new_tokens = self.splitter.tokenizer.encode(summary)
@@ -240,15 +258,17 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                     best_token_count = new_token_count
                     best_distance_from_target = new_distance
 
-                    logger.info(
-                        f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
-                        f"(target: {target_tokens}, distance: {new_distance})"
-                    )
+                    if debug:
+                        logger.info(
+                            f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
+                            f"(target: {target_tokens}, distance: {new_distance})"
+                        )
                 else:
-                    logger.info(
-                        f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
-                        f"(best so far: {best_token_count} tokens)"
-                    )
+                    if debug:
+                        logger.info(
+                            f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
+                            f"(best so far: {best_token_count} tokens)"
+                        )
 
                 # Use best for next iteration
                 summary = best_summary
@@ -258,7 +278,7 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                 logger.error(f"{node_info}Error during retry {retry_count}: {e}")
                 break
 
-        return best_summary
+        return best_summary, actual_retries
 
     async def _summarize_text(
         self,
@@ -268,8 +288,13 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
         prev_context: Optional[str] = None,
         next_context: Optional[str] = None,
         parent_id: Optional[str] = None,
-    ) -> str:
-        """Summarize text using LLM."""
+        debug: bool = False,
+    ) -> tuple[str, int]:
+        """Summarize text using LLM.
+
+        Returns:
+            tuple: (summary, retry_count)
+        """
         # Check if combined text is already under target
         combined_text = f"{left_text} {right_text}".strip()
         combined_tokens = self.splitter.tokenizer.encode(combined_text)
@@ -281,7 +306,7 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                 f"{node_info}Combined text already under target: {current_token_count} tokens "
                 f"(target: {target_tokens}). Skipping summarization."
             )
-            return combined_text
+            return combined_text, 0  # No retries needed
 
         # Build prompt with adjacent context (trim to avoid token explosion)
         prompt_parts = []
@@ -393,30 +418,33 @@ Here's the content to summarize:"""
                 node_info = f"[{parent_id}] " if parent_id else ""
 
                 # Use retry correction if deviation exceeds threshold
+                retry_count = 0
                 if deviation_pct > self.config.summary_deviation_threshold:
-                    summary = await self._retry_summary_correction(
-                        summary, target_tokens, parent_id
+                    summary, retry_count = await self._retry_summary_correction(
+                        summary, target_tokens, parent_id, debug
                     )
                     # Re-calculate final tokens for logging
                     final_tokens = len(self.splitter.tokenizer.encode(summary))
                     utilization_pct = (final_tokens / target_tokens) * 100
-                    logger.info(
-                        f"{node_info}Summary corrected: {final_tokens} tokens "
-                        f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
-                    )
+                    if debug:
+                        logger.info(
+                            f"{node_info}Summary corrected: {final_tokens} tokens "
+                            f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
+                        )
                 else:
                     # Log initial result
                     utilization_pct = (current_tokens / target_tokens) * 100
-                    logger.info(
-                        f"{node_info}Summary complete: {current_tokens} tokens "
-                        f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
-                    )
+                    if debug:
+                        logger.info(
+                            f"{node_info}Summary complete: {current_tokens} tokens "
+                            f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
+                        )
 
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
                 raise
 
-        return summary
+        return summary, retry_count
 
     async def _add_document_impl(
         self,
@@ -460,14 +488,9 @@ Here's the content to summarize:"""
         # Split into chunks
         chunks = self.splitter.split_text(text)
 
-        # Create progress tracker early so we can use it for logging
-        # When progress bar is active, we suppress info logs to avoid disrupting the display
-        progress = (
-            GlobalProgressTracker(len(chunks), show_progress) if show_progress else None
-        )
-
-        logger.info("Splitting document into chunks...")
-        logger.info(f"Split document into {len(chunks)} chunks")
+        if debug:
+            logger.info("Splitting document into chunks...")
+            logger.info(f"Split document into {len(chunks)} chunks")
 
         # Early validation: Check chunk sizes immediately after splitting
         from ragzoom.validate import validate, validate_chunk_sizes
@@ -483,7 +506,12 @@ Here's the content to summarize:"""
             "early chunk size validation",
         )
 
-        # Create async wrapper for progress (tracker already created above)
+        # Create progress tracker right before we start actual work
+        progress = (
+            GlobalProgressTracker(len(chunks), show_progress) if show_progress else None
+        )
+
+        # Create async wrapper for progress
         async_progress = AsyncProgressWrapper(progress) if progress else None
 
         # Track overall start time for cumulative elapsed time
@@ -491,7 +519,7 @@ Here's the content to summarize:"""
 
         try:
             # Create leaf nodes with batch embeddings
-            if len(chunks) > 100:
+            if len(chunks) > 100 and debug:
                 logger.info("Preparing chunk data...")
 
             leaf_ids: list[str] = []
@@ -565,11 +593,12 @@ Here's the content to summarize:"""
                 batch_end = min(i + batch_size, len(chunks))
 
                 # Show which batch we're processing with cumulative elapsed time
-                elapsed = time.time() - overall_start_time
-                mins, secs = divmod(int(elapsed), 60)
-                logger.info(
-                    f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]"
-                )
+                if debug:
+                    elapsed = time.time() - overall_start_time
+                    mins, secs = divmod(int(elapsed), 60)
+                    logger.info(
+                        f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]"
+                    )
 
                 batch_embeddings = await self._get_embeddings_batch(batch_texts)
                 all_embeddings.extend(batch_embeddings)
@@ -660,8 +689,13 @@ Here's the content to summarize:"""
         prev_context: Optional[str],
         next_context: Optional[str],
         document_id: Optional[str],
-    ) -> tuple[str, str, list[float]]:
-        """Process a single node pair - generate summary and embedding."""
+        debug: bool = False,
+    ) -> tuple[str, str, list[float], int]:
+        """Process a single node pair - generate summary and embedding.
+
+        Returns:
+            tuple: (parent_id, summary, embedding, retry_count)
+        """
         parent_id = self._generate_node_id()
 
         # Calculate target tokens
@@ -669,8 +703,14 @@ Here's the content to summarize:"""
         target_tokens = self._calculate_target_tokens(combined_text)
 
         # Generate summary (async)
-        summary = await self._summarize_text(
-            left_text, right_text, target_tokens, prev_context, next_context, parent_id
+        summary, retry_count = await self._summarize_text(
+            left_text,
+            right_text,
+            target_tokens,
+            prev_context,
+            next_context,
+            parent_id,
+            debug,
         )
 
         # Validate summary faithfulness if validation is enabled
@@ -741,7 +781,7 @@ Here's the content to summarize:"""
 
         validate(check_parent_structure, f"tree structure for parent {parent_id}")
 
-        return parent_id, summary, embedding
+        return parent_id, summary, embedding, retry_count
 
     async def _build_tree_from_leaves(
         self,
@@ -761,12 +801,16 @@ Here's the content to summarize:"""
 
         # Track token usage statistics by height
         token_stats: dict[int, list[int]] = {}
+        # Track retry statistics by height
+        retry_stats: dict[int, list[int]] = {}
 
         # Record leaf node token counts (height 0)
         token_stats[0] = []
+        retry_stats[0] = []  # Leaf nodes have no retries
         for text in leaf_texts:
             tokens = self.splitter.tokenizer.encode(text)
             token_stats[0].append(len(tokens))
+            retry_stats[0].append(0)  # No retries for leaf nodes
 
         current_height = 1  # Track height for logging (leaves are at height 0)
         while len(current_level_ids) > 1:
@@ -776,6 +820,7 @@ Here's the content to summarize:"""
 
             # Initialize token stats for this height
             token_stats[current_height] = []
+            retry_stats[current_height] = []
 
             # Process pairs concurrently
             tasks = []
@@ -817,6 +862,7 @@ Here's the content to summarize:"""
                     prev_context,
                     next_context,
                     document_id,
+                    debug,
                 )
                 tasks.append(task)
                 pair_info.append((i, i + 1))
@@ -831,17 +877,30 @@ Here's the content to summarize:"""
 
             # Process all pairs concurrently
             if tasks:
-                # Log tree building progress
-                if overall_start_time:
-                    elapsed = time.time() - overall_start_time
-                    mins, secs = divmod(int(elapsed), 60)
-                    logger.info(
-                        f"Building tree height {current_height}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
-                    )
-                else:
-                    logger.info(
-                        f"Building tree height {current_height}: processing {len(tasks)} node pairs"
-                    )
+                # Show tree building progress inline with progress bar
+                if progress and progress.tracker and progress.tracker.pbar and HAS_TQDM:
+                    if overall_start_time:
+                        elapsed = time.time() - overall_start_time
+                        mins, secs = divmod(int(elapsed), 60)
+                        tqdm.write(
+                            f"Building tree height {current_height}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
+                        )
+                    else:
+                        tqdm.write(
+                            f"Building tree height {current_height}: processing {len(tasks)} node pairs"
+                        )
+                elif debug:
+                    # Only log to stderr if no progress bar and debug is enabled
+                    if overall_start_time:
+                        elapsed = time.time() - overall_start_time
+                        mins, secs = divmod(int(elapsed), 60)
+                        logger.info(
+                            f"Building tree height {current_height}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
+                        )
+                    else:
+                        logger.info(
+                            f"Building tree height {current_height}: processing {len(tasks)} node pairs"
+                        )
 
                 # Track completion count
                 completed_count = 0
@@ -855,14 +914,24 @@ Here's the content to summarize:"""
                     if progress:
                         await progress.update(2)
 
-                    # Log batch completion every 10 tasks
+                    # Log batch completion only in debug mode and at larger intervals
                     completed_count += 1
-                    if completed_count % 10 == 0 and overall_start_time:
+                    if completed_count % 20 == 0 and overall_start_time and debug:
                         elapsed = time.time() - overall_start_time
                         mins, secs = divmod(int(elapsed), 60)
-                        logger.info(
-                            f"  Completed {completed_count}/{len(tasks)} pairs at height {current_height} [{mins}m {secs}s elapsed total]"
-                        )
+                        if (
+                            progress
+                            and progress.tracker
+                            and progress.tracker.pbar
+                            and HAS_TQDM
+                        ):
+                            tqdm.write(
+                                f"  Completed {completed_count}/{len(tasks)} pairs at height {current_height} [{mins}m {secs}s elapsed total]"
+                            )
+                        else:
+                            logger.info(
+                                f"  Completed {completed_count}/{len(tasks)} pairs at height {current_height} [{mins}m {secs}s elapsed total]"
+                            )
 
                     return result
 
@@ -881,9 +950,10 @@ Here's the content to summarize:"""
                     results.extend(group_results)
 
                 # Add the parent nodes to next height
-                for parent_id, summary, _ in results:
+                for parent_id, summary, _, retry_count in results:
                     next_level_ids.append(parent_id)
                     next_level_texts.append(summary)
+                    retry_stats[current_height].append(retry_count)
 
                 # Handle odd node by creating a single-child parent
                 if odd_node:
@@ -904,13 +974,14 @@ Here's the content to summarize:"""
                     # Calculate target tokens for single-child case
                     target_tokens = self._calculate_target_tokens(odd_node_text)
 
-                    summary = await self._summarize_text(
+                    summary, retry_count = await self._summarize_text(
                         odd_node_text,
                         "",  # No right child
                         target_tokens,
                         prev_context=None,
                         next_context=None,
                         parent_id=parent_id,
+                        debug=debug,
                     )
 
                     # Get embedding for the summary
@@ -938,6 +1009,7 @@ Here's the content to summarize:"""
                     # Add the new parent to the next level
                     next_level_ids.append(parent_id)
                     next_level_texts.append(summary)
+                    retry_stats[current_height].append(retry_count)
 
                 # Track token counts for all nodes at this height
                 for text in next_level_texts:
@@ -950,18 +1022,19 @@ Here's the content to summarize:"""
 
         # Return root node ID
         if current_level_ids:
-            if overall_start_time:
-                elapsed = time.time() - overall_start_time
-                mins, secs = divmod(int(elapsed), 60)
-                logger.info(
-                    f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]"
-                )
-            else:
-                logger.info(
-                    f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}..."
-                )
+            if debug:
+                if overall_start_time:
+                    elapsed = time.time() - overall_start_time
+                    mins, secs = divmod(int(elapsed), 60)
+                    logger.info(
+                        f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]"
+                    )
+                else:
+                    logger.info(
+                        f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}..."
+                    )
 
-            # Log token usage statistics if debug is enabled
+            # Log token usage and retry statistics if debug is enabled
             if debug:
                 logger.info("\nToken usage statistics by tree height:")
                 for height in sorted(token_stats.keys()):
@@ -973,6 +1046,20 @@ Here's the content to summarize:"""
                         logger.info(
                             f"  Height {height}: avg {avg_tokens:.0f} tokens, "
                             f"min {min_tokens}, max {max_tokens} ({len(counts)} nodes)"
+                        )
+
+                logger.info("\nRetry statistics by tree height:")
+                for height in sorted(retry_stats.keys()):
+                    retries = retry_stats[height]
+                    if retries:
+                        avg_retries = sum(retries) / len(retries)
+                        min_retries = min(retries)
+                        max_retries = max(retries)
+                        total_retries = sum(retries)
+                        logger.info(
+                            f"  Height {height}: avg {avg_retries:.1f} retries, "
+                            f"min {min_retries}, max {max_retries} "
+                            f"({total_retries} total retries across {len(retries)} nodes)"
                         )
 
         return current_level_ids[0] if current_level_ids else ""
@@ -1013,23 +1100,42 @@ Here's the content to summarize:"""
 
                 # Get children
                 left_child, right_child = self.store.get_children(node_id)
-                if not left_child or not right_child:
-                    logger.warning(f"Node {node_id} missing children, skipping refresh")
+                if not left_child:
+                    logger.warning(
+                        f"Node {node_id} has no left child, skipping refresh"
+                    )
                     continue
 
                 # Calculate target tokens for refresh
-                combined_text = f"{left_child.text} {right_child.text}".strip()
-                target_tokens = self._calculate_target_tokens(combined_text)
+                if right_child:
+                    # Two children case
+                    combined_text = f"{left_child.text} {right_child.text}".strip()
+                    target_tokens = self._calculate_target_tokens(combined_text)
 
-                # Re-summarize with fresh content
-                summary = await self._summarize_text(
-                    left_child.text,
-                    right_child.text,
-                    target_tokens=target_tokens,
-                    prev_context="",
-                    next_context="",
-                    parent_id=node_id,
-                )
+                    # Re-summarize with fresh content
+                    summary, _ = await self._summarize_text(
+                        left_child.text,
+                        right_child.text,
+                        target_tokens=target_tokens,
+                        prev_context="",
+                        next_context="",
+                        parent_id=node_id,
+                        debug=False,
+                    )
+                else:
+                    # Single child case
+                    target_tokens = self._calculate_target_tokens(left_child.text)
+
+                    # Re-summarize with fresh content
+                    summary, _ = await self._summarize_text(
+                        left_child.text,
+                        "",  # No right child
+                        target_tokens=target_tokens,
+                        prev_context="",
+                        next_context="",
+                        parent_id=node_id,
+                        debug=False,
+                    )
 
                 # Get new embedding
                 embedding = await self._get_embedding(summary)

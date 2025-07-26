@@ -34,12 +34,12 @@ class TestIndexingCreatesLeftBalancedTrees:
             return [[0.1] * 1536 for _ in texts]
 
         async def mock_summarize_text(
-            left, right, target, prev_context, next_context, parent_id=None
+            left, right, target, prev_context, next_context, parent_id=None, debug=False
         ):
             if right:  # Two children
-                return f"Summary of: {left[:20]}... and {right[:20]}..."
+                return f"Summary of: {left[:20]}... and {right[:20]}...", 0
             else:  # Single child
-                return f"Summary of: {left[:20]}..."
+                return f"Summary of: {left[:20]}...", 0
 
         tree_builder._get_embedding = mock_get_embedding
         tree_builder._get_embeddings_batch = mock_get_batch_embeddings
