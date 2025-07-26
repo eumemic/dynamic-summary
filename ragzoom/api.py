@@ -1,7 +1,7 @@
 """FastAPI routes for RagZoom REST interface."""
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -25,7 +25,7 @@ class RagZoomService:
         self.store = Store(self.config)
         # Each service gets its own OpenAI client to avoid thread issues
         self.tree_builder = TreeBuilder(self.config, self.store)
-        self.retriever = Retriever(self.config, self.store, self.tree_builder)
+        self.retriever = Retriever(self.config, self.store)
         self.assembler = Assembler(self.config, self.store)
 
     def close(self) -> None:
@@ -311,27 +311,6 @@ async def get_status(
         )
     except Exception as e:
         logger.error(f"Error getting status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/recompute")
-async def recompute_summaries(
-    service: RagZoomService = Depends(get_ragzoom_service),
-) -> dict[str, Any]:
-    """Recompute summaries for dirty nodes."""
-    try:
-        # Get dirty nodes first
-        dirty_nodes = service.store.get_dirty_nodes()
-        node_ids = [node.id for node in dirty_nodes]
-
-        # Refresh them using the async method
-        count = await service.tree_builder.refresh_nodes_async(node_ids)
-        return {
-            "message": "Summaries recomputed",
-            "nodes_updated": count,
-        }
-    except Exception as e:
-        logger.error(f"Error recomputing summaries: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

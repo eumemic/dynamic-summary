@@ -228,23 +228,6 @@ class TestIntegration:
         assert token_count <= 110  # Allow 10% tolerance
         assert len(summary) > 0
 
-    def test_dirty_node_marking(self, temp_system):
-        """Test marking nodes as dirty."""
-        config, store, tree_builder, retriever, assembler = temp_system
-
-        # Create a simple tree
-        text = "Original content. " * 50
-        tree_builder.add_document(text)
-
-        # Mark some nodes as dirty
-        leaf_nodes = store.get_leaf_nodes()
-        if leaf_nodes:
-            store.mark_dirty_upward(leaf_nodes[0].id)
-
-        # Check that parent nodes were marked dirty
-        # Note: The is_dirty field may not exist in the current implementation
-        # This test just verifies the mark_dirty_upward method doesn't crash
-
     def test_node_pinning(self, temp_system):
         """Test that pinned nodes are always included."""
         config, store, tree_builder, retriever, assembler = temp_system
