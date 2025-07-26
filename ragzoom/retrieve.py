@@ -43,12 +43,8 @@ class Retriever:
         """Initialize retriever."""
         self.config = config
         self.store = store
-        self.tree_builder = tree_builder
         self.client = OpenAI(api_key=config.openai_api_key)
         self.dp_generator = DynamicTilingGenerator(config)
-
-        # Per-request cache to avoid double refresh
-        self._refreshed_node_ids: set[str] = set()
 
     def _get_query_embedding(self, query: str) -> list[float]:
         """Get embedding for query text."""
@@ -74,17 +70,13 @@ class Retriever:
         budget_tokens: Optional[int] = None,
         document_id: Optional[str] = None,
     ) -> RetrievalResult:
-        """Async retrieval method with MMR diversity and dirty node refresh.
+        """Async retrieval method with MMR diversity.
 
         Supports three modes:
         1. Budget only: Calculate conservative n_max to guarantee no overflow
         2. Budget + n_max: Use n_max but drop nodes if needed for budget
         3. n_max only: Just use n_max, no budget enforcement
         """
-        # Refresh dirty nodes before retrieval
-        await self._refresh_dirty_nodes_async()
-
-        # Continue with existing logic...
         # Determine which mode we're in
         if budget_tokens is not None and n_max is None:
             # Mode 1: Budget only - calculate conservative n_max
@@ -230,46 +222,6 @@ class Retriever:
         return asyncio.run(
             self.retrieve_async(query, n_max, budget_tokens, document_id)
         )
-
-    async def _refresh_dirty_nodes_async(self, limit: Optional[int] = None) -> None:
-        """Refresh dirty nodes by re-summarizing them asynchronously."""
-        if not self.tree_builder:
-            logger.warning(
-                "No TreeBuilder available for refresh, skipping dirty node refresh"
-            )
-            return
-
-        dirty_nodes = self.store.get_dirty_nodes()
-        if not dirty_nodes:
-            return
-
-        # Filter out already-refreshed nodes and apply limit
-        effective_limit = (
-            limit if limit is not None else self.config.dirty_refresh_limit
-        )
-        nodes_to_refresh = []
-        for node in dirty_nodes:
-            if node.id not in self._refreshed_node_ids and not self.store.is_leaf_node(
-                node.id
-            ):
-                nodes_to_refresh.append(node.id)
-                if len(nodes_to_refresh) >= effective_limit:
-                    break
-
-        if not nodes_to_refresh:
-            return
-
-        logger.info(f"Refreshing {len(nodes_to_refresh)} dirty nodes")
-
-        try:
-            refreshed_count = await self.tree_builder.refresh_nodes_async(
-                nodes_to_refresh
-            )
-            # Update cache to prevent re-refresh in same request
-            self._refreshed_node_ids.update(nodes_to_refresh[:refreshed_count])
-            logger.info(f"Successfully refreshed {refreshed_count} nodes")
-        except Exception as e:
-            logger.error(f"Error during async refresh: {e}")
 
     def _build_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
         """Build a coverage map including selected nodes, their ancestors, and all required siblings to maintain the coverage property."""
