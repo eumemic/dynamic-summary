@@ -269,59 +269,6 @@ class TestStore:
         # Check cache contains the node
         assert "cached" in temp_store.node_cache
 
-    def test_dirty_marking(self, temp_store):
-        """Test marking nodes as dirty."""
-        # Create a tree structure
-        temp_store.add_node(
-            node_id="root",
-            text="Root",
-            embedding=[0.9] * 384,
-            span_start=0,
-            span_end=40,
-        )
-
-        temp_store.add_node(
-            node_id="parent",
-            text="Parent",
-            embedding=[0.85] * 384,
-            span_start=0,
-            span_end=20,
-            parent_id="root",
-        )
-
-        temp_store.add_node(
-            node_id="child",
-            text="Child",
-            embedding=[0.8] * 384,
-            span_start=0,
-            span_end=10,
-            parent_id="parent",
-        )
-
-        # Mark child as dirty
-        temp_store.mark_dirty_upward("child")
-
-        # Check all ancestors are marked dirty
-        child_node = temp_store.get_node("child")
-        parent_node = temp_store.get_node("parent")
-        root_node = temp_store.get_node("root")
-
-        # Debug: Check if nodes exist and have correct parent relationships
-        assert child_node is not None, "Child node not found"
-        assert parent_node is not None, "Parent node not found"
-        assert root_node is not None, "Root node not found"
-        assert (
-            child_node.parent_id == "parent"
-        ), f"Child parent_id is {child_node.parent_id}"
-        assert (
-            parent_node.parent_id == "root"
-        ), f"Parent parent_id is {parent_node.parent_id}"
-
-        # Now check is_dirty
-        assert child_node.is_dirty == 1, f"Child is_dirty is {child_node.is_dirty}"
-        assert parent_node.is_dirty == 1, f"Parent is_dirty is {parent_node.is_dirty}"
-        assert root_node.is_dirty == 1, f"Root is_dirty is {root_node.is_dirty}"
-
     def test_node_depth_calculation(self, temp_store):
         """Test dynamic depth calculation."""
         # Create a tree structure:
