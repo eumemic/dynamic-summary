@@ -315,17 +315,6 @@ Get system status.
 }
 ```
 
-#### `POST /recompute`
-
-Recompute summaries for dirty nodes.
-
-**Request Body:**
-```json
-{
-  "document_id": "my-doc",
-  "node_ids": ["3_100_200_abc123"]  // optional, recomputes all dirty if not specified
-}
-```
 
 #### `GET /health`
 
@@ -454,7 +443,6 @@ All parameters can be set via environment variables with the `RAGZOOM_` prefix. 
 | `log_level` | str | "INFO" | Logging level |
 | `rate_limit_rpm` | int | 10000 | Requests per minute limit |
 | `embedding_batch_size` | int | 100 | Batch size for embeddings |
-| `dirty_refresh_limit` | int | 20 | Max dirty nodes to refresh |
 
 ### Configuration Files
 
