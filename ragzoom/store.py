@@ -729,7 +729,6 @@ class Store:
                                     span_end INTEGER NOT NULL,
                                     text TEXT NOT NULL,
                                     summary TEXT,
-                                    is_dirty INTEGER DEFAULT 0,
                                     is_pinned INTEGER DEFAULT 0,
                                     last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
                                     access_count INTEGER DEFAULT 0,
@@ -749,7 +748,7 @@ class Store:
                                 INSERT INTO tree_nodes_new
                                 SELECT id, parent_id, left_child_id, right_child_id,
                                        span_start, span_end, text, summary,
-                                       is_dirty, is_pinned, last_accessed, access_count,
+                                       is_pinned, last_accessed, access_count,
                                        created_at, document_id
                                 FROM tree_nodes
                             """
