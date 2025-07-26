@@ -6,13 +6,11 @@ Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system tha
 
 ## Features
 
-- **Hierarchical Tree Structure**: Binary tree organization with automatic summarization
-- **Dynamic Resolution**: "Zooms in" on relevant content based on queries
-- **Document Isolation**: Complete namespace separation between indexed documents
-- **MMR Diversity**: Maximal Marginal Relevance for diverse, comprehensive results
-- **Slope-Capped Transitions**: Smooth depth transitions (±1 level) for coherent summaries
+- **Hierarchical Summarization**: Binary tree structure with dynamic summaries
+- **Intelligent Retrieval**: Context-aware node selection with MMR diversity
+- **Incremental Updates**: Append-only design for efficient document growth
+- **Flexible Chunking**: Dynamic tiling adapts to document structure
 - **Token Budget Management**: Strict adherence to configurable token limits
-- **Incremental Updates**: Append-only design with efficient dirty node tracking
 - **Optional Features**:
   - Node pinning for always-included content
   - Sliding queue eviction with freshness decay
