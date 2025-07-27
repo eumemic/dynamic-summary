@@ -45,7 +45,14 @@ fi
 
 # Set up branch to track master
 echo "Setting up $WORKTREE_NAME to track origin/master..."
-git -C "$WORKTREE_PATH" branch --set-upstream-to=origin/master "$WORKTREE_NAME"
+cd "$WORKTREE_PATH"
+if git branch --set-upstream-to=origin/master "$WORKTREE_NAME"; then
+    echo "✓ Branch tracking configured successfully"
+else
+    echo "⚠️  Warning: Failed to set up branch tracking"
+    echo "  You can manually set it later with: git branch --set-upstream-to=origin/master"
+fi
+cd - > /dev/null
 
 # Symlink .env if it exists
 if [[ -f .env ]]; then
