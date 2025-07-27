@@ -42,7 +42,7 @@ Clean up debug code, update docs, and create well-organized commits.
    - Each commit leaves app working
    - Message format: "verb: description" (50 chars)
 
-4. **Push**: `git push origin <branch>` (never force without asking)
+4. **Push**: `git push -u origin <branch>` (never force without asking)
    - For worktree branches, this maintains the sequential PR workflow
 
 ## Examples
