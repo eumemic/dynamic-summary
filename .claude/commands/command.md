@@ -10,12 +10,10 @@ Arguments: "$ARGUMENTS"
 
 Create a new custom Claude command. Use extended thinking to anticipate what the executing agent will need to succeed.
 
-Background reading: https://docs.anthropic.com/en/docs/claude-code/slash-commands
-
 ## Design Principles
 
 1. **YAML Frontmatter**: Security and UX through tool restrictions and metadata
-2. **Dynamic Context**: Use ! for bash output, @ for file contents  
+2. **Dynamic Context**: Use `!` for bash output, `@` for file contents  
 3. **Strategic Preparation**: Do the hard thinking upfront about approach and necessary context
 4. **Guided Autonomy**: Provide mental models and key insights, not step-by-step instructions
 5. **Information Density**: Be concise. Every line costs tokens. Pack maximum insight into minimum words
@@ -48,6 +46,7 @@ argument-hint: [optional args] or <required args>
 
 ## Context
 [Dynamic context using ! and @ prefixes]
+- Current state: !`relevant command`
 - Key files: @important/file.md
 
 ## Strategic Guidance
@@ -83,6 +82,8 @@ argument-hint: <module name>
 # file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
 ## Context
+- Module structure: !`find $1 -name "*.js" -o -name "*.ts" | head -20`
+- Test coverage: !`npm test -- --coverage $1 2>&1 | grep -A5 "File.*%"`
 - Dependencies: @package.json
 
 ## Strategic Guidance
