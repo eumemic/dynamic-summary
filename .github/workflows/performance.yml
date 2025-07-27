@@ -4,6 +4,10 @@ on:
   pull_request:
     branches: [ master, main ]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   benchmark:
     name: Run Performance Benchmarks
@@ -47,16 +51,23 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          # Run benchmarks for different chunk sizes
-          mkdir -p benchmark_results
-          
-          for chunk_size in 100 200 400; do
-            echo "Running baseline benchmark with chunk_size=$chunk_size"
-            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size" -v || true
-          done
-          
-          # Copy results
-          cp -r benchmark_results ../baseline_results
+          # Check if benchmark tests exist on base branch
+          if [ -d "tests/benchmarks" ]; then
+            echo "Running baseline benchmarks..."
+            mkdir -p benchmark_results
+            
+            for chunk_size in 100 200 400; do
+              echo "Running baseline benchmark with chunk_size=$chunk_size"
+              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size" -v || true
+            done
+            
+            # Copy results
+            cp -r benchmark_results ../baseline_results
+          else
+            echo "No benchmark tests on base branch - skipping baseline"
+            mkdir -p ../baseline_results
+            echo "No baseline benchmarks available" > ../baseline_results/README.md
+          fi
       
       - name: Install dependencies (PR)
         working-directory: pr
@@ -83,18 +94,50 @@ jobs:
         working-directory: pr
         id: compare
         run: |
-          # Generate comparison report
-          python scripts/compare_benchmarks.py ../baseline_results benchmark_results report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
+          # Check if we have baseline results
+          if [ -f "../baseline_results/README.md" ]; then
+            echo "## 📊 Performance Report" > report.md
+            echo "" >> report.md
+            echo "⚠️ No baseline benchmarks available on master branch." >> report.md
+            echo "" >> report.md
+            echo "This is the first PR with performance benchmarks. Future PRs will compare against these results." >> report.md
+            echo "" >> report.md
+            echo "### Current Performance" >> report.md
+            echo "" >> report.md
+            
+            # Show current results
+            for file in benchmark_results/metrics_*_tokens.json; do
+              if [ -f "$file" ]; then
+                chunk_size=$(basename "$file" | sed 's/metrics_\([0-9]*\)_tokens.json/\1/')
+                echo "**Chunk size: $chunk_size tokens**" >> report.md
+                python -c "
+import json
+with open('$file') as f:
+    data = json.load(f)
+    m = data['metrics']
+    print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\")
+    print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\")
+    print(f\"- Cost per 1K tokens: \${m['efficiency']['cost_per_1k_tokens']:.4f}\")
+" >> report.md
+                echo "" >> report.md
+              fi
+            done
+          else
+            # Generate comparison report
+            python scripts/compare_benchmarks.py ../baseline_results benchmark_results report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
+          fi
           
           # Save report for comment
-          cat report.md >> $GITHUB_STEP_SUMMARY
-          
-          # Also save as output for PR comment
-          {
-            echo 'report<<EOF'
-            cat report.md
-            echo EOF
-          } >> $GITHUB_OUTPUT
+          if [ -f report.md ]; then
+            cat report.md >> $GITHUB_STEP_SUMMARY
+            
+            # Also save as output for PR comment
+            {
+              echo 'report<<EOF'
+              cat report.md
+              echo EOF
+            } >> $GITHUB_OUTPUT
+          fi
       
       - name: Comment PR with results
         uses: actions/github-script@v7
