@@ -16,6 +16,7 @@ from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
+from ragzoom.metrics import IndexingMetrics, IndexingMetricsReporter
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
@@ -87,6 +88,7 @@ class TreeBuilder:
         right_text: str,
         target_tokens: int,
         prev_context: Optional[str] = None,
+        reporter: Optional[IndexingMetricsReporter] = None,
     ) -> str:
         """Summarize text using LLM."""
         # Build prompt with adjacent context (trim to avoid token explosion)
@@ -154,6 +156,16 @@ Here's the content to summarize:"""
                 content = response.choices[0].message.content
                 summary = content.strip() if content else ""
 
+                # Track summary result
+                if reporter and hasattr(response, "usage") and response.usage:
+                    summary_tokens = len(self.splitter.tokenizer.encode(summary))
+                    reporter.record_summary_result(
+                        target_tokens=target_tokens,
+                        actual_tokens=summary_tokens,
+                        prompt_tokens=response.usage.prompt_tokens,
+                        completion_tokens=response.usage.completion_tokens,
+                    )
+
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
                 raise
@@ -166,6 +178,7 @@ Here's the content to summarize:"""
         document_id: Optional[str] = None,
         file_path: Optional[str] = None,
         show_progress: bool = True,
+        reporter: Optional[IndexingMetricsReporter] = None,
     ) -> str:
         """Add a document to the tree, creating leaf nodes."""
         # Compute content hash
@@ -200,6 +213,12 @@ Here's the content to summarize:"""
 
         # Split into chunks
         chunks = self.splitter.split_text(text)
+
+        # Initialize reporter if provided
+        if reporter:
+            # Count source document tokens
+            source_tokens = len(self.splitter.tokenizer.encode(text))
+            reporter = IndexingMetricsReporter(document_id, source_tokens)
 
         # Create progress tracker early so we can use it for logging
         # When progress bar is active, we suppress info logs to avoid disrupting the display
@@ -272,6 +291,11 @@ Here's the content to summarize:"""
                 )
                 leaf_ids.append(node_id)
 
+                # Track chunk creation
+                if reporter:
+                    chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
+                    reporter.record_chunk_created(node_id, chunk_tokens)
+
                 current_pos = chunk_end
 
             # Early validation: Check document coverage before processing embeddings
@@ -315,6 +339,14 @@ Here's the content to summarize:"""
                         f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]"
                     )
 
+                # Track embedding call
+                if reporter:
+                    token_counts = [
+                        len(self.splitter.tokenizer.encode(text))
+                        for text in batch_texts
+                    ]
+                    reporter.record_embedding_call(len(batch_texts), token_counts)
+
                 batch_embeddings = await self._get_embeddings_batch(batch_texts)
                 all_embeddings.extend(batch_embeddings)
 
@@ -352,7 +384,12 @@ Here's the content to summarize:"""
 
             # Build tree from leaves
             root_id = await self._build_tree_from_leaves(
-                leaf_ids, chunks, document_id, async_progress, overall_start_time
+                leaf_ids,
+                chunks,
+                document_id,
+                async_progress,
+                overall_start_time,
+                reporter,
             )
 
             # Final completion logging with total elapsed time
@@ -363,6 +400,12 @@ Here's the content to summarize:"""
                     logger.info(
                         f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
                     )
+
+            # Finalize metrics if reporter was used
+            if reporter:
+                metrics = reporter.finalize()
+                # Store metrics for later retrieval by benchmarks
+                self._last_indexing_metrics = metrics
 
             return document_id
         finally:
@@ -381,6 +424,28 @@ Here's the content to summarize:"""
         return asyncio.run(
             self.add_document_async(text, document_id, file_path, show_progress)
         )
+
+    def add_document_with_metrics(
+        self,
+        text: str,
+        document_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        show_progress: bool = False,
+    ) -> tuple[str, IndexingMetrics]:
+        """Add document and return metrics. Used for benchmarking."""
+        # Create reporter internally
+        source_tokens = len(self.splitter.tokenizer.encode(text))
+        reporter = IndexingMetricsReporter(document_id or "benchmark", source_tokens)
+
+        # Run indexing with reporter
+        doc_id = asyncio.run(
+            self._add_document_impl(
+                text, document_id, file_path, show_progress, reporter
+            )
+        )
+
+        # Return document ID and metrics
+        return doc_id, self._last_indexing_metrics
 
     async def add_document_async(
         self,
@@ -402,6 +467,7 @@ Here's the content to summarize:"""
         right_text: str,
         prev_context: Optional[str],
         document_id: Optional[str],
+        reporter: Optional[IndexingMetricsReporter] = None,
     ) -> tuple[str, str, list[float]]:
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
@@ -412,7 +478,7 @@ Here's the content to summarize:"""
 
         # Generate summary (async)
         summary = await self._summarize_text(
-            left_text, right_text, target_tokens, prev_context
+            left_text, right_text, target_tokens, prev_context, reporter
         )
 
         # Validate summary faithfulness if validation is enabled
@@ -492,6 +558,7 @@ Here's the content to summarize:"""
         document_id: Optional[str] = None,
         progress: Optional[AsyncProgressWrapper] = None,
         overall_start_time: Optional[float] = None,
+        reporter: Optional[IndexingMetricsReporter] = None,
     ) -> str:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
         current_level_ids = leaf_ids
@@ -499,6 +566,10 @@ Here's the content to summarize:"""
 
         # Calculate total tree height (distance from root to furthest leaf)
         # Note: This is used for progress tracking estimation
+
+        # Track leaf level
+        if reporter:
+            reporter.record_tree_level_complete(0, len(leaf_ids))
 
         current_height = 1  # Track height for logging (leaves are at height 0)
         while len(current_level_ids) > 1:
@@ -539,6 +610,7 @@ Here's the content to summarize:"""
                     right_text,
                     prev_context,
                     document_id,
+                    reporter,
                 )
                 tasks.append(task)
                 pair_info.append((i, i + 1))
@@ -635,6 +707,7 @@ Here's the content to summarize:"""
                         "",  # No right child
                         self.config.leaf_tokens,
                         prev_context=None,
+                        reporter=reporter,
                     )
 
                     # Get embedding for the summary
@@ -665,6 +738,13 @@ Here's the content to summarize:"""
 
             current_level_ids = next_level_ids
             current_level_texts = next_level_texts
+
+            # Track tree level completion
+            if reporter and current_level_ids:
+                reporter.record_tree_level_complete(
+                    current_height, len(current_level_ids)
+                )
+
             current_height += 1
 
         # Return root node ID
