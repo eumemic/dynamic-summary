@@ -10,7 +10,7 @@ argument-hint: [PR number]
 
 ## Context
 - Current branch: !`git branch --show-current`
-- PR status: !`gh pr view --json state,statusCheckRollup -q '.state + " / " + .statusCheckRollup.state' 2>/dev/null || echo "No PR"`
+- PR status: !`gh pr view --json state,mergeable -q 'if .mergeable == "MERGEABLE" then .state + " / Ready" else .state + " / Not ready" end' 2>/dev/null || echo "No PR"`
 
 ## Strategic Guidance
 Merging completes the feature cycle. Use regular merge (not squash) to preserve commit history. For worktree branches, we don't delete the branch - just sync with master for the next cycle.
