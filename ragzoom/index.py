@@ -87,7 +87,6 @@ class TreeBuilder:
         right_text: str,
         target_tokens: int,
         prev_context: Optional[str] = None,
-        next_context: Optional[str] = None,
     ) -> str:
         """Summarize text using LLM."""
         # Build prompt with adjacent context (trim to avoid token explosion)
@@ -95,7 +94,6 @@ class TreeBuilder:
 
         # Process adjacent context if needed
         trimmed_prev = None
-        trimmed_next = None
 
         if prev_context and self.config.adjacent_context_tokens > 0:
             # Trim prev_context to adjacent_context_tokens
@@ -106,17 +104,8 @@ class TreeBuilder:
             else:
                 trimmed_prev = prev_context
 
-        if next_context and self.config.adjacent_context_tokens > 0:
-            # Trim next_context to adjacent_context_tokens
-            next_tokens = self.splitter.tokenizer.encode(next_context)
-            if len(next_tokens) > self.config.adjacent_context_tokens:
-                context_tokens = next_tokens[: self.config.adjacent_context_tokens]
-                trimmed_next = self.splitter.tokenizer.decode(context_tokens)
-            else:
-                trimmed_next = next_context
-
         # Build the summarization prompt
-        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> and <FOLLOWING_TEXT> content as context (when provided - these may be omitted if there is no preceding/following context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary and your summary should flow smoothly into the <FOLLOWING_TEXT>.
+        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
 
 CRITICAL REQUIREMENTS:
 - Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
@@ -145,12 +134,6 @@ Here's the content to summarize:"""
         # Add the content to summarize (concatenated)
         combined_text = f"{left_text} {right_text}".strip()
         prompt_parts.append(f"\n<SUMMARIZE_TEXT>\n{combined_text}\n</SUMMARIZE_TEXT>")
-
-        # Add following context if available
-        if next_context and self.config.adjacent_context_tokens > 0 and trimmed_next:
-            prompt_parts.append(
-                f"\n<FOLLOWING_TEXT>\n{trimmed_next.strip()}...\n</FOLLOWING_TEXT>"
-            )
 
         full_prompt = "\n\n".join(prompt_parts)
 
@@ -418,7 +401,6 @@ Here's the content to summarize:"""
         right_id: str,
         right_text: str,
         prev_context: Optional[str],
-        next_context: Optional[str],
         document_id: Optional[str],
     ) -> tuple[str, str, list[float]]:
         """Process a single node pair - generate summary and embedding."""
@@ -430,7 +412,7 @@ Here's the content to summarize:"""
 
         # Generate summary (async)
         summary = await self._summarize_text(
-            left_text, right_text, target_tokens, prev_context, next_context
+            left_text, right_text, target_tokens, prev_context
         )
 
         # Validate summary faithfulness if validation is enabled
@@ -542,16 +524,10 @@ Here's the content to summarize:"""
 
                 # Get adjacent context
                 prev_context = None
-                next_context = None
 
                 if i > 0:
                     prev_context, _ = self.splitter.get_adjacent_context(
                         current_level_texts, i - 1
-                    )
-
-                if i + 2 < len(current_level_texts):
-                    _, next_context = self.splitter.get_adjacent_context(
-                        current_level_texts, i + 1
                     )
 
                 # Create async task
@@ -562,7 +538,6 @@ Here's the content to summarize:"""
                     right_id,
                     right_text,
                     prev_context,
-                    next_context,
                     document_id,
                 )
                 tasks.append(task)
@@ -660,7 +635,6 @@ Here's the content to summarize:"""
                         "",  # No right child
                         self.config.leaf_tokens,
                         prev_context=None,
-                        next_context=None,
                     )
 
                     # Get embedding for the summary
