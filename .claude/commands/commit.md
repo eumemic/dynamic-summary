@@ -14,7 +14,7 @@ argument-hint: [commit message]
 - CLAUDE.md todos: @CLAUDE.md:10-20
 
 ## Strategic Guidance
-Atomic commits tell a story. Each commit should be a complete, working change that could be reverted independently. Think features, not files. If reverting your commit would break the app, you've split too finely.
+Atomic commits tell a story. Each commit should be a complete, working change that could be reverted independently. Think features, not files. In worktree slots, we work directly on the worktree branch and push after each commit.
 
 ## Task
 Arguments: "$ARGUMENTS"
@@ -23,11 +23,9 @@ Clean up debug code, update docs, and create well-organized commits.
 
 ## Process
 
-1. **Safety Check**: Never commit to master or worktree branches. 
-   - If on master or worktree-N:
-     - Infer branch name from changes (e.g., "feature/auth-system")
-     - Ask: "Create branch 'feature/auth-system'? (or provide different name)"
-     - Create branch: `git checkout -b <branch-name>`
+1. **Safety Check**: Never commit to master.
+   - If on master: STOP and ask user to switch to a worktree or feature branch
+   - If on worktree-N: This is expected - proceed with commits
 
 2. **Cleanup**:
    - Remove debug prints/console.logs
@@ -44,7 +42,8 @@ Clean up debug code, update docs, and create well-organized commits.
    - Each commit leaves app working
    - Message format: "verb: description" (50 chars)
 
-4. **Push**: `git push -u origin <branch>` (never force without asking)
+4. **Push**: `git push origin <branch>` (never force without asking)
+   - For worktree branches, this maintains the sequential PR workflow
 
 ## Examples
 ❌ Three commits: "Add component", "Add styles", "Wire up component"
