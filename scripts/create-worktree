@@ -37,8 +37,26 @@ fi
 
 # Check if branch already exists
 if git show-ref --verify --quiet "refs/heads/$WORKTREE_NAME"; then
-    echo "Branch $WORKTREE_NAME already exists, using existing branch..."
-    git worktree add "$WORKTREE_PATH" "$WORKTREE_NAME"
+    echo "Branch $WORKTREE_NAME already exists, checking for uncommitted changes..."
+    
+    # Check if there are uncommitted changes on the branch
+    if git worktree list --porcelain | grep -q "$WORKTREE_NAME" && [ -d "$WORKTREE_PATH" ]; then
+        # Worktree exists, check for uncommitted changes
+        if [ -n "$(cd "$WORKTREE_PATH" 2>/dev/null && git status --porcelain)" ]; then
+            echo "⚠️  WARNING: Uncommitted changes detected in $WORKTREE_PATH"
+            echo "    Resetting the branch will lose these changes."
+            read -p "    Continue anyway? (y/N) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+        fi
+    fi
+    
+    echo "Resetting $WORKTREE_NAME to master..."
+    git branch -f "$WORKTREE_NAME" master
+    git worktree add "$WORKTREE_PATH" "$WORKTREE_NAME" 2>/dev/null || echo "Worktree already exists at $WORKTREE_PATH"
 else
     git worktree add -b "$WORKTREE_NAME" "$WORKTREE_PATH" master
 fi
