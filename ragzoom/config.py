@@ -93,6 +93,20 @@ class RagZoomConfig(BaseSettings):
         default=2, description="Deepest level a node may be permanently pinned"
     )
 
+    # Cost estimation settings (per 1K tokens)
+    embedding_cost_per_1k: float = Field(
+        default=0.00002,
+        description="Cost per 1K tokens for embeddings (default: text-embedding-3-small)",
+    )
+    summary_input_cost_per_1k: float = Field(
+        default=0.00015,
+        description="Cost per 1K input tokens for summary model (default: gpt-4o-mini)",
+    )
+    summary_output_cost_per_1k: float = Field(
+        default=0.0006,
+        description="Cost per 1K output tokens for summary model (default: gpt-4o-mini)",
+    )
+
     @field_validator("mmr_lambda")
     @classmethod
     def validate_mmr_lambda(cls, v: float) -> float:
