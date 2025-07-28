@@ -10,7 +10,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Optional, cast
+from typing import Any, Optional, Union, cast
 
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN
@@ -179,8 +179,13 @@ Here's the content to summarize:"""
         file_path: Optional[str] = None,
         show_progress: bool = True,
         reporter: Optional[IndexingMetricsReporter] = None,
-    ) -> str:
-        """Add a document to the tree, creating leaf nodes."""
+    ) -> Union[str, tuple[str, IndexingMetrics]]:
+        """Add a document to the tree, creating leaf nodes.
+
+        Returns:
+            If reporter is None: document_id
+            If reporter is provided: (document_id, metrics)
+        """
         # Compute content hash
         content_hash = self.store.compute_content_hash(text)
 
@@ -404,8 +409,7 @@ Here's the content to summarize:"""
             # Finalize metrics if reporter was used
             if reporter:
                 metrics = reporter.finalize()
-                # Store metrics for later retrieval by benchmarks
-                self._last_indexing_metrics = metrics
+                return document_id, metrics
 
             return document_id
         finally:
@@ -432,20 +436,35 @@ Here's the content to summarize:"""
         file_path: Optional[str] = None,
         show_progress: bool = False,
     ) -> tuple[str, IndexingMetrics]:
-        """Add document and return metrics. Used for benchmarking."""
-        # Create reporter internally
-        source_tokens = len(self.splitter.tokenizer.encode(text))
-        reporter = IndexingMetricsReporter(document_id or "benchmark", source_tokens)
+        """Add document and return metrics. Used for benchmarking.
 
-        # Run indexing with reporter
-        doc_id = asyncio.run(
+        This is a convenience method that creates an IndexingMetricsReporter internally
+        and returns the collected metrics. For production use, add_document() is preferred
+        as it doesn't have the overhead of metrics collection.
+
+        The dual-method pattern ensures:
+        - Normal indexing (add_document) has zero metrics overhead
+        - Benchmarking gets detailed metrics without modifying core logic
+        - Internal implementation (_add_document_impl) remains flexible
+        """
+        # Create reporter internally with config for pricing
+        source_tokens = len(self.splitter.tokenizer.encode(text))
+        reporter = IndexingMetricsReporter(
+            document_id or "benchmark", source_tokens, self.config
+        )
+
+        # Run indexing with reporter - will return (doc_id, metrics)
+        result = asyncio.run(
             self._add_document_impl(
                 text, document_id, file_path, show_progress, reporter
             )
         )
 
-        # Return document ID and metrics
-        return doc_id, self._last_indexing_metrics
+        # Extract tuple returned when reporter is provided
+        # We know result is a tuple because we passed a reporter
+        assert isinstance(result, tuple)
+        doc_id, metrics = result
+        return doc_id, metrics
 
     async def add_document_async(
         self,
@@ -455,9 +474,12 @@ Here's the content to summarize:"""
         show_progress: bool = True,
     ) -> str:
         """Async version of add_document - called by sync wrapper."""
-        return await self._add_document_impl(
+        result = await self._add_document_impl(
             text, document_id, file_path, show_progress
         )
+        # When no reporter is provided, result is just the document_id string
+        assert isinstance(result, str)
+        return result
 
     async def _process_node_pair(
         self,
