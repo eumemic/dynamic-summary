@@ -886,18 +886,14 @@ Here's the content to summarize:"""
         # Calculate total tree height (distance from root to furthest leaf)
         # Note: This is used for progress tracking estimation
 
-        # Track token usage statistics by height
+        # Track token usage statistics by height (keep for debug logging)
         token_stats: dict[int, list[int]] = {}
-        # Track retry statistics by height
-        retry_stats: dict[int, list[int]] = {}
 
         # Record leaf node token counts (height 0)
         token_stats[0] = []
-        retry_stats[0] = []  # Leaf nodes have no retries
         for text in leaf_texts:
             tokens = self.splitter.tokenizer.encode(text)
             token_stats[0].append(len(tokens))
-            retry_stats[0].append(0)  # No retries for leaf nodes
 
         # Track leaf level
         if reporter:
@@ -911,7 +907,6 @@ Here's the content to summarize:"""
 
             # Initialize token stats for this height
             token_stats[current_height] = []
-            retry_stats[current_height] = []
 
             # Process pairs concurrently
             tasks = []
@@ -1038,7 +1033,10 @@ Here's the content to summarize:"""
                 for parent_id, summary, _, retry_count in results:
                     next_level_ids.append(parent_id)
                     next_level_texts.append(summary)
-                    retry_stats[current_height].append(retry_count)
+
+                    # Track retry in reporter if available
+                    if reporter:
+                        reporter.record_summary_retry(current_height, retry_count)
 
                 # Handle odd node by creating a single-child parent
                 if odd_node:
@@ -1094,7 +1092,10 @@ Here's the content to summarize:"""
                     # Add the new parent to the next level
                     next_level_ids.append(parent_id)
                     next_level_texts.append(summary)
-                    retry_stats[current_height].append(retry_count)
+
+                    # Track retry in reporter if available
+                    if reporter:
+                        reporter.record_summary_retry(current_height, retry_count)
 
                 # Track token counts for all nodes at this height
                 for text in next_level_texts:
@@ -1138,20 +1139,6 @@ Here's the content to summarize:"""
                         logger.info(
                             f"  Height {height}: avg {avg_tokens:.0f} tokens, "
                             f"min {min_tokens}, max {max_tokens} ({len(counts)} nodes)"
-                        )
-
-                logger.info("\nRetry statistics by tree height:")
-                for height in sorted(retry_stats.keys()):
-                    retries = retry_stats[height]
-                    if retries:
-                        avg_retries = sum(retries) / len(retries)
-                        min_retries = min(retries)
-                        max_retries = max(retries)
-                        total_retries = sum(retries)
-                        logger.info(
-                            f"  Height {height}: avg {avg_retries:.1f} retries, "
-                            f"min {min_retries}, max {max_retries} "
-                            f"({total_retries} total retries across {len(retries)} nodes)"
                         )
 
         return current_level_ids[0] if current_level_ids else ""
