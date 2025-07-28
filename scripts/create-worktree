@@ -37,7 +37,8 @@ fi
 
 # Check if branch already exists
 if git show-ref --verify --quiet "refs/heads/$WORKTREE_NAME"; then
-    echo "Branch $WORKTREE_NAME already exists, using existing branch..."
+    echo "Branch $WORKTREE_NAME already exists, resetting to master..."
+    git branch -f "$WORKTREE_NAME" master
     git worktree add "$WORKTREE_PATH" "$WORKTREE_NAME"
 else
     git worktree add -b "$WORKTREE_NAME" "$WORKTREE_PATH" master
