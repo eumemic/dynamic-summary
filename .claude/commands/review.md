@@ -1,7 +1,7 @@
 ---
 allowed-tools: Read, Grep, Bash, Task
-description: Review code for architecture, correctness, and maintainability
-argument-hint: [file/PR/commit]
+description: Review code - changes, architecture, or specific components
+argument-hint: [scope]
 ---
 
 # /review
@@ -10,15 +10,39 @@ argument-hint: [file/PR/commit]
 
 ## Context
 - Current branch: !`git branch --show-current`
-- Changed files: !`git diff --name-status HEAD~ 2>/dev/null | head -10 || git status --porcelain | head -10`
+- Review scope: !`if [ -z "$ARGUMENTS" ]; then echo "All changes vs master"; else echo "$ARGUMENTS"; fi`
 
 Arguments: "$ARGUMENTS"
 
-Review code changes with focus on architecture, correctness, and maintainability.
+## Usage Examples
+
+**Git Changes:**
+- `/review` - Review all changes in current branch vs master
+- `/review staged` - Review only staged changes
+- `/review HEAD` - Review the latest commit
+- `/review HEAD~2` - Review specific commit
+
+**Code & Architecture:**
+- `/review the tiling algorithm` - Review implementation and design
+- `/review ragzoom/index.py` - Review a specific file or module
+- `/review error handling` - Review patterns across codebase
+- `/review API design` - Review architectural decisions
+
+## Task
+
+Identify the review scope and gather necessary context:
+
+!`if [ -z "$ARGUMENTS" ]; then echo "Reviewing all changes vs master:"; echo ""; git diff --stat $(git merge-base HEAD master)..HEAD 2>/dev/null | head -20; elif [ "$ARGUMENTS" = "staged" ]; then echo "Reviewing staged changes:"; echo ""; git diff --cached --stat | head -20; elif [ "$ARGUMENTS" = "HEAD" ]; then echo "Reviewing latest commit:"; echo ""; git show --stat | head -20; elif [[ "$ARGUMENTS" =~ ^HEAD~[0-9]+$ ]]; then echo "Reviewing commit $ARGUMENTS:"; echo ""; git show --stat "$ARGUMENTS" | head -20; else echo "Reviewing: $ARGUMENTS"; fi`
 
 ## Strategic Guidance
 
 Look beyond syntax to question design decisions. Think carefully about the architecture - trace data flows, understand component relationships. Is this the simplest solution? Could we achieve the same with less code? What would a new developer think?
+
+Regardless of review scope (git changes or conceptual), apply the same methodology:
+1. **Understand Context**: First understand what code is involved and why it exists
+2. **Trace Implementation**: Follow the logic through the system
+3. **Evaluate Design**: Consider simpler alternatives
+4. **Assess Impact**: Think about maintainability and clarity
 
 ## Review Focus
 
