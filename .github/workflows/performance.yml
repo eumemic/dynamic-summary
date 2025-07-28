@@ -228,4 +228,4 @@ with open('$file') as f:
           path: |
             baseline_results/
             pr/benchmark_results/
-            pr/report.md# Trigger CI
+            pr/report.md
