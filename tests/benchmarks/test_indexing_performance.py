@@ -2,7 +2,6 @@
 
 import json
 import os
-import tempfile
 import time
 from pathlib import Path
 
@@ -52,30 +51,6 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
         pytest.skip(f"Could not load test document {file_path}: {e}")
 
 
-class BenchmarkStore:
-    """Wrapper for Store that provides cleanup after benchmarks."""
-
-    def __init__(self):
-        self.temp_dir = tempfile.mkdtemp()
-        self.config = RagZoomConfig(
-            sqlite_database_url=f"sqlite:///{self.temp_dir}/test.db",
-            chroma_persist_directory=f"{self.temp_dir}/chroma",
-        )
-        self.store = Store(self.config)
-
-    def cleanup(self):
-        """Clean up temporary files."""
-        import shutil
-
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
-
-    def __enter__(self):
-        return self.store
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.cleanup()
-
-
 @pytest.fixture
 def benchmark_config():
     """Config for benchmarks with real API calls."""
@@ -102,7 +77,7 @@ def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
     test_doc, doc_name = get_test_document(document_type)
 
     # Run indexing with metrics
-    with BenchmarkStore() as store:
+    with Store.temporary() as store:
         builder = TreeBuilder(benchmark_config, store)
 
         # Warm up tokenizer

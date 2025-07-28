@@ -1,11 +1,14 @@
 """Performance metrics collection for RagZoom indexing."""
 
+import logging
 import time
 from dataclasses import dataclass, field
 
 import psutil
 
 from ragzoom.config import RagZoomConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -287,9 +290,9 @@ class IndexingMetricsReporter:
             current_memory_mb = memory_info.rss / 1024 / 1024
             if current_memory_mb > self.metrics.peak_memory_mb:
                 self.metrics.peak_memory_mb = current_memory_mb
-        except Exception:
-            # Ignore errors in memory tracking
-            pass
+        except Exception as e:
+            # Log but don't fail indexing due to memory tracking issues
+            logger.debug(f"Failed to update memory usage: {e}")
 
     def record_chunk_created(self, chunk_id: str, tokens: int) -> None:
         """Called when a chunk is created during splitting."""

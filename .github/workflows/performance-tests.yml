@@ -29,18 +29,6 @@ jobs:
           path: baseline_results
         continue-on-error: true
       
-      - name: Check baseline availability
-        id: baseline_check
-        run: |
-          if [ -d "baseline_results" ] && [ -f "baseline_results/metadata.json" ]; then
-            echo "has_baseline=true" >> $GITHUB_OUTPUT
-            echo "✅ Found baseline benchmarks"
-            cat baseline_results/metadata.json
-          else
-            echo "has_baseline=false" >> $GITHUB_OUTPUT
-            echo "⚠️ No baseline benchmarks found - will generate on-demand"
-          fi
-      
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
@@ -55,45 +43,8 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
       
-      - name: Generate baseline if needed
-        if: steps.baseline_check.outputs.has_baseline == 'false'
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          echo "Generating baseline benchmarks from ${{ github.base_ref }}..."
-          
-          # Clone base branch using GitHub token
-          git clone --depth 1 --branch ${{ github.base_ref }} https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git base_branch
-          
-          cd base_branch
-          
-          # Check if benchmark tests exist on base branch
-          if [ -d "tests/benchmarks" ] && [ -f "tests/benchmarks/test_indexing_performance.py" ]; then
-            echo "Running baseline benchmarks..."
-            pip install -r requirements.txt
-            pip install -r requirements-dev.txt
-            
-            # Run baseline benchmarks
-            mkdir -p benchmark_results
-            for chunk_size in 100 200 400; do
-              echo "Running baseline benchmark with chunk_size=$chunk_size"
-              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-$chunk_size" -v || true
-            done
-            
-            # Move results
-            mv benchmark_results ../baseline_results
-            cd ..
-            rm -rf base_branch
-          else
-            echo "No benchmark tests on base branch - skipping baseline"
-            mkdir -p baseline_results
-            echo "No baseline benchmarks available" > baseline_results/README.md
-          fi
-      
       - name: Run PR benchmarks
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           echo "Current directory: $(pwd)"
@@ -102,11 +53,11 @@ jobs:
           ls -la tests/benchmarks/ || echo "⚠️ No benchmarks directory"
           
           # Verify API key is set
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "❌ OPENAI_API_KEY is not set!"
+          if [ -z "$RAGZOOM_OPENAI_API_KEY" ]; then
+            echo "❌ RAGZOOM_OPENAI_API_KEY is not set!"
             exit 1
           else
-            echo "✅ OPENAI_API_KEY is configured"
+            echo "✅ RAGZOOM_OPENAI_API_KEY is configured"
           fi
           # Run benchmarks for different chunk sizes
           mkdir -p benchmark_results

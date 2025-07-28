@@ -15,7 +15,6 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List
 
 # Add parent directory to path to import ragzoom
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -56,14 +55,14 @@ class BenchmarkRunner:
         },
     }
 
-    def __init__(self, chunk_sizes: List[int], output_dir: Path):
+    def __init__(self, chunk_sizes: list[int], output_dir: Path):
         self.chunk_sizes = chunk_sizes
         self.output_dir = output_dir
         self.output_dir.mkdir(exist_ok=True)
 
     def run_benchmark(
         self, config: RagZoomConfig, document_path: Path, document_name: str
-    ) -> Dict[int, IndexingMetrics]:
+    ) -> dict[int, IndexingMetrics]:
         """Run benchmark for a single document at all chunk sizes."""
         # Read document
         text = document_path.read_text(encoding="utf-8")
@@ -116,7 +115,7 @@ class BenchmarkRunner:
         return results
 
     def save_results(
-        self, results: Dict[str, Dict[int, IndexingMetrics]], timestamp: float
+        self, results: dict[str, dict[int, IndexingMetrics]], timestamp: float
     ) -> None:
         """Save benchmark results to JSON files."""
         # Save individual metrics files (for compatibility with CI)
@@ -162,11 +161,11 @@ class BenchmarkRunner:
             )
         logger.info(f"Saved detailed results to {detailed_file}")
 
-    def _aggregate_metrics(self, metrics_by_doc: Dict[str, IndexingMetrics]) -> Dict:
+    def _aggregate_metrics(self, metrics_by_doc: dict[str, IndexingMetrics]) -> dict:
         """Aggregate metrics across multiple documents."""
         # For now, average the key metrics
         total_docs = len(metrics_by_doc)
-        
+
         aggregated = {
             "timing": {
                 "total_duration_seconds": 0,
@@ -196,7 +195,7 @@ class BenchmarkRunner:
 
         for doc, metrics in metrics_by_doc.items():
             m_dict = metrics.to_dict()
-            
+
             # Add to aggregated values
             for category in aggregated:
                 for key in aggregated[category]:
@@ -235,7 +234,7 @@ class BenchmarkRunner:
         # Print summary
         self.print_summary(all_results)
 
-    def print_summary(self, results: Dict[str, Dict[int, IndexingMetrics]]) -> None:
+    def print_summary(self, results: dict[str, dict[int, IndexingMetrics]]) -> None:
         """Print a summary table of results."""
         logger.info(f"\n{'='*80}")
         logger.info("BENCHMARK SUMMARY")
@@ -278,7 +277,7 @@ def main():
     parser.add_argument(
         "--api-key",
         type=str,
-        help="OpenAI API key (or set OPENAI_API_KEY environment variable)",
+        help="OpenAI API key (or set RAGZOOM_OPENAI_API_KEY environment variable)",
     )
     parser.add_argument(
         "--embedding-model",
@@ -307,8 +306,8 @@ def main():
     )
 
     # Check API key
-    if config.openai_api_key == "test-key":
-        logger.error("No OpenAI API key provided. Set OPENAI_API_KEY or use --api-key")
+    if not config.openai_api_key or config.openai_api_key == "test-key":
+        logger.error("No OpenAI API key provided. Set RAGZOOM_OPENAI_API_KEY environment variable or use --api-key")
         sys.exit(1)
 
     # Run benchmarks
