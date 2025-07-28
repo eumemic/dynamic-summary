@@ -317,6 +317,8 @@ class IndexingMetricsReporter:
         )
         self._current_level = 0
         self._nodes_at_current_level = 0
+        # Track token usage per node across multiple attempts
+        self._node_accumulator: dict[str, dict[str, int]] = {}
 
     def record_chunk_created(self, chunk_id: str, tokens: int) -> None:
         """Called when a chunk is created during splitting."""
@@ -336,24 +338,63 @@ class IndexingMetricsReporter:
         self.metrics.embedding_batch_sizes.append(batch_size)
         self.metrics.total_embedding_tokens += sum(token_counts)
 
-    def record_summary_result(
+    def record_summary_attempt(
         self,
-        target_tokens: int,
-        actual_tokens: int,
+        node_id: str,
         prompt_tokens: int,
         completion_tokens: int,
+        is_retry: bool = False,
+    ) -> None:
+        """Record a summary generation attempt (initial or retry).
+
+        Args:
+            node_id: The node being summarized
+            prompt_tokens: Tokens in the prompt
+            completion_tokens: Tokens in the completion
+            is_retry: Whether this is a retry attempt
+        """
+        if node_id not in self._node_accumulator:
+            self._node_accumulator[node_id] = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "attempts": 0,
+            }
+
+        acc = self._node_accumulator[node_id]
+        acc["prompt_tokens"] += prompt_tokens
+        acc["completion_tokens"] += completion_tokens
+        acc["attempts"] += 1
+
+    def record_summary_result(
+        self,
+        node_id: str,
+        target_tokens: int,
+        actual_tokens: int,
     ) -> None:
         """Record summary generation result with size tracking.
 
         Args:
+            node_id: The node that was summarized
             target_tokens: Target size for summary
             actual_tokens: Actual size of generated summary
-            prompt_tokens: Tokens in prompt
-            completion_tokens: Tokens in completion
         """
-        self.metrics.summary_api_calls += 1
-        self.metrics.total_summary_prompt_tokens += prompt_tokens
-        self.metrics.total_summary_completion_tokens += completion_tokens
+        # Use accumulated tokens if available, otherwise something went wrong
+        if node_id in self._node_accumulator:
+            acc = self._node_accumulator[node_id]
+            total_prompt_tokens = acc["prompt_tokens"]
+            total_completion_tokens = acc["completion_tokens"]
+            total_attempts = acc["attempts"]
+            # Clear the accumulator for this node
+            del self._node_accumulator[node_id]
+        else:
+            # Fallback - should not happen in normal flow
+            total_prompt_tokens = 0
+            total_completion_tokens = 0
+            total_attempts = 1
+
+        self.metrics.summary_api_calls += total_attempts
+        self.metrics.total_summary_prompt_tokens += total_prompt_tokens
+        self.metrics.total_summary_completion_tokens += total_completion_tokens
 
         # Track accuracy by target size
         if target_tokens not in self.metrics.summary_stats:

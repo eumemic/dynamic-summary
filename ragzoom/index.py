@@ -114,6 +114,7 @@ class TreeBuilder:
         target_tokens: int,
         parent_id: Optional[str] = None,
         debug: bool = False,
+        reporter: Optional[IndexingMetricsReporter] = None,
     ) -> tuple[str, int]:
         """Retry summary correction to get closer to target token count.
 
@@ -233,6 +234,20 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                     temperature=self.config.summary_temperature,
                     max_tokens=int(target_tokens * 1.5),  # Safety margin
                 )
+
+                # Track retry attempt tokens
+                if (
+                    reporter
+                    and parent_id
+                    and hasattr(retry_response, "usage")
+                    and retry_response.usage
+                ):
+                    reporter.record_summary_attempt(
+                        node_id=parent_id,
+                        prompt_tokens=retry_response.usage.prompt_tokens,
+                        completion_tokens=retry_response.usage.completion_tokens,
+                        is_retry=True,
+                    )
 
                 content = retry_response.choices[0].message.content
                 if not content:
@@ -405,7 +420,7 @@ Here's the content to summarize:"""
                 retry_count = 0
                 if deviation_pct > self.config.summary_deviation_threshold:
                     summary, retry_count = await self._retry_summary_correction(
-                        summary, target_tokens, parent_id, debug
+                        summary, target_tokens, parent_id, debug, reporter
                     )
                     # Re-calculate final tokens for logging
                     final_tokens = len(self.splitter.tokenizer.encode(summary))
@@ -424,15 +439,28 @@ Here's the content to summarize:"""
                             f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
                         )
 
-                # Track summary result
-                if reporter and hasattr(response, "usage") and response.usage:
+                # Track the initial attempt
+                if (
+                    reporter
+                    and parent_id
+                    and hasattr(response, "usage")
+                    and response.usage
+                ):
+                    reporter.record_summary_attempt(
+                        node_id=parent_id,
+                        prompt_tokens=response.usage.prompt_tokens,
+                        completion_tokens=response.usage.completion_tokens,
+                        is_retry=False,
+                    )
+
+                # Track summary result (after any retries)
+                if reporter and parent_id:
                     summary_tokens_list = self.splitter.tokenizer.encode(summary)
                     summary_token_count = len(summary_tokens_list)
                     reporter.record_summary_result(
+                        node_id=parent_id,
                         target_tokens=self.config.leaf_tokens,  # Always use configured target for metrics
                         actual_tokens=summary_token_count,
-                        prompt_tokens=response.usage.prompt_tokens,
-                        completion_tokens=response.usage.completion_tokens,
                     )
 
             except Exception as e:
