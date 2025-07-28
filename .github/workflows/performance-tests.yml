@@ -165,6 +165,7 @@ jobs:
             {
               echo "report<<${delimiter}"
               cat report.md
+              echo ""  # Ensure newline before delimiter
               echo "${delimiter}"
             } >> $GITHUB_OUTPUT
           fi
