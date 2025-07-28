@@ -160,10 +160,12 @@ jobs:
             cat report.md >> $GITHUB_STEP_SUMMARY
             
             # Also save as output for PR comment
+            # Use a unique delimiter to avoid conflicts with content
+            delimiter="$(openssl rand -hex 16)"
             {
-              echo 'report<<EOF'
+              echo "report<<${delimiter}"
               cat report.md
-              echo EOF
+              echo "${delimiter}"
             } >> $GITHUB_OUTPUT
           fi
       
