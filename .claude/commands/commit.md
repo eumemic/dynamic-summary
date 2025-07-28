@@ -12,9 +12,9 @@ argument-hint: [commit message]
 - Current branch: !`git branch --show-current`
 - Changed files: !`git status --porcelain`
 - Changes preview: !`git diff --stat`
-- PR title: "!`gh pr view --json title -q .title 2>/dev/null || echo "No PR"`"
+- PR title: "!`gh pr list --head $(git branch --show-current) --state open --json title -q '.[0].title // "No PR"'`"
 - PR description:
-!`gh pr view --json body -q .body 2>/dev/null || echo "No PR"`
+!`gh pr list --head $(git branch --show-current) --state open --json body -q '.[0].body // "No PR"'`
 
 ## Strategic Guidance
 Atomic commits tell a story. Each commit should be a complete, working change that could be reverted independently. Think features, not files. In worktree slots, we work directly on the worktree branch and push after each commit.
