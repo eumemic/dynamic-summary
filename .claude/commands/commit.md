@@ -10,8 +10,11 @@ argument-hint: [commit message]
 
 ## Context
 - Current branch: !`git branch --show-current`
-- Changed files: !`git status --porcelain | wc -l` files
-- CLAUDE.md todos: @CLAUDE.md:10-20
+- Changed files: !`git status --porcelain`
+- Changes preview: !`git diff --stat`
+- PR title: "!`gh pr view --json title -q .title 2>/dev/null || echo "No PR"`"
+- PR description:
+!`gh pr view --json body -q .body 2>/dev/null || echo "No PR"`
 
 ## Strategic Guidance
 Atomic commits tell a story. Each commit should be a complete, working change that could be reverted independently. Think features, not files. In worktree slots, we work directly on the worktree branch and push after each commit.
@@ -30,7 +33,6 @@ Clean up debug code, update docs, and create well-organized commits.
 2. **Cleanup**:
    - Remove debug prints/console.logs
    - Delete temp files
-   - Update CLAUDE.md (completed TODOs, new utilities)
    - Check for secrets: !`git diff | grep -E '(password|key|token|secret)' || echo "Clean"`
 
 3. **Organize by Feature**:
