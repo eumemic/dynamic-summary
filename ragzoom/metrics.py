@@ -2,6 +2,9 @@
 
 import time
 from dataclasses import dataclass, field
+from typing import Optional
+
+from ragzoom.config import RagZoomConfig
 
 
 @dataclass
@@ -85,6 +88,11 @@ class IndexingMetrics:
     tree_height: int = 0
     nodes_per_level: list[int] = field(default_factory=list)
 
+    # Cost configuration (per 1K tokens)
+    embedding_cost_per_1k: float = 0.00002
+    summary_input_cost_per_1k: float = 0.00015
+    summary_output_cost_per_1k: float = 0.0006
+
     @property
     def total_duration_seconds(self) -> float:
         """Total indexing time in seconds."""
@@ -141,19 +149,16 @@ class IndexingMetrics:
 
     @property
     def cost_per_1k_tokens(self) -> float:
-        """Estimated cost per 1K source tokens (OpenAI pricing)."""
-        # Rough estimates - should be configurable
-        embedding_cost_per_1k = 0.00002  # text-embedding-3-small
-        gpt4_mini_input_cost_per_1k = 0.00015
-        gpt4_mini_output_cost_per_1k = 0.0006
-
-        embedding_cost = (self.total_embedding_tokens / 1000) * embedding_cost_per_1k
+        """Estimated cost per 1K source tokens using configured pricing."""
+        embedding_cost = (
+            self.total_embedding_tokens / 1000
+        ) * self.embedding_cost_per_1k
         prompt_cost = (
             self.total_summary_prompt_tokens / 1000
-        ) * gpt4_mini_input_cost_per_1k
+        ) * self.summary_input_cost_per_1k
         completion_cost = (
             self.total_summary_completion_tokens / 1000
-        ) * gpt4_mini_output_cost_per_1k
+        ) * self.summary_output_cost_per_1k
 
         total_cost = embedding_cost + prompt_cost + completion_cost
 
@@ -209,22 +214,48 @@ class IndexingMetrics:
 
 
 class IndexingMetricsReporter:
-    """Collects performance metrics during indexing with minimal intrusion."""
+    """Collects performance metrics during indexing with minimal intrusion.
 
-    def __init__(self, document_id: str, source_tokens: int):
+    Design decisions:
+    - Metrics collection is completely optional via the reporter parameter
+    - Errors in metrics collection are silently ignored to never interfere with indexing
+    - The reporter pattern avoids polluting core logic with metrics concerns
+    - All metrics are collected in a single pass during normal indexing flow
+    """
+
+    def __init__(
+        self,
+        document_id: str,
+        source_tokens: int,
+        config: Optional[RagZoomConfig] = None,
+    ):
         """Initialize reporter for a document.
 
         Args:
             document_id: Document being indexed
             source_tokens: Total tokens in source document
+            config: Optional config for cost estimation
         """
         self.document_id = document_id
-        self.metrics = IndexingMetrics(
-            start_time=time.time(),
-            end_time=0,
-            source_document_tokens=source_tokens,
-            chunks_created=0,
-        )
+
+        # Initialize metrics with config-based pricing if provided
+        if config:
+            self.metrics = IndexingMetrics(
+                start_time=time.time(),
+                end_time=0,
+                source_document_tokens=source_tokens,
+                chunks_created=0,
+                embedding_cost_per_1k=config.embedding_cost_per_1k,
+                summary_input_cost_per_1k=config.summary_input_cost_per_1k,
+                summary_output_cost_per_1k=config.summary_output_cost_per_1k,
+            )
+        else:
+            self.metrics = IndexingMetrics(
+                start_time=time.time(),
+                end_time=0,
+                source_document_tokens=source_tokens,
+                chunks_created=0,
+            )
         self._current_level = 0
         self._nodes_at_current_level = 0
 
