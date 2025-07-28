@@ -1,6 +1,6 @@
 ---
 allowed-tools: Bash
-description: Merge PR and clean up branch/worktree
+description: Merge PR and sync with master
 argument-hint: [PR number]
 ---
 
@@ -10,38 +10,27 @@ argument-hint: [PR number]
 
 ## Context
 - Current branch: !`git branch --show-current`
-- PR status: !`gh pr view --json state,statusCheckRollup -q '.state + " / " + .statusCheckRollup.state' 2>/dev/null || echo "No PR"`
+- PR status: !`gh pr view --json state,mergeable -q 'if .mergeable == "MERGEABLE" then .state + " / Ready" else .state + " / Not ready" end' 2>/dev/null || echo "No PR"`
 
 ## Strategic Guidance
-Merging completes the feature cycle. Use regular merge (not squash) to preserve commit history. The branch cleanup is automatic. This keeps your workspace tidy.
+Merging completes the feature cycle. Use regular merge (not squash) to preserve commit history. For worktree branches, we don't delete the branch - just sync with master for the next cycle.
 
 ## Task
 Arguments: "$ARGUMENTS"
 
-Merge the current PR, clean up branch, return to master.
+Merge the current PR and sync with master.
 
 ## Process
 
 1. **Verify Ready**: Check CI passed, no review blockers
-2. **Merge**: `gh pr merge --merge --delete-branch`
-3. **Clean Remote**: `git fetch --prune`
-4. **Return to Base Branch**:
-   ```bash
-   # Detect if we're in a worktree
-   WORKTREE_BRANCH=$(git worktree list --porcelain | grep -A1 "worktree $(pwd)" | grep "branch" | cut -d' ' -f3 | sed 's|refs/heads/||')
-   if [[ "$WORKTREE_BRANCH" =~ ^worktree-[0-9]+$ ]]; then
-     # In a worktree slot, return to the worktree branch
-     git checkout "$WORKTREE_BRANCH" && git pull origin master
-   else
-     # In main repo, return to master
-     git checkout master && git pull
-   fi
-   ```
+2. **Merge**: `gh pr merge --merge`
+3. **Sync with master**: `git pull origin master`
+4. **Ready for next PR**: The worktree branch is now synced and ready for the next feature
 
 ## Error Handling
-- No PR found → "Create PR first with /push"
+- No PR found → "Create PR first with /pr"
 - CI failing → Show failures, stop
-- Already on master → "Switch to feature branch first"
+- Already on master → "Switch to worktree or feature branch first"
 
 ## Retrospective
 After merging, reflect on three levels:
