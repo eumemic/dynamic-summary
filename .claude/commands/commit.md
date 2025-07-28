@@ -1,6 +1,6 @@
 ---
-allowed-tools: Bash, Read, Edit, Grep
-description: Clean up and create atomic git commits
+allowed-tools: Bash, Read, Edit, Grep, MultiEdit
+description: Clean up, commit, push, and update PR if needed
 argument-hint: [commit message]
 ---
 
@@ -45,9 +45,24 @@ Clean up debug code, update docs, and create well-organized commits.
 4. **Push**: `git push -u origin <branch>` (never force without asking)
    - For worktree branches, this maintains the sequential PR workflow
 
+5. **Update PR (if needed)**: Check if PR description needs updating
+   - Only for substantial changes that expand scope
+   - Use context from what was just committed
+   - Skip for fixes, CI issues, or review feedback
+   - Update when: new features, major refactoring, scope expansion
+   - Skip when: fixing tests, addressing reviews, minor tweaks
+
 ## Examples
+
+**Commit organization:**
 ❌ Three commits: "Add component", "Add styles", "Wire up component"
 ✅ One commit: "Add user profile modal with avatar upload"
+
+**PR updates:**
+✅ Update PR after: "feat: add export to CSV functionality" (new feature)
+✅ Update PR after: "refactor: extract common logic into shared service" (major change)
+❌ Skip update after: "fix: address review feedback on temp files" (review response)
+❌ Skip update after: "fix: resolve CI test failures" (CI fix)
 
 ## Retrospective
 After committing, reflect on three levels:
