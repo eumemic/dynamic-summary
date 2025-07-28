@@ -429,7 +429,7 @@ Here's the content to summarize:"""
                     summary_tokens_list = self.splitter.tokenizer.encode(summary)
                     summary_token_count = len(summary_tokens_list)
                     reporter.record_summary_result(
-                        target_tokens=target_tokens,
+                        target_tokens=self.config.leaf_tokens,  # Always use configured target for metrics
                         actual_tokens=summary_token_count,
                         prompt_tokens=response.usage.prompt_tokens,
                         completion_tokens=response.usage.completion_tokens,
