@@ -3,6 +3,8 @@
 import time
 from dataclasses import dataclass, field
 
+import psutil
+
 from ragzoom.config import RagZoomConfig
 
 
@@ -90,6 +92,11 @@ class IndexingMetrics:
     tree_height: int = 0
     nodes_per_level: list[int] = field(default_factory=list)
 
+    # Memory usage (in MB)
+    peak_memory_mb: float = 0.0
+    memory_start_mb: float = 0.0
+    memory_end_mb: float = 0.0
+
     @property
     def total_duration_seconds(self) -> float:
         """Total indexing time in seconds."""
@@ -163,6 +170,11 @@ class IndexingMetrics:
             return total_cost / (self.source_document_tokens / 1000)
         return 0
 
+    @property
+    def memory_usage_mb(self) -> float:
+        """Peak memory usage during indexing in MB."""
+        return self.peak_memory_mb - self.memory_start_mb
+
     def to_dict(self) -> dict:
         """Convert metrics to dictionary for JSON serialization."""
         summary_stats_dict = {}
@@ -207,6 +219,12 @@ class IndexingMetrics:
                 "height": self.tree_height,
                 "nodes_per_level": self.nodes_per_level,
             },
+            "memory": {
+                "peak_mb": self.peak_memory_mb,
+                "start_mb": self.memory_start_mb,
+                "end_mb": self.memory_end_mb,
+                "usage_mb": self.memory_usage_mb,
+            },
         }
 
 
@@ -241,6 +259,13 @@ class IndexingMetricsReporter:
                 "RagZoomConfig is required for metrics collection to provide pricing information"
             )
 
+        # Get current process for memory tracking
+        self.process = psutil.Process()
+
+        # Get initial memory usage
+        memory_info = self.process.memory_info()
+        initial_memory_mb = memory_info.rss / 1024 / 1024
+
         self.metrics = IndexingMetrics(
             start_time=time.time(),
             end_time=0,
@@ -249,9 +274,22 @@ class IndexingMetricsReporter:
             embedding_cost_per_1k=config.embedding_cost_per_1k,
             summary_input_cost_per_1k=config.summary_input_cost_per_1k,
             summary_output_cost_per_1k=config.summary_output_cost_per_1k,
+            memory_start_mb=initial_memory_mb,
+            peak_memory_mb=initial_memory_mb,
         )
         self._current_level = 0
         self._nodes_at_current_level = 0
+
+    def _update_memory_usage(self) -> None:
+        """Update peak memory usage if current usage is higher."""
+        try:
+            memory_info = self.process.memory_info()
+            current_memory_mb = memory_info.rss / 1024 / 1024
+            if current_memory_mb > self.metrics.peak_memory_mb:
+                self.metrics.peak_memory_mb = current_memory_mb
+        except Exception:
+            # Ignore errors in memory tracking
+            pass
 
     def record_chunk_created(self, chunk_id: str, tokens: int) -> None:
         """Called when a chunk is created during splitting."""
@@ -259,6 +297,7 @@ class IndexingMetricsReporter:
         # Track for leaf-level nodes
         if self._current_level == 0:
             self._nodes_at_current_level += 1
+        self._update_memory_usage()
 
     def record_embedding_call(self, batch_size: int, token_counts: list[int]) -> None:
         """Called before embedding API call.
@@ -270,6 +309,7 @@ class IndexingMetricsReporter:
         self.metrics.embedding_api_calls += 1
         self.metrics.embedding_batch_sizes.append(batch_size)
         self.metrics.total_embedding_tokens += sum(token_counts)
+        self._update_memory_usage()
 
     def record_summary_result(
         self,
@@ -297,6 +337,7 @@ class IndexingMetricsReporter:
         self.metrics.summary_stats[target_tokens].add_summary(
             target_tokens, actual_tokens
         )
+        self._update_memory_usage()
 
     def record_tree_level_complete(self, level: int, nodes_created: int) -> None:
         """Called when a tree level is built.
@@ -314,6 +355,7 @@ class IndexingMetricsReporter:
             self._nodes_at_current_level = nodes_created
 
         self.metrics.tree_height = max(self.metrics.tree_height, level)
+        self._update_memory_usage()
 
     def finalize(self) -> IndexingMetrics:
         """Compute final metrics after indexing completes."""
@@ -322,5 +364,12 @@ class IndexingMetricsReporter:
         # Record final level
         if self._nodes_at_current_level > 0:
             self.metrics.nodes_per_level.append(self._nodes_at_current_level)
+
+        # Record final memory usage
+        try:
+            memory_info = self.process.memory_info()
+            self.metrics.memory_end_mb = memory_info.rss / 1024 / 1024
+        except Exception:
+            self.metrics.memory_end_mb = self.metrics.peak_memory_mb
 
         return self.metrics

@@ -12,3 +12,4 @@ numpy>=1.24.0
 click>=8.1.0
 python-dotenv>=1.0.0
 httpx>=0.25.0
+psutil>=5.9.0
