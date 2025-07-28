@@ -2,9 +2,7 @@ name: Performance Tests
 
 on:
   pull_request:
-    branches: [ master, main ]
-  push:
-    branches: [ master, main, fix/summary-size-bug ]
+    branches: [ master ]
 
 permissions:
   contents: read
