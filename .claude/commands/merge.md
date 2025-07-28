@@ -23,10 +23,9 @@ Merge the current PR and sync with master.
 ## Process
 
 1. **Verify Ready**: Check CI passed, no review blockers
-2. **Merge**: `gh pr merge --squash`
-3. **Delete remote branch**: `git push origin --delete $(gh pr view --json headRefName -q .headRefName)`
-4. **Sync with master**: `git fetch origin && git reset --hard origin/master`
-5. **Ready for next PR**: The worktree branch is now synced and ready for the next feature
+2. **Merge**: `gh pr merge --squash` (GitHub auto-deletes the remote branch)
+3. **Sync with master**: `git fetch origin && git reset --hard origin/master`
+4. **Ready for next PR**: The worktree branch is now synced and ready for the next feature
 
 ## Error Handling
 - No PR found → "Create PR first with /pr"
