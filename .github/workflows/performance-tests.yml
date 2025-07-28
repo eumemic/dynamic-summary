@@ -18,79 +18,82 @@ jobs:
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
-        with:
-          path: pr
-      
-      - name: Checkout base branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.base_ref }}
-          path: base
       
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
+      - name: Download baseline benchmarks
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-benchmarks-latest
+          path: baseline_results
+        continue-on-error: true
+      
+      - name: Check baseline availability
+        id: baseline_check
+        run: |
+          if [ -d "baseline_results" ] && [ -f "baseline_results/metadata.json" ]; then
+            echo "has_baseline=true" >> $GITHUB_OUTPUT
+            echo "✅ Found baseline benchmarks"
+            cat baseline_results/metadata.json
+          else
+            echo "has_baseline=false" >> $GITHUB_OUTPUT
+            echo "⚠️ No baseline benchmarks found - will generate on-demand"
+          fi
+      
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pr/requirements.txt', 'pr/requirements-dev.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
       
-      - name: Install dependencies (base)
-        working-directory: base
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
       
-      - name: Run baseline benchmarks
-        working-directory: base
+      - name: Generate baseline if needed
+        if: steps.baseline_check.outputs.has_baseline == 'false'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          echo "Current directory: $(pwd)"
-          echo "Python version: $(python --version)"
-          echo "Checking for pytest and markers..."
-          pytest --markers | grep benchmark || echo "⚠️ No benchmark marker found"
+          echo "Generating baseline benchmarks from ${{ github.base_ref }}..."
+          
+          # Clone base branch
+          git clone --depth 1 --branch ${{ github.base_ref }} https://github.com/${{ github.repository }}.git base_branch
+          
+          cd base_branch
+          
           # Check if benchmark tests exist on base branch
-          if [ -d "tests/benchmarks" ]; then
+          if [ -d "tests/benchmarks" ] && [ -f "tests/benchmarks/test_indexing_performance.py" ]; then
             echo "Running baseline benchmarks..."
-            # Check if the specific test file exists
-            if [ ! -f "tests/benchmarks/test_indexing_performance.py" ]; then
-              echo "⚠️ Benchmark test file not found on base branch"
-              mkdir -p ../baseline_results
-              echo "No baseline benchmarks available" > ../baseline_results/README.md
-              exit 0
-            fi
-            mkdir -p benchmark_results
+            pip install -r requirements.txt
+            pip install -r requirements-dev.txt
             
+            # Run baseline benchmarks
+            mkdir -p benchmark_results
             for chunk_size in 100 200 400; do
               echo "Running baseline benchmark with chunk_size=$chunk_size"
-              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -m benchmark -k "$chunk_size" -v
+              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size and document_type==narrative" -v || true
             done
             
-            # Copy results
-            cp -r benchmark_results ../baseline_results
+            # Move results
+            mv benchmark_results ../baseline_results
+            cd ..
+            rm -rf base_branch
           else
             echo "No benchmark tests on base branch - skipping baseline"
-            mkdir -p ../baseline_results
-            echo "No baseline benchmarks available" > ../baseline_results/README.md
+            mkdir -p baseline_results
+            echo "No baseline benchmarks available" > baseline_results/README.md
           fi
       
-      - name: Install dependencies (PR)
-        working-directory: pr
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-      
       - name: Run PR benchmarks
-        working-directory: pr
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -112,7 +115,7 @@ jobs:
           
           for chunk_size in 100 200 400; do
             echo "Running PR benchmark with chunk_size=$chunk_size"
-            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -m benchmark -k "$chunk_size" -v || {
+            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size and document_type==narrative" -v || {
               echo "⚠️ Benchmark failed for chunk_size=$chunk_size"
               echo "Creating empty result file..."
               echo '{"error": "Benchmark failed to run"}' > "benchmark_results/metrics_${chunk_size}_tokens.json"
@@ -120,14 +123,13 @@ jobs:
           done
       
       - name: Compare results
-        working-directory: pr
         id: compare
         run: |
           # Check if we have baseline results
-          if [ -f "../baseline_results/README.md" ] || [ -z "$(ls -A ../baseline_results 2>/dev/null)" ]; then
+          if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/metrics_100_tokens.json" ]; then
             echo "## 📊 Performance Report" > report.md
             echo "" >> report.md
-            echo "⚠️ No baseline benchmarks available on master branch." >> report.md
+            echo "⚠️ No baseline benchmarks available." >> report.md
             echo "" >> report.md
             echo "This is the first PR with performance benchmarks. Future PRs will compare against these results." >> report.md
             echo "" >> report.md
@@ -145,14 +147,7 @@ jobs:
             done
           else
             # Generate comparison report
-            if [ -f "scripts/compare_benchmarks.py" ]; then
-              python scripts/compare_benchmarks.py ../baseline_results benchmark_results report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
-            else
-              echo "⚠️ Comparison script not found. Creating basic report..."
-              echo "## 📊 Performance Report" > report.md
-              echo "" >> report.md
-              echo "⚠️ Unable to compare with baseline - comparison script missing." >> report.md
-            fi
+            python scripts/compare_benchmarks.py baseline_results benchmark_results report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
           fi
           
           # Save report for comment
@@ -222,5 +217,5 @@ jobs:
           name: benchmark-results
           path: |
             baseline_results/
-            pr/benchmark_results/
-            pr/report.md
+            benchmark_results/
+            report.md
