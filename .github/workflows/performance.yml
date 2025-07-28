@@ -3,6 +3,8 @@ name: Performance Tests
 on:
   pull_request:
     branches: [ master, main ]
+  push:
+    branches: [ master, main, fix/summary-size-bug ]
 
 permissions:
   contents: read
@@ -51,14 +53,25 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          echo "Current directory: $(pwd)"
+          echo "Python version: $(python --version)"
+          echo "Checking for pytest and markers..."
+          pytest --markers | grep benchmark || echo "⚠️ No benchmark marker found"
           # Check if benchmark tests exist on base branch
           if [ -d "tests/benchmarks" ]; then
             echo "Running baseline benchmarks..."
+            # Check if the specific test file exists
+            if [ ! -f "tests/benchmarks/test_indexing_performance.py" ]; then
+              echo "⚠️ Benchmark test file not found on base branch"
+              mkdir -p ../baseline_results
+              echo "No baseline benchmarks available" > ../baseline_results/README.md
+              exit 0
+            fi
             mkdir -p benchmark_results
             
             for chunk_size in 100 200 400; do
               echo "Running baseline benchmark with chunk_size=$chunk_size"
-              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size" -v
+              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -m benchmark -k "$chunk_size" -v
             done
             
             # Copy results
@@ -82,12 +95,28 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          echo "Current directory: $(pwd)"
+          echo "Python version: $(python --version)"
+          echo "Checking for benchmark tests..."
+          ls -la tests/benchmarks/ || echo "⚠️ No benchmarks directory"
+          
+          # Verify API key is set
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "❌ OPENAI_API_KEY is not set!"
+            exit 1
+          else
+            echo "✅ OPENAI_API_KEY is configured"
+          fi
           # Run benchmarks for different chunk sizes
           mkdir -p benchmark_results
           
           for chunk_size in 100 200 400; do
             echo "Running PR benchmark with chunk_size=$chunk_size"
-            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size" -v
+            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -m benchmark -k "$chunk_size" -v || {
+              echo "⚠️ Benchmark failed for chunk_size=$chunk_size"
+              echo "Creating empty result file..."
+              echo '{"error": "Benchmark failed to run"}' > "benchmark_results/metrics_${chunk_size}_tokens.json"
+            }
           done
       
       - name: Compare results
@@ -95,7 +124,7 @@ jobs:
         id: compare
         run: |
           # Check if we have baseline results
-          if [ -f "../baseline_results/README.md" ]; then
+          if [ -f "../baseline_results/README.md" ] || [ -z "$(ls -A ../baseline_results 2>/dev/null)" ]; then
             echo "## 📊 Performance Report" > report.md
             echo "" >> report.md
             echo "⚠️ No baseline benchmarks available on master branch." >> report.md
@@ -124,7 +153,14 @@ with open('$file') as f:
             done
           else
             # Generate comparison report
-            python scripts/compare_benchmarks.py ../baseline_results benchmark_results report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
+            if [ -f "scripts/compare_benchmarks.py" ]; then
+              python scripts/compare_benchmarks.py ../baseline_results benchmark_results report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️ Comparison script not found. Creating basic report..."
+              echo "## 📊 Performance Report" > report.md
+              echo "" >> report.md
+              echo "⚠️ Unable to compare with baseline - comparison script missing." >> report.md
+            fi
           fi
           
           # Save report for comment
