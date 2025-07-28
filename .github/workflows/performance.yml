@@ -58,7 +58,7 @@ jobs:
             
             for chunk_size in 100 200 400; do
               echo "Running baseline benchmark with chunk_size=$chunk_size"
-              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size" -v || true
+              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size" -v
             done
             
             # Copy results
@@ -87,7 +87,7 @@ jobs:
           
           for chunk_size in 100 200 400; do
             echo "Running PR benchmark with chunk_size=$chunk_size"
-            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size" -v || true
+            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size" -v
           done
       
       - name: Compare results
