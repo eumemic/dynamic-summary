@@ -5,12 +5,13 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Optional, cast
+from typing import Any, Optional, Union, cast, overload
 
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
+from ragzoom.metrics import IndexingMetrics, IndexingMetricsReporter
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
@@ -286,9 +287,9 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
         right_text: str,
         target_tokens: int,
         prev_context: Optional[str] = None,
-        next_context: Optional[str] = None,
         parent_id: Optional[str] = None,
         debug: bool = False,
+        reporter: Optional[IndexingMetricsReporter] = None,
     ) -> tuple[str, int]:
         """Summarize text using LLM.
 
@@ -307,13 +308,11 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                 f"(target: {target_tokens}). Skipping summarization."
             )
             return combined_text, 0  # No retries needed
-
         # Build prompt with adjacent context (trim to avoid token explosion)
         prompt_parts = []
 
         # Process adjacent context if needed
         trimmed_prev = None
-        trimmed_next = None
 
         if prev_context and self.config.adjacent_context_tokens > 0:
             # Trim prev_context to adjacent_context_tokens
@@ -324,21 +323,12 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
             else:
                 trimmed_prev = prev_context
 
-        if next_context and self.config.adjacent_context_tokens > 0:
-            # Trim next_context to adjacent_context_tokens
-            next_tokens = self.splitter.tokenizer.encode(next_context)
-            if len(next_tokens) > self.config.adjacent_context_tokens:
-                context_tokens = next_tokens[: self.config.adjacent_context_tokens]
-                trimmed_next = self.splitter.tokenizer.decode(context_tokens)
-            else:
-                trimmed_next = next_context
-
         # Calculate compression stats for the prompt
         tokens_to_remove = current_token_count - target_tokens
         compression_ratio = (tokens_to_remove / current_token_count) * 100
 
         # Build the summarization prompt
-        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags, using the <PRECEDING_TEXT> and <FOLLOWING_TEXT> content as context (when provided - these may be omitted if there is no preceding/following context).
+        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context).
 
 TOKEN REQUIREMENTS:
 - The content to summarize is {current_token_count} tokens
@@ -376,12 +366,6 @@ Here's the content to summarize:"""
         # Add the content to summarize (concatenated)
         combined_text = f"{left_text} {right_text}".strip()
         prompt_parts.append(f"\n<SUMMARIZE_TEXT>\n{combined_text}\n</SUMMARIZE_TEXT>")
-
-        # Add following context if available
-        if next_context and self.config.adjacent_context_tokens > 0 and trimmed_next:
-            prompt_parts.append(
-                f"\n<FOLLOWING_TEXT>\n{trimmed_next.strip()}...\n</FOLLOWING_TEXT>"
-            )
 
         full_prompt = "\n\n".join(prompt_parts)
 
@@ -440,11 +424,44 @@ Here's the content to summarize:"""
                             f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
                         )
 
+                # Track summary result
+                if reporter and hasattr(response, "usage") and response.usage:
+                    summary_tokens_list = self.splitter.tokenizer.encode(summary)
+                    summary_token_count = len(summary_tokens_list)
+                    reporter.record_summary_result(
+                        target_tokens=target_tokens,
+                        actual_tokens=summary_token_count,
+                        prompt_tokens=response.usage.prompt_tokens,
+                        completion_tokens=response.usage.completion_tokens,
+                    )
+
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
                 raise
 
         return summary, retry_count
+
+    @overload
+    async def _add_document_impl(
+        self,
+        text: str,
+        document_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        show_progress: bool = True,
+        debug: bool = False,
+        reporter: None = None,
+    ) -> str: ...
+
+    @overload
+    async def _add_document_impl(
+        self,
+        text: str,
+        document_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        show_progress: bool = True,
+        debug: bool = False,
+        reporter: IndexingMetricsReporter = ...,
+    ) -> tuple[str, IndexingMetrics]: ...
 
     async def _add_document_impl(
         self,
@@ -453,8 +470,14 @@ Here's the content to summarize:"""
         file_path: Optional[str] = None,
         show_progress: bool = True,
         debug: bool = False,
-    ) -> str:
-        """Add a document to the tree, creating leaf nodes."""
+        reporter: Optional[IndexingMetricsReporter] = None,
+    ) -> Union[str, tuple[str, IndexingMetrics]]:
+        """Add a document to the tree, creating leaf nodes.
+
+        Returns:
+            If reporter is None: document_id
+            If reporter is provided: (document_id, metrics)
+        """
         # Compute content hash
         content_hash = self.store.compute_content_hash(text)
 
@@ -557,6 +580,11 @@ Here's the content to summarize:"""
                 )
                 leaf_ids.append(node_id)
 
+                # Track chunk creation
+                if reporter:
+                    chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
+                    reporter.record_chunk_created(node_id, chunk_tokens)
+
                 current_pos = chunk_end
 
             # Early validation: Check document coverage before processing embeddings
@@ -600,6 +628,14 @@ Here's the content to summarize:"""
                         f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]"
                     )
 
+                # Track embedding call
+                if reporter:
+                    token_counts = [
+                        len(self.splitter.tokenizer.encode(text))
+                        for text in batch_texts
+                    ]
+                    reporter.record_embedding_call(len(batch_texts), token_counts)
+
                 batch_embeddings = await self._get_embeddings_batch(batch_texts)
                 all_embeddings.extend(batch_embeddings)
 
@@ -637,7 +673,13 @@ Here's the content to summarize:"""
 
             # Build tree from leaves
             root_id = await self._build_tree_from_leaves(
-                leaf_ids, chunks, document_id, async_progress, overall_start_time, debug
+                leaf_ids,
+                chunks,
+                document_id,
+                async_progress,
+                overall_start_time,
+                debug,
+                reporter,
             )
 
             # Final completion logging with total elapsed time
@@ -647,6 +689,11 @@ Here's the content to summarize:"""
                 logger.info(
                     f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
                 )
+
+            # Finalize metrics if reporter was used
+            if reporter:
+                metrics = reporter.finalize()
+                return document_id, metrics
 
             return document_id
         finally:
@@ -667,6 +714,43 @@ Here's the content to summarize:"""
             self.add_document_async(text, document_id, file_path, show_progress, debug)
         )
 
+    def add_document_with_metrics(
+        self,
+        text: str,
+        document_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        show_progress: bool = False,
+        debug: bool = False,
+    ) -> tuple[str, IndexingMetrics]:
+        """Add document and return metrics. Used for benchmarking.
+
+        This is a convenience method that creates an IndexingMetricsReporter internally
+        and returns the collected metrics. For production use, add_document() is preferred
+        as it doesn't have the overhead of metrics collection.
+
+        The dual-method pattern ensures:
+        - Normal indexing (add_document) has zero metrics overhead
+        - Benchmarking gets detailed metrics without modifying core logic
+        - Internal implementation (_add_document_impl) remains flexible
+        """
+        # Create reporter internally with config for pricing
+        source_tokens = len(self.splitter.tokenizer.encode(text))
+        reporter = IndexingMetricsReporter(
+            document_id or "benchmark", source_tokens, self.config
+        )
+
+        # Run indexing with reporter - will return (doc_id, metrics)
+        result = asyncio.run(
+            self._add_document_impl(
+                text, document_id, file_path, show_progress, debug, reporter
+            )
+        )
+
+        # Extract tuple returned when reporter is provided
+        # Type checker knows result is a tuple because we passed a reporter
+        doc_id, metrics = result
+        return doc_id, metrics
+
     async def add_document_async(
         self,
         text: str,
@@ -676,9 +760,11 @@ Here's the content to summarize:"""
         debug: bool = False,
     ) -> str:
         """Async version of add_document - called by sync wrapper."""
-        return await self._add_document_impl(
-            text, document_id, file_path, show_progress, debug
+        result = await self._add_document_impl(
+            text, document_id, file_path, show_progress, debug, reporter=None
         )
+        # Type checker knows result is a string when no reporter is provided
+        return cast(str, result)
 
     async def _process_node_pair(
         self,
@@ -687,9 +773,9 @@ Here's the content to summarize:"""
         right_id: str,
         right_text: str,
         prev_context: Optional[str],
-        next_context: Optional[str],
         document_id: Optional[str],
         debug: bool = False,
+        reporter: Optional[IndexingMetricsReporter] = None,
     ) -> tuple[str, str, list[float], int]:
         """Process a single node pair - generate summary and embedding.
 
@@ -708,9 +794,9 @@ Here's the content to summarize:"""
             right_text,
             target_tokens,
             prev_context,
-            next_context,
             parent_id,
             debug,
+            reporter,
         )
 
         # Validate summary faithfulness if validation is enabled
@@ -791,6 +877,7 @@ Here's the content to summarize:"""
         progress: Optional[AsyncProgressWrapper] = None,
         overall_start_time: Optional[float] = None,
         debug: bool = False,
+        reporter: Optional[IndexingMetricsReporter] = None,
     ) -> str:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
         current_level_ids = leaf_ids
@@ -811,6 +898,10 @@ Here's the content to summarize:"""
             tokens = self.splitter.tokenizer.encode(text)
             token_stats[0].append(len(tokens))
             retry_stats[0].append(0)  # No retries for leaf nodes
+
+        # Track leaf level
+        if reporter:
+            reporter.record_tree_level_complete(0, len(leaf_ids))
 
         current_height = 1  # Track height for logging (leaves are at height 0)
         while len(current_level_ids) > 1:
@@ -840,16 +931,10 @@ Here's the content to summarize:"""
 
                 # Get adjacent context
                 prev_context = None
-                next_context = None
 
                 if i > 0:
                     prev_context, _ = self.splitter.get_adjacent_context(
                         current_level_texts, i - 1
-                    )
-
-                if i + 2 < len(current_level_texts):
-                    _, next_context = self.splitter.get_adjacent_context(
-                        current_level_texts, i + 1
                     )
 
                 # Create async task
@@ -860,9 +945,9 @@ Here's the content to summarize:"""
                     right_id,
                     right_text,
                     prev_context,
-                    next_context,
                     document_id,
                     debug,
+                    reporter,
                 )
                 tasks.append(task)
                 pair_info.append((i, i + 1))
@@ -979,9 +1064,9 @@ Here's the content to summarize:"""
                         "",  # No right child
                         target_tokens,
                         prev_context=None,
-                        next_context=None,
                         parent_id=parent_id,
                         debug=debug,
+                        reporter=reporter,
                     )
 
                     # Get embedding for the summary
@@ -1018,6 +1103,13 @@ Here's the content to summarize:"""
 
             current_level_ids = next_level_ids
             current_level_texts = next_level_texts
+
+            # Track tree level completion
+            if reporter and current_level_ids:
+                reporter.record_tree_level_complete(
+                    current_height, len(current_level_ids)
+                )
+
             current_height += 1
 
         # Return root node ID
@@ -1079,75 +1171,3 @@ Here's the content to summarize:"""
                     del self.store.node_cache[node_id]
                     if node_id in self.store.cache_order:
                         self.store.cache_order.remove(node_id)
-
-    async def refresh_nodes_async(self, node_ids: list[str]) -> int:
-        """Refresh dirty nodes by re-summarizing their content.
-
-        Args:
-            node_ids: List of node IDs to refresh
-
-        Returns:
-            Number of nodes successfully refreshed
-        """
-        refreshed_count = 0
-
-        for node_id in node_ids:
-            try:
-                node = self.store.get_node(node_id)
-                if not node or self.store.is_leaf_node(node_id):
-                    # Skip leaf nodes - they don't have summaries
-                    continue
-
-                # Get children
-                left_child, right_child = self.store.get_children(node_id)
-                if not left_child:
-                    logger.warning(
-                        f"Node {node_id} has no left child, skipping refresh"
-                    )
-                    continue
-
-                # Calculate target tokens for refresh
-                if right_child:
-                    # Two children case
-                    combined_text = f"{left_child.text} {right_child.text}".strip()
-                    target_tokens = self._calculate_target_tokens(combined_text)
-
-                    # Re-summarize with fresh content
-                    summary, _ = await self._summarize_text(
-                        left_child.text,
-                        right_child.text,
-                        target_tokens=target_tokens,
-                        prev_context="",
-                        next_context="",
-                        parent_id=node_id,
-                        debug=False,
-                    )
-                else:
-                    # Single child case
-                    target_tokens = self._calculate_target_tokens(left_child.text)
-
-                    # Re-summarize with fresh content
-                    summary, _ = await self._summarize_text(
-                        left_child.text,
-                        "",  # No right child
-                        target_tokens=target_tokens,
-                        prev_context="",
-                        next_context="",
-                        parent_id=node_id,
-                        debug=False,
-                    )
-
-                # Get new embedding
-                embedding = await self._get_embedding(summary)
-
-                # Update the node
-                self.store.update_summary(node_id, summary, embedding)
-                refreshed_count += 1
-
-                logger.info(f"Refreshed node {node_id} with new summary")
-
-            except Exception as e:
-                logger.error(f"Error refreshing node {node_id}: {e}")
-                continue
-
-        return refreshed_count

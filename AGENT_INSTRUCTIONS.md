@@ -41,7 +41,12 @@ For detailed understanding of the core tiling algorithm:
 
 ## 7. Custom Claude Commands
 
-Custom slash commands (e.g., `/push`) are stored in `.claude/commands/` as markdown files.
+Custom slash commands are stored in `.claude/commands/` as markdown files:
+- `/commit` - Create atomic commits and push to origin
+- `/pr` - Create PR if needed and monitor CI (formerly `/push`)
+- `/merge` - Merge PR and sync with master
+- `/test` - Run tests
+- `/review` - Code review
 To modify: edit `.claude/commands/<command-name>.md`
 
 ## 8. Agent Slots for Parallel Development
@@ -57,10 +62,12 @@ This repository uses persistent worktree "agent slots" for isolated Claude sessi
 cd worktrees/worktree-N && claude
 ```
 
-### Workflow Within Slots
-- Use `/commit` to create branches (it will prompt if on master)
-- Use `/merge` to complete PRs and return to master
-- Slots persist - you can work on multiple features in sequence
+### Workflow Within Slots (Sequential PR Model)
+- Work directly on the worktree branch (e.g., `worktree-2`)
+- Use `/commit` to commit and push changes
+- Use `/pr` to create PR and monitor CI
+- Use `/merge` to merge PR and sync with master
+- The same branch is reused for multiple sequential PRs
 
 ## 9. Quick Reference
 

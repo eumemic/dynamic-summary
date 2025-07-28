@@ -140,25 +140,37 @@ class DynamicTilingGenerator:
             budget_r = budget - budget_l
             return budget_l, budget_r
 
-        # Reserve minimum for each side, then allocate the rest
-        available = budget - min_total
-
         # Compute total relevance mass in each subtree
         relevance_left = self._get_subtree_relevance(left_child, scores)
         relevance_right = self._get_subtree_relevance(right_child, scores)
         total_relevance = relevance_left + relevance_right
 
+        # Direct proportional split based on relevance
         if total_relevance == 0:
             # Fall back to text length-based allocation
             len_left = len(left_child.text) if left_child.text else 1
             len_right = len(right_child.text) if right_child.text else 1
             total_len = len_left + len_right
-            extra_left = int(available * (len_left / total_len))
+            target_left = int(budget * (len_left / total_len))
         else:
-            extra_left = int(available * (relevance_left / total_relevance))
+            target_left = int(budget * (relevance_left / total_relevance))
 
-        budget_l = min_left + extra_left
-        budget_r = budget - budget_l
+        target_right = budget - target_left
+
+        # Ensure minimums are met
+        if target_left < min_left:
+            # Left is under minimum, give it what it needs
+            budget_l = min_left
+            budget_r = budget - budget_l
+        elif target_right < min_right:
+            # Right is under minimum, give it what it needs
+            budget_r = min_right
+            budget_l = budget - budget_r
+        else:
+            # Both meet minimums, use the targets
+            budget_l = target_left
+            budget_r = target_right
+
         return budget_l, budget_r
 
     def _find_optimal_tiling_for_span_unmemoized(

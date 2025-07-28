@@ -34,7 +34,13 @@ class TestIndexingCreatesLeftBalancedTrees:
             return [[0.1] * 1536 for _ in texts]
 
         async def mock_summarize_text(
-            left, right, target, prev_context, next_context, parent_id=None, debug=False
+            left,
+            right,
+            target,
+            prev_context,
+            parent_id=None,
+            debug=False,
+            reporter=None,
         ):
             if right:  # Two children
                 return f"Summary of: {left[:20]}... and {right[:20]}...", 0

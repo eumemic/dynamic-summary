@@ -23,7 +23,6 @@ class SimpleMockStore:
         self.documents: dict[str, SimpleNamespace] = {}
 
         # State tracking
-        self.dirty_nodes: set[str] = set()
         self.pinned_nodes: set[str] = set()
         self.mock_scores: dict[str, float] = {}
 
@@ -112,7 +111,6 @@ class SimpleMockStore:
             document_id=document_id,
             left_child_id=left_child_id,
             right_child_id=right_child_id,
-            is_dirty=kwargs.get("is_dirty", False),
             is_pinned=kwargs.get("is_pinned", False),
             access_count=0,
             last_accessed=None,
@@ -213,22 +211,6 @@ class SimpleMockStore:
     ) -> Optional[SimpleNamespace]:
         """Get the root node for a specific document from the mock store."""
         return self.get_root_node(document_id=document_id)
-
-    def mark_dirty_upward(self, node_id: str) -> None:
-        """Mark a node and all its ancestors as dirty."""
-        current_id = node_id
-        while current_id:
-            self.dirty_nodes.add(current_id)
-            node = self.nodes.get(current_id)
-            if node:
-                node.is_dirty = True
-                current_id = node.parent_id
-            else:
-                break
-
-    def get_dirty_nodes(self) -> list[SimpleNamespace]:
-        """Get all nodes marked as dirty."""
-        return [self.nodes[nid] for nid in self.dirty_nodes if nid in self.nodes]
 
     def get_ancestors(self, node_ids: list[str]) -> list[SimpleNamespace]:
         """Get all ancestors of given nodes."""
@@ -423,9 +405,7 @@ class SimpleMockStore:
         if node:
             node.summary = text
             node.text = text
-            node.is_dirty = False
             self.embeddings[node_id] = embedding
-            self.dirty_nodes.discard(node_id)
 
     def add_document(
         self,
@@ -450,7 +430,6 @@ class SimpleMockStore:
             self.nodes.pop(node_id, None)
             self.embeddings.pop(node_id, None)
             self.node_cache.pop(node_id, None)
-            self.dirty_nodes.discard(node_id)
             self.pinned_nodes.discard(node_id)
 
         self.document_nodes.pop(document_id, None)
@@ -498,8 +477,6 @@ class SimpleMockStore:
                 filtered = [
                     n for n in filtered if n.document_id == kwargs["document_id"]
                 ]
-            if "is_dirty" in kwargs:
-                filtered = [n for n in filtered if n.is_dirty == kwargs["is_dirty"]]
             if "parent_id" in kwargs and kwargs["parent_id"] is None:
                 filtered = [n for n in filtered if n.parent_id is None]
 
