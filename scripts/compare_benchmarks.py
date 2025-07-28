@@ -61,7 +61,7 @@ def generate_comparison_table(
     output_format: str = "markdown",
     throughput_regression_threshold: float = 10.0,
     cost_regression_threshold: float = 10.0,
-) -> str:
+) -> tuple[str, bool, bool]:
     """Generate comparison table between baseline and current results.
 
     Args:
@@ -70,13 +70,16 @@ def generate_comparison_table(
         output_format: Output format (only 'markdown' supported)
         throughput_regression_threshold: Percentage decrease to trigger regression warning
         cost_regression_threshold: Percentage increase to trigger regression warning
+
+    Returns:
+        Tuple of (markdown report, has_throughput_regression, has_cost_regression)
     """
 
     # Get all chunk sizes present in both sets
     chunk_sizes = sorted(set(baseline.keys()) & set(current.keys()))
 
     if not chunk_sizes:
-        return "❌ No matching chunk sizes found between baseline and current results"
+        return "❌ No matching chunk sizes found between baseline and current results", False, False
 
     lines = []
 
@@ -191,7 +194,7 @@ def generate_comparison_table(
     # Show thresholds used
     lines.append(f"\n*Regression thresholds: throughput={throughput_regression_threshold}%, cost={cost_regression_threshold}%*")
 
-    return "\n".join(lines)
+    return "\n".join(lines), throughput_regression, cost_regression
 
 
 def main():
@@ -222,7 +225,7 @@ def main():
         sys.exit(1)
 
     # Generate comparison with configurable thresholds
-    report = generate_comparison_table(
+    report, throughput_regression, cost_regression = generate_comparison_table(
         baseline_results,
         current_results,
         throughput_regression_threshold=throughput_threshold,
@@ -238,7 +241,7 @@ def main():
         print(report)
 
     # Exit with error code if regressions detected
-    if "❌" in report or "⚠️" in report:
+    if throughput_regression or cost_regression:
         sys.exit(1)
 
 
