@@ -10,10 +10,14 @@ modified_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py
 # Function to run tests
 run_tests() {
     echo "[Tests] Starting..."
-    pytest tests/ -v --tb=short -m "not slow and not integration" -n 8
+    # Run quietly first, capture output
+    pytest tests/ -q --tb=short -m "not slow and not integration" -n 8 --no-header > /tmp/pytest_output.$$ 2>&1
     local result=$?
     if [ $result -ne 0 ]; then
         echo "[Tests] ❌ Failed!"
+        # Show full output on failure
+        cat /tmp/pytest_output.$$
+        rm -f /tmp/pytest_output.$$
         return 1
     else
         echo "[Tests] ✅ Passed!"
@@ -24,11 +28,15 @@ run_tests() {
 # Function to run ruff
 run_ruff() {
     if command -v ruff &> /dev/null && [ -n "$modified_files" ]; then
-        echo "[Ruff] Starting auto-fixing..."
-        ruff check ragzoom/ tests/ --fix
+        echo "[Ruff] Starting..."
+        # Run with quiet flag, capture output
+        ruff check ragzoom/ tests/ --fix --quiet > /tmp/ruff_output.$$ 2>&1
         local result=$?
         if [ $result -ne 0 ]; then
             echo "[Ruff] ❌ Found issues that could not be auto-fixed."
+            # Show full output on failure
+            cat /tmp/ruff_output.$$
+            rm -f /tmp/ruff_output.$$
             return 1
         else
             echo "[Ruff] ✅ Passed!"
@@ -41,11 +49,15 @@ run_ruff() {
 # Function to run black
 run_black() {
     if command -v black &> /dev/null && [ -n "$modified_files" ]; then
-        echo "[Black] Starting auto-formatting..."
-        black ragzoom/ tests/
+        echo "[Black] Starting..."
+        # Run with quiet flag, capture output
+        black ragzoom/ tests/ --quiet > /tmp/black_output.$$ 2>&1
         local result=$?
         if [ $result -ne 0 ]; then
             echo "[Black] ❌ Formatting failed."
+            # Show full output on failure
+            cat /tmp/black_output.$$
+            rm -f /tmp/black_output.$$
             return 1
         else
             echo "[Black] ✅ Passed!"
@@ -58,7 +70,7 @@ run_black() {
 # Function to run mypy
 run_mypy() {
     if command -v dmypy &> /dev/null && [ -n "$modified_files" ]; then
-        echo "[Mypy] Starting type checking with daemon..."
+        echo "[Mypy] Starting..."
         # Use dmypy run which starts daemon if needed and runs check
         dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
         local result=$?
@@ -71,7 +83,7 @@ run_mypy() {
         fi
     elif command -v mypy &> /dev/null && [ -n "$modified_files" ]; then
         # Fallback to regular mypy if dmypy not available
-        echo "[Mypy] Starting type checking..."
+        echo "[Mypy] Starting..."
         mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
         local result=$?
         if [ $result -ne 0 ]; then
