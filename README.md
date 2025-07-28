@@ -1,6 +1,6 @@
 # RagZoom
 
-[![CI](https://github.com/eumemic/dynamic-summary/actions/workflows/ci.yml/badge.svg)](https://github.com/eumemic/dynamic-summary/actions/workflows/ci.yml)
+[![Code Validation](https://github.com/eumemic/dynamic-summary/actions/workflows/code-validation.yml/badge.svg)](https://github.com/eumemic/dynamic-summary/actions/workflows/code-validation.yml)
 
 Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system that creates dynamic summaries with intelligent resolution control.
 
