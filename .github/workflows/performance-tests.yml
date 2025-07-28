@@ -163,7 +163,7 @@ jobs:
             {
               echo 'report<<EOF'
               cat report.md
-              echo EOF
+              echo 'EOF'
             } >> $GITHUB_OUTPUT
           fi
       
