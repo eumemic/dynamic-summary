@@ -1,8 +1,10 @@
 """Configuration management for RagZoom."""
 
+import json
+from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -93,6 +95,26 @@ class RagZoomConfig(BaseSettings):
         default=2, description="Deepest level a node may be permanently pinned"
     )
 
+    # Pricing configuration
+    pricing_file: Optional[str] = Field(
+        default=None,
+        description="Path to JSON file with LLM pricing (defaults to ragzoom/pricing.json)",
+    )
+
+    # Cost estimation settings (per 1K tokens) - populated from pricing file
+    embedding_cost_per_1k: float = Field(
+        default=0.0,  # Will be set by model_validator
+        description="Cost per 1K tokens for embeddings",
+    )
+    summary_input_cost_per_1k: float = Field(
+        default=0.0,  # Will be set by model_validator
+        description="Cost per 1K input tokens for summary model",
+    )
+    summary_output_cost_per_1k: float = Field(
+        default=0.0,  # Will be set by model_validator
+        description="Cost per 1K output tokens for summary model",
+    )
+
     @field_validator("mmr_lambda")
     @classmethod
     def validate_mmr_lambda(cls, v: float) -> float:
@@ -109,6 +131,57 @@ class RagZoomConfig(BaseSettings):
         if v > leaf_tokens:
             raise ValueError("adjacent_context_tokens cannot exceed leaf_tokens")
         return v
+
+    @model_validator(mode="after")
+    def load_pricing_from_file(self) -> "RagZoomConfig":
+        """Load pricing from JSON file."""
+        # Load pricing data
+        pricing_data = self._load_pricing_data()
+
+        # Get embedding price
+        if self.embedding_model not in pricing_data["embeddings"]:
+            raise ValueError(
+                f"Embedding model '{self.embedding_model}' not found in pricing file. "
+                f"Available models: {list(pricing_data['embeddings'].keys())}"
+            )
+        self.embedding_cost_per_1k = pricing_data["embeddings"][self.embedding_model]
+
+        # Get LLM prices
+        if self.summary_model not in pricing_data["llms"]:
+            raise ValueError(
+                f"Summary model '{self.summary_model}' not found in pricing file. "
+                f"Available models: {list(pricing_data['llms'].keys())}"
+            )
+        llm_pricing = pricing_data["llms"][self.summary_model]
+        self.summary_input_cost_per_1k = llm_pricing["input"]
+        self.summary_output_cost_per_1k = llm_pricing["output"]
+
+        return self
+
+    def _load_pricing_data(self) -> dict[str, Any]:
+        """Load pricing data from JSON file."""
+        if self.pricing_file:
+            # Use explicitly provided file
+            pricing_path = Path(self.pricing_file)
+        else:
+            # Default to ragzoom/pricing.json
+            module_dir = Path(__file__).parent
+            pricing_path = module_dir / "pricing.json"
+
+        if not pricing_path.exists():
+            raise FileNotFoundError(
+                f"Pricing file not found at {pricing_path}. "
+                "Please ensure ragzoom/pricing.json exists or specify a custom path."
+            )
+
+        try:
+            with open(pricing_path) as f:
+                data: dict[str, Any] = json.load(f)
+                return data
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in pricing file {pricing_path}: {e}")
+        except OSError as e:
+            raise OSError(f"Error reading pricing file {pricing_path}: {e}")
 
     @property
     def n_max(self) -> int:

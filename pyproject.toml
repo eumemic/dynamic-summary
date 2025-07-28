@@ -40,5 +40,6 @@ markers = [
     "skip_ci: marks tests as skipped in CI (e.g., visualization tests)",
     "slow: marks tests as slow-running (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests requiring real services",
+    "benchmark: marks performance benchmark tests",
 ]
 # In CI, run: pytest -m "not skip_ci"
