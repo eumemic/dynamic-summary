@@ -45,12 +45,13 @@ Clean up debug code, update docs, and create well-organized commits.
 4. **Push**: `git push -u origin <branch>` (never force without asking)
    - For worktree branches, this maintains the sequential PR workflow
 
-5. **Update PR (if needed)**: Check if PR description needs updating
+5. **Update PR (if needed)**: Check if PR title/description need updating
    - Only for substantial changes that expand scope
    - Use context from what was just committed
    - Skip for fixes, CI issues, or review feedback
    - Update when: new features, major refactoring, scope expansion
    - Skip when: fixing tests, addressing reviews, minor tweaks
+   - Consider updating title if original scope has grown significantly
 
 ## Examples
 
@@ -63,6 +64,11 @@ Clean up debug code, update docs, and create well-organized commits.
 ✅ Update PR after: "refactor: extract common logic into shared service" (major change)
 ❌ Skip update after: "fix: address review feedback on temp files" (review response)
 ❌ Skip update after: "fix: resolve CI test failures" (CI fix)
+
+**PR title updates:**
+✅ Update title: "Fix login bug" → "Fix login bug and add session management"
+✅ Update title: "Update docs" → "Update docs and add API examples"
+❌ Keep title: "Refactor auth system" (when just fixing tests)
 
 ## Retrospective
 After committing, reflect on three levels:
