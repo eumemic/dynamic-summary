@@ -7,6 +7,38 @@ from ragzoom.config import RagZoomConfig
 
 
 @dataclass
+class RetryStats:
+    """Statistics for summary retries at a specific tree level."""
+
+    count: int = 0
+    total_retries: int = 0
+    min_retries: float = float("inf")  # Use float to handle infinity
+    max_retries: int = 0
+
+    def add_retry(self, retry_count: int) -> None:
+        """Record a retry result."""
+        self.count += 1
+        self.total_retries += retry_count
+        self.min_retries = min(self.min_retries, retry_count)
+        self.max_retries = max(self.max_retries, retry_count)
+
+    @property
+    def avg_retries(self) -> float:
+        """Average retries per summary at this level."""
+        return self.total_retries / self.count if self.count > 0 else 0
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for serialization."""
+        return {
+            "count": self.count,
+            "total_retries": self.total_retries,
+            "avg_retries": self.avg_retries,
+            "min_retries": self.min_retries if self.min_retries != float("inf") else 0,
+            "max_retries": self.max_retries,
+        }
+
+
+@dataclass
 class SummaryStats:
     """Statistics for summaries at a specific target size."""
 
@@ -86,6 +118,9 @@ class IndexingMetrics:
     # Summary accuracy by target size
     summary_stats: dict[int, SummaryStats] = field(default_factory=dict)
 
+    # Retry statistics by tree level
+    retry_stats: dict[int, RetryStats] = field(default_factory=dict)
+
     # Tree structure
     tree_height: int = 0
     nodes_per_level: list[int] = field(default_factory=list)
@@ -163,6 +198,26 @@ class IndexingMetrics:
             return total_cost / (self.source_document_tokens / 1000)
         return 0
 
+    @property
+    def total_retries(self) -> int:
+        """Total retries across all levels."""
+        return sum(stats.total_retries for stats in self.retry_stats.values())
+
+    @property
+    def retries_per_1k_tokens(self) -> float:
+        """Retries per 1K source tokens."""
+        if self.source_document_tokens > 0:
+            return self.total_retries / (self.source_document_tokens / 1000)
+        return 0
+
+    @property
+    def avg_retries_per_summary(self) -> float:
+        """Average retries per summary across all levels."""
+        total_summaries = sum(stats.count for stats in self.retry_stats.values())
+        if total_summaries > 0:
+            return self.total_retries / total_summaries
+        return 0
+
     def to_dict(self) -> dict:
         """Convert metrics to dictionary for JSON serialization."""
         summary_stats_dict = {}
@@ -176,6 +231,10 @@ class IndexingMetrics:
                 "max_overage_percent": stats.max_overage_percent,
                 "max_underage_percent": stats.max_underage_percent,
             }
+
+        retry_stats_dict = {}
+        for level, retry_stat in self.retry_stats.items():
+            retry_stats_dict[str(level)] = retry_stat.to_dict()
 
         return {
             "timing": {
@@ -203,6 +262,12 @@ class IndexingMetrics:
                 "cost_per_1k_tokens": self.cost_per_1k_tokens,
             },
             "summary_accuracy": summary_stats_dict,
+            "retry_stats": retry_stats_dict,
+            "retry_summary": {
+                "total_retries": self.total_retries,
+                "retries_per_1k_tokens": self.retries_per_1k_tokens,
+                "avg_retries_per_summary": self.avg_retries_per_summary,
+            },
             "tree_structure": {
                 "height": self.tree_height,
                 "nodes_per_level": self.nodes_per_level,
@@ -297,6 +362,18 @@ class IndexingMetricsReporter:
         self.metrics.summary_stats[target_tokens].add_summary(
             target_tokens, actual_tokens
         )
+
+    def record_summary_retry(self, level: int, retry_count: int) -> None:
+        """Record retry count for a summary at a specific tree level.
+
+        Args:
+            level: Tree level (0 = leaves)
+            retry_count: Number of retries performed
+        """
+        if level not in self.metrics.retry_stats:
+            self.metrics.retry_stats[level] = RetryStats()
+
+        self.metrics.retry_stats[level].add_retry(retry_count)
 
     def record_tree_level_complete(self, level: int, nodes_created: int) -> None:
         """Called when a tree level is built.
