@@ -139,15 +139,7 @@ jobs:
               if [ -f "$file" ]; then
                 chunk_size=$(basename "$file" | sed 's/metrics_\([0-9]*\)_tokens.json/\1/')
                 echo "**Chunk size: $chunk_size tokens**" >> report.md
-                python -c "
-import json
-with open('$file') as f:
-    data = json.load(f)
-    m = data['metrics']
-    print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\")
-    print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\")
-    print(f\"- Cost per 1K tokens: \${m['efficiency']['cost_per_1k_tokens']:.4f}\")
-" >> report.md
+                python -c "import json; data=json.load(open('\$file')); m=data['metrics']; print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\"); print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\"); print(f\"- Cost per 1K tokens: \\\${m['efficiency']['cost_per_1k_tokens']:.4f}\")" >> report.md
                 echo "" >> report.md
               fi
             done
