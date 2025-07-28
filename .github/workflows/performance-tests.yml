@@ -63,8 +63,8 @@ jobs:
         run: |
           echo "Generating baseline benchmarks from ${{ github.base_ref }}..."
           
-          # Clone base branch
-          git clone --depth 1 --branch ${{ github.base_ref }} https://github.com/${{ github.repository }}.git base_branch
+          # Clone base branch using GitHub token
+          git clone --depth 1 --branch ${{ github.base_ref }} https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git base_branch
           
           cd base_branch
           
