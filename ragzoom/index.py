@@ -10,7 +10,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, Union, cast, overload
 
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN
@@ -172,6 +172,26 @@ Here's the content to summarize:"""
 
         return summary
 
+    @overload
+    async def _add_document_impl(
+        self,
+        text: str,
+        document_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        show_progress: bool = True,
+        reporter: None = None,
+    ) -> str: ...
+
+    @overload
+    async def _add_document_impl(
+        self,
+        text: str,
+        document_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        show_progress: bool = True,
+        reporter: IndexingMetricsReporter = ...,
+    ) -> tuple[str, IndexingMetrics]: ...
+
     async def _add_document_impl(
         self,
         text: str,
@@ -218,12 +238,6 @@ Here's the content to summarize:"""
 
         # Split into chunks
         chunks = self.splitter.split_text(text)
-
-        # Initialize reporter if provided
-        if reporter:
-            # Count source document tokens
-            source_tokens = len(self.splitter.tokenizer.encode(text))
-            reporter = IndexingMetricsReporter(document_id, source_tokens)
 
         # Create progress tracker early so we can use it for logging
         # When progress bar is active, we suppress info logs to avoid disrupting the display
@@ -461,8 +475,7 @@ Here's the content to summarize:"""
         )
 
         # Extract tuple returned when reporter is provided
-        # We know result is a tuple because we passed a reporter
-        assert isinstance(result, tuple)
+        # Type checker knows result is a tuple because we passed a reporter
         doc_id, metrics = result
         return doc_id, metrics
 
@@ -477,8 +490,7 @@ Here's the content to summarize:"""
         result = await self._add_document_impl(
             text, document_id, file_path, show_progress
         )
-        # When no reporter is provided, result is just the document_id string
-        assert isinstance(result, str)
+        # Type checker knows result is a string when no reporter is provided
         return result
 
     async def _process_node_pair(

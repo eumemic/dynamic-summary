@@ -2,7 +2,6 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 from ragzoom.config import RagZoomConfig
 
@@ -18,13 +17,11 @@ class SummaryStats:
     under_target_count: int = 0
     max_overage_percent: float = 0.0
     max_underage_percent: float = 0.0
-    sizes: list[int] = field(default_factory=list)
 
     def add_summary(self, target: int, actual: int) -> None:
         """Record a summary result."""
         self.count += 1
         self.total_tokens += actual
-        self.sizes.append(actual)
 
         deviation_percent = abs(actual - target) / target * 100
         self.total_deviation += deviation_percent
@@ -71,6 +68,11 @@ class IndexingMetrics:
     source_document_tokens: int
     chunks_created: int
 
+    # Cost configuration (per 1K tokens) - must be provided, no defaults
+    embedding_cost_per_1k: float
+    summary_input_cost_per_1k: float
+    summary_output_cost_per_1k: float
+
     # API usage
     embedding_api_calls: int = 0
     summary_api_calls: int = 0
@@ -87,11 +89,6 @@ class IndexingMetrics:
     # Tree structure
     tree_height: int = 0
     nodes_per_level: list[int] = field(default_factory=list)
-
-    # Cost configuration (per 1K tokens)
-    embedding_cost_per_1k: float = 0.00002
-    summary_input_cost_per_1k: float = 0.00015
-    summary_output_cost_per_1k: float = 0.0006
 
     @property
     def total_duration_seconds(self) -> float:
@@ -227,35 +224,32 @@ class IndexingMetricsReporter:
         self,
         document_id: str,
         source_tokens: int,
-        config: Optional[RagZoomConfig] = None,
+        config: RagZoomConfig,
     ):
         """Initialize reporter for a document.
 
         Args:
             document_id: Document being indexed
             source_tokens: Total tokens in source document
-            config: Optional config for cost estimation
+            config: Config for cost estimation (required for pricing)
         """
         self.document_id = document_id
 
-        # Initialize metrics with config-based pricing if provided
-        if config:
-            self.metrics = IndexingMetrics(
-                start_time=time.time(),
-                end_time=0,
-                source_document_tokens=source_tokens,
-                chunks_created=0,
-                embedding_cost_per_1k=config.embedding_cost_per_1k,
-                summary_input_cost_per_1k=config.summary_input_cost_per_1k,
-                summary_output_cost_per_1k=config.summary_output_cost_per_1k,
+        # Initialize metrics with config-based pricing
+        if not config:
+            raise ValueError(
+                "RagZoomConfig is required for metrics collection to provide pricing information"
             )
-        else:
-            self.metrics = IndexingMetrics(
-                start_time=time.time(),
-                end_time=0,
-                source_document_tokens=source_tokens,
-                chunks_created=0,
-            )
+
+        self.metrics = IndexingMetrics(
+            start_time=time.time(),
+            end_time=0,
+            source_document_tokens=source_tokens,
+            chunks_created=0,
+            embedding_cost_per_1k=config.embedding_cost_per_1k,
+            summary_input_cost_per_1k=config.summary_input_cost_per_1k,
+            summary_output_cost_per_1k=config.summary_output_cost_per_1k,
+        )
         self._current_level = 0
         self._nodes_at_current_level = 0
 
