@@ -32,7 +32,7 @@ Arguments: "$ARGUMENTS"
 
 Identify the review scope and gather necessary context:
 
-!`if [ -z "$ARGUMENTS" ]; then echo "Reviewing all changes vs master:"; echo ""; git diff --stat $(git merge-base HEAD master)..HEAD 2>/dev/null | head -20; elif [ "$ARGUMENTS" = "staged" ]; then echo "Reviewing staged changes:"; echo ""; git diff --cached --stat | head -20; elif [ "$ARGUMENTS" = "HEAD" ]; then echo "Reviewing latest commit:"; echo ""; git show --stat | head -20; elif [[ "$ARGUMENTS" =~ ^HEAD~[0-9]+$ ]]; then echo "Reviewing commit $ARGUMENTS:"; echo ""; git show --stat "$ARGUMENTS" | head -20; else echo "Reviewing: $ARGUMENTS"; fi`
+!`if [ -z "$ARGUMENTS" ]; then echo "Reviewing all changes vs master:"; echo ""; git diff --stat $(git merge-base HEAD master 2>/dev/null || git merge-base HEAD origin/master 2>/dev/null || echo "HEAD")..HEAD 2>/dev/null | head -20; elif [ "$ARGUMENTS" = "staged" ]; then echo "Reviewing staged changes:"; echo ""; git diff --cached --stat | head -20; elif [ "$ARGUMENTS" = "HEAD" ]; then echo "Reviewing latest commit:"; echo ""; git show --stat | head -20; elif [[ "$ARGUMENTS" =~ ^HEAD~[0-9]+$ ]]; then echo "Reviewing commit $ARGUMENTS:"; echo ""; git show --stat "$ARGUMENTS" | head -20; else echo "Reviewing: $ARGUMENTS"; fi`
 
 ## Strategic Guidance
 
