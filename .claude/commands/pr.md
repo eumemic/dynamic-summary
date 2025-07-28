@@ -24,33 +24,26 @@ Get code through CI successfully with minimal back-and-forth. Monitor CI, fix is
 
 1. **Create PR**: If no PR exists, create one (reference related issues with "Fixes #123")
 
-2. **Monitor Everything Concurrently**: Watch for THREE possible outcomes:
-   - **CI Failure** → Fix immediately and resume monitoring
-   - **Review Completed** (e.g., claude-review finishes) → Address feedback and resume monitoring  
-   - **All Checks Pass + No Outstanding Reviews** → Declare success
+2. **Monitor CI with fail-fast**: Use `gh pr checks --watch --fail-fast`
+   - Exits immediately on first CI failure
+   - Fix the failure, commit, and resume monitoring
+   - Continues until all checks pass
 
-3. **Monitoring Strategy**:
-   - Use `gh pr checks --watch` to see all CI statuses
-   - Periodically check for completed reviews: `gh pr view --comments`
-   - Watch for automated reviews (claude-review) transitioning from pending → complete
-   - Act on the FIRST actionable event (failure or review)
+3. **Read Reviews**: Once all CI checks pass (build complete):
+   - Check for reviews: `gh pr view --comments`
+   - Look for automated review feedback (e.g., claude-review)
+   - If issues found, fix them and return to step 2
 
-4. **Fix Issues Immediately**:
-   - Stop monitoring when issues found
-   - Fix ALL known issues (CI failures + review feedback)
-   - Commit and push fixes using /commit
-   - Resume monitoring for more issues
-
-5. **Success Criteria**:
-   - All CI checks pass (including automated reviews)
-   - All review feedback addressed
-   - No CHANGES_REQUESTED status on any review
+4. **Success Criteria**:
+   - All CI checks pass
+   - All review feedback read and addressed
+   - No outstanding issues to fix
 
 ## Key Principles
 
-- **Monitor concurrently**: Watch CI and reviews simultaneously, not sequentially
-- **Act on first issue**: Don't wait for all CI to pass if reviews are ready
-- **Batch fixes**: Address all known issues before pushing
+- **Fail fast**: `--fail-fast` flag exits on first CI failure for quick fixes
+- **Reviews after CI**: Read reviews only after all checks pass
+- **Batch fixes**: Fix all issues before pushing
 - **Be proactive**: Auto-fix build/test/lint/security issues
 - **Ask first**: For style preferences and non-blocking suggestions
 
@@ -86,29 +79,32 @@ PR #N: https://github.com/owner/repo/pull/N
 Creating PR...
 ✅ PR #42: https://github.com/owner/repo/pull/42
 
-Monitoring PR status...
-⏳ CI: 5 pending, 2 passed | Reviews: claude-review pending
-
+Monitoring CI with fail-fast...
 ❌ Build failed: missing import
-Stopping monitor to fix...
-✅ Fixed import issue - ready to commit
+
+Fixing import issue...
+✅ Fixed and ready to commit
 (User runs /commit)
 
-Resuming PR monitoring...
-⏳ CI: 3 pending, 4 passed | Reviews: claude-review pending
+Resuming CI monitoring...
+✅ All CI checks passed!
 
-📝 claude-review completed with feedback (while CI still running):
-- Temp file conflicts in pre-commit hook  
+Checking for code reviews...
+📝 Found claude-review with feedback:
+- Temp file conflicts in pre-commit hook
 - Missing safety check for branch reset
 
-Stopping monitor to address review...
-✅ Fixed all review issues - ready to commit
+Fixing review issues...
+✅ Fixed all issues - ready to commit
 (User runs /commit)
 
-Resuming PR monitoring...
-✅ CI: All passed | Reviews: All addressed
+Resuming CI monitoring...
+✅ All CI checks passed!
 
-✅ PR ready for final review
+Checking for code reviews...
+✅ No new issues found
+
+✅ PR ready for review
 PR #42: https://github.com/owner/repo/pull/42
 ```
 
