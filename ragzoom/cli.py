@@ -86,6 +86,23 @@ def display_metrics(metrics: IndexingMetrics) -> None:
                 f"    Under target: {stats.percent_under_target:.1f}% (max: {stats.max_underage_percent:.1f}%)"
             )
 
+    if metrics.retry_stats:
+        click.echo("\n🔄 Summary Retries:")
+        click.echo(f"  Total retries: {metrics.total_retries}")
+        click.echo(
+            f"  Retries per 1K source tokens: {metrics.retries_per_1k_tokens:.1f}"
+        )
+        click.echo(
+            f"  Average retries per summary: {metrics.avg_retries_per_summary:.1f}"
+        )
+
+        if len(metrics.retry_stats) > 1:
+            click.echo("\n  By tree level:")
+            for level, retry_stat in sorted(metrics.retry_stats.items()):
+                click.echo(
+                    f"    Level {level}: avg {retry_stat.avg_retries:.1f}, min {retry_stat.min_retries}, max {retry_stat.max_retries} ({retry_stat.count} summaries)"
+                )
+
 
 @click.group()
 @click.pass_context
