@@ -78,7 +78,7 @@ jobs:
             mkdir -p benchmark_results
             for chunk_size in 100 200 400; do
               echo "Running baseline benchmark with chunk_size=$chunk_size"
-              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size and document_type==narrative" -v || true
+              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-$chunk_size" -v || true
             done
             
             # Move results
@@ -113,7 +113,7 @@ jobs:
           
           for chunk_size in 100 200 400; do
             echo "Running PR benchmark with chunk_size=$chunk_size"
-            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size and document_type==narrative" -v || {
+            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-$chunk_size" -v || {
               echo "⚠️ Benchmark failed for chunk_size=$chunk_size"
               echo "Creating empty result file..."
               echo '{"error": "Benchmark failed to run"}' > "benchmark_results/metrics_${chunk_size}_tokens.json"
@@ -139,7 +139,12 @@ jobs:
               if [ -f "$file" ]; then
                 chunk_size=$(basename "$file" | sed 's/metrics_\([0-9]*\)_tokens.json/\1/')
                 echo "**Chunk size: $chunk_size tokens**" >> report.md
-                python -c "import json; f = open('$file'); data = json.load(f); m = data['metrics']; print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\"); print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\"); print(f\"- Cost per 1K tokens: \${m['efficiency']['cost_per_1k_tokens']:.4f}\")" >> report.md
+                # Check if file contains error
+                if grep -q '"error"' "$file"; then
+                  echo "- ❌ Benchmark failed to run" >> report.md
+                else
+                  python -c "import json; f = open('$file'); data = json.load(f); m = data['metrics']; print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\"); print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\"); print(f\"- Cost per 1K tokens: \${m['efficiency']['cost_per_1k_tokens']:.4f}\")" >> report.md
+                fi
                 echo "" >> report.md
               fi
             done

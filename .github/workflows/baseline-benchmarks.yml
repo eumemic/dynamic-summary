@@ -46,7 +46,7 @@ jobs:
           # Run benchmarks for different chunk sizes
           for chunk_size in 100 200 400; do
             echo "Running benchmark with chunk_size=$chunk_size"
-            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "leaf_tokens==$chunk_size and document_type==narrative" -v
+            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-$chunk_size" -v
           done
           
           # Add metadata
