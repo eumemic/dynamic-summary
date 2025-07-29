@@ -20,7 +20,16 @@ Background reading: https://docs.anthropic.com/en/docs/claude-code/slash-command
 4. **Guided Autonomy**: Provide mental models and key insights, not step-by-step instructions
 5. **Information Density**: Be concise. Every line costs tokens. Pack maximum insight into minimum words
 6. **Argument Hints**: Use `[brackets]` for optional arguments, `<angles>` for required
-7. **Continuous Improvement**: Include retrospective to evolve commands based on usage
+7. **Continuous Improvement**: Include retrospective to evolve commands based on usage. The retrospective template should always be exactly this text:
+  ```markdown
+  ## Retrospective
+  After completing this task, reflect on three levels:
+  1. **Command Improvement**: How could this specific command guide future agents better?
+  2. **Rubric Conformance**: Does this command follow the /command design principles well?
+  3. **Meta Evolution**: Should the /command rubric itself evolve based on your experience?
+
+  ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.
+  ```
 
 ## Key Questions to Consider
 
