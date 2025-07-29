@@ -285,6 +285,46 @@ class BenchmarkRunner:
                     f"{metrics.peak_memory_mb:<10.1f}"
                 )
 
+        # Print detailed summary accuracy stats
+        self.print_summary_accuracy_details(results)
+
+    def print_summary_accuracy_details(self, results: dict[str, dict[int, IndexingMetrics]]) -> None:
+        """Print detailed summary accuracy statistics."""
+        logger.info(f"\n{'='*80}")
+        logger.info("SUMMARY ACCURACY DETAILS")
+        logger.info(f"{'='*80}")
+
+        for doc_type, metrics_by_size in results.items():
+            for chunk_size, metrics in sorted(metrics_by_size.items()):
+                if not metrics.summary_stats:
+                    continue
+
+                for target, stats in metrics.summary_stats.items():
+                    if stats.count == 0:
+                        continue
+
+                    logger.info(f"\n📏 {self.DOCUMENTS[doc_type]['name']} - Target {target} tokens:")
+                    logger.info(f"  Count: {stats.count}")
+                    logger.info(f"  Average size: {stats.avg_tokens:.1f} tokens")
+                    logger.info(f"  Average deviation: {stats.avg_deviation_percent:.1f}%")
+                    logger.info(f"  Median deviation: {stats.median_deviation_percent:.1f}%")
+                    logger.info(f"  Std deviation: {stats.std_deviation_percent:.1f}%")
+                    logger.info(f"  Over target: {stats.percent_over_target:.1f}% (max: {stats.max_overage_percent:.1f}%)")
+                    logger.info(f"  Under target: {stats.percent_under_target:.1f}% (max: {stats.max_underage_percent:.1f}%)")
+
+                    # Percentiles
+                    logger.info("\n  Percentiles:")
+                    logger.info(f"    P50 (median): {stats.percentile_50:.1f}%")
+                    logger.info(f"    P90: {stats.percentile_90:.1f}%")
+                    logger.info(f"    P95: {stats.percentile_95:.1f}%")
+
+                    # Histogram
+                    logger.info("\n  Distribution:")
+                    for bucket, data in stats.histogram.items():
+                        bar_length = int(data['percentage'] / 2)  # Scale to fit
+                        bar = "█" * bar_length
+                        logger.info(f"    {bucket:>8}: {bar:<50} {data['count']:3d} ({data['percentage']:5.1f}%)")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(

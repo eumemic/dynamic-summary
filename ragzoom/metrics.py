@@ -1,6 +1,7 @@
 """Performance metrics collection for RagZoom indexing."""
 
 import logging
+import statistics
 import time
 from dataclasses import dataclass, field
 
@@ -23,6 +24,18 @@ class SummaryStats:
     max_overage_percent: float = 0.0
     max_underage_percent: float = 0.0
 
+    # Distribution tracking
+    deviations: list[float] = field(default_factory=list)
+    histogram_buckets: dict[str, int] = field(
+        default_factory=lambda: {
+            "0-10%": 0,
+            "10-25%": 0,
+            "25-50%": 0,
+            "50-100%": 0,
+            "100%+": 0,
+        }
+    )
+
     def add_summary(self, target: int, actual: int) -> None:
         """Record a summary result."""
         self.count += 1
@@ -30,6 +43,21 @@ class SummaryStats:
 
         deviation_percent = abs(actual - target) / target * 100
         self.total_deviation += deviation_percent
+
+        # Track deviation for distribution analysis
+        self.deviations.append(deviation_percent)
+
+        # Update histogram bucket
+        if deviation_percent <= 10:
+            self.histogram_buckets["0-10%"] += 1
+        elif deviation_percent <= 25:
+            self.histogram_buckets["10-25%"] += 1
+        elif deviation_percent <= 50:
+            self.histogram_buckets["25-50%"] += 1
+        elif deviation_percent <= 100:
+            self.histogram_buckets["50-100%"] += 1
+        else:
+            self.histogram_buckets["100%+"] += 1
 
         if actual > target:
             self.over_target_count += 1
@@ -59,6 +87,50 @@ class SummaryStats:
     def percent_under_target(self) -> float:
         """Percentage of summaries under target."""
         return self.under_target_count / self.count * 100 if self.count > 0 else 0
+
+    @property
+    def median_deviation_percent(self) -> float:
+        """Median deviation from target (more robust than mean)."""
+        if not self.deviations:
+            return 0.0
+        return statistics.median(self.deviations)
+
+    @property
+    def percentile_50(self) -> float:
+        """50th percentile (median) of deviations."""
+        return self.median_deviation_percent
+
+    @property
+    def percentile_90(self) -> float:
+        """90th percentile of deviations."""
+        if not self.deviations:
+            return 0.0
+        return statistics.quantiles(self.deviations, n=10)[8]  # 9th of 9 cut points
+
+    @property
+    def percentile_95(self) -> float:
+        """95th percentile of deviations."""
+        if not self.deviations:
+            return 0.0
+        return statistics.quantiles(self.deviations, n=20)[18]  # 19th of 19 cut points
+
+    @property
+    def std_deviation_percent(self) -> float:
+        """Standard deviation of deviation percentages."""
+        if len(self.deviations) < 2:
+            return 0.0
+        return statistics.stdev(self.deviations)
+
+    @property
+    def histogram(self) -> dict[str, dict[str, float]]:
+        """Histogram with counts and percentages for each bucket."""
+        if self.count == 0:
+            return {}
+
+        result = {}
+        for bucket, count in self.histogram_buckets.items():
+            result[bucket] = {"count": count, "percentage": (count / self.count) * 100}
+        return result
 
 
 @dataclass
@@ -186,10 +258,16 @@ class IndexingMetrics:
                 "count": stats.count,
                 "avg_tokens": stats.avg_tokens,
                 "avg_deviation_percent": stats.avg_deviation_percent,
+                "median_deviation_percent": stats.median_deviation_percent,
+                "std_deviation_percent": stats.std_deviation_percent,
+                "percentile_50": stats.percentile_50,
+                "percentile_90": stats.percentile_90,
+                "percentile_95": stats.percentile_95,
                 "percent_over_target": stats.percent_over_target,
                 "percent_under_target": stats.percent_under_target,
                 "max_overage_percent": stats.max_overage_percent,
                 "max_underage_percent": stats.max_underage_percent,
+                "histogram": stats.histogram,
             }
 
         return {
