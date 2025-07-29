@@ -127,8 +127,9 @@ class BenchmarkRunner:
             )
 
             # Prepare telemetry data for this chunk size
+            from ragzoom.metrics import TELEMETRY_FORMAT_VERSION
             telemetry_data = {
-                "format_version": "1.0",
+                "format_version": TELEMETRY_FORMAT_VERSION,
                 "documents": {}
             }
             
