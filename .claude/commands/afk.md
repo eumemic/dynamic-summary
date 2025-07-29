@@ -20,16 +20,22 @@ Think of this as running a modified `.claude/commands/pr.md` that also responds 
 ## Task
 Arguments: "$ARGUMENTS"
 
-Setup phase: If mid-task, finish it. Commit any outstanding changes (follow `.claude/commands/commit.md`). Ensure PR exists (follow `.claude/commands/pr.md` if needed). Post "🤖 Entering AFK mode" to PR.
+Setup phase: 
+1. **CRITICAL**: If you made ANY code changes, commit and push them immediately!
+2. If mid-task, finish it first
+3. Commit any outstanding changes (follow `.claude/commands/commit.md`)
+4. Ensure PR exists (follow `.claude/commands/pr.md` if needed)
+5. Post "🤖 Entering AFK mode" to PR
 
 Then enter dual monitoring loop:
 1. Monitor CI/reviews like pr.md - post updates about failing checks, review feedback
 2. Monitor user comments - execute instructions, post results
-3. Polling intervals:
+3. **ALWAYS commit and push after making any code changes!**
+4. Polling intervals:
    - If monitoring active CI/reviews: Fixed 30s intervals
    - If idle: Exponential backoff (30s * 1.5^n, max 5min)
    - **Reset to 30s whenever user comments**
-4. Always check for user comments during any poll
+5. Always check for user comments during any poll
 
 Never stop until interrupted. Post "final answers" only as PR comments, not intermediate thoughts.
 
