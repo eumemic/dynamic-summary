@@ -4,6 +4,7 @@ import hashlib
 import logging
 from collections import deque
 from collections.abc import Mapping
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Optional, Union, cast
 
@@ -849,3 +850,33 @@ class Store:
     def compute_content_hash(content: str) -> str:
         """Compute SHA256 hash of content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    @contextmanager
+    def temporary():
+        """Create a temporary Store instance for testing/benchmarking.
+
+        This creates a Store with temporary SQLite and Chroma databases
+        that are automatically cleaned up when the context exits.
+
+        Usage:
+            with Store.temporary() as store:
+                # Use store for testing
+                pass
+            # Databases are automatically cleaned up
+        """
+        import shutil
+        import tempfile
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            config = RagZoomConfig(
+                sqlite_database_url=f"sqlite:///{temp_dir}/test.db",
+                chroma_persist_directory=f"{temp_dir}/chroma",
+            )
+            store = Store(config)
+            yield store
+        finally:
+            # Clean up
+            store.close()
+            shutil.rmtree(temp_dir, ignore_errors=True)
