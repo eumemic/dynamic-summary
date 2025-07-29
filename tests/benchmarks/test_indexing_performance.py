@@ -55,7 +55,7 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
 def benchmark_config():
     """Config for benchmarks with real API calls."""
     return RagZoomConfig(
-        openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+        openai_api_key=os.getenv("RAGZOOM_OPENAI_API_KEY", "test-key"),
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
         embedding_batch_size=100,
@@ -68,7 +68,7 @@ def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
     """Benchmark indexing performance at different chunk sizes with real documents."""
     # Skip if no API key
     if benchmark_config.openai_api_key == "test-key":
-        pytest.skip("OPENAI_API_KEY not set")
+        pytest.skip("RAGZOOM_OPENAI_API_KEY not set")
 
     # Update config with chunk size
     benchmark_config.leaf_tokens = leaf_tokens
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         leaf_tokens = int(sys.argv[1])
         config = RagZoomConfig(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            openai_api_key=os.getenv("RAGZOOM_OPENAI_API_KEY"),
             leaf_tokens=leaf_tokens,
         )
         test_indexing_performance(config, leaf_tokens)
