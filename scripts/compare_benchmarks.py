@@ -261,6 +261,82 @@ def generate_comparison_table(
                     f"| | P95 Deviation | - | {curr_stats['percentile_95']:.1f}% | 📊 New |"
                 )
 
+    # Token Amplification comparison
+    if any("amplification" in current[size]["metrics"] for size in chunk_sizes):
+        lines.append("\n### Token Efficiency (Amplification Factors)")
+        lines.append("| Chunk Size | Metric | Baseline | Current | Change |")
+        lines.append("|------------|--------|----------|---------|--------|")
+
+        amplification_regression = False
+
+        for size in chunk_sizes:
+            if "amplification" not in current[size]["metrics"]:
+                continue
+
+            curr_amp = current[size]["metrics"]["amplification"]
+
+            # Check if baseline has amplification metrics
+            has_baseline_amp = (
+                "amplification" in baseline[size]["metrics"]
+            )
+
+            if has_baseline_amp:
+                base_amp = baseline[size]["metrics"]["amplification"]
+
+                # Cost amplification (main regression metric)
+                base_cost_amp = base_amp.get("median_cost", 0)
+                curr_cost_amp = curr_amp.get("median_cost", 0)
+
+                if base_cost_amp > 0:
+                    change = ((curr_cost_amp - base_cost_amp) / base_cost_amp) * 100
+
+                    if change > 10:  # 10% threshold for cost amplification
+                        amplification_regression = True
+                        emoji = "❌"
+                    elif abs(change) > 5:
+                        emoji = "⚠️" if change > 0 else "✅"
+                    else:
+                        emoji = ""
+
+                    lines.append(
+                        f"| {size} tokens | Cost Amplification | {base_cost_amp:.2f}x | "
+                        f"{curr_cost_amp:.2f}x | {emoji} {change:+.1f}% |"
+                    )
+
+                    # Input amplification (informational)
+                    base_input = base_amp.get("median_input", 0)
+                    curr_input = curr_amp.get("median_input", 0)
+                    if base_input > 0:
+                        change = ((curr_input - base_input) / base_input) * 100
+                        emoji = "⚠️" if abs(change) > 10 else ""
+                        lines.append(
+                            f"| | ├─ Input | {base_input:.2f}x | {curr_input:.2f}x | "
+                            f"{emoji} {change:+.1f}% |"
+                        )
+
+                    # Output amplification (informational)
+                    base_output = base_amp.get("median_output", 0)
+                    curr_output = curr_amp.get("median_output", 0)
+                    if base_output > 0:
+                        change = ((curr_output - base_output) / base_output) * 100
+                        emoji = "⚠️" if abs(change) > 20 else ""
+                        lines.append(
+                            f"| | └─ Output | {base_output:.2f}x | {curr_output:.2f}x | "
+                            f"{emoji} {change:+.1f}% |"
+                        )
+            else:
+                # No baseline - show current values
+                lines.append(
+                    f"| {size} tokens | Cost Amplification | - | "
+                    f"{curr_amp.get('median_cost', 0):.2f}x | 📊 New |"
+                )
+                lines.append(
+                    f"| | ├─ Input | - | {curr_amp.get('median_input', 0):.2f}x | 📊 New |"
+                )
+                lines.append(
+                    f"| | └─ Output | - | {curr_amp.get('median_output', 0):.2f}x | 📊 New |"
+                )
+
     # Summary
     lines.append("\n### Summary")
 
@@ -269,6 +345,8 @@ def generate_comparison_table(
         issues.append(f"❌ Summary token regression detected (>{summary_token_regression_threshold}% increase)")
     if accuracy_regression:
         issues.append("❌ Summary accuracy regression detected")
+    if "amplification_regression" in locals() and amplification_regression:
+        issues.append("❌ Cost amplification regression detected (>10% increase)")
 
     if issues:
         lines.extend(issues)
@@ -302,7 +380,10 @@ def generate_comparison_table(
 
     lines.append("\n*Cost changes are shown for informational purposes but do not trigger regression detection.*")
 
-    return "\n".join(lines), summary_regression, accuracy_regression
+    # Include amplification regression in the return
+    has_amplification_regression = "amplification_regression" in locals() and amplification_regression
+
+    return "\n".join(lines), summary_regression or has_amplification_regression, accuracy_regression
 
 
 def main() -> None:

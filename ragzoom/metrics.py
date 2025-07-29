@@ -163,6 +163,16 @@ class IndexingMetrics:
     # Summary accuracy by target size
     summary_stats: dict[int, SummaryStats] = field(default_factory=dict)
 
+    # Amplification tracking (per-operation)
+    input_amplifications: list[float] = field(default_factory=list)
+    output_amplifications: list[float] = field(default_factory=list)
+    cost_amplifications: list[float] = field(default_factory=list)
+
+    # Amplifications by tree level
+    amplifications_by_level: dict[int, dict[str, list[float]]] = field(
+        default_factory=dict
+    )
+
     # Tree structure
     tree_height: int = 0
     nodes_per_level: list[int] = field(default_factory=list)
@@ -250,6 +260,45 @@ class IndexingMetrics:
         """Peak memory usage during indexing in MB."""
         return self.peak_memory_mb - self.memory_start_mb
 
+    @property
+    def median_cost_amplification(self) -> float:
+        """Median cost amplification factor across all operations."""
+        if not self.cost_amplifications:
+            return 0.0
+        return statistics.median(self.cost_amplifications)
+
+    @property
+    def cost_amplification_p90(self) -> float:
+        """90th percentile of cost amplification."""
+        if not self.cost_amplifications:
+            return 0.0
+        sorted_values = sorted(self.cost_amplifications)
+        index = int(len(sorted_values) * 0.9)
+        return sorted_values[min(index, len(sorted_values) - 1)]
+
+    @property
+    def cost_amplification_p95(self) -> float:
+        """95th percentile of cost amplification."""
+        if not self.cost_amplifications:
+            return 0.0
+        sorted_values = sorted(self.cost_amplifications)
+        index = int(len(sorted_values) * 0.95)
+        return sorted_values[min(index, len(sorted_values) - 1)]
+
+    @property
+    def median_input_amplification(self) -> float:
+        """Median input amplification factor."""
+        if not self.input_amplifications:
+            return 0.0
+        return statistics.median(self.input_amplifications)
+
+    @property
+    def median_output_amplification(self) -> float:
+        """Median output amplification factor."""
+        if not self.output_amplifications:
+            return 0.0
+        return statistics.median(self.output_amplifications)
+
     def to_dict(self) -> dict:
         """Convert metrics to dictionary for JSON serialization."""
         summary_stats_dict = {}
@@ -305,6 +354,14 @@ class IndexingMetrics:
                 "start_mb": self.memory_start_mb,
                 "end_mb": self.memory_end_mb,
                 "usage_mb": self.memory_usage_mb,
+            },
+            "amplification": {
+                "median_cost": self.median_cost_amplification,
+                "cost_p90": self.cost_amplification_p90,
+                "cost_p95": self.cost_amplification_p95,
+                "median_input": self.median_input_amplification,
+                "median_output": self.median_output_amplification,
+                "by_level": self.amplifications_by_level,
             },
         }
 
@@ -398,14 +455,16 @@ class IndexingMetricsReporter:
         actual_tokens: int,
         prompt_tokens: int,
         completion_tokens: int,
+        input_text_tokens: int,
     ) -> None:
-        """Record summary generation result with size tracking.
+        """Record summary generation result with size tracking and amplification metrics.
 
         Args:
             target_tokens: Target size for summary
             actual_tokens: Actual size of generated summary
             prompt_tokens: Tokens in prompt
             completion_tokens: Tokens in completion
+            input_text_tokens: Tokens in the text being summarized (left + right)
         """
         self.metrics.summary_api_calls += 1
         self.metrics.total_summary_prompt_tokens += prompt_tokens
@@ -418,6 +477,52 @@ class IndexingMetricsReporter:
         self.metrics.summary_stats[target_tokens].add_summary(
             target_tokens, actual_tokens
         )
+
+        # Calculate amplification factors
+        if input_text_tokens > 0:
+            input_amplification = prompt_tokens / input_text_tokens
+            output_amplification = (
+                completion_tokens / actual_tokens if actual_tokens > 0 else 1.0
+            )
+
+            # Calculate cost-weighted amplification
+            # Cost amplification = (actual cost / theoretical minimum cost)
+            actual_cost = (
+                prompt_tokens * self.metrics.summary_input_cost_per_1k
+                + completion_tokens * self.metrics.summary_output_cost_per_1k
+            ) / 1000
+
+            min_cost = (
+                input_text_tokens * self.metrics.summary_input_cost_per_1k
+                + actual_tokens * self.metrics.summary_output_cost_per_1k
+            ) / 1000
+
+            cost_amplification = actual_cost / min_cost if min_cost > 0 else 1.0
+
+            # Record per-operation amplifications
+            self.metrics.input_amplifications.append(input_amplification)
+            self.metrics.output_amplifications.append(output_amplification)
+            self.metrics.cost_amplifications.append(cost_amplification)
+
+            # Track by level
+            level = self._current_level
+            if level not in self.metrics.amplifications_by_level:
+                self.metrics.amplifications_by_level[level] = {
+                    "input": [],
+                    "output": [],
+                    "cost": [],
+                }
+
+            self.metrics.amplifications_by_level[level]["input"].append(
+                input_amplification
+            )
+            self.metrics.amplifications_by_level[level]["output"].append(
+                output_amplification
+            )
+            self.metrics.amplifications_by_level[level]["cost"].append(
+                cost_amplification
+            )
+
         self._update_memory_usage()
 
     def record_tree_level_complete(self, level: int, nodes_created: int) -> None:
