@@ -39,7 +39,6 @@ jobs:
           
       - name: Run fast tests
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
           pytest tests/ -m "not slow and not integration" -n 8 --no-header -v
@@ -72,7 +71,6 @@ jobs:
           
       - name: Run slow tests
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
           # Run slow tests if any exist, otherwise skip gracefully
@@ -111,7 +109,6 @@ jobs:
           
       - name: Run integration tests
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
           # Run integration tests if any exist, otherwise skip gracefully
@@ -220,7 +217,6 @@ jobs:
           
       - name: Run tests with coverage
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
           pytest tests/ -n 8 --cov=ragzoom --cov-report=term --cov-report=html --no-header
@@ -262,7 +258,6 @@ jobs:
           
       - name: Run fast tests
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
           pytest tests/ -m "not slow and not integration" -n 8 --no-header -q

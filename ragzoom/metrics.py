@@ -292,7 +292,7 @@ class IndexingMetricsReporter:
                 self.metrics.peak_memory_mb = current_memory_mb
         except Exception as e:
             # Log but don't fail indexing due to memory tracking issues
-            logger.debug(f"Failed to update memory usage: {e}")
+            logger.warning(f"Failed to update memory usage: {e}")
 
     def record_chunk_created(self, chunk_id: str, tokens: int) -> None:
         """Called when a chunk is created during splitting."""
