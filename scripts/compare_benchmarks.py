@@ -6,6 +6,15 @@ import os
 import sys
 from pathlib import Path
 
+# Emoji display thresholds - these control when to show warning/success indicators
+# They don't trigger regression failures, just visual feedback
+EMOJI_THRESHOLD_NEGLIGIBLE = 1.0   # Changes below this are not highlighted
+EMOJI_THRESHOLD_COST_WARN = 10.0   # Cost increase above this shows warning
+EMOJI_THRESHOLD_COST_GOOD = 5.0    # Cost decrease above this shows success
+EMOJI_THRESHOLD_MINOR = 5.0        # Minor changes worth noting
+EMOJI_THRESHOLD_MODERATE = 10.0    # Moderate changes that warrant attention
+EMOJI_THRESHOLD_MAJOR = 20.0       # Major changes that are concerning
+
 
 def load_benchmark_results(results_dir: Path) -> dict[int, dict]:
     """Load benchmark results from JSON files."""
@@ -31,7 +40,7 @@ def calculate_change(old_value: float, new_value: float) -> tuple[float, str]:
     change = ((new_value - old_value) / old_value) * 100
 
     # Determine emoji based on metric type and direction
-    if abs(change) < 1:
+    if abs(change) < EMOJI_THRESHOLD_NEGLIGIBLE:
         emoji = ""
     elif change > 0:
         # For cost and time metrics, increase is bad
@@ -113,7 +122,7 @@ def generate_comparison_table(
         if change > summary_token_regression_threshold:
             summary_regression = True
             emoji = "❌"
-        elif abs(change) > 1:
+        elif abs(change) > EMOJI_THRESHOLD_NEGLIGIBLE:
             emoji = "⚠️" if change > 0 else "✅"
         else:
             emoji = ""
@@ -129,9 +138,9 @@ def generate_comparison_table(
         change, emoji = calculate_change(base_cost, curr_cost)
 
         # Just show warning/success for cost, don't use for regression
-        if change > 10:
+        if change > EMOJI_THRESHOLD_COST_WARN:
             emoji = "⚠️"
-        elif change < -5:
+        elif change < -EMOJI_THRESHOLD_COST_GOOD:
             emoji = "✅"
         else:
             emoji = ""
@@ -172,7 +181,7 @@ def generate_comparison_table(
                 change, emoji = calculate_change(base_avg_dev, curr_avg_dev)
 
                 # Only warning level for average deviation
-                if abs(change) > 10:
+                if abs(change) > EMOJI_THRESHOLD_MODERATE:
                     emoji = "⚠️" if change > 0 else "✅"
                 else:
                     emoji = ""
@@ -194,7 +203,7 @@ def generate_comparison_table(
                     if change > median_deviation_regression_threshold:
                         accuracy_regression = True
                         emoji = "❌"
-                    elif abs(change) > 5:
+                    elif abs(change) > EMOJI_THRESHOLD_MINOR:
                         emoji = "⚠️" if change > 0 else "✅"
                     else:
                         emoji = ""
@@ -210,7 +219,7 @@ def generate_comparison_table(
                     change, emoji = calculate_change(base_std, curr_std)
 
                     # Only warning level
-                    if abs(change) > 20:
+                    if abs(change) > EMOJI_THRESHOLD_MAJOR:
                         emoji = "⚠️" if change > 0 else "✅"
                     else:
                         emoji = ""
@@ -226,7 +235,7 @@ def generate_comparison_table(
                     change, emoji = calculate_change(base_p95, curr_p95)
 
                     # Only warning level
-                    if abs(change) > 20:
+                    if abs(change) > EMOJI_THRESHOLD_MAJOR:
                         emoji = "⚠️" if change > 0 else "✅"
                     else:
                         emoji = ""
@@ -294,7 +303,7 @@ def generate_comparison_table(
                     if change > cost_amplification_regression_threshold:
                         amplification_regression = True
                         emoji = "❌"
-                    elif abs(change) > 5:
+                    elif abs(change) > EMOJI_THRESHOLD_MINOR:
                         emoji = "⚠️" if change > 0 else "✅"
                     else:
                         emoji = ""
@@ -309,7 +318,7 @@ def generate_comparison_table(
                     curr_input = curr_amp.get("median_input", 0)
                     if base_input > 0:
                         change = ((curr_input - base_input) / base_input) * 100
-                        emoji = "⚠️" if abs(change) > 10 else ""
+                        emoji = "⚠️" if abs(change) > EMOJI_THRESHOLD_MODERATE else ""
                         lines.append(
                             f"| | ├─ Input | {base_input:.2f}x | {curr_input:.2f}x | "
                             f"{emoji} {change:+.1f}% |"
@@ -320,7 +329,7 @@ def generate_comparison_table(
                     curr_output = curr_amp.get("median_output", 0)
                     if base_output > 0:
                         change = ((curr_output - base_output) / base_output) * 100
-                        emoji = "⚠️" if abs(change) > 20 else ""
+                        emoji = "⚠️" if abs(change) > EMOJI_THRESHOLD_MAJOR else ""
                         lines.append(
                             f"| | └─ Output | {base_output:.2f}x | {curr_output:.2f}x | "
                             f"{emoji} {change:+.1f}% |"

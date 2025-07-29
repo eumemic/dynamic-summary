@@ -280,9 +280,30 @@ class BenchmarkRunner:
         if all_cost_amplifications:
             import statistics
             aggregated["amplification"]["median_cost"] = statistics.median(all_cost_amplifications)
-            sorted_costs = sorted(all_cost_amplifications)
-            aggregated["amplification"]["cost_p90"] = sorted_costs[int(len(sorted_costs) * 0.9)]
-            aggregated["amplification"]["cost_p95"] = sorted_costs[int(len(sorted_costs) * 0.95)]
+            # Use consistent percentile calculation with metrics.py
+            n = len(all_cost_amplifications)
+            if n == 1:
+                aggregated["amplification"]["cost_p90"] = all_cost_amplifications[0]
+                aggregated["amplification"]["cost_p95"] = all_cost_amplifications[0]
+            else:
+                # Linear interpolation for percentiles
+                sorted_costs = sorted(all_cost_amplifications)
+                # 90th percentile
+                pos_90 = (n - 1) * 0.9
+                lower_90 = int(pos_90)
+                upper_90 = min(lower_90 + 1, n - 1)
+                fraction_90 = pos_90 - lower_90
+                aggregated["amplification"]["cost_p90"] = (
+                    sorted_costs[lower_90] + fraction_90 * (sorted_costs[upper_90] - sorted_costs[lower_90])
+                )
+                # 95th percentile
+                pos_95 = (n - 1) * 0.95
+                lower_95 = int(pos_95)
+                upper_95 = min(lower_95 + 1, n - 1)
+                fraction_95 = pos_95 - lower_95
+                aggregated["amplification"]["cost_p95"] = (
+                    sorted_costs[lower_95] + fraction_95 * (sorted_costs[upper_95] - sorted_costs[lower_95])
+                )
 
         if all_input_amplifications:
             aggregated["amplification"]["median_input"] = statistics.median(all_input_amplifications)
