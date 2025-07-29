@@ -60,7 +60,11 @@ def generate_comparison_table(
     current: dict[int, dict],
     output_format: str = "markdown",
     summary_token_regression_threshold: float = 10.0,
-) -> tuple[str, bool]:
+    avg_deviation_regression_threshold: float = 20.0,
+    median_deviation_regression_threshold: float = 10.0,
+    std_deviation_regression_threshold: float = 30.0,
+    p95_regression_threshold: float = 25.0,
+) -> tuple[str, bool, bool]:
     """Generate comparison table between baseline and current results.
 
     Args:
@@ -68,16 +72,20 @@ def generate_comparison_table(
         current: Current benchmark results by chunk size
         output_format: Output format (only 'markdown' supported)
         summary_token_regression_threshold: Percentage increase to trigger regression warning
+        avg_deviation_regression_threshold: Percentage increase for avg deviation regression
+        median_deviation_regression_threshold: Percentage increase for median deviation regression
+        std_deviation_regression_threshold: Percentage increase for std deviation regression
+        p95_regression_threshold: Percentage increase for P95 regression
 
     Returns:
-        Tuple of (markdown report, has_summary_regression)
+        Tuple of (markdown report, has_summary_regression, has_accuracy_regression)
     """
 
     # Get all chunk sizes present in both sets
     chunk_sizes = sorted(set(baseline.keys()) & set(current.keys()))
 
     if not chunk_sizes:
-        return "❌ No matching chunk sizes found between baseline and current results", False
+        return "❌ No matching chunk sizes found between baseline and current results", False, False
 
     lines = []
 
@@ -90,6 +98,7 @@ def generate_comparison_table(
     lines.append("|------------|--------|----------|---------|--------|")
 
     summary_regression = False
+    accuracy_regression = False
 
     for size in chunk_sizes:
         base_m = baseline[size]["metrics"]["efficiency"]
@@ -131,42 +140,172 @@ def generate_comparison_table(
             f"{emoji} {change:+.1f}% |"
         )
 
-    # Summary accuracy if available
+    # Summary accuracy comparison
     if any("summary_accuracy" in current[size]["metrics"] for size in chunk_sizes):
         lines.append("\n### Summary Size Accuracy")
-        lines.append("| Chunk Size | Avg Deviation | Over Target | Under Target |")
-        lines.append("|------------|---------------|-------------|--------------|")
+        lines.append("| Chunk Size | Metric | Baseline | Current | Change |")
+        lines.append("|------------|--------|----------|---------|--------|")
 
         for size in chunk_sizes:
             if "summary_accuracy" not in current[size]["metrics"]:
                 continue
 
-            # Get summary stats for the chunk size (same as target)
-            stats_dict = current[size]["metrics"]["summary_accuracy"]
-            if str(size) in stats_dict:
-                stats = stats_dict[str(size)]
+            # Get current stats
+            curr_stats_dict = current[size]["metrics"]["summary_accuracy"]
+            if str(size) not in curr_stats_dict:
+                continue
+            curr_stats = curr_stats_dict[str(size)]
+
+            # Check if baseline has summary accuracy
+            has_baseline_accuracy = (
+                "summary_accuracy" in baseline[size]["metrics"] and
+                str(size) in baseline[size]["metrics"]["summary_accuracy"]
+            )
+
+            if has_baseline_accuracy:
+                base_stats = baseline[size]["metrics"]["summary_accuracy"][str(size)]
+
+                # Average deviation (always present in old metrics)
+                base_avg_dev = base_stats.get("avg_deviation_percent", 0)
+                curr_avg_dev = curr_stats["avg_deviation_percent"]
+                change, emoji = calculate_change(base_avg_dev, curr_avg_dev)
+
+                # Only warning level for average deviation
+                if abs(change) > 10:
+                    emoji = "⚠️" if change > 0 else "✅"
+                else:
+                    emoji = ""
+
                 lines.append(
-                    f"| {size} tokens | {stats['avg_deviation_percent']:.1f}% | "
-                    f"{stats['percent_over_target']:.1f}% | "
-                    f"{stats['percent_under_target']:.1f}% |"
+                    f"| {size} tokens | Avg Deviation | {base_avg_dev:.1f}% | "
+                    f"{curr_avg_dev:.1f}% | {emoji} {change:+.1f}% |"
+                )
+
+                # Check for new distribution metrics
+                has_distribution_metrics = "median_deviation_percent" in base_stats
+
+                if has_distribution_metrics:
+                    # Median deviation - the only metric that triggers accuracy regression
+                    base_median = base_stats["median_deviation_percent"]
+                    curr_median = curr_stats["median_deviation_percent"]
+                    change, emoji = calculate_change(base_median, curr_median)
+
+                    if change > median_deviation_regression_threshold:
+                        accuracy_regression = True
+                        emoji = "❌"
+                    elif abs(change) > 5:
+                        emoji = "⚠️" if change > 0 else "✅"
+                    else:
+                        emoji = ""
+
+                    lines.append(
+                        f"| | Median Deviation | {base_median:.1f}% | "
+                        f"{curr_median:.1f}% | {emoji} {change:+.1f}% |"
+                    )
+
+                    # Standard deviation - warning only
+                    base_std = base_stats["std_deviation_percent"]
+                    curr_std = curr_stats["std_deviation_percent"]
+                    change, emoji = calculate_change(base_std, curr_std)
+
+                    # Only warning level
+                    if abs(change) > 20:
+                        emoji = "⚠️" if change > 0 else "✅"
+                    else:
+                        emoji = ""
+
+                    lines.append(
+                        f"| | Std Deviation | {base_std:.1f}% | "
+                        f"{curr_std:.1f}% | {emoji} {change:+.1f}% |"
+                    )
+
+                    # P95 Deviation - warning only
+                    base_p95 = base_stats["percentile_95"]
+                    curr_p95 = curr_stats["percentile_95"]
+                    change, emoji = calculate_change(base_p95, curr_p95)
+
+                    # Only warning level
+                    if abs(change) > 20:
+                        emoji = "⚠️" if change > 0 else "✅"
+                    else:
+                        emoji = ""
+
+                    lines.append(
+                        f"| | P95 Deviation | {base_p95:.1f}% | "
+                        f"{curr_p95:.1f}% | {emoji} {change:+.1f}% |"
+                    )
+                else:
+                    # Show new metrics without comparison
+                    lines.append(
+                        f"| | Median Deviation | - | {curr_stats['median_deviation_percent']:.1f}% | 📊 New |"
+                    )
+                    lines.append(
+                        f"| | Std Deviation | - | {curr_stats['std_deviation_percent']:.1f}% | 📊 New |"
+                    )
+                    lines.append(
+                        f"| | P95 Deviation | - | {curr_stats['percentile_95']:.1f}% | 📊 New |"
+                    )
+            else:
+                # No baseline at all - show current values
+                lines.append(
+                    f"| {size} tokens | Avg Deviation | - | "
+                    f"{curr_stats['avg_deviation_percent']:.1f}% | 📊 New |"
+                )
+                lines.append(
+                    f"| | Median Deviation | - | {curr_stats['median_deviation_percent']:.1f}% | 📊 New |"
+                )
+                lines.append(
+                    f"| | Std Deviation | - | {curr_stats['std_deviation_percent']:.1f}% | 📊 New |"
+                )
+                lines.append(
+                    f"| | P95 Deviation | - | {curr_stats['percentile_95']:.1f}% | 📊 New |"
                 )
 
     # Summary
     lines.append("\n### Summary")
 
+    issues = []
     if summary_regression:
-        lines.append(f"❌ Summary token regression detected (>{summary_token_regression_threshold}% increase)")
+        issues.append(f"❌ Summary token regression detected (>{summary_token_regression_threshold}% increase)")
+    if accuracy_regression:
+        issues.append("❌ Summary accuracy regression detected")
+
+    if issues:
+        lines.extend(issues)
     else:
         lines.append("✅ No significant regressions detected")
 
+    # Check if we have new metrics without baseline
+    has_new_metrics = any(
+        "summary_accuracy" in current[size]["metrics"] and
+        (
+            "summary_accuracy" not in baseline[size]["metrics"] or
+            "median_deviation_percent" not in baseline[size]["metrics"]["summary_accuracy"].get(str(size), {})
+        )
+        for size in chunk_sizes
+    )
+
+    if has_new_metrics:
+        lines.append("\nℹ️ Summary accuracy tracking enhanced - baseline will update on next master merge")
+
     # Show thresholds used
-    lines.append(f"\n*Regression threshold: summary tokens >{summary_token_regression_threshold}% increase*")
-    lines.append("*Cost changes are shown for informational purposes but do not trigger regression detection.*")
+    lines.append("\n*Regression thresholds (failures):*")
+    lines.append(f"- Summary tokens: >{summary_token_regression_threshold}% increase")
 
-    return "\n".join(lines), summary_regression
+    # Only show median threshold if we have baseline accuracy data with distribution metrics
+    if any(
+        "summary_accuracy" in baseline.get(size, {}).get("metrics", {}) and
+        "median_deviation_percent" in baseline.get(size, {}).get("metrics", {}).get("summary_accuracy", {}).get(str(size), {})
+        for size in chunk_sizes
+    ):
+        lines.append(f"- Median deviation: >{median_deviation_regression_threshold}% increase")
+
+    lines.append("\n*Cost changes are shown for informational purposes but do not trigger regression detection.*")
+
+    return "\n".join(lines), summary_regression, accuracy_regression
 
 
-def main():
+def main() -> None:
     """Main entry point for CLI usage."""
     if len(sys.argv) < 3:
         print("Usage: python compare_benchmarks.py <baseline_dir> <current_dir> [output_file]")
@@ -177,8 +316,12 @@ def main():
     current_dir = Path(sys.argv[2])
     output_file = Path(sys.argv[3]) if len(sys.argv) > 3 else None
 
-    # Get threshold from environment or use default
+    # Get thresholds from environment or use defaults
     summary_threshold = float(os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0"))
+    avg_deviation_threshold = float(os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0"))
+    median_deviation_threshold = float(os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "10.0"))
+    std_deviation_threshold = float(os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0"))
+    p95_threshold = float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0"))
 
     # Load results
     baseline_results = load_benchmark_results(baseline_dir)
@@ -192,11 +335,15 @@ def main():
         print(f"Error: No benchmark results found in {current_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # Generate comparison with configurable threshold
-    report, has_regression = generate_comparison_table(
+    # Generate comparison with configurable thresholds
+    report, has_summary_regression, has_accuracy_regression = generate_comparison_table(
         baseline_results,
         current_results,
         summary_token_regression_threshold=summary_threshold,
+        avg_deviation_regression_threshold=avg_deviation_threshold,
+        median_deviation_regression_threshold=median_deviation_threshold,
+        std_deviation_regression_threshold=std_deviation_threshold,
+        p95_regression_threshold=p95_threshold,
     )
 
     # Output
@@ -208,7 +355,7 @@ def main():
         print(report)
 
     # Exit with error code if regressions detected
-    if has_regression:
+    if has_summary_regression or has_accuracy_regression:
         sys.exit(1)
 
 
