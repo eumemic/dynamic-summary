@@ -33,7 +33,7 @@ Clean up debug code, update docs, and create well-organized commits.
 2. **Cleanup**:
    - Remove debug prints/console.logs
    - Delete temp files
-   - Check for secrets: !`git diff | grep -E '(password|key|token|secret)' || echo "Clean"`
+   - Check for secrets: !`git diff | grep -E '(password|key|token|secret)' >/dev/null 2>&1 && echo "⚠️ Potential secrets detected!" || echo "Clean"`
 
 3. **Organize by Feature**:
    ```bash

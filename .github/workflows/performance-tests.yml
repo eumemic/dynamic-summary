@@ -121,9 +121,8 @@ jobs:
           for chunk_size in 100 200 400; do
             echo "Running PR benchmark with chunk_size=$chunk_size"
             pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -m benchmark -k "$chunk_size" -v || {
-              echo "⚠️ Benchmark failed for chunk_size=$chunk_size"
-              echo "Creating empty result file..."
-              echo '{"error": "Benchmark failed to run"}' > "benchmark_results/metrics_${chunk_size}_tokens.json"
+              echo "❌ Benchmark failed for chunk_size=$chunk_size"
+              exit 1
             }
           done
       

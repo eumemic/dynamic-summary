@@ -11,13 +11,14 @@ modified_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py
 run_tests() {
     echo "[Tests] Starting..."
     # Run quietly first, capture output
-    pytest tests/ -q --tb=short -m "not slow and not integration" -n 8 --no-header > /tmp/pytest_output.$$ 2>&1
+    local tmpfile=$(mktemp)
+    pytest tests/ -q --tb=short -m "not slow and not integration" -n 8 --no-header > "$tmpfile" 2>&1
     local result=$?
     if [ $result -ne 0 ]; then
         echo "[Tests] ❌ Failed!"
         # Show full output on failure
-        cat /tmp/pytest_output.$$
-        rm -f /tmp/pytest_output.$$
+        cat "$tmpfile"
+        rm -f "$tmpfile"
         return 1
     else
         echo "[Tests] ✅ Passed!"
@@ -31,13 +32,14 @@ run_ruff() {
         if [ -n "$modified_files" ]; then
             echo "[Ruff] Starting..."
             # Run with quiet flag, capture output
-            ruff check ragzoom/ tests/ --fix --quiet > /tmp/ruff_output.$$ 2>&1
+            local tmpfile=$(mktemp)
+            ruff check ragzoom/ tests/ --fix --quiet > "$tmpfile" 2>&1
             local result=$?
             if [ $result -ne 0 ]; then
                 echo "[Ruff] ❌ Found issues that could not be auto-fixed."
                 # Show full output on failure
-                cat /tmp/ruff_output.$$
-                rm -f /tmp/ruff_output.$$
+                cat "$tmpfile"
+                rm -f "$tmpfile"
                 return 1
             else
                 echo "[Ruff] ✅ Passed!"
@@ -57,13 +59,14 @@ run_black() {
         if [ -n "$modified_files" ]; then
             echo "[Black] Starting..."
             # Run with quiet flag, capture output
-            black ragzoom/ tests/ --quiet > /tmp/black_output.$$ 2>&1
+            local tmpfile=$(mktemp)
+            black ragzoom/ tests/ --quiet > "$tmpfile" 2>&1
             local result=$?
             if [ $result -ne 0 ]; then
                 echo "[Black] ❌ Formatting failed."
                 # Show full output on failure
-                cat /tmp/black_output.$$
-                rm -f /tmp/black_output.$$
+                cat "$tmpfile"
+                rm -f "$tmpfile"
                 return 1
             else
                 echo "[Black] ✅ Passed!"
