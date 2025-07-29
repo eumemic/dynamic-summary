@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  actions: read
 
 jobs:
   benchmark:
@@ -30,6 +31,7 @@ jobs:
           name: baseline-benchmarks-latest
           path: baseline_results
           if_no_artifact_found: warn
+          github_token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
       
       - name: Cache pip dependencies
@@ -129,37 +131,15 @@ jobs:
           script: |
             const report = `${{ steps.compare.outputs.report }}`;
             
-            // Find existing comment
-            const { data: comments } = await github.rest.issues.listComments({
+            const body = report || '❌ Performance benchmarks failed to run';
+            
+            // Create new comment for each run to track performance evolution
+            await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
+              body
             });
-            
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
-              comment.body.includes('📊 Performance Report')
-            );
-            
-            const body = report || '❌ Performance benchmarks failed to run';
-            
-            if (botComment) {
-              // Update existing comment
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body
-              });
-            } else {
-              // Create new comment
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body
-              });
-            }
       
       - name: Fail if regression detected
         if: steps.compare.outputs.REGRESSION == 'true'
