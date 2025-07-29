@@ -22,37 +22,14 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Find baseline workflow run
-        id: baseline-run
-        run: |
-          # Get the most recent successful baseline workflow run on master
-          RUN_ID=$(gh run list \
-            --workflow=baseline-benchmarks.yml \
-            --branch=master \
-            --status=success \
-            --limit=1 \
-            --json databaseId \
-            --jq '.[0].databaseId')
-          
-          if [ -z "$RUN_ID" ]; then
-            echo "No successful baseline runs found"
-            echo "run-id=" >> $GITHUB_OUTPUT
-          else
-            echo "run-id=$RUN_ID" >> $GITHUB_OUTPUT
-            echo "Found baseline run: $RUN_ID"
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-      
       - name: Download baseline benchmarks
-        if: steps.baseline-run.outputs.run-id != ''
-        uses: actions/download-artifact@v4
+        uses: dawidd6/action-download-artifact@v3
         with:
+          workflow: baseline-benchmarks.yml
+          branch: master
           name: baseline-benchmarks-latest
           path: baseline_results
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ steps.baseline-run.outputs.run-id }}
+          if_no_artifact_found: warn
         continue-on-error: true
       
       - name: Cache pip dependencies
