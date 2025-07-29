@@ -10,6 +10,10 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   benchmark:
     name: Run Performance Benchmarks
@@ -52,6 +56,8 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PERF_THROUGHPUT_REGRESSION_THRESHOLD: "20.0"
+          PERF_COST_REGRESSION_THRESHOLD: "20.0"
         run: |
           echo "Current directory: $(pwd)"
           echo "Python version: $(python --version)"
@@ -94,6 +100,8 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PERF_THROUGHPUT_REGRESSION_THRESHOLD: "20.0"
+          PERF_COST_REGRESSION_THRESHOLD: "20.0"
         run: |
           echo "Current directory: $(pwd)"
           echo "Python version: $(python --version)"
@@ -113,15 +121,17 @@ jobs:
           for chunk_size in 100 200 400; do
             echo "Running PR benchmark with chunk_size=$chunk_size"
             pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -m benchmark -k "$chunk_size" -v || {
-              echo "⚠️ Benchmark failed for chunk_size=$chunk_size"
-              echo "Creating empty result file..."
-              echo '{"error": "Benchmark failed to run"}' > "benchmark_results/metrics_${chunk_size}_tokens.json"
+              echo "❌ Benchmark failed for chunk_size=$chunk_size"
+              exit 1
             }
           done
       
       - name: Compare results
         working-directory: pr
         id: compare
+        env:
+          PERF_THROUGHPUT_REGRESSION_THRESHOLD: "20.0"
+          PERF_COST_REGRESSION_THRESHOLD: "20.0"
         run: |
           # Check if we have baseline results
           if [ -f "../baseline_results/README.md" ] || [ -z "$(ls -A ../baseline_results 2>/dev/null)" ]; then
@@ -139,7 +149,7 @@ jobs:
               if [ -f "$file" ]; then
                 chunk_size=$(basename "$file" | sed 's/metrics_\([0-9]*\)_tokens.json/\1/')
                 echo "**Chunk size: $chunk_size tokens**" >> report.md
-                python -c "import json; data=json.load(open('\$file')); m=data['metrics']; print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\"); print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\"); print(f\"- Cost per 1K tokens: \\\${m['efficiency']['cost_per_1k_tokens']:.4f}\")" >> report.md
+                python -c "import json; data=json.load(open('$file')); m=data['metrics']; print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\"); print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\"); print(f\"- Cost per 1K tokens: \\\${m['efficiency']['cost_per_1k_tokens']:.4f}\")" >> report.md
                 echo "" >> report.md
               fi
             done
@@ -159,50 +169,36 @@ jobs:
           if [ -f report.md ]; then
             cat report.md >> $GITHUB_STEP_SUMMARY
             
-            # Also save as output for PR comment
-            echo 'report<<EOF' >> $GITHUB_OUTPUT
-            cat report.md >> $GITHUB_OUTPUT
-            echo 'EOF' >> $GITHUB_OUTPUT
+            # Also save as output for PR comment (using GitHub Actions escaping)
+            REPORT=$(cat report.md)
+            REPORT="${REPORT//'%'/'%25'}"
+            REPORT="${REPORT//$'\n'/'%0A'}"
+            REPORT="${REPORT//$'\r'/'%0D'}"
+            echo "report=${REPORT}" >> $GITHUB_OUTPUT
           fi
       
       - name: Comment PR with results
         uses: actions/github-script@v7
-        if: always()
+        if: github.event_name == 'pull_request' && always()
         with:
           script: |
-            const report = `${{ steps.compare.outputs.report }}`;
+            const rawReport = `${{ steps.compare.outputs.report }}`;
             
-            // Find existing comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
-              comment.body.includes('📊 Performance Report')
-            );
+            // Decode GitHub Actions escape sequences
+            const report = rawReport
+              .replace(/%0A/g, '\n')
+              .replace(/%0D/g, '\r')
+              .replace(/%25/g, '%');
             
             const body = report || '❌ Performance benchmarks failed to run';
             
-            if (botComment) {
-              // Update existing comment
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body
-              });
-            } else {
-              // Create new comment
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body
-              });
-            }
+            // Create new comment for each run to track performance evolution
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
       
       - name: Fail if regression detected
         if: steps.compare.outputs.REGRESSION == 'true'
