@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 import shutil
 import subprocess
 import sys
@@ -277,6 +276,8 @@ def index(
                 )
                 output_file = temp_benchmark_file
                 # Close the file descriptor as we'll write to it normally
+                import os
+
                 os.close(temp_fd)
 
             # Save metrics to file (either specified or temp)

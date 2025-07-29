@@ -64,6 +64,7 @@ def generate_comparison_table(
     median_deviation_regression_threshold: float = 10.0,
     std_deviation_regression_threshold: float = 30.0,
     p95_regression_threshold: float = 25.0,
+    cost_amplification_regression_threshold: float = 10.0,
 ) -> tuple[str, bool, bool]:
     """Generate comparison table between baseline and current results.
 
@@ -290,7 +291,7 @@ def generate_comparison_table(
                 if base_cost_amp > 0:
                     change = ((curr_cost_amp - base_cost_amp) / base_cost_amp) * 100
 
-                    if change > 10:  # 10% threshold for cost amplification
+                    if change > cost_amplification_regression_threshold:
                         amplification_regression = True
                         emoji = "❌"
                     elif abs(change) > 5:
@@ -346,7 +347,7 @@ def generate_comparison_table(
     if accuracy_regression:
         issues.append("❌ Summary accuracy regression detected")
     if "amplification_regression" in locals() and amplification_regression:
-        issues.append("❌ Cost amplification regression detected (>10% increase)")
+        issues.append(f"❌ Cost amplification regression detected (>{cost_amplification_regression_threshold}% increase)")
 
     if issues:
         lines.extend(issues)
@@ -403,6 +404,7 @@ def main() -> None:
     median_deviation_threshold = float(os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "10.0"))
     std_deviation_threshold = float(os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0"))
     p95_threshold = float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0"))
+    cost_amplification_threshold = float(os.getenv("PERF_COST_AMPLIFICATION_REGRESSION_THRESHOLD", "10.0"))
 
     # Load results
     baseline_results = load_benchmark_results(baseline_dir)
@@ -425,6 +427,7 @@ def main() -> None:
         median_deviation_regression_threshold=median_deviation_threshold,
         std_deviation_regression_threshold=std_deviation_threshold,
         p95_regression_threshold=p95_threshold,
+        cost_amplification_regression_threshold=cost_amplification_threshold,
     )
 
     # Output

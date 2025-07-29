@@ -15,6 +15,7 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 # Add parent directory to path to import ragzoom
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -166,7 +167,7 @@ class BenchmarkRunner:
         # For now, average most metrics but use max for peak memory
         total_docs = len(metrics_by_doc)
 
-        aggregated = {
+        aggregated: dict[str, Any] = {
             "timing": {
                 "total_duration_seconds": 0.0,
                 "tokens_per_second": 0.0,
@@ -197,6 +198,13 @@ class BenchmarkRunner:
                 "end_mb": 0.0,
                 "usage_mb": 0.0,
             },
+            "amplification": {
+                "median_cost": 0.0,
+                "cost_p90": 0.0,
+                "cost_p95": 0.0,
+                "median_input": 0.0,
+                "median_output": 0.0,
+            },
         }
 
         # Collect all values for aggregation
@@ -204,6 +212,9 @@ class BenchmarkRunner:
         memory_starts = []
         memory_ends = []
         memory_usages = []
+
+        # Collect summary accuracy data by target size
+        summary_accuracy_by_target: dict[str, list[dict[str, Any]]] = {}
 
         for doc, metrics in metrics_by_doc.items():
             m_dict = metrics.to_dict()
@@ -222,6 +233,13 @@ class BenchmarkRunner:
                         if key in m_dict.get(category, {}):
                             aggregated[category][key] += m_dict[category][key]
 
+            # Collect summary accuracy data
+            if "summary_accuracy" in m_dict:
+                for target_size, stats in m_dict["summary_accuracy"].items():
+                    if target_size not in summary_accuracy_by_target:
+                        summary_accuracy_by_target[target_size] = []
+                    summary_accuracy_by_target[target_size].append(stats)
+
         # Average the non-memory values
         for category in aggregated:
             if category != "memory":
@@ -234,6 +252,40 @@ class BenchmarkRunner:
             aggregated["memory"]["start_mb"] = sum(memory_starts) / len(memory_starts)  # Average start
             aggregated["memory"]["end_mb"] = sum(memory_ends) / len(memory_ends)  # Average end
             aggregated["memory"]["usage_mb"] = max(memory_usages)  # Use max for usage
+
+        # Aggregate summary accuracy stats
+        if summary_accuracy_by_target:
+            aggregated["summary_accuracy"] = {}
+            for target_size, stats_list in summary_accuracy_by_target.items():
+                # Aggregate stats for this target size
+                total_count = sum(s["count"] for s in stats_list)
+                total_tokens = sum(s["avg_tokens"] * s["count"] for s in stats_list)
+
+                # Combine histogram buckets
+                combined_histogram = {}
+                for bucket in ["0-10%", "10-25%", "25-50%", "50-100%", "100%+"]:
+                    bucket_count = sum(s["histogram"].get(bucket, {}).get("count", 0) for s in stats_list)
+                    bucket_percentage = (bucket_count / total_count * 100) if total_count > 0 else 0
+                    combined_histogram[bucket] = {
+                        "count": bucket_count,
+                        "percentage": bucket_percentage
+                    }
+
+                aggregated["summary_accuracy"][target_size] = {
+                    "count": total_count,
+                    "avg_tokens": total_tokens / total_count if total_count > 0 else 0,
+                    "avg_deviation_percent": sum(s["avg_deviation_percent"] * s["count"] for s in stats_list) / total_count if total_count > 0 else 0,
+                    "median_deviation_percent": sum(s.get("median_deviation_percent", 0) for s in stats_list) / len(stats_list),
+                    "std_deviation_percent": sum(s.get("std_deviation_percent", 0) for s in stats_list) / len(stats_list),
+                    "percentile_50": sum(s.get("percentile_50", 0) for s in stats_list) / len(stats_list),
+                    "percentile_90": sum(s.get("percentile_90", 0) for s in stats_list) / len(stats_list),
+                    "percentile_95": sum(s.get("percentile_95", 0) for s in stats_list) / len(stats_list),
+                    "percent_over_target": sum(s["percent_over_target"] for s in stats_list) / len(stats_list),
+                    "percent_under_target": sum(s["percent_under_target"] for s in stats_list) / len(stats_list),
+                    "max_overage_percent": max(s["max_overage_percent"] for s in stats_list),
+                    "max_underage_percent": max(s["max_underage_percent"] for s in stats_list),
+                    "histogram": combined_histogram
+                }
 
         return aggregated
 

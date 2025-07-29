@@ -22,6 +22,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from compare_benchmarks import generate_comparison_table
 
+# Default chunk size if unable to determine from benchmark data
+DEFAULT_CHUNK_SIZE = 200
+
 
 def load_single_benchmark(filepath: Path) -> tuple[int, dict]:
     """Load a single benchmark file and extract chunk size and metrics.
@@ -43,11 +46,11 @@ def load_single_benchmark(filepath: Path) -> tuple[int, dict]:
         # This is approximate but better than nothing
         source_tokens = data["document"]["source_tokens"]
         chunks = data["document"]["chunks_created"]
-        chunk_size = source_tokens // chunks if chunks > 0 else 200
+        chunk_size = source_tokens // chunks if chunks > 0 else DEFAULT_CHUNK_SIZE
 
     if chunk_size is None:
-        print("Warning: Could not determine chunk size, defaulting to 200", file=sys.stderr)
-        chunk_size = 200
+        print(f"Warning: Could not determine chunk size, defaulting to {DEFAULT_CHUNK_SIZE}", file=sys.stderr)
+        chunk_size = DEFAULT_CHUNK_SIZE
 
     return chunk_size, data
 
