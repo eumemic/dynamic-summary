@@ -56,6 +56,8 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PERF_THROUGHPUT_REGRESSION_THRESHOLD: "20.0"
+          PERF_COST_REGRESSION_THRESHOLD: "20.0"
         run: |
           echo "Current directory: $(pwd)"
           echo "Python version: $(python --version)"
@@ -98,6 +100,8 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PERF_THROUGHPUT_REGRESSION_THRESHOLD: "20.0"
+          PERF_COST_REGRESSION_THRESHOLD: "20.0"
         run: |
           echo "Current directory: $(pwd)"
           echo "Python version: $(python --version)"
@@ -184,37 +188,15 @@ jobs:
               .replace(/%0D/g, '\r')
               .replace(/%25/g, '%');
             
-            // Find existing comment
-            const { data: comments } = await github.rest.issues.listComments({
+            const body = report || '❌ Performance benchmarks failed to run';
+            
+            // Create new comment for each run to track performance evolution
+            await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
+              body
             });
-            
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
-              comment.body.includes('📊 Performance Report')
-            );
-            
-            const body = report || '❌ Performance benchmarks failed to run';
-            
-            if (botComment) {
-              // Update existing comment
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body
-              });
-            } else {
-              // Create new comment
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body
-              });
-            }
       
       - name: Fail if regression detected
         if: steps.compare.outputs.REGRESSION == 'true'

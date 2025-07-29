@@ -34,9 +34,18 @@ Get code through CI successfully with minimal back-and-forth. Monitor CI, fix is
    - Look for automated review feedback (e.g., claude-review)
    - If issues found, fix them and return to step 2
 
-4. **Success Criteria**:
+4. **Assess Performance Tradeoffs**: After all CI checks pass:
+   - Find latest performance report in PR comments
+   - Analyze performance changes in context of PR objectives
+   - Consider acceptable tradeoffs (e.g., slightly higher cost for better accuracy)
+   - If tradeoffs seem reasonable for the PR's goals, proceed
+   - If concerning, discuss with user before declaring PR ready
+
+5. **Success Criteria**:
    - All CI checks pass
    - All review feedback read and addressed
+   - Performance changes are reasonable given PR objectives
+   - Any performance tradeoffs are justified by improvements elsewhere
    - No outstanding issues to fix
 
 ## Key Principles
@@ -103,6 +112,13 @@ Resuming CI monitoring...
 
 Checking for code reviews...
 ✅ No new issues found
+
+Assessing performance changes...
+📊 Performance Report Analysis:
+- Throughput: -4.3% on 200 tokens (acceptable variation)
+- Cost: +4.2% on 200 tokens (minor increase)
+- Context: PR adds improved accuracy features
+✅ Performance tradeoffs justified by accuracy improvements
 
 ✅ PR ready for review
 PR #42: https://github.com/owner/repo/pull/42
