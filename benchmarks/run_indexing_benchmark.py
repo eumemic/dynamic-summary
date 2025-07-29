@@ -126,6 +126,67 @@ class BenchmarkRunner:
                 {doc: metrics[chunk_size] for doc, metrics in results.items()}
             )
 
+            # Prepare telemetry data for this chunk size
+            from ragzoom.metrics import TELEMETRY_FORMAT_VERSION
+            telemetry_data = {
+                "format_version": TELEMETRY_FORMAT_VERSION,
+                "documents": {}
+            }
+            
+            # Serialize telemetry for each document
+            for doc_type, metrics_by_size in results.items():
+                if chunk_size in metrics_by_size:
+                    metrics = metrics_by_size[chunk_size]
+                    doc_telemetry = []
+                    
+                    # Convert node telemetry to serializable format
+                    for node_id, node_data in metrics.node_telemetry.items():
+                        node_dict = {
+                            "node_id": node_id,
+                            "node_type": node_data.node_type,
+                            "level": node_data.level,
+                            "span": [node_data.span_start, node_data.span_end],
+                            "created_at": node_data.created_at,
+                        }
+                        
+                        # Add embedding telemetry if present
+                        if node_data.embedding:
+                            node_dict["embedding"] = {
+                                "text_tokens": node_data.embedding.text_tokens,
+                                "batch_size": node_data.embedding.batch_size,
+                                "batch_position": node_data.embedding.batch_position,
+                                "model": node_data.embedding.model,
+                                "timestamp": node_data.embedding.timestamp,
+                            }
+                        
+                        # Add summary attempts if present
+                        if node_data.summary_attempts:
+                            node_dict["summary_attempts"] = []
+                            for attempt in node_data.summary_attempts:
+                                node_dict["summary_attempts"].append({
+                                    "is_retry": attempt.is_retry,
+                                    "target_tokens": attempt.target_tokens,
+                                    "input_text_tokens": attempt.input_text_tokens,
+                                    "prompt_tokens": attempt.prompt_tokens,
+                                    "completion_tokens": attempt.completion_tokens,
+                                    "actual_tokens": attempt.actual_tokens,
+                                    "status": attempt.status,
+                                    "rejection_reason": attempt.rejection_reason,
+                                    "model": attempt.model,
+                                    "timestamp": attempt.timestamp,
+                                })
+                        
+                        doc_telemetry.append(node_dict)
+                    
+                    telemetry_data["documents"][doc_type] = {
+                        "nodes": doc_telemetry,
+                        "metadata": {
+                            "total_nodes": len(doc_telemetry),
+                            "leaf_nodes": sum(1 for n in doc_telemetry if n["node_type"] == "leaf"),
+                            "summary_nodes": sum(1 for n in doc_telemetry if n["node_type"] == "summary"),
+                        }
+                    }
+
             output_file = self.output_dir / f"metrics_{chunk_size}_tokens.json"
             with open(output_file, "w") as f:
                 json.dump(
@@ -135,6 +196,7 @@ class BenchmarkRunner:
                             "documents": list(results.keys()),
                         },
                         "metrics": aggregated,
+                        "telemetry": telemetry_data,
                         "timestamp": timestamp,
                     },
                     f,
