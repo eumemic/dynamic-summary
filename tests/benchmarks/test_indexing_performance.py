@@ -2,7 +2,6 @@
 
 import json
 import os
-import tempfile
 import time
 from pathlib import Path
 
@@ -16,141 +15,69 @@ from ragzoom.store import Store
 pytestmark = pytest.mark.benchmark
 
 
-def generate_test_document(size_tokens: int = 10000) -> str:
-    """Generate a test document with approximately the specified number of tokens.
+def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
+    """Get a test document from the test_data directory.
 
-    Creates realistic narrative text that's good for testing summarization.
+    Args:
+        document_type: Type of document to load
+            - "narrative": The Hobbit Chapter 1 (~7K tokens)
+            - "technical": Technical documentation sample
+            - "classic": Moby Dick sample
+
+    Returns:
+        Tuple of (document_text, document_name)
     """
-    # Each sentence is roughly 15-20 tokens
-    tokens_per_sentence = 17
-    sentences_needed = size_tokens // tokens_per_sentence
+    documents = {
+        "narrative": ("test_data/the_hobbit_chapter_1.txt", "The Hobbit Ch1"),
+        "technical": ("test_data/smoke_test_larger.txt", "Technical Doc"),
+        "classic": ("test_data/moby_dick_sample.txt", "Moby Dick Sample"),
+    }
 
-    # Generate a story-like document
-    paragraphs = []
-    sentences_written = 0
+    if document_type not in documents:
+        document_type = "narrative"  # Default
 
-    # Opening
-    opening = [
-        "In the early morning light, Sarah walked through the bustling city streets.",
-        "The coffee shop on the corner was already filled with the usual crowd of commuters.",
-        "She ordered her regular cappuccino and found a quiet table by the window.",
-        "Outside, the city was coming to life with its familiar rhythm of honking cars and hurried footsteps.",
-    ]
-    paragraphs.append(" ".join(opening))
-    sentences_written += len(opening)
+    file_path, name = documents[document_type]
 
-    # Middle sections - vary the content
-    topics = [
-        "technology conference",
-        "medical research",
-        "environmental project",
-        "educational initiative",
-        "business venture",
-        "scientific discovery",
-    ]
+    # Read the document
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            # If running from different directory, try from root
+            path = Path(__file__).parent.parent.parent / file_path
 
-    for i, topic in enumerate(topics):
-        if sentences_written >= sentences_needed:
-            break
-
-        if topic == "technology conference":
-            section = [
-                f"The {topic} was scheduled to begin at nine o'clock sharp.",
-                "Speakers from around the world had gathered to share their latest innovations.",
-                "Sarah's presentation on distributed systems was scheduled for the afternoon session.",
-                "She had spent months preparing the slides and rehearsing her key points.",
-                "The demo would showcase a new approach to handling large-scale data processing.",
-            ]
-        elif topic == "medical research":
-            section = [
-                f"Her colleague Dr. Chen was leading a groundbreaking {topic} project.",
-                "The team had been working on developing new treatments for rare diseases.",
-                "Initial trials showed promising results with minimal side effects.",
-                "The research facility was equipped with state-of-the-art laboratory equipment.",
-                "Funding for the next phase had just been approved by the board.",
-            ]
-        elif topic == "environmental project":
-            section = [
-                f"The {topic} aimed to restore the local wetlands ecosystem.",
-                "Volunteers from the community had been working tirelessly every weekend.",
-                "Native plants were being reintroduced to support wildlife habitats.",
-                "The project had already shown positive impacts on water quality.",
-                "Local schools were using it as an educational opportunity for students.",
-            ]
-        else:
-            section = [
-                f"Meanwhile, the {topic} was gaining momentum across the region.",
-                "Stakeholders from various sectors had expressed strong interest.",
-                "The implementation phase would require careful coordination.",
-                "Success metrics had been clearly defined and agreed upon.",
-                "Regular progress reports would be submitted to all participants.",
-            ]
-
-        paragraphs.append(" ".join(section))
-        sentences_written += len(section)
-
-    # Closing
-    closing = [
-        "As the day drew to a close, Sarah reflected on all that had been accomplished.",
-        "The journey ahead would be challenging, but the foundation was solid.",
-        "Tomorrow would bring new opportunities and fresh perspectives.",
-        "She finished her coffee and prepared for the next chapter.",
-    ]
-    paragraphs.append(" ".join(closing))
-
-    return "\n\n".join(paragraphs)
-
-
-class BenchmarkStore:
-    """Wrapper for Store that provides cleanup after benchmarks."""
-
-    def __init__(self):
-        self.temp_dir = tempfile.mkdtemp()
-        self.config = RagZoomConfig(
-            sqlite_database_url=f"sqlite:///{self.temp_dir}/test.db",
-            chroma_persist_directory=f"{self.temp_dir}/chroma",
-        )
-        self.store = Store(self.config)
-
-    def cleanup(self):
-        """Clean up temporary files."""
-        import shutil
-
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
-
-    def __enter__(self):
-        return self.store
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.cleanup()
+        text = path.read_text(encoding="utf-8")
+        return text, name
+    except Exception as e:
+        pytest.skip(f"Could not load test document {file_path}: {e}")
 
 
 @pytest.fixture
 def benchmark_config():
     """Config for benchmarks with real API calls."""
     return RagZoomConfig(
-        openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+        openai_api_key=os.getenv("RAGZOOM_OPENAI_API_KEY", "test-key"),
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
         embedding_batch_size=100,
     )
 
 
-@pytest.mark.parametrize("leaf_tokens", [100, 200, 400, 800])
-def test_indexing_performance(benchmark_config, leaf_tokens):
-    """Benchmark indexing performance at different chunk sizes."""
+@pytest.mark.parametrize("leaf_tokens", [100, 200, 400])
+@pytest.mark.parametrize("document_type", ["narrative"])
+def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
+    """Benchmark indexing performance at different chunk sizes with real documents."""
     # Skip if no API key
     if benchmark_config.openai_api_key == "test-key":
-        pytest.skip("OPENAI_API_KEY not set")
+        pytest.skip("RAGZOOM_OPENAI_API_KEY not set")
 
     # Update config with chunk size
     benchmark_config.leaf_tokens = leaf_tokens
 
-    # Generate test document
-    test_doc = generate_test_document(10000)  # 10K tokens
+    # Get test document
+    test_doc, doc_name = get_test_document(document_type)
 
     # Run indexing with metrics
-    with BenchmarkStore() as store:
+    with Store.temporary() as store:
         builder = TreeBuilder(benchmark_config, store)
 
         # Warm up tokenizer
@@ -159,7 +86,7 @@ def test_indexing_performance(benchmark_config, leaf_tokens):
         # Run indexing
         start_time = time.time()
         doc_id, metrics = builder.add_document_with_metrics(
-            test_doc, document_id=f"benchmark_{leaf_tokens}", show_progress=False
+            test_doc, document_id=f"{document_type}_{leaf_tokens}", show_progress=False
         )
         end_time = time.time()
 
@@ -179,6 +106,7 @@ def test_indexing_performance(benchmark_config, leaf_tokens):
                         "leaf_tokens": leaf_tokens,
                         "embedding_model": benchmark_config.embedding_model,
                         "summary_model": benchmark_config.summary_model,
+                        "document": doc_name,
                     },
                     "metrics": metrics.to_dict(),
                     "timestamp": time.time(),
@@ -188,13 +116,16 @@ def test_indexing_performance(benchmark_config, leaf_tokens):
             )
 
         # Print summary
-        print(f"\n=== Performance Summary (leaf_tokens={leaf_tokens}) ===")
+        print(f"\n=== Performance Summary ({doc_name}, leaf_tokens={leaf_tokens}) ===")
+        print(f"Document: {metrics.source_document_tokens:,} tokens")
         print(f"Tokens/second: {metrics.tokens_per_second:.1f}")
         print(f"Time per 1K tokens: {metrics.time_per_1k_tokens:.2f}s")
         print(f"Embedding tokens per 1K: {metrics.embedding_tokens_per_1k:.1f}")
         print(f"Summary tokens per 1K: {metrics.summary_tokens_per_1k:.1f}")
         print(f"API calls per 1K: {metrics.api_calls_per_1k:.1f}")
         print(f"Cost per 1K tokens: ${metrics.cost_per_1k_tokens:.4f}")
+        print(f"Peak memory: {metrics.peak_memory_mb:.1f} MB")
+        print(f"Memory growth: {metrics.memory_usage_mb:.1f} MB")
 
         # Summary accuracy
         if metrics.summary_stats:
@@ -248,7 +179,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         leaf_tokens = int(sys.argv[1])
         config = RagZoomConfig(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            openai_api_key=os.getenv("RAGZOOM_OPENAI_API_KEY"),
             leaf_tokens=leaf_tokens,
         )
         test_indexing_performance(config, leaf_tokens)
