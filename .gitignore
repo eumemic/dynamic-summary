@@ -68,4 +68,5 @@ Thumbs.db
 .mypy_cache/
 
 # Git worktrees
-worktrees/
+worktrees/benchmark-*.json
+benchmark-*.json
