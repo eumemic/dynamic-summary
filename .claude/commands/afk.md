@@ -25,10 +25,24 @@ Setup phase: If mid-task, finish it. Commit any outstanding changes (follow `.cl
 Then enter dual monitoring loop:
 1. Monitor CI/reviews like pr.md - post updates about failing checks, review feedback
 2. Monitor user comments - execute instructions, post results
-3. Both use same backoff: 30s * 1.5^n (max 5min)
-4. User comments reset backoff and take priority
+3. Polling intervals:
+   - If monitoring active CI/reviews: Fixed 30s intervals
+   - If idle: Exponential backoff (30s * 1.5^n, max 5min)
+   - **Reset to 30s whenever user comments**
+4. Always check for user comments during any poll
 
 Never stop until interrupted. Post "final answers" only as PR comments, not intermediate thoughts.
+
+## Comment Detection
+Since both your comments and user comments appear from the same GitHub account, use content patterns to distinguish:
+
+**Your comments contain**: Status emojis (🤖, 📝, ✅, ⚠️, ⏳, 🔄), formal CI/test updates, content you just posted
+
+**User comments**: Everything else - natural language, questions, observations, any non-status content
+
+**Get recent comments**: `gh pr view PR_NUMBER --comments | tail -30`
+
+Track last processed comment to identify new ones.
 
 ## Communication Protocol
 - 🤖 Started → 📝 Working → ✅/⚠️ Done
