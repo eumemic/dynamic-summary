@@ -2,8 +2,11 @@
 
 import json
 import logging
+import os
 import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -125,6 +128,11 @@ def cli(ctx: click.Context) -> None:
 @click.option(
     "--benchmark-output", type=click.Path(), help="Save benchmark results to JSON file"
 )
+@click.option(
+    "--benchmark-against",
+    type=click.Path(exists=True),
+    help="Compare against baseline benchmark file and show report",
+)
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -136,8 +144,14 @@ def index(
     validate: bool,
     benchmark: bool,
     benchmark_output: Optional[str],
+    benchmark_against: Optional[str],
 ) -> None:
     """Index a document from file."""
+    # Validate options
+    if benchmark_against and not benchmark:
+        click.echo("❌ Error: --benchmark-against requires --benchmark flag", err=True)
+        sys.exit(1)
+
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
 
@@ -252,16 +266,79 @@ def index(
         if benchmark:
             display_metrics(metrics)
 
-            # Save to JSON if requested
-            if benchmark_output:
-                click.echo(f"\n📁 Saving metrics to {benchmark_output}...")
+            # Handle benchmark output and comparison
+            temp_benchmark_file = None
+            output_file = benchmark_output
+
+            # If comparing against baseline, use temp file if no output specified
+            if benchmark_against and not benchmark_output:
+                temp_fd, temp_benchmark_file = tempfile.mkstemp(
+                    suffix=".json", prefix="ragzoom_benchmark_"
+                )
+                output_file = temp_benchmark_file
+                # Close the file descriptor as we'll write to it normally
+                os.close(temp_fd)
+
+            # Save metrics to file (either specified or temp)
+            if output_file:
+                click.echo(f"\n📁 Saving metrics to {output_file}...")
                 metrics_dict = metrics.to_dict()
                 metrics_dict["document_id"] = doc_id
                 metrics_dict["file_path"] = str(path.absolute())
 
-                with open(benchmark_output, "w") as f:
+                with open(output_file, "w") as f:
                     json.dump(metrics_dict, f, indent=2)
-                click.echo(f"✅ Metrics saved to {benchmark_output}")
+
+                if not temp_benchmark_file:
+                    click.echo(f"✅ Metrics saved to {output_file}")
+
+            # Run comparison if baseline provided
+            if benchmark_against:
+                click.echo(f"\n📊 Comparing against baseline: {benchmark_against}")
+                click.echo("=" * 70)
+
+                # Find the comparison script
+                script_path = (
+                    Path(__file__).parent.parent
+                    / "scripts"
+                    / "compare_single_benchmark.py"
+                )
+
+                try:
+                    # Run the comparison script
+                    # output_file should always be set if we get here
+                    if not output_file:
+                        raise ValueError(
+                            "No benchmark output file available for comparison"
+                        )
+
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(script_path),
+                            benchmark_against,
+                            output_file,
+                        ],
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    # Display the output
+                    click.echo(result.stdout)
+
+                    if result.returncode != 0:
+                        if result.stderr:
+                            click.echo(result.stderr, err=True)
+                        click.echo("\n⚠️  Regressions detected!", err=True)
+                        sys.exit(1)
+
+                except Exception as e:
+                    click.echo(f"❌ Error running comparison: {e}", err=True)
+                    sys.exit(1)
+                finally:
+                    # Clean up temp file
+                    if temp_benchmark_file and Path(temp_benchmark_file).exists():
+                        Path(temp_benchmark_file).unlink()
 
     except Exception as e:
         click.echo(f"❌ Error indexing document: {e}", err=True)
