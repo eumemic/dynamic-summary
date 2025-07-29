@@ -33,7 +33,8 @@ Then enter dual monitoring loop:
 3. **ALWAYS commit and push after making any code changes!**
 4. Polling intervals:
    - If monitoring active CI/reviews: Fixed 30s intervals
-   - If idle: Exponential backoff (30s * 1.5^n, max 5min)
+   - If idle: Exponential backoff (30s * 1.5^n, capped at 300s/5min)
+     - Example: 30s → 45s → 68s → 102s → 153s → 230s → 300s (max)
    - **Reset to 30s whenever user comments**
 5. Always check for user comments during any poll
 

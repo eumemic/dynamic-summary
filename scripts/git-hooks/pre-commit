@@ -111,7 +111,14 @@ run_mypy() {
 
 # Create temporary files for storing results
 tmpdir=$(mktemp -d)
-trap "rm -rf $tmpdir" EXIT
+# Set up trap to clean up temp files and kill any background processes on exit
+cleanup() {
+    # Kill any background processes that might still be running
+    kill $pid_tests $pid_mypy $pid_ruff $pid_black 2>/dev/null || true
+    # Clean up temp directory
+    rm -rf "$tmpdir"
+}
+trap cleanup EXIT INT TERM
 
 # Capture output from each tool
 (run_tests > "$tmpdir/tests.output" 2>&1; echo $? > "$tmpdir/tests.result") &

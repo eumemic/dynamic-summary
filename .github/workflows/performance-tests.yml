@@ -129,6 +129,9 @@ jobs:
       - name: Compare results
         working-directory: pr
         id: compare
+        env:
+          PERF_THROUGHPUT_REGRESSION_THRESHOLD: "20.0"
+          PERF_COST_REGRESSION_THRESHOLD: "20.0"
         run: |
           # Check if we have baseline results
           if [ -f "../baseline_results/README.md" ] || [ -z "$(ls -A ../baseline_results 2>/dev/null)" ]; then
