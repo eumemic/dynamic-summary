@@ -589,14 +589,14 @@ class IndexingMetricsReporter:
         """Update peak memory usage if current usage is higher.
 
         Thread-safe: Uses a lock to prevent race conditions when multiple
-        async tasks update peak memory concurrently.
+        async tasks update peak memory concurrently. Memory reading is done
+        inside the lock to prevent missing spikes between read and comparison.
         """
         try:
-            memory_info = self.process.memory_info()
-            current_memory_mb = memory_info.rss / 1024 / 1024
-
-            # Use lock to ensure thread-safe peak memory update
+            # Use lock to ensure thread-safe memory reading and peak update
             with self._memory_lock:
+                memory_info = self.process.memory_info()
+                current_memory_mb = memory_info.rss / 1024 / 1024
                 if current_memory_mb > self.metrics.peak_memory_mb:
                     self.metrics.peak_memory_mb = current_memory_mb
         except Exception as e:
