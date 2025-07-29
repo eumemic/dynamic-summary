@@ -11,13 +11,14 @@ modified_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py
 run_tests() {
     echo "[Tests] Starting..."
     # Run quietly first, capture output
-    pytest tests/ -q --tb=short -m "not slow and not integration" -n 8 --no-header > /tmp/pytest_output.$$ 2>&1
+    local tmpfile=$(mktemp)
+    pytest tests/ -q --tb=short -m "not slow and not integration" -n 8 --no-header > "$tmpfile" 2>&1
     local result=$?
     if [ $result -ne 0 ]; then
         echo "[Tests] ❌ Failed!"
         # Show full output on failure
-        cat /tmp/pytest_output.$$
-        rm -f /tmp/pytest_output.$$
+        cat "$tmpfile"
+        rm -f "$tmpfile"
         return 1
     else
         echo "[Tests] ✅ Passed!"
@@ -27,19 +28,25 @@ run_tests() {
 
 # Function to run ruff
 run_ruff() {
-    if command -v ruff &> /dev/null && [ -n "$modified_files" ]; then
-        echo "[Ruff] Starting..."
-        # Run with quiet flag, capture output
-        ruff check ragzoom/ tests/ --fix --quiet > /tmp/ruff_output.$$ 2>&1
-        local result=$?
-        if [ $result -ne 0 ]; then
-            echo "[Ruff] ❌ Found issues that could not be auto-fixed."
-            # Show full output on failure
-            cat /tmp/ruff_output.$$
-            rm -f /tmp/ruff_output.$$
-            return 1
+    if command -v ruff &> /dev/null; then
+        if [ -n "$modified_files" ]; then
+            echo "[Ruff] Starting..."
+            # Run with quiet flag, capture output
+            local tmpfile=$(mktemp)
+            ruff check ragzoom/ tests/ --fix --quiet > "$tmpfile" 2>&1
+            local result=$?
+            if [ $result -ne 0 ]; then
+                echo "[Ruff] ❌ Found issues that could not be auto-fixed."
+                # Show full output on failure
+                cat "$tmpfile"
+                rm -f "$tmpfile"
+                return 1
+            else
+                echo "[Ruff] ✅ Passed!"
+                return 0
+            fi
         else
-            echo "[Ruff] ✅ Passed!"
+            echo "[Ruff] Skipped (no Python files)"
             return 0
         fi
     fi
@@ -48,19 +55,25 @@ run_ruff() {
 
 # Function to run black
 run_black() {
-    if command -v black &> /dev/null && [ -n "$modified_files" ]; then
-        echo "[Black] Starting..."
-        # Run with quiet flag, capture output
-        black ragzoom/ tests/ --quiet > /tmp/black_output.$$ 2>&1
-        local result=$?
-        if [ $result -ne 0 ]; then
-            echo "[Black] ❌ Formatting failed."
-            # Show full output on failure
-            cat /tmp/black_output.$$
-            rm -f /tmp/black_output.$$
-            return 1
+    if command -v black &> /dev/null; then
+        if [ -n "$modified_files" ]; then
+            echo "[Black] Starting..."
+            # Run with quiet flag, capture output
+            local tmpfile=$(mktemp)
+            black ragzoom/ tests/ --quiet > "$tmpfile" 2>&1
+            local result=$?
+            if [ $result -ne 0 ]; then
+                echo "[Black] ❌ Formatting failed."
+                # Show full output on failure
+                cat "$tmpfile"
+                rm -f "$tmpfile"
+                return 1
+            else
+                echo "[Black] ✅ Passed!"
+                return 0
+            fi
         else
-            echo "[Black] ✅ Passed!"
+            echo "[Black] Skipped (no Python files)"
             return 0
         fi
     fi
@@ -69,28 +82,27 @@ run_black() {
 
 # Function to run mypy
 run_mypy() {
-    if command -v dmypy &> /dev/null && [ -n "$modified_files" ]; then
-        echo "[Mypy] Starting..."
-        # Use dmypy run which starts daemon if needed and runs check
-        dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
-        local result=$?
-        if [ $result -ne 0 ]; then
-            echo "[Mypy] ❌ Failed! Type errors found"
-            return $result  # Return the actual error code
+    if command -v dmypy &> /dev/null || command -v mypy &> /dev/null; then
+        if [ -n "$modified_files" ]; then
+            echo "[Mypy] Starting..."
+            if command -v dmypy &> /dev/null; then
+                # Use dmypy run which starts daemon if needed and runs check
+                dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
+                local result=$?
+            else
+                # Fallback to regular mypy if dmypy not available
+                mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
+                local result=$?
+            fi
+            if [ $result -ne 0 ]; then
+                echo "[Mypy] ❌ Failed! Type errors found"
+                return $result  # Return the actual error code
+            else
+                echo "[Mypy] ✅ Passed!"
+                return 0
+            fi
         else
-            echo "[Mypy] ✅ Passed!"
-            return 0
-        fi
-    elif command -v mypy &> /dev/null && [ -n "$modified_files" ]; then
-        # Fallback to regular mypy if dmypy not available
-        echo "[Mypy] Starting..."
-        mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
-        local result=$?
-        if [ $result -ne 0 ]; then
-            echo "[Mypy] ❌ Failed! Type errors found"
-            return $result  # Return the actual error code
-        else
-            echo "[Mypy] ✅ Passed!"
+            echo "[Mypy] Skipped (no Python files)"
             return 0
         fi
     fi
@@ -99,32 +111,42 @@ run_mypy() {
 
 # Create temporary files for storing results
 tmpdir=$(mktemp -d)
-trap "rm -rf $tmpdir" EXIT
+# Set up trap to clean up temp files and kill any background processes on exit
+cleanup() {
+    # Kill any background processes that might still be running
+    kill $pid_tests $pid_mypy $pid_ruff $pid_black 2>/dev/null || true
+    # Clean up temp directory
+    rm -rf "$tmpdir"
+}
+trap cleanup EXIT INT TERM
 
-# Run all checks in parallel
-(run_tests; echo $? > "$tmpdir/tests.result") &
+# Capture output from each tool
+(run_tests > "$tmpdir/tests.output" 2>&1; echo $? > "$tmpdir/tests.result") &
 pid_tests=$!
 
-(run_ruff; echo $? > "$tmpdir/ruff.result") &
+(run_mypy > "$tmpdir/mypy.output" 2>&1; echo $? > "$tmpdir/mypy.result") &
+pid_mypy=$!
+
+(run_ruff > "$tmpdir/ruff.output" 2>&1; echo $? > "$tmpdir/ruff.result") &
 pid_ruff=$!
 
-(run_black; echo $? > "$tmpdir/black.result") &
+(run_black > "$tmpdir/black.output" 2>&1; echo $? > "$tmpdir/black.result") &
 pid_black=$!
-
-(run_mypy; echo $? > "$tmpdir/mypy.result") &
-pid_mypy=$!
 
 # Wait for all background jobs to complete
 echo ""
-echo "Running tests, ruff, black, and mypy in parallel..."
-echo ""
+wait $pid_tests $pid_mypy $pid_ruff $pid_black
 
-wait $pid_tests $pid_ruff $pid_black $pid_mypy
+# Display output in predictable order: tests, mypy, ruff, black
+cat "$tmpdir/tests.output" 2>/dev/null
+cat "$tmpdir/mypy.output" 2>/dev/null
+cat "$tmpdir/ruff.output" 2>/dev/null
+cat "$tmpdir/black.output" 2>/dev/null
 
 # Re-add any files that were auto-formatted
-echo ""
-echo "Adding any auto-fixed files to the commit..."
-git add $modified_files
+if [ -n "$modified_files" ]; then
+    git add $modified_files 2>/dev/null
+fi
 
 # Check results
 failed=0
