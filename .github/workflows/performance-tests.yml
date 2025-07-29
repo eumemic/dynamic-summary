@@ -172,7 +172,13 @@ jobs:
         if: github.event_name == 'pull_request' && always()
         with:
           script: |
-            const report = `${{ steps.compare.outputs.report }}`;
+            const rawReport = `${{ steps.compare.outputs.report }}`;
+            
+            // Decode GitHub Actions escape sequences
+            const report = rawReport
+              .replace(/%0A/g, '\n')
+              .replace(/%0D/g, '\r')
+              .replace(/%25/g, '%');
             
             // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
