@@ -216,6 +216,14 @@ class BenchmarkRunner:
         # Collect summary accuracy data by target size
         summary_accuracy_by_target: dict[str, list[dict[str, Any]]] = {}
 
+        # Collect raw deviation values for proper percentile calculation
+        raw_deviations_by_target: dict[str, list[float]] = {}
+
+        # Collect raw amplification values for proper percentile calculation
+        all_cost_amplifications: list[float] = []
+        all_input_amplifications: list[float] = []
+        all_output_amplifications: list[float] = []
+
         for doc, metrics in metrics_by_doc.items():
             m_dict = metrics.to_dict()
 
@@ -240,6 +248,21 @@ class BenchmarkRunner:
                         summary_accuracy_by_target[target_size] = []
                     summary_accuracy_by_target[target_size].append(stats)
 
+                    # Collect raw deviations if available
+                    if target_size not in raw_deviations_by_target:
+                        raw_deviations_by_target[target_size] = []
+                    if "deviations" in stats and stats["deviations"]:
+                        raw_deviations_by_target[target_size].extend(stats["deviations"])
+
+            # Collect raw amplification values
+            if "amplification" in m_dict:
+                if "cost_amplifications" in metrics.__dict__:
+                    all_cost_amplifications.extend(metrics.cost_amplifications)
+                if "input_amplifications" in metrics.__dict__:
+                    all_input_amplifications.extend(metrics.input_amplifications)
+                if "output_amplifications" in metrics.__dict__:
+                    all_output_amplifications.extend(metrics.output_amplifications)
+
         # Average the non-memory values
         for category in aggregated:
             if category != "memory":
@@ -252,6 +275,20 @@ class BenchmarkRunner:
             aggregated["memory"]["start_mb"] = sum(memory_starts) / len(memory_starts)  # Average start
             aggregated["memory"]["end_mb"] = sum(memory_ends) / len(memory_ends)  # Average end
             aggregated["memory"]["usage_mb"] = max(memory_usages)  # Use max for usage
+
+        # Aggregate amplification metrics from raw values
+        if all_cost_amplifications:
+            import statistics
+            aggregated["amplification"]["median_cost"] = statistics.median(all_cost_amplifications)
+            sorted_costs = sorted(all_cost_amplifications)
+            aggregated["amplification"]["cost_p90"] = sorted_costs[int(len(sorted_costs) * 0.9)]
+            aggregated["amplification"]["cost_p95"] = sorted_costs[int(len(sorted_costs) * 0.95)]
+
+        if all_input_amplifications:
+            aggregated["amplification"]["median_input"] = statistics.median(all_input_amplifications)
+
+        if all_output_amplifications:
+            aggregated["amplification"]["median_output"] = statistics.median(all_output_amplifications)
 
         # Aggregate summary accuracy stats
         if summary_accuracy_by_target:
@@ -271,15 +308,32 @@ class BenchmarkRunner:
                         "percentage": bucket_percentage
                     }
 
+                # Calculate percentiles from raw values if available
+                if target_size in raw_deviations_by_target and raw_deviations_by_target[target_size]:
+                    import statistics
+                    raw_devs = sorted(raw_deviations_by_target[target_size])
+                    median_deviation = statistics.median(raw_devs)
+                    std_deviation = statistics.stdev(raw_devs) if len(raw_devs) > 1 else 0
+                    percentile_50 = raw_devs[int(len(raw_devs) * 0.5)]
+                    percentile_90 = raw_devs[int(len(raw_devs) * 0.9)] if len(raw_devs) > 1 else percentile_50
+                    percentile_95 = raw_devs[int(len(raw_devs) * 0.95)] if len(raw_devs) > 1 else percentile_50
+                else:
+                    # Fallback to averaging if raw values not available
+                    median_deviation = sum(s.get("median_deviation_percent", 0) for s in stats_list) / len(stats_list)
+                    std_deviation = sum(s.get("std_deviation_percent", 0) for s in stats_list) / len(stats_list)
+                    percentile_50 = sum(s.get("percentile_50", 0) for s in stats_list) / len(stats_list)
+                    percentile_90 = sum(s.get("percentile_90", 0) for s in stats_list) / len(stats_list)
+                    percentile_95 = sum(s.get("percentile_95", 0) for s in stats_list) / len(stats_list)
+
                 aggregated["summary_accuracy"][target_size] = {
                     "count": total_count,
                     "avg_tokens": total_tokens / total_count if total_count > 0 else 0,
                     "avg_deviation_percent": sum(s["avg_deviation_percent"] * s["count"] for s in stats_list) / total_count if total_count > 0 else 0,
-                    "median_deviation_percent": sum(s.get("median_deviation_percent", 0) for s in stats_list) / len(stats_list),
-                    "std_deviation_percent": sum(s.get("std_deviation_percent", 0) for s in stats_list) / len(stats_list),
-                    "percentile_50": sum(s.get("percentile_50", 0) for s in stats_list) / len(stats_list),
-                    "percentile_90": sum(s.get("percentile_90", 0) for s in stats_list) / len(stats_list),
-                    "percentile_95": sum(s.get("percentile_95", 0) for s in stats_list) / len(stats_list),
+                    "median_deviation_percent": median_deviation,
+                    "std_deviation_percent": std_deviation,
+                    "percentile_50": percentile_50,
+                    "percentile_90": percentile_90,
+                    "percentile_95": percentile_95,
                     "percent_over_target": sum(s["percent_over_target"] for s in stats_list) / len(stats_list),
                     "percent_under_target": sum(s["percent_under_target"] for s in stats_list) / len(stats_list),
                     "max_overage_percent": max(s["max_overage_percent"] for s in stats_list),

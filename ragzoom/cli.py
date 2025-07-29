@@ -92,6 +92,21 @@ def display_metrics(metrics: IndexingMetrics) -> None:
                 f"    Under target: {stats.percent_under_target:.1f}% (max: {stats.max_underage_percent:.1f}%)"
             )
 
+    # Display amplification metrics if available
+    if hasattr(metrics, "cost_amplifications") and metrics.cost_amplifications:
+        click.echo("\n🔍 Token Amplification:")
+        click.echo(
+            f"  Cost amplification (median): {metrics.median_cost_amplification:.2f}x"
+        )
+        click.echo(f"  Cost amplification (P90): {metrics.cost_amplification_p90:.2f}x")
+        click.echo(f"  Cost amplification (P95): {metrics.cost_amplification_p95:.2f}x")
+        click.echo(
+            f"  Input amplification (median): {metrics.median_input_amplification:.2f}x"
+        )
+        click.echo(
+            f"  Output amplification (median): {metrics.median_output_amplification:.2f}x"
+        )
+
 
 @click.group()
 @click.pass_context
