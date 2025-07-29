@@ -72,6 +72,10 @@ def display_metrics(metrics: IndexingMetrics) -> None:
     total_cost = metrics.cost_per_1k_tokens * metrics.source_document_tokens / 1000
     click.echo(f"  Total estimated cost: ${total_cost:.4f}")
 
+    click.echo("\n💾 Memory Usage:")
+    click.echo(f"  Peak memory: {metrics.peak_memory_mb:.1f} MB")
+    click.echo(f"  Memory growth: {metrics.memory_usage_mb:.1f} MB")
+
     if metrics.summary_stats:
         click.echo("\n📏 Summary Accuracy:")
         for target_size, stats in sorted(metrics.summary_stats.items()):

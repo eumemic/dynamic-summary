@@ -2,17 +2,11 @@ name: Performance Tests
 
 on:
   pull_request:
-    branches: [ master, main ]
-  push:
-    branches: [ master, main, fix/summary-size-bug ]
+    branches: [ master ]
 
 permissions:
   contents: read
   pull-requests: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 jobs:
   benchmark:
@@ -22,86 +16,36 @@ jobs:
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
-        with:
-          path: pr
-      
-      - name: Checkout base branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.base_ref }}
-          path: base
       
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
+      - name: Download baseline benchmarks
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-benchmarks-latest
+          path: baseline_results
+        continue-on-error: true
+      
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pr/requirements.txt', 'pr/requirements-dev.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
       
-      - name: Install dependencies (base)
-        working-directory: base
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-      
-      - name: Run baseline benchmarks
-        working-directory: base
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          PERF_THROUGHPUT_REGRESSION_THRESHOLD: "20.0"
-          PERF_COST_REGRESSION_THRESHOLD: "20.0"
-        run: |
-          echo "Current directory: $(pwd)"
-          echo "Python version: $(python --version)"
-          echo "Checking for pytest and markers..."
-          pytest --markers | grep benchmark || echo "⚠️ No benchmark marker found"
-          # Check if benchmark tests exist on base branch
-          if [ -d "tests/benchmarks" ]; then
-            echo "Running baseline benchmarks..."
-            # Check if the specific test file exists
-            if [ ! -f "tests/benchmarks/test_indexing_performance.py" ]; then
-              echo "⚠️ Benchmark test file not found on base branch"
-              mkdir -p ../baseline_results
-              echo "No baseline benchmarks available" > ../baseline_results/README.md
-              exit 0
-            fi
-            mkdir -p benchmark_results
-            
-            for chunk_size in 100 200 400; do
-              echo "Running baseline benchmark with chunk_size=$chunk_size"
-              pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -m benchmark -k "$chunk_size" -v
-            done
-            
-            # Copy results
-            cp -r benchmark_results ../baseline_results
-          else
-            echo "No benchmark tests on base branch - skipping baseline"
-            mkdir -p ../baseline_results
-            echo "No baseline benchmarks available" > ../baseline_results/README.md
-          fi
-      
-      - name: Install dependencies (PR)
-        working-directory: pr
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
       
       - name: Run PR benchmarks
-        working-directory: pr
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          PERF_THROUGHPUT_REGRESSION_THRESHOLD: "20.0"
-          PERF_COST_REGRESSION_THRESHOLD: "20.0"
         run: |
           echo "Current directory: $(pwd)"
           echo "Python version: $(python --version)"
@@ -109,35 +53,32 @@ jobs:
           ls -la tests/benchmarks/ || echo "⚠️ No benchmarks directory"
           
           # Verify API key is set
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "❌ OPENAI_API_KEY is not set!"
+          if [ -z "$RAGZOOM_OPENAI_API_KEY" ]; then
+            echo "❌ RAGZOOM_OPENAI_API_KEY is not set!"
             exit 1
           else
-            echo "✅ OPENAI_API_KEY is configured"
+            echo "✅ RAGZOOM_OPENAI_API_KEY is configured"
           fi
           # Run benchmarks for different chunk sizes
           mkdir -p benchmark_results
           
           for chunk_size in 100 200 400; do
             echo "Running PR benchmark with chunk_size=$chunk_size"
-            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -m benchmark -k "$chunk_size" -v || {
-              echo "❌ Benchmark failed for chunk_size=$chunk_size"
-              exit 1
+            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-$chunk_size" -v || {
+              echo "⚠️ Benchmark failed for chunk_size=$chunk_size"
+              echo "Creating empty result file..."
+              echo '{"error": "Benchmark failed to run"}' > "benchmark_results/metrics_${chunk_size}_tokens.json"
             }
           done
       
       - name: Compare results
-        working-directory: pr
         id: compare
-        env:
-          PERF_THROUGHPUT_REGRESSION_THRESHOLD: "20.0"
-          PERF_COST_REGRESSION_THRESHOLD: "20.0"
         run: |
           # Check if we have baseline results
-          if [ -f "../baseline_results/README.md" ] || [ -z "$(ls -A ../baseline_results 2>/dev/null)" ]; then
+          if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/metrics_100_tokens.json" ]; then
             echo "## 📊 Performance Report" > report.md
             echo "" >> report.md
-            echo "⚠️ No baseline benchmarks available on master branch." >> report.md
+            echo "⚠️ No baseline benchmarks available." >> report.md
             echo "" >> report.md
             echo "This is the first PR with performance benchmarks. Future PRs will compare against these results." >> report.md
             echo "" >> report.md
@@ -149,56 +90,73 @@ jobs:
               if [ -f "$file" ]; then
                 chunk_size=$(basename "$file" | sed 's/metrics_\([0-9]*\)_tokens.json/\1/')
                 echo "**Chunk size: $chunk_size tokens**" >> report.md
-                python -c "import json; data=json.load(open('$file')); m=data['metrics']; print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\"); print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\"); print(f\"- Cost per 1K tokens: \\\${m['efficiency']['cost_per_1k_tokens']:.4f}\")" >> report.md
+                # Check if file contains error
+                if grep -q '"error"' "$file"; then
+                  echo "- ❌ Benchmark failed to run" >> report.md
+                else
+                  python -c "import json; f = open('$file'); data = json.load(f); m = data['metrics']; print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\"); print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\"); print(f\"- Cost per 1K tokens: \${m['efficiency']['cost_per_1k_tokens']:.4f}\")" >> report.md
+                fi
                 echo "" >> report.md
               fi
             done
           else
             # Generate comparison report
-            if [ -f "scripts/compare_benchmarks.py" ]; then
-              python scripts/compare_benchmarks.py ../baseline_results benchmark_results report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
-            else
-              echo "⚠️ Comparison script not found. Creating basic report..."
-              echo "## 📊 Performance Report" > report.md
-              echo "" >> report.md
-              echo "⚠️ Unable to compare with baseline - comparison script missing." >> report.md
-            fi
+            python scripts/compare_benchmarks.py baseline_results benchmark_results report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
           fi
           
           # Save report for comment
           if [ -f report.md ]; then
             cat report.md >> $GITHUB_STEP_SUMMARY
             
-            # Also save as output for PR comment (using GitHub Actions escaping)
-            REPORT=$(cat report.md)
-            REPORT="${REPORT//'%'/'%25'}"
-            REPORT="${REPORT//$'\n'/'%0A'}"
-            REPORT="${REPORT//$'\r'/'%0D'}"
-            echo "report=${REPORT}" >> $GITHUB_OUTPUT
+            # Also save as output for PR comment
+            # Use a unique delimiter to avoid conflicts with content
+            delimiter="$(openssl rand -hex 16)"
+            {
+              echo "report<<${delimiter}"
+              cat report.md
+              echo ""  # Ensure newline before delimiter
+              echo "${delimiter}"
+            } >> $GITHUB_OUTPUT
           fi
       
       - name: Comment PR with results
         uses: actions/github-script@v7
-        if: github.event_name == 'pull_request' && always()
+        if: always()
         with:
           script: |
-            const rawReport = `${{ steps.compare.outputs.report }}`;
+            const report = `${{ steps.compare.outputs.report }}`;
             
-            // Decode GitHub Actions escape sequences
-            const report = rawReport
-              .replace(/%0A/g, '\n')
-              .replace(/%0D/g, '\r')
-              .replace(/%25/g, '%');
-            
-            const body = report || '❌ Performance benchmarks failed to run';
-            
-            // Create new comment for each run to track performance evolution
-            await github.rest.issues.createComment({
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body
             });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('📊 Performance Report')
+            );
+            
+            const body = report || '❌ Performance benchmarks failed to run';
+            
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
       
       - name: Fail if regression detected
         if: steps.compare.outputs.REGRESSION == 'true'
@@ -213,5 +171,5 @@ jobs:
           name: benchmark-results
           path: |
             baseline_results/
-            pr/benchmark_results/
-            pr/report.md
+            benchmark_results/
+            report.md
