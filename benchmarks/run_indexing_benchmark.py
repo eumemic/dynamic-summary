@@ -15,6 +15,7 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 # Add parent directory to path to import ragzoom
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -166,7 +167,7 @@ class BenchmarkRunner:
         # For now, average most metrics but use max for peak memory
         total_docs = len(metrics_by_doc)
 
-        aggregated = {
+        aggregated: dict[str, Any] = {
             "timing": {
                 "total_duration_seconds": 0.0,
                 "tokens_per_second": 0.0,
@@ -197,6 +198,13 @@ class BenchmarkRunner:
                 "end_mb": 0.0,
                 "usage_mb": 0.0,
             },
+            "amplification": {
+                "median_cost": 0.0,
+                "cost_p90": 0.0,
+                "cost_p95": 0.0,
+                "median_input": 0.0,
+                "median_output": 0.0,
+            },
         }
 
         # Collect all values for aggregation
@@ -204,6 +212,17 @@ class BenchmarkRunner:
         memory_starts = []
         memory_ends = []
         memory_usages = []
+
+        # Collect summary accuracy data by target size
+        summary_accuracy_by_target: dict[str, list[dict[str, Any]]] = {}
+
+        # Collect raw deviation values for proper percentile calculation
+        raw_deviations_by_target: dict[str, list[float]] = {}
+
+        # Collect raw amplification values for proper percentile calculation
+        all_cost_amplifications: list[float] = []
+        all_input_amplifications: list[float] = []
+        all_output_amplifications: list[float] = []
 
         for doc, metrics in metrics_by_doc.items():
             m_dict = metrics.to_dict()
@@ -222,6 +241,28 @@ class BenchmarkRunner:
                         if key in m_dict.get(category, {}):
                             aggregated[category][key] += m_dict[category][key]
 
+            # Collect summary accuracy data
+            if "summary_accuracy" in m_dict:
+                for target_size, stats in m_dict["summary_accuracy"].items():
+                    if target_size not in summary_accuracy_by_target:
+                        summary_accuracy_by_target[target_size] = []
+                    summary_accuracy_by_target[target_size].append(stats)
+
+                    # Collect raw deviations if available
+                    if target_size not in raw_deviations_by_target:
+                        raw_deviations_by_target[target_size] = []
+                    if "deviations" in stats and stats["deviations"]:
+                        raw_deviations_by_target[target_size].extend(stats["deviations"])
+
+            # Collect raw amplification values
+            if "amplification" in m_dict:
+                if "cost_amplifications" in metrics.__dict__:
+                    all_cost_amplifications.extend(metrics.cost_amplifications)
+                if "input_amplifications" in metrics.__dict__:
+                    all_input_amplifications.extend(metrics.input_amplifications)
+                if "output_amplifications" in metrics.__dict__:
+                    all_output_amplifications.extend(metrics.output_amplifications)
+
         # Average the non-memory values
         for category in aggregated:
             if category != "memory":
@@ -234,6 +275,111 @@ class BenchmarkRunner:
             aggregated["memory"]["start_mb"] = sum(memory_starts) / len(memory_starts)  # Average start
             aggregated["memory"]["end_mb"] = sum(memory_ends) / len(memory_ends)  # Average end
             aggregated["memory"]["usage_mb"] = max(memory_usages)  # Use max for usage
+
+        # Aggregate amplification metrics from raw values
+        if all_cost_amplifications:
+            import statistics
+            aggregated["amplification"]["median_cost"] = statistics.median(all_cost_amplifications)
+            # Use consistent percentile calculation with metrics.py
+            n = len(all_cost_amplifications)
+            if n == 1:
+                aggregated["amplification"]["cost_p90"] = all_cost_amplifications[0]
+                aggregated["amplification"]["cost_p95"] = all_cost_amplifications[0]
+            else:
+                # Linear interpolation for percentiles
+                sorted_costs = sorted(all_cost_amplifications)
+                # 90th percentile
+                pos_90 = (n - 1) * 0.9
+                lower_90 = int(pos_90)
+                upper_90 = min(lower_90 + 1, n - 1)
+                fraction_90 = pos_90 - lower_90
+                aggregated["amplification"]["cost_p90"] = (
+                    sorted_costs[lower_90] + fraction_90 * (sorted_costs[upper_90] - sorted_costs[lower_90])
+                )
+                # 95th percentile
+                pos_95 = (n - 1) * 0.95
+                lower_95 = int(pos_95)
+                upper_95 = min(lower_95 + 1, n - 1)
+                fraction_95 = pos_95 - lower_95
+                aggregated["amplification"]["cost_p95"] = (
+                    sorted_costs[lower_95] + fraction_95 * (sorted_costs[upper_95] - sorted_costs[lower_95])
+                )
+
+        if all_input_amplifications:
+            aggregated["amplification"]["median_input"] = statistics.median(all_input_amplifications)
+
+        if all_output_amplifications:
+            aggregated["amplification"]["median_output"] = statistics.median(all_output_amplifications)
+
+        # Aggregate summary accuracy stats
+        if summary_accuracy_by_target:
+            aggregated["summary_accuracy"] = {}
+            for target_size, stats_list in summary_accuracy_by_target.items():
+                # Aggregate stats for this target size
+                total_count = sum(s["count"] for s in stats_list)
+                total_tokens = sum(s["avg_tokens"] * s["count"] for s in stats_list)
+
+                # Combine histogram buckets
+                combined_histogram = {}
+                for bucket in ["0-10%", "10-25%", "25-50%", "50-100%", "100%+"]:
+                    bucket_count = sum(s["histogram"].get(bucket, {}).get("count", 0) for s in stats_list)
+                    bucket_percentage = (bucket_count / total_count * 100) if total_count > 0 else 0
+                    combined_histogram[bucket] = {
+                        "count": bucket_count,
+                        "percentage": bucket_percentage
+                    }
+
+                # Calculate percentiles from raw values if available
+                if target_size in raw_deviations_by_target and raw_deviations_by_target[target_size]:
+                    import statistics
+                    raw_devs = sorted(raw_deviations_by_target[target_size])
+                    median_deviation = statistics.median(raw_devs)
+                    std_deviation = statistics.stdev(raw_devs) if len(raw_devs) > 1 else 0
+
+                    # Use linear interpolation for percentiles (consistent with amplification metrics)
+                    n = len(raw_devs)
+                    if n == 1:
+                        percentile_50 = percentile_90 = percentile_95 = raw_devs[0]
+                    else:
+                        # 50th percentile (median) - using statistics.median for consistency
+                        percentile_50 = median_deviation
+
+                        # 90th percentile with linear interpolation
+                        pos_90 = (n - 1) * 0.9
+                        lower_90 = int(pos_90)
+                        upper_90 = min(lower_90 + 1, n - 1)
+                        fraction_90 = pos_90 - lower_90
+                        percentile_90 = raw_devs[lower_90] + fraction_90 * (raw_devs[upper_90] - raw_devs[lower_90])
+
+                        # 95th percentile with linear interpolation
+                        pos_95 = (n - 1) * 0.95
+                        lower_95 = int(pos_95)
+                        upper_95 = min(lower_95 + 1, n - 1)
+                        fraction_95 = pos_95 - lower_95
+                        percentile_95 = raw_devs[lower_95] + fraction_95 * (raw_devs[upper_95] - raw_devs[lower_95])
+                else:
+                    # Fallback to averaging if raw values not available
+                    median_deviation = sum(s.get("median_deviation_percent", 0) for s in stats_list) / len(stats_list)
+                    std_deviation = sum(s.get("std_deviation_percent", 0) for s in stats_list) / len(stats_list)
+                    percentile_50 = sum(s.get("percentile_50", 0) for s in stats_list) / len(stats_list)
+                    percentile_90 = sum(s.get("percentile_90", 0) for s in stats_list) / len(stats_list)
+                    percentile_95 = sum(s.get("percentile_95", 0) for s in stats_list) / len(stats_list)
+
+                aggregated["summary_accuracy"][target_size] = {
+                    "count": total_count,
+                    "avg_tokens": total_tokens / total_count if total_count > 0 else 0,
+                    "avg_deviation_percent": sum(s["avg_deviation_percent"] * s["count"] for s in stats_list) / total_count if total_count > 0 else 0,
+                    "median_deviation_percent": median_deviation,
+                    "std_deviation_percent": std_deviation,
+                    "percentile_50": percentile_50,
+                    "percentile_90": percentile_90,
+                    "percentile_95": percentile_95,
+                    "percent_over_target": sum(s["percent_over_target"] for s in stats_list) / len(stats_list),
+                    "percent_under_target": sum(s["percent_under_target"] for s in stats_list) / len(stats_list),
+                    "max_overage_percent": max(s["max_overage_percent"] for s in stats_list),
+                    "max_underage_percent": max(s["max_underage_percent"] for s in stats_list),
+                    "histogram": combined_histogram
+                }
 
         return aggregated
 
@@ -284,6 +430,46 @@ class BenchmarkRunner:
                     f"${metrics.cost_per_1k_tokens:<9.4f} "
                     f"{metrics.peak_memory_mb:<10.1f}"
                 )
+
+        # Print detailed summary accuracy stats
+        self.print_summary_accuracy_details(results)
+
+    def print_summary_accuracy_details(self, results: dict[str, dict[int, IndexingMetrics]]) -> None:
+        """Print detailed summary accuracy statistics."""
+        logger.info(f"\n{'='*80}")
+        logger.info("SUMMARY ACCURACY DETAILS")
+        logger.info(f"{'='*80}")
+
+        for doc_type, metrics_by_size in results.items():
+            for chunk_size, metrics in sorted(metrics_by_size.items()):
+                if not metrics.summary_stats:
+                    continue
+
+                for target, stats in metrics.summary_stats.items():
+                    if stats.count == 0:
+                        continue
+
+                    logger.info(f"\n📏 {self.DOCUMENTS[doc_type]['name']} - Target {target} tokens:")
+                    logger.info(f"  Count: {stats.count}")
+                    logger.info(f"  Average size: {stats.avg_tokens:.1f} tokens")
+                    logger.info(f"  Average deviation: {stats.avg_deviation_percent:.1f}%")
+                    logger.info(f"  Median deviation: {stats.median_deviation_percent:.1f}%")
+                    logger.info(f"  Std deviation: {stats.std_deviation_percent:.1f}%")
+                    logger.info(f"  Over target: {stats.percent_over_target:.1f}% (max: {stats.max_overage_percent:.1f}%)")
+                    logger.info(f"  Under target: {stats.percent_under_target:.1f}% (max: {stats.max_underage_percent:.1f}%)")
+
+                    # Percentiles
+                    logger.info("\n  Percentiles:")
+                    logger.info(f"    P50 (median): {stats.percentile_50:.1f}%")
+                    logger.info(f"    P90: {stats.percentile_90:.1f}%")
+                    logger.info(f"    P95: {stats.percentile_95:.1f}%")
+
+                    # Histogram
+                    logger.info("\n  Distribution:")
+                    for bucket, data in stats.histogram.items():
+                        bar_length = int(data['percentage'] / 2)  # Scale to fit
+                        bar = "█" * bar_length
+                        logger.info(f"    {bucket:>8}: {bar:<50} {data['count']:3d} ({data['percentage']:5.1f}%)")
 
 
 def main() -> None:

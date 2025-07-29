@@ -139,6 +139,11 @@ Here's the content to summarize:"""
 
         full_prompt = "\n\n".join(prompt_parts)
 
+        # Calculate input text tokens for amplification tracking
+        input_text_tokens = len(self.splitter.tokenizer.encode(left_text)) + len(
+            self.splitter.tokenizer.encode(right_text)
+        )
+
         async with self.semaphore:
             try:
                 response = await self.client.chat.completions.create(
@@ -164,6 +169,7 @@ Here's the content to summarize:"""
                         actual_tokens=summary_tokens,
                         prompt_tokens=response.usage.prompt_tokens,
                         completion_tokens=response.usage.completion_tokens,
+                        input_text_tokens=input_text_tokens,
                     )
 
             except Exception as e:
