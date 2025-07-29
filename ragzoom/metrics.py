@@ -272,18 +272,42 @@ class IndexingMetrics:
         """90th percentile of cost amplification."""
         if not self.cost_amplifications:
             return 0.0
+        # Use more precise percentile calculation
+        n = len(self.cost_amplifications)
+        if n == 1:
+            return self.cost_amplifications[0]
+        # For small samples, use linear interpolation between closest values
         sorted_values = sorted(self.cost_amplifications)
-        index = int(len(sorted_values) * 0.9)
-        return sorted_values[min(index, len(sorted_values) - 1)]
+        # Calculate the exact position for 90th percentile
+        pos = (n - 1) * 0.9
+        lower = int(pos)
+        upper = min(lower + 1, n - 1)
+        fraction = pos - lower
+        # Linear interpolation
+        return sorted_values[lower] + fraction * (
+            sorted_values[upper] - sorted_values[lower]
+        )
 
     @property
     def cost_amplification_p95(self) -> float:
         """95th percentile of cost amplification."""
         if not self.cost_amplifications:
             return 0.0
+        # Use more precise percentile calculation
+        n = len(self.cost_amplifications)
+        if n == 1:
+            return self.cost_amplifications[0]
+        # For small samples, use linear interpolation between closest values
         sorted_values = sorted(self.cost_amplifications)
-        index = int(len(sorted_values) * 0.95)
-        return sorted_values[min(index, len(sorted_values) - 1)]
+        # Calculate the exact position for 95th percentile
+        pos = (n - 1) * 0.95
+        lower = int(pos)
+        upper = min(lower + 1, n - 1)
+        fraction = pos - lower
+        # Linear interpolation
+        return sorted_values[lower] + fraction * (
+            sorted_values[upper] - sorted_values[lower]
+        )
 
     @property
     def median_input_amplification(self) -> float:
