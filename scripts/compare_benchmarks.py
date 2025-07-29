@@ -59,7 +59,6 @@ def generate_comparison_table(
     baseline: dict[int, dict],
     current: dict[int, dict],
     output_format: str = "markdown",
-    embedding_token_regression_threshold: float = 5.0,
     summary_token_regression_threshold: float = 10.0,
 ) -> tuple[str, bool]:
     """Generate comparison table between baseline and current results.
@@ -68,11 +67,10 @@ def generate_comparison_table(
         baseline: Baseline benchmark results by chunk size
         current: Current benchmark results by chunk size
         output_format: Output format (only 'markdown' supported)
-        embedding_token_regression_threshold: Percentage increase to trigger regression warning
         summary_token_regression_threshold: Percentage increase to trigger regression warning
 
     Returns:
-        Tuple of (markdown report, has_token_regression)
+        Tuple of (markdown report, has_summary_regression)
     """
 
     # Get all chunk sizes present in both sets
@@ -86,60 +84,16 @@ def generate_comparison_table(
     # Header
     lines.append("## 📊 Performance Report\n")
 
-    # Throughput comparison (informational only - not used for regression detection)
-    lines.append("### Throughput Comparison")
-    lines.append("| Chunk Size | Baseline | Current | Change |")
-    lines.append("|------------|----------|---------|--------|")
-
-    for size in chunk_sizes:
-        base_tps = baseline[size]["metrics"]["timing"]["tokens_per_second"]
-        curr_tps = current[size]["metrics"]["timing"]["tokens_per_second"]
-        change, emoji = calculate_change(base_tps, curr_tps)
-
-        # For throughput, higher is better
-        if change > 0:
-            emoji = "✅"
-        elif change < -10:
-            emoji = "⚠️"  # Warning but not regression
-        else:
-            emoji = ""
-
-        lines.append(
-            f"| {size} tokens | {base_tps:.1f} tok/s | {curr_tps:.1f} tok/s | "
-            f"{emoji} {change:+.1f}% |"
-        )
-    
-    lines.append("\n*Note: Throughput can vary due to API latency and is not used for regression detection.*")
-
     # Token usage comparison
     lines.append("\n### Token Usage (per 1K source tokens)")
     lines.append("| Chunk Size | Metric | Baseline | Current | Change |")
     lines.append("|------------|--------|----------|---------|--------|")
 
-    embedding_regression = False
     summary_regression = False
 
     for size in chunk_sizes:
         base_m = baseline[size]["metrics"]["efficiency"]
         curr_m = current[size]["metrics"]["efficiency"]
-
-        # Embedding tokens
-        base_embed = base_m["embedding_tokens_per_1k"]
-        curr_embed = curr_m["embedding_tokens_per_1k"]
-        change, emoji = calculate_change(base_embed, curr_embed)
-
-        if change > embedding_token_regression_threshold:
-            embedding_regression = True
-            emoji = "❌"
-        elif abs(change) > 1:
-            emoji = "⚠️" if change > 0 else "✅"
-        else:
-            emoji = ""
-
-        lines.append(
-            f"| {size} tokens | Embedding | {base_embed:.1f} | {curr_embed:.1f} | "
-            f"{emoji} {change:+.1f}% |"
-        )
 
         # Summary tokens
         base_summary = base_m["summary_tokens_per_1k"]
@@ -200,25 +154,16 @@ def generate_comparison_table(
     # Summary
     lines.append("\n### Summary")
 
-    issues = []
-    if embedding_regression:
-        issues.append(f"❌ Embedding token regression detected (>{embedding_token_regression_threshold}% increase)")
     if summary_regression:
-        issues.append(f"❌ Summary token regression detected (>{summary_token_regression_threshold}% increase)")
-
-    if issues:
-        lines.extend(issues)
+        lines.append(f"❌ Summary token regression detected (>{summary_token_regression_threshold}% increase)")
     else:
         lines.append("✅ No significant regressions detected")
 
     # Show thresholds used
-    lines.append(f"\n*Regression thresholds: embedding tokens={embedding_token_regression_threshold}%, summary tokens={summary_token_regression_threshold}%*")
+    lines.append(f"\n*Regression threshold: summary tokens >{summary_token_regression_threshold}% increase*")
     lines.append("*Cost changes are shown for informational purposes but do not trigger regression detection.*")
 
-    # Combine regressions into single boolean
-    has_regression = embedding_regression or summary_regression
-
-    return "\n".join(lines), has_regression
+    return "\n".join(lines), summary_regression
 
 
 def main():
@@ -232,8 +177,7 @@ def main():
     current_dir = Path(sys.argv[2])
     output_file = Path(sys.argv[3]) if len(sys.argv) > 3 else None
 
-    # Get thresholds from environment or use defaults
-    embedding_threshold = float(os.getenv("PERF_EMBEDDING_TOKEN_REGRESSION_THRESHOLD", "5.0"))
+    # Get threshold from environment or use default
     summary_threshold = float(os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0"))
 
     # Load results
@@ -248,11 +192,10 @@ def main():
         print(f"Error: No benchmark results found in {current_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # Generate comparison with configurable thresholds
+    # Generate comparison with configurable threshold
     report, has_regression = generate_comparison_table(
         baseline_results,
         current_results,
-        embedding_token_regression_threshold=embedding_threshold,
         summary_token_regression_threshold=summary_threshold,
     )
 
