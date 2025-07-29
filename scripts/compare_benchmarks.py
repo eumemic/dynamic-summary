@@ -59,65 +59,65 @@ def generate_comparison_table(
     baseline: dict[int, dict],
     current: dict[int, dict],
     output_format: str = "markdown",
-    throughput_regression_threshold: float = 10.0,
-    cost_regression_threshold: float = 10.0,
-) -> tuple[str, bool, bool]:
+    embedding_token_regression_threshold: float = 5.0,
+    summary_token_regression_threshold: float = 10.0,
+) -> tuple[str, bool]:
     """Generate comparison table between baseline and current results.
 
     Args:
         baseline: Baseline benchmark results by chunk size
         current: Current benchmark results by chunk size
         output_format: Output format (only 'markdown' supported)
-        throughput_regression_threshold: Percentage decrease to trigger regression warning
-        cost_regression_threshold: Percentage increase to trigger regression warning
+        embedding_token_regression_threshold: Percentage increase to trigger regression warning
+        summary_token_regression_threshold: Percentage increase to trigger regression warning
 
     Returns:
-        Tuple of (markdown report, has_throughput_regression, has_cost_regression)
+        Tuple of (markdown report, has_token_regression)
     """
 
     # Get all chunk sizes present in both sets
     chunk_sizes = sorted(set(baseline.keys()) & set(current.keys()))
 
     if not chunk_sizes:
-        return "❌ No matching chunk sizes found between baseline and current results", False, False
+        return "❌ No matching chunk sizes found between baseline and current results", False
 
     lines = []
 
     # Header
     lines.append("## 📊 Performance Report\n")
 
-    # Throughput comparison
+    # Throughput comparison (informational only - not used for regression detection)
     lines.append("### Throughput Comparison")
     lines.append("| Chunk Size | Baseline | Current | Change |")
     lines.append("|------------|----------|---------|--------|")
-
-    throughput_regression = False
 
     for size in chunk_sizes:
         base_tps = baseline[size]["metrics"]["timing"]["tokens_per_second"]
         curr_tps = current[size]["metrics"]["timing"]["tokens_per_second"]
         change, emoji = calculate_change(base_tps, curr_tps)
 
-        # For throughput, higher is better, so flip the emoji logic
+        # For throughput, higher is better
         if change > 0:
             emoji = "✅"
-        elif change < -throughput_regression_threshold:
-            emoji = "⚠️"
-            throughput_regression = True
-        elif change < 0:
+        elif change < -10:
+            emoji = "⚠️"  # Warning but not regression
+        else:
             emoji = ""
 
         lines.append(
             f"| {size} tokens | {base_tps:.1f} tok/s | {curr_tps:.1f} tok/s | "
             f"{emoji} {change:+.1f}% |"
         )
+    
+    lines.append("\n*Note: Throughput can vary due to API latency and is not used for regression detection.*")
 
     # Token usage comparison
     lines.append("\n### Token Usage (per 1K source tokens)")
     lines.append("| Chunk Size | Metric | Baseline | Current | Change |")
     lines.append("|------------|--------|----------|---------|--------|")
 
-    cost_regression = False
+    embedding_regression = False
+    summary_regression = False
 
     for size in chunk_sizes:
         base_m = baseline[size]["metrics"]["efficiency"]
@@ -128,9 +128,17 @@ def generate_comparison_table(
         curr_embed = curr_m["embedding_tokens_per_1k"]
         change, emoji = calculate_change(base_embed, curr_embed)
 
+        if change > embedding_token_regression_threshold:
+            embedding_regression = True
+            emoji = "❌"
+        elif abs(change) > 1:
+            emoji = "⚠️" if change > 0 else "✅"
+        else:
+            emoji = ""
+
         lines.append(
             f"| {size} tokens | Embedding | {base_embed:.1f} | {curr_embed:.1f} | "
-            f"{emoji if abs(change) > 1 else ''} {change:+.1f}% |"
+            f"{emoji} {change:+.1f}% |"
         )
 
         # Summary tokens
@@ -138,23 +146,35 @@ def generate_comparison_table(
         curr_summary = curr_m["summary_tokens_per_1k"]
         change, emoji = calculate_change(base_summary, curr_summary)
 
+        if change > summary_token_regression_threshold:
+            summary_regression = True
+            emoji = "❌"
+        elif abs(change) > 1:
+            emoji = "⚠️" if change > 0 else "✅"
+        else:
+            emoji = ""
+
         lines.append(
             f"| | Summary | {base_summary:.1f} | {curr_summary:.1f} | "
-            f"{emoji if abs(change) > 1 else ''} {change:+.1f}% |"
+            f"{emoji} {change:+.1f}% |"
         )
 
-        # Total cost
+        # Total cost (informational only)
         base_cost = base_m["cost_per_1k_tokens"]
         curr_cost = curr_m["cost_per_1k_tokens"]
         change, emoji = calculate_change(base_cost, curr_cost)
 
-        if change > cost_regression_threshold:
-            cost_regression = True
-            emoji = "❌"
+        # Just show warning/success for cost, don't use for regression
+        if change > 10:
+            emoji = "⚠️"
+        elif change < -5:
+            emoji = "✅"
+        else:
+            emoji = ""
 
         lines.append(
             f"| | **Total Cost** | ${base_cost:.4f} | ${curr_cost:.4f} | "
-            f"{emoji if abs(change) > 1 else ''} {change:+.1f}% |"
+            f"{emoji} {change:+.1f}% |"
         )
 
     # Summary accuracy if available
@@ -181,20 +201,24 @@ def generate_comparison_table(
     lines.append("\n### Summary")
 
     issues = []
-    if throughput_regression:
-        issues.append(f"⚠️ Throughput regression detected (>{throughput_regression_threshold}% decrease)")
-    if cost_regression:
-        issues.append(f"❌ Cost regression detected (>{cost_regression_threshold}% increase)")
+    if embedding_regression:
+        issues.append(f"❌ Embedding token regression detected (>{embedding_token_regression_threshold}% increase)")
+    if summary_regression:
+        issues.append(f"❌ Summary token regression detected (>{summary_token_regression_threshold}% increase)")
 
     if issues:
         lines.extend(issues)
     else:
-        lines.append("✅ No significant performance regressions detected")
+        lines.append("✅ No significant regressions detected")
 
     # Show thresholds used
-    lines.append(f"\n*Regression thresholds: throughput={throughput_regression_threshold}%, cost={cost_regression_threshold}%*")
+    lines.append(f"\n*Regression thresholds: embedding tokens={embedding_token_regression_threshold}%, summary tokens={summary_token_regression_threshold}%*")
+    lines.append("*Cost changes are shown for informational purposes but do not trigger regression detection.*")
 
-    return "\n".join(lines), throughput_regression, cost_regression
+    # Combine regressions into single boolean
+    has_regression = embedding_regression or summary_regression
+
+    return "\n".join(lines), has_regression
 
 
 def main():
@@ -209,8 +233,8 @@ def main():
     output_file = Path(sys.argv[3]) if len(sys.argv) > 3 else None
 
     # Get thresholds from environment or use defaults
-    throughput_threshold = float(os.getenv("PERF_THROUGHPUT_REGRESSION_THRESHOLD", "10.0"))
-    cost_threshold = float(os.getenv("PERF_COST_REGRESSION_THRESHOLD", "10.0"))
+    embedding_threshold = float(os.getenv("PERF_EMBEDDING_TOKEN_REGRESSION_THRESHOLD", "5.0"))
+    summary_threshold = float(os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0"))
 
     # Load results
     baseline_results = load_benchmark_results(baseline_dir)
@@ -225,11 +249,11 @@ def main():
         sys.exit(1)
 
     # Generate comparison with configurable thresholds
-    report, throughput_regression, cost_regression = generate_comparison_table(
+    report, has_regression = generate_comparison_table(
         baseline_results,
         current_results,
-        throughput_regression_threshold=throughput_threshold,
-        cost_regression_threshold=cost_threshold,
+        embedding_token_regression_threshold=embedding_threshold,
+        summary_token_regression_threshold=summary_threshold,
     )
 
     # Output
@@ -241,7 +265,7 @@ def main():
         print(report)
 
     # Exit with error code if regressions detected
-    if throughput_regression or cost_regression:
+    if has_regression:
         sys.exit(1)
 
 
