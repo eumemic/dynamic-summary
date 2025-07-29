@@ -163,49 +163,77 @@ class BenchmarkRunner:
 
     def _aggregate_metrics(self, metrics_by_doc: dict[str, IndexingMetrics]) -> dict:
         """Aggregate metrics across multiple documents."""
-        # For now, average the key metrics
+        # For now, average most metrics but use max for peak memory
         total_docs = len(metrics_by_doc)
 
         aggregated = {
             "timing": {
-                "total_duration_seconds": 0,
-                "tokens_per_second": 0,
-                "time_per_1k_tokens": 0,
+                "total_duration_seconds": 0.0,
+                "tokens_per_second": 0.0,
+                "time_per_1k_tokens": 0.0,
             },
             "document": {
-                "source_tokens": 0,
-                "chunks_created": 0,
+                "source_tokens": 0.0,
+                "chunks_created": 0.0,
             },
             "api_usage": {
-                "total_calls": 0,
-                "embedding_calls": 0,
-                "summary_calls": 0,
-                "embedding_tokens": 0,
-                "summary_prompt_tokens": 0,
-                "summary_completion_tokens": 0,
+                "total_calls": 0.0,
+                "embedding_calls": 0.0,
+                "summary_calls": 0.0,
+                "embedding_tokens": 0.0,
+                "summary_prompt_tokens": 0.0,
+                "summary_completion_tokens": 0.0,
             },
             "efficiency": {
-                "avg_embedding_batch_size": 0,
-                "embedding_tokens_per_1k": 0,
-                "summary_tokens_per_1k": 0,
-                "api_calls_per_1k": 0,
-                "cost_per_1k_tokens": 0,
+                "avg_embedding_batch_size": 0.0,
+                "embedding_tokens_per_1k": 0.0,
+                "summary_tokens_per_1k": 0.0,
+                "api_calls_per_1k": 0.0,
+                "cost_per_1k_tokens": 0.0,
+            },
+            "memory": {
+                "peak_mb": 0.0,
+                "start_mb": 0.0,
+                "end_mb": 0.0,
+                "usage_mb": 0.0,
             },
         }
+
+        # Collect all values for aggregation
+        memory_peaks = []
+        memory_starts = []
+        memory_ends = []
+        memory_usages = []
 
         for doc, metrics in metrics_by_doc.items():
             m_dict = metrics.to_dict()
 
-            # Add to aggregated values
+            # Add to aggregated values (for averaging)
             for category in aggregated:
-                for key in aggregated[category]:
-                    if key in m_dict.get(category, {}):
-                        aggregated[category][key] += m_dict[category][key]
+                if category == "memory":
+                    # Collect memory values for special handling
+                    if "memory" in m_dict:
+                        memory_peaks.append(m_dict["memory"].get("peak_mb", 0))
+                        memory_starts.append(m_dict["memory"].get("start_mb", 0))
+                        memory_ends.append(m_dict["memory"].get("end_mb", 0))
+                        memory_usages.append(m_dict["memory"].get("usage_mb", 0))
+                else:
+                    for key in aggregated[category]:
+                        if key in m_dict.get(category, {}):
+                            aggregated[category][key] += m_dict[category][key]
 
-        # Average the values
+        # Average the non-memory values
         for category in aggregated:
-            for key in aggregated[category]:
-                aggregated[category][key] /= total_docs
+            if category != "memory":
+                for key in aggregated[category]:
+                    aggregated[category][key] /= total_docs
+
+        # Handle memory metrics specially
+        if memory_peaks:
+            aggregated["memory"]["peak_mb"] = max(memory_peaks)  # Use max for peak
+            aggregated["memory"]["start_mb"] = sum(memory_starts) / len(memory_starts)  # Average start
+            aggregated["memory"]["end_mb"] = sum(memory_ends) / len(memory_ends)  # Average end
+            aggregated["memory"]["usage_mb"] = max(memory_usages)  # Use max for usage
 
         return aggregated
 
@@ -258,7 +286,7 @@ class BenchmarkRunner:
                 )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run RagZoom indexing performance benchmarks"
     )
@@ -306,7 +334,7 @@ def main():
     )
 
     # Check API key
-    if not config.openai_api_key or config.openai_api_key == "test-key":
+    if not config.openai_api_key or config.openai_api_key in ["test-key", ""]:
         logger.error("No OpenAI API key provided. Set RAGZOOM_OPENAI_API_KEY environment variable or use --api-key")
         sys.exit(1)
 

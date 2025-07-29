@@ -23,10 +23,13 @@ jobs:
           python-version: '3.11'
       
       - name: Download baseline benchmarks
-        uses: actions/download-artifact@v4
+        uses: dawidd6/action-download-artifact@v3
         with:
+          workflow: baseline-benchmarks.yml
+          branch: master
           name: baseline-benchmarks-latest
           path: baseline_results
+          if_no_artifact_found: warn
         continue-on-error: true
       
       - name: Cache pip dependencies
