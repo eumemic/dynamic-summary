@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ master, main ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Fast tests (excluding slow and integration tests)
   test-fast:
@@ -71,7 +75,13 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
-          pytest tests/ -m "slow" -n 4 --no-header -v || [ $? -eq 5 ]
+          # Run slow tests if any exist, otherwise skip gracefully
+          if pytest --collect-only -m "slow" tests/ 2>/dev/null | grep -q "0 selected"; then
+            echo "No slow tests found - skipping"
+            exit 0
+          else
+            pytest tests/ -m "slow" -n 4 --no-header -v
+          fi
 
   # Integration tests only
   test-integration:
@@ -104,7 +114,13 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
         run: |
-          pytest tests/ -m "integration" -n 4 --no-header -v || [ $? -eq 5 ]
+          # Run integration tests if any exist, otherwise skip gracefully
+          if pytest --collect-only -m "integration" tests/ 2>/dev/null | grep -q "0 selected"; then
+            echo "No integration tests found - skipping"
+            exit 0
+          else
+            pytest tests/ -m "integration" -n 4 --no-header -v
+          fi
 
   # Linting with Ruff
   lint:
