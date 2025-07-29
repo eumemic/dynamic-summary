@@ -335,9 +335,28 @@ class BenchmarkRunner:
                     raw_devs = sorted(raw_deviations_by_target[target_size])
                     median_deviation = statistics.median(raw_devs)
                     std_deviation = statistics.stdev(raw_devs) if len(raw_devs) > 1 else 0
-                    percentile_50 = raw_devs[int(len(raw_devs) * 0.5)]
-                    percentile_90 = raw_devs[int(len(raw_devs) * 0.9)] if len(raw_devs) > 1 else percentile_50
-                    percentile_95 = raw_devs[int(len(raw_devs) * 0.95)] if len(raw_devs) > 1 else percentile_50
+
+                    # Use linear interpolation for percentiles (consistent with amplification metrics)
+                    n = len(raw_devs)
+                    if n == 1:
+                        percentile_50 = percentile_90 = percentile_95 = raw_devs[0]
+                    else:
+                        # 50th percentile (median) - using statistics.median for consistency
+                        percentile_50 = median_deviation
+
+                        # 90th percentile with linear interpolation
+                        pos_90 = (n - 1) * 0.9
+                        lower_90 = int(pos_90)
+                        upper_90 = min(lower_90 + 1, n - 1)
+                        fraction_90 = pos_90 - lower_90
+                        percentile_90 = raw_devs[lower_90] + fraction_90 * (raw_devs[upper_90] - raw_devs[lower_90])
+
+                        # 95th percentile with linear interpolation
+                        pos_95 = (n - 1) * 0.95
+                        lower_95 = int(pos_95)
+                        upper_95 = min(lower_95 + 1, n - 1)
+                        fraction_95 = pos_95 - lower_95
+                        percentile_95 = raw_devs[lower_95] + fraction_95 * (raw_devs[upper_95] - raw_devs[lower_95])
                 else:
                     # Fallback to averaging if raw values not available
                     median_deviation = sum(s.get("median_deviation_percent", 0) for s in stats_list) / len(stats_list)
