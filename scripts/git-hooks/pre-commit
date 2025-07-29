@@ -12,7 +12,7 @@ run_tests() {
     echo "[Tests] Starting..."
     # Run quietly first, capture output
     local tmpfile=$(mktemp)
-    pytest tests/ -q --tb=short -m "not slow and not integration" -n 8 --no-header > "$tmpfile" 2>&1
+    pytest tests/ -q --tb=short -m "not slow and not integration and not benchmark" -n 8 --no-header > "$tmpfile" 2>&1
     local result=$?
     if [ $result -ne 0 ]; then
         echo "[Tests] ❌ Failed!"
