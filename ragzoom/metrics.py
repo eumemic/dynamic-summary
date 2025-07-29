@@ -4,6 +4,7 @@ import logging
 import statistics
 import time
 from dataclasses import dataclass, field
+from typing import Literal, Optional
 
 import psutil
 
@@ -134,6 +135,64 @@ class SummaryStats:
 
 
 @dataclass
+class EmbeddingTelemetry:
+    """Telemetry for embedding API call."""
+
+    text_tokens: int
+    batch_size: int
+    batch_position: int
+    model: str
+    timestamp: float
+
+
+@dataclass
+class SummaryAttempt:
+    """Telemetry for a single summary attempt."""
+
+    is_retry: bool
+
+    # Inputs
+    target_tokens: int
+    input_text_tokens: int  # Combined left+right child tokens
+
+    # API usage
+    prompt_tokens: int
+    completion_tokens: int  # Tokens reported by API
+
+    # Results
+    actual_tokens: int  # Tokens we measure in the summary text
+    status: Literal["accepted", "rejected_over", "rejected_under", "error"]
+
+    # Model info
+    model: str
+    timestamp: float
+
+    # Optional fields with defaults
+    rejection_reason: Optional[str] = None
+    prompt_hash: Optional[str] = None  # Hash of prompt for deduplication analysis
+
+
+@dataclass
+class NodeTelemetry:
+    """Telemetry data for a single node."""
+
+    node_id: str
+    node_type: Literal["leaf", "summary"]
+    level: int
+    span_start: int
+    span_end: int
+
+    # Embedding telemetry
+    embedding: Optional[EmbeddingTelemetry] = None
+
+    # Summary telemetry (multiple attempts for retries)
+    summary_attempts: list[SummaryAttempt] = field(default_factory=list)
+
+    # Timing
+    created_at: float = field(default_factory=time.time)
+
+
+@dataclass
 class IndexingMetrics:
     """Complete metrics from an indexing operation."""
 
@@ -181,6 +240,9 @@ class IndexingMetrics:
     peak_memory_mb: float = 0.0
     memory_start_mb: float = 0.0
     memory_end_mb: float = 0.0
+
+    # Raw telemetry data
+    node_telemetry: dict[str, NodeTelemetry] = field(default_factory=dict)
 
     @property
     def total_duration_seconds(self) -> float:
@@ -441,6 +503,38 @@ class IndexingMetricsReporter:
         )
         self._current_level = 0
         self._nodes_at_current_level = 0
+        # Track pending embeddings for batch processing
+        self._pending_embeddings: dict[str, NodeTelemetry] = {}
+
+    def track_node_created(
+        self,
+        node_id: str,
+        node_type: Literal["leaf", "summary"],
+        level: int,
+        span_start: int,
+        span_end: int,
+    ) -> None:
+        """Track when a node is created (before any API calls).
+
+        Args:
+            node_id: Unique identifier for the node
+            node_type: Whether this is a leaf or summary node
+            level: Tree level (0 = leaves)
+            span_start: Start position in source document
+            span_end: End position in source document
+        """
+        telemetry = NodeTelemetry(
+            node_id=node_id,
+            node_type=node_type,
+            level=level,
+            span_start=span_start,
+            span_end=span_end,
+        )
+        self.metrics.node_telemetry[node_id] = telemetry
+
+        # Also track pending for embedding batch correlation
+        if node_type == "leaf":
+            self._pending_embeddings[node_id] = telemetry
 
     def _update_memory_usage(self) -> None:
         """Update peak memory usage if current usage is higher."""
@@ -472,6 +566,34 @@ class IndexingMetricsReporter:
         self.metrics.embedding_batch_sizes.append(batch_size)
         self.metrics.total_embedding_tokens += sum(token_counts)
         self._update_memory_usage()
+
+    def record_embedding_call_v2(
+        self,
+        node_embeddings: list[tuple[str, int]],
+        batch_size: int,
+        model: str,
+    ) -> None:
+        """Enhanced embedding tracking with node-level detail.
+
+        Args:
+            node_embeddings: List of (node_id, token_count) tuples
+            batch_size: Total batch size
+            model: Model used for embeddings
+        """
+        # Update aggregate metrics (backward compatible)
+        self.record_embedding_call(batch_size, [tc for _, tc in node_embeddings])
+
+        # Update telemetry
+        timestamp = time.time()
+        for position, (node_id, token_count) in enumerate(node_embeddings):
+            if node_id in self.metrics.node_telemetry:
+                self.metrics.node_telemetry[node_id].embedding = EmbeddingTelemetry(
+                    text_tokens=token_count,
+                    batch_size=batch_size,
+                    batch_position=position,
+                    model=model,
+                    timestamp=timestamp,
+                )
 
     def record_summary_result(
         self,
@@ -546,6 +668,112 @@ class IndexingMetricsReporter:
             self.metrics.amplifications_by_level[level]["cost"].append(
                 cost_amplification
             )
+
+        self._update_memory_usage()
+
+    def record_summary_attempt_v2(
+        self,
+        node_id: str,
+        is_retry: bool,
+        target_tokens: int,
+        input_text_tokens: int,
+        prompt_tokens: int,
+        completion_tokens: int,
+        actual_tokens: int,
+        status: Literal["accepted", "rejected_over", "rejected_under", "error"],
+        model: str,
+        rejection_reason: Optional[str] = None,
+    ) -> None:
+        """Record a summary attempt (compatible with PR #29 retry mechanism).
+
+        Args:
+            node_id: Node being summarized
+            is_retry: Whether this is a retry attempt
+            target_tokens: Target token count for summary
+            input_text_tokens: Combined tokens from children being summarized
+            prompt_tokens: Tokens in the prompt
+            completion_tokens: Tokens in the completion (from API)
+            actual_tokens: Actual tokens in summary text (measured)
+            status: Outcome of this attempt
+            model: Model used for summary
+            rejection_reason: Optional reason for rejection
+        """
+        # Update aggregate metrics
+        self.metrics.summary_api_calls += 1
+        self.metrics.total_summary_prompt_tokens += prompt_tokens
+        self.metrics.total_summary_completion_tokens += completion_tokens
+
+        # Only update result metrics if accepted
+        if status == "accepted":
+            # Update result-specific metrics (accuracy, amplification)
+            # Track accuracy by target size
+            if target_tokens not in self.metrics.summary_stats:
+                self.metrics.summary_stats[target_tokens] = SummaryStats()
+
+            self.metrics.summary_stats[target_tokens].add_summary(
+                target_tokens, actual_tokens
+            )
+
+            # Calculate amplification factors
+            if input_text_tokens > 0:
+                input_amplification = prompt_tokens / input_text_tokens
+                output_amplification = (
+                    completion_tokens / actual_tokens if actual_tokens > 0 else 1.0
+                )
+
+                # Calculate cost-weighted amplification
+                # Cost amplification = (actual cost / theoretical minimum cost)
+                actual_cost = (
+                    prompt_tokens * self.metrics.summary_input_cost_per_1k
+                    + completion_tokens * self.metrics.summary_output_cost_per_1k
+                ) / 1000
+
+                min_cost = (
+                    input_text_tokens * self.metrics.summary_input_cost_per_1k
+                    + actual_tokens * self.metrics.summary_output_cost_per_1k
+                ) / 1000
+
+                cost_amplification = actual_cost / min_cost if min_cost > 0 else 1.0
+
+                # Record per-operation amplifications
+                self.metrics.input_amplifications.append(input_amplification)
+                self.metrics.output_amplifications.append(output_amplification)
+                self.metrics.cost_amplifications.append(cost_amplification)
+
+                # Track by level
+                level = self._current_level
+                if level not in self.metrics.amplifications_by_level:
+                    self.metrics.amplifications_by_level[level] = {
+                        "input": [],
+                        "output": [],
+                        "cost": [],
+                    }
+
+                self.metrics.amplifications_by_level[level]["input"].append(
+                    input_amplification
+                )
+                self.metrics.amplifications_by_level[level]["output"].append(
+                    output_amplification
+                )
+                self.metrics.amplifications_by_level[level]["cost"].append(
+                    cost_amplification
+                )
+
+        # Update telemetry
+        if node_id in self.metrics.node_telemetry:
+            attempt = SummaryAttempt(
+                is_retry=is_retry,
+                target_tokens=target_tokens,
+                input_text_tokens=input_text_tokens,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                actual_tokens=actual_tokens,
+                status=status,
+                model=model,
+                timestamp=time.time(),
+                rejection_reason=rejection_reason,
+            )
+            self.metrics.node_telemetry[node_id].summary_attempts.append(attempt)
 
         self._update_memory_usage()
 

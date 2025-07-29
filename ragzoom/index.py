@@ -89,6 +89,7 @@ class TreeBuilder:
         target_tokens: int,
         prev_context: Optional[str] = None,
         reporter: Optional[IndexingMetricsReporter] = None,
+        parent_id: Optional[str] = None,
     ) -> str:
         """Summarize text using LLM."""
         # Build prompt with adjacent context (trim to avoid token explosion)
@@ -161,16 +162,32 @@ Here's the content to summarize:"""
                 content = response.choices[0].message.content
                 summary = content.strip() if content else ""
 
-                # Track summary result
+                # Track summary result with telemetry
                 if reporter and hasattr(response, "usage") and response.usage:
                     summary_tokens = len(self.splitter.tokenizer.encode(summary))
-                    reporter.record_summary_result(
-                        target_tokens=target_tokens,
-                        actual_tokens=summary_tokens,
-                        prompt_tokens=response.usage.prompt_tokens,
-                        completion_tokens=response.usage.completion_tokens,
-                        input_text_tokens=input_text_tokens,
-                    )
+
+                    # Use v2 method if parent_id is available (telemetry enabled)
+                    if parent_id:
+                        reporter.record_summary_attempt_v2(
+                            node_id=parent_id,
+                            is_retry=False,
+                            target_tokens=target_tokens,
+                            input_text_tokens=input_text_tokens,
+                            prompt_tokens=response.usage.prompt_tokens,
+                            completion_tokens=response.usage.completion_tokens,
+                            actual_tokens=summary_tokens,
+                            status="accepted",
+                            model=self.config.summary_model,
+                        )
+                    else:
+                        # Fallback to original method
+                        reporter.record_summary_result(
+                            target_tokens=target_tokens,
+                            actual_tokens=summary_tokens,
+                            prompt_tokens=response.usage.prompt_tokens,
+                            completion_tokens=response.usage.completion_tokens,
+                            input_text_tokens=input_text_tokens,
+                        )
 
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
@@ -314,6 +331,16 @@ Here's the content to summarize:"""
                         "span_end": chunk_end,
                     }
                 )
+
+                # Track node creation for telemetry
+                if reporter:
+                    reporter.track_node_created(
+                        node_id=node_id,
+                        node_type="leaf",
+                        level=0,
+                        span_start=chunk_start,
+                        span_end=chunk_end,
+                    )
                 leaf_ids.append(node_id)
 
                 # Track chunk creation
@@ -364,13 +391,20 @@ Here's the content to summarize:"""
                         f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]"
                     )
 
-                # Track embedding call
+                # Track embedding call with node-level detail
                 if reporter:
-                    token_counts = [
-                        len(self.splitter.tokenizer.encode(text))
-                        for text in batch_texts
-                    ]
-                    reporter.record_embedding_call(len(batch_texts), token_counts)
+                    node_embeddings = []
+                    for j in range(i, batch_end):
+                        node_id = chunk_data[j]["id"]
+                        text = chunk_data[j]["text"]
+                        token_count = len(self.splitter.tokenizer.encode(text))
+                        node_embeddings.append((node_id, token_count))
+
+                    reporter.record_embedding_call_v2(
+                        node_embeddings=node_embeddings,
+                        batch_size=len(batch_texts),
+                        model=self.config.embedding_model,
+                    )
 
                 batch_embeddings = await self._get_embeddings_batch(batch_texts)
                 all_embeddings.extend(batch_embeddings)
@@ -512,13 +546,33 @@ Here's the content to summarize:"""
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
 
+        # Get node data for span information
+        left_node = self.store.get_node(left_id)
+        right_node = self.store.get_node(right_id)
+
+        if not left_node or not right_node:
+            logger.error(
+                f"Failed to retrieve child nodes: left={left_id}, right={right_id}"
+            )
+            raise ValueError("Child nodes not found in store")
+
+        # Track parent node creation
+        if reporter:
+            reporter.track_node_created(
+                node_id=parent_id,
+                node_type="summary",
+                level=reporter._current_level + 1,
+                span_start=left_node.span_start,
+                span_end=right_node.span_end,
+            )
+
         # Use consistent token budget for all heights
         # Target tokens for the summary (guidance for LLM, not hard limit)
         target_tokens = self.config.leaf_tokens
 
         # Generate summary (async)
         summary = await self._summarize_text(
-            left_text, right_text, target_tokens, prev_context, reporter
+            left_text, right_text, target_tokens, prev_context, reporter, parent_id
         )
 
         # Validate summary faithfulness if validation is enabled
@@ -549,16 +603,16 @@ Here's the content to summarize:"""
         # Get embedding for the summary
         embedding = await self._get_embedding(summary)
 
-        # Store the node data
-        left_node = self.store.get_node(left_id)
-        right_node = self.store.get_node(right_id)
-
-        if not left_node or not right_node:
-            logger.error(
-                f"Failed to retrieve child nodes: left={left_id}, right={right_id}"
+        # Track embedding for parent node
+        if reporter and parent_id:
+            summary_tokens = len(self.splitter.tokenizer.encode(summary))
+            reporter.record_embedding_call_v2(
+                node_embeddings=[(parent_id, summary_tokens)],
+                batch_size=1,
+                model=self.config.embedding_model,
             )
-            raise ValueError("Child nodes not found in store")
 
+        # Store the node data
         self.store.add_node(
             node_id=parent_id,
             text=summary,
@@ -734,6 +788,16 @@ Here's the content to summarize:"""
 
                     # Get the odd node for its span information
                     odd_node_obj = self.store.get_node(odd_node)
+
+                    # Track parent node creation for telemetry
+                    if reporter and odd_node_obj:
+                        reporter.track_node_created(
+                            node_id=parent_id,
+                            node_type="summary",
+                            level=current_height,
+                            span_start=odd_node_obj.span_start,
+                            span_end=odd_node_obj.span_end,
+                        )
                     if not odd_node_obj:
                         logger.error(f"Failed to retrieve odd node: {odd_node}")
                         raise ValueError("Odd node not found in store")
@@ -748,10 +812,20 @@ Here's the content to summarize:"""
                         self.config.leaf_tokens,
                         prev_context=None,
                         reporter=reporter,
+                        parent_id=parent_id,
                     )
 
                     # Get embedding for the summary
                     embedding = await self._get_embedding(summary)
+
+                    # Track embedding for parent node
+                    if reporter:
+                        summary_tokens = len(self.splitter.tokenizer.encode(summary))
+                        reporter.record_embedding_call_v2(
+                            node_embeddings=[(parent_id, summary_tokens)],
+                            batch_size=1,
+                            model=self.config.embedding_model,
+                        )
 
                     # Store the single-child parent node
                     self.store.add_node(
