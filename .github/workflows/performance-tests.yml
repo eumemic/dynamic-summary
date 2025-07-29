@@ -159,10 +159,12 @@ jobs:
           if [ -f report.md ]; then
             cat report.md >> $GITHUB_STEP_SUMMARY
             
-            # Also save as output for PR comment
-            echo 'report<<PERF_REPORT_END' >> $GITHUB_OUTPUT
-            cat report.md >> $GITHUB_OUTPUT
-            echo 'PERF_REPORT_END' >> $GITHUB_OUTPUT
+            # Also save as output for PR comment (using GitHub Actions escaping)
+            REPORT=$(cat report.md)
+            REPORT="${REPORT//'%'/'%25'}"
+            REPORT="${REPORT//$'\n'/'%0A'}"
+            REPORT="${REPORT//$'\r'/'%0D'}"
+            echo "report=${REPORT}" >> $GITHUB_OUTPUT
           fi
       
       - name: Comment PR with results
