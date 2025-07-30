@@ -73,7 +73,11 @@ def cli(ctx: click.Context) -> None:
 @click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.option(
     "--telemetry",
+    "telemetry_file",
     type=click.Path(),
+    is_flag=False,
+    flag_value="telemetry.json",
+    default=None,
     help="Save telemetry data to JSON file (default: telemetry.json)",
 )
 @click.pass_context
@@ -85,7 +89,7 @@ def index(
     no_progress: bool,
     max_concurrent: int,
     validate: bool,
-    telemetry: Optional[str],
+    telemetry_file: Optional[str],
 ) -> None:
     """Index a document from file."""
 
@@ -128,7 +132,7 @@ def index(
         tree_builder = TreeBuilder(config, store, max_concurrent=max_concurrent)
 
         # Index with or without metrics based on telemetry flag
-        if telemetry:
+        if telemetry_file:
             doc_id, metrics = tree_builder.add_document_with_metrics(
                 text,
                 document_id=document_id,
@@ -200,9 +204,9 @@ def index(
         )
 
         # Save telemetry if requested
-        if telemetry:
-            # Use provided filename or default to telemetry.json
-            output_file = telemetry if telemetry else "telemetry.json"
+        if telemetry_file:
+            # telemetry_file will be either the flag_value or the user-provided path
+            output_file = telemetry_file
 
             click.echo(f"\n📁 Saving telemetry to {output_file}...")
 
