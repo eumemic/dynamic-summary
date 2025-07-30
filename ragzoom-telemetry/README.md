@@ -60,6 +60,8 @@ ragzoom-telemetry compare baseline.json current.json
 ragzoom-telemetry compare baseline.json current.json --output comparison.md
 ```
 
+**Note**: Currently only supports comparing individual files. The original `compare_benchmarks.py` script supported comparing directories of benchmarks. This functionality may be added in a future version.
+
 Exit codes:
 - 0: No regression detected
 - 1: Performance regression detected

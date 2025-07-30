@@ -1,4 +1,5 @@
-ragzoom>=0.1.0
+# Note: ragzoom must be installed separately as it's the parent package
+# This avoids circular dependency issues during CI
 click>=8.1.0
 matplotlib>=3.5.0
 seaborn>=0.12.0

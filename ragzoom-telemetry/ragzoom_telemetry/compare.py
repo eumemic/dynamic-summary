@@ -44,8 +44,10 @@ def load_single_benchmark(filepath: Path) -> Tuple[int, Dict]:
         chunk_size = data["config"]["leaf_tokens"]
 
         # Create config for analysis
+        # Use environment variable if available, otherwise use placeholder
+        api_key = os.getenv("RAGZOOM_OPENAI_API_KEY", "not-needed-for-analysis")
         config = RagZoomConfig(
-            openai_api_key="dummy",  # Not needed for analysis
+            openai_api_key=api_key,
             leaf_tokens=chunk_size,
             summary_input_cost_per_1k=0.0025,
             summary_output_cost_per_1k=0.01,
