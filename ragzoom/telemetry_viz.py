@@ -199,11 +199,14 @@ class TelemetryVisualizer:
         metrics = compute_metrics_from_telemetry(telemetry, config)
 
         # Calculate costs from metrics
-        embedding_cost = (metrics.total_embedding_tokens / 1000) * metrics.embedding_cost_per_1k
+        embedding_cost = (
+            metrics.total_embedding_tokens / 1000
+        ) * metrics.embedding_cost_per_1k
         summary_cost = (
-            (metrics.total_summary_prompt_tokens / 1000) * metrics.summary_input_cost_per_1k +
-            (metrics.total_summary_completion_tokens / 1000) * metrics.summary_output_cost_per_1k
-        )
+            metrics.total_summary_prompt_tokens / 1000
+        ) * metrics.summary_input_cost_per_1k + (
+            metrics.total_summary_completion_tokens / 1000
+        ) * metrics.summary_output_cost_per_1k
 
         if embedding_cost == 0 and summary_cost == 0:
             ax.text(
@@ -506,11 +509,14 @@ class TelemetryVisualizer:
             batch_utils.append(batch["batch_utilization"])
             retry_rates.append(retry["retry_rate"])
             # Calculate total cost from metrics
-            embedding_cost = (metrics.total_embedding_tokens / 1000) * metrics.embedding_cost_per_1k
+            embedding_cost = (
+                metrics.total_embedding_tokens / 1000
+            ) * metrics.embedding_cost_per_1k
             summary_cost = (
-                (metrics.total_summary_prompt_tokens / 1000) * metrics.summary_input_cost_per_1k +
-                (metrics.total_summary_completion_tokens / 1000) * metrics.summary_output_cost_per_1k
-            )
+                metrics.total_summary_prompt_tokens / 1000
+            ) * metrics.summary_input_cost_per_1k + (
+                metrics.total_summary_completion_tokens / 1000
+            ) * metrics.summary_output_cost_per_1k
             total_costs.append(embedding_cost + summary_cost)
 
         # Plot 1: Cost Amplification
