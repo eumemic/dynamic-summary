@@ -343,6 +343,43 @@ ragzoom telemetry visualize benchmark_results/ --compare --format pdf
 ragzoom telemetry explore benchmark_results/metrics_200_tokens.json
 ```
 
+### Configuration Options
+
+#### Threshold Configuration
+
+The telemetry analysis tools use configurable thresholds for identifying performance issues and generating recommendations. These can be customized via environment variables:
+
+```bash
+# Analysis thresholds (defaults shown)
+export RAGZOOM_HIGH_INPUT_AMPLIFICATION_THRESHOLD=3.0       # High input amplification warning
+export RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD=2.0        # High cost amplification warning  
+export RAGZOOM_GOOD_COST_AMPLIFICATION_THRESHOLD=1.5        # Good cost amplification target
+export RAGZOOM_HIGH_RETRY_RATE_THRESHOLD=20                 # High retry rate warning (%)
+export RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD=70          # Good batch utilization target (%)
+export RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD=50           # Low batch utilization warning (%)
+export RAGZOOM_MULTIPLE_RETRY_THRESHOLD=1                   # Multiple retry detection
+```
+
+**Examples:**
+
+```bash
+# Use stricter thresholds for production monitoring
+export RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD=1.8
+export RAGZOOM_HIGH_RETRY_RATE_THRESHOLD=15
+ragzoom telemetry analyze production_metrics.json
+
+# Relaxed thresholds for development
+export RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD=3.0
+export RAGZOOM_HIGH_RETRY_RATE_THRESHOLD=30
+ragzoom telemetry visualize dev_metrics.json
+```
+
+These thresholds affect:
+- Warning messages in analysis reports
+- Colored indicators in visualizations  
+- Threshold lines on charts
+- Recommendation generation
+
 ### Future: Query Telemetry
 
 For debugging query issues, telemetry collection during queries is planned:
