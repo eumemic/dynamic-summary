@@ -875,20 +875,15 @@ def telemetry_analyze(telemetry_file: str, output: Optional[str]) -> None:
 def telemetry_validate(telemetry_file: str, fix: bool) -> None:
     """Validate telemetry data format and integrity."""
     try:
-        # Find and run the validation script
-        script_path = Path(__file__).parent.parent / "scripts" / "validate_telemetry.py"
+        # Import and use the validator directly
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from scripts.validate_telemetry import TelemetryValidator
 
-        cmd = [sys.executable, str(script_path), telemetry_file]
-        if fix:
-            cmd.append("--fix")
+        validator = TelemetryValidator(fix_issues=fix)
+        is_valid, _ = validator.validate_file(Path(telemetry_file))
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        click.echo(result.stdout)
-
-        if result.stderr:
-            click.echo(result.stderr, err=True)
-
-        sys.exit(result.returncode)
+        # Exit with appropriate code
+        sys.exit(0 if is_valid else 1)
 
     except Exception as e:
         click.echo(f"❌ Error running validation: {e}", err=True)
@@ -936,21 +931,27 @@ def telemetry_compare(file1: str, file2: str) -> None:
 def telemetry_export(telemetry_file: str, output_file: str, format: str) -> None:
     """Export telemetry data to CSV or JSON format."""
     try:
-        # Find and run the explorer script with export option
-        script_path = Path(__file__).parent.parent / "scripts" / "telemetry_explorer.py"
+        # Import and use the explorer directly
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from scripts.telemetry_explorer import TelemetryExplorer
 
-        result = subprocess.run(
-            [sys.executable, str(script_path), telemetry_file, "--export", output_file],
-            capture_output=True,
-            text=True,
-        )
+        # Load telemetry data
+        with open(telemetry_file) as f:
+            data = json.load(f)
 
-        click.echo(result.stdout)
+        if "telemetry" not in data:
+            click.echo("❌ No telemetry data found in file", err=True)
+            sys.exit(1)
 
-        if result.stderr:
-            click.echo(result.stderr, err=True)
+        # Create explorer and export
+        explorer = TelemetryExplorer(data["telemetry"])
 
-        sys.exit(result.returncode)
+        if format == "csv":
+            explorer.nodes_df.to_csv(output_file, index=False)
+        else:
+            explorer.nodes_df.to_json(output_file, orient="records", indent=2)
+
+        click.echo(f"✅ Exported {len(explorer.nodes_df)} nodes to {output_file}")
 
     except Exception as e:
         click.echo(f"❌ Error exporting telemetry: {e}", err=True)
@@ -981,30 +982,36 @@ def telemetry_visualize(
 ) -> None:
     """Generate visualizations from telemetry data."""
     try:
-        # Find and run the visualization script
-        script_path = (
-            Path(__file__).parent.parent / "scripts" / "visualize_telemetry.py"
-        )
+        # Import and use the visualizer directly
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from scripts.visualize_telemetry import TelemetryVisualizer
 
-        cmd = [
-            sys.executable,
-            str(script_path),
-            input_path,
-            "--output-dir",
-            output_dir,
-            "--format",
-            format,
-        ]
-        if compare:
-            cmd.append("--compare")
+        visualizer = TelemetryVisualizer(Path(output_dir))
+        input_path_obj = Path(input_path)
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        click.echo(result.stdout)
+        if input_path_obj.is_file():
+            # Single file visualization
+            visualizer.visualize_single_benchmark(input_path_obj, format)
+        elif input_path_obj.is_dir():
+            # Directory of benchmarks
+            json_files = list(input_path_obj.glob("metrics_*_tokens.json"))
 
-        if result.stderr:
-            click.echo(result.stderr, err=True)
+            if not json_files:
+                click.echo(f"❌ No benchmark files found in {input_path}")
+                sys.exit(1)
 
-        sys.exit(result.returncode)
+            # Visualize each file
+            for file in json_files:
+                visualizer.visualize_single_benchmark(file, format)
+
+            # Generate comparison if requested
+            if compare and len(json_files) >= 2:
+                visualizer.visualize_comparison(input_path_obj, format)
+        else:
+            click.echo(f"❌ Error: {input_path} not found")
+            sys.exit(1)
+
+        click.echo("\n✅ Visualization complete!")
 
     except Exception as e:
         click.echo(f"❌ Error generating visualizations: {e}", err=True)
@@ -1016,7 +1023,8 @@ def telemetry_visualize(
 def telemetry_explore(telemetry_file: str) -> None:
     """Launch interactive telemetry explorer."""
     try:
-        # Find and run the explorer script
+        # Import and use the explorer directly - but we need to run it interactively
+        # So we'll keep the subprocess approach for this one since it needs stdin/stdout
         script_path = Path(__file__).parent.parent / "scripts" / "telemetry_explorer.py"
 
         # Run interactively (don't capture output)
