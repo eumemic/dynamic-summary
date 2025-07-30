@@ -309,6 +309,11 @@ def index(
                 metrics_dict["document_id"] = doc_id
                 metrics_dict["file_path"] = str(path.absolute())
 
+                # Add telemetry data for analysis
+                metrics_dict["telemetry"] = metrics.get_telemetry_data(
+                    doc_id, config.leaf_tokens
+                )
+
                 with open(output_file, "w") as f:
                     json.dump(metrics_dict, f, indent=2)
 
