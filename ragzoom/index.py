@@ -562,7 +562,7 @@ Here's the content to summarize:"""
         if reporter:
             reporter.track_node_created(
                 node_id=parent_id,
-                height=reporter._current_level + 1,  # Parent is one level higher
+                height=reporter._current_height + 1,  # Parent is one level higher
             )
 
         # Use consistent token budget for all heights

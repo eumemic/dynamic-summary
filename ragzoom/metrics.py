@@ -324,7 +324,7 @@ class IndexingMetrics:
 
     # Tree structure
     tree_height: int = 0
-    nodes_per_level: list[int] = field(default_factory=list)
+    nodes_per_height: list[int] = field(default_factory=list)
 
     # Memory usage (in MB)
     peak_memory_mb: float = 0.0
@@ -523,7 +523,7 @@ class IndexingMetrics:
             "summary_accuracy": summary_stats_dict,
             "tree_structure": {
                 "height": self.tree_height,
-                "nodes_per_level": self.nodes_per_level,
+                "nodes_per_height": self.nodes_per_height,
             },
             "memory": {
                 "peak_mb": self.peak_memory_mb,
@@ -623,8 +623,8 @@ class IndexingMetricsReporter:
             memory_start_mb=initial_memory_mb,
             peak_memory_mb=initial_memory_mb,
         )
-        self._current_level = 0
-        self._nodes_at_current_level = 0
+        self._current_height = 0
+        self._nodes_at_current_height = 0
         # Track pending embeddings for batch processing
         self._pending_embeddings: dict[str, NodeTelemetry] = {}
         # Thread-safe lock for memory updates
@@ -673,8 +673,8 @@ class IndexingMetricsReporter:
         """Called when a chunk is created during splitting."""
         self.metrics.chunks_created += 1
         # Track for leaf-height nodes
-        if self._current_level == 0:
-            self._nodes_at_current_level += 1
+        if self._current_height == 0:
+            self._nodes_at_current_height += 1
         self._update_memory_usage()
 
     def record_embedding_call(self, batch_size: int, token_counts: list[int]) -> None:
@@ -789,7 +789,7 @@ class IndexingMetricsReporter:
             self.metrics.cost_amplifications.append(cost_amplification)
 
             # Track by height
-            height = self._current_level
+            height = self._current_height
             if height not in self.metrics.amplifications_by_height:
                 self.metrics.amplifications_by_height[height] = {
                     "input": [],
@@ -879,7 +879,7 @@ class IndexingMetricsReporter:
                 self.metrics.cost_amplifications.append(cost_amplification)
 
                 # Track by height
-                height = self._current_level
+                height = self._current_height
                 if height not in self.metrics.amplifications_by_height:
                     self.metrics.amplifications_by_height[height] = {
                         "input": [],
@@ -925,31 +925,31 @@ class IndexingMetricsReporter:
 
         self._update_memory_usage()
 
-    def record_tree_level_complete(self, level: int, nodes_created: int) -> None:
+    def record_tree_level_complete(self, height: int, nodes_created: int) -> None:
         """Called when a tree level is built.
 
         Args:
-            level: Tree level (0 = leaves) - NOTE: still using 'level' here for compatibility
-            nodes_created: Number of nodes at this level
+            height: Tree height (0 = leaves)
+            nodes_created: Number of nodes at this height
         """
-        # Record nodes from previous level when moving to new level
-        if level > self._current_level:
-            self.metrics.nodes_per_level.append(self._nodes_at_current_level)
-            self._current_level = level
-            self._nodes_at_current_level = nodes_created
+        # Record nodes from previous height when moving to new height
+        if height > self._current_height:
+            self.metrics.nodes_per_height.append(self._nodes_at_current_height)
+            self._current_height = height
+            self._nodes_at_current_height = nodes_created
         else:
-            self._nodes_at_current_level = nodes_created
+            self._nodes_at_current_height = nodes_created
 
-        self.metrics.tree_height = max(self.metrics.tree_height, level)
+        self.metrics.tree_height = max(self.metrics.tree_height, height)
         self._update_memory_usage()
 
     def finalize(self) -> IndexingMetrics:
         """Compute final metrics after indexing completes."""
         self.metrics.end_time = time.time()
 
-        # Record final level
-        if self._nodes_at_current_level > 0:
-            self.metrics.nodes_per_level.append(self._nodes_at_current_level)
+        # Record final height
+        if self._nodes_at_current_height > 0:
+            self.metrics.nodes_per_height.append(self._nodes_at_current_height)
 
         # Record final memory usage
         try:

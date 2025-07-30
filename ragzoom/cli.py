@@ -57,7 +57,7 @@ def display_metrics(metrics: IndexingMetrics) -> None:
     click.echo(f"  Source tokens: {metrics.source_document_tokens:,}")
     click.echo(f"  Chunks created: {metrics.chunks_created}")
     click.echo(f"  Tree height: {metrics.tree_height}")
-    click.echo(f"  Nodes per level: {metrics.nodes_per_level}")
+    click.echo(f"  Nodes per height: {metrics.nodes_per_height}")
 
     click.echo("\n🔌 API Usage:")
     click.echo(f"  Total API calls: {metrics.total_api_calls}")
