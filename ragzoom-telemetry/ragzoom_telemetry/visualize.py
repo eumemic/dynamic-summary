@@ -28,6 +28,19 @@ from ragzoom.telemetry import (
     get_telemetry_thresholds,
 )
 
+# Visualization configuration constants
+DISPLAY_DPI = 100           # Screen display resolution
+SAVE_DPI = 300              # High resolution for saved plots
+DEFAULT_FONT_SIZE = 10      # Base font size for plots
+FIGURE_WIDTH = 20           # Standard figure width in inches
+FIGURE_HEIGHT = 24          # Standard figure height in inches
+
+# API pricing constants (as of January 2025, used for visualization consistency)
+# Note: These are older pricing values maintained for consistency with existing benchmarks
+EMBEDDING_COST_PER_1K = 0.0001      # text-embedding-3-small (older pricing)
+SUMMARY_INPUT_COST_PER_1K = 0.0025  # gpt-4o-mini input (older pricing)  
+SUMMARY_OUTPUT_COST_PER_1K = 0.01   # gpt-4o-mini output (older pricing)
+
 # Set style for professional-looking plots
 try:
     plt.style.use('seaborn-darkgrid')
@@ -35,9 +48,9 @@ except OSError:
     # Fallback to a default style if seaborn style is not available
     plt.style.use('ggplot')
 sns.set_palette("husl")
-matplotlib.rcParams['figure.dpi'] = 100
-matplotlib.rcParams['savefig.dpi'] = 300
-matplotlib.rcParams['font.size'] = 10
+matplotlib.rcParams['figure.dpi'] = DISPLAY_DPI
+matplotlib.rcParams['savefig.dpi'] = SAVE_DPI
+matplotlib.rcParams['font.size'] = DEFAULT_FONT_SIZE
 
 
 class TelemetryVisualizer:
@@ -70,7 +83,7 @@ class TelemetryVisualizer:
         config = self._create_config_from_metrics(data.get("metrics", {}))
 
         # Create figure with subplots
-        fig = plt.figure(figsize=(20, 24))
+        fig = plt.figure(figsize=(FIGURE_WIDTH, FIGURE_HEIGHT))
         gs = GridSpec(6, 2, figure=fig, hspace=0.3, wspace=0.3)
 
         # 1. Amplification by Level
@@ -120,9 +133,9 @@ class TelemetryVisualizer:
         """Create a config object from metrics data for cost calculations."""
         return RagZoomConfig(
             openai_api_key="dummy",  # Not needed for analysis
-            embedding_cost_per_1k=0.0001,  # text-embedding-3-small (older pricing)
-            summary_input_cost_per_1k=0.0025,  # gpt-4o-mini input (older pricing)
-            summary_output_cost_per_1k=0.01,   # gpt-4o-mini output (older pricing)
+            embedding_cost_per_1k=EMBEDDING_COST_PER_1K,
+            summary_input_cost_per_1k=SUMMARY_INPUT_COST_PER_1K,
+            summary_output_cost_per_1k=SUMMARY_OUTPUT_COST_PER_1K,
         )
 
     def _plot_amplification_by_level(self, telemetry: Dict, config: RagZoomConfig, ax: plt.Axes) -> None:

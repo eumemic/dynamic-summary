@@ -29,6 +29,27 @@ EMOJI_THRESHOLD_MODERATE = 10.0    # Moderate changes that warrant attention
 EMOJI_THRESHOLD_MAJOR = 20.0       # Major changes that are concerning
 
 
+def _write_error_report(error_msg: str, output: Optional[str]) -> None:
+    """Write error report to output file or stdout."""
+    report = f"""## ❌ Performance Comparison Failed
+
+**Error**: {error_msg}
+
+The benchmark comparison could not be completed. Please check:
+- File paths are correct and files exist
+- Files contain valid telemetry data
+- ragzoom package is properly installed and importable
+
+For debugging, try running the commands manually to see detailed error messages.
+"""
+    
+    if output:
+        Path(output).write_text(report)
+        click.echo(f"❌ Error report saved to {output}")
+    else:
+        click.echo(report)
+
+
 def load_single_benchmark(filepath: Path) -> Tuple[int, Dict]:
     """Load a single benchmark file and extract chunk size and metrics.
 
@@ -308,7 +329,8 @@ def compare(file1: str, file2: str, output: Optional[str]) -> None:
             baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
             current_chunk_size, current_metrics = load_single_benchmark(current_file)
         except Exception as e:
-            click.echo(f"❌ Error loading benchmark files: {e}", err=True)
+            error_msg = f"Error loading benchmark files: {e}"
+            _write_error_report(error_msg, output)
             sys.exit(1)
 
         # Warn if chunk sizes don't match
@@ -359,5 +381,6 @@ def compare(file1: str, file2: str, output: Optional[str]) -> None:
             sys.exit(0)
 
     except Exception as e:
-        click.echo(f"❌ Error running comparison: {e}", err=True)
+        error_msg = f"Unexpected error during comparison: {e}"
+        _write_error_report(error_msg, output)
         sys.exit(1)

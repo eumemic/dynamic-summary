@@ -110,12 +110,50 @@ jobs:
             done
           else
             # Generate comparison report using ragzoom-telemetry
-            # For now, compare just the 100-token benchmarks (most common case)
-            # TODO: Update ragzoom-telemetry compare to support directory inputs
+            echo "🔍 Checking for baseline and current benchmark files..."
+            ls -la baseline_results/ || echo "No baseline_results directory"
+            ls -la benchmark_results/ || echo "No benchmark_results directory"
+            
+            # Test ragzoom-telemetry installation
+            echo "🧪 Testing ragzoom-telemetry installation..."
+            ragzoom-telemetry --help > /dev/null || {
+              echo "❌ ragzoom-telemetry command not found or failed" > report.md
+              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              exit 0
+            }
+            
+            # Test Python imports
+            echo "🐍 Testing Python imports..."
+            python -c "from ragzoom.telemetry import compute_amplification_metrics; print('✅ ragzoom imports OK')" || {
+              echo "❌ Failed to import ragzoom.telemetry module" > report.md
+              echo "Check that ragzoom package was installed correctly before ragzoom-telemetry" >> report.md
+              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              exit 0
+            }
+            
+            # Compare benchmarks
             if [ -f "baseline_results/metrics_100_tokens.json" ] && [ -f "benchmark_results/metrics_100_tokens.json" ]; then
-              ragzoom-telemetry compare baseline_results/metrics_100_tokens.json benchmark_results/metrics_100_tokens.json --output report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              echo "📊 Running benchmark comparison..."
+              ragzoom-telemetry compare baseline_results/metrics_100_tokens.json benchmark_results/metrics_100_tokens.json --output report.md
+              comparison_exit_code=$?
+              
+              if [ $comparison_exit_code -ne 0 ]; then
+                echo "REGRESSION=true" >> $GITHUB_OUTPUT
+                # The compare command should have written an error report to report.md
+                echo "⚠️ Comparison command exited with code $comparison_exit_code" >> report.md
+              fi
             else
               echo "❌ Expected benchmark files not found" > report.md
+              echo "" >> report.md
+              echo "Looking for:" >> report.md
+              echo "- baseline_results/metrics_100_tokens.json" >> report.md  
+              echo "- benchmark_results/metrics_100_tokens.json" >> report.md
+              echo "" >> report.md
+              echo "Available files:" >> report.md
+              echo "Baseline:" >> report.md
+              ls -la baseline_results/*.json 2>/dev/null || echo "  (no JSON files)" >> report.md
+              echo "Current:" >> report.md
+              ls -la benchmark_results/*.json 2>/dev/null || echo "  (no JSON files)" >> report.md
               echo "REGRESSION=true" >> $GITHUB_OUTPUT
             fi
           fi
