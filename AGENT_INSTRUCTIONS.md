@@ -39,7 +39,30 @@ For detailed understanding of the core tiling algorithm:
 
 @include docs/deep-dives/tiling-algorithm.md
 
-## 7. Custom Claude Commands
+## 7. Telemetry Tools Architecture
+
+### Optional Dependencies Design
+The telemetry analysis commands (`analyze`, `compare`, `visualize`) use optional dependencies to:
+
+- **Avoid heavy deps in main package**: Matplotlib, seaborn, pandas only installed when needed
+- **Clean separation**: Developer tools vs end-user features 
+- **Single package maintenance**: No circular dependencies, simpler versioning
+- **Idiomatic Python**: Follows PEP 517/518 standards with `[project.optional-dependencies]`
+
+**Installation**:
+```bash
+# Core package only
+pip install ragzoom
+
+# With telemetry tools
+pip install ragzoom[telemetry]
+```
+
+**Usage**: `ragzoom-telemetry analyze|compare|visualize` (separate CLI entry point)
+
+This approach was chosen over a separate package to eliminate circular dependencies and maintenance overhead while preserving clean separation.
+
+## 8. Custom Claude Commands
 
 Custom slash commands are stored in `.claude/commands/` as markdown files:
 - `/commit` - Create atomic commits and push to origin

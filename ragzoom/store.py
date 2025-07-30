@@ -6,7 +6,7 @@ from collections import deque
 from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
 
 import chromadb
 import numpy as np
@@ -37,22 +37,22 @@ class TreeNode(Base):
     __tablename__ = "tree_nodes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    parent_id: Mapped[Optional[str]] = mapped_column(
+    parent_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("tree_nodes.id"), nullable=True
     )
-    left_child_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    right_child_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    left_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    right_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
     span_start: Mapped[int] = mapped_column(Integer, nullable=False)
     span_end: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    summary: Mapped[Optional[str]] = mapped_column(
+    summary: Mapped[str | None] = mapped_column(
         Text, nullable=True
     )  # NULL for leaf nodes
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     access_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    document_id: Mapped[Optional[str]] = mapped_column(
+    document_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("documents.id"), nullable=True
     )
 
@@ -63,7 +63,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    file_path: Mapped[Optional[str]] = mapped_column(
+    file_path: Mapped[str | None] = mapped_column(
         String, nullable=True, unique=True
     )  # Path to the source file
     content_hash: Mapped[str] = mapped_column(
@@ -111,7 +111,7 @@ class Store:
         # Cache expected embedding dimension for validation
         self._expected_embedding_dim = self._get_expected_embedding_dimension()
 
-    def _get_from_cache(self, node_id: str) -> Optional[TreeNode]:
+    def _get_from_cache(self, node_id: str) -> TreeNode | None:
         """Get node from cache if available."""
         if node_id in self.node_cache:
             # Move to end (most recently used)
@@ -134,7 +134,7 @@ class Store:
         self.node_cache[node.id] = node
         self.cache_order.append(node.id)
 
-    def _get_expected_embedding_dimension(self) -> Optional[int]:
+    def _get_expected_embedding_dimension(self) -> int | None:
         """Get expected embedding dimension from config or existing data."""
         if self.config.embedding_dimensions:
             return self.config.embedding_dimensions
@@ -158,7 +158,7 @@ class Store:
         return None
 
     def _validate_embedding_dimension(
-        self, embedding: Union[list[float], np.ndarray]
+        self, embedding: list[float] | np.ndarray
     ) -> None:
         """Validate embedding dimension matches expected."""
         if not embedding:
@@ -180,14 +180,14 @@ class Store:
         self,
         node_id: str,
         text: str,
-        embedding: Union[list[float], np.ndarray],
+        embedding: list[float] | np.ndarray,
         span_start: int,
         span_end: int,
-        parent_id: Optional[str] = None,
-        left_child_id: Optional[str] = None,
-        right_child_id: Optional[str] = None,
-        summary: Optional[str] = None,
-        document_id: Optional[str] = None,
+        parent_id: str | None = None,
+        left_child_id: str | None = None,
+        right_child_id: str | None = None,
+        summary: str | None = None,
+        document_id: str | None = None,
     ) -> TreeNode:
         """Add a node to both SQLite and Chroma."""
         # Validate embedding dimension
@@ -234,7 +234,7 @@ class Store:
 
         return node
 
-    def get_node(self, node_id: str) -> Optional[TreeNode]:
+    def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID."""
         # Check cache first
         cached = self._get_from_cache(node_id)
@@ -278,9 +278,7 @@ class Store:
                 node.access_count += 1
                 session.commit()
 
-    def get_children(
-        self, node_id: str
-    ) -> tuple[Optional[TreeNode], Optional[TreeNode]]:
+    def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
         """Get left and right children of a node."""
         node = self.get_node(node_id)
         if not node:
@@ -317,9 +315,9 @@ class Store:
 
     def search_similar(
         self,
-        query_embedding: Union[list[float], np.ndarray],
+        query_embedding: list[float] | np.ndarray,
         n_results: int,
-        where: Optional[dict] = None,
+        where: dict | None = None,
     ) -> list[tuple[str, float, dict]]:
         """Search for similar nodes using Chroma.
 
@@ -363,7 +361,7 @@ class Store:
 
         return output
 
-    def get_pinned_nodes(self, depth_max: Optional[int] = None) -> list[TreeNode]:
+    def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         """Get nodes that are pinned (always included in coverage)."""
         with self.SessionLocal() as session:
             pinned_nodes = session.query(TreeNode).filter_by(is_pinned=1).all()
@@ -412,14 +410,12 @@ class Store:
                 .all()
             )
 
-    def get_root_node(self) -> Optional[TreeNode]:
+    def get_root_node(self) -> TreeNode | None:
         """Get the root node (node with no parent)."""
         with self.SessionLocal() as session:
             return session.query(TreeNode).filter_by(parent_id=None).first()
 
-    def get_root_node_for_document(
-        self, document_id: Optional[str]
-    ) -> Optional[TreeNode]:
+    def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
         """Get the root node for a specific document."""
         with self.SessionLocal() as session:
             query = session.query(TreeNode).filter_by(parent_id=None)
@@ -427,7 +423,7 @@ class Store:
                 query = query.filter_by(document_id=document_id)
             return query.first()
 
-    def get_all_nodes_for_document(self, document_id: Optional[str]) -> list[TreeNode]:
+    def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
         """Get all nodes for a specific document."""
         with self.SessionLocal() as session:
             if document_id:
@@ -504,7 +500,7 @@ class Store:
 
     def compute_mmr_diverse_results(
         self,
-        query_embedding: Union[list[float], np.ndarray],
+        query_embedding: list[float] | np.ndarray,
         candidates: list[tuple[str, float, dict]],
         lambda_param: float,
         k: int,
@@ -580,7 +576,7 @@ class Store:
         # Return selected node IDs
         return [candidates[i][0] for i in selected_indices]
 
-    def get_document_by_path(self, file_path: str) -> Optional[Document]:
+    def get_document_by_path(self, file_path: str) -> Document | None:
         """Get a document by file path."""
         with self.SessionLocal() as session:
             return session.query(Document).filter_by(file_path=file_path).first()
@@ -588,7 +584,7 @@ class Store:
     def add_document(
         self,
         document_id: str,
-        file_path: Optional[str],
+        file_path: str | None,
         content_hash: str,
         chunk_count: int,
     ) -> Document:
