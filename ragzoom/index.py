@@ -664,7 +664,7 @@ Here's the content to summarize:"""
 
         # Track leaf level
         if reporter:
-            reporter.record_tree_level_complete(0, len(leaf_ids))
+            reporter.record_tree_height_complete(0, len(leaf_ids))
 
         current_height = 1  # Track height for logging (leaves are at height 0)
         while len(current_level_ids) > 1:
@@ -855,7 +855,7 @@ Here's the content to summarize:"""
 
             # Track tree level completion
             if reporter and current_level_ids:
-                reporter.record_tree_level_complete(
+                reporter.record_tree_height_complete(
                     current_height, len(current_level_ids)
                 )
 
