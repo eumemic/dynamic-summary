@@ -25,8 +25,8 @@ class RetrievalResult:
     node_ids: list[str]
     scores: dict[str, float]
     coverage_map: dict[str, bool]
-    tiling: Optional[list[str]] = None  # List of node IDs in the tiling
-    nodes: Optional[dict[str, "TreeNode"]] = (
+    tiling: list[str] | None = None  # List of node IDs in the tiling
+    nodes: dict[str, "TreeNode"] | None = (
         None  # Pre-loaded nodes to avoid redundant loading
     )
 
@@ -66,9 +66,9 @@ class Retriever:
     async def retrieve_async(
         self,
         query: str,
-        n_max: Optional[int] = None,
-        budget_tokens: Optional[int] = None,
-        document_id: Optional[str] = None,
+        n_max: int | None = None,
+        budget_tokens: int | None = None,
+        document_id: str | None = None,
     ) -> RetrievalResult:
         """Async retrieval method with MMR diversity.
 
@@ -130,7 +130,7 @@ class Retriever:
         if nodes_needing_scores:
             # Get embeddings and compute similarities for ancestors
             for node_id in nodes_needing_scores:
-                ancestor_node: Optional[TreeNode] = self.store.get_node(node_id)
+                ancestor_node: TreeNode | None = self.store.get_node(node_id)
                 if ancestor_node is not None:
                     # Get node's embedding from Chroma
                     try:
@@ -210,9 +210,9 @@ class Retriever:
     def retrieve(
         self,
         query: str,
-        n_max: Optional[int] = None,
-        budget_tokens: Optional[int] = None,
-        document_id: Optional[str] = None,
+        n_max: int | None = None,
+        budget_tokens: int | None = None,
+        document_id: str | None = None,
     ) -> RetrievalResult:
         """Synchronous wrapper for retrieve_async.
 
@@ -266,7 +266,7 @@ class Retriever:
         return coverage_map
 
     def _calculate_conservative_n_max(
-        self, budget_tokens: int, document_id: Optional[str] = None
+        self, budget_tokens: int, document_id: str | None = None
     ) -> int:
         """Calculate conservative n_max that is more grounded in document reality."""
 

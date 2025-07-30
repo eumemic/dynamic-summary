@@ -5,7 +5,7 @@ import statistics
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Literal
 
 import psutil
 
@@ -205,8 +205,8 @@ class SummaryAttempt:
     end_time: float
 
     # Optional fields with defaults
-    rejection_reason: Optional[str] = None
-    prompt_hash: Optional[str] = None  # Hash of prompt for deduplication analysis
+    rejection_reason: str | None = None
+    prompt_hash: str | None = None  # Hash of prompt for deduplication analysis
 
 
 @dataclass
@@ -229,7 +229,7 @@ class NodeTelemetry:
     height: int
 
     # Embedding telemetry
-    embedding: Optional[EmbeddingTelemetry] = None
+    embedding: EmbeddingTelemetry | None = None
 
     # Summary telemetry (multiple attempts for retries)
     summary_attempts: list[SummaryAttempt] = field(default_factory=list)
@@ -820,7 +820,7 @@ class IndexingMetricsReporter:
         status: Literal["accepted", "rejected_over", "rejected_under", "error"],
         model: str,
         start_time: float,
-        rejection_reason: Optional[str] = None,
+        rejection_reason: str | None = None,
     ) -> None:
         """Record a summary attempt (compatible with PR #29 retry mechanism).
 

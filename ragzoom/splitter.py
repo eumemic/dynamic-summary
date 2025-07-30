@@ -1,7 +1,6 @@
 """Text splitting functionality for RagZoom."""
 
 import logging
-from typing import Optional
 
 import tiktoken
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -142,7 +141,7 @@ class TextSplitter:
 
     def get_adjacent_context(
         self, chunks: list[str], chunk_index: int
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None]:
         """Get adjacent context for a chunk (for summarization)."""
         prev_context = None
         next_context = None

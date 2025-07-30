@@ -1,7 +1,6 @@
 """FastAPI routes for RagZoom REST interface."""
 
 import logging
-from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -53,8 +52,8 @@ class IndexDocumentRequest(BaseModel):
     """Request to index a new document."""
 
     text: str = Field(..., description="Document text to index")
-    document_id: Optional[str] = Field(None, description="Optional document ID")
-    file_path: Optional[str] = Field(
+    document_id: str | None = Field(None, description="Optional document ID")
+    file_path: str | None = Field(
         None, description="Optional file path (used for default document ID)"
     )
 
@@ -72,8 +71,8 @@ class QueryRequest(BaseModel):
 
     query: str = Field(..., description="Query text")
     document_id: str = Field(..., description="Document ID to query within")
-    n_max: Optional[int] = Field(None, description="Override max nodes to retrieve")
-    token_budget: Optional[int] = Field(None, description="Override token budget")
+    n_max: int | None = Field(None, description="Override max nodes to retrieve")
+    token_budget: int | None = Field(None, description="Override token budget")
 
 
 class QueryResponse(BaseModel):
@@ -94,11 +93,11 @@ class PinNodeRequest(BaseModel):
 class UpdateConfigRequest(BaseModel):
     """Request to update configuration."""
 
-    budget_tokens: Optional[int] = None
-    leaf_tokens: Optional[int] = None
-    mmr_lambda: Optional[float] = None
-    slope_cap: Optional[bool] = None
-    smoothing_pass_enabled: Optional[bool] = None
+    budget_tokens: int | None = None
+    leaf_tokens: int | None = None
+    mmr_lambda: float | None = None
+    slope_cap: bool | None = None
+    smoothing_pass_enabled: bool | None = None
     # Deprecated fields removed - ttl_turns and freshness_decay no longer exist
 
 
@@ -116,7 +115,7 @@ class DocumentInfo(BaseModel):
     """Information about an indexed document."""
 
     document_id: str
-    file_path: Optional[str]
+    file_path: str | None
     indexed_at: str
     chunk_count: int
     node_count: int
