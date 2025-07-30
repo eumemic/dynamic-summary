@@ -439,16 +439,23 @@ class TelemetryVisualizer:
     def _plot_token_heatmap(self, telemetry: dict[str, Any], ax: plt.Axes) -> None:
         """Plot token usage heatmap by node height and type."""
         try:
-            # Collect token data by level and type
+            # Collect token data by height and type
             token_data: dict[int, dict[str, list[int]]] = {}
 
             for doc_data in telemetry.get("documents", {}).values():
                 for node in doc_data.get("nodes", []):
-                    level = node.get('level', 0)
-                    node_type = node.get('node_type', 'unknown')
+                    # Get height - compatible with both v1.0 (level) and v2.0 (height)
+                    height = node.get('height', node.get('level', 0))
+                    
+                    # Determine node type - v1.0 has explicit node_type, v2.0 derives from height
+                    if 'node_type' in node:
+                        node_type = node['node_type']
+                    else:
+                        # v2.0: derive from height
+                        node_type = 'leaf' if height == 0 else 'summary'
 
-                    if level not in token_data:
-                        token_data[level] = {'leaf': [], 'summary': []}
+                    if height not in token_data:
+                        token_data[height] = {'leaf': [], 'summary': []}
 
                     # Get token count from embedding or summary data
                     tokens = 0
@@ -461,8 +468,8 @@ class TelemetryVisualizer:
                                 tokens = attempt.get('actual_tokens', 0)
                                 break
 
-                    if tokens > 0 and node_type in token_data[level]:
-                        token_data[level][node_type].append(tokens)
+                    if tokens > 0 and node_type in token_data[height]:
+                        token_data[height][node_type].append(tokens)
 
             if not token_data:
                 ax.text(0.5, 0.5, "No token data available",
