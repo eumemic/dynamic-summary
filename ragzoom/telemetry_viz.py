@@ -23,8 +23,11 @@ from ragzoom.telemetry import (
 DISPLAY_DPI = 100  # Screen display resolution for development
 SAVE_DPI = 300  # High resolution for production reports
 DEFAULT_FONT_SIZE = 10  # Base font size optimized for readability
-FIGURE_WIDTH = 20  # Standard figure width - accommodates multiple subplots
-FIGURE_HEIGHT = 24  # Standard figure height - allows vertical layout of 6-7 charts
+# Figure dimensions chosen for comprehensive dashboard layout:
+# - 20 inch width: accommodates side-by-side subplots with readable labels
+# - 24 inch height: allows vertical layout of 6-7 charts without cramping
+FIGURE_WIDTH = 20
+FIGURE_HEIGHT = 24
 
 # API pricing constants (as of January 2025, used for visualization consistency)
 # Note: These are older pricing values maintained for consistency with existing benchmarks
@@ -34,7 +37,7 @@ SUMMARY_OUTPUT_COST_PER_1K = 0.01  # gpt-4o-mini output (older pricing)
 
 # Set style for professional-looking plots
 try:
-    plt.style.use("seaborn-darkgrid")
+    plt.style.use("seaborn-v0_8-darkgrid")
 except OSError:
     # Fallback to a default style if seaborn style is not available
     plt.style.use("ggplot")

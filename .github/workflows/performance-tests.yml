@@ -126,7 +126,7 @@ jobs:
             ragzoom-telemetry --help > /dev/null || {
               echo "❌ ragzoom-telemetry command not found or failed" > report.md
               echo "REGRESSION=true" >> $GITHUB_OUTPUT
-              exit 0
+              exit 1
             }
             
             # Test Python imports
@@ -135,7 +135,7 @@ jobs:
               echo "❌ Failed to import ragzoom.telemetry module" > report.md
               echo "Check that ragzoom package was installed correctly before ragzoom-telemetry" >> report.md
               echo "REGRESSION=true" >> $GITHUB_OUTPUT
-              exit 0
+              exit 1
             }
             
             # Compare benchmarks

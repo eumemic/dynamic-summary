@@ -8,17 +8,17 @@ from pathlib import Path
 import click
 
 # Check for optional telemetry dependencies
+# Note: telemetry_viz.py also imports these but this check provides
+# user-friendly error messages before attempting to use visualization features
 try:
-    import matplotlib
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import pandas as pd
-    import seaborn as sns
-    from matplotlib.gridspec import GridSpec
+    import matplotlib  # noqa: F401
+    import matplotlib.pyplot as plt  # noqa: F401
+    import numpy as np  # noqa: F401
+    import pandas as pd  # noqa: F401
+    import seaborn as sns  # noqa: F401
+    from matplotlib.gridspec import GridSpec  # noqa: F401
 
     TELEMETRY_DEPS_AVAILABLE = True
-    # Suppress unused imports warning - these are checked for availability only
-    _ = (matplotlib, plt, np, pd, sns, GridSpec)
 except ImportError as e:
     TELEMETRY_DEPS_AVAILABLE = False
     MISSING_DEPS = str(e)
