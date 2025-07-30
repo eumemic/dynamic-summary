@@ -782,9 +782,10 @@ Generated from: {data.get('timestamp', 'Unknown')}
         ax.set_title('Embedding Batch Efficiency by Chunk Size')
 
         # Combine legends
-        lns = list(bars) + line
-        labs = ['Avg Batch Size', 'Utilization %']
-        ax.legend(lns, labs, loc='upper left')
+        # bars is a BarContainer, we need to convert it to a list for legend
+        bar_patch = bars[0]  # Get the first bar patch for legend
+        line_obj = line[0]   # line is a list with one Line2D object
+        ax.legend([bar_patch, line_obj], ['Avg Batch Size', 'Utilization %'], loc='upper left')
 
         ax.grid(True, alpha=0.3, axis='y')
 
