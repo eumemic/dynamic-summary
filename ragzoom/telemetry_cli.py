@@ -29,31 +29,11 @@ from ragzoom.telemetry import (
     compute_amplification_metrics,
     compute_batch_efficiency,
 )
-
-# Visualization configuration constants
-DISPLAY_DPI = 100  # Screen display resolution for development
-SAVE_DPI = 300  # High resolution for production reports
-DEFAULT_FONT_SIZE = 10  # Base font size optimized for readability
-FIGURE_WIDTH = 20  # Standard figure width - accommodates multiple subplots
-FIGURE_HEIGHT = 24  # Standard figure height - allows vertical layout of 6-7 charts
-
-# API pricing constants (as of January 2025, used for visualization consistency)
-# Note: These are older pricing values maintained for consistency with existing benchmarks
-EMBEDDING_COST_PER_1K = 0.0001  # text-embedding-3-small (older pricing)
-SUMMARY_INPUT_COST_PER_1K = 0.0025  # gpt-4o-mini input (older pricing)
-SUMMARY_OUTPUT_COST_PER_1K = 0.01  # gpt-4o-mini output (older pricing)
-
-# Default chunk size if unable to determine from benchmark data
-DEFAULT_CHUNK_SIZE = 200
-
-# Emoji display thresholds - these control when to show warning/success indicators
-# They don't trigger regression failures, just visual feedback
-EMOJI_THRESHOLD_NEGLIGIBLE = 1.0  # Changes below this are not highlighted
-EMOJI_THRESHOLD_COST_WARN = 10.0  # Cost increase above this shows warning
-EMOJI_THRESHOLD_COST_GOOD = 5.0  # Cost decrease above this shows success
-EMOJI_THRESHOLD_MINOR = 5.0  # Minor changes worth noting
-EMOJI_THRESHOLD_MODERATE = 10.0  # Moderate changes that warrant attention
-EMOJI_THRESHOLD_MAJOR = 20.0  # Major changes that are concerning
+from ragzoom.telemetry_config import (
+    DEFAULT_CHUNK_SIZE,
+    EMOJI_THRESHOLD_MINOR,
+    EMOJI_THRESHOLD_NEGLIGIBLE,
+)
 
 
 def _check_telemetry_deps() -> None:

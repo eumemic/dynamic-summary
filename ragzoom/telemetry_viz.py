@@ -18,28 +18,22 @@ from ragzoom.telemetry import (
     compute_metrics_from_telemetry,
     get_telemetry_thresholds,
 )
-
-# Visualization configuration constants
-DISPLAY_DPI = 100  # Screen display resolution for development
-SAVE_DPI = 300  # High resolution for production reports
-DEFAULT_FONT_SIZE = 10  # Base font size optimized for readability
-# Figure dimensions chosen for comprehensive dashboard layout:
-# - 20 inch width: accommodates side-by-side subplots with readable labels
-# - 24 inch height: allows vertical layout of 6-7 charts without cramping
-FIGURE_WIDTH = 20
-FIGURE_HEIGHT = 24
-
-# API pricing constants (as of January 2025, used for visualization consistency)
-# Note: These are older pricing values maintained for consistency with existing benchmarks
-EMBEDDING_COST_PER_1K = 0.0001  # text-embedding-3-small (older pricing)
-SUMMARY_INPUT_COST_PER_1K = 0.0025  # gpt-4o-mini input (older pricing)
-SUMMARY_OUTPUT_COST_PER_1K = 0.01  # gpt-4o-mini output (older pricing)
+from ragzoom.telemetry_config import (
+    DEFAULT_FONT_SIZE,
+    DISPLAY_DPI,
+    EMBEDDING_COST_PER_1K,
+    FIGURE_HEIGHT,
+    FIGURE_WIDTH,
+    SAVE_DPI,
+    SUMMARY_INPUT_COST_PER_1K,
+    SUMMARY_OUTPUT_COST_PER_1K,
+)
 
 # Set style for professional-looking plots
 try:
     plt.style.use("seaborn-v0_8-darkgrid")
 except OSError:
-    # Fallback to a default style if seaborn style is not available
+    # Fallback to a default style if seaborn-darkgrid style is deprecated/unavailable
     plt.style.use("ggplot")
 sns.set_palette("husl")
 matplotlib.rcParams["figure.dpi"] = DISPLAY_DPI
