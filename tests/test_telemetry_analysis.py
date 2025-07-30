@@ -39,6 +39,28 @@ class TestTelemetryFormatParsing:
         assert result["format_version"] == "1.0"
         assert "test_doc" in result["documents"]
 
+    def test_parse_v2_telemetry_format(self) -> None:
+        """Test parsing v2.0 telemetry format."""
+        telemetry_data = {
+            "format_version": "2.0",
+            "documents": {
+                "test_doc": {
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "height": 0,  # v2.0 uses height instead of level
+                            "created_at": 1234567890.0,
+                            # v2.0 doesn't have node_type or span fields
+                        }
+                    ]
+                }
+            },
+        }
+
+        result = parse_telemetry_format(telemetry_data)
+        assert result["format_version"] == "2.0"
+        assert "test_doc" in result["documents"]
+
     def test_parse_missing_format_version(self) -> None:
         """Test parsing telemetry without format version."""
         telemetry_data = {"documents": {}}
@@ -48,7 +70,7 @@ class TestTelemetryFormatParsing:
 
     def test_parse_unsupported_format_version(self) -> None:
         """Test parsing telemetry with unsupported format version."""
-        telemetry_data = {"format_version": "2.0", "documents": {}}
+        telemetry_data = {"format_version": "3.0", "documents": {}}
 
         with pytest.raises(
             TelemetryAnalysisError, match="Unsupported telemetry format version"
@@ -150,11 +172,11 @@ class TestAmplificationMetrics:
         # Check output amplification: median of [1.0, 1.1] = 1.05
         assert result["median_output"] == pytest.approx(1.05, rel=0.01)
 
-        # Check by-level breakdown
-        assert 1 in result["by_level"]
-        assert len(result["by_level"][1]["input"]) == 2
-        assert len(result["by_level"][1]["output"]) == 2
-        assert len(result["by_level"][1]["cost"]) == 2
+        # Check by-height breakdown (should work even with v1.0 data)
+        assert 1 in result["by_height"]
+        assert len(result["by_height"][1]["input"]) == 2
+        assert len(result["by_height"][1]["output"]) == 2
+        assert len(result["by_height"][1]["cost"]) == 2
 
     def test_amplification_metrics_empty_data(self, config: RagZoomConfig) -> None:
         """Test amplification metrics with empty telemetry."""
@@ -166,7 +188,7 @@ class TestAmplificationMetrics:
         assert result["median_cost"] == 0.0
         assert result["median_input"] == 0.0
         assert result["median_output"] == 0.0
-        assert result["by_level"] == {}
+        assert result["by_height"] == {}
 
     def test_amplification_metrics_only_leaf_nodes(self, config: RagZoomConfig) -> None:
         """Test amplification metrics with only leaf nodes (no summaries)."""
@@ -574,3 +596,78 @@ class TestFullMetricsComputation:
         # These assertions will FAIL, demonstrating the bug
         assert metrics.input_amplifications[0] == pytest.approx(4.8, rel=0.01)
         assert metrics.output_amplifications[0] == pytest.approx(3.75, rel=0.01)
+
+
+class TestBackwardCompatibility:
+    """Test backward compatibility with v1.0 telemetry format."""
+
+    @pytest.fixture
+    def config(self) -> RagZoomConfig:
+        """Create test config."""
+        return RagZoomConfig(
+            openai_api_key="test-key",
+            embedding_cost_per_1k=0.0001,
+            summary_input_cost_per_1k=0.0025,
+            summary_output_cost_per_1k=0.01,
+        )
+
+    def test_v1_telemetry_with_v2_analysis(self, config: RagZoomConfig) -> None:
+        """Test that v1.0 telemetry can be analyzed with v2.0 code."""
+        # v1.0 telemetry with all legacy fields
+        v1_telemetry = {
+            "format_version": "1.0",
+            "documents": {
+                "test_doc": {
+                    "nodes": [
+                        {
+                            "node_id": "leaf-1",
+                            "node_type": "leaf",
+                            "level": 0,
+                            "span": [0, 100],
+                            "created_at": 1234567890.0,
+                            "embedding": {
+                                "text_tokens": 90,
+                                "batch_size": 2,
+                                "batch_position": 0,
+                                "model": "text-embedding-3-small",
+                                "timestamp": 1234567891.0,  # v1.0 single timestamp
+                            },
+                        },
+                        {
+                            "node_id": "summary-1",
+                            "node_type": "summary",
+                            "level": 1,
+                            "span": [0, 200],
+                            "created_at": 1234567892.0,
+                            "summary_attempts": [
+                                {
+                                    "is_retry": False,  # v1.0 explicit is_retry
+                                    "target_tokens": 100,
+                                    "input_text_tokens": 200,
+                                    "prompt_tokens": 250,
+                                    "completion_tokens": 90,
+                                    "actual_tokens": 85,
+                                    "status": "accepted",
+                                    "model": "gpt-4o-mini",
+                                    "timestamp": 1234567892.5,  # v1.0 single timestamp
+                                }
+                            ],
+                        },
+                    ]
+                }
+            },
+        }
+
+        # All analysis functions should work with v1.0 data
+        amplification = compute_amplification_metrics(v1_telemetry, config)
+        assert amplification["median_input"] > 0
+        assert 1 in amplification["by_height"]  # Should map level to height
+
+        batch_efficiency = compute_batch_efficiency(v1_telemetry)
+        assert batch_efficiency["total_embeddings"] == 1
+
+        retry_patterns = analyze_retry_patterns(v1_telemetry)
+        assert retry_patterns["total_nodes_with_summaries"] == 1
+
+        metrics = compute_metrics_from_telemetry(v1_telemetry, config)
+        assert metrics.chunks_created == 1  # Should identify leaf nodes by node_type
