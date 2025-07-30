@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 try:
     from tqdm import tqdm
@@ -65,7 +65,7 @@ class GlobalProgressTracker:
 
         return operations
 
-    def update(self, n: int = 1, stage: Optional[str] = None) -> None:
+    def update(self, n: int = 1, stage: str | None = None) -> None:
         """Update progress."""
         self.current += n
         if self.pbar:
@@ -92,11 +92,11 @@ class AsyncProgressWrapper:
         self.tracker = tracker
         self.lock = asyncio.Lock()
 
-    async def update(self, n: int = 1, stage: Optional[str] = None) -> None:
+    async def update(self, n: int = 1, stage: str | None = None) -> None:
         """Thread-safe async update."""
         async with self.lock:
             self.tracker.update(n, stage)
 
-    def update_sync(self, n: int = 1, stage: Optional[str] = None) -> None:
+    def update_sync(self, n: int = 1, stage: str | None = None) -> None:
         """Sync update for non-async contexts."""
         self.tracker.update(n, stage)

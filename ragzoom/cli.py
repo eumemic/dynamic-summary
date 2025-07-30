@@ -5,7 +5,6 @@ import logging
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from dotenv import load_dotenv
@@ -76,12 +75,12 @@ def cli(ctx: click.Context) -> None:
 def index(
     ctx: click.Context,
     file_path: str,
-    document_id: Optional[str],
+    document_id: str | None,
     clear: bool,
     no_progress: bool,
     max_concurrent: int,
     validate: bool,
-    telemetry_file: Optional[str],
+    telemetry_file: str | None,
 ) -> None:
     """Index a document from file."""
 
@@ -306,11 +305,11 @@ def query(
     ctx: click.Context,
     query_text: str,
     document_id: str,
-    n_max: Optional[int],
-    token_budget: Optional[int],
+    n_max: int | None,
+    token_budget: int | None,
     debug: bool,
     validate: bool,
-    viz_width: Optional[int],
+    viz_width: int | None,
     viz_coords: str,
 ) -> None:
     """Query the system and get a summary."""
@@ -503,7 +502,7 @@ def serve(host: str, port: int, reload: bool) -> None:
 @click.option("--document-id", "-d", help="Clear only a specific document")
 @click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
-def clear(ctx: click.Context, document_id: Optional[str], confirm: bool) -> None:
+def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
     """Clear data from the database.
 
     Without --document-id, clears all data.
@@ -627,8 +626,8 @@ def export(ctx: click.Context, input_file: str, output_file: str, format: str) -
         sys.exit(1)
 
 
-# Telemetry commands have been moved to the ragzoom-telemetry package
-# Install with: pip install ./ragzoom-telemetry
+# Telemetry commands are available via optional dependencies
+# Install with: pip install ragzoom[telemetry]
 # Usage: ragzoom-telemetry analyze|compare|visualize
 
 
