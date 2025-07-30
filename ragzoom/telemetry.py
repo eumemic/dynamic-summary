@@ -144,32 +144,48 @@ def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -
             summary_attempts = node.get("summary_attempts", [])
             level = node.get("level", 0)
 
-            # Process accepted attempts only
-            for attempt in summary_attempts:
-                if attempt.get("status") != "accepted":
-                    continue
+            # Track cumulative tokens for this node across all attempts
+            node_total_prompt_tokens = 0
+            node_total_completion_tokens = 0
+            node_input_text_tokens = 0
+            node_final_summary_tokens = 0
+            has_accepted = False
 
-                # Extract attempt data
+            # Accumulate tokens from ALL attempts
+            for attempt in summary_attempts:
                 prompt_tokens = attempt.get("prompt_tokens", 0)
                 completion_tokens = attempt.get("completion_tokens", 0)
-                input_text_tokens = attempt.get("input_text_tokens", 0)
-                actual_tokens = attempt.get("actual_tokens", 0)
 
-                if input_text_tokens == 0:
-                    continue  # Skip invalid data
+                node_total_prompt_tokens += prompt_tokens
+                node_total_completion_tokens += completion_tokens
 
-                # Calculate amplification factors with consistent zero checks
-                input_amplification = prompt_tokens / input_text_tokens
+                # Track the input text tokens (should be same across attempts)
+                if node_input_text_tokens == 0:
+                    node_input_text_tokens = attempt.get("input_text_tokens", 0)
+
+                # Track the final accepted attempt's output
+                if attempt.get("status") == "accepted":
+                    has_accepted = True
+                    node_final_summary_tokens = attempt.get("actual_tokens", 0)
+
+            # Calculate amplification using ALL attempts' tokens
+            if has_accepted and node_input_text_tokens > 0:
+                # Input amplification = total prompt tokens / original text tokens
+                input_amplification = node_total_prompt_tokens / node_input_text_tokens
+
+                # Output amplification = total completion tokens / final summary tokens
                 output_amplification = (
-                    completion_tokens / actual_tokens if actual_tokens > 0 else 1.0
+                    node_total_completion_tokens / node_final_summary_tokens
+                    if node_final_summary_tokens > 0
+                    else 1.0
                 )
 
-                # Calculate cost-weighted amplification using helper
+                # Calculate cost-weighted amplification using cumulative tokens
                 cost_amplification = _calculate_cost_amplification(
-                    prompt_tokens,
-                    completion_tokens,
-                    input_text_tokens,
-                    actual_tokens,
+                    node_total_prompt_tokens,
+                    node_total_completion_tokens,
+                    node_input_text_tokens,
+                    node_final_summary_tokens,
                     config,
                 )
 
@@ -495,53 +511,71 @@ def compute_metrics_from_telemetry(
 
             # Process summary attempts
             summary_attempts = node.get("summary_attempts", [])
+
+            # Track cumulative tokens for this node across all attempts
+            node_total_prompt_tokens = 0
+            node_total_completion_tokens = 0
+            node_input_text_tokens = 0
+            node_final_summary_tokens = 0
+            final_attempt = None
+
             for attempt in summary_attempts:
                 metrics.summary_api_calls += 1
-                metrics.total_summary_prompt_tokens += attempt.get("prompt_tokens", 0)
-                metrics.total_summary_completion_tokens += attempt.get(
-                    "completion_tokens", 0
-                )
-
-                # Only process accepted attempts for accuracy and amplification
-                if attempt.get("status") != "accepted":
-                    continue
-
-                target_tokens = attempt.get("target_tokens", 0)
-                actual_tokens = attempt.get("actual_tokens", 0)
-
-                # Track summary accuracy
-                if target_tokens > 0:
-                    if target_tokens not in summary_stats_by_target:
-                        summary_stats_by_target[target_tokens] = SummaryStats()
-
-                    summary_stats_by_target[target_tokens].add_summary(
-                        target_tokens, actual_tokens
-                    )
-
-                # Calculate amplification factors
-                input_text_tokens = attempt.get("input_text_tokens", 0)
                 prompt_tokens = attempt.get("prompt_tokens", 0)
                 completion_tokens = attempt.get("completion_tokens", 0)
 
-                if input_text_tokens > 0:
-                    input_amplification = prompt_tokens / input_text_tokens
-                    output_amplification = (
-                        completion_tokens / actual_tokens if actual_tokens > 0 else 1.0
-                    )
+                metrics.total_summary_prompt_tokens += prompt_tokens
+                metrics.total_summary_completion_tokens += completion_tokens
 
-                    # Calculate cost-weighted amplification using helper
-                    cost_amplification = _calculate_cost_amplification(
-                        prompt_tokens,
-                        completion_tokens,
-                        input_text_tokens,
-                        actual_tokens,
-                        config,
-                    )
+                # Accumulate tokens for amplification calculation
+                node_total_prompt_tokens += prompt_tokens
+                node_total_completion_tokens += completion_tokens
 
-                    # Record amplifications
-                    metrics.input_amplifications.append(input_amplification)
-                    metrics.output_amplifications.append(output_amplification)
-                    metrics.cost_amplifications.append(cost_amplification)
+                # Track the input text tokens (should be same across attempts)
+                if node_input_text_tokens == 0:
+                    node_input_text_tokens = attempt.get("input_text_tokens", 0)
+
+                # Track the final accepted attempt
+                if attempt.get("status") == "accepted":
+                    final_attempt = attempt
+                    node_final_summary_tokens = attempt.get("actual_tokens", 0)
+
+            # Calculate amplification using ALL attempts' tokens
+            if summary_attempts and node_input_text_tokens > 0 and final_attempt:
+                # Input amplification = total prompt tokens / original text tokens
+                input_amplification = node_total_prompt_tokens / node_input_text_tokens
+
+                # Output amplification = total completion tokens / final summary tokens
+                output_amplification = (
+                    node_total_completion_tokens / node_final_summary_tokens
+                    if node_final_summary_tokens > 0
+                    else 1.0
+                )
+
+                # Calculate cost-weighted amplification using cumulative tokens
+                cost_amplification = _calculate_cost_amplification(
+                    node_total_prompt_tokens,
+                    node_total_completion_tokens,
+                    node_input_text_tokens,
+                    node_final_summary_tokens,
+                    config,
+                )
+
+                # Record amplifications
+                metrics.input_amplifications.append(input_amplification)
+                metrics.output_amplifications.append(output_amplification)
+                metrics.cost_amplifications.append(cost_amplification)
+
+                # Track summary accuracy for the final accepted attempt
+                target_tokens = final_attempt.get("target_tokens", 0)
+                if target_tokens > 0:
+                    config_leaf_tokens = config.leaf_tokens
+                    if config_leaf_tokens not in summary_stats_by_target:
+                        summary_stats_by_target[config_leaf_tokens] = SummaryStats()
+
+                    summary_stats_by_target[config_leaf_tokens].add_summary(
+                        config_leaf_tokens, node_final_summary_tokens
+                    )
 
             # Count chunks (leaf nodes)
             if node.get("node_type") == "leaf":
