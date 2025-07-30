@@ -217,11 +217,8 @@ class TelemetryVisualizer:
                 labels = list(labels_tuple)
                 colors = list(colors_tuple)
 
-                pie_result = ax.pie(costs, labels=labels, colors=colors,
-                                   autopct='%1.1f%%', startangle=90)
-                wedges = pie_result[0]
-                texts = pie_result[1] if len(pie_result) > 1 else []
-                autotexts = pie_result[2] if len(pie_result) > 2 else []
+                ax.pie(costs, labels=labels, colors=colors,
+                       autopct='%1.1f%%', startangle=90)
                 ax.set_title('Cost Breakdown by API Type')
 
                 # Add total cost annotation
