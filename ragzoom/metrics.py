@@ -926,7 +926,7 @@ class IndexingMetricsReporter:
         self._update_memory_usage()
 
     def record_tree_level_complete(self, height: int, nodes_created: int) -> None:
-        """Called when a tree level is built.
+        """Called when a tree height is complete.
 
         Args:
             height: Tree height (0 = leaves)

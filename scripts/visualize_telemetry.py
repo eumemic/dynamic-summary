@@ -153,28 +153,28 @@ class TelemetryVisualizer:
         """Plot amplification metrics by tree height."""
         try:
             amplification = compute_amplification_metrics(telemetry, config)
-            by_level = amplification.get("by_height", {})
+            by_height = amplification.get("by_height", {})
 
-            if not by_level:
+            if not by_height:
                 ax.text(0.5, 0.5, "No amplification data available",
                        ha='center', va='center', transform=ax.transAxes)
-                ax.set_title("Amplification by Tree Level")
+                ax.set_title("Amplification by Tree Height")
                 return
 
             # Prepare data for plotting
-            levels = sorted(by_level.keys())
+            heights = sorted(by_height.keys())
             input_medians = []
             output_medians = []
             cost_medians = []
 
-            for level in levels:
-                level_data = by_level[level]
-                input_medians.append(np.median(level_data.get("input", [1.0])))
-                output_medians.append(np.median(level_data.get("output", [1.0])))
-                cost_medians.append(np.median(level_data.get("cost", [1.0])))
+            for height in heights:
+                height_data = by_height[height]
+                input_medians.append(np.median(height_data.get("input", [1.0])))
+                output_medians.append(np.median(height_data.get("output", [1.0])))
+                cost_medians.append(np.median(height_data.get("cost", [1.0])))
 
             # Plot lines
-            x = np.arange(len(levels))
+            x = np.arange(len(heights))
             width = 0.25
 
             ax.bar(x - width, input_medians, width, label='Input Amplification', alpha=0.8)
@@ -185,14 +185,14 @@ class TelemetryVisualizer:
             ax.set_ylabel('Amplification Factor')
             ax.set_title('Median Amplification Factors by Tree Height')
             ax.set_xticks(x)
-            ax.set_xticklabels([f"Height {level}" for level in levels])
+            ax.set_xticklabels([f"Height {height}" for height in heights])
             ax.legend()
             ax.axhline(y=1.0, color='red', linestyle='--', alpha=0.5, label='Baseline (1.0)')
             ax.grid(True, alpha=0.3)
 
         except Exception as e:
             ax.text(0.5, 0.5, f"Error: {e}", ha='center', va='center', transform=ax.transAxes)
-            ax.set_title("Amplification by Tree Level (Error)")
+            ax.set_title("Amplification by Tree Height (Error)")
 
     def _plot_cost_breakdown(self, telemetry: dict[str, Any], config: RagZoomConfig, ax: plt.Axes) -> None:
         """Plot cost breakdown pie chart."""
@@ -381,10 +381,20 @@ class TelemetryVisualizer:
             nodes_data = []
             for doc_data in telemetry.get("documents", {}).values():
                 for node in doc_data.get("nodes", []):
+                    # Get height - compatible with both v1.0 (level) and v2.0 (height)
+                    height = node.get('height', node.get('level', 0))
+                    
+                    # Determine node type - v1.0 has explicit node_type, v2.0 derives from height
+                    if 'node_type' in node:
+                        node_type = node['node_type']
+                    else:
+                        # v2.0: derive from height
+                        node_type = 'leaf' if height == 0 else 'summary'
+                    
                     nodes_data.append({
                         'created_at': node.get('created_at', 0),
-                        'height': node.get('height', 0),
-                        'type': 'leaf' if node.get('height', 0) == 0 else 'summary'
+                        'height': height,
+                        'type': node_type
                     })
 
             if not nodes_data:
@@ -414,7 +424,7 @@ class TelemetryVisualizer:
             ax.legend(handles=[blue_patch, red_patch])
 
             ax.set_xlabel('Time (seconds)')
-            ax.set_ylabel('Tree Level')
+            ax.set_ylabel('Tree Height')
             ax.set_title('Node Creation Timeline')
             ax.grid(True, alpha=0.3)
 
@@ -461,15 +471,15 @@ class TelemetryVisualizer:
                 return
 
             # Prepare data for heatmap
-            levels = sorted(token_data.keys())
+            heights = sorted(token_data.keys())
             types = ['leaf', 'summary']
 
             # Calculate average tokens for each cell
             heatmap_data: list[list[float]] = []
             for node_type in types:
                 row: list[float] = []
-                for level in levels:
-                    tokens_list: list[int] = token_data[level].get(node_type, [])
+                for height in heights:
+                    tokens_list: list[int] = token_data[height].get(node_type, [])
                     avg_tokens = float(np.mean(tokens_list)) if tokens_list else 0.0
                     row.append(avg_tokens)
                 heatmap_data.append(row)
@@ -478,9 +488,9 @@ class TelemetryVisualizer:
             im = ax.imshow(heatmap_data, cmap='YlOrRd', aspect='auto')
 
             # Set ticks and labels
-            ax.set_xticks(np.arange(len(levels)))
+            ax.set_xticks(np.arange(len(heights)))
             ax.set_yticks(np.arange(len(types)))
-            ax.set_xticklabels([f"Level {level}" for level in levels])
+            ax.set_xticklabels([f"Height {height}" for height in heights])
             ax.set_yticklabels(['Leaf Nodes', 'Summary Nodes'])
 
             # Add colorbar
@@ -489,11 +499,11 @@ class TelemetryVisualizer:
 
             # Add text annotations
             for i in range(len(types)):
-                for j in range(len(levels)):
+                for j in range(len(heights)):
                     ax.text(j, i, f'{heatmap_data[i][j]:.0f}',
                            ha="center", va="center", color="black" if heatmap_data[i][j] < 50 else "white")
 
-            ax.set_title('Average Token Count by Node Type and Level')
+            ax.set_title('Average Token Count by Node Type and Height')
             ax.set_xlabel('Tree Height')
 
         except Exception as e:
@@ -533,12 +543,12 @@ Generated from: {data.get('timestamp', 'Unknown')}
 
 ### By Level
 """
-            for level in sorted(amplification.get('by_level', {}).keys()):
-                level_data = amplification['by_level'][level]
-                report += f"\n#### Level {level}\n"
-                report += f"- Input: {np.median(level_data.get('input', [0])):.2f}x\n"
-                report += f"- Output: {np.median(level_data.get('output', [0])):.2f}x\n"
-                report += f"- Cost: {np.median(level_data.get('cost', [0])):.2f}x\n"
+            for height in sorted(amplification.get('by_height', {}).keys()):
+                height_data = amplification.get('by_height', {})[height]
+                report += f"\n#### Height {height}\n"
+                report += f"- Input: {np.median(height_data.get('input', [0])):.2f}x\n"
+                report += f"- Output: {np.median(height_data.get('output', [0])):.2f}x\n"
+                report += f"- Cost: {np.median(height_data.get('cost', [0])):.2f}x\n"
 
             report += f"""
 ## Batch Efficiency
