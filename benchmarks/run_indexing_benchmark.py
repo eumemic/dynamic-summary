@@ -184,6 +184,7 @@ class BenchmarkRunner:
                             "total_nodes": len(doc_telemetry),
                             "leaf_nodes": sum(1 for n in doc_telemetry if n["node_type"] == "leaf"),
                             "summary_nodes": sum(1 for n in doc_telemetry if n["node_type"] == "summary"),
+                            "source_document_tokens": metrics.source_document_tokens,
                         }
                     }
 
