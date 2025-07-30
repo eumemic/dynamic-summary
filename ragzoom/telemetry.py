@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 # Current supported telemetry format version
 SUPPORTED_TELEMETRY_VERSIONS = ["1.0"]
 
+# Default token estimate for leaf nodes when source tokens are not available
+DEFAULT_LEAF_TOKEN_ESTIMATE = 150
+
 
 class TelemetryAnalysisError(Exception):
     """Raised when telemetry analysis encounters an error."""
@@ -111,9 +114,7 @@ def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -
                     continue  # Skip invalid data
 
                 # Calculate amplification factors with consistent zero checks
-                input_amplification = (
-                    prompt_tokens / input_text_tokens if input_text_tokens > 0 else 1.0
-                )
+                input_amplification = prompt_tokens / input_text_tokens
                 output_amplification = (
                     completion_tokens / actual_tokens if actual_tokens > 0 else 1.0
                 )
@@ -169,7 +170,15 @@ def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -
 
 
 def _compute_percentile(values: list[float], percentile: float) -> float:
-    """Compute percentile using linear interpolation (consistent with metrics.py)."""
+    """Compute percentile using linear interpolation (consistent with metrics.py).
+
+    Args:
+        values: List of numeric values
+        percentile: Percentile to compute (0.0 to 1.0, e.g., 0.9 for 90th percentile)
+
+    Returns:
+        The computed percentile value
+    """
     if not values:
         return 0.0
 
@@ -279,12 +288,16 @@ def compute_batch_efficiency(telemetry_data: dict) -> dict:
     if batch_sizes:
         avg_batch_size = sum(batch_sizes) / len(batch_sizes)
         result["avg_batch_size"] = avg_batch_size
-        # Batch utilization calculation assumes the optimal batch size is the
-        # maximum observed batch size in this telemetry data. This provides a
-        # relative measure of how well batching was utilized compared to the
-        # best case observed in this specific run.
-        max_batch_size = max(batch_sizes) if batch_sizes else 1
-        result["batch_utilization"] = (avg_batch_size / max_batch_size) * 100
+        # Batch utilization calculation uses the 95th percentile batch size as
+        # the reference point. This provides a more realistic measure than using
+        # the maximum, as it avoids skewing from outliers while still representing
+        # high utilization observed in practice.
+        optimal_batch_size = _compute_percentile(batch_sizes, 0.95)
+        result["batch_utilization"] = (
+            (avg_batch_size / optimal_batch_size) * 100
+            if optimal_batch_size > 0
+            else 0.0
+        )
 
     return result
 
@@ -303,7 +316,8 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
         - retry_attempts: Number of retry attempts
         - retry_success_rate: Percentage of retries that succeeded
         - rejection_reasons: Distribution of rejection reasons
-        - cost_overhead: Additional cost from retries (requires config)
+        - nodes_with_retries: Number of nodes that required retries
+        - total_nodes_with_summaries: Total number of nodes with summary attempts
     """
     parsed_data = parse_telemetry_format(telemetry_data)
 
@@ -465,11 +479,7 @@ def compute_metrics_from_telemetry(
                 completion_tokens = attempt.get("completion_tokens", 0)
 
                 if input_text_tokens > 0:
-                    input_amplification = (
-                        prompt_tokens / input_text_tokens
-                        if input_text_tokens > 0
-                        else 1.0
-                    )
+                    input_amplification = prompt_tokens / input_text_tokens
                     output_amplification = (
                         completion_tokens / actual_tokens if actual_tokens > 0 else 1.0
                     )
@@ -514,9 +524,9 @@ def compute_metrics_from_telemetry(
                 for node in doc_data.get("nodes", [])
                 if node.get("node_type") == "leaf"
             )
-            # Rough estimate: assume average leaf size of 150 tokens
+            # Rough estimate: assume average leaf size
             # This is only used for old telemetry data without metadata
-            estimated_tokens = leaf_count * 150
+            estimated_tokens = leaf_count * DEFAULT_LEAF_TOKEN_ESTIMATE
             total_source_tokens += estimated_tokens
             logger.warning(
                 f"Source tokens not found in telemetry metadata, using estimate: {estimated_tokens}"
