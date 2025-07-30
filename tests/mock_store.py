@@ -3,7 +3,6 @@
 import hashlib
 from collections import OrderedDict, defaultdict, deque
 from types import SimpleNamespace
-from typing import Optional
 from unittest.mock import MagicMock
 
 
@@ -83,11 +82,11 @@ class SimpleMockStore:
         embedding: list[float],
         span_start: int,
         span_end: int,
-        parent_id: Optional[str] = None,
-        summary: Optional[str] = None,
-        document_id: Optional[str] = None,
-        left_child_id: Optional[str] = None,
-        right_child_id: Optional[str] = None,
+        parent_id: str | None = None,
+        summary: str | None = None,
+        document_id: str | None = None,
+        left_child_id: str | None = None,
+        right_child_id: str | None = None,
         **kwargs,
     ) -> None:
         """Add a node to the mock store."""
@@ -131,7 +130,7 @@ class SimpleMockStore:
         # Update mock session results
         self._update_mock_results()
 
-    def get_node(self, node_id: str) -> Optional[SimpleNamespace]:
+    def get_node(self, node_id: str) -> SimpleNamespace | None:
         """Get a node by ID."""
         # Check cache first
         if node_id in self.node_cache:
@@ -156,7 +155,7 @@ class SimpleMockStore:
 
     def get_children(
         self, parent_id: str
-    ) -> tuple[Optional[SimpleNamespace], Optional[SimpleNamespace]]:
+    ) -> tuple[SimpleNamespace | None, SimpleNamespace | None]:
         """Get children of a node."""
         parent = self.nodes.get(parent_id)
         if not parent:
@@ -181,9 +180,7 @@ class SimpleMockStore:
         """Get multiple nodes by their IDs."""
         return [self.nodes[nid] for nid in node_ids if nid in self.nodes]
 
-    def get_leaf_nodes(
-        self, document_id: Optional[str] = None
-    ) -> list[SimpleNamespace]:
+    def get_leaf_nodes(self, document_id: str | None = None) -> list[SimpleNamespace]:
         """Get all leaf nodes (nodes without summary)."""
         leaves = [n for n in self.nodes.values() if n.summary is None]
 
@@ -192,9 +189,7 @@ class SimpleMockStore:
 
         return sorted(leaves, key=lambda x: x.span_start)
 
-    def get_root_node(
-        self, document_id: Optional[str] = None
-    ) -> Optional[SimpleNamespace]:
+    def get_root_node(self, document_id: str | None = None) -> SimpleNamespace | None:
         """Get the root node (node without parent)."""
         candidates = [n for n in self.nodes.values() if n.parent_id is None]
 
@@ -207,8 +202,8 @@ class SimpleMockStore:
         return None
 
     def get_root_node_for_document(
-        self, document_id: Optional[str] = None
-    ) -> Optional[SimpleNamespace]:
+        self, document_id: str | None = None
+    ) -> SimpleNamespace | None:
         """Get the root node for a specific document from the mock store."""
         return self.get_root_node(document_id=document_id)
 
@@ -285,7 +280,7 @@ class SimpleMockStore:
         return node.parent_id is None
 
     def get_all_nodes_for_document(
-        self, document_id: Optional[str]
+        self, document_id: str | None
     ) -> list[SimpleNamespace]:
         """Get all nodes for a document from the mock store."""
         if not document_id:
@@ -296,8 +291,8 @@ class SimpleMockStore:
         self,
         query_embedding: list[float],
         n_results: int = 10,
-        where: Optional[dict] = None,
-        where_document: Optional[dict] = None,
+        where: dict | None = None,
+        where_document: dict | None = None,
         **kwargs,
     ) -> list[tuple[str, float, dict]]:
         """Simple similarity search implementation."""
@@ -383,9 +378,7 @@ class SimpleMockStore:
         """Set mock scores for testing."""
         self.mock_scores = scores
 
-    def get_pinned_nodes(
-        self, depth_max: Optional[int] = None
-    ) -> list[SimpleNamespace]:
+    def get_pinned_nodes(self, depth_max: int | None = None) -> list[SimpleNamespace]:
         """Get all pinned nodes."""
         pinned = [self.nodes[nid] for nid in self.pinned_nodes if nid in self.nodes]
 
@@ -410,7 +403,7 @@ class SimpleMockStore:
     def add_document(
         self,
         document_id: str,
-        file_path: Optional[str],
+        file_path: str | None,
         content_hash: str,
         chunk_count: int,
     ) -> None:
@@ -441,7 +434,7 @@ class SimpleMockStore:
         """Compute hash of content."""
         return hashlib.sha256(content.encode()).hexdigest()
 
-    def find_existing_document(self, content_hash: str) -> Optional[str]:
+    def find_existing_document(self, content_hash: str) -> str | None:
         """Find document by content hash."""
         for doc in self.documents.values():
             if doc.content_hash == content_hash:

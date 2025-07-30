@@ -1,7 +1,6 @@
 """Assembly logic for creating coherent summaries from tiling nodes."""
 
 import logging
-from typing import Optional
 
 import tiktoken
 from openai import OpenAI
@@ -34,7 +33,7 @@ class Assembler:
     def assemble_dp(
         self,
         tiling: list[str],  # List of node IDs
-        nodes: Optional[dict[str, "TreeNode"]] = None,
+        nodes: dict[str, "TreeNode"] | None = None,
     ) -> str:
         """Assemble a tiling from a list of node IDs."""
         if not tiling:
@@ -46,11 +45,11 @@ class Assembler:
         return "\n\n".join(texts)
 
     def _get_text_for_node(
-        self, node_id: str, nodes: Optional[dict[str, "TreeNode"]] = None
+        self, node_id: str, nodes: dict[str, "TreeNode"] | None = None
     ) -> str:
         """Extract the text for a single node."""
         # Use pre-loaded nodes if available, otherwise fall back to store
-        node: Optional[TreeNode]
+        node: TreeNode | None
         if nodes and node_id in nodes:
             node = nodes[node_id]
         else:

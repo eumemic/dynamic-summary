@@ -39,7 +39,7 @@ class DynamicTilingGenerator:
     def __init__(self, config: RagZoomConfig):
         self.config = config
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
-        self._memo_cache: dict[tuple[Optional[str], int], Tiling] = {}
+        self._memo_cache: dict[tuple[str | None, int], Tiling] = {}
         self._subtree_relevance_cache: dict[str, float] = {}
         self._nodes: dict[str, TreeNode] = {}  # Will be set per tiling request
 
