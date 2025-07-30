@@ -5,7 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 # Add the parent directory to path for importing ragzoom modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -27,11 +27,21 @@ def load_benchmark_results(results_dir: Path) -> dict[int, dict]:
     """Load benchmark results from JSON files."""
     results = {}
 
-    for file in results_dir.glob("metrics_*_tokens.json"):
+    # Support both old naming (metrics_*_tokens.json) and new naming (telemetry.json)
+    json_files = list(results_dir.glob("metrics_*_tokens.json")) + list(results_dir.glob("telemetry*.json"))
+
+    for file in json_files:
         try:
             with open(file) as f:
                 data = json.load(f)
-                chunk_size = data["config"]["leaf_tokens"]
+
+                # Extract chunk size from config
+                if "config" in data:
+                    chunk_size = data["config"]["leaf_tokens"]
+                else:
+                    # Old format fallback
+                    chunk_size = data.get("document", {}).get("chunks_created", 200)
+
                 results[chunk_size] = data
         except Exception as e:
             print(f"Error loading {file}: {e}", file=sys.stderr)
@@ -46,9 +56,9 @@ def detect_telemetry_support(benchmark_data: dict) -> bool:
 
 def get_amplification_metrics_from_telemetry(
     benchmark_data: dict, chunk_size: int
-) -> Optional[Tuple[dict, str]]:
+) -> Optional[tuple[dict, str]]:
     """Extract amplification metrics from telemetry data if available.
-    
+
     Returns:
         Tuple of (amplification_metrics, source_indicator) or None if unavailable
     """
@@ -73,9 +83,9 @@ def get_amplification_metrics_from_telemetry(
         return None
 
 
-def get_amplification_metrics_fallback(benchmark_data: dict) -> Optional[Tuple[dict, str]]:
+def get_amplification_metrics_fallback(benchmark_data: dict) -> Optional[tuple[dict, str]]:
     """Get amplification metrics from aggregated data as fallback.
-    
+
     Returns:
         Tuple of (amplification_metrics, source_indicator) or None if unavailable
     """

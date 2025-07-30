@@ -35,7 +35,70 @@ def load_single_benchmark(filepath: Path) -> tuple[int, dict]:
     with open(filepath) as f:
         data = json.load(f)
 
-    # The ragzoom CLI output is the direct metrics dictionary
+    # Handle new telemetry format
+    if "telemetry" in data and "config" in data:
+        # New format with telemetry
+        chunk_size = data["config"]["leaf_tokens"]
+
+        # Import telemetry analysis functions
+        from ragzoom.config import RagZoomConfig
+        from ragzoom.telemetry import (
+            analyze_retry_patterns,
+            compute_amplification_metrics,
+            compute_batch_efficiency,
+        )
+
+        # Create config for analysis
+        config = RagZoomConfig(
+            openai_api_key="dummy",  # Not needed for analysis
+            leaf_tokens=chunk_size,
+            summary_input_cost_per_1k=0.0025,
+            summary_output_cost_per_1k=0.01,
+        )
+
+        # Compute metrics from telemetry
+        telemetry = data["telemetry"]
+        amplification = compute_amplification_metrics(telemetry, config)
+        batch_efficiency = compute_batch_efficiency(telemetry)
+        retry_patterns = analyze_retry_patterns(telemetry)
+
+        # Build metrics dict in old format for compatibility
+        metrics = {
+            "timing": {
+                "total_duration_seconds": 0,  # Not available in telemetry
+                "tokens_per_second": 0,
+                "time_per_1k_tokens": 0,
+            },
+            "document": data.get("document", {}),
+            "api_usage": {
+                "total_calls": batch_efficiency["total_batches"] + retry_patterns["total_attempts"],
+                "embedding_calls": batch_efficiency["total_batches"],
+                "summary_calls": retry_patterns["total_attempts"],
+                "embedding_tokens": batch_efficiency["total_embeddings"],
+                "summary_prompt_tokens": 0,  # Would need computation
+                "summary_completion_tokens": 0,  # Would need computation
+            },
+            "efficiency": {
+                "avg_embedding_batch_size": batch_efficiency["avg_batch_size"],
+                "batch_utilization": batch_efficiency["batch_utilization"],
+                "embedding_tokens_per_1k": 0,  # Would need computation
+                "summary_tokens_per_1k": 0,  # Would need computation
+                "api_calls_per_1k": 0,  # Would need computation
+                "cost_per_1k_tokens": 0,  # Would need computation
+            },
+            "amplification": {
+                "median_cost": amplification["median_cost"],
+                "cost_p90": amplification["cost_p90"],
+                "cost_p95": amplification["cost_p95"],
+                "median_input": amplification["median_input"],
+                "median_output": amplification["median_output"],
+            },
+            "summary_accuracy": {},  # Would need more complex analysis
+        }
+
+        return chunk_size, metrics
+
+    # Old format - the data IS the metrics
     # Try to infer chunk size from summary_accuracy keys
     chunk_size = None
 
