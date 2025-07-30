@@ -15,7 +15,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # Add parent directory to path for importing ragzoom
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -38,6 +38,7 @@ from ragzoom.telemetry import (
     compute_amplification_metrics,
     compute_batch_efficiency,
     compute_metrics_from_telemetry,
+    get_telemetry_thresholds,
 )
 
 # Set style for professional-looking plots
@@ -52,13 +53,6 @@ matplotlib.rcParams['savefig.dpi'] = 300
 matplotlib.rcParams['font.size'] = 10
 
 
-# Constants for thresholds and warnings
-HIGH_COST_AMPLIFICATION_THRESHOLD = 2.0
-LOW_BATCH_UTILIZATION_THRESHOLD = 50
-HIGH_RETRY_RATE_THRESHOLD = 20
-GOOD_COST_AMPLIFICATION_THRESHOLD = 1.5
-GOOD_BATCH_UTILIZATION_THRESHOLD = 70
-
 class TelemetryVisualizer:
     """Generate visualizations from telemetry data."""
 
@@ -66,11 +60,12 @@ class TelemetryVisualizer:
         """Initialize visualizer with output directory."""
         self.output_dir = output_dir
         self.output_dir.mkdir(exist_ok=True, parents=True)
+        self.thresholds = get_telemetry_thresholds()
 
-    def load_benchmark_data(self, file_path: Path) -> Dict[str, Any]:
+    def load_benchmark_data(self, file_path: Path) -> dict[str, Any]:
         """Load benchmark data from JSON file."""
         with open(file_path) as f:
-            data: Dict[str, Any] = json.load(f)
+            data: dict[str, Any] = json.load(f)
             return data
 
     def visualize_single_benchmark(self, benchmark_path: Path, output_format: str = "png") -> None:
@@ -134,14 +129,14 @@ class TelemetryVisualizer:
         # Also generate markdown report
         self._generate_markdown_report(data, telemetry, config, chunk_size)
 
-    def _create_config_from_metrics(self, metrics: Dict[str, Any]) -> RagZoomConfig:
+    def _create_config_from_metrics(self, metrics: dict[str, Any]) -> RagZoomConfig:
         """Create a config object from metrics data for cost calculations.
-        
+
         Uses default values based on typical API costs as of January 2025:
         - text-embedding-3-small: $0.02 per 1M tokens ($0.00002 per 1K)
         - gpt-4o-mini input: $0.15 per 1M tokens ($0.00015 per 1K)
         - gpt-4o-mini output: $0.60 per 1M tokens ($0.0006 per 1K)
-        
+
         Note: These are default values for visualization purposes. Actual costs
         in the benchmark data were calculated using the exact costs at runtime.
         """
@@ -154,7 +149,7 @@ class TelemetryVisualizer:
             summary_output_cost_per_1k=0.01,   # gpt-4o-mini output (older pricing)
         )
 
-    def _plot_amplification_by_level(self, telemetry: Dict[str, Any], config: RagZoomConfig, ax: plt.Axes) -> None:
+    def _plot_amplification_by_level(self, telemetry: dict[str, Any], config: RagZoomConfig, ax: plt.Axes) -> None:
         """Plot amplification metrics by tree level."""
         try:
             amplification = compute_amplification_metrics(telemetry, config)
@@ -199,7 +194,7 @@ class TelemetryVisualizer:
             ax.text(0.5, 0.5, f"Error: {e}", ha='center', va='center', transform=ax.transAxes)
             ax.set_title("Amplification by Tree Level (Error)")
 
-    def _plot_cost_breakdown(self, telemetry: Dict[str, Any], config: RagZoomConfig, ax: plt.Axes) -> None:
+    def _plot_cost_breakdown(self, telemetry: dict[str, Any], config: RagZoomConfig, ax: plt.Axes) -> None:
         """Plot cost breakdown pie chart."""
         try:
             metrics = compute_metrics_from_telemetry(telemetry, config)
@@ -239,7 +234,7 @@ class TelemetryVisualizer:
             ax.text(0.5, 0.5, f"Error: {e}", ha='center', va='center', transform=ax.transAxes)
             ax.set_title("Cost Breakdown (Error)")
 
-    def _plot_batch_efficiency(self, telemetry: Dict[str, Any], ax: plt.Axes) -> None:
+    def _plot_batch_efficiency(self, telemetry: dict[str, Any], ax: plt.Axes) -> None:
         """Plot embedding batch efficiency."""
         try:
             batch_data = compute_batch_efficiency(telemetry)
@@ -268,7 +263,7 @@ class TelemetryVisualizer:
             ax.text(0.5, 0.5, f"Error: {e}", ha='center', va='center', transform=ax.transAxes)
             ax.set_title("Batch Efficiency (Error)")
 
-    def _plot_retry_patterns(self, telemetry: Dict[str, Any], ax: plt.Axes) -> None:
+    def _plot_retry_patterns(self, telemetry: dict[str, Any], ax: plt.Axes) -> None:
         """Plot retry patterns analysis."""
         try:
             retry_data = analyze_retry_patterns(telemetry)
@@ -326,7 +321,7 @@ class TelemetryVisualizer:
             ax.text(0.5, 0.5, f"Error: {e}", ha='center', va='center', transform=ax.transAxes)
             ax.set_title("Retry Patterns (Error)")
 
-    def _plot_summary_accuracy(self, metrics: Dict[str, Any], ax: plt.Axes) -> None:
+    def _plot_summary_accuracy(self, metrics: dict[str, Any], ax: plt.Axes) -> None:
         """Plot summary accuracy distribution."""
         accuracy_data = metrics.get("summary_accuracy", {})
 
@@ -379,7 +374,7 @@ class TelemetryVisualizer:
                    ha='center', va='center', transform=ax.transAxes)
             ax.set_title("Summary Accuracy Distribution")
 
-    def _plot_node_timeline(self, telemetry: Dict[str, Any], ax: plt.Axes) -> None:
+    def _plot_node_timeline(self, telemetry: dict[str, Any], ax: plt.Axes) -> None:
         """Plot node creation timeline."""
         try:
             # Extract node creation times
@@ -431,11 +426,11 @@ class TelemetryVisualizer:
             ax.text(0.5, 0.5, f"Error: {e}", ha='center', va='center', transform=ax.transAxes)
             ax.set_title("Node Creation Timeline (Error)")
 
-    def _plot_token_heatmap(self, telemetry: Dict[str, Any], ax: plt.Axes) -> None:
+    def _plot_token_heatmap(self, telemetry: dict[str, Any], ax: plt.Axes) -> None:
         """Plot token usage heatmap by node level and type."""
         try:
             # Collect token data by level and type
-            token_data: Dict[int, Dict[str, List[int]]] = {}
+            token_data: dict[int, dict[str, list[int]]] = {}
 
             for doc_data in telemetry.get("documents", {}).values():
                 for node in doc_data.get("nodes", []):
@@ -470,11 +465,11 @@ class TelemetryVisualizer:
             types = ['leaf', 'summary']
 
             # Calculate average tokens for each cell
-            heatmap_data: List[List[float]] = []
+            heatmap_data: list[list[float]] = []
             for node_type in types:
-                row: List[float] = []
+                row: list[float] = []
                 for level in levels:
-                    tokens_list: List[int] = token_data[level].get(node_type, [])
+                    tokens_list: list[int] = token_data[level].get(node_type, [])
                     avg_tokens = float(np.mean(tokens_list)) if tokens_list else 0.0
                     row.append(avg_tokens)
                 heatmap_data.append(row)
@@ -505,7 +500,7 @@ class TelemetryVisualizer:
             ax.text(0.5, 0.5, f"Error: {e}", ha='center', va='center', transform=ax.transAxes)
             ax.set_title("Token Usage Heatmap (Error)")
 
-    def _generate_markdown_report(self, data: Dict[str, Any], telemetry: Dict[str, Any], config: RagZoomConfig, chunk_size: int) -> None:
+    def _generate_markdown_report(self, data: dict[str, Any], telemetry: dict[str, Any], config: RagZoomConfig, chunk_size: int) -> None:
         """Generate a markdown report with analysis summary."""
         try:
             # Compute all metrics
@@ -571,16 +566,16 @@ Generated from: {data.get('timestamp', 'Unknown')}
 
 """
             # Add recommendations based on metrics
-            if amplification['median_cost'] > HIGH_COST_AMPLIFICATION_THRESHOLD:
+            if amplification['median_cost'] > self.thresholds.high_cost_amplification:
                 report += "- ⚠️ High cost amplification detected. Consider optimizing prompt templates.\n"
 
-            if batch_efficiency['batch_utilization'] < LOW_BATCH_UTILIZATION_THRESHOLD:
+            if batch_efficiency['batch_utilization'] < self.thresholds.low_batch_utilization:
                 report += "- ⚠️ Low batch utilization. Consider increasing batch sizes for better efficiency.\n"
 
-            if retry_patterns['retry_rate'] > HIGH_RETRY_RATE_THRESHOLD:
+            if retry_patterns['retry_rate'] > self.thresholds.high_retry_rate:
                 report += "- ⚠️ High retry rate. Review summary generation parameters and constraints.\n"
 
-            if amplification['median_cost'] <= GOOD_COST_AMPLIFICATION_THRESHOLD and batch_efficiency['batch_utilization'] >= GOOD_BATCH_UTILIZATION_THRESHOLD:
+            if amplification['median_cost'] <= self.thresholds.good_cost_amplification and batch_efficiency['batch_utilization'] >= self.thresholds.good_batch_utilization:
                 report += "- ✅ System is operating efficiently with good cost control.\n"
 
             # Save report
@@ -649,7 +644,7 @@ Generated from: {data.get('timestamp', 'Unknown')}
 
         print(f"Saved comparison visualization to {output_path}")
 
-    def _plot_cost_comparison(self, benchmarks: Dict[int, Dict[str, Any]], ax: plt.Axes) -> None:
+    def _plot_cost_comparison(self, benchmarks: dict[int, dict[str, Any]], ax: plt.Axes) -> None:
         """Plot cost comparison across chunk sizes."""
         chunk_sizes = sorted(benchmarks.keys())
         costs = []
@@ -671,7 +666,7 @@ Generated from: {data.get('timestamp', 'Unknown')}
         for i, cost in enumerate(costs):
             ax.text(i, cost + 0.0001, f'${cost:.4f}', ha='center', va='bottom')
 
-    def _plot_throughput_comparison(self, benchmarks: Dict[int, Dict[str, Any]], ax: plt.Axes) -> None:
+    def _plot_throughput_comparison(self, benchmarks: dict[int, dict[str, Any]], ax: plt.Axes) -> None:
         """Plot throughput comparison across chunk sizes."""
         chunk_sizes = sorted(benchmarks.keys())
         throughputs = []
@@ -692,7 +687,7 @@ Generated from: {data.get('timestamp', 'Unknown')}
             ax.annotate(f'{throughput:.1f}', (size, throughput),
                        textcoords="offset points", xytext=(0,10), ha='center')
 
-    def _plot_amplification_comparison(self, benchmarks: Dict[int, Dict[str, Any]], ax: plt.Axes) -> None:
+    def _plot_amplification_comparison(self, benchmarks: dict[int, dict[str, Any]], ax: plt.Axes) -> None:
         """Plot amplification comparison across chunk sizes."""
         chunk_sizes = sorted(benchmarks.keys())
 
@@ -738,7 +733,7 @@ Generated from: {data.get('timestamp', 'Unknown')}
         ax.axhline(y=1.0, color='red', linestyle='--', alpha=0.5)
         ax.grid(True, alpha=0.3, axis='y')
 
-    def _plot_batch_efficiency_comparison(self, benchmarks: Dict[int, Dict[str, Any]], ax: plt.Axes) -> None:
+    def _plot_batch_efficiency_comparison(self, benchmarks: dict[int, dict[str, Any]], ax: plt.Axes) -> None:
         """Plot batch efficiency comparison."""
         chunk_sizes = sorted(benchmarks.keys())
         utilizations = []
@@ -783,7 +778,7 @@ Generated from: {data.get('timestamp', 'Unknown')}
 
         ax.grid(True, alpha=0.3, axis='y')
 
-    def _plot_retry_rate_comparison(self, benchmarks: Dict[int, Dict[str, Any]], ax: plt.Axes) -> None:
+    def _plot_retry_rate_comparison(self, benchmarks: dict[int, dict[str, Any]], ax: plt.Axes) -> None:
         """Plot retry rate comparison."""
         chunk_sizes = sorted(benchmarks.keys())
         retry_rates = []
@@ -811,10 +806,10 @@ Generated from: {data.get('timestamp', 'Unknown')}
             ax.text(i, rate + 0.5, f'{rate:.1f}%', ha='center', va='bottom')
 
         # Add warning line at threshold
-        ax.axhline(y=HIGH_RETRY_RATE_THRESHOLD, color='red', linestyle='--', alpha=0.5, label=f'{HIGH_RETRY_RATE_THRESHOLD}% threshold')
+        ax.axhline(y=self.thresholds.high_retry_rate, color='red', linestyle='--', alpha=0.5, label=f'{self.thresholds.high_retry_rate}% threshold')
         ax.legend()
 
-    def _plot_accuracy_comparison(self, benchmarks: Dict[int, Dict[str, Any]], ax: plt.Axes) -> None:
+    def _plot_accuracy_comparison(self, benchmarks: dict[int, dict[str, Any]], ax: plt.Axes) -> None:
         """Plot summary accuracy comparison."""
         chunk_sizes = sorted(benchmarks.keys())
 
@@ -832,7 +827,7 @@ Generated from: {data.get('timestamp', 'Unknown')}
             return
 
         # Plot grouped bars for each target size
-        target_sizes_int: List[int] = sorted([int(t) for t in target_sizes if t.isdigit()])
+        target_sizes_int: list[int] = sorted([int(t) for t in target_sizes if t.isdigit()])
         x = np.arange(len(chunk_sizes))
         width = 0.8 / len(target_sizes_int)
 
@@ -869,13 +864,13 @@ def main() -> int:
 Examples:
   # Visualize a single benchmark
   python scripts/visualize_telemetry.py benchmark_results/metrics_200_tokens.json
-  
+
   # Visualize all benchmarks in a directory
   python scripts/visualize_telemetry.py benchmark_results/
-  
+
   # Generate HTML output with comparison
   python scripts/visualize_telemetry.py benchmark_results/ --format html --compare
-  
+
   # Specify output directory
   python scripts/visualize_telemetry.py benchmark_results/ --output-dir reports/
         """

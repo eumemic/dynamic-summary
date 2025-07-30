@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,12 @@ from ragzoom.metrics import IndexingMetrics
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store, TreeNode
 from ragzoom.tree_viz import build_ascii_tree
+
+
+def _add_scripts_to_path() -> None:
+    """Add scripts directory to Python path for imports."""
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+
 
 # Load environment variables
 load_dotenv()
@@ -876,7 +883,7 @@ def telemetry_validate(telemetry_file: str, fix: bool) -> None:
     """Validate telemetry data format and integrity."""
     try:
         # Import and use the validator directly
-        sys.path.insert(0, str(Path(__file__).parent.parent))
+        _add_scripts_to_path()
         from scripts.validate_telemetry import TelemetryValidator
 
         validator = TelemetryValidator(fix_issues=fix)
@@ -896,23 +903,75 @@ def telemetry_validate(telemetry_file: str, fix: bool) -> None:
 def telemetry_compare(file1: str, file2: str) -> None:
     """Compare telemetry data between two benchmark files."""
     try:
-        # Find and run the comparison script
-        script_path = (
-            Path(__file__).parent.parent / "scripts" / "compare_single_benchmark.py"
+        # Import and use the comparison functions directly
+        _add_scripts_to_path()
+        from scripts.compare_benchmarks import generate_comparison_table
+        from scripts.compare_single_benchmark import load_single_benchmark
+
+        baseline_file = Path(file1)
+        current_file = Path(file2)
+
+        # Load benchmarks
+        try:
+            baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
+            current_chunk_size, current_metrics = load_single_benchmark(current_file)
+        except Exception as e:
+            click.echo(f"❌ Error loading benchmark files: {e}", err=True)
+            sys.exit(1)
+
+        # Warn if chunk sizes don't match
+        if baseline_chunk_size != current_chunk_size:
+            click.echo(
+                f"⚠️  Warning: Chunk sizes differ - baseline: {baseline_chunk_size}, current: {current_chunk_size}",
+                err=True,
+            )
+            click.echo("Using baseline chunk size for comparison\n", err=True)
+
+        # Wrap in expected format for generate_comparison_table
+        baseline_wrapped = {baseline_chunk_size: {"metrics": baseline_metrics}}
+        current_wrapped = {baseline_chunk_size: {"metrics": current_metrics}}
+
+        # Get thresholds from environment
+        summary_threshold = float(
+            os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
+        )
+        avg_deviation_threshold = float(
+            os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+        )
+        median_deviation_threshold = float(
+            os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+        )
+        std_deviation_threshold = float(
+            os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
+        )
+        p95_threshold = float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0"))
+
+        # Generate comparison report
+        report, has_summary_regression, has_accuracy_regression = (
+            generate_comparison_table(
+                baseline_wrapped,
+                current_wrapped,
+                summary_token_regression_threshold=summary_threshold,
+                avg_deviation_regression_threshold=avg_deviation_threshold,
+                median_deviation_regression_threshold=median_deviation_threshold,
+                std_deviation_regression_threshold=std_deviation_threshold,
+                p95_regression_threshold=p95_threshold,
+            )
         )
 
-        result = subprocess.run(
-            [sys.executable, str(script_path), file1, file2],
-            capture_output=True,
-            text=True,
-        )
+        # Add file info header
+        header = "Comparing benchmarks:\n"
+        header += f"  Baseline: {baseline_file.name}\n"
+        header += f"  Current:  {current_file.name}\n"
 
-        click.echo(result.stdout)
+        click.echo(header)
+        click.echo(report)
 
-        if result.stderr:
-            click.echo(result.stderr, err=True)
-
-        sys.exit(result.returncode)
+        # Exit with appropriate code
+        if has_summary_regression or has_accuracy_regression:
+            sys.exit(1)
+        else:
+            sys.exit(0)
 
     except Exception as e:
         click.echo(f"❌ Error running comparison: {e}", err=True)
@@ -932,7 +991,7 @@ def telemetry_export(telemetry_file: str, output_file: str, format: str) -> None
     """Export telemetry data to CSV or JSON format."""
     try:
         # Import and use the explorer directly
-        sys.path.insert(0, str(Path(__file__).parent.parent))
+        _add_scripts_to_path()
         from scripts.telemetry_explorer import TelemetryExplorer
 
         # Load telemetry data
@@ -983,7 +1042,7 @@ def telemetry_visualize(
     """Generate visualizations from telemetry data."""
     try:
         # Import and use the visualizer directly
-        sys.path.insert(0, str(Path(__file__).parent.parent))
+        _add_scripts_to_path()
         from scripts.visualize_telemetry import TelemetryVisualizer
 
         visualizer = TelemetryVisualizer(Path(output_dir))

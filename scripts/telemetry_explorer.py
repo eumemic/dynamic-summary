@@ -28,13 +28,9 @@ except ImportError as e:
     print("Please install: pip install pandas rich")
     sys.exit(1)
 
-from ragzoom.telemetry import parse_telemetry_format
+from ragzoom.telemetry import get_telemetry_thresholds, parse_telemetry_format
 
 console = Console()
-
-# Constants for outlier detection
-HIGH_INPUT_AMPLIFICATION_THRESHOLD = 3.0
-MULTIPLE_RETRY_THRESHOLD = 1
 
 class TelemetryExplorer:
     """Interactive explorer for telemetry data."""
@@ -43,6 +39,7 @@ class TelemetryExplorer:
         """Initialize explorer with telemetry data."""
         self.telemetry = parse_telemetry_format(telemetry_data)
         self.nodes_df = self._create_nodes_dataframe()
+        self.thresholds = get_telemetry_thresholds()
 
     def _create_nodes_dataframe(self) -> pd.DataFrame:
         """Convert telemetry nodes to pandas DataFrame for easy analysis."""
@@ -389,9 +386,9 @@ class TelemetryExplorer:
 
         # High amplification outliers
         if "input_amplification" in self.nodes_df.columns:
-            high_amp = self.nodes_df[self.nodes_df["input_amplification"] > HIGH_INPUT_AMPLIFICATION_THRESHOLD]
+            high_amp = self.nodes_df[self.nodes_df["input_amplification"] > self.thresholds.high_input_amplification]
             if len(high_amp) > 0:
-                console.print(f"[yellow]Found {len(high_amp)} nodes with input amplification > {HIGH_INPUT_AMPLIFICATION_THRESHOLD}x:[/yellow]")
+                console.print(f"[yellow]Found {len(high_amp)} nodes with input amplification > {self.thresholds.high_input_amplification}x:[/yellow]")
                 for _, row in high_amp.head(5).iterrows():
                     console.print(
                         f"  - {row['node_id'][:40]}... "
@@ -404,7 +401,7 @@ class TelemetryExplorer:
 
         # High retry count
         if "retry_count" in self.nodes_df.columns:
-            high_retry = self.nodes_df[self.nodes_df["retry_count"] > MULTIPLE_RETRY_THRESHOLD]
+            high_retry = self.nodes_df[self.nodes_df["retry_count"] > self.thresholds.multiple_retry]
             if len(high_retry) > 0:
                 console.print(f"\n[yellow]Found {len(high_retry)} nodes with multiple retries:[/yellow]")
                 for _, row in high_retry.head(5).iterrows():
@@ -774,7 +771,7 @@ def main() -> int:
 Examples:
   # Explore a single benchmark file
   python scripts/telemetry_explorer.py benchmark_results/metrics_200_tokens.json
-  
+
   # Export data directly without interactive mode
   python scripts/telemetry_explorer.py benchmark_results/metrics_200_tokens.json --export nodes.csv
         """
