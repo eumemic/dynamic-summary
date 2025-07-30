@@ -17,8 +17,8 @@ from ragzoom.metrics import (
 
 logger = logging.getLogger(__name__)
 
-# Current supported telemetry format version
-SUPPORTED_TELEMETRY_VERSIONS = ["1.0"]
+# Current supported telemetry format versions
+SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0"]
 
 # Default token estimate for leaf nodes when source tokens are not available
 DEFAULT_LEAF_TOKEN_ESTIMATE = 150
@@ -123,26 +123,29 @@ def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -
         - cost_p95: 95th percentile cost amplification
         - median_input: Median input amplification
         - median_output: Median output amplification
-        - by_level: Amplification metrics broken down by tree level
+        - by_height: Amplification metrics broken down by tree height
     """
     parsed_data = parse_telemetry_format(telemetry_data)
 
     all_cost_amplifications = []
     all_input_amplifications = []
     all_output_amplifications = []
-    amplifications_by_level: dict[int, dict[str, list[float]]] = {}
+    amplifications_by_height: dict[int, dict[str, list[float]]] = {}
 
     # Process all documents
     for doc_type, doc_data in parsed_data["documents"].items():
         nodes = doc_data.get("nodes", [])
 
         for node in nodes:
-            # Only process summary nodes (they have summary attempts)
-            if node.get("node_type") != "summary":
+            # Only process summary nodes
+            # v1.0: check node_type, v2.0: check height > 0
+            # Get height (compatible with both v1.0 and v2.0)
+            height = node.get("height", node.get("level", 0))
+            is_leaf = node.get("node_type") == "leaf" or height == 0
+            if is_leaf:
                 continue
 
             summary_attempts = node.get("summary_attempts", [])
-            level = node.get("level", 0)
 
             # Track cumulative tokens for this node across all attempts
             node_total_prompt_tokens = 0
@@ -194,17 +197,17 @@ def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -
                 all_input_amplifications.append(input_amplification)
                 all_output_amplifications.append(output_amplification)
 
-                # Track by level
-                if level not in amplifications_by_level:
-                    amplifications_by_level[level] = {
+                # Track by height
+                if height not in amplifications_by_height:
+                    amplifications_by_height[height] = {
                         "input": [],
                         "output": [],
                         "cost": [],
                     }
 
-                amplifications_by_level[level]["input"].append(input_amplification)
-                amplifications_by_level[level]["output"].append(output_amplification)
-                amplifications_by_level[level]["cost"].append(cost_amplification)
+                amplifications_by_height[height]["input"].append(input_amplification)
+                amplifications_by_height[height]["output"].append(output_amplification)
+                amplifications_by_height[height]["cost"].append(cost_amplification)
 
     # Compute summary statistics
     result = {
@@ -213,7 +216,7 @@ def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -
         "cost_p95": 0.0,
         "median_input": 0.0,
         "median_output": 0.0,
-        "by_level": amplifications_by_level,
+        "by_height": amplifications_by_height,
     }
 
     if all_cost_amplifications:
@@ -327,7 +330,8 @@ def compute_batch_efficiency(telemetry_data: dict) -> dict:
                 continue
 
             batch_size = embedding.get("batch_size", 1)
-            timestamp = embedding.get("timestamp", 0)
+            # v1.0: use timestamp, v2.0: use start_time
+            timestamp = embedding.get("timestamp", embedding.get("start_time", 0))
             batch_key = (batch_size, timestamp)
 
             # Only count each batch once
@@ -396,7 +400,11 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
 
         for node in nodes:
             # Only process summary nodes
-            if node.get("node_type") != "summary":
+            # v1.0: check node_type, v2.0: check height > 0
+            # Get height (compatible with both v1.0 and v2.0)
+            height = node.get("height", node.get("level", 0))
+            is_leaf = node.get("node_type") == "leaf" or height == 0
+            if is_leaf:
                 continue
 
             summary_attempts = node.get("summary_attempts", [])
@@ -498,7 +506,8 @@ def compute_metrics_from_telemetry(
             if embedding:
                 text_tokens = embedding.get("text_tokens", 0)
                 batch_size = embedding.get("batch_size", 1)
-                timestamp = embedding.get("timestamp", 0)
+                # v1.0: use timestamp, v2.0: use start_time
+                timestamp = embedding.get("timestamp", embedding.get("start_time", 0))
 
                 metrics.total_embedding_tokens += text_tokens
 
@@ -578,7 +587,10 @@ def compute_metrics_from_telemetry(
                     )
 
             # Count chunks (leaf nodes)
-            if node.get("node_type") == "leaf":
+            # v1.0: check node_type, v2.0: check height == 0
+            height = node.get("height", node.get("level", 0))
+            is_leaf = node.get("node_type") == "leaf" or height == 0
+            if is_leaf:
                 metrics.chunks_created += 1
 
     # Set timing
