@@ -316,11 +316,38 @@ for doc_data in parsed["documents"].values():
    print(f"Batch size distribution: {np.histogram(batch_sizes, bins=10)}")
    ```
 
-### Adding Telemetry to Query Operations
+### CLI Integration
 
-For debugging query issues, you can enable telemetry collection:
+RagZoom provides a comprehensive set of telemetry commands through the CLI:
 
-```python
+```bash
+# Analyze telemetry data
+ragzoom telemetry analyze benchmark_results/metrics_200_tokens.json
+
+# Validate telemetry format
+ragzoom telemetry validate benchmark_results/metrics_200_tokens.json
+ragzoom telemetry validate benchmark_results/ --fix  # Fix minor issues
+
+# Compare two benchmarks
+ragzoom telemetry compare baseline.json new_results.json
+
+# Export telemetry data
+ragzoom telemetry export benchmark_results/metrics_200_tokens.json nodes.csv
+ragzoom telemetry export benchmark_results/metrics_200_tokens.json data.json --format json
+
+# Generate visualizations
+ragzoom telemetry visualize benchmark_results/metrics_200_tokens.json
+ragzoom telemetry visualize benchmark_results/ --compare --format pdf
+
+# Interactive exploration
+ragzoom telemetry explore benchmark_results/metrics_200_tokens.json
+```
+
+### Future: Query Telemetry
+
+For debugging query issues, telemetry collection during queries is planned:
+
+```bash
 # Future feature - not yet implemented
 ragzoom query "search text" --document-id doc1 --telemetry
 
