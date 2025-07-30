@@ -6,7 +6,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -16,7 +15,6 @@ from dotenv import load_dotenv
 from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.metrics import IndexingMetrics
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store, TreeNode
 from ragzoom.tree_viz import build_ascii_tree
@@ -41,78 +39,6 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
 # Keep ragzoom.index at INFO to show batch progress
-
-
-def display_metrics(metrics: IndexingMetrics) -> None:
-    """Display detailed performance metrics in a user-friendly format."""
-    click.echo("\n📊 PERFORMANCE METRICS")
-    click.echo(f"{'='*50}")
-
-    click.echo("\n⏱️  Timing:")
-    click.echo(f"  Total duration: {metrics.total_duration_seconds:.2f} seconds")
-    click.echo(f"  Throughput: {metrics.tokens_per_second:.1f} tokens/sec")
-    click.echo(f"  Time per 1K tokens: {metrics.time_per_1k_tokens:.2f} seconds")
-
-    click.echo("\n📄 Document:")
-    click.echo(f"  Source tokens: {metrics.source_document_tokens:,}")
-    click.echo(f"  Chunks created: {metrics.chunks_created}")
-    click.echo(f"  Tree height: {metrics.tree_height}")
-    click.echo(f"  Nodes per level: {metrics.nodes_per_level}")
-
-    click.echo("\n🔌 API Usage:")
-    click.echo(f"  Total API calls: {metrics.total_api_calls}")
-    click.echo(f"  Embedding calls: {metrics.embedding_api_calls}")
-    click.echo(f"  Summary calls: {metrics.summary_api_calls}")
-    click.echo(f"  Avg embedding batch size: {metrics.avg_embedding_batch_size:.1f}")
-
-    click.echo("\n🪙 Token Usage:")
-    click.echo(f"  Embedding tokens: {metrics.total_embedding_tokens:,}")
-    click.echo(f"  Summary prompt tokens: {metrics.total_summary_prompt_tokens:,}")
-    click.echo(
-        f"  Summary completion tokens: {metrics.total_summary_completion_tokens:,}"
-    )
-    click.echo(
-        f"  Embedding tokens per 1K source: {metrics.embedding_tokens_per_1k:.1f}"
-    )
-    click.echo(f"  Summary tokens per 1K source: {metrics.summary_tokens_per_1k:.1f}")
-
-    click.echo("\n💰 Cost Analysis:")
-    click.echo(f"  Cost per 1K source tokens: ${metrics.cost_per_1k_tokens:.4f}")
-    total_cost = metrics.cost_per_1k_tokens * metrics.source_document_tokens / 1000
-    click.echo(f"  Total estimated cost: ${total_cost:.4f}")
-
-    click.echo("\n💾 Memory Usage:")
-    click.echo(f"  Peak memory: {metrics.peak_memory_mb:.1f} MB")
-    click.echo(f"  Memory growth: {metrics.memory_usage_mb:.1f} MB")
-
-    if metrics.summary_stats:
-        click.echo("\n📏 Summary Accuracy:")
-        for target_size, stats in sorted(metrics.summary_stats.items()):
-            click.echo(f"\n  Target {target_size} tokens:")
-            click.echo(f"    Count: {stats.count}")
-            click.echo(f"    Average size: {stats.avg_tokens:.1f} tokens")
-            click.echo(f"    Average deviation: {stats.avg_deviation_percent:.1f}%")
-            click.echo(
-                f"    Over target: {stats.percent_over_target:.1f}% (max: {stats.max_overage_percent:.1f}%)"
-            )
-            click.echo(
-                f"    Under target: {stats.percent_under_target:.1f}% (max: {stats.max_underage_percent:.1f}%)"
-            )
-
-    # Display amplification metrics if available
-    if hasattr(metrics, "cost_amplifications") and metrics.cost_amplifications:
-        click.echo("\n🔍 Token Amplification:")
-        click.echo(
-            f"  Cost amplification (median): {metrics.median_cost_amplification:.2f}x"
-        )
-        click.echo(f"  Cost amplification (P90): {metrics.cost_amplification_p90:.2f}x")
-        click.echo(f"  Cost amplification (P95): {metrics.cost_amplification_p95:.2f}x")
-        click.echo(
-            f"  Input amplification (median): {metrics.median_input_amplification:.2f}x"
-        )
-        click.echo(
-            f"  Output amplification (median): {metrics.median_output_amplification:.2f}x"
-        )
 
 
 @click.group()
@@ -145,14 +71,10 @@ def cli(ctx: click.Context) -> None:
     help="Maximum concurrent API requests (default: 10)",
 )
 @click.option("--validate", is_flag=True, help="Enable validation checks")
-@click.option("--benchmark", is_flag=True, help="Enable performance metrics collection")
 @click.option(
-    "--benchmark-output", type=click.Path(), help="Save benchmark results to JSON file"
-)
-@click.option(
-    "--benchmark-against",
-    type=click.Path(exists=True),
-    help="Compare against baseline benchmark file and show report",
+    "--telemetry",
+    type=click.Path(),
+    help="Save telemetry data to JSON file (default: telemetry.json)",
 )
 @click.pass_context
 def index(
@@ -163,15 +85,9 @@ def index(
     no_progress: bool,
     max_concurrent: int,
     validate: bool,
-    benchmark: bool,
-    benchmark_output: Optional[str],
-    benchmark_against: Optional[str],
+    telemetry: Optional[str],
 ) -> None:
     """Index a document from file."""
-    # Validate options
-    if benchmark_against and not benchmark:
-        click.echo("❌ Error: --benchmark-against requires --benchmark flag", err=True)
-        sys.exit(1)
 
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
@@ -211,8 +127,8 @@ def index(
         store = ctx.obj["store"]
         tree_builder = TreeBuilder(config, store, max_concurrent=max_concurrent)
 
-        # Index with or without metrics based on benchmark flag
-        if benchmark:
+        # Index with or without metrics based on telemetry flag
+        if telemetry:
             doc_id, metrics = tree_builder.add_document_with_metrics(
                 text,
                 document_id=document_id,
@@ -283,90 +199,32 @@ def index(
             lambda: validate_equal_leaf_depth(store, doc_id), "equal leaf depth"
         )
 
-        # Display and save metrics if benchmark mode
-        if benchmark:
-            display_metrics(metrics)
+        # Save telemetry if requested
+        if telemetry:
+            # Use provided filename or default to telemetry.json
+            output_file = telemetry if telemetry else "telemetry.json"
 
-            # Handle benchmark output and comparison
-            temp_benchmark_file = None
-            output_file = benchmark_output
+            click.echo(f"\n📁 Saving telemetry to {output_file}...")
 
-            # If comparing against baseline, use temp file if no output specified
-            if benchmark_against and not benchmark_output:
-                temp_fd, temp_benchmark_file = tempfile.mkstemp(
-                    suffix=".json", prefix="ragzoom_benchmark_"
-                )
-                output_file = temp_benchmark_file
-                # Close the file descriptor as we'll write to it normally
-                import os
+            # Create minimal output with only config, document info, and telemetry
+            telemetry_data = {
+                "config": {
+                    "leaf_tokens": config.leaf_tokens,
+                    "budget_tokens": config.budget_tokens,
+                    "summary_model": config.summary_model,
+                    "embedding_model": config.embedding_model,
+                },
+                "document": {
+                    "document_id": doc_id,
+                    "file_path": str(path.absolute()),
+                },
+                "telemetry": metrics.get_telemetry_data(doc_id, config.leaf_tokens),
+            }
 
-                os.close(temp_fd)
+            with open(output_file, "w") as f:
+                json.dump(telemetry_data, f, indent=2)
 
-            # Save metrics to file (either specified or temp)
-            if output_file:
-                click.echo(f"\n📁 Saving metrics to {output_file}...")
-                metrics_dict = metrics.to_dict()
-                metrics_dict["document_id"] = doc_id
-                metrics_dict["file_path"] = str(path.absolute())
-
-                # Add telemetry data for analysis
-                metrics_dict["telemetry"] = metrics.get_telemetry_data(
-                    doc_id, config.leaf_tokens
-                )
-
-                with open(output_file, "w") as f:
-                    json.dump(metrics_dict, f, indent=2)
-
-                if not temp_benchmark_file:
-                    click.echo(f"✅ Metrics saved to {output_file}")
-
-            # Run comparison if baseline provided
-            if benchmark_against:
-                click.echo(f"\n📊 Comparing against baseline: {benchmark_against}")
-                click.echo("=" * 70)
-
-                # Find the comparison script
-                script_path = (
-                    Path(__file__).parent.parent
-                    / "scripts"
-                    / "compare_single_benchmark.py"
-                )
-
-                try:
-                    # Run the comparison script
-                    # output_file should always be set if we get here
-                    if not output_file:
-                        raise ValueError(
-                            "No benchmark output file available for comparison"
-                        )
-
-                    result = subprocess.run(
-                        [
-                            sys.executable,
-                            str(script_path),
-                            benchmark_against,
-                            output_file,
-                        ],
-                        capture_output=True,
-                        text=True,
-                    )
-
-                    # Display the output
-                    click.echo(result.stdout)
-
-                    if result.returncode != 0:
-                        if result.stderr:
-                            click.echo(result.stderr, err=True)
-                        click.echo("\n⚠️  Regressions detected!", err=True)
-                        sys.exit(1)
-
-                except Exception as e:
-                    click.echo(f"❌ Error running comparison: {e}", err=True)
-                    sys.exit(1)
-                finally:
-                    # Clean up temp file
-                    if temp_benchmark_file and Path(temp_benchmark_file).exists():
-                        Path(temp_benchmark_file).unlink()
+            click.echo(f"✅ Telemetry saved to {output_file}")
 
     except Exception as e:
         click.echo(f"❌ Error indexing document: {e}", err=True)
