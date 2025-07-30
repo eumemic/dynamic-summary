@@ -6,7 +6,7 @@ and other insights from historical benchmark data.
 """
 
 import logging
-import statistics
+from statistics import median
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.metrics import (
@@ -110,24 +110,22 @@ def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -
                 if input_text_tokens == 0:
                     continue  # Skip invalid data
 
-                # Calculate amplification factors
-                input_amplification = prompt_tokens / input_text_tokens
+                # Calculate amplification factors with consistent zero checks
+                input_amplification = (
+                    prompt_tokens / input_text_tokens if input_text_tokens > 0 else 1.0
+                )
                 output_amplification = (
                     completion_tokens / actual_tokens if actual_tokens > 0 else 1.0
                 )
 
-                # Calculate cost-weighted amplification
-                actual_cost = (
-                    prompt_tokens * config.summary_input_cost_per_1k
-                    + completion_tokens * config.summary_output_cost_per_1k
-                ) / 1000
-
-                min_cost = (
-                    input_text_tokens * config.summary_input_cost_per_1k
-                    + actual_tokens * config.summary_output_cost_per_1k
-                ) / 1000
-
-                cost_amplification = actual_cost / min_cost if min_cost > 0 else 1.0
+                # Calculate cost-weighted amplification using helper
+                cost_amplification = _calculate_cost_amplification(
+                    prompt_tokens,
+                    completion_tokens,
+                    input_text_tokens,
+                    actual_tokens,
+                    config,
+                )
 
                 # Collect amplifications
                 all_cost_amplifications.append(cost_amplification)
@@ -157,15 +155,15 @@ def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -
     }
 
     if all_cost_amplifications:
-        result["median_cost"] = statistics.median(all_cost_amplifications)
+        result["median_cost"] = median(all_cost_amplifications)
         result["cost_p90"] = _compute_percentile(all_cost_amplifications, 0.9)
         result["cost_p95"] = _compute_percentile(all_cost_amplifications, 0.95)
 
     if all_input_amplifications:
-        result["median_input"] = statistics.median(all_input_amplifications)
+        result["median_input"] = median(all_input_amplifications)
 
     if all_output_amplifications:
-        result["median_output"] = statistics.median(all_output_amplifications)
+        result["median_output"] = median(all_output_amplifications)
 
     return result
 
@@ -188,6 +186,43 @@ def _compute_percentile(values: list[float], percentile: float) -> float:
     return sorted_values[lower] + fraction * (
         sorted_values[upper] - sorted_values[lower]
     )
+
+
+def _calculate_cost_amplification(
+    prompt_tokens: int,
+    completion_tokens: int,
+    input_text_tokens: int,
+    actual_tokens: int,
+    config: RagZoomConfig,
+) -> float:
+    """Calculate cost-weighted amplification factor.
+
+    Cost amplification = (actual cost / theoretical minimum cost)
+
+    Args:
+        prompt_tokens: Tokens in the API prompt
+        completion_tokens: Tokens in the API completion
+        input_text_tokens: Tokens in the original text being summarized
+        actual_tokens: Actual tokens in the generated summary
+        config: Configuration with pricing information
+
+    Returns:
+        Cost amplification factor (1.0 = no amplification)
+    """
+    # Calculate actual cost
+    actual_cost = (
+        prompt_tokens * config.summary_input_cost_per_1k
+        + completion_tokens * config.summary_output_cost_per_1k
+    ) / 1000
+
+    # Calculate theoretical minimum cost
+    min_cost = (
+        input_text_tokens * config.summary_input_cost_per_1k
+        + actual_tokens * config.summary_output_cost_per_1k
+    ) / 1000
+
+    # Return amplification factor with zero check
+    return actual_cost / min_cost if min_cost > 0 else 1.0
 
 
 def compute_batch_efficiency(telemetry_data: dict) -> dict:
@@ -244,7 +279,10 @@ def compute_batch_efficiency(telemetry_data: dict) -> dict:
     if batch_sizes:
         avg_batch_size = sum(batch_sizes) / len(batch_sizes)
         result["avg_batch_size"] = avg_batch_size
-        # Assume optimal batch size is the maximum observed
+        # Batch utilization calculation assumes the optimal batch size is the
+        # maximum observed batch size in this telemetry data. This provides a
+        # relative measure of how well batching was utilized compared to the
+        # best case observed in this specific run.
         max_batch_size = max(batch_sizes) if batch_sizes else 1
         result["batch_utilization"] = (avg_batch_size / max_batch_size) * 100
 
@@ -427,23 +465,23 @@ def compute_metrics_from_telemetry(
                 completion_tokens = attempt.get("completion_tokens", 0)
 
                 if input_text_tokens > 0:
-                    input_amplification = prompt_tokens / input_text_tokens
+                    input_amplification = (
+                        prompt_tokens / input_text_tokens
+                        if input_text_tokens > 0
+                        else 1.0
+                    )
                     output_amplification = (
                         completion_tokens / actual_tokens if actual_tokens > 0 else 1.0
                     )
 
-                    # Calculate cost-weighted amplification
-                    actual_cost = (
-                        prompt_tokens * config.summary_input_cost_per_1k
-                        + completion_tokens * config.summary_output_cost_per_1k
-                    ) / 1000
-
-                    min_cost = (
-                        input_text_tokens * config.summary_input_cost_per_1k
-                        + actual_tokens * config.summary_output_cost_per_1k
-                    ) / 1000
-
-                    cost_amplification = actual_cost / min_cost if min_cost > 0 else 1.0
+                    # Calculate cost-weighted amplification using helper
+                    cost_amplification = _calculate_cost_amplification(
+                        prompt_tokens,
+                        completion_tokens,
+                        input_text_tokens,
+                        actual_tokens,
+                        config,
+                    )
 
                     # Record amplifications
                     metrics.input_amplifications.append(input_amplification)
@@ -462,15 +500,28 @@ def compute_metrics_from_telemetry(
     # Set summary stats
     metrics.summary_stats = summary_stats_by_target
 
-    # Estimate source tokens from leaf nodes (this is approximate)
-    # In a real implementation, we'd need this from the document metadata
-    leaf_count = sum(
-        1
-        for doc_data in parsed_data["documents"].values()
-        for node in doc_data.get("nodes", [])
-        if node.get("node_type") == "leaf"
-    )
-    # Rough estimate: assume average leaf size
-    metrics.source_document_tokens = leaf_count * 150  # Rough estimate
+    # Calculate total source tokens from all documents
+    total_source_tokens = 0
+    for doc_data in parsed_data["documents"].values():
+        # Try to get source tokens from metadata first (new format)
+        metadata = doc_data.get("metadata", {})
+        if "source_document_tokens" in metadata:
+            total_source_tokens += metadata["source_document_tokens"]
+        else:
+            # Fallback: estimate from leaf nodes for backward compatibility
+            leaf_count = sum(
+                1
+                for node in doc_data.get("nodes", [])
+                if node.get("node_type") == "leaf"
+            )
+            # Rough estimate: assume average leaf size of 150 tokens
+            # This is only used for old telemetry data without metadata
+            estimated_tokens = leaf_count * 150
+            total_source_tokens += estimated_tokens
+            logger.warning(
+                f"Source tokens not found in telemetry metadata, using estimate: {estimated_tokens}"
+            )
+
+    metrics.source_document_tokens = total_source_tokens
 
     return metrics
