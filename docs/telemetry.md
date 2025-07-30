@@ -17,14 +17,23 @@ RagZoom's telemetry system provides detailed insights into the indexing process 
 
 ### Format Version
 
-The current telemetry format version is **1.0**. The version is stored in all telemetry data to ensure backward compatibility:
+The current telemetry format version is **2.0**. The version is stored in all telemetry data to ensure backward compatibility:
 
 ```json
 {
-  "format_version": "1.0",
+  "format_version": "2.0",
   "documents": { ... }
 }
 ```
+
+### Version History
+
+- **v1.0**: Initial telemetry format with node-level tracking
+- **v2.0**: Improved telemetry format:
+  - Removed redundant fields: `is_retry`, `node_type`, `span` fields
+  - Renamed `level` to `height` throughout for clarity
+  - Added `start_time`/`end_time` to EmbeddingTelemetry and SummaryAttempt
+  - Replaced single `timestamp` field with start/end times for precise timing
 
 ### Structure
 
@@ -32,15 +41,13 @@ Telemetry data follows this hierarchical structure:
 
 ```json
 {
-  "format_version": "1.0",
+  "format_version": "2.0",
   "documents": {
     "<document_type>": {
       "nodes": [
         {
           "node_id": "node-123",
-          "node_type": "leaf|summary",
-          "level": 0,
-          "span": [start, end],
+          "height": 0,
           "created_at": 1234567890.0,
           "embedding": { ... },
           "summary_attempts": [ ... ]
@@ -62,12 +69,12 @@ Telemetry data follows this hierarchical structure:
 Each node contains:
 
 - **node_id**: Unique identifier
-- **node_type**: Either "leaf" or "summary"
-- **level**: Tree level (0 for leaves, increases up the tree)
-- **span**: Character positions [start, end] in source document
+- **height**: Tree height (0 for leaves, increases up the tree)
 - **created_at**: Timestamp when node was created
 - **embedding**: (Optional) Embedding generation details
 - **summary_attempts**: (Optional) List of summary generation attempts
+
+Note: Node type is derived from height (height 0 = leaf, height > 0 = summary)
 
 ### Embedding Telemetry
 
@@ -78,7 +85,8 @@ Each node contains:
     "batch_size": 10,
     "batch_position": 3,
     "model": "text-embedding-3-small",
-    "timestamp": 1234567891.0
+    "start_time": 1234567891.0,
+    "end_time": 1234567891.5
   }
 }
 ```
@@ -89,7 +97,6 @@ Each node contains:
 {
   "summary_attempts": [
     {
-      "is_retry": false,
       "target_tokens": 100,
       "input_text_tokens": 200,
       "prompt_tokens": 250,
@@ -97,12 +104,15 @@ Each node contains:
       "actual_tokens": 90,
       "status": "accepted",
       "model": "gpt-4o-mini",
-      "timestamp": 1234567892.0,
+      "start_time": 1234567892.0,
+      "end_time": 1234567893.5,
       "rejection_reason": null
     }
   ]
 }
 ```
+
+Note: Whether an attempt is a retry is determined by its position in the array (index 0 = initial attempt, index > 0 = retry)
 
 Status values:
 - `"accepted"`: Summary met constraints
@@ -149,9 +159,9 @@ print(f"90th percentile cost: {amplification['cost_p90']:.2f}x")
 print(f"Median input amplification: {amplification['median_input']:.2f}x")
 print(f"Median output amplification: {amplification['median_output']:.2f}x")
 
-# Analyze by level
-for level, data in amplification['by_level'].items():
-    print(f"\nLevel {level}:")
+# Analyze by height
+for height, data in amplification['by_height'].items():
+    print(f"\nHeight {height}:")
     print(f"  Input: {np.median(data['input']):.2f}x")
     print(f"  Output: {np.median(data['output']):.2f}x")
     print(f"  Cost: {np.median(data['cost']):.2f}x")
@@ -202,7 +212,7 @@ python scripts/visualize_telemetry.py benchmark_results/metrics_200_tokens.json
 ```
 
 This generates:
-- Amplification patterns by tree level
+- Amplification patterns by tree height
 - Cost breakdown pie chart
 - Batch efficiency histogram
 - Retry pattern analysis
@@ -266,14 +276,14 @@ high_amp_nodes = []
 
 for doc_data in parsed["documents"].values():
     for node in doc_data["nodes"]:
-        if node["node_type"] == "summary":
+        if node["height"] > 0:  # Summary nodes have height > 0
             for attempt in node.get("summary_attempts", []):
                 if attempt["status"] == "accepted":
                     amp = attempt["prompt_tokens"] / attempt["input_text_tokens"]
                     if amp > 3.0:
                         high_amp_nodes.append({
                             "node_id": node["node_id"],
-                            "level": node["level"],
+                            "height": node["height"],
                             "amplification": amp
                         })
 ```
@@ -408,17 +418,17 @@ When telemetry format changes occur:
 
 2. **Major Version Changes** (e.g., 1.0 → 2.0)
    - Breaking changes requiring migration
-   - Use migration tools to update old data
+   - Use migration tools to update old data (if available)
+   - v2.0 changes: removed redundant fields, added timing, renamed level→height
 
-### Migration Example
+### Migration from v1.0 to v2.0
 
-```python
-# Future migration tool usage
-python scripts/migrate_telemetry.py old_benchmark.json --to-version 2.0
+The analysis tools support both v1.0 and v2.0 formats automatically. When processing v1.0 data:
+- `node_type` field is used if present
+- `level` is treated as `height`
+- Single `timestamp` fields are used for timing analysis
 
-# Or migrate entire directory
-python scripts/migrate_telemetry.py benchmark_results/ --to-version 2.0
-```
+No manual migration is required - the tools handle version differences transparently.
 
 ### Writing Compatible Analysis Code
 
