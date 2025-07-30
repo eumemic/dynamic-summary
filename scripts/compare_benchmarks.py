@@ -54,7 +54,7 @@ def get_amplification_metrics_from_telemetry(
     """
     if not detect_telemetry_support(benchmark_data):
         return None
-    
+
     try:
         # Create a basic config for cost calculations (gpt-4o-mini pricing)
         config = RagZoomConfig(
@@ -62,12 +62,12 @@ def get_amplification_metrics_from_telemetry(
             summary_input_cost_per_1k=0.0025,
             summary_output_cost_per_1k=0.01,
         )
-        
+
         telemetry_data = benchmark_data["telemetry"]
         amplification_metrics = compute_amplification_metrics(telemetry_data, config)
-        
+
         return amplification_metrics, "📊 Telemetry"
-        
+
     except (TelemetryAnalysisError, KeyError, TypeError) as e:
         print(f"Warning: Failed to compute amplification from telemetry: {e}", file=sys.stderr)
         return None
@@ -83,7 +83,7 @@ def get_amplification_metrics_fallback(benchmark_data: dict) -> Optional[Tuple[d
         metrics = benchmark_data["metrics"]
         if "amplification" not in metrics:
             return None
-            
+
         amplification = metrics["amplification"]
         # Convert to the same format as telemetry analysis
         result = {
@@ -94,9 +94,9 @@ def get_amplification_metrics_fallback(benchmark_data: dict) -> Optional[Tuple[d
             "median_output": amplification.get("median_output", 0.0),
             "by_level": amplification.get("by_level", {}),
         }
-        
+
         return result, "📈 Aggregated"
-        
+
     except (KeyError, TypeError):
         return None
 
@@ -363,10 +363,10 @@ def generate_comparison_table(
             curr_result = get_amplification_metrics_from_telemetry(current[size], size)
             if curr_result is None:
                 curr_result = get_amplification_metrics_fallback(current[size])
-            
+
             if curr_result is None:
                 continue
-                
+
             curr_amp, curr_source = curr_result
 
             # Get baseline amplification metrics (prefer telemetry)
