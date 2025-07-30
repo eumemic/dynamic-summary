@@ -6,6 +6,7 @@ and other insights from historical benchmark data.
 """
 
 import logging
+import os
 from statistics import median
 
 from ragzoom.config import RagZoomConfig
@@ -21,6 +22,50 @@ SUPPORTED_TELEMETRY_VERSIONS = ["1.0"]
 
 # Default token estimate for leaf nodes when source tokens are not available
 DEFAULT_LEAF_TOKEN_ESTIMATE = 150
+
+
+class TelemetryThresholds:
+    """Configurable thresholds for telemetry analysis and visualization.
+
+    Thresholds can be overridden via environment variables:
+    - RAGZOOM_HIGH_INPUT_AMPLIFICATION_THRESHOLD (default: 3.0)
+    - RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD (default: 2.0)
+    - RAGZOOM_GOOD_COST_AMPLIFICATION_THRESHOLD (default: 1.5)
+    - RAGZOOM_HIGH_RETRY_RATE_THRESHOLD (default: 20)
+    - RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD (default: 70)
+    - RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD (default: 50)
+    - RAGZOOM_MULTIPLE_RETRY_THRESHOLD (default: 1)
+    """
+
+    def __init__(self) -> None:
+        self.high_input_amplification = float(
+            os.getenv("RAGZOOM_HIGH_INPUT_AMPLIFICATION_THRESHOLD", "3.0")
+        )
+        self.high_cost_amplification = float(
+            os.getenv("RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD", "2.0")
+        )
+        self.good_cost_amplification = float(
+            os.getenv("RAGZOOM_GOOD_COST_AMPLIFICATION_THRESHOLD", "1.5")
+        )
+        self.high_retry_rate = float(
+            os.getenv("RAGZOOM_HIGH_RETRY_RATE_THRESHOLD", "20")
+        )
+        self.good_batch_utilization = float(
+            os.getenv("RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD", "70")
+        )
+        self.low_batch_utilization = float(
+            os.getenv("RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD", "50")
+        )
+        self.multiple_retry = int(os.getenv("RAGZOOM_MULTIPLE_RETRY_THRESHOLD", "1"))
+
+
+# Global instance for convenience
+_telemetry_thresholds = TelemetryThresholds()
+
+
+def get_telemetry_thresholds() -> TelemetryThresholds:
+    """Get the global telemetry thresholds instance."""
+    return _telemetry_thresholds
 
 
 class TelemetryAnalysisError(Exception):

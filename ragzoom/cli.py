@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,12 @@ from ragzoom.metrics import IndexingMetrics
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store, TreeNode
 from ragzoom.tree_viz import build_ascii_tree
+
+
+def _add_scripts_to_path() -> None:
+    """Add scripts directory to Python path for imports."""
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+
 
 # Load environment variables
 load_dotenv()
@@ -757,6 +764,335 @@ def export(ctx: click.Context, input_file: str, output_file: str, format: str) -
 
     except Exception as e:
         click.echo(f"❌ Error exporting: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.group()
+def telemetry() -> None:
+    """Telemetry analysis commands."""
+    pass
+
+
+@telemetry.command("analyze")
+@click.argument("telemetry_file", type=click.Path(exists=True))
+@click.option(
+    "--output",
+    type=click.Path(),
+    help="Output file for analysis report (defaults to stdout)",
+)
+def telemetry_analyze(telemetry_file: str, output: Optional[str]) -> None:
+    """Analyze telemetry data from a benchmark file."""
+    try:
+        # Import here to avoid circular dependencies
+        from ragzoom.telemetry import (
+            analyze_retry_patterns,
+            compute_amplification_metrics,
+            compute_batch_efficiency,
+        )
+
+        # Load telemetry data
+        with open(telemetry_file) as f:
+            data = json.load(f)
+
+        if "telemetry" not in data:
+            click.echo("❌ No telemetry data found in file", err=True)
+            sys.exit(1)
+
+        telemetry = data["telemetry"]
+
+        # Create config for analysis
+        config = RagZoomConfig()
+
+        # Compute all metrics
+        try:
+            amplification = compute_amplification_metrics(telemetry, config)
+            batch_efficiency = compute_batch_efficiency(telemetry)
+            retry_patterns = analyze_retry_patterns(telemetry)
+        except Exception as e:
+            click.echo(f"❌ Error analyzing telemetry: {e}", err=True)
+            sys.exit(1)
+
+        # Format report
+        report = []
+        report.append("TELEMETRY ANALYSIS REPORT")
+        report.append("=" * 60)
+        report.append("")
+
+        # Amplification metrics
+        report.append("📈 Amplification Metrics:")
+        report.append(
+            f"  Median cost amplification: {amplification['median_cost']:.2f}x"
+        )
+        report.append(f"  90th percentile cost: {amplification['cost_p90']:.2f}x")
+        report.append(f"  95th percentile cost: {amplification['cost_p95']:.2f}x")
+        report.append(
+            f"  Median input amplification: {amplification['median_input']:.2f}x"
+        )
+        report.append(
+            f"  Median output amplification: {amplification['median_output']:.2f}x"
+        )
+        report.append("")
+
+        # Batch efficiency
+        report.append("📦 Batch Efficiency:")
+        report.append(f"  Total batches: {batch_efficiency['total_batches']}")
+        report.append(f"  Total embeddings: {batch_efficiency['total_embeddings']}")
+        report.append(f"  Average batch size: {batch_efficiency['avg_batch_size']:.1f}")
+        report.append(
+            f"  Batch utilization: {batch_efficiency['batch_utilization']:.1f}%"
+        )
+        report.append("")
+
+        # Retry patterns
+        report.append("🔄 Retry Patterns:")
+        report.append(f"  Total attempts: {retry_patterns['total_attempts']}")
+        report.append(f"  Successful attempts: {retry_patterns['successful_attempts']}")
+        report.append(f"  Retry rate: {retry_patterns['retry_rate']:.1f}%")
+        report.append(
+            f"  Retry success rate: {retry_patterns['retry_success_rate']:.1f}%"
+        )
+
+        if retry_patterns["rejection_reasons"]:
+            report.append("  Rejection reasons:")
+            for reason, count in sorted(
+                retry_patterns["rejection_reasons"].items(),
+                key=lambda x: x[1],
+                reverse=True,
+            ):
+                report.append(f"    - {reason}: {count}")
+
+        report.append("")
+
+        # Output report
+        report_text = "\n".join(report)
+        if output:
+            Path(output).write_text(report_text)
+            click.echo(f"✅ Analysis report saved to {output}")
+        else:
+            click.echo(report_text)
+
+    except Exception as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@telemetry.command("validate")
+@click.argument("telemetry_file", type=click.Path(exists=True))
+@click.option("--fix", is_flag=True, help="Attempt to fix minor issues")
+def telemetry_validate(telemetry_file: str, fix: bool) -> None:
+    """Validate telemetry data format and integrity."""
+    try:
+        # Import and use the validator directly
+        _add_scripts_to_path()
+        from scripts.validate_telemetry import TelemetryValidator
+
+        validator = TelemetryValidator(fix_issues=fix)
+        is_valid, _ = validator.validate_file(Path(telemetry_file))
+
+        # Exit with appropriate code
+        sys.exit(0 if is_valid else 1)
+
+    except Exception as e:
+        click.echo(f"❌ Error running validation: {e}", err=True)
+        sys.exit(1)
+
+
+@telemetry.command("compare")
+@click.argument("file1", type=click.Path(exists=True))
+@click.argument("file2", type=click.Path(exists=True))
+def telemetry_compare(file1: str, file2: str) -> None:
+    """Compare telemetry data between two benchmark files."""
+    try:
+        # Import and use the comparison functions directly
+        _add_scripts_to_path()
+        from scripts.compare_benchmarks import generate_comparison_table
+        from scripts.compare_single_benchmark import load_single_benchmark
+
+        baseline_file = Path(file1)
+        current_file = Path(file2)
+
+        # Load benchmarks
+        try:
+            baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
+            current_chunk_size, current_metrics = load_single_benchmark(current_file)
+        except Exception as e:
+            click.echo(f"❌ Error loading benchmark files: {e}", err=True)
+            sys.exit(1)
+
+        # Warn if chunk sizes don't match
+        if baseline_chunk_size != current_chunk_size:
+            click.echo(
+                f"⚠️  Warning: Chunk sizes differ - baseline: {baseline_chunk_size}, current: {current_chunk_size}",
+                err=True,
+            )
+            click.echo("Using baseline chunk size for comparison\n", err=True)
+
+        # Wrap in expected format for generate_comparison_table
+        baseline_wrapped = {baseline_chunk_size: {"metrics": baseline_metrics}}
+        current_wrapped = {baseline_chunk_size: {"metrics": current_metrics}}
+
+        # Get thresholds from environment
+        summary_threshold = float(
+            os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
+        )
+        avg_deviation_threshold = float(
+            os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+        )
+        median_deviation_threshold = float(
+            os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+        )
+        std_deviation_threshold = float(
+            os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
+        )
+        p95_threshold = float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0"))
+
+        # Generate comparison report
+        report, has_summary_regression, has_accuracy_regression = (
+            generate_comparison_table(
+                baseline_wrapped,
+                current_wrapped,
+                summary_token_regression_threshold=summary_threshold,
+                avg_deviation_regression_threshold=avg_deviation_threshold,
+                median_deviation_regression_threshold=median_deviation_threshold,
+                std_deviation_regression_threshold=std_deviation_threshold,
+                p95_regression_threshold=p95_threshold,
+            )
+        )
+
+        # Add file info header
+        header = "Comparing benchmarks:\n"
+        header += f"  Baseline: {baseline_file.name}\n"
+        header += f"  Current:  {current_file.name}\n"
+
+        click.echo(header)
+        click.echo(report)
+
+        # Exit with appropriate code
+        if has_summary_regression or has_accuracy_regression:
+            sys.exit(1)
+        else:
+            sys.exit(0)
+
+    except Exception as e:
+        click.echo(f"❌ Error running comparison: {e}", err=True)
+        sys.exit(1)
+
+
+@telemetry.command("export")
+@click.argument("telemetry_file", type=click.Path(exists=True))
+@click.argument("output_file", type=click.Path())
+@click.option(
+    "--format",
+    type=click.Choice(["csv", "json"]),
+    default="csv",
+    help="Export format (default: csv)",
+)
+def telemetry_export(telemetry_file: str, output_file: str, format: str) -> None:
+    """Export telemetry data to CSV or JSON format."""
+    try:
+        # Import and use the explorer directly
+        _add_scripts_to_path()
+        from scripts.telemetry_explorer import TelemetryExplorer
+
+        # Load telemetry data
+        with open(telemetry_file) as f:
+            data = json.load(f)
+
+        if "telemetry" not in data:
+            click.echo("❌ No telemetry data found in file", err=True)
+            sys.exit(1)
+
+        # Create explorer and export
+        explorer = TelemetryExplorer(data["telemetry"])
+
+        if format == "csv":
+            explorer.nodes_df.to_csv(output_file, index=False)
+        else:
+            explorer.nodes_df.to_json(output_file, orient="records", indent=2)
+
+        click.echo(f"✅ Exported {len(explorer.nodes_df)} nodes to {output_file}")
+
+    except Exception as e:
+        click.echo(f"❌ Error exporting telemetry: {e}", err=True)
+        sys.exit(1)
+
+
+@telemetry.command("visualize")
+@click.argument("input_path", type=click.Path(exists=True))
+@click.option(
+    "--output-dir",
+    type=click.Path(),
+    default="telemetry_reports",
+    help="Output directory for visualizations",
+)
+@click.option(
+    "--format",
+    type=click.Choice(["png", "pdf", "svg"]),
+    default="png",
+    help="Output format (default: png)",
+)
+@click.option(
+    "--compare",
+    is_flag=True,
+    help="Generate comparison visualizations when input is a directory",
+)
+def telemetry_visualize(
+    input_path: str, output_dir: str, format: str, compare: bool
+) -> None:
+    """Generate visualizations from telemetry data."""
+    try:
+        # Import and use the visualizer directly
+        _add_scripts_to_path()
+        from scripts.visualize_telemetry import TelemetryVisualizer
+
+        visualizer = TelemetryVisualizer(Path(output_dir))
+        input_path_obj = Path(input_path)
+
+        if input_path_obj.is_file():
+            # Single file visualization
+            visualizer.visualize_single_benchmark(input_path_obj, format)
+        elif input_path_obj.is_dir():
+            # Directory of benchmarks
+            json_files = list(input_path_obj.glob("metrics_*_tokens.json"))
+
+            if not json_files:
+                click.echo(f"❌ No benchmark files found in {input_path}")
+                sys.exit(1)
+
+            # Visualize each file
+            for file in json_files:
+                visualizer.visualize_single_benchmark(file, format)
+
+            # Generate comparison if requested
+            if compare and len(json_files) >= 2:
+                visualizer.visualize_comparison(input_path_obj, format)
+        else:
+            click.echo(f"❌ Error: {input_path} not found")
+            sys.exit(1)
+
+        click.echo("\n✅ Visualization complete!")
+
+    except Exception as e:
+        click.echo(f"❌ Error generating visualizations: {e}", err=True)
+        sys.exit(1)
+
+
+@telemetry.command("explore")
+@click.argument("telemetry_file", type=click.Path(exists=True))
+def telemetry_explore(telemetry_file: str) -> None:
+    """Launch interactive telemetry explorer."""
+    try:
+        # Import and use the explorer directly - but we need to run it interactively
+        # So we'll keep the subprocess approach for this one since it needs stdin/stdout
+        script_path = Path(__file__).parent.parent / "scripts" / "telemetry_explorer.py"
+
+        # Run interactively (don't capture output)
+        result = subprocess.run([sys.executable, str(script_path), telemetry_file])
+
+        sys.exit(result.returncode)
+
+    except Exception as e:
+        click.echo(f"❌ Error launching explorer: {e}", err=True)
         sys.exit(1)
 
 
