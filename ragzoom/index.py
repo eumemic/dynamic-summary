@@ -171,7 +171,7 @@ Here's the content to summarize:"""
                         reporter.record_summary_attempt_v2(
                             node_id=parent_id,
                             is_retry=False,
-                            target_tokens=target_tokens,
+                            target_tokens=self.config.leaf_tokens,  # Always use configured target for metrics
                             input_text_tokens=input_text_tokens,
                             prompt_tokens=response.usage.prompt_tokens,
                             completion_tokens=response.usage.completion_tokens,
@@ -182,7 +182,7 @@ Here's the content to summarize:"""
                     else:
                         # Fallback to original method
                         reporter.record_summary_result(
-                            target_tokens=target_tokens,
+                            target_tokens=self.config.leaf_tokens,  # Always use configured target for metrics
                             actual_tokens=summary_tokens,
                             prompt_tokens=response.usage.prompt_tokens,
                             completion_tokens=response.usage.completion_tokens,
