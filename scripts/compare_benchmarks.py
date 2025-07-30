@@ -5,6 +5,13 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Optional, Tuple
+
+# Add the parent directory to path for importing ragzoom modules
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from ragzoom.config import RagZoomConfig
+from ragzoom.telemetry import TelemetryAnalysisError, compute_amplification_metrics
 
 # Emoji display thresholds - these control when to show warning/success indicators
 # They don't trigger regression failures, just visual feedback
@@ -30,6 +37,68 @@ def load_benchmark_results(results_dir: Path) -> dict[int, dict]:
             print(f"Error loading {file}: {e}", file=sys.stderr)
 
     return results
+
+
+def detect_telemetry_support(benchmark_data: dict) -> bool:
+    """Check if benchmark data contains telemetry information."""
+    return "telemetry" in benchmark_data and isinstance(benchmark_data["telemetry"], dict)
+
+
+def get_amplification_metrics_from_telemetry(
+    benchmark_data: dict, chunk_size: int
+) -> Optional[Tuple[dict, str]]:
+    """Extract amplification metrics from telemetry data if available.
+    
+    Returns:
+        Tuple of (amplification_metrics, source_indicator) or None if unavailable
+    """
+    if not detect_telemetry_support(benchmark_data):
+        return None
+    
+    try:
+        # Create a basic config for cost calculations (gpt-4o-mini pricing)
+        config = RagZoomConfig(
+            openai_api_key="dummy",  # Not needed for analysis
+            summary_input_cost_per_1k=0.0025,
+            summary_output_cost_per_1k=0.01,
+        )
+        
+        telemetry_data = benchmark_data["telemetry"]
+        amplification_metrics = compute_amplification_metrics(telemetry_data, config)
+        
+        return amplification_metrics, "📊 Telemetry"
+        
+    except (TelemetryAnalysisError, KeyError, TypeError) as e:
+        print(f"Warning: Failed to compute amplification from telemetry: {e}", file=sys.stderr)
+        return None
+
+
+def get_amplification_metrics_fallback(benchmark_data: dict) -> Optional[Tuple[dict, str]]:
+    """Get amplification metrics from aggregated data as fallback.
+    
+    Returns:
+        Tuple of (amplification_metrics, source_indicator) or None if unavailable
+    """
+    try:
+        metrics = benchmark_data["metrics"]
+        if "amplification" not in metrics:
+            return None
+            
+        amplification = metrics["amplification"]
+        # Convert to the same format as telemetry analysis
+        result = {
+            "median_cost": amplification.get("median_cost", 0.0),
+            "cost_p90": amplification.get("cost_p90", 0.0),
+            "cost_p95": amplification.get("cost_p95", 0.0),
+            "median_input": amplification.get("median_input", 0.0),
+            "median_output": amplification.get("median_output", 0.0),
+            "by_level": amplification.get("by_level", {}),
+        }
+        
+        return result, "📈 Aggregated"
+        
+    except (KeyError, TypeError):
+        return None
 
 
 def calculate_change(old_value: float, new_value: float) -> tuple[float, str]:
@@ -271,8 +340,18 @@ def generate_comparison_table(
                     f"| | P95 Deviation | - | {curr_stats['percentile_95']:.1f}% | 📊 New |"
                 )
 
-    # Token Amplification comparison
-    if any("amplification" in current[size]["metrics"] for size in chunk_sizes):
+    # Token Amplification comparison (telemetry-aware)
+    amplification_available = False
+    for size in chunk_sizes:
+        # Check if current data has amplification (from telemetry or aggregated)
+        curr_result = get_amplification_metrics_from_telemetry(current[size], size)
+        if curr_result is None:
+            curr_result = get_amplification_metrics_fallback(current[size])
+        if curr_result is not None:
+            amplification_available = True
+            break
+
+    if amplification_available:
         lines.append("\n### Token Efficiency (Amplification Factors)")
         lines.append("| Chunk Size | Metric | Baseline | Current | Change |")
         lines.append("|------------|--------|----------|---------|--------|")
@@ -280,18 +359,23 @@ def generate_comparison_table(
         amplification_regression = False
 
         for size in chunk_sizes:
-            if "amplification" not in current[size]["metrics"]:
+            # Get current amplification metrics (prefer telemetry)
+            curr_result = get_amplification_metrics_from_telemetry(current[size], size)
+            if curr_result is None:
+                curr_result = get_amplification_metrics_fallback(current[size])
+            
+            if curr_result is None:
                 continue
+                
+            curr_amp, curr_source = curr_result
 
-            curr_amp = current[size]["metrics"]["amplification"]
+            # Get baseline amplification metrics (prefer telemetry)
+            base_result = get_amplification_metrics_from_telemetry(baseline[size], size)
+            if base_result is None:
+                base_result = get_amplification_metrics_fallback(baseline[size])
 
-            # Check if baseline has amplification metrics
-            has_baseline_amp = (
-                "amplification" in baseline[size]["metrics"]
-            )
-
-            if has_baseline_amp:
-                base_amp = baseline[size]["metrics"]["amplification"]
+            if base_result is not None:
+                base_amp, base_source = base_result
 
                 # Cost amplification (main regression metric)
                 base_cost_amp = base_amp.get("median_cost", 0)
@@ -308,8 +392,15 @@ def generate_comparison_table(
                     else:
                         emoji = ""
 
+                    # Show data sources if different
+                    source_info = ""
+                    if base_source != curr_source:
+                        source_info = f" ({base_source} → {curr_source})"
+                    elif base_source == "📊 Telemetry":
+                        source_info = f" {base_source}"
+
                     lines.append(
-                        f"| {size} tokens | Cost Amplification | {base_cost_amp:.2f}x | "
+                        f"| {size} tokens | Cost Amplification{source_info} | {base_cost_amp:.2f}x | "
                         f"{curr_cost_amp:.2f}x | {emoji} {change:+.1f}% |"
                     )
 
@@ -335,9 +426,9 @@ def generate_comparison_table(
                             f"{emoji} {change:+.1f}% |"
                         )
             else:
-                # No baseline - show current values
+                # No baseline - show current values with source indicator
                 lines.append(
-                    f"| {size} tokens | Cost Amplification | - | "
+                    f"| {size} tokens | Cost Amplification {curr_source} | - | "
                     f"{curr_amp.get('median_cost', 0):.2f}x | 📊 New |"
                 )
                 lines.append(
