@@ -217,8 +217,8 @@ class TelemetryVisualizer:
                 labels = list(labels_tuple)
                 colors = list(colors_tuple)
 
-                wedges, texts, autotexts = ax.pie(costs, labels=labels, colors=colors,
-                                                  autopct='%1.1f%%', startangle=90)
+                ax.pie(costs, labels=labels, colors=colors,
+                       autopct='%1.1f%%', startangle=90)
                 ax.set_title('Cost Breakdown by API Type')
 
                 # Add total cost annotation
@@ -772,9 +772,10 @@ Generated from: {data.get('timestamp', 'Unknown')}
         ax.set_title('Embedding Batch Efficiency by Chunk Size')
 
         # Combine legends
-        lns = bars + line
-        labs = ['Avg Batch Size', 'Utilization %']
-        ax.legend(lns, labs, loc='upper left')
+        # bars is a BarContainer, we need to convert it to a list for legend
+        bar_patch = bars[0]  # Get the first bar patch for legend
+        line_obj = line[0]   # line is a list with one Line2D object
+        ax.legend([bar_patch, line_obj], ['Avg Batch Size', 'Utilization %'], loc='upper left')
 
         ax.grid(True, alpha=0.3, axis='y')
 
