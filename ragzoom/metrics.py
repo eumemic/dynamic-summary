@@ -238,6 +238,51 @@ class NodeTelemetry:
     # Timing
     created_at: float = field(default_factory=time.time)
 
+    def to_telemetry_dict(self) -> dict:
+        """Convert to telemetry format for analysis.
+
+        Returns a dictionary in the format expected by telemetry analysis tools.
+        """
+        result = {
+            "node_id": self.node_id,
+            "node_type": self.node_type,
+            "level": self.level,
+            "span": [self.span_start, self.span_end],
+            "created_at": self.created_at,
+        }
+
+        # Add embedding info if present
+        if self.embedding:
+            result["embedding"] = {
+                "text_tokens": self.embedding.text_tokens,
+                "batch_size": self.embedding.batch_size,
+                "batch_position": self.embedding.batch_position,
+                "model": self.embedding.model,
+                "timestamp": self.embedding.timestamp,
+            }
+
+        # Add summary attempts if present
+        if self.summary_attempts:
+            attempts_list: list[dict] = []
+            for attempt in self.summary_attempts:
+                attempt_dict = {
+                    "is_retry": attempt.is_retry,
+                    "target_tokens": attempt.target_tokens,
+                    "input_text_tokens": attempt.input_text_tokens,
+                    "prompt_tokens": attempt.prompt_tokens,
+                    "completion_tokens": attempt.completion_tokens,
+                    "actual_tokens": attempt.actual_tokens,
+                    "status": attempt.status,
+                    "model": attempt.model,
+                    "timestamp": attempt.timestamp,
+                }
+                if attempt.rejection_reason:
+                    attempt_dict["rejection_reason"] = attempt.rejection_reason
+                attempts_list.append(attempt_dict)
+            result["summary_attempts"] = attempts_list
+
+        return result
+
 
 @dataclass
 class IndexingMetrics:
@@ -495,6 +540,38 @@ class IndexingMetrics:
                 "median_input": self.median_input_amplification,
                 "median_output": self.median_output_amplification,
                 "by_level": self.amplifications_by_level,
+            },
+        }
+
+    def get_telemetry_data(self, document_id: str, chunk_size: int) -> dict:
+        """Export raw telemetry data in standard format for analysis.
+
+        Args:
+            document_id: Document identifier for the telemetry
+            chunk_size: Chunk size used for indexing (for metadata)
+
+        Returns:
+            Dictionary in telemetry format version 1.0
+        """
+        # Convert all node telemetry to dict format
+        nodes_data = []
+        for node in self.node_telemetry.values():
+            nodes_data.append(node.to_telemetry_dict())
+
+        # Sort nodes by creation time for consistent output
+        nodes_data.sort(key=lambda x: x["created_at"])
+
+        return {
+            "format_version": TELEMETRY_FORMAT_VERSION,
+            "documents": {
+                document_id: {
+                    "metadata": {
+                        "source_document_tokens": self.source_document_tokens,
+                        "chunk_size": chunk_size,
+                        "indexed_at": self.start_time,
+                    },
+                    "nodes": nodes_data,
+                }
             },
         }
 
