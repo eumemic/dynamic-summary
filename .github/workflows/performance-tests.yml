@@ -47,6 +47,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
+          # Install telemetry package for comparison tools
+          pip install ./ragzoom-telemetry
       
       - name: Run PR benchmarks
         env:
@@ -105,8 +107,8 @@ jobs:
               fi
             done
           else
-            # Generate comparison report
-            python scripts/compare_benchmarks.py baseline_results benchmark_results report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
+            # Generate comparison report using ragzoom-telemetry
+            ragzoom-telemetry compare baseline_results/metrics_100_tokens.json benchmark_results/metrics_100_tokens.json --output report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
           fi
           
           # Save report for comment
