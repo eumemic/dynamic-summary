@@ -483,11 +483,94 @@ class TestFullMetricsComputation:
         assert len(metrics.input_amplifications) == 1
         assert len(metrics.output_amplifications) == 1
 
-        # Check summary stats
-        assert 100 in metrics.summary_stats
-        assert metrics.summary_stats[100].count == 1
+        # Check summary stats (bucketed by config.leaf_tokens)
+        assert config.leaf_tokens in metrics.summary_stats
+        assert metrics.summary_stats[config.leaf_tokens].count == 1
 
         # Check batch sizes
         assert len(metrics.embedding_batch_sizes) == 2
         assert 2 in metrics.embedding_batch_sizes
         assert 1 in metrics.embedding_batch_sizes
+
+    def test_amplification_includes_retry_attempts(self, config: RagZoomConfig) -> None:
+        """Test that amplification metrics include ALL attempts, not just accepted ones.
+
+        This test demonstrates the bug where retries make amplification appear lower
+        because only the final accepted attempt is counted.
+        """
+        telemetry = {
+            "format_version": "1.0",
+            "documents": {
+                "test_doc": {
+                    "metadata": {"source_document_tokens": 100},
+                    "nodes": [
+                        {
+                            "node_id": "summary-1",
+                            "node_type": "summary",
+                            "level": 1,
+                            "span": [0, 100],
+                            "created_at": 1234567890.0,
+                            "summary_attempts": [
+                                {
+                                    "is_retry": False,
+                                    "target_tokens": 50,
+                                    "input_text_tokens": 100,  # Text being summarized
+                                    "prompt_tokens": 150,  # First attempt
+                                    "completion_tokens": 120,  # Too long
+                                    "actual_tokens": 120,
+                                    "status": "rejected_over",
+                                    "model": "gpt-4o-mini",
+                                    "timestamp": 1234567891.0,
+                                },
+                                {
+                                    "is_retry": True,
+                                    "target_tokens": 50,
+                                    "input_text_tokens": 100,
+                                    "prompt_tokens": 160,  # Second attempt
+                                    "completion_tokens": 100,  # Still too long
+                                    "actual_tokens": 100,
+                                    "status": "rejected_over",
+                                    "model": "gpt-4o-mini",
+                                    "timestamp": 1234567892.0,
+                                },
+                                {
+                                    "is_retry": True,
+                                    "target_tokens": 50,
+                                    "input_text_tokens": 100,
+                                    "prompt_tokens": 170,  # Third attempt
+                                    "completion_tokens": 80,  # Finally accepted
+                                    "actual_tokens": 80,
+                                    "status": "accepted",
+                                    "model": "gpt-4o-mini",
+                                    "timestamp": 1234567893.0,
+                                },
+                            ],
+                        },
+                    ],
+                }
+            },
+        }
+
+        metrics = compute_metrics_from_telemetry(telemetry, config)
+
+        # Verify token counts include ALL attempts
+        assert metrics.total_summary_prompt_tokens == 150 + 160 + 170  # 480
+        assert metrics.total_summary_completion_tokens == 120 + 100 + 80  # 300
+        assert metrics.summary_api_calls == 3
+
+        # EXPECTED behavior: Amplification should include all attempts
+        # Input amplification = total_prompt_tokens / text_being_summarized
+        #                    = 480 / 100 = 4.8x
+        # Output amplification = total_completion_tokens / final_summary_tokens
+        #                     = 300 / 80 = 3.75x
+
+        # ACTUAL behavior (BUG): Only counts the accepted attempt
+        # Input amplification = 170 / 100 = 1.7x
+        # Output amplification = 80 / 80 = 1.0x
+
+        assert len(metrics.input_amplifications) == 1
+        assert len(metrics.output_amplifications) == 1
+
+        # These assertions will FAIL, demonstrating the bug
+        assert metrics.input_amplifications[0] == pytest.approx(4.8, rel=0.01)
+        assert metrics.output_amplifications[0] == pytest.approx(3.75, rel=0.01)
