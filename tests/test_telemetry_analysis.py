@@ -48,7 +48,7 @@ class TestTelemetryFormatParsing:
 
     def test_parse_unsupported_format_version(self) -> None:
         """Test parsing telemetry with unsupported format version."""
-        telemetry_data = {"format_version": "2.0", "documents": {}}
+        telemetry_data = {"format_version": "3.0", "documents": {}}
 
         with pytest.raises(
             TelemetryAnalysisError, match="Unsupported telemetry format version"

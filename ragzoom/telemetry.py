@@ -17,8 +17,8 @@ from ragzoom.metrics import (
 
 logger = logging.getLogger(__name__)
 
-# Current supported telemetry format version
-SUPPORTED_TELEMETRY_VERSIONS = ["1.0"]
+# Current supported telemetry format versions
+SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0"]
 
 # Default token estimate for leaf nodes when source tokens are not available
 DEFAULT_LEAF_TOKEN_ESTIMATE = 150

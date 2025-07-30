@@ -88,7 +88,7 @@ class TelemetryVisualizer:
 
         # 1. Amplification by Level
         ax1 = fig.add_subplot(gs[0, :])
-        self._plot_amplification_by_level(telemetry, config, ax1)
+        self._plot_amplification_by_height(telemetry, config, ax1)
 
         # 2. Cost Breakdown
         ax2 = fig.add_subplot(gs[1, 0])
@@ -149,11 +149,11 @@ class TelemetryVisualizer:
             summary_output_cost_per_1k=0.01,   # gpt-4o-mini output (older pricing)
         )
 
-    def _plot_amplification_by_level(self, telemetry: dict[str, Any], config: RagZoomConfig, ax: plt.Axes) -> None:
-        """Plot amplification metrics by tree level."""
+    def _plot_amplification_by_height(self, telemetry: dict[str, Any], config: RagZoomConfig, ax: plt.Axes) -> None:
+        """Plot amplification metrics by tree height."""
         try:
             amplification = compute_amplification_metrics(telemetry, config)
-            by_level = amplification.get("by_level", {})
+            by_level = amplification.get("by_height", {})
 
             if not by_level:
                 ax.text(0.5, 0.5, "No amplification data available",
@@ -181,11 +181,11 @@ class TelemetryVisualizer:
             ax.bar(x, output_medians, width, label='Output Amplification', alpha=0.8)
             ax.bar(x + width, cost_medians, width, label='Cost Amplification', alpha=0.8)
 
-            ax.set_xlabel('Tree Level')
+            ax.set_xlabel('Tree Height')
             ax.set_ylabel('Amplification Factor')
-            ax.set_title('Median Amplification Factors by Tree Level')
+            ax.set_title('Median Amplification Factors by Tree Height')
             ax.set_xticks(x)
-            ax.set_xticklabels([f"Level {level}" for level in levels])
+            ax.set_xticklabels([f"Height {level}" for level in levels])
             ax.legend()
             ax.axhline(y=1.0, color='red', linestyle='--', alpha=0.5, label='Baseline (1.0)')
             ax.grid(True, alpha=0.3)
@@ -217,8 +217,8 @@ class TelemetryVisualizer:
                 labels = list(labels_tuple)
                 colors = list(colors_tuple)
 
-                wedges, texts, autotexts = ax.pie(costs, labels=labels, colors=colors,
-                                                  autopct='%1.1f%%', startangle=90)
+                wedges, texts = ax.pie(costs, labels=labels, colors=colors,
+                                       autopct='%1.1f%%', startangle=90)[:2]
                 ax.set_title('Cost Breakdown by API Type')
 
                 # Add total cost annotation
@@ -383,8 +383,8 @@ class TelemetryVisualizer:
                 for node in doc_data.get("nodes", []):
                     nodes_data.append({
                         'created_at': node.get('created_at', 0),
-                        'level': node.get('level', 0),
-                        'type': node.get('node_type', 'unknown')
+                        'height': node.get('height', 0),
+                        'type': 'leaf' if node.get('height', 0) == 0 else 'summary'
                     })
 
             if not nodes_data:
@@ -399,7 +399,7 @@ class TelemetryVisualizer:
             # Normalize timestamps
             start_time = nodes_data[0]['created_at']
             times = [(n['created_at'] - start_time) for n in nodes_data]
-            levels = [n['level'] for n in nodes_data]
+            levels = [n['height'] for n in nodes_data]
             types = [n['type'] for n in nodes_data]
 
             # Create scatter plot
@@ -427,7 +427,7 @@ class TelemetryVisualizer:
             ax.set_title("Node Creation Timeline (Error)")
 
     def _plot_token_heatmap(self, telemetry: dict[str, Any], ax: plt.Axes) -> None:
-        """Plot token usage heatmap by node level and type."""
+        """Plot token usage heatmap by node height and type."""
         try:
             # Collect token data by level and type
             token_data: dict[int, dict[str, list[int]]] = {}
@@ -494,7 +494,7 @@ class TelemetryVisualizer:
                            ha="center", va="center", color="black" if heatmap_data[i][j] < 50 else "white")
 
             ax.set_title('Average Token Count by Node Type and Level')
-            ax.set_xlabel('Tree Level')
+            ax.set_xlabel('Tree Height')
 
         except Exception as e:
             ax.text(0.5, 0.5, f"Error: {e}", ha='center', va='center', transform=ax.transAxes)
@@ -772,7 +772,7 @@ Generated from: {data.get('timestamp', 'Unknown')}
         ax.set_title('Embedding Batch Efficiency by Chunk Size')
 
         # Combine legends
-        lns = bars + line
+        lns = list(bars) + line
         labs = ['Avg Batch Size', 'Utilization %']
         ax.legend(lns, labs, loc='upper left')
 

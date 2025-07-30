@@ -1,5 +1,6 @@
 """Test node-level telemetry collection."""
 
+import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -21,25 +22,18 @@ class TestTelemetryDataStructures:
         """Test NodeTelemetry dataclass creation."""
         telemetry = NodeTelemetry(
             node_id="test-123",
-            node_type="leaf",
-            level=0,
-            span_start=0,
-            span_end=100,
+            height=0,
         )
 
         assert telemetry.node_id == "test-123"
-        assert telemetry.node_type == "leaf"
-        assert telemetry.level == 0
-        assert telemetry.span_start == 0
-        assert telemetry.span_end == 100
+        assert telemetry.height == 0
         assert telemetry.embedding is None
         assert telemetry.summary_attempts == []
         assert telemetry.created_at > 0
 
-    def test_summary_attempt_no_attempt_number(self) -> None:
-        """Test SummaryAttempt doesn't have attempt_number field."""
+    def test_summary_attempt_timing_fields(self) -> None:
+        """Test SummaryAttempt has start_time and end_time fields."""
         attempt = SummaryAttempt(
-            is_retry=False,
             target_tokens=200,
             input_text_tokens=400,
             prompt_tokens=500,
@@ -47,13 +41,16 @@ class TestTelemetryDataStructures:
             actual_tokens=180,
             status="accepted",
             model="gpt-4o-mini",
-            timestamp=1234567890.0,
+            start_time=1234567890.0,
+            end_time=1234567891.0,
         )
 
-        # Verify no attempt_number field exists
-        assert not hasattr(attempt, "attempt_number")
-        assert attempt.is_retry is False
+        # Verify timing fields exist
+        assert attempt.start_time == 1234567890.0
+        assert attempt.end_time == 1234567891.0
         assert attempt.status == "accepted"
+        # Verify is_retry field removed
+        assert not hasattr(attempt, "is_retry")
 
 
 class TestTelemetryCollection:
@@ -82,30 +79,31 @@ class TestTelemetryCollection:
         """Test node creation tracking."""
         reporter.track_node_created(
             node_id="leaf-1",
-            node_type="leaf",
-            level=0,
-            span_start=0,
-            span_end=100,
+            height=0,
         )
 
         assert "leaf-1" in reporter.metrics.node_telemetry
         node = reporter.metrics.node_telemetry["leaf-1"]
-        assert node.node_type == "leaf"
-        assert node.level == 0
-        assert node.span_start == 0
-        assert node.span_end == 100
+        assert node.height == 0
+        # Verify span fields removed
+        assert not hasattr(node, "span_start")
+        assert not hasattr(node, "span_end")
+        # Verify node_type field removed
+        assert not hasattr(node, "node_type")
 
     def test_record_embedding_v2(self, reporter: IndexingMetricsReporter) -> None:
         """Test v2 embedding recording with node-level detail."""
         # First track nodes
-        reporter.track_node_created("node-1", "leaf", 0, 0, 50)
-        reporter.track_node_created("node-2", "leaf", 0, 50, 100)
+        reporter.track_node_created("node-1", 0)
+        reporter.track_node_created("node-2", 0)
 
         # Record embedding batch
+        start_time = time.time()
         reporter.record_embedding_call_v2(
             node_embeddings=[("node-1", 45), ("node-2", 48)],
             batch_size=2,
             model="text-embedding-3-small",
+            start_time=start_time,
         )
 
         # Check aggregate metrics
@@ -127,12 +125,12 @@ class TestTelemetryCollection:
     def test_record_summary_attempt_v2(self, reporter: IndexingMetricsReporter) -> None:
         """Test v2 summary recording with telemetry."""
         # Track a summary node
-        reporter.track_node_created("parent-1", "summary", 1, 0, 200)
+        reporter.track_node_created("parent-1", 1)
 
         # Record a failed attempt
+        start_time1 = time.time()
         reporter.record_summary_attempt_v2(
             node_id="parent-1",
-            is_retry=False,
             target_tokens=100,
             input_text_tokens=200,
             prompt_tokens=250,
@@ -140,13 +138,14 @@ class TestTelemetryCollection:
             actual_tokens=130,
             status="rejected_over",
             model="gpt-4o-mini",
+            start_time=start_time1,
             rejection_reason="30% over target",
         )
 
         # Record a successful retry
+        start_time2 = time.time()
         reporter.record_summary_attempt_v2(
             node_id="parent-1",
-            is_retry=True,
             target_tokens=100,
             input_text_tokens=200,
             prompt_tokens=250,
@@ -154,6 +153,7 @@ class TestTelemetryCollection:
             actual_tokens=95,
             status="accepted",
             model="gpt-4o-mini",
+            start_time=start_time2,
         )
 
         # Check aggregate metrics
@@ -167,16 +167,18 @@ class TestTelemetryCollection:
 
         # First attempt (failed)
         attempt1 = node.summary_attempts[0]
-        assert attempt1.is_retry is False
         assert attempt1.status == "rejected_over"
         assert attempt1.rejection_reason == "30% over target"
         assert attempt1.completion_tokens == 130
+        assert attempt1.start_time > 0
+        assert attempt1.end_time > attempt1.start_time
 
         # Second attempt (successful)
         attempt2 = node.summary_attempts[1]
-        assert attempt2.is_retry is True
         assert attempt2.status == "accepted"
         assert attempt2.completion_tokens == 95
+        assert attempt2.start_time > attempt1.end_time
+        assert attempt2.end_time > attempt2.start_time
 
     def test_backward_compatibility(self, reporter: IndexingMetricsReporter) -> None:
         """Test that old methods still work without telemetry."""
@@ -278,13 +280,9 @@ class TestTelemetryIntegration:
         # Verify telemetry was collected
         assert len(metrics.node_telemetry) > 0
 
-        # Count node types
-        leaf_count = sum(
-            1 for n in metrics.node_telemetry.values() if n.node_type == "leaf"
-        )
-        summary_count = sum(
-            1 for n in metrics.node_telemetry.values() if n.node_type == "summary"
-        )
+        # Count node types by height (height 0 = leaves)
+        leaf_count = sum(1 for n in metrics.node_telemetry.values() if n.height == 0)
+        summary_count = sum(1 for n in metrics.node_telemetry.values() if n.height > 0)
 
         # Should have multiple leaves from our test text
         assert leaf_count >= 3
@@ -299,8 +297,8 @@ class TestTelemetryIntegration:
                 "mock-embedding",
             ]
 
-            # Summary nodes should have summary attempts
-            if node_data.node_type == "summary":
+            # Summary nodes (height > 0) should have summary attempts
+            if node_data.height > 0:
                 assert len(node_data.summary_attempts) > 0
                 # At least one attempt should be accepted
                 assert any(a.status == "accepted" for a in node_data.summary_attempts)
@@ -312,30 +310,16 @@ class TestTelemetryIntegration:
         reporter = IndexingMetricsReporter("test", 1000, base_config)
 
         # Create some telemetry
-        reporter.track_node_created("node-1", "leaf", 0, 0, 100)
-        reporter.record_embedding_call_v2([("node-1", 50)], 1, "text-embedding-3-small")
+        reporter.track_node_created("node-1", 0)
+        start_time = time.time()
+        reporter.record_embedding_call_v2(
+            [("node-1", 50)], 1, "text-embedding-3-small", start_time
+        )
 
         # Convert to dict format (like benchmark output)
         telemetry_dict = {}
         for node_id, node_data in reporter.metrics.node_telemetry.items():
-            node_dict = {
-                "node_id": node_id,
-                "node_type": node_data.node_type,
-                "level": node_data.level,
-                "span": [node_data.span_start, node_data.span_end],
-                "created_at": node_data.created_at,
-            }
-
-            if node_data.embedding:
-                node_dict["embedding"] = {
-                    "text_tokens": node_data.embedding.text_tokens,
-                    "batch_size": node_data.embedding.batch_size,
-                    "batch_position": node_data.embedding.batch_position,
-                    "model": node_data.embedding.model,
-                    "timestamp": node_data.embedding.timestamp,
-                }
-
-            telemetry_dict[node_id] = node_dict
+            telemetry_dict[node_id] = node_data.to_telemetry_dict()
 
         # Should be JSON serializable
         json_str = json.dumps(telemetry_dict)
@@ -343,5 +327,12 @@ class TestTelemetryIntegration:
 
         # Can round-trip
         loaded = json.loads(json_str)
-        assert loaded["node-1"]["node_type"] == "leaf"
+        assert loaded["node-1"]["height"] == 0
+        assert "node_type" not in loaded["node-1"]  # Field removed
+        assert "span" not in loaded["node-1"]  # Field removed
         assert loaded["node-1"]["embedding"]["text_tokens"] == 50
+        assert loaded["node-1"]["embedding"]["start_time"] > 0
+        assert (
+            loaded["node-1"]["embedding"]["end_time"]
+            > loaded["node-1"]["embedding"]["start_time"]
+        )

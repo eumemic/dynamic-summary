@@ -147,6 +147,7 @@ Here's the content to summarize:"""
 
         async with self.semaphore:
             try:
+                start_time = time.time()
                 response = await self.client.chat.completions.create(
                     model=self.config.summary_model,
                     messages=[
@@ -170,7 +171,6 @@ Here's the content to summarize:"""
                     if parent_id:
                         reporter.record_summary_attempt_v2(
                             node_id=parent_id,
-                            is_retry=False,
                             target_tokens=self.config.leaf_tokens,  # Always use configured target for metrics
                             input_text_tokens=input_text_tokens,
                             prompt_tokens=response.usage.prompt_tokens,
@@ -178,6 +178,7 @@ Here's the content to summarize:"""
                             actual_tokens=summary_tokens,
                             status="accepted",
                             model=self.config.summary_model,
+                            start_time=start_time,
                         )
                     else:
                         # Fallback to original method
@@ -336,10 +337,7 @@ Here's the content to summarize:"""
                 if reporter:
                     reporter.track_node_created(
                         node_id=node_id,
-                        node_type="leaf",
-                        level=0,
-                        span_start=chunk_start,
-                        span_end=chunk_end,
+                        height=0,  # Leaves have height 0
                     )
                 leaf_ids.append(node_id)
 
@@ -400,13 +398,17 @@ Here's the content to summarize:"""
                         token_count = len(self.splitter.tokenizer.encode(text))
                         node_embeddings.append((node_id, token_count))
 
+                    start_time = time.time()
+
+                batch_embeddings = await self._get_embeddings_batch(batch_texts)
+
+                if reporter:
                     reporter.record_embedding_call_v2(
                         node_embeddings=node_embeddings,
                         batch_size=len(batch_texts),
                         model=self.config.embedding_model,
+                        start_time=start_time,
                     )
-
-                batch_embeddings = await self._get_embeddings_batch(batch_texts)
                 all_embeddings.extend(batch_embeddings)
 
                 # Update progress for embeddings
@@ -560,10 +562,7 @@ Here's the content to summarize:"""
         if reporter:
             reporter.track_node_created(
                 node_id=parent_id,
-                node_type="summary",
-                level=reporter._current_level + 1,
-                span_start=left_node.span_start,
-                span_end=right_node.span_end,
+                height=reporter._current_level + 1,  # Parent is one level higher
             )
 
         # Use consistent token budget for all heights
@@ -601,6 +600,7 @@ Here's the content to summarize:"""
         #     raise ValueError(validation_error)
 
         # Get embedding for the summary
+        start_time = time.time()
         embedding = await self._get_embedding(summary)
 
         # Track embedding for parent node
@@ -610,6 +610,7 @@ Here's the content to summarize:"""
                 node_embeddings=[(parent_id, summary_tokens)],
                 batch_size=1,
                 model=self.config.embedding_model,
+                start_time=start_time,
             )
 
         # Store the node data
@@ -793,10 +794,7 @@ Here's the content to summarize:"""
                     if reporter and odd_node_obj:
                         reporter.track_node_created(
                             node_id=parent_id,
-                            node_type="summary",
-                            level=current_height,
-                            span_start=odd_node_obj.span_start,
-                            span_end=odd_node_obj.span_end,
+                            height=current_height,  # Use current height
                         )
                     if not odd_node_obj:
                         logger.error(f"Failed to retrieve odd node: {odd_node}")
@@ -816,6 +814,7 @@ Here's the content to summarize:"""
                     )
 
                     # Get embedding for the summary
+                    start_time = time.time()
                     embedding = await self._get_embedding(summary)
 
                     # Track embedding for parent node
@@ -825,6 +824,7 @@ Here's the content to summarize:"""
                             node_embeddings=[(parent_id, summary_tokens)],
                             batch_size=1,
                             model=self.config.embedding_model,
+                            start_time=start_time,
                         )
 
                     # Store the single-child parent node
