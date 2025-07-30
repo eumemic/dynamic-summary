@@ -108,7 +108,14 @@ jobs:
             done
           else
             # Generate comparison report using ragzoom-telemetry
-            ragzoom-telemetry compare baseline_results/metrics_100_tokens.json benchmark_results/metrics_100_tokens.json --output report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
+            # For now, compare just the 100-token benchmarks (most common case)
+            # TODO: Update ragzoom-telemetry compare to support directory inputs
+            if [ -f "baseline_results/metrics_100_tokens.json" ] && [ -f "benchmark_results/metrics_100_tokens.json" ]; then
+              ragzoom-telemetry compare baseline_results/metrics_100_tokens.json benchmark_results/metrics_100_tokens.json --output report.md || echo "REGRESSION=true" >> $GITHUB_OUTPUT
+            else
+              echo "❌ Expected benchmark files not found" > report.md
+              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+            fi
           fi
           
           # Save report for comment
