@@ -10,7 +10,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Optional, Union, cast, overload
+from typing import Any, cast, overload
 
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN
@@ -87,9 +87,9 @@ class TreeBuilder:
         left_text: str,
         right_text: str,
         target_tokens: int,
-        prev_context: Optional[str] = None,
-        reporter: Optional[IndexingMetricsReporter] = None,
-        parent_id: Optional[str] = None,
+        prev_context: str | None = None,
+        reporter: IndexingMetricsReporter | None = None,
+        parent_id: str | None = None,
     ) -> str:
         """Summarize text using LLM."""
         # Build prompt with adjacent context (trim to avoid token explosion)
@@ -200,8 +200,8 @@ Here's the content to summarize:"""
     async def _add_document_impl(
         self,
         text: str,
-        document_id: Optional[str] = None,
-        file_path: Optional[str] = None,
+        document_id: str | None = None,
+        file_path: str | None = None,
         show_progress: bool = True,
         reporter: None = None,
     ) -> str: ...
@@ -210,8 +210,8 @@ Here's the content to summarize:"""
     async def _add_document_impl(
         self,
         text: str,
-        document_id: Optional[str] = None,
-        file_path: Optional[str] = None,
+        document_id: str | None = None,
+        file_path: str | None = None,
         show_progress: bool = True,
         reporter: IndexingMetricsReporter = ...,
     ) -> tuple[str, IndexingMetrics]: ...
@@ -219,11 +219,11 @@ Here's the content to summarize:"""
     async def _add_document_impl(
         self,
         text: str,
-        document_id: Optional[str] = None,
-        file_path: Optional[str] = None,
+        document_id: str | None = None,
+        file_path: str | None = None,
         show_progress: bool = True,
-        reporter: Optional[IndexingMetricsReporter] = None,
-    ) -> Union[str, tuple[str, IndexingMetrics]]:
+        reporter: IndexingMetricsReporter | None = None,
+    ) -> str | tuple[str, IndexingMetrics]:
         """Add a document to the tree, creating leaf nodes.
 
         Returns:
@@ -476,8 +476,8 @@ Here's the content to summarize:"""
     def add_document(
         self,
         text: str,
-        document_id: Optional[str] = None,
-        file_path: Optional[str] = None,
+        document_id: str | None = None,
+        file_path: str | None = None,
         show_progress: bool = True,
     ) -> str:
         """Sync wrapper for add_document."""
@@ -488,8 +488,8 @@ Here's the content to summarize:"""
     def add_document_with_metrics(
         self,
         text: str,
-        document_id: Optional[str] = None,
-        file_path: Optional[str] = None,
+        document_id: str | None = None,
+        file_path: str | None = None,
         show_progress: bool = False,
     ) -> tuple[str, IndexingMetrics]:
         """Add document and return metrics. Used for benchmarking.
@@ -524,8 +524,8 @@ Here's the content to summarize:"""
     async def add_document_async(
         self,
         text: str,
-        document_id: Optional[str] = None,
-        file_path: Optional[str] = None,
+        document_id: str | None = None,
+        file_path: str | None = None,
         show_progress: bool = True,
     ) -> str:
         """Async version of add_document - called by sync wrapper."""
@@ -541,9 +541,9 @@ Here's the content to summarize:"""
         left_text: str,
         right_id: str,
         right_text: str,
-        prev_context: Optional[str],
-        document_id: Optional[str],
-        reporter: Optional[IndexingMetricsReporter] = None,
+        prev_context: str | None,
+        document_id: str | None,
+        reporter: IndexingMetricsReporter | None = None,
     ) -> tuple[str, str, list[float]]:
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
@@ -632,7 +632,7 @@ Here's the content to summarize:"""
         # Early validation: Check tree structure immediately after creating parent
         from ragzoom.validate import validate
 
-        def check_parent_structure() -> Optional[str]:
+        def check_parent_structure() -> str | None:
             # Check span validity
             if left_node.span_start >= right_node.span_end:
                 return f"Invalid parent span: left child starts at {left_node.span_start}, right child ends at {right_node.span_end}"
@@ -650,10 +650,10 @@ Here's the content to summarize:"""
         self,
         leaf_ids: list[str],
         leaf_texts: list[str],
-        document_id: Optional[str] = None,
-        progress: Optional[AsyncProgressWrapper] = None,
-        overall_start_time: Optional[float] = None,
-        reporter: Optional[IndexingMetricsReporter] = None,
+        document_id: str | None = None,
+        progress: AsyncProgressWrapper | None = None,
+        overall_start_time: float | None = None,
+        reporter: IndexingMetricsReporter | None = None,
     ) -> str:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
         current_level_ids = leaf_ids
