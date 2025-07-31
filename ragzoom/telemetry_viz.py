@@ -321,17 +321,17 @@ class TelemetryVisualizer:
         ax.set_ylabel("Number of Batches")
         ax.set_title(
             f"Embedding Batch Efficiency\n"
-            f"Utilization: {utilization_pct:.1f}% "
+            f"Efficiency: {utilization_pct:.1f}% "
             f"({total_embeddings} embeddings in {total_batches} batches)"
         )
         ax.legend(loc="upper right")
         ax.grid(True, alpha=0.3, axis="y")
 
-        # Add text explanation of utilization metric
+        # Add text explanation of efficiency metric
         ax.text(
             0.02,
             0.98,
-            "Utilization: Average batch size vs 95th percentile\n"
+            "Efficiency: % of embeddings that were batched\n"
             "Higher values = better API efficiency",
             transform=ax.transAxes,
             va="top",
