@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -43,6 +43,13 @@ matplotlib.rcParams["font.size"] = DEFAULT_FONT_SIZE
 
 class TelemetryVisualizer:
     """Generate visualizations from telemetry data."""
+
+    # Histogram binning constants
+    SMALL_BIN_THRESHOLD = 20
+    MEDIUM_BIN_THRESHOLD = 100
+    SMALL_BIN_WIDTH = 5
+    MEDIUM_BIN_WIDTH = 10
+    LARGE_BIN_COUNT = 20
 
     def __init__(self, output_dir: Path) -> None:
         """Initialize visualizer with output directory."""
@@ -100,9 +107,9 @@ class TelemetryVisualizer:
         ax6 = fig.add_subplot(gs[4, :])
         self._plot_node_timeline(telemetry, ax6)
 
-        # 7. Token Usage Heatmap
+        # 7. Token Count Distributions
         ax7 = fig.add_subplot(gs[5, :])
-        self._plot_token_heatmap(telemetry, ax7)
+        self._plot_token_distributions(telemetry, ax7)
 
         # Add title and metadata
         chunk_size = data["config"]["leaf_tokens"]
@@ -130,13 +137,47 @@ class TelemetryVisualizer:
             summary_output_cost_per_1k=SUMMARY_OUTPUT_COST_PER_1K,
         )
 
+    def _calculate_histogram_bins(
+        self, batch_sizes: list[float]
+    ) -> tuple[list[int] | int, Literal["left", "mid", "right"]]:
+        """Calculate appropriate histogram bins based on data distribution.
+
+        Args:
+            batch_sizes: List of batch sizes to analyze
+
+        Returns:
+            Tuple of (bins, align) where:
+            - bins: Either a list of bin edges or an integer number of bins
+            - align: 'left' for discrete bins, 'mid' for continuous bins
+        """
+        unique_sizes = sorted(set(batch_sizes))
+        max_size = int(max(batch_sizes))
+
+        if len(unique_sizes) <= 10 and max_size <= self.SMALL_BIN_THRESHOLD:
+            # For small discrete values, use exact bins for each value
+            bins: list[int] | int = list(range(0, max_size + 2))  # 0, 1, 2, ..., max+1
+            align: Literal["left", "mid", "right"] = "left"
+        elif max_size <= self.MEDIUM_BIN_THRESHOLD:
+            # For medium ranges, use fixed-width bins
+            bin_width = (
+                self.SMALL_BIN_WIDTH if max_size <= 50 else self.MEDIUM_BIN_WIDTH
+            )
+            bins = list(range(0, max_size + bin_width, bin_width))
+            align = "left"
+        else:
+            # For large ranges, use automatic binning
+            bins = self.LARGE_BIN_COUNT
+            align = "mid"
+
+        return bins, align
+
     def _plot_amplification_by_level(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
     ) -> None:
         """Plot amplification metrics by tree level."""
         amplification = compute_amplification_metrics(telemetry, config)
 
-        if not amplification["by_level"]:
+        if not amplification["by_height"]:
             ax.text(
                 0.5,
                 0.5,
@@ -148,13 +189,13 @@ class TelemetryVisualizer:
             ax.set_title("Amplification by Tree Level")
             return
 
-        levels = sorted(amplification["by_level"].keys())
+        levels = sorted(amplification["by_height"].keys())
         cost_medians = []
         input_medians = []
         output_medians = []
 
         for level in levels:
-            level_data = amplification["by_level"][level]
+            level_data = amplification["by_height"][level]
             cost_medians.append(
                 np.median(level_data["cost"]) if level_data["cost"] else 0
             )
@@ -174,19 +215,33 @@ class TelemetryVisualizer:
 
         ax.set_xlabel("Tree Level")
         ax.set_ylabel("Amplification Factor")
-        ax.set_title("Amplification Metrics by Tree Level")
+        ax.set_title(
+            "Token & Cost Amplification by Tree Level\n(Lower is better - shows summarization efficiency)"
+        )
         ax.set_xticks(x)
         ax.set_xticklabels(levels)
         ax.legend()
         ax.grid(True, alpha=0.3)
 
-        # Add threshold line
+        # Add threshold line with better labeling
         ax.axhline(
             y=self.thresholds.high_cost_amplification,
             color="r",
             linestyle="--",
-            alpha=0.5,
-            label="High threshold",
+            alpha=0.7,
+            linewidth=2,
+        )
+
+        # Add threshold annotation
+        ax.text(
+            0.98,
+            self.thresholds.high_cost_amplification + 0.1,
+            f"Alert threshold: {self.thresholds.high_cost_amplification:.1f}x",
+            transform=ax.get_yaxis_transform(),
+            ha="right",
+            va="bottom",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="red", alpha=0.2),
+            fontsize=8,
         )
 
     def _plot_cost_breakdown(
@@ -225,46 +280,117 @@ class TelemetryVisualizer:
         ax.set_title(f"Cost Breakdown (Total: ${sum(costs):.4f})")
 
     def _plot_batch_efficiency(self, telemetry: dict, ax: plt.Axes) -> None:
-        """Plot batch efficiency metrics."""
+        """Plot embedding batch efficiency with clear explanations."""
         batch_eff = compute_batch_efficiency(telemetry)
 
         if not batch_eff["batch_sizes"]:
             ax.text(
                 0.5,
                 0.5,
-                "No batch data available",
+                "No embedding batch data available",
                 ha="center",
                 va="center",
                 transform=ax.transAxes,
             )
-            ax.set_title("Batch Efficiency")
+            ax.set_title("Embedding Batch Efficiency")
             return
 
         batch_sizes = batch_eff["batch_sizes"]
+        avg_batch_size = batch_eff["avg_batch_size"]
 
-        ax.hist(batch_sizes, bins=20, alpha=0.7, edgecolor="black")
+        # Calculate appropriate histogram bins
+        hist_bins, align = self._calculate_histogram_bins(batch_sizes)
+
+        # Create histogram with intelligent binning
+        _, _, patches = ax.hist(
+            batch_sizes,
+            bins=hist_bins,
+            alpha=0.7,
+            edgecolor="black",
+            color="skyblue",
+            align=align,
+        )
+
+        # Add average line
         ax.axvline(
-            batch_eff["avg_batch_size"],
+            avg_batch_size,
             color="red",
             linestyle="--",
-            label=f'Avg: {batch_eff["avg_batch_size"]:.1f}',
+            linewidth=2,
+            label=f"Average: {avg_batch_size:.1f}",
         )
 
-        ax.set_xlabel("Batch Size")
-        ax.set_ylabel("Frequency")
-        ax.set_title(
-            f'Embedding Batch Distribution (Utilization: {batch_eff["batch_utilization"]:.1f}%)'
+        # Add optimal batch size reference (theoretical maximum from the data)
+        max_batch_size = max(batch_sizes) if batch_sizes else 1
+        ax.axvline(
+            max_batch_size,
+            color="green",
+            linestyle=":",
+            linewidth=2,
+            label=f"Peak: {max_batch_size}",
         )
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+
+        # Calculate and display efficiency metrics
+        utilization_pct = batch_eff["batch_utilization"]
+        total_batches = batch_eff["total_batches"]
+        total_embeddings = batch_eff["total_embeddings"]
+
+        ax.set_xlabel("Embedding Batch Size")
+        ax.set_ylabel("Number of Batches")
+        ax.set_title(
+            f"Embedding Batch Efficiency\n"
+            f"Utilization: {utilization_pct:.1f}% "
+            f"({total_embeddings} embeddings in {total_batches} batches)"
+        )
+        ax.legend(loc="upper right")
+        ax.grid(True, alpha=0.3, axis="y")
+
+        # Add text explanation of utilization metric
+        ax.text(
+            0.02,
+            0.98,
+            "Utilization: Average batch size vs 95th percentile\n"
+            "Higher values = better API efficiency",
+            transform=ax.transAxes,
+            va="top",
+            ha="left",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.8),
+            fontsize=8,
+        )
 
     def _plot_retry_patterns(self, telemetry: dict, ax: plt.Axes) -> None:
-        """Plot retry pattern analysis."""
+        """Plot retry pattern analysis, or show success message if no retries."""
         retry_data = analyze_retry_patterns(telemetry)
 
+        retry_rate = retry_data["retry_rate"]
+        total_attempts = retry_data["total_attempts"]
+
+        # If no retries occurred, show a success message instead of empty chart
+        if retry_rate == 0.0 or retry_data["retry_attempts"] == 0:
+            ax.text(
+                0.5,
+                0.5,
+                "✅ No Retries Needed\n\nAll summary attempts succeeded on first try.\n"
+                f"Total successful attempts: {retry_data['successful_attempts']}",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=12,
+                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgreen", alpha=0.8),
+            )
+            ax.set_title("Summary Retry Analysis - Excellent Performance!")
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            return
+
+        # Show detailed retry analysis when retries occurred
         categories = ["Total Attempts", "Successful", "Retries"]
         values = [
-            retry_data["total_attempts"],
+            total_attempts,
             retry_data["successful_attempts"],
             retry_data["retry_attempts"],
         ]
@@ -279,19 +405,47 @@ class TelemetryVisualizer:
         # Add value labels on bars
         for bar in bars:
             height = bar.get_height()
-            ax.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height,
-                f"{int(height)}",
-                ha="center",
-                va="bottom",
-            )
+            if height > 0:  # Only show labels for non-zero values
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2.0,
+                    height,
+                    f"{int(height)}",
+                    ha="center",
+                    va="bottom",
+                )
 
         ax.set_ylabel("Count")
         ax.set_title(
-            f'Summary Retry Patterns (Retry Rate: {retry_data["retry_rate"]:.1f}%)'
+            f"Summary Retry Analysis\n"
+            f"Retry Rate: {retry_rate:.1f}% "
+            f'(Success Rate: {retry_data["retry_success_rate"]:.1f}%)'
         )
         ax.grid(True, alpha=0.3, axis="y")
+
+        # Show rejection reasons if available
+        if retry_data["rejection_reasons"]:
+            reasons_text = "Rejection reasons:\n" + "\n".join(
+                [
+                    f"• {reason}: {count}"
+                    for reason, count in sorted(
+                        retry_data["rejection_reasons"].items(),
+                        key=lambda x: x[1],
+                        reverse=True,
+                    )[
+                        :3
+                    ]  # Top 3
+                ]
+            )
+            ax.text(
+                0.98,
+                0.02,
+                reasons_text,
+                transform=ax.transAxes,
+                va="bottom",
+                ha="right",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightcoral", alpha=0.8),
+                fontsize=8,
+            )
 
     def _plot_summary_accuracy(self, metrics: dict, ax: plt.Axes) -> None:
         """Plot summary accuracy distribution."""
@@ -339,9 +493,11 @@ class TelemetryVisualizer:
             linewidth=2,
         )
 
-        ax.set_xlabel("Deviation from Target (%)")
+        ax.set_xlabel("Deviation from Target Token Count (%)")
         ax.set_ylabel("Frequency")
-        ax.set_title("Summary Token Count Accuracy")
+        ax.set_title(
+            "Summary Length Accuracy\n(How well summaries hit target token counts)"
+        )
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -370,52 +526,140 @@ class TelemetryVisualizer:
         min_time = creation_times[0]
         relative_times = [(t - min_time) for t in creation_times]
 
-        ax.plot(relative_times, range(len(relative_times)), alpha=0.8)
-        ax.set_xlabel("Time (seconds)")
+        ax.plot(
+            relative_times,
+            range(len(relative_times)),
+            alpha=0.8,
+            linewidth=2,
+            color="purple",
+        )
+        ax.set_xlabel("Time Since Start (seconds)")
         ax.set_ylabel("Cumulative Nodes Created")
-        ax.set_title("Node Creation Timeline")
+        ax.set_title(
+            "Document Processing Timeline\n(Shows indexing progress over time)"
+        )
         ax.grid(True, alpha=0.3)
 
-    def _plot_token_heatmap(self, telemetry: dict, ax: plt.Axes) -> None:
-        """Plot token usage heatmap by level and node."""
-        # This is a simplified version - you could make it more sophisticated
-        amplification = compute_amplification_metrics(telemetry, RagZoomConfig())
+        # Add total processing time annotation
+        total_time = max(relative_times) if relative_times else 0
+        total_nodes = len(relative_times)
+        ax.text(
+            0.02,
+            0.98,
+            (
+                f"Total: {total_nodes} nodes in {total_time:.1f}s\n"
+                f"Rate: {total_nodes/total_time:.1f} nodes/sec"
+                if total_time > 0
+                else f"Total: {total_nodes} nodes"
+            ),
+            transform=ax.transAxes,
+            va="top",
+            ha="left",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8),
+            fontsize=8,
+        )
 
-        if not amplification["by_level"]:
+    def _plot_token_distributions(self, telemetry: dict, ax: plt.Axes) -> None:
+        """Plot token count distributions by tree level using violin plots."""
+        # TODO: Consider refactoring this method to extract data preparation logic
+        # into a separate method for better readability and testability
+        import pandas as pd
+
+        # Extract token data by level from telemetry
+        token_data = []
+        parsed_data = telemetry if isinstance(telemetry, dict) else {}
+
+        for doc_type, doc_data in parsed_data.get("documents", {}).items():
+            nodes = doc_data.get("nodes", [])
+
+            for node in nodes:
+                # Get height (compatible with both v1.0 and v2.0)
+                height = node.get("height", node.get("level", 0))
+
+                # Extract token counts from summary attempts for summary nodes
+                if height > 0:  # Summary nodes
+                    summary_attempts = node.get("summary_attempts", [])
+                    for attempt in summary_attempts:
+                        if attempt.get("status") == "accepted":
+                            actual_tokens = attempt.get("actual_tokens", 0)
+                            target_tokens = attempt.get("target_tokens", 0)
+                            if actual_tokens > 0:
+                                token_data.append(
+                                    {
+                                        "level": f"Level {height}",
+                                        "actual_tokens": actual_tokens,
+                                        "target_tokens": target_tokens,
+                                        "node_type": "Summary",
+                                    }
+                                )
+                else:  # Leaf nodes
+                    # For leaf nodes, we can estimate from embedding data or use default
+                    embedding = node.get("embedding", {})
+                    text_tokens = embedding.get("text_tokens", 0)
+                    if text_tokens > 0:
+                        token_data.append(
+                            {
+                                "level": "Level 0 (Leaves)",
+                                "actual_tokens": text_tokens,
+                                "target_tokens": text_tokens,
+                                "node_type": "Leaf",
+                            }
+                        )
+
+        if not token_data:
             ax.text(
                 0.5,
                 0.5,
-                "No token usage data available",
+                "No token distribution data available",
                 ha="center",
                 va="center",
                 transform=ax.transAxes,
             )
-            ax.set_title("Token Usage Heatmap")
+            ax.set_title("Token Count Distributions by Tree Level")
             return
 
-        # Create a simple heatmap of cost amplification by level
-        levels = sorted(amplification["by_level"].keys())
-        data_matrix = []
+        # Create DataFrame for plotting
+        df = pd.DataFrame(token_data)
 
-        for level in levels:
-            level_data = amplification["by_level"][level]
-            # Take first 10 nodes or pad with zeros
-            costs = level_data["cost"][:10] if "cost" in level_data else []
-            while len(costs) < 10:
-                costs.append(0)
-            data_matrix.append(costs)
+        # Create violin plot
+        sns.violinplot(
+            data=df,
+            x="level",
+            y="actual_tokens",
+            hue="level",  # Assign x to hue to fix deprecation warning
+            ax=ax,
+            inner="quartile",  # Show quartiles
+            palette="Set2",
+            legend=False,  # Don't show legend since it's redundant with x-axis
+        )
 
-        if data_matrix:
-            im = ax.imshow(data_matrix, aspect="auto", cmap="YlOrRd")
-            ax.set_xlabel("Node Index")
-            ax.set_ylabel("Tree Level")
-            ax.set_title("Cost Amplification Heatmap")
-            ax.set_yticks(range(len(levels)))
-            ax.set_yticklabels(levels)
+        # Add target token reference lines if available
+        if "target_tokens" in df.columns:
+            level_names = df["level"].unique()
+            for i, level_name in enumerate(level_names):
+                level_data = df[df["level"] == level_name]
+                if len(level_data) > 0:
+                    target = level_data["target_tokens"].iloc[0]
+                    if target > 0:
+                        ax.axhline(
+                            y=target,
+                            color="red",
+                            linestyle="--",
+                            alpha=0.5,
+                            label="Target" if i == 0 else "",
+                        )
 
-            # Add colorbar
-            cbar = plt.colorbar(im, ax=ax)
-            cbar.set_label("Cost Amplification Factor")
+        ax.set_xlabel("Tree Level")
+        ax.set_ylabel("Token Count")
+        ax.set_title("Token Count Distributions by Tree Level")
+        ax.grid(True, alpha=0.3, axis="y")
+
+        # Rotate x-axis labels for better readability
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+
+        # Add legend if target lines were added
+        if ax.lines:
+            ax.legend(loc="upper right")
 
     def _generate_markdown_report(
         self, data: dict, telemetry: dict, config: RagZoomConfig, chunk_size: int
