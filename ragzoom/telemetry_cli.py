@@ -526,7 +526,7 @@ def _generate_unified_comparison_report(
                 # For deviations, increase is bad
                 if change_pct > 10:
                     emoji = "⚠️"
-                if change_pct > 20:
+                if change_pct > 30:
                     has_regression = True
                     emoji += " ❌"
                 if abs(change_pct) >= significance_threshold:
@@ -541,7 +541,7 @@ def _generate_unified_comparison_report(
                 change_pct, emoji = calculate_change(baseline_val, current_val)
                 if change_pct > 10:
                     emoji = "⚠️"
-                if change_pct > 20:
+                if change_pct > 30:
                     has_regression = True
                     emoji += " ❌"
                 if abs(change_pct) >= significance_threshold:
