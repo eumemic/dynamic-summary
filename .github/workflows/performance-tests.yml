@@ -74,7 +74,7 @@ jobs:
             if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-$chunk_size" -v; then
               echo "❌ Benchmark failed for chunk_size=$chunk_size"
               echo "Creating error result file..."
-              echo '{"error": "Benchmark failed to run", "chunk_size": "'$chunk_size'"}' > "benchmark_results/metrics_${chunk_size}_tokens.json"
+              echo '{"error": "Benchmark failed to run", "chunk_size": "'$chunk_size'"}' > "benchmark_results/telemetry_${chunk_size}_tokens.json"
               echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
             fi
           done
@@ -91,7 +91,7 @@ jobs:
         id: compare
         run: |
           # Check if we have baseline results
-          if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/metrics_100_tokens.json" ]; then
+          if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/telemetry_100_tokens.json" ]; then
             echo "## 📊 Performance Report" > report.md
             echo "" >> report.md
             echo "⚠️ No baseline benchmarks available." >> report.md
@@ -102,9 +102,9 @@ jobs:
             echo "" >> report.md
             
             # Show current results
-            for file in benchmark_results/metrics_*_tokens.json; do
+            for file in benchmark_results/telemetry_*_tokens.json; do
               if [ -f "$file" ]; then
-                chunk_size=$(basename "$file" | sed 's/metrics_\([0-9]*\)_tokens.json/\1/')
+                chunk_size=$(basename "$file" | sed 's/telemetry_\([0-9]*\)_tokens.json/\1/')
                 echo "**Chunk size: $chunk_size tokens**" >> report.md
                 # Check if file contains error
                 if grep -q '"error"' "$file"; then
@@ -139,9 +139,9 @@ jobs:
             }
             
             # Compare benchmarks
-            if [ -f "baseline_results/metrics_100_tokens.json" ] && [ -f "benchmark_results/metrics_100_tokens.json" ]; then
+            if [ -f "baseline_results/telemetry_100_tokens.json" ] && [ -f "benchmark_results/telemetry_100_tokens.json" ]; then
               echo "📊 Running benchmark comparison..."
-              ragzoom-telemetry compare baseline_results/metrics_100_tokens.json benchmark_results/metrics_100_tokens.json --output report.md
+              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output report.md
               comparison_exit_code=$?
               
               if [ $comparison_exit_code -ne 0 ]; then
@@ -153,8 +153,8 @@ jobs:
               echo "❌ Expected benchmark files not found" > report.md
               echo "" >> report.md
               echo "Looking for:" >> report.md
-              echo "- baseline_results/metrics_100_tokens.json" >> report.md  
-              echo "- benchmark_results/metrics_100_tokens.json" >> report.md
+              echo "- baseline_results/telemetry_100_tokens.json" >> report.md  
+              echo "- benchmark_results/telemetry_100_tokens.json" >> report.md
               echo "" >> report.md
               echo "Available files:" >> report.md
               echo "Baseline:" >> report.md

@@ -30,7 +30,6 @@ from ragzoom.telemetry import (
     compute_batch_efficiency,
 )
 from ragzoom.telemetry_config import (
-    DEFAULT_CHUNK_SIZE,
     EMOJI_THRESHOLD_MINOR,
     EMOJI_THRESHOLD_NEGLIGIBLE,
 )
@@ -180,93 +179,60 @@ For debugging, try running the commands manually to see detailed error messages.
 
 
 def load_single_benchmark(filepath: Path) -> tuple[int, dict]:
-    """Load a single benchmark file and extract chunk size and metrics.
+    """Load a telemetry benchmark file and extract chunk size and computed metrics.
 
     Returns:
-        Tuple of (chunk_size, metrics_dict)
+        Tuple of (chunk_size, computed_metrics_dict)
     """
     with open(filepath) as f:
         data = json.load(f)
 
-    # Handle new telemetry format
-    if "telemetry" in data and "config" in data:
-        # New format with telemetry
-        chunk_size = data["config"]["leaf_tokens"]
-
-        # Create config for analysis
-        # Use environment variable if available, otherwise use placeholder
-        api_key = os.getenv("RAGZOOM_OPENAI_API_KEY", "not-needed-for-analysis")
-        config = RagZoomConfig(
-            openai_api_key=api_key,
-            leaf_tokens=chunk_size,
-            summary_input_cost_per_1k=0.0025,
-            summary_output_cost_per_1k=0.01,
+    # Only support telemetry format
+    if "telemetry" not in data or "config" not in data:
+        raise ValueError(
+            f"File {filepath} is not in telemetry format. "
+            "Only telemetry format is supported. "
+            "Expected structure: {config, document, telemetry}"
         )
 
-        # Compute metrics from telemetry
-        telemetry = data["telemetry"]
-        amplification = compute_amplification_metrics(telemetry, config)
-        batch_efficiency = compute_batch_efficiency(telemetry)
-        retry_patterns = analyze_retry_patterns(telemetry)
+    chunk_size = data["config"]["leaf_tokens"]
 
-        # Build metrics dict in old format for compatibility
-        metrics = {
-            "timing": {
-                "total_duration_seconds": 0,  # Not available in telemetry
-                "tokens_per_second": 0,
-                "time_per_1k_tokens": 0,
-            },
-            "document": data.get("document", {}),
-            "api_usage": {
-                "total_calls": batch_efficiency["total_batches"]
-                + retry_patterns["total_attempts"],
-                "embedding_calls": batch_efficiency["total_batches"],
-                "summary_calls": retry_patterns["total_attempts"],
-                "embedding_tokens": batch_efficiency["total_embeddings"],
-                "summary_prompt_tokens": 0,  # Would need computation
-                "summary_completion_tokens": 0,  # Would need computation
-            },
-            "efficiency": {
-                "avg_embedding_batch_size": batch_efficiency["avg_batch_size"],
-                "batch_utilization": batch_efficiency["batch_utilization"],
-                "embedding_tokens_per_1k": 0,  # Would need computation
-                "summary_tokens_per_1k": 0,  # Would need computation
-                "api_calls_per_1k": 0,  # Would need computation
-                "cost_per_1k_tokens": 0,  # Would need computation
-            },
-            "amplification": {
-                "median_cost": amplification["median_cost"],
-                "cost_p90": amplification["cost_p90"],
-                "cost_p95": amplification["cost_p95"],
-                "median_input": amplification["median_input"],
-                "median_output": amplification["median_output"],
-            },
-            "summary_accuracy": {},  # Would need more complex analysis
-        }
+    # Create config for analysis
+    api_key = os.getenv("RAGZOOM_OPENAI_API_KEY", "not-needed-for-analysis")
+    config = RagZoomConfig(
+        openai_api_key=api_key,
+        leaf_tokens=chunk_size,
+        summary_input_cost_per_1k=0.0025,
+        summary_output_cost_per_1k=0.01,
+    )
 
-        return chunk_size, metrics
+    # Compute metrics from telemetry
+    telemetry = data["telemetry"]
+    amplification = compute_amplification_metrics(telemetry, config)
+    batch_efficiency = compute_batch_efficiency(telemetry)
+    retry_patterns = analyze_retry_patterns(telemetry)
 
-    # Handle old format (metrics at top level)
-    elif "metrics" in data:
-        # Old benchmark format
-        metrics = data["metrics"]
+    # Return computed metrics (not in old format - this is the new way)
+    metrics = {
+        "amplification": {
+            "median_cost": amplification["median_cost"],
+            "cost_p90": amplification["cost_p90"],
+            "cost_p95": amplification["cost_p95"],
+            "median_input": amplification["median_input"],
+            "median_output": amplification["median_output"],
+        },
+        "efficiency": {
+            "avg_embedding_batch_size": batch_efficiency["avg_batch_size"],
+            "batch_utilization": batch_efficiency["batch_utilization"],
+        },
+        "retry_patterns": {
+            "retry_rate": retry_patterns["retry_rate"],
+            "retry_success_rate": retry_patterns["retry_success_rate"],
+        },
+        "document": data.get("document", {}),
+    }
 
-        # Try to extract chunk size
-        if "config" in data:
-            chunk_size = data["config"]["leaf_tokens"]
-        elif "document" in metrics:
-            # Estimate from document stats
-            chunks = metrics["document"].get("chunks_created", 1)
-            tokens = metrics["document"].get(
-                "source_document_tokens", chunks * DEFAULT_CHUNK_SIZE
-            )
-            chunk_size = tokens // chunks if chunks > 0 else DEFAULT_CHUNK_SIZE
-        else:
-            chunk_size = DEFAULT_CHUNK_SIZE
-
-        return chunk_size, metrics
-    else:
-        raise ValueError(f"Unrecognized benchmark format in {filepath}")
+    return chunk_size, metrics
 
 
 def calculate_change(old_value: float, new_value: float) -> tuple[float, str]:
@@ -553,7 +519,7 @@ def visualize(input_path: str, output_dir: str, format: str, compare: bool) -> N
             visualizer.visualize_single_benchmark(input_path_obj, format)
         elif input_path_obj.is_dir():
             # Directory of benchmarks
-            json_files = list(input_path_obj.glob("metrics_*_tokens.json"))
+            json_files = list(input_path_obj.glob("telemetry_*_tokens.json"))
             # Also support new telemetry.json files
             json_files.extend(input_path_obj.glob("telemetry*.json"))
 

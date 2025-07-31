@@ -448,7 +448,7 @@ class TelemetryVisualizer:
         self, results_dir: Path, output_format: str = "png"
     ) -> None:
         """Create comparison visualizations between multiple benchmarks."""
-        json_files = list(results_dir.glob("metrics_*_tokens.json"))
+        json_files = list(results_dir.glob("telemetry_*_tokens.json"))
 
         if len(json_files) < 2:
             print("Need at least 2 benchmark files for comparison")
