@@ -95,7 +95,7 @@ jobs:
           if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/telemetry_100_tokens.json" ]; then
             echo "## 📊 Performance Report" > report.md
             echo "" >> report.md
-            echo "_View [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_" >> report.md
+            echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" >> report.md
             echo "" >> report.md
             echo "⚠️ No baseline benchmarks available." >> report.md
             echo "" >> report.md
@@ -154,7 +154,7 @@ jobs:
               # Add workflow link to the top of the report if comparison succeeded
               if [ $comparison_exit_code -eq 0 ] && [ -f report.md ]; then
                 # Create a temporary file with the link
-                echo "_View [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_" > report_with_link.md
+                echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
                 echo "" >> report_with_link.md
                 cat report.md >> report_with_link.md
                 mv report_with_link.md report.md
@@ -169,7 +169,7 @@ jobs:
               # Add workflow link to the top of the report if comparison succeeded
               if [ $comparison_exit_code -eq 0 ] && [ -f report.md ]; then
                 # Create a temporary file with the link
-                echo "_View [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_" > report_with_link.md
+                echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
                 echo "" >> report_with_link.md
                 cat report.md >> report_with_link.md
                 mv report_with_link.md report.md
