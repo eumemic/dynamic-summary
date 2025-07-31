@@ -13,6 +13,7 @@ from ragzoom.telemetry import (
     analyze_retry_patterns,
     compute_amplification_metrics,
     compute_batch_efficiency,
+    compute_metrics_from_telemetry,
 )
 from ragzoom.telemetry_config import (
     EMOJI_THRESHOLD_MINOR,
@@ -218,6 +219,21 @@ def load_single_benchmark(filepath: Path) -> tuple[int, MetricsDict]:
     batch_efficiency = compute_batch_efficiency(telemetry)
     retry_patterns = analyze_retry_patterns(telemetry)
 
+    # Compute full metrics to extract summary stats
+    full_metrics = compute_metrics_from_telemetry(telemetry, config)
+
+    # Extract summary accuracy stats
+    summary_accuracy = {}
+    for target_size, stats in full_metrics.summary_stats.items():
+        summary_accuracy[target_size] = {
+            "avg_deviation": stats.avg_deviation_percent,
+            "median_deviation": stats.median_deviation_percent,
+            "std_deviation": stats.std_deviation_percent,
+            "p95_deviation": stats.percentile_95,
+            "count": stats.count,
+            "deviations": stats.deviations,  # Raw data for visualization
+        }
+
     # Return computed metrics (not in old format - this is the new way)
     metrics = {
         "amplification": {
@@ -235,6 +251,7 @@ def load_single_benchmark(filepath: Path) -> tuple[int, MetricsDict]:
             "retry_rate": retry_patterns["retry_rate"],
             "retry_success_rate": retry_patterns["retry_success_rate"],
         },
+        "summary_accuracy": summary_accuracy,
         "document": data.get("document", {}),
     }
 
@@ -428,21 +445,105 @@ def _generate_unified_comparison_report(
     report = []
     has_regression = False
 
-    report.append("# 📊 Multi-Chunk Performance Comparison")
-    report.append("")
-    report.append(f"**Baseline:** {baseline_name}")
-    report.append(f"**Current:** {current_name}")
+    report.append("# 📊 Performance Report")
     report.append("")
 
     # Sort chunk sizes for consistent ordering
     sorted_chunks = sorted(chunk_metrics.keys())
 
+    # Summary Size Accuracy Table (first, most important)
+    report.append("## 📏 Summary Size Accuracy")
+    report.append("")
+
+    summary_rows = []
+    for chunk_size in sorted_chunks:
+        baseline_summary = chunk_metrics[chunk_size]["baseline"].get(
+            "summary_accuracy", {}
+        )
+        current_summary = chunk_metrics[chunk_size]["current"].get(
+            "summary_accuracy", {}
+        )
+
+        # Get the summary stats for the chunk size (target size)
+        baseline_stats = baseline_summary.get(chunk_size, {})
+        current_stats = current_summary.get(chunk_size, {})
+
+        if baseline_stats and current_stats:
+            # Average Deviation
+            baseline_val = baseline_stats.get("avg_deviation", 0)
+            current_val = current_stats.get("avg_deviation", 0)
+            if baseline_val > 0:
+                change_pct, emoji = calculate_change(baseline_val, current_val)
+                # For deviations, increase is bad
+                if change_pct > 10:
+                    emoji = "⚠️"
+                if change_pct > 20:
+                    emoji = "❌"
+                    has_regression = True
+                if abs(change_pct) >= 1.0:  # Only show if >= 1% change
+                    summary_rows.append(
+                        f"| {chunk_size} tokens | Avg Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_pct:+.1f}% {emoji} |"
+                    )
+
+            # Median Deviation
+            baseline_val = baseline_stats.get("median_deviation", 0)
+            current_val = current_stats.get("median_deviation", 0)
+            if baseline_val > 0:
+                change_pct, emoji = calculate_change(baseline_val, current_val)
+                if change_pct > 10:
+                    emoji = "⚠️"
+                if change_pct > 20:
+                    emoji = "❌"
+                    has_regression = True
+                if abs(change_pct) >= 1.0:
+                    summary_rows.append(
+                        f"| | Median Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_pct:+.1f}% {emoji} |"
+                    )
+
+            # Standard Deviation
+            baseline_val = baseline_stats.get("std_deviation", 0)
+            current_val = current_stats.get("std_deviation", 0)
+            if baseline_val > 0:
+                change_pct, emoji = calculate_change(baseline_val, current_val)
+                if change_pct > 10:
+                    emoji = "⚠️"
+                if change_pct > 20:
+                    emoji = "❌"
+                    has_regression = True
+                if abs(change_pct) >= 1.0:
+                    summary_rows.append(
+                        f"| | Std Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_pct:+.1f}% {emoji} |"
+                    )
+
+            # P95 Deviation
+            baseline_val = baseline_stats.get("p95_deviation", 0)
+            current_val = current_stats.get("p95_deviation", 0)
+            if baseline_val > 0:
+                change_pct, emoji = calculate_change(baseline_val, current_val)
+                if change_pct > 10:
+                    emoji = "⚠️"
+                if change_pct > 20:
+                    emoji = "❌"
+                    has_regression = True
+                if abs(change_pct) >= 1.0:
+                    summary_rows.append(
+                        f"| | P95 Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_pct:+.1f}% {emoji} |"
+                    )
+
+    if summary_rows:
+        report.append("| Chunk Size | Metric | Baseline | Current | Change |")
+        report.append("|------------|--------|----------|---------|--------|")
+        report.extend(summary_rows)
+    else:
+        report.append("No significant changes (all metrics within ±1%)")
+
+    report.append("")
+
     # Amplification Metrics Table
     report.append("## 📈 Amplification Metrics")
     report.append("")
-    report.append("| Chunk Size | Metric | Baseline | Current | Change |")
-    report.append("|------------|--------|----------|---------|--------|")
 
+    amplification_rows = []
     for chunk_size in sorted_chunks:
         baseline_metrics = chunk_metrics[chunk_size]["baseline"]["amplification"]
         current_metrics = chunk_metrics[chunk_size]["current"]["amplification"]
@@ -455,46 +556,45 @@ def _generate_unified_comparison_report(
             if check_regression(change_pct, "Median Cost Amplification", thresholds):
                 has_regression = True
                 emoji += " ❌"
-            change_str = f"{change_pct:+.1f}% {emoji}"
-        else:
-            change_str = "N/A"
-
-        report.append(
-            f"| {chunk_size} tokens | Median Cost Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
-        )
+            if abs(change_pct) >= 1.0:
+                amplification_rows.append(
+                    f"| {chunk_size} tokens | Median Cost Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_pct:+.1f}% {emoji} |"
+                )
 
         # Input amplification (sub-metric)
         baseline_val = baseline_metrics.get("median_input", 0)
         current_val = current_metrics.get("median_input", 0)
         if baseline_val > 0:
             change_pct, emoji = calculate_change(baseline_val, current_val)
-            change_str = f"{change_pct:+.1f}% {emoji}"
-        else:
-            change_str = "N/A"
-        report.append(
-            f"| | ├─ Input Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
-        )
+            if abs(change_pct) >= 1.0:
+                amplification_rows.append(
+                    f"| | ├─ Input Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_pct:+.1f}% {emoji} |"
+                )
 
         # Output amplification (sub-metric)
         baseline_val = baseline_metrics.get("median_output", 0)
         current_val = current_metrics.get("median_output", 0)
         if baseline_val > 0:
             change_pct, emoji = calculate_change(baseline_val, current_val)
-            change_str = f"{change_pct:+.1f}% {emoji}"
-        else:
-            change_str = "N/A"
-        report.append(
-            f"| | └─ Output Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
-        )
+            if abs(change_pct) >= 1.0:
+                amplification_rows.append(
+                    f"| | └─ Output Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_pct:+.1f}% {emoji} |"
+                )
+
+    if amplification_rows:
+        report.append("| Chunk Size | Metric | Baseline | Current | Change |")
+        report.append("|------------|--------|----------|---------|--------|")
+        report.extend(amplification_rows)
+    else:
+        report.append("No significant changes (all metrics within ±1%)")
 
     report.append("")
 
-    # Efficiency Metrics Table
-    report.append("## 📦 Efficiency Metrics")
+    # Embedding Efficiency Table
+    report.append("## 📦 Embedding Efficiency")
     report.append("")
-    report.append("| Chunk Size | Metric | Baseline | Current | Change |")
-    report.append("|------------|--------|----------|---------|--------|")
 
+    efficiency_rows = []
     for chunk_size in sorted_chunks:
         baseline_metrics = chunk_metrics[chunk_size]["baseline"]["efficiency"]
         current_metrics = chunk_metrics[chunk_size]["current"]["efficiency"]
@@ -504,12 +604,10 @@ def _generate_unified_comparison_report(
         current_val = current_metrics.get("avg_embedding_batch_size", 0)
         if baseline_val > 0:
             change_pct, emoji = calculate_change(baseline_val, current_val)
-            change_str = f"{change_pct:+.1f}% {emoji}"
-        else:
-            change_str = "N/A"
-        report.append(
-            f"| {chunk_size} tokens | Avg Embedding Batch Size | {baseline_val:.1f} | {current_val:.1f} | {change_str} |"
-        )
+            if abs(change_pct) >= 1.0:
+                efficiency_rows.append(
+                    f"| {chunk_size} tokens | Avg Embedding Batch Size | {baseline_val:.1f} | {current_val:.1f} | {change_pct:+.1f}% {emoji} |"
+                )
 
         # Batch utilization
         baseline_val = baseline_metrics.get("batch_utilization", 0)
@@ -519,12 +617,17 @@ def _generate_unified_comparison_report(
             # For utilization, decrease might be bad
             if "Utilization" in "Batch Utilization" and change_pct < 0:
                 emoji = "⚠️" if abs(change_pct) > EMOJI_THRESHOLD_MINOR else ""
-            change_str = f"{change_pct:+.1f}% {emoji}"
-        else:
-            change_str = "N/A"
-        report.append(
-            f"| | Batch Utilization | {baseline_val:.1f}% | {current_val:.1f}% | {change_str} |"
-        )
+            if abs(change_pct) >= 1.0:
+                efficiency_rows.append(
+                    f"| | Batch Utilization | {baseline_val:.1f}% | {current_val:.1f}% | {change_pct:+.1f}% {emoji} |"
+                )
+
+    if efficiency_rows:
+        report.append("| Chunk Size | Metric | Baseline | Current | Change |")
+        report.append("|------------|--------|----------|---------|--------|")
+        report.extend(efficiency_rows)
+    else:
+        report.append("No significant changes (all metrics within ±1%)")
 
     report.append("")
 
