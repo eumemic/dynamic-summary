@@ -132,6 +132,19 @@ class SummaryStats:
         """95th percentile of deviations."""
         if not self.deviations:
             return 0.0
+        # Need at least 2 values for quantiles
+        if len(self.deviations) < 2:
+            return max(self.deviations)
+        # For small samples, use numpy-style percentile calculation
+        if len(self.deviations) < 20:
+            sorted_vals = sorted(self.deviations)
+            index = 0.95 * (len(sorted_vals) - 1)
+            lower = int(index)
+            upper = lower + 1
+            if upper >= len(sorted_vals):
+                return sorted_vals[-1]
+            weight = index - lower
+            return sorted_vals[lower] * (1 - weight) + sorted_vals[upper] * weight
         return statistics.quantiles(self.deviations, n=20)[18]  # 19th of 19 cut points
 
     @property

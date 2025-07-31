@@ -266,8 +266,8 @@ def calculate_change(old_value: float, new_value: float) -> tuple[float, str]:
     change = ((new_value - old_value) / old_value) * 100
 
     # Determine emoji based on metric type and direction
-    # Only show emojis for changes >= 5% to reduce noise
-    if abs(change) < 5.0:
+    # Only show emojis for significant changes to reduce noise
+    if abs(change) < EMOJI_THRESHOLD_MINOR:
         emoji = ""
     elif change > 0:
         # For cost and time metrics, increase is bad
@@ -289,6 +289,47 @@ def format_value(value: float, metric_type: str) -> str:
         return f"{value:.2f}s"
     else:
         return f"{value:.1f}"
+
+
+def format_metric_rows_with_chunk_label(
+    chunk_size: int,
+    chunk_rows: list[tuple[str, float, float, float, str]],
+    format_baseline: str = "{baseline:.1f}%",
+    format_current: str = "{current:.1f}%",
+    special_formatting: dict[str, tuple[str, str]] | None = None,
+) -> list[str]:
+    """Format metric rows with chunk size label on the first row.
+
+    Args:
+        chunk_size: The chunk size in tokens
+        chunk_rows: List of (metric_name, baseline, current, change, emoji) tuples
+        format_baseline: Format string for baseline values
+        format_current: Format string for current values
+        special_formatting: Dict mapping metric names to (baseline_fmt, current_fmt) tuples
+
+    Returns:
+        List of formatted table rows
+    """
+    rows = []
+    for i, (metric_name, baseline, current, change, emoji) in enumerate(chunk_rows):
+        # Check for special formatting for this metric
+        if special_formatting and metric_name in special_formatting:
+            baseline_fmt, current_fmt = special_formatting[metric_name]
+            baseline_str = baseline_fmt.format(baseline=baseline)
+            current_str = current_fmt.format(current=current)
+        else:
+            baseline_str = format_baseline.format(baseline=baseline)
+            current_str = format_current.format(current=current)
+
+        if i == 0:
+            rows.append(
+                f"| {chunk_size} tokens | {metric_name} | {baseline_str} | {current_str} | {change:+.1f}% {emoji} |"
+            )
+        else:
+            rows.append(
+                f"| | {metric_name} | {baseline_str} | {current_str} | {change:+.1f}% {emoji} |"
+            )
+    return rows
 
 
 def check_regression(
@@ -540,21 +581,19 @@ def _generate_unified_comparison_report(
                     emoji += " ❌"
                 if abs(change_pct) >= significance_threshold:
                     chunk_rows.append(
-                        ("P95 Deviation", baseline_val, current_val, change_pct, emoji)
+                        (
+                            "P95 Deviation (%)",
+                            baseline_val,
+                            current_val,
+                            change_pct,
+                            emoji,
+                        )
                     )
 
             # Add rows with chunk size label on the first row
-            for i, (metric_name, baseline, current, change, emoji) in enumerate(
-                chunk_rows
-            ):
-                if i == 0:
-                    summary_rows.append(
-                        f"| {chunk_size} tokens | {metric_name} | {baseline:.1f}% | {current:.1f}% | {change:+.1f}% {emoji} |"
-                    )
-                else:
-                    summary_rows.append(
-                        f"| | {metric_name} | {baseline:.1f}% | {current:.1f}% | {change:+.1f}% {emoji} |"
-                    )
+            summary_rows.extend(
+                format_metric_rows_with_chunk_label(chunk_size, chunk_rows)
+            )
 
     if summary_rows:
         report.append("| Chunk Size | Metric | Baseline | Current | Change |")
@@ -631,15 +670,14 @@ def _generate_unified_comparison_report(
                 )
 
         # Add rows with chunk size label on the first row
-        for i, (metric_name, baseline, current, change, emoji) in enumerate(chunk_rows):
-            if i == 0:
-                amplification_rows.append(
-                    f"| {chunk_size} tokens | {metric_name} | {baseline:.2f}x | {current:.2f}x | {change:+.1f}% {emoji} |"
-                )
-            else:
-                amplification_rows.append(
-                    f"| | {metric_name} | {baseline:.2f}x | {current:.2f}x | {change:+.1f}% {emoji} |"
-                )
+        amplification_rows.extend(
+            format_metric_rows_with_chunk_label(
+                chunk_size,
+                chunk_rows,
+                format_baseline="{baseline:.2f}x",
+                format_current="{current:.2f}x",
+            )
+        )
 
     if amplification_rows:
         report.append("| Chunk Size | Metric | Baseline | Current | Change |")
@@ -694,27 +732,17 @@ def _generate_unified_comparison_report(
                 )
 
         # Add rows with chunk size label on the first row
-        for i, (metric_name, baseline, current, change, emoji) in enumerate(chunk_rows):
-            if i == 0:
-                # For Batch Utilization, show % for both baseline and current
-                if metric_name == "Batch Utilization":
-                    efficiency_rows.append(
-                        f"| {chunk_size} tokens | {metric_name} | {baseline:.1f}% | {current:.1f}% | {change:+.1f}% {emoji} |"
-                    )
-                else:
-                    efficiency_rows.append(
-                        f"| {chunk_size} tokens | {metric_name} | {baseline:.1f} | {current:.1f} | {change:+.1f}% {emoji} |"
-                    )
-            else:
-                # For Batch Utilization, show % for both baseline and current
-                if metric_name == "Batch Utilization":
-                    efficiency_rows.append(
-                        f"| | {metric_name} | {baseline:.1f}% | {current:.1f}% | {change:+.1f}% {emoji} |"
-                    )
-                else:
-                    efficiency_rows.append(
-                        f"| | {metric_name} | {baseline:.1f} | {current:.1f} | {change:+.1f}% {emoji} |"
-                    )
+        efficiency_rows.extend(
+            format_metric_rows_with_chunk_label(
+                chunk_size,
+                chunk_rows,
+                format_baseline="{baseline:.1f}",
+                format_current="{current:.1f}",
+                special_formatting={
+                    "Batch Utilization": ("{baseline:.1f}%", "{current:.1f}%")
+                },
+            )
+        )
 
     if efficiency_rows:
         report.append("| Chunk Size | Metric | Baseline | Current | Change |")
