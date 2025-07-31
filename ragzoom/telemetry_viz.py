@@ -101,7 +101,7 @@ class TelemetryVisualizer:
 
         # 5. Summary Accuracy Distribution
         ax5 = fig.add_subplot(gs[3, :])
-        self._plot_summary_accuracy(data.get("metrics", {}), ax5)
+        self._plot_summary_accuracy(telemetry, ax5)
 
         # 6. Node Creation Timeline
         ax6 = fig.add_subplot(gs[4, :])
@@ -254,13 +254,16 @@ class TelemetryVisualizer:
         embedding_cost = (
             metrics.total_embedding_tokens / 1000
         ) * metrics.embedding_cost_per_1k
-        summary_cost = (
+        summary_input_cost = (
             metrics.total_summary_prompt_tokens / 1000
-        ) * metrics.summary_input_cost_per_1k + (
+        ) * metrics.summary_input_cost_per_1k
+        summary_output_cost = (
             metrics.total_summary_completion_tokens / 1000
         ) * metrics.summary_output_cost_per_1k
 
-        if embedding_cost == 0 and summary_cost == 0:
+        total_cost = embedding_cost + summary_input_cost + summary_output_cost
+
+        if total_cost == 0:
             ax.text(
                 0.5,
                 0.5,
@@ -272,12 +275,12 @@ class TelemetryVisualizer:
             ax.set_title("Cost Breakdown")
             return
 
-        costs = [embedding_cost, summary_cost]
-        labels = ["Embeddings", "Summaries"]
-        colors = ["#ff9999", "#66b3ff"]
+        costs = [embedding_cost, summary_input_cost, summary_output_cost]
+        labels = ["Embeddings", "Summary Input", "Summary Output"]
+        colors = ["#ff9999", "#66b3ff", "#99ff99"]
 
         ax.pie(costs, labels=labels, colors=colors, autopct="%1.1f%%", startangle=90)
-        ax.set_title(f"Cost Breakdown (Total: ${sum(costs):.4f})")
+        ax.set_title(f"Cost Breakdown (Total: ${total_cost:.4f})")
 
     def _plot_batch_efficiency(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot embedding batch efficiency with clear explanations."""
@@ -447,25 +450,49 @@ class TelemetryVisualizer:
                 fontsize=8,
             )
 
-    def _plot_summary_accuracy(self, metrics: dict, ax: plt.Axes) -> None:
-        """Plot summary accuracy distribution."""
-        if "summary_accuracy" not in metrics or not metrics["summary_accuracy"]:
-            ax.text(
-                0.5,
-                0.5,
-                "No summary accuracy data available",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-            )
-            ax.set_title("Summary Accuracy Distribution")
-            return
+    def _extract_summary_deviations_from_telemetry(
+        self, telemetry: dict
+    ) -> list[float]:
+        """Extract summary accuracy deviations from telemetry data.
 
-        # Extract deviation data
+        Returns:
+            List of deviation percentages from chunk_size target
+        """
         deviations = []
-        for target_size, stats in metrics["summary_accuracy"].items():
-            if "deviations" in stats:
-                deviations.extend(stats["deviations"])
+        parsed_data = telemetry if isinstance(telemetry, dict) else {}
+
+        # Process all documents
+        for doc_name, doc_data in parsed_data.get("documents", {}).items():
+            # Get the chunk size for this document
+            chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
+            if chunk_size <= 0:
+                continue
+
+            # Process all nodes
+            nodes = doc_data.get("nodes", [])
+            for node in nodes:
+                # Only process summary nodes (height > 0)
+                height = node.get("height", node.get("level", 0))
+                if height > 0:
+                    # Look for accepted summary attempts
+                    summary_attempts = node.get("summary_attempts", [])
+                    for attempt in summary_attempts:
+                        if attempt.get("status") == "accepted":
+                            actual_tokens = attempt.get("actual_tokens", 0)
+                            if actual_tokens > 0:
+                                # Calculate deviation percentage
+                                deviation = (
+                                    (actual_tokens - chunk_size) / chunk_size * 100
+                                )
+                                deviations.append(deviation)
+                                break  # Only use the accepted attempt
+
+        return deviations
+
+    def _plot_summary_accuracy(self, telemetry: dict, ax: plt.Axes) -> None:
+        """Plot summary accuracy distribution."""
+        # Extract deviations from telemetry
+        deviations = self._extract_summary_deviations_from_telemetry(telemetry)
 
         if not deviations:
             ax.text(
@@ -484,7 +511,7 @@ class TelemetryVisualizer:
         ax.axvline(0, color="green", linestyle="--", label="Target", linewidth=2)
 
         # Add median line
-        median_dev = np.median(deviations)
+        median_dev = float(np.median(deviations))
         ax.axvline(
             median_dev,
             color="red",
