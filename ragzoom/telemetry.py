@@ -353,9 +353,9 @@ def compute_batch_efficiency(telemetry_data: dict) -> dict:
     if batch_sizes:
         avg_batch_size = sum(batch_sizes) / len(batch_sizes)
         result["avg_batch_size"] = avg_batch_size
-        # Batch efficiency: percentage of embeddings that benefited from batching
-        # Each batch of size N results in (N-1) embeddings that were batched together
-        # rather than sent individually
+        # Batch efficiency: percentage of embeddings that benefited from batching.
+        # For each batch of size N, (N-1) embeddings were batched together rather
+        # than sent individually.
         batched_embeddings = sum(max(0, batch_size - 1) for batch_size in batch_sizes)
         result["batch_utilization"] = (
             (batched_embeddings / total_embeddings) * 100

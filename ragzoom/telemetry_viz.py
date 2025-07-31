@@ -322,7 +322,7 @@ class TelemetryVisualizer:
         )
 
         # Calculate and display efficiency metrics
-        utilization_pct = batch_eff["batch_utilization"]
+        efficiency_pct = batch_eff["batch_utilization"]
         total_batches = batch_eff["total_batches"]
         total_embeddings = batch_eff["total_embeddings"]
 
@@ -330,7 +330,7 @@ class TelemetryVisualizer:
         ax.set_ylabel("Number of Batches")
         ax.set_title(
             f"Embedding Batch Efficiency\n"
-            f"Efficiency: {utilization_pct:.1f}% "
+            f"Efficiency: {efficiency_pct:.1f}% "
             f"({total_embeddings} embeddings in {total_batches} batches)"
         )
         ax.legend(loc="upper right")
