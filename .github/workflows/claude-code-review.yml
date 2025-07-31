@@ -33,7 +33,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Fetch full history so Claude can see all changes
+          fetch-depth: 0
+          # Ensure we have the full PR history
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Run Claude Code Review
         id: claude-review
@@ -46,10 +49,10 @@ jobs:
 
           # Direct prompt for automated review (no @claude mention needed)
           direct_prompt: |
-            - Perform a comprehensive PR review according to the rubric defined in .claude/commands/review.md (using
-            this PR branch as the scope). If there are still outstanding issues from previous reviews, just briefly
-            summarize them. Most of your review should focus on new issues you've identified.
-            - If the PR references a GitHub issue, assess how well the PR addresses it.
+            - Perform a comprehensive PR review according to the rubric defined in .claude/commands/review.md
+            - Review ONLY the current state of the code in this PR branch
+            - Do NOT reference or summarize previous reviews - focus solely on the code as it exists now
+            - If the PR references a GitHub issue, assess how well the PR addresses it
 
           # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
           use_sticky_comment: false
