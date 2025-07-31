@@ -408,75 +408,216 @@ def generate_comparison_report(
     return "\n".join(report), has_regression
 
 
+def _compare_files(baseline_file: Path, current_file: Path, output: str | None) -> None:
+    """Compare two telemetry files and generate a report."""
+    # Load benchmarks
+    try:
+        baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
+        current_chunk_size, current_metrics = load_single_benchmark(current_file)
+    except Exception as e:
+        error_msg = f"Error loading benchmark files: {e}"
+        _write_error_report(error_msg, output)
+        sys.exit(1)
+
+    # Warn if chunk sizes don't match
+    if baseline_chunk_size != current_chunk_size:
+        click.echo(
+            f"⚠️  Warning: Chunk sizes differ - baseline: {baseline_chunk_size}, current: {current_chunk_size}",
+            err=True,
+        )
+        click.echo("Using baseline chunk size for comparison\n", err=True)
+
+    # Get thresholds from environment
+    thresholds = {
+        "summary_token": float(
+            os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
+        ),
+        "avg_deviation": float(
+            os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+        ),
+        "median_deviation": float(
+            os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+        ),
+        "std_deviation": float(
+            os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
+        ),
+        "p95": float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0")),
+    }
+
+    # Generate comparison report
+    report, has_regression = generate_comparison_report(
+        baseline_metrics,
+        current_metrics,
+        baseline_file.name,
+        current_file.name,
+        thresholds,
+    )
+
+    # Output report
+    if output:
+        Path(output).write_text(report)
+        click.echo(f"✅ Comparison report saved to {output}")
+    else:
+        click.echo(report)
+
+    # Exit with appropriate code
+    if has_regression:
+        sys.exit(1)
+    else:
+        sys.exit(0)
+
+
+def _match_telemetry_files(dir1: Path, dir2: Path) -> list[tuple[Path, Path]]:
+    """Match telemetry files between two directories by token count.
+
+    Returns list of (baseline_file, current_file) tuples.
+    """
+    # Find telemetry files in both directories
+    dir1_files = list(dir1.glob("telemetry_*_tokens.json"))
+    dir2_files = list(dir2.glob("telemetry_*_tokens.json"))
+
+    # Also support generic telemetry.json files
+    dir1_files.extend(dir1.glob("telemetry.json"))
+    dir2_files.extend(dir2.glob("telemetry.json"))
+
+    # Create mapping by filename pattern
+    dir1_map = {f.name: f for f in dir1_files}
+    dir2_map = {f.name: f for f in dir2_files}
+
+    # Find matching pairs
+    matches = []
+    for filename, file1 in dir1_map.items():
+        if filename in dir2_map:
+            matches.append((file1, dir2_map[filename]))
+
+    return sorted(matches, key=lambda x: x[0].name)
+
+
+def _compare_directories(
+    baseline_dir: Path, current_dir: Path, output: str | None
+) -> None:
+    """Compare all matching telemetry files between two directories."""
+    # Find matching files
+    matches = _match_telemetry_files(baseline_dir, current_dir)
+
+    if not matches:
+        click.echo(
+            f"❌ No matching telemetry files found between {baseline_dir} and {current_dir}",
+            err=True,
+        )
+        sys.exit(1)
+
+    click.echo(f"📊 Found {len(matches)} matching file pairs to compare\n")
+
+    # Track overall results
+    all_reports = []
+    any_regression = False
+
+    for baseline_file, current_file in matches:
+        click.echo(f"Comparing {baseline_file.name}...")
+
+        try:
+            # Load benchmarks
+            baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
+            current_chunk_size, current_metrics = load_single_benchmark(current_file)
+
+            # Warn if chunk sizes don't match
+            if baseline_chunk_size != current_chunk_size:
+                click.echo(
+                    f"  ⚠️  Warning: Chunk sizes differ - baseline: {baseline_chunk_size}, current: {current_chunk_size}",
+                    err=True,
+                )
+
+            # Get thresholds from environment
+            thresholds = {
+                "summary_token": float(
+                    os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
+                ),
+                "avg_deviation": float(
+                    os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+                ),
+                "median_deviation": float(
+                    os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+                ),
+                "std_deviation": float(
+                    os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
+                ),
+                "p95": float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0")),
+            }
+
+            # Generate comparison report
+            report, has_regression = generate_comparison_report(
+                baseline_metrics,
+                current_metrics,
+                f"{baseline_dir.name}/{baseline_file.name}",
+                f"{current_dir.name}/{current_file.name}",
+                thresholds,
+            )
+
+            all_reports.append(f"## {baseline_file.name}\n\n{report}")
+
+            if has_regression:
+                any_regression = True
+                click.echo("  ❌ Regression detected")
+            else:
+                click.echo("  ✅ No regression")
+
+        except Exception as e:
+            click.echo(f"  ❌ Error: {e}", err=True)
+            all_reports.append(f"## {baseline_file.name}\n\n❌ Error: {e}")
+
+    # Combine all reports
+    combined_report = f"# Directory Comparison Report\n\n**Baseline:** {baseline_dir}\n**Current:** {current_dir}\n\n---\n\n"
+    combined_report += "\n\n---\n\n".join(all_reports)
+
+    # Output report
+    if output:
+        Path(output).write_text(combined_report)
+        click.echo(f"\n✅ Combined comparison report saved to {output}")
+    else:
+        click.echo(f"\n{'='*60}\n")
+        click.echo(combined_report)
+
+    # Exit with appropriate code
+    if any_regression:
+        sys.exit(1)
+    else:
+        sys.exit(0)
+
+
 @cli.command("compare")
-@click.argument("file1", type=click.Path(exists=True))
-@click.argument("file2", type=click.Path(exists=True))
+@click.argument("path1", type=click.Path(exists=True))
+@click.argument("path2", type=click.Path(exists=True))
 @click.option(
     "--output",
     type=click.Path(),
     help="Output file for comparison report (defaults to stdout)",
 )
-def compare(file1: str, file2: str, output: str | None) -> None:
-    """Compare telemetry data between two benchmark files."""
+def compare(path1: str, path2: str, output: str | None) -> None:
+    """Compare telemetry data between two benchmark files or directories.
+
+    Examples:
+        Compare two files:
+            ragzoom-telemetry compare baseline.json current.json
+
+        Compare directories:
+            ragzoom-telemetry compare baseline_results/ current_results/
+    """
     try:
-        baseline_file = Path(file1)
-        current_file = Path(file2)
+        path1_obj = Path(path1)
+        path2_obj = Path(path2)
 
-        # Load benchmarks
-        try:
-            baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
-            current_chunk_size, current_metrics = load_single_benchmark(current_file)
-        except Exception as e:
-            error_msg = f"Error loading benchmark files: {e}"
-            _write_error_report(error_msg, output)
-            sys.exit(1)
-
-        # Warn if chunk sizes don't match
-        if baseline_chunk_size != current_chunk_size:
+        # Check if both are directories
+        if path1_obj.is_dir() and path2_obj.is_dir():
+            _compare_directories(path1_obj, path2_obj, output)
+        elif path1_obj.is_file() and path2_obj.is_file():
+            # Single file comparison (existing logic)
+            _compare_files(path1_obj, path2_obj, output)
+        else:
             click.echo(
-                f"⚠️  Warning: Chunk sizes differ - baseline: {baseline_chunk_size}, current: {current_chunk_size}",
-                err=True,
+                "❌ Error: Both arguments must be either files or directories", err=True
             )
-            click.echo("Using baseline chunk size for comparison\n", err=True)
-
-        # Get thresholds from environment
-        thresholds = {
-            "summary_token": float(
-                os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
-            ),
-            "avg_deviation": float(
-                os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
-            ),
-            "median_deviation": float(
-                os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
-            ),
-            "std_deviation": float(
-                os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
-            ),
-            "p95": float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0")),
-        }
-
-        # Generate comparison report
-        report, has_regression = generate_comparison_report(
-            baseline_metrics,
-            current_metrics,
-            baseline_file.name,
-            current_file.name,
-            thresholds,
-        )
-
-        # Output report
-        if output:
-            Path(output).write_text(report)
-            click.echo(f"✅ Comparison report saved to {output}")
-        else:
-            click.echo(report)
-
-        # Exit with appropriate code
-        if has_regression:
             sys.exit(1)
-        else:
-            sys.exit(0)
 
     except Exception as e:
         error_msg = f"Unexpected error during comparison: {e}"
