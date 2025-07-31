@@ -33,7 +33,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Fetch PR commits + buffer for merge base (default to 50 if not available)
+          fetch-depth: 50
 
       - name: Run Claude Code Review
         id: claude-review
@@ -46,10 +47,31 @@ jobs:
 
           # Direct prompt for automated review (no @claude mention needed)
           direct_prompt: |
-            - Perform a comprehensive PR review according to the rubric defined in .claude/commands/review.md (using
-            this PR branch as the scope). If there are still outstanding issues from previous reviews, just briefly
-            summarize them. Most of your review should focus on new issues you've identified.
-            - If the PR references a GitHub issue, assess how well the PR addresses it.
+            - FIRST review on this PR: Use the full review format from .claude/commands/review.md
+            - SUBSEQUENT reviews: Use this concise format focusing only on changes since last review:
+              
+              ## Incremental Review - Changes Since Last Review
+              
+              ### Fixed Issues:
+              ✅ <description of what was fixed>
+              
+              ### Unresolved Issues:
+              ❌ Critical: <description of critical issue that still remains>
+              ⚠️ Important: <description of important issue that still remains>
+              Minor: <description of minor issue that still remains>
+              
+              ### New Issues Found:
+              ❌ Critical: <description of new critical issue>
+              ⚠️ Important: <description of new important issue>
+              Minor: <description of new minor issue>
+              
+              ### Summary
+              <Brief assessment of progress and remaining work>
+            
+            - For subsequent reviews: Examine ONLY the changes made since your last review
+            - Check each previously-identified issue to see if it was addressed
+            - Look for any new issues introduced by the recent changes
+            - If the PR references a GitHub issue, assess progress toward addressing it
 
           # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
           use_sticky_comment: false
