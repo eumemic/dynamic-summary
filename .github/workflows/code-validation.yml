@@ -47,13 +47,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mypy-
       
-      - name: Cache pytest results
-        uses: actions/cache@v4
-        with:
-          path: .pytest_cache
-          key: ${{ runner.os }}-pytest-static-${{ hashFiles('tests/**/*.py', 'ragzoom/**/*.py') }}
-          restore-keys: |
-            ${{ runner.os }}-pytest-static-
       
       - name: Install analysis tools
         run: |

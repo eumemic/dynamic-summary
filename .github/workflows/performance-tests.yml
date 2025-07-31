@@ -8,11 +8,9 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
-      - '.github/workflows/claude.yml'
-      - '.github/workflows/claude-code-review.yml'
       - 'LICENSE'
       - '.gitignore'
-      - '.claude/**'
+      - '.claude/commands/**'  # Claude command configs don't affect performance
 
 permissions:
   contents: read
