@@ -4,15 +4,13 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches: [ master ]
-    # Skip performance tests if only docs/configs are changed
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.claude/commands/**'  # Claude command configs don't affect performance
-      - '.github/workflows/**'  # Workflow changes don't affect performance
-      - '!.github/workflows/performance-tests.yml'  # Except this workflow itself
+    # Only run performance tests when code or this workflow changes
+    paths:
+      - 'ragzoom/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'requirements*.txt'
+      - '.github/workflows/performance-tests.yml'
 
 permissions:
   contents: read
