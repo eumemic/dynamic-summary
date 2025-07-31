@@ -71,7 +71,11 @@ jobs:
               ### Summary
               <Brief assessment of progress and remaining work - 2-3 sentences max>
               
-              Note: Omit any sections that have no items (e.g., if no new issues, omit "New Issues Found")
+              CRITICAL FORMATTING RULE: Only include sections that have actual items! 
+              - If Fixed Issues is empty → don't include that section at all
+              - If Unresolved Issues is empty → don't include that section at all  
+              - If New Issues Found is empty → don't include that section at all
+              Never show "None" or empty sections - just omit them entirely!
             
             - For subsequent reviews: 
               * You have access to the full git history with fetch-depth: 50
