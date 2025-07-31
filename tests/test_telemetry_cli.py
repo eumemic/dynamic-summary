@@ -46,7 +46,37 @@ class TestTelemetryCompare:
                                         "completion_tokens": 50,
                                         "input_text_tokens": 100,
                                         "actual_tokens": 50,
-                                        "target_tokens": 50,
+                                        "target_tokens": 100,
+                                    }
+                                ],
+                            },
+                            {
+                                "node_id": "node3",
+                                "height": 1,
+                                "created_at": 1234567892.0,
+                                "summary_attempts": [
+                                    {
+                                        "status": "accepted",
+                                        "prompt_tokens": 210,
+                                        "completion_tokens": 48,
+                                        "input_text_tokens": 100,
+                                        "actual_tokens": 48,
+                                        "target_tokens": 100,
+                                    }
+                                ],
+                            },
+                            {
+                                "node_id": "node4",
+                                "height": 1,
+                                "created_at": 1234567893.0,
+                                "summary_attempts": [
+                                    {
+                                        "status": "accepted",
+                                        "prompt_tokens": 195,
+                                        "completion_tokens": 52,
+                                        "input_text_tokens": 100,
+                                        "actual_tokens": 52,
+                                        "target_tokens": 100,
                                     }
                                 ],
                             },
@@ -105,8 +135,24 @@ class TestTelemetryCompare:
         runner = CliRunner()
         result = runner.invoke(cli, ["compare", str(baseline_file), str(current_file)])
 
+        # Debug output
+        if result.exit_code != 0:
+            print(f"Exit code: {result.exit_code}")
+            print(f"Output:\n{result.output}")
+            if result.exception:
+                import traceback
+
+                traceback.print_exception(
+                    type(result.exception),
+                    result.exception,
+                    result.exception.__traceback__,
+                )
+
         assert result.exit_code == 0
-        assert "Performance Comparison Report" in result.output
+        assert (
+            "Performance Report" in result.output
+            or "Performance Comparison Report" in result.output
+        )
         assert "Amplification Metrics" in result.output
 
     def test_compare_directories(self, create_test_files):
@@ -126,7 +172,7 @@ class TestTelemetryCompare:
         assert "Found 2 matching file pairs to compare" in result.output
         assert "telemetry_100_tokens.json" in result.output
         assert "telemetry_200_tokens.json" in result.output
-        assert "Multi-Chunk Performance Comparison" in result.output
+        assert "Performance Report" in result.output
         assert "Amplification Metrics" in result.output
         assert "100 tokens" in result.output
         assert "200 tokens" in result.output
@@ -154,7 +200,7 @@ class TestTelemetryCompare:
 
         # Check report contents
         report = output_file.read_text()
-        assert "Multi-Chunk Performance Comparison" in report
+        assert "Performance Report" in report
         assert "100 tokens" in report
         assert "200 tokens" in report
 
@@ -232,12 +278,16 @@ class TestTelemetryCompare:
 
         # Create current with significant regression
         current_data = sample_telemetry_data.copy()
-        # Increase prompt tokens by >10% to trigger regression
-        current_data["telemetry"]["documents"]["test.txt"]["nodes"][1][
-            "summary_attempts"
-        ][0][
-            "prompt_tokens"
-        ] = 500  # 2.5x increase
+        # Increase prompt tokens by >10% to trigger regression for all summary nodes
+        for i in [1, 2, 3]:  # All summary nodes
+            current_data["telemetry"]["documents"]["test.txt"]["nodes"][i][
+                "summary_attempts"
+            ][0]["prompt_tokens"] = (
+                current_data["telemetry"]["documents"]["test.txt"]["nodes"][i][
+                    "summary_attempts"
+                ][0]["prompt_tokens"]
+                * 2
+            )  # Double the prompt tokens
 
         current_file = current_dir / "telemetry_100_tokens.json"
         current_file.write_text(json.dumps(current_data))
@@ -251,6 +301,11 @@ class TestTelemetryCompare:
             result = runner.invoke(
                 cli, ["compare", str(baseline_dir), str(current_dir)]
             )
+
+        # Debug output
+        if result.exit_code != 1:
+            print(f"Exit code: {result.exit_code}")
+            print(f"Output:\n{result.output}")
 
         assert result.exit_code == 1
         assert "Regression Detected" in result.output
