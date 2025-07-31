@@ -94,13 +94,62 @@ To track your GitHub Actions usage:
 2. Monitor daily usage patterns
 3. Set up billing alerts at 50%, 75%, 90% thresholds
 
+## Draft PR Strategy (Major Cost Saver)
+
+One of the most effective cost-saving features is our draft PR optimization. Here's how to leverage it:
+
+### What Gets Skipped on Draft PRs:
+- ❌ **Slow tests** - Skip entirely (saves ~10-15 minutes)
+- ❌ **Integration tests** - Skip entirely (saves ~5-10 minutes)
+- ❌ **Performance benchmarks** - Skip entirely (saves ~20-30 minutes)
+- ❌ **Python version matrix** - Skip compatibility tests (saves ~10-15 minutes)
+
+### What Still Runs on Draft PRs:
+- ✅ **Static analysis** - Lint, format, type checking, security (fast feedback)
+- ✅ **Fast tests** - Core functionality tests (quick validation)
+
+### Recommended Workflow:
+
+1. **Start as Draft**:
+   ```bash
+   gh pr create --draft --title "WIP: Add feature" --body "Early draft"
+   ```
+   - Get early feedback on approach
+   - CI runs ~5-10 minutes instead of 30-60 minutes
+   - **~70% cost savings during development**
+
+2. **Iterate on Draft**:
+   - Push frequently to draft PR
+   - Fast feedback from static analysis
+   - Share with team for early review
+   - No expensive tests running
+
+3. **Mark Ready When Complete**:
+   ```bash
+   gh pr ready  # Triggers full CI validation
+   ```
+
+### Cost Impact Example:
+- **Traditional**: 10 commits × 60 min = 600 minutes ($4.80)
+- **Draft workflow**: 9 drafts × 10 min + 1 ready × 60 min = 150 minutes ($1.20)
+- **75% savings per feature!**
+
+### Override for Full CI:
+Add `[full-ci]` to commit message to run all tests on draft:
+```bash
+git commit -m "Major refactor [full-ci]
+
+Need to validate performance impact"
+```
+
 ## Best Practices
 
 1. **Always use concurrency groups** to cancel outdated runs
 2. **Cache aggressively** but with proper cache keys
 3. **Use matrix strategies sparingly** - they multiply costs
-4. **Optimize Docker builds** with layer caching
-5. **Review workflow runs** regularly to identify inefficiencies
+4. **Start work as draft PRs** - Biggest cost saver for iterative development
+5. **Optimize Docker builds** with layer caching
+6. **Review workflow runs** regularly to identify inefficiencies
 
 ## Emergency Cost Controls
 
