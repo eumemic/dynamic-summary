@@ -79,6 +79,8 @@ jobs:
             - Check each previously-identified issue to see if it was addressed
             - Review PR comments for explanations about why certain issues may not be addressed
             - Look for any new issues introduced by the recent changes
+            - Assess if new commits expand the scope beyond the original PR title/description
+              * If yes, suggest updates to the PR title and/or description to reflect the expanded scope
             - If the PR references a GitHub issue, assess progress toward addressing it
 
           # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
