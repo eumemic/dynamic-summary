@@ -91,7 +91,7 @@ jobs:
         id: compare
         run: |
           # Check if we have baseline results
-          if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/telemetry_100_tokens.json" ]; then
+          if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/metrics_100_tokens.json" ]; then
             echo "## 📊 Performance Report" > report.md
             echo "" >> report.md
             echo "⚠️ No baseline benchmarks available." >> report.md
@@ -110,7 +110,33 @@ jobs:
                 if grep -q '"error"' "$file"; then
                   echo "- ❌ Benchmark failed to run" >> report.md
                 else
-                  python -c "import json; f = open('$file'); data = json.load(f); m = data['metrics']; print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\"); print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\"); print(f\"- Cost per 1K tokens: \${m['efficiency']['cost_per_1k_tokens']:.4f}\")" >> report.md
+                  python -c "
+import json
+from ragzoom.config import RagZoomConfig
+from ragzoom.telemetry import compute_metrics_from_telemetry
+
+with open('$file') as f:
+    data = json.load(f)
+
+if 'telemetry' in data:
+    # New telemetry format
+    config = RagZoomConfig(
+        openai_api_key='dummy',
+        embedding_cost_per_1k=0.0001,
+        summary_input_cost_per_1k=0.0025,
+        summary_output_cost_per_1k=0.01
+    )
+    metrics = compute_metrics_from_telemetry(data['telemetry'], config)
+    print(f'- Throughput: {metrics.tokens_per_second:.1f} tokens/sec')
+    print(f'- Time per 1K tokens: {metrics.time_per_1k_tokens:.2f}s')
+    print(f'- Cost per 1K tokens: \${metrics.cost_per_1k_tokens:.4f}')
+else:
+    # Legacy metrics format (for baseline files)
+    m = data['metrics']
+    print(f\"- Throughput: {m['timing']['tokens_per_second']:.1f} tokens/sec\")
+    print(f\"- Time per 1K tokens: {m['timing']['time_per_1k_tokens']:.2f}s\")
+    print(f\"- Cost per 1K tokens: \${m['efficiency']['cost_per_1k_tokens']:.4f}\")
+" >> report.md
                 fi
                 echo "" >> report.md
               fi
@@ -139,9 +165,9 @@ jobs:
             }
             
             # Compare benchmarks
-            if [ -f "baseline_results/telemetry_100_tokens.json" ] && [ -f "benchmark_results/telemetry_100_tokens.json" ]; then
+            if [ -f "baseline_results/metrics_100_tokens.json" ] && [ -f "benchmark_results/telemetry_100_tokens.json" ]; then
               echo "📊 Running benchmark comparison..."
-              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output report.md
+              ragzoom-telemetry compare baseline_results/metrics_100_tokens.json benchmark_results/telemetry_100_tokens.json --output report.md
               comparison_exit_code=$?
               
               if [ $comparison_exit_code -ne 0 ]; then
@@ -153,7 +179,7 @@ jobs:
               echo "❌ Expected benchmark files not found" > report.md
               echo "" >> report.md
               echo "Looking for:" >> report.md
-              echo "- baseline_results/telemetry_100_tokens.json" >> report.md  
+              echo "- baseline_results/metrics_100_tokens.json" >> report.md  
               echo "- benchmark_results/telemetry_100_tokens.json" >> report.md
               echo "" >> report.md
               echo "Available files:" >> report.md
