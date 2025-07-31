@@ -225,17 +225,17 @@ This generates:
 Compare multiple benchmarks:
 
 ```bash
-python scripts/visualize_telemetry.py benchmark_results/ --compare
+ragzoom-telemetry visualize benchmark_results/ --compare
 ```
 
 ### Output Formats
 
 ```bash
 # Generate PDF reports
-python scripts/visualize_telemetry.py benchmark_results/ --format pdf
+ragzoom-telemetry visualize benchmark_results/ --format pdf
 
 # Specify output directory
-python scripts/visualize_telemetry.py benchmark_results/ --output-dir reports/
+ragzoom-telemetry visualize benchmark_results/ --output-dir reports/
 ```
 
 ### Generated Reports
