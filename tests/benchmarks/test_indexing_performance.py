@@ -94,22 +94,27 @@ def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
         actual_duration = end_time - start_time
         assert abs(metrics.total_duration_seconds - actual_duration) < 0.1
 
-        # Save metrics to file for comparison
+        # Save telemetry data for comparison
         output_dir = Path("benchmark_results")
         output_dir.mkdir(exist_ok=True)
 
-        output_file = output_dir / f"metrics_{leaf_tokens}_tokens.json"
+        output_file = output_dir / f"telemetry_{leaf_tokens}_tokens.json"
         with open(output_file, "w") as f:
             json.dump(
                 {
                     "config": {
                         "leaf_tokens": leaf_tokens,
-                        "embedding_model": benchmark_config.embedding_model,
+                        "budget_tokens": benchmark_config.budget_tokens,
                         "summary_model": benchmark_config.summary_model,
-                        "document": doc_name,
+                        "embedding_model": benchmark_config.embedding_model,
                     },
-                    "metrics": metrics.to_dict(),
-                    "timestamp": time.time(),
+                    "document": {
+                        "document_id": f"{document_type}_{leaf_tokens}",
+                        "file_path": doc_name,
+                    },
+                    "telemetry": metrics.get_telemetry_data(
+                        f"{document_type}_{leaf_tokens}", leaf_tokens
+                    ),
                 },
                 f,
                 indent=2,

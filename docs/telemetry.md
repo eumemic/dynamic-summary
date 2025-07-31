@@ -135,7 +135,7 @@ from ragzoom.telemetry import (
 from ragzoom.config import RagZoomConfig
 
 # Load benchmark data
-with open("benchmark_results/metrics_200_tokens.json") as f:
+with open("benchmark_results/telemetry_200_tokens.json") as f:
     data = json.load(f)
     
 telemetry = data["telemetry"]
@@ -208,7 +208,7 @@ print(f"Peak memory: {metrics.peak_memory_mb:.1f} MB")
 Visualize a single benchmark:
 
 ```bash
-python scripts/visualize_telemetry.py benchmark_results/metrics_200_tokens.json
+ragzoom-telemetry visualize benchmark_results/telemetry_200_tokens.json
 ```
 
 This generates:
@@ -225,17 +225,17 @@ This generates:
 Compare multiple benchmarks:
 
 ```bash
-python scripts/visualize_telemetry.py benchmark_results/ --compare
+ragzoom-telemetry visualize benchmark_results/ --compare
 ```
 
 ### Output Formats
 
 ```bash
 # Generate PDF reports
-python scripts/visualize_telemetry.py benchmark_results/ --format pdf
+ragzoom-telemetry visualize benchmark_results/ --format pdf
 
 # Specify output directory
-python scripts/visualize_telemetry.py benchmark_results/ --output-dir reports/
+ragzoom-telemetry visualize benchmark_results/ --output-dir reports/
 ```
 
 ### Generated Reports
@@ -332,25 +332,14 @@ RagZoom provides a comprehensive set of telemetry commands through the CLI:
 
 ```bash
 # Analyze telemetry data
-ragzoom telemetry analyze benchmark_results/metrics_200_tokens.json
-
-# Validate telemetry format
-ragzoom telemetry validate benchmark_results/metrics_200_tokens.json
-ragzoom telemetry validate benchmark_results/ --fix  # Fix minor issues
+ragzoom-telemetry analyze benchmark_results/telemetry_200_tokens.json
 
 # Compare two benchmarks
-ragzoom telemetry compare baseline.json new_results.json
-
-# Export telemetry data
-ragzoom telemetry export benchmark_results/metrics_200_tokens.json nodes.csv
-ragzoom telemetry export benchmark_results/metrics_200_tokens.json data.json --format json
+ragzoom-telemetry compare baseline.json current.json
 
 # Generate visualizations
-ragzoom telemetry visualize benchmark_results/metrics_200_tokens.json
-ragzoom telemetry visualize benchmark_results/ --compare --format pdf
-
-# Interactive exploration
-ragzoom telemetry explore benchmark_results/metrics_200_tokens.json
+ragzoom-telemetry visualize benchmark_results/telemetry_200_tokens.json
+ragzoom-telemetry visualize benchmark_results/ --compare --format pdf
 ```
 
 ### Configuration Options
