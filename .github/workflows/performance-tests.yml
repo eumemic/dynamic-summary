@@ -140,23 +140,34 @@ jobs:
             }
             
             # Compare benchmarks
-            if [ -f "baseline_results/telemetry_100_tokens.json" ] && [ -f "benchmark_results/telemetry_100_tokens.json" ]; then
-              echo "📊 Running benchmark comparison..."
+            # Check if we have multiple baseline files for directory comparison
+            baseline_count=$(ls baseline_results/telemetry_*_tokens.json 2>/dev/null | wc -l)
+            
+            if [ "$baseline_count" -gt 1 ]; then
+              # New style: directory comparison for multiple chunk sizes
+              echo "📊 Running multi-file benchmark comparison..."
+              ragzoom-telemetry compare baseline_results/ benchmark_results/ --output report.md
+              comparison_exit_code=$?
+            elif [ -f "baseline_results/telemetry_100_tokens.json" ] && [ -f "benchmark_results/telemetry_100_tokens.json" ]; then
+              # TODO: Remove this single-file fallback after migration period
+              # Once all baselines in master are multi-file, we can remove this branch
+              echo "📊 Running single-file benchmark comparison (legacy mode)..."
               ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output report.md
               comparison_exit_code=$?
-              
-              if [ $comparison_exit_code -ne 0 ]; then
-                echo "REGRESSION=true" >> $GITHUB_OUTPUT
-                # The compare command should have written an error report to report.md
-                echo "⚠️ Comparison command exited with code $comparison_exit_code" >> report.md
-              fi
             else
               echo "❌ Expected benchmark files not found" > report.md
               echo "" >> report.md
               echo "Looking for:" >> report.md
-              echo "- baseline_results/telemetry_100_tokens.json" >> report.md  
-              echo "- benchmark_results/telemetry_100_tokens.json" >> report.md
+              echo "- baseline_results/telemetry_*_tokens.json" >> report.md  
+              echo "- benchmark_results/telemetry_*_tokens.json" >> report.md
               echo "" >> report.md
+              comparison_exit_code=1
+            fi
+            
+            if [ $comparison_exit_code -ne 0 ]; then
+              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              # The compare command should have written an error report to report.md
+              echo "⚠️ Comparison command exited with code $comparison_exit_code" >> report.md
               echo "Available files:" >> report.md
               echo "Baseline:" >> report.md
               ls -la baseline_results/*.json 2>/dev/null || echo "  (no JSON files)" >> report.md
