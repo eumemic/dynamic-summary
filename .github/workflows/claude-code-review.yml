@@ -73,6 +73,7 @@ jobs:
               * This means examining ONLY new commits pushed since your previous review
               * Do NOT re-review the entire PR diff from base branch
             - Check each previously-identified issue to see if it was addressed
+            - Review PR comments for explanations about why certain issues may not be addressed
             - Look for any new issues introduced by the recent changes
             - If the PR references a GitHub issue, assess progress toward addressing it
 
