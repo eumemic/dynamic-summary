@@ -454,7 +454,7 @@ def _generate_unified_comparison_report(
     report.append("# 📊 Performance Report")
     report.append("")
 
-    # Sort chunk sizes for consistent ordering
+    # Sort chunk sizes once for consistent ordering across all sections
     sorted_chunks = sorted(chunk_metrics.keys())
 
     # Summary Size Accuracy Table (first, most important)
@@ -488,7 +488,7 @@ def _generate_unified_comparison_report(
                     emoji = "⚠️"
                 if change_pct > 20:
                     has_regression = True
-                    emoji = "❌"
+                    emoji += " ❌"
                 if abs(change_pct) >= significance_threshold:
                     chunk_rows.append(
                         ("Avg Deviation", baseline_val, current_val, change_pct, emoji)
@@ -503,7 +503,7 @@ def _generate_unified_comparison_report(
                     emoji = "⚠️"
                 if change_pct > 20:
                     has_regression = True
-                    emoji = "❌"
+                    emoji += " ❌"
                 if abs(change_pct) >= significance_threshold:
                     chunk_rows.append(
                         (
@@ -524,7 +524,7 @@ def _generate_unified_comparison_report(
                     emoji = "⚠️"
                 if change_pct > 20:
                     has_regression = True
-                    emoji = "❌"
+                    emoji += " ❌"
                 if abs(change_pct) >= significance_threshold:
                     chunk_rows.append(
                         ("Std Deviation", baseline_val, current_val, change_pct, emoji)
@@ -539,7 +539,7 @@ def _generate_unified_comparison_report(
                     emoji = "⚠️"
                 if change_pct > 20:
                     has_regression = True
-                    emoji = "❌"
+                    emoji += " ❌"
                 if abs(change_pct) >= significance_threshold:
                     chunk_rows.append(
                         ("P95 Deviation", baseline_val, current_val, change_pct, emoji)
@@ -608,7 +608,7 @@ def _generate_unified_comparison_report(
             if abs(change_pct) >= significance_threshold:
                 chunk_rows.append(
                     (
-                        "├─ Input Amplification",
+                        "Input Amplification",
                         baseline_val,
                         current_val,
                         change_pct,
@@ -624,7 +624,7 @@ def _generate_unified_comparison_report(
             if abs(change_pct) >= significance_threshold:
                 chunk_rows.append(
                     (
-                        "└─ Output Amplification",
+                        "Output Amplification",
                         baseline_val,
                         current_val,
                         change_pct,
@@ -702,9 +702,15 @@ def _generate_unified_comparison_report(
                     f"| {chunk_size} tokens | {metric_name} | {baseline:.1f} | {current:.1f} | {change:+.1f}% {emoji} |"
                 )
             else:
-                efficiency_rows.append(
-                    f"| | {metric_name} | {baseline:.1f}% | {current:.1f}% | {change:+.1f}% {emoji} |"
-                )
+                # For Batch Utilization, show % for both baseline and current
+                if metric_name == "Batch Utilization":
+                    efficiency_rows.append(
+                        f"| | {metric_name} | {baseline:.1f}% | {current:.1f}% | {change:+.1f}% {emoji} |"
+                    )
+                else:
+                    efficiency_rows.append(
+                        f"| | {metric_name} | {baseline:.1f} | {current:.1f} | {change:+.1f}% {emoji} |"
+                    )
 
     if efficiency_rows:
         report.append("| Chunk Size | Metric | Baseline | Current | Change |")
