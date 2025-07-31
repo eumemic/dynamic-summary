@@ -8,7 +8,8 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
-      - '.github/workflows/claude*.yml'
+      - '.github/workflows/claude.yml'
+      - '.github/workflows/claude-code-review.yml'
       - 'LICENSE'
       - '.gitignore'
       - '.claude/**'

@@ -2,6 +2,18 @@
 
 This document outlines the optimizations made to reduce GitHub Actions costs and provides guidance for future improvements.
 
+## Cost Context
+
+**Before optimization**: Daily GitHub Actions costs were increasing by ~$10/day with current PR velocity, suggesting a baseline spend of $200-300/month for active development.
+
+**GitHub Actions pricing**: $0.008 per minute for Linux runners (what we use), with different GitHub plans offering:
+- Free: 2,000 minutes/month
+- Pro: 3,000 minutes/month
+- Team: 3,000 minutes/month
+- Enterprise: 50,000 minutes/month
+
+**Estimated usage**: With ~13 jobs per PR and average 5-8 minutes per job, each full PR was consuming ~65-104 minutes, costing $0.52-0.83 per PR. At 10-15 PRs/day, monthly costs were approaching plan limits.
+
 ## Cost Reduction Summary
 
 The following optimizations have been implemented to reduce CI/CD costs:
