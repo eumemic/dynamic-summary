@@ -536,6 +536,10 @@ Here's the content to summarize:"""
 
         This method is kept for backward compatibility but returns telemetry dict
         instead of IndexingMetrics.
+
+        Returns:
+            tuple[str, dict]: Document ID and telemetry data dictionary
+                (previously returned IndexingMetrics object)
         """
         return self.add_document_with_telemetry(
             text, document_id, file_path, show_progress

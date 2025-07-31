@@ -27,13 +27,7 @@ logger = logging.getLogger(__name__)
 #   - Added start_time/end_time to EmbeddingTelemetry and SummaryAttempt
 #   - Removed timestamp field in favor of start_time/end_time
 #
-# Migration strategy:
-# - Telemetry format changes should be backward compatible when possible
-# - When breaking changes are needed:
-#   1. Increment major version (e.g., 1.0 -> 2.0)
-#   2. Add migration code in analysis tools to handle old formats
-#   3. Document the changes in this version history
-# - Minor additions that don't break parsing can use minor version bumps (e.g., 1.0 -> 1.1)
+# Current format version (increment for breaking changes)
 TELEMETRY_FORMAT_VERSION = "2.0"
 
 
