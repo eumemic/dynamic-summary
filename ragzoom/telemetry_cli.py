@@ -447,9 +447,7 @@ def _generate_unified_comparison_report(
     has_regression = False
 
     # Get the change significance threshold
-    significance_threshold = thresholds.get(
-        "change_significance", CHANGE_SIGNIFICANCE_THRESHOLD
-    )
+    significance_threshold = thresholds["change_significance"]
 
     report.append("# 📊 Performance Report")
     report.append("")
@@ -698,9 +696,15 @@ def _generate_unified_comparison_report(
         # Add rows with chunk size label on the first row
         for i, (metric_name, baseline, current, change, emoji) in enumerate(chunk_rows):
             if i == 0:
-                efficiency_rows.append(
-                    f"| {chunk_size} tokens | {metric_name} | {baseline:.1f} | {current:.1f} | {change:+.1f}% {emoji} |"
-                )
+                # For Batch Utilization, show % for both baseline and current
+                if metric_name == "Batch Utilization":
+                    efficiency_rows.append(
+                        f"| {chunk_size} tokens | {metric_name} | {baseline:.1f}% | {current:.1f}% | {change:+.1f}% {emoji} |"
+                    )
+                else:
+                    efficiency_rows.append(
+                        f"| {chunk_size} tokens | {metric_name} | {baseline:.1f} | {current:.1f} | {change:+.1f}% {emoji} |"
+                    )
             else:
                 # For Batch Utilization, show % for both baseline and current
                 if metric_name == "Batch Utilization":
