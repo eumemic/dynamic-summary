@@ -4,6 +4,13 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches: [ master ]
+    # Skip performance tests if only docs/configs are changed
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.claude/commands/**'  # Claude command configs don't affect performance
 
 permissions:
   contents: read
@@ -14,6 +21,8 @@ jobs:
   benchmark:
     name: 📊 Performance Report
     runs-on: ubuntu-latest
+    # Skip on draft PRs to save expensive benchmark runs
+    if: github.event.pull_request.draft != true
     
     steps:
       - name: Checkout PR branch
