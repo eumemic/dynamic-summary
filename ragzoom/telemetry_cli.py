@@ -18,7 +18,6 @@ from ragzoom.telemetry import (
 from ragzoom.telemetry_config import (
     CHANGE_SIGNIFICANCE_THRESHOLD,
     EMOJI_THRESHOLD_MINOR,
-    EMOJI_THRESHOLD_NEGLIGIBLE,
 )
 
 # Type aliases for complex dictionaries
@@ -267,7 +266,8 @@ def calculate_change(old_value: float, new_value: float) -> tuple[float, str]:
     change = ((new_value - old_value) / old_value) * 100
 
     # Determine emoji based on metric type and direction
-    if abs(change) < EMOJI_THRESHOLD_NEGLIGIBLE:
+    # Only show emojis for changes >= 5% to reduce noise
+    if abs(change) < 5.0:
         emoji = ""
     elif change > 0:
         # For cost and time metrics, increase is bad
