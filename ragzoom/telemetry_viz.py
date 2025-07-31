@@ -11,7 +11,7 @@ import seaborn as sns
 from matplotlib.gridspec import GridSpec
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.telemetry import (
+from ragzoom.telemetry_analysis import (
     analyze_retry_patterns,
     compute_amplification_metrics,
     compute_batch_efficiency,
