@@ -87,6 +87,8 @@ jobs:
                 significant architectural changes beyond the stated goal, changing from bug fix to refactor
               * If scope expanded, suggest specific updates to the PR title and/or description
             - If the PR references a GitHub issue, assess progress toward addressing it
+            - IMPORTANT: Focus on substantive issues that matter. Avoid nitpicking or finding problems just 
+              to have something to report. If the code is good, say so. Quality > Quantity.
 
           # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
           use_sticky_comment: false
