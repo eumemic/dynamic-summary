@@ -263,14 +263,47 @@ class TelemetryVisualizer:
         batch_sizes = batch_eff["batch_sizes"]
         avg_batch_size = batch_eff["avg_batch_size"]
 
-        # Create histogram with better styling
-        n, bins, patches = ax.hist(
-            batch_sizes,
-            bins=min(20, len(set(batch_sizes))),
-            alpha=0.7,
-            edgecolor="black",
-            color="skyblue",
-        )
+        # Create histogram with proper binning
+        # Use intelligent binning strategy based on data distribution
+        unique_sizes = sorted(set(batch_sizes))
+        max_size = max(batch_sizes)
+
+        if len(unique_sizes) <= 10 and max_size <= 20:
+            # For small discrete values, use exact bins for each value
+            hist_bins: list[int] | int = list(
+                range(0, max_size + 2)
+            )  # 0, 1, 2, ..., max+1
+            n, bins_result, patches = ax.hist(
+                batch_sizes,
+                bins=hist_bins,
+                alpha=0.7,
+                edgecolor="black",
+                color="skyblue",
+                align="left",
+            )
+        elif max_size <= 100:
+            # For medium ranges, use bins of width 5 or 10
+            bin_width = 5 if max_size <= 50 else 10
+            hist_bins = list(range(0, max_size + bin_width, bin_width))
+            n, bins_result, patches = ax.hist(
+                batch_sizes,
+                bins=hist_bins,
+                alpha=0.7,
+                edgecolor="black",
+                color="skyblue",
+                align="left",
+            )
+        else:
+            # For large ranges, use 20 bins
+            hist_bins = 20
+            n, bins_result, patches = ax.hist(
+                batch_sizes,
+                bins=hist_bins,
+                alpha=0.7,
+                edgecolor="black",
+                color="skyblue",
+                align="mid",
+            )
 
         # Add average line
         ax.axvline(
