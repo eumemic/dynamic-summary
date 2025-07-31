@@ -223,27 +223,6 @@ class TelemetryVisualizer:
         ax.legend()
         ax.grid(True, alpha=0.3)
 
-        # Add threshold line with better labeling
-        ax.axhline(
-            y=self.thresholds.high_cost_amplification,
-            color="r",
-            linestyle="--",
-            alpha=0.7,
-            linewidth=2,
-        )
-
-        # Add threshold annotation
-        ax.text(
-            0.98,
-            self.thresholds.high_cost_amplification + 0.1,
-            f"Alert threshold: {self.thresholds.high_cost_amplification:.1f}x",
-            transform=ax.get_yaxis_transform(),
-            ha="right",
-            va="bottom",
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="red", alpha=0.2),
-            fontsize=8,
-        )
-
     def _plot_cost_breakdown(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
     ) -> None:
@@ -523,7 +502,7 @@ class TelemetryVisualizer:
         ax.set_xlabel("Deviation from Target Token Count (%)")
         ax.set_ylabel("Frequency")
         ax.set_title(
-            "Summary Length Accuracy\n(How well summaries hit target token counts)"
+            "Summary Length Accuracy\n(Distribution of deviations from target chunk size)"
         )
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -655,26 +634,29 @@ class TelemetryVisualizer:
             y="actual_tokens",
             hue="level",  # Assign x to hue to fix deprecation warning
             ax=ax,
-            inner="quartile",  # Show quartiles
+            inner=None,  # Remove noisy quartile lines
             palette="Set2",
             legend=False,  # Don't show legend since it's redundant with x-axis
         )
 
-        # Add target token reference lines if available
-        if "target_tokens" in df.columns:
-            level_names = df["level"].unique()
-            for i, level_name in enumerate(level_names):
-                level_data = df[df["level"] == level_name]
-                if len(level_data) > 0:
-                    target = level_data["target_tokens"].iloc[0]
-                    if target > 0:
-                        ax.axhline(
-                            y=target,
-                            color="red",
-                            linestyle="--",
-                            alpha=0.5,
-                            label="Target" if i == 0 else "",
-                        )
+        # Add single target line at chunk_size from telemetry
+        # Get chunk_size from telemetry metadata
+        chunk_size = None
+        parsed_data = telemetry if isinstance(telemetry, dict) else {}
+        for doc_name, doc_data in parsed_data.get("documents", {}).items():
+            chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
+            if chunk_size > 0:
+                break  # Use the first valid chunk_size found
+
+        if chunk_size and chunk_size > 0:
+            ax.axhline(
+                y=chunk_size,
+                color="red",
+                linestyle="--",
+                alpha=0.7,
+                linewidth=2,
+                label="Target",
+            )
 
         ax.set_xlabel("Tree Level")
         ax.set_ylabel("Token Count")
