@@ -353,14 +353,13 @@ def compute_batch_efficiency(telemetry_data: dict) -> dict:
     if batch_sizes:
         avg_batch_size = sum(batch_sizes) / len(batch_sizes)
         result["avg_batch_size"] = avg_batch_size
-        # Batch utilization calculation uses the 95th percentile batch size as
-        # the reference point. This provides a more realistic measure than using
-        # the maximum, as it avoids skewing from outliers while still representing
-        # high utilization observed in practice.
-        optimal_batch_size = _compute_percentile(batch_sizes, 0.95)
+        # Batch efficiency: percentage of embeddings that benefited from batching.
+        # For each batch of size N, (N-1) embeddings were batched together rather
+        # than sent individually.
+        batched_embeddings = sum(max(0, batch_size - 1) for batch_size in batch_sizes)
         result["batch_utilization"] = (
-            (avg_batch_size / optimal_batch_size) * 100
-            if optimal_batch_size > 0
+            (batched_embeddings / total_embeddings) * 100
+            if total_embeddings > 0
             else 0.0
         )
 
