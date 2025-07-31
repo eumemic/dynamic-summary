@@ -11,6 +11,8 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - '.claude/commands/**'  # Claude command configs don't affect performance
+      - '.github/workflows/**'  # Workflow changes don't affect performance
+      - '!.github/workflows/performance-tests.yml'  # Except this workflow itself
 
 permissions:
   contents: read
