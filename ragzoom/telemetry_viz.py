@@ -119,8 +119,17 @@ class TelemetryVisualizer:
 
         # Save figure
         output_path = self.output_dir / f"telemetry_{chunk_size}_tokens.{output_format}"
-        plt.tight_layout()
-        plt.savefig(output_path, bbox_inches="tight")
+        # Suppress layout and font warnings for cleaner output
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="This figure includes Axes that are not compatible with tight_layout",
+            )
+            warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+            plt.tight_layout()
+            plt.savefig(output_path, bbox_inches="tight")
         plt.close()
 
         print(f"Saved visualization to {output_path}")
@@ -352,7 +361,7 @@ class TelemetryVisualizer:
             ax.text(
                 0.5,
                 0.5,
-                "✅ No Retries Needed\n\nAll summary attempts succeeded on first try.\n"
+                "No Retries Needed\n\nAll summary attempts succeeded on first try.\n"
                 f"Total successful attempts: {retry_data['successful_attempts']}",
                 ha="center",
                 va="center",
