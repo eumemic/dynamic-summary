@@ -4,8 +4,25 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
+
+from ragzoom.config import RagZoomConfig
+from ragzoom.telemetry import (
+    analyze_retry_patterns,
+    compute_amplification_metrics,
+    compute_batch_efficiency,
+)
+from ragzoom.telemetry_config import (
+    EMOJI_THRESHOLD_MINOR,
+    EMOJI_THRESHOLD_NEGLIGIBLE,
+)
+
+# Type aliases for complex dictionaries
+MetricsDict = dict[str, Any]
+TelemetryDict = dict[str, Any]
+ThresholdsDict = dict[str, float]
 
 # Check for optional telemetry dependencies
 # Note: telemetry_viz.py also imports these but this check provides
@@ -22,17 +39,6 @@ try:
 except ImportError as e:
     TELEMETRY_DEPS_AVAILABLE = False
     MISSING_DEPS = str(e)
-
-from ragzoom.config import RagZoomConfig
-from ragzoom.telemetry import (
-    analyze_retry_patterns,
-    compute_amplification_metrics,
-    compute_batch_efficiency,
-)
-from ragzoom.telemetry_config import (
-    EMOJI_THRESHOLD_MINOR,
-    EMOJI_THRESHOLD_NEGLIGIBLE,
-)
 
 
 def _check_telemetry_deps() -> None:
@@ -178,7 +184,7 @@ For debugging, try running the commands manually to see detailed error messages.
         click.echo(report)
 
 
-def load_single_benchmark(filepath: Path) -> tuple[int, dict]:
+def load_single_benchmark(filepath: Path) -> tuple[int, MetricsDict]:
     """Load a telemetry benchmark file and extract chunk size and computed metrics.
 
     Returns:
@@ -268,7 +274,7 @@ def format_value(value: float, metric_type: str) -> str:
 
 
 def check_regression(
-    change_pct: float, metric_name: str, thresholds: dict[str, float]
+    change_pct: float, metric_name: str, thresholds: ThresholdsDict
 ) -> bool:
     """Check if a metric change represents a regression."""
     # Map metric names to threshold types
@@ -288,11 +294,11 @@ def check_regression(
 
 
 def generate_comparison_report(
-    baseline_metrics: dict,
-    current_metrics: dict,
+    baseline_metrics: MetricsDict,
+    current_metrics: MetricsDict,
     baseline_name: str,
     current_name: str,
-    thresholds: dict[str, float] | None = None,
+    thresholds: ThresholdsDict | None = None,
 ) -> tuple[str, bool]:
     """Generate comparison report between two benchmarks.
 
@@ -300,13 +306,7 @@ def generate_comparison_report(
         Tuple of (report_text, has_regression)
     """
     if thresholds is None:
-        thresholds = {
-            "summary_token": 10.0,
-            "avg_deviation": 20.0,
-            "median_deviation": 20.0,
-            "std_deviation": 30.0,
-            "p95": 25.0,
-        }
+        thresholds = _load_thresholds()
 
     report = []
     has_regression = False
@@ -408,75 +408,359 @@ def generate_comparison_report(
     return "\n".join(report), has_regression
 
 
+def _generate_unified_comparison_report(
+    chunk_metrics: dict[int, dict[str, MetricsDict]],
+    baseline_name: str,
+    current_name: str,
+    thresholds: ThresholdsDict,
+) -> tuple[str, bool]:
+    """Generate a unified comparison report for multiple chunk sizes.
+
+    Args:
+        chunk_metrics: Dict mapping chunk_size -> {"baseline": metrics, "current": metrics}
+        baseline_name: Name for baseline (e.g., "baseline_results")
+        current_name: Name for current (e.g., "current_results")
+        thresholds: Regression thresholds
+
+    Returns:
+        Tuple of (report_text, has_regression)
+    """
+    report = []
+    has_regression = False
+
+    report.append("# 📊 Multi-Chunk Performance Comparison")
+    report.append("")
+    report.append(f"**Baseline:** {baseline_name}")
+    report.append(f"**Current:** {current_name}")
+    report.append("")
+
+    # Sort chunk sizes for consistent ordering
+    sorted_chunks = sorted(chunk_metrics.keys())
+
+    # Amplification Metrics Table
+    report.append("## 📈 Amplification Metrics")
+    report.append("")
+    report.append("| Chunk Size | Metric | Baseline | Current | Change |")
+    report.append("|------------|--------|----------|---------|--------|")
+
+    for chunk_size in sorted_chunks:
+        baseline_metrics = chunk_metrics[chunk_size]["baseline"]["amplification"]
+        current_metrics = chunk_metrics[chunk_size]["current"]["amplification"]
+
+        # Cost amplification (main metric)
+        baseline_val = baseline_metrics.get("median_cost", 0)
+        current_val = current_metrics.get("median_cost", 0)
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            if check_regression(change_pct, "Median Cost Amplification", thresholds):
+                has_regression = True
+                emoji += " ❌"
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+
+        report.append(
+            f"| {chunk_size} tokens | Median Cost Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
+        )
+
+        # Input amplification (sub-metric)
+        baseline_val = baseline_metrics.get("median_input", 0)
+        current_val = current_metrics.get("median_input", 0)
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+        report.append(
+            f"| | ├─ Input Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
+        )
+
+        # Output amplification (sub-metric)
+        baseline_val = baseline_metrics.get("median_output", 0)
+        current_val = current_metrics.get("median_output", 0)
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+        report.append(
+            f"| | └─ Output Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
+        )
+
+    report.append("")
+
+    # Efficiency Metrics Table
+    report.append("## 📦 Efficiency Metrics")
+    report.append("")
+    report.append("| Chunk Size | Metric | Baseline | Current | Change |")
+    report.append("|------------|--------|----------|---------|--------|")
+
+    for chunk_size in sorted_chunks:
+        baseline_metrics = chunk_metrics[chunk_size]["baseline"]["efficiency"]
+        current_metrics = chunk_metrics[chunk_size]["current"]["efficiency"]
+
+        # Batch size
+        baseline_val = baseline_metrics.get("avg_embedding_batch_size", 0)
+        current_val = current_metrics.get("avg_embedding_batch_size", 0)
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+        report.append(
+            f"| {chunk_size} tokens | Avg Embedding Batch Size | {baseline_val:.1f} | {current_val:.1f} | {change_str} |"
+        )
+
+        # Batch utilization
+        baseline_val = baseline_metrics.get("batch_utilization", 0)
+        current_val = current_metrics.get("batch_utilization", 0)
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            # For utilization, decrease might be bad
+            if "Utilization" in "Batch Utilization" and change_pct < 0:
+                emoji = "⚠️" if abs(change_pct) > EMOJI_THRESHOLD_MINOR else ""
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+        report.append(
+            f"| | Batch Utilization | {baseline_val:.1f}% | {current_val:.1f}% | {change_str} |"
+        )
+
+    report.append("")
+
+    # Summary
+    if has_regression:
+        report.append("## ❌ Regression Detected")
+        report.append("")
+        report.append(
+            "Performance regressions were detected in one or more chunk sizes. Please review the metrics above."
+        )
+    else:
+        report.append("## ✅ No Regressions")
+        report.append("")
+        report.append(
+            "All metrics across all chunk sizes are within acceptable thresholds."
+        )
+
+    return "\n".join(report), has_regression
+
+
+def _load_thresholds() -> ThresholdsDict:
+    """Load regression thresholds from environment variables."""
+    return {
+        "summary_token": float(
+            os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
+        ),
+        "avg_deviation": float(
+            os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+        ),
+        "median_deviation": float(
+            os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+        ),
+        "std_deviation": float(
+            os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
+        ),
+        "p95": float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0")),
+    }
+
+
+def _compare_files(baseline_file: Path, current_file: Path, output: str | None) -> None:
+    """Compare two telemetry files and generate a report."""
+    # Load benchmarks
+    try:
+        baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
+        current_chunk_size, current_metrics = load_single_benchmark(current_file)
+    except Exception as e:
+        error_msg = f"Error loading benchmark files: {e}"
+        _write_error_report(error_msg, output)
+        sys.exit(1)
+
+    # Warn if chunk sizes don't match
+    if baseline_chunk_size != current_chunk_size:
+        click.echo(
+            f"⚠️  Warning: Chunk sizes differ - baseline: {baseline_chunk_size}, current: {current_chunk_size}",
+            err=True,
+        )
+        click.echo("Using baseline chunk size for comparison\n", err=True)
+
+    # Get thresholds from environment
+    thresholds = _load_thresholds()
+
+    # Generate comparison report
+    report, has_regression = generate_comparison_report(
+        baseline_metrics,
+        current_metrics,
+        baseline_file.name,
+        current_file.name,
+        thresholds,
+    )
+
+    # Output report
+    if output:
+        Path(output).write_text(report)
+        click.echo(f"✅ Comparison report saved to {output}")
+    else:
+        click.echo(report)
+
+    # Exit with appropriate code
+    if has_regression:
+        sys.exit(1)
+    else:
+        sys.exit(0)
+
+
+def _match_telemetry_files(dir1: Path, dir2: Path) -> list[tuple[Path, Path]]:
+    """Match telemetry files between two directories by token count.
+
+    Returns list of (baseline_file, current_file) tuples.
+    """
+    # Find telemetry files in both directories
+    dir1_files = list(dir1.glob("telemetry_*_tokens.json"))
+    dir2_files = list(dir2.glob("telemetry_*_tokens.json"))
+
+    # Also support generic telemetry.json files
+    dir1_files.extend(dir1.glob("telemetry.json"))
+    dir2_files.extend(dir2.glob("telemetry.json"))
+
+    # Create mapping by filename pattern
+    dir1_map = {f.name: f for f in dir1_files}
+    dir2_map = {f.name: f for f in dir2_files}
+
+    # Find matching pairs
+    matches = []
+    for filename, file1 in dir1_map.items():
+        if filename in dir2_map:
+            matches.append((file1, dir2_map[filename]))
+
+    return sorted(matches, key=lambda x: x[0].name)
+
+
+def _compare_directories(
+    baseline_dir: Path, current_dir: Path, output: str | None
+) -> None:
+    """Compare all matching telemetry files between two directories."""
+    # Find matching files
+    matches = _match_telemetry_files(baseline_dir, current_dir)
+
+    if not matches:
+        click.echo(
+            f"❌ No matching telemetry files found between {baseline_dir} and {current_dir}",
+            err=True,
+        )
+        sys.exit(1)
+
+    click.echo(f"📊 Found {len(matches)} matching file pairs to compare\n")
+
+    # Track overall results and collect metrics by chunk size
+    chunk_metrics: dict[int, dict[str, MetricsDict]] = {}
+    any_error = False
+    error_messages = []
+
+    for baseline_file, current_file in matches:
+        click.echo(f"Comparing {baseline_file.name}...", err=True)
+
+        try:
+            # Load benchmarks
+            baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
+            current_chunk_size, current_metrics = load_single_benchmark(current_file)
+
+            # Warn if chunk sizes don't match
+            if baseline_chunk_size != current_chunk_size:
+                click.echo(
+                    f"  ⚠️  Warning: Chunk sizes differ - baseline: {baseline_chunk_size}, current: {current_chunk_size}",
+                    err=True,
+                )
+
+            # Use baseline chunk size as the key
+            chunk_size = baseline_chunk_size
+            chunk_metrics[chunk_size] = {
+                "baseline": baseline_metrics,
+                "current": current_metrics,
+            }
+
+            click.echo("  ✅ Loaded successfully", err=True)
+
+        except Exception as e:
+            click.echo(f"  ❌ Error: {e}", err=True)
+            error_messages.append(f"Error loading {baseline_file.name}: {e}")
+            any_error = True
+
+    # Generate unified report if we have any successful comparisons
+    if chunk_metrics:
+        thresholds = _load_thresholds()
+        combined_report, any_regression = _generate_unified_comparison_report(
+            chunk_metrics,
+            baseline_dir.name,
+            current_dir.name,
+            thresholds,
+        )
+
+        # Append error messages if any
+        if error_messages:
+            combined_report += "\n\n## ⚠️ Errors Encountered\n\n"
+            for error_msg in error_messages:
+                combined_report += f"- {error_msg}\n"
+    else:
+        # All files failed to load
+        combined_report = "# ❌ Directory Comparison Failed\n\n"
+        combined_report += (
+            f"**Baseline:** {baseline_dir}\n**Current:** {current_dir}\n\n"
+        )
+        combined_report += "No files could be successfully compared:\n\n"
+        for error_msg in error_messages:
+            combined_report += f"- {error_msg}\n"
+        any_regression = True  # Treat total failure as regression
+
+    # Output report
+    if output:
+        Path(output).write_text(combined_report)
+        click.echo(f"\n✅ Combined comparison report saved to {output}")
+    else:
+        click.echo(f"\n{'='*60}\n")
+        click.echo(combined_report)
+
+    # Exit with appropriate code
+    # Exit with code 1 if any regressions were detected OR any errors occurred during comparison
+    # This ensures CI fails if either performance degrades or comparison process fails
+    if any_regression or any_error:
+        sys.exit(1)
+    else:
+        sys.exit(0)
+
+
 @cli.command("compare")
-@click.argument("file1", type=click.Path(exists=True))
-@click.argument("file2", type=click.Path(exists=True))
+@click.argument("path1", type=click.Path(exists=True))
+@click.argument("path2", type=click.Path(exists=True))
 @click.option(
     "--output",
     type=click.Path(),
     help="Output file for comparison report (defaults to stdout)",
 )
-def compare(file1: str, file2: str, output: str | None) -> None:
-    """Compare telemetry data between two benchmark files."""
+def compare(path1: str, path2: str, output: str | None) -> None:
+    """Compare telemetry data between two benchmark files or directories.
+
+    Examples:
+        Compare two files:
+            ragzoom-telemetry compare baseline.json current.json
+
+        Compare directories:
+            ragzoom-telemetry compare baseline_results/ current_results/
+    """
     try:
-        baseline_file = Path(file1)
-        current_file = Path(file2)
+        path1_obj = Path(path1)
+        path2_obj = Path(path2)
 
-        # Load benchmarks
-        try:
-            baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
-            current_chunk_size, current_metrics = load_single_benchmark(current_file)
-        except Exception as e:
-            error_msg = f"Error loading benchmark files: {e}"
-            _write_error_report(error_msg, output)
-            sys.exit(1)
-
-        # Warn if chunk sizes don't match
-        if baseline_chunk_size != current_chunk_size:
+        # Check if both are directories
+        if path1_obj.is_dir() and path2_obj.is_dir():
+            _compare_directories(path1_obj, path2_obj, output)
+        elif path1_obj.is_file() and path2_obj.is_file():
+            # Single file comparison (existing logic)
+            _compare_files(path1_obj, path2_obj, output)
+        else:
             click.echo(
-                f"⚠️  Warning: Chunk sizes differ - baseline: {baseline_chunk_size}, current: {current_chunk_size}",
-                err=True,
+                "❌ Error: Both arguments must be either files or directories", err=True
             )
-            click.echo("Using baseline chunk size for comparison\n", err=True)
-
-        # Get thresholds from environment
-        thresholds = {
-            "summary_token": float(
-                os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
-            ),
-            "avg_deviation": float(
-                os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
-            ),
-            "median_deviation": float(
-                os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
-            ),
-            "std_deviation": float(
-                os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
-            ),
-            "p95": float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0")),
-        }
-
-        # Generate comparison report
-        report, has_regression = generate_comparison_report(
-            baseline_metrics,
-            current_metrics,
-            baseline_file.name,
-            current_file.name,
-            thresholds,
-        )
-
-        # Output report
-        if output:
-            Path(output).write_text(report)
-            click.echo(f"✅ Comparison report saved to {output}")
-        else:
-            click.echo(report)
-
-        # Exit with appropriate code
-        if has_regression:
             sys.exit(1)
-        else:
-            sys.exit(0)
 
     except Exception as e:
         error_msg = f"Unexpected error during comparison: {e}"
