@@ -33,7 +33,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Fetch PR commits + buffer for merge base (default to 50 if not available)
+          # Fetch PR commits + buffer for merge base
           fetch-depth: 50
 
       - name: Run Claude Code Review
@@ -53,22 +53,25 @@ jobs:
               ## Incremental Review - Changes Since Last Review
               
               ### Fixed Issues:
-              ✅ <description of what was fixed>
+              ✅ <concise description of what was fixed - 1-2 sentences>
               
               ### Unresolved Issues:
-              ❌ Critical: <description of critical issue that still remains>
-              ⚠️ Important: <description of important issue that still remains>
-              Minor: <description of minor issue that still remains>
+              ❌ Critical: <concise description - 1-2 sentences>
+              ⚠️ Important: <concise description - 1-2 sentences>
+              Minor: <concise description - 1-2 sentences>
               
               ### New Issues Found:
-              ❌ Critical: <description of new critical issue>
-              ⚠️ Important: <description of new important issue>
-              Minor: <description of new minor issue>
+              ❌ Critical: <concise description - 1-2 sentences>
+              ⚠️ Important: <concise description - 1-2 sentences>
+              Minor: <concise description - 1-2 sentences>
               
               ### Summary
-              <Brief assessment of progress and remaining work>
+              <Brief assessment of progress and remaining work - 2-3 sentences max>
             
-            - For subsequent reviews: Examine ONLY the changes made since your last review
+            - For subsequent reviews: 
+              * Focus on the diff between the commit you last reviewed and the current HEAD
+              * This means examining ONLY new commits pushed since your previous review
+              * Do NOT re-review the entire PR diff from base branch
             - Check each previously-identified issue to see if it was addressed
             - Look for any new issues introduced by the recent changes
             - If the PR references a GitHub issue, assess progress toward addressing it
