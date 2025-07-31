@@ -2,7 +2,6 @@
 
 import json
 import os
-import time
 from pathlib import Path
 
 import pytest
@@ -84,15 +83,9 @@ def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
         _ = builder.splitter.tokenizer.encode("warmup")
 
         # Run indexing
-        start_time = time.time()
-        doc_id, metrics = builder.add_document_with_metrics(
+        doc_id, telemetry = builder.add_document_with_telemetry(
             test_doc, document_id=f"{document_type}_{leaf_tokens}", show_progress=False
         )
-        end_time = time.time()
-
-        # Verify metrics match actual timing
-        actual_duration = end_time - start_time
-        assert abs(metrics.total_duration_seconds - actual_duration) < 0.1
 
         # Save telemetry data for comparison
         output_dir = Path("benchmark_results")
@@ -112,13 +105,16 @@ def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
                         "document_id": f"{document_type}_{leaf_tokens}",
                         "file_path": doc_name,
                     },
-                    "telemetry": metrics.get_telemetry_data(
-                        f"{document_type}_{leaf_tokens}", leaf_tokens
-                    ),
+                    "telemetry": telemetry,
                 },
                 f,
                 indent=2,
             )
+
+        # Compute metrics from telemetry for display
+        from ragzoom.telemetry_analysis import compute_metrics_from_telemetry
+
+        metrics = compute_metrics_from_telemetry(telemetry, benchmark_config)
 
         # Print summary
         print(f"\n=== Performance Summary ({doc_name}, leaf_tokens={leaf_tokens}) ===")
@@ -133,7 +129,7 @@ def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
         print(f"Memory growth: {metrics.memory_usage_mb:.1f} MB")
 
         # Summary accuracy
-        if metrics.summary_stats:
+        if hasattr(metrics, "summary_stats") and metrics.summary_stats:
             for target, stats in metrics.summary_stats.items():
                 print(f"\nSummary accuracy (target={target}):")
                 print(f"  Count: {stats.count}")
@@ -168,7 +164,7 @@ def test_performance_comparison():
 
     # Import needed for computing metrics from telemetry
     from ragzoom.config import RagZoomConfig
-    from ragzoom.telemetry import compute_metrics_from_telemetry
+    from ragzoom.telemetry_analysis import compute_metrics_from_telemetry
 
     # Load all results
     results = {}

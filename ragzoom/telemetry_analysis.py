@@ -7,13 +7,12 @@ and other insights from historical benchmark data.
 
 import logging
 import os
+import statistics
+from dataclasses import dataclass, field
 from statistics import median
+from typing import Any
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.metrics import (
-    IndexingMetrics,
-    SummaryStats,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +21,78 @@ SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0"]
 
 # Default token estimate for leaf nodes when source tokens are not available
 DEFAULT_LEAF_TOKEN_ESTIMATE = 150
+
+
+@dataclass
+class SummaryStats:
+    """Statistics for summaries at a specific target size, computed from telemetry."""
+
+    count: int = 0
+    total_tokens: int = 0
+    total_deviation: float = 0.0
+    over_target_count: int = 0
+    under_target_count: int = 0
+    max_overage_percent: float = 0.0
+    max_underage_percent: float = 0.0
+    deviations: list[float] = field(default_factory=list)
+    histogram: dict[str, dict[str, float]] = field(default_factory=dict)
+
+    @property
+    def avg_tokens(self) -> float:
+        """Average summary size in tokens."""
+        return self.total_tokens / self.count if self.count > 0 else 0
+
+    @property
+    def avg_deviation_percent(self) -> float:
+        """Average absolute deviation from target."""
+        return self.total_deviation / self.count if self.count > 0 else 0
+
+    @property
+    def percent_over_target(self) -> float:
+        """Percentage of summaries over target."""
+        return self.over_target_count / self.count * 100 if self.count > 0 else 0
+
+    @property
+    def percent_under_target(self) -> float:
+        """Percentage of summaries under target."""
+        return self.under_target_count / self.count * 100 if self.count > 0 else 0
+
+    @property
+    def median_deviation_percent(self) -> float:
+        """Median deviation from target (more robust than mean)."""
+        if not self.deviations:
+            return 0.0
+        return median(self.deviations)
+
+    @property
+    def percentile_50(self) -> float:
+        """50th percentile (median) of deviations."""
+        return self.median_deviation_percent
+
+    @property
+    def percentile_90(self) -> float:
+        """90th percentile of deviations."""
+        if not self.deviations:
+            return 0.0
+        if len(self.deviations) < 2:
+            return max(self.deviations)
+        return _compute_percentile(self.deviations, 0.9)
+
+    @property
+    def percentile_95(self) -> float:
+        """95th percentile of deviations."""
+        if not self.deviations:
+            return 0.0
+        if len(self.deviations) < 2:
+            return max(self.deviations)
+        return _compute_percentile(self.deviations, 0.95)
+
+    @property
+    def std_deviation_percent(self) -> float:
+        """Standard deviation of deviation percentages."""
+        if len(self.deviations) < 2:
+            return 0.0
+        return statistics.stdev(self.deviations)
 
 
 class TelemetryThresholds:
@@ -459,42 +530,206 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
     return result
 
 
+def compute_summary_stats_from_telemetry(
+    telemetry_data: dict,
+) -> dict[int, SummaryStats]:
+    """Compute summary statistics from raw telemetry data.
+
+    Args:
+        telemetry_data: Parsed telemetry data
+
+    Returns:
+        Dictionary mapping target sizes to SummaryStats objects
+    """
+    parsed_data = parse_telemetry_format(telemetry_data)
+    summary_stats_by_target: dict[int, SummaryStats] = {}
+
+    # Process all documents
+    for doc_type, doc_data in parsed_data["documents"].items():
+        nodes = doc_data.get("nodes", [])
+
+        for node in nodes:
+            # Process summary attempts for non-leaf nodes
+            summary_attempts = node.get("summary_attempts", [])
+
+            for attempt in summary_attempts:
+                # Only process accepted attempts for summary stats
+                if attempt.get("status") == "accepted":
+                    target_tokens = attempt.get("target_tokens", 0)
+                    actual_tokens = attempt.get("actual_tokens", 0)
+
+                    if target_tokens > 0 and actual_tokens > 0:
+                        # Create stats object if needed
+                        if target_tokens not in summary_stats_by_target:
+                            summary_stats_by_target[target_tokens] = SummaryStats()
+
+                        stats = summary_stats_by_target[target_tokens]
+
+                        # Update basic counts
+                        stats.count += 1
+                        stats.total_tokens += actual_tokens
+
+                        # Calculate deviation
+                        deviation_percent = (
+                            abs(actual_tokens - target_tokens) / target_tokens * 100
+                        )
+                        stats.total_deviation += deviation_percent
+                        stats.deviations.append(deviation_percent)
+
+                        # Track over/under target
+                        if actual_tokens > target_tokens:
+                            stats.over_target_count += 1
+                            overage = (
+                                (actual_tokens - target_tokens) / target_tokens * 100
+                            )
+                            stats.max_overage_percent = max(
+                                stats.max_overage_percent, overage
+                            )
+                        else:
+                            stats.under_target_count += 1
+                            underage = (
+                                (target_tokens - actual_tokens) / target_tokens * 100
+                            )
+                            stats.max_underage_percent = max(
+                                stats.max_underage_percent, underage
+                            )
+
+    # Compute histograms for each target size
+    for target_size, stats in summary_stats_by_target.items():
+        if stats.count > 0:
+            histogram_buckets = {
+                "0-10%": 0,
+                "10-25%": 0,
+                "25-50%": 0,
+                "50-100%": 0,
+                "100%+": 0,
+            }
+
+            for deviation in stats.deviations:
+                if deviation <= 10:
+                    histogram_buckets["0-10%"] += 1
+                elif deviation <= 25:
+                    histogram_buckets["10-25%"] += 1
+                elif deviation <= 50:
+                    histogram_buckets["25-50%"] += 1
+                elif deviation <= 100:
+                    histogram_buckets["50-100%"] += 1
+                else:
+                    histogram_buckets["100%+"] += 1
+
+            # Convert to percentage format
+            stats.histogram = {}
+            for bucket, count in histogram_buckets.items():
+                stats.histogram[bucket] = {
+                    "count": count,
+                    "percentage": (count / stats.count) * 100,
+                }
+
+    return summary_stats_by_target
+
+
+@dataclass
+class ComputedMetrics:
+    """Computed metrics from telemetry data.
+
+    This provides the same attributes that were previously computed by IndexingMetrics,
+    but calculated from raw telemetry data during analysis.
+    """
+
+    # Timing
+    start_time: float
+    end_time: float
+    total_duration_seconds: float
+
+    # Document info
+    source_document_tokens: int
+    chunks_created: int
+    tokens_per_second: float
+    time_per_1k_tokens: float
+
+    # Cost configuration
+    embedding_cost_per_1k: float
+    summary_input_cost_per_1k: float
+    summary_output_cost_per_1k: float
+
+    # API usage
+    embedding_api_calls: int
+    summary_api_calls: int
+    total_api_calls: int
+    total_embedding_tokens: int
+    total_summary_prompt_tokens: int
+    total_summary_completion_tokens: int
+
+    # Derived metrics
+    embedding_tokens_per_1k: float
+    summary_tokens_per_1k: float
+    api_calls_per_1k: float
+    cost_per_1k_tokens: float
+    avg_embedding_batch_size: float
+
+    # Memory metrics
+    peak_memory_mb: float
+    memory_start_mb: float
+    memory_end_mb: float
+    memory_usage_mb: float
+
+    # Collections
+    embedding_batch_sizes: list[int]
+    input_amplifications: list[float]
+    output_amplifications: list[float]
+    cost_amplifications: list[float]
+    summary_stats: dict[int, SummaryStats]
+    amplifications_by_height: dict[int, dict[str, list[float]]]
+    tree_height: int
+    nodes_per_height: list[int]
+
+
 def compute_metrics_from_telemetry(
     telemetry_data: dict, config: RagZoomConfig
-) -> IndexingMetrics:
-    """Compute full IndexingMetrics from raw telemetry data.
+) -> ComputedMetrics:
+    """Compute metrics from raw telemetry data.
 
-    This function reconstructs an IndexingMetrics object as if it were collected
-    during indexing, enabling retroactive analysis of benchmark data.
+    This function computes all metrics from raw telemetry data that were
+    previously available as computed properties in IndexingMetrics.
 
     Args:
         telemetry_data: Raw telemetry data from benchmark file
         config: Configuration for cost calculations and pricing
 
     Returns:
-        IndexingMetrics object computed from telemetry
+        ComputedMetrics object with calculated values
 
     Raises:
         TelemetryAnalysisError: If telemetry data is invalid or incomplete
     """
     parsed_data = parse_telemetry_format(telemetry_data)
 
-    # Initialize metrics with dummy values - we'll compute real ones from telemetry
-    metrics = IndexingMetrics(
-        start_time=0.0,
-        end_time=0.0,
-        source_document_tokens=0,
-        chunks_created=0,
-        embedding_cost_per_1k=config.embedding_cost_per_1k,
-        summary_input_cost_per_1k=config.summary_input_cost_per_1k,
-        summary_output_cost_per_1k=config.summary_output_cost_per_1k,
-    )
+    # Initialize metrics collection
+    metrics_data: dict[str, Any] = {
+        "start_time": 0.0,
+        "end_time": 0.0,
+        "source_document_tokens": 0,
+        "chunks_created": 0,
+        "embedding_cost_per_1k": config.embedding_cost_per_1k,
+        "summary_input_cost_per_1k": config.summary_input_cost_per_1k,
+        "summary_output_cost_per_1k": config.summary_output_cost_per_1k,
+        "total_embedding_tokens": 0,
+        "embedding_api_calls": 0,
+        "embedding_batch_sizes": [],
+        "total_summary_prompt_tokens": 0,
+        "total_summary_completion_tokens": 0,
+        "summary_api_calls": 0,
+        "input_amplifications": [],
+        "output_amplifications": [],
+        "cost_amplifications": [],
+        "summary_stats": {},
+        "amplifications_by_height": {},  # Initialize empty dict
+    }
 
     # Track various metrics as we process telemetry
     min_timestamp = float("inf")
     max_timestamp = 0.0
     embedding_batches = set()
-    summary_stats_by_target = {}
 
     # Process all documents
     for doc_type, doc_data in parsed_data["documents"].items():
@@ -513,14 +748,14 @@ def compute_metrics_from_telemetry(
                 # v1.0: use timestamp, v2.0: use start_time
                 timestamp = embedding.get("timestamp", embedding.get("start_time", 0))
 
-                metrics.total_embedding_tokens += text_tokens
+                metrics_data["total_embedding_tokens"] += text_tokens
 
                 # Track unique batches by (batch_size, timestamp)
                 batch_key = (batch_size, timestamp)
                 if batch_key not in embedding_batches:
                     embedding_batches.add(batch_key)
-                    metrics.embedding_api_calls += 1
-                    metrics.embedding_batch_sizes.append(batch_size)
+                    metrics_data["embedding_api_calls"] += 1
+                    metrics_data["embedding_batch_sizes"].append(batch_size)
 
             # Process summary attempts
             summary_attempts = node.get("summary_attempts", [])
@@ -533,12 +768,12 @@ def compute_metrics_from_telemetry(
             final_attempt = None
 
             for attempt in summary_attempts:
-                metrics.summary_api_calls += 1
+                metrics_data["summary_api_calls"] += 1
                 prompt_tokens = attempt.get("prompt_tokens", 0)
                 completion_tokens = attempt.get("completion_tokens", 0)
 
-                metrics.total_summary_prompt_tokens += prompt_tokens
-                metrics.total_summary_completion_tokens += completion_tokens
+                metrics_data["total_summary_prompt_tokens"] += prompt_tokens
+                metrics_data["total_summary_completion_tokens"] += completion_tokens
 
                 # Accumulate tokens for amplification calculation
                 node_total_prompt_tokens += prompt_tokens
@@ -575,35 +810,24 @@ def compute_metrics_from_telemetry(
                 )
 
                 # Record amplifications
-                metrics.input_amplifications.append(input_amplification)
-                metrics.output_amplifications.append(output_amplification)
-                metrics.cost_amplifications.append(cost_amplification)
-
-                # Track summary accuracy for the final accepted attempt
-                target_tokens = final_attempt.get("target_tokens", 0)
-                if target_tokens > 0:
-                    config_leaf_tokens = config.leaf_tokens
-                    if config_leaf_tokens not in summary_stats_by_target:
-                        summary_stats_by_target[config_leaf_tokens] = SummaryStats()
-
-                    summary_stats_by_target[config_leaf_tokens].add_summary(
-                        config_leaf_tokens, node_final_summary_tokens
-                    )
+                metrics_data["input_amplifications"].append(input_amplification)
+                metrics_data["output_amplifications"].append(output_amplification)
+                metrics_data["cost_amplifications"].append(cost_amplification)
 
             # Count chunks (leaf nodes)
             # v1.0: check node_type, v2.0: check height == 0
             height = node.get("height", node.get("level", 0))
             is_leaf = node.get("node_type") == "leaf" or height == 0
             if is_leaf:
-                metrics.chunks_created += 1
+                metrics_data["chunks_created"] += 1
 
     # Set timing
     if min_timestamp != float("inf"):
-        metrics.start_time = min_timestamp
-        metrics.end_time = max_timestamp
+        metrics_data["start_time"] = min_timestamp
+        metrics_data["end_time"] = max_timestamp
 
-    # Set summary stats
-    metrics.summary_stats = summary_stats_by_target
+    # Compute summary stats from raw telemetry
+    metrics_data["summary_stats"] = compute_summary_stats_from_telemetry(telemetry_data)
 
     # Calculate total source tokens from all documents
     total_source_tokens = 0
@@ -627,6 +851,91 @@ def compute_metrics_from_telemetry(
                 f"Source tokens not found in telemetry metadata, using estimate: {estimated_tokens}"
             )
 
-    metrics.source_document_tokens = total_source_tokens
+    metrics_data["source_document_tokens"] = total_source_tokens
 
-    return metrics
+    # Tree structure analysis (estimate from height info)
+    tree_height = 0
+    nodes_per_height_dict: dict[int, int] = {}
+    for doc_data in parsed_data["documents"].values():
+        for node in doc_data.get("nodes", []):
+            # v1.0: level, v2.0: height
+            height = node.get("height", node.get("level", 0))
+            tree_height = max(tree_height, height)
+            nodes_per_height_dict[height] = nodes_per_height_dict.get(height, 0) + 1
+
+    metrics_data["tree_height"] = tree_height
+    metrics_data["nodes_per_height"] = [
+        nodes_per_height_dict.get(h, 0) for h in range(tree_height + 1)
+    ]
+
+    # Compute derived metrics that were previously properties
+    duration = metrics_data["end_time"] - metrics_data["start_time"]
+    if duration > 0:
+        metrics_data["total_duration_seconds"] = duration
+        metrics_data["tokens_per_second"] = (
+            metrics_data["source_document_tokens"] / duration
+        )
+        metrics_data["time_per_1k_tokens"] = (
+            duration / (metrics_data["source_document_tokens"] / 1000)
+            if metrics_data["source_document_tokens"] > 0
+            else 0
+        )
+    else:
+        metrics_data["total_duration_seconds"] = 0
+        metrics_data["tokens_per_second"] = 0
+        metrics_data["time_per_1k_tokens"] = 0
+
+    # Compute cost metrics
+    embedding_cost = (metrics_data["total_embedding_tokens"] / 1000) * metrics_data[
+        "embedding_cost_per_1k"
+    ]
+    prompt_cost = (metrics_data["total_summary_prompt_tokens"] / 1000) * metrics_data[
+        "summary_input_cost_per_1k"
+    ]
+    completion_cost = (
+        metrics_data["total_summary_completion_tokens"] / 1000
+    ) * metrics_data["summary_output_cost_per_1k"]
+    total_cost = embedding_cost + prompt_cost + completion_cost
+
+    if metrics_data["source_document_tokens"] > 0:
+        metrics_data["cost_per_1k_tokens"] = total_cost / (
+            metrics_data["source_document_tokens"] / 1000
+        )
+        metrics_data["embedding_tokens_per_1k"] = metrics_data[
+            "total_embedding_tokens"
+        ] / (metrics_data["source_document_tokens"] / 1000)
+        total_summary_tokens = (
+            metrics_data["total_summary_prompt_tokens"]
+            + metrics_data["total_summary_completion_tokens"]
+        )
+        metrics_data["summary_tokens_per_1k"] = total_summary_tokens / (
+            metrics_data["source_document_tokens"] / 1000
+        )
+        metrics_data["api_calls_per_1k"] = (
+            metrics_data["embedding_api_calls"] + metrics_data["summary_api_calls"]
+        ) / (metrics_data["source_document_tokens"] / 1000)
+    else:
+        metrics_data["cost_per_1k_tokens"] = 0
+        metrics_data["embedding_tokens_per_1k"] = 0
+        metrics_data["summary_tokens_per_1k"] = 0
+        metrics_data["api_calls_per_1k"] = 0
+
+    # Compute batch size metrics
+    if metrics_data["embedding_batch_sizes"]:
+        metrics_data["avg_embedding_batch_size"] = sum(
+            metrics_data["embedding_batch_sizes"]
+        ) / len(metrics_data["embedding_batch_sizes"])
+    else:
+        metrics_data["avg_embedding_batch_size"] = 0
+
+    metrics_data["total_api_calls"] = (
+        metrics_data["embedding_api_calls"] + metrics_data["summary_api_calls"]
+    )
+
+    # Default memory values (not tracked in telemetry)
+    metrics_data["peak_memory_mb"] = 0.0
+    metrics_data["memory_start_mb"] = 0.0
+    metrics_data["memory_end_mb"] = 0.0
+    metrics_data["memory_usage_mb"] = 0.0
+
+    return ComputedMetrics(**metrics_data)
