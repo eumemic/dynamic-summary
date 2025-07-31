@@ -2,7 +2,7 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, ready_for_review]
     # Optional: Only run on specific file changes
     # paths:
     #   - "src/**/*.ts"
@@ -16,6 +16,9 @@ concurrency:
 
 jobs:
   claude-review:
+    # Skip on draft PRs
+    if: github.event.pull_request.draft != true
+    
     # Optional: Filter by PR author
     # if: |
     #   github.event.pull_request.user.login == 'external-contributor' ||
@@ -33,7 +36,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Fetch PR commits + buffer for merge base
+          fetch-depth: 50
 
       - name: Run Claude Code Review
         id: claude-review
@@ -46,10 +50,52 @@ jobs:
 
           # Direct prompt for automated review (no @claude mention needed)
           direct_prompt: |
-            - Perform a comprehensive PR review according to the rubric defined in .claude/commands/review.md (using
-            this PR branch as the scope). If there are still outstanding issues from previous reviews, just briefly
-            summarize them. Most of your review should focus on new issues you've identified.
-            - If the PR references a GitHub issue, assess how well the PR addresses it.
+            - FIRST review on this PR: Use the full review format from .claude/commands/review.md
+            - SUBSEQUENT reviews: Use this concise format focusing only on changes since last review:
+              
+              ## Review Updates
+              
+              ### Fixed Issues:
+              ✅ <concise description of what was fixed - 1-2 sentences>
+              
+              ### Unresolved Issues:
+              ❌ Critical: <concise description - 1-2 sentences>
+              ⚠️ Important: <concise description - 1-2 sentences>
+              Minor: <concise description - 1-2 sentences>
+              
+              ### New Issues Found:
+              ❌ Critical: <concise description - 1-2 sentences>
+              ⚠️ Important: <concise description - 1-2 sentences>
+              Minor: <concise description - 1-2 sentences>
+              
+              ### Summary
+              <Brief assessment of progress and remaining work - 2-3 sentences max>
+              
+              CRITICAL FORMATTING RULE: Only include sections that have actual items! 
+              - If Fixed Issues is empty → don't include that section at all
+              - If Unresolved Issues is empty → don't include that section at all  
+              - If New Issues Found is empty → don't include that section at all
+              Never show "None" or empty sections - just omit them entirely!
+            
+            - For subsequent reviews: 
+              * You have access to the full git history with fetch-depth: 50
+              * Identify the commit SHA from your last review (check your previous comment timestamp)
+              * Review ONLY commits made after that point: git diff <last-reviewed-sha>..HEAD
+              * Focus exclusively on changes in those new commits
+              * Do NOT re-review the entire PR diff from base branch
+            - Check each previously-identified issue to see if it was addressed
+            - Review PR comments for explanations about why certain issues may not be addressed
+            - Look for any new issues introduced by the recent changes
+            - Assess if new commits expand the scope beyond the original PR title/description
+              * Examples of scope expansion: adding unrelated features, fixing issues not mentioned in the PR, 
+                significant architectural changes beyond the stated goal, changing from bug fix to refactor
+              * If scope expanded, suggest specific updates to the PR title and/or description
+            - If the PR references a GitHub issue, assess progress toward addressing it
+            - IMPORTANT: Focus on substantive issues that matter. Avoid nitpicking or finding problems just 
+              to have something to report. If the code is good, say so. Quality > Quantity.
+            - When reviewing fixes for previously-identified issues: Respect the implementer's approach. Since both 
+              reviewer and implementer are likely Claude agents with similar capabilities, defer to the implementer's 
+              judgment as they have more context. Only flag if the fix is clearly incorrect or introduces new problems.
 
           # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
           use_sticky_comment: false
