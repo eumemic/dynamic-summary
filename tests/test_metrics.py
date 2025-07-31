@@ -55,7 +55,13 @@ class TestSummaryStats:
         # quantiles returns [1.0, 12.0, 23.0, 34.0, 45.0, 56.0, 67.0, 78.0, 89.0]
         assert stats.percentile_50 == 45.0  # median (5th of 9 cut points)
         assert stats.percentile_90 == 89.0  # 90th percentile (9th of 9 cut points)
-        assert stats.percentile_95 == 94.5  # 95th percentile using n=20
+        # With 10 values, our fallback P95 calculation uses linear interpolation
+        # index = 0.95 * (10 - 1) = 8.55, so we interpolate between values at indices 8 and 9
+        # values[8] = 80, values[9] = 90, weight = 0.55
+        # result = 80 * 0.45 + 90 * 0.55 = 36 + 49.5 = 85.5
+        assert stats.percentile_95 == pytest.approx(
+            85.5
+        )  # 95th percentile using interpolation
 
 
 class TestIndexingMetrics:

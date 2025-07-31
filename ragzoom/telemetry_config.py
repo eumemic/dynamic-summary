@@ -32,3 +32,7 @@ EMOJI_THRESHOLD_COST_GOOD = 5.0  # Cost decrease above this shows success
 EMOJI_THRESHOLD_MINOR = 5.0  # Minor changes worth noting
 EMOJI_THRESHOLD_MODERATE = 10.0  # Moderate changes that warrant attention
 EMOJI_THRESHOLD_MAJOR = 20.0  # Major changes that are concerning
+
+# Change significance threshold - changes below this are hidden in comparison reports
+# This filters out noise from minor fluctuations to focus on meaningful changes
+CHANGE_SIGNIFICANCE_THRESHOLD = 1.0  # Hide changes smaller than ±1%
