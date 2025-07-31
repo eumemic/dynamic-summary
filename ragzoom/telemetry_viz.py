@@ -101,7 +101,7 @@ class TelemetryVisualizer:
 
         # 5. Summary Accuracy Distribution
         ax5 = fig.add_subplot(gs[3, :])
-        self._plot_summary_accuracy(data.get("metrics", {}), ax5)
+        self._plot_summary_accuracy(telemetry, ax5)
 
         # 6. Node Creation Timeline
         ax6 = fig.add_subplot(gs[4, :])
@@ -119,8 +119,17 @@ class TelemetryVisualizer:
 
         # Save figure
         output_path = self.output_dir / f"telemetry_{chunk_size}_tokens.{output_format}"
-        plt.tight_layout()
-        plt.savefig(output_path, bbox_inches="tight")
+        # Suppress layout and font warnings for cleaner output
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="This figure includes Axes that are not compatible with tight_layout",
+            )
+            warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+            plt.tight_layout()
+            plt.savefig(output_path, bbox_inches="tight")
         plt.close()
 
         print(f"Saved visualization to {output_path}")
@@ -223,27 +232,6 @@ class TelemetryVisualizer:
         ax.legend()
         ax.grid(True, alpha=0.3)
 
-        # Add threshold line with better labeling
-        ax.axhline(
-            y=self.thresholds.high_cost_amplification,
-            color="r",
-            linestyle="--",
-            alpha=0.7,
-            linewidth=2,
-        )
-
-        # Add threshold annotation
-        ax.text(
-            0.98,
-            self.thresholds.high_cost_amplification + 0.1,
-            f"Alert threshold: {self.thresholds.high_cost_amplification:.1f}x",
-            transform=ax.get_yaxis_transform(),
-            ha="right",
-            va="bottom",
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="red", alpha=0.2),
-            fontsize=8,
-        )
-
     def _plot_cost_breakdown(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
     ) -> None:
@@ -254,13 +242,16 @@ class TelemetryVisualizer:
         embedding_cost = (
             metrics.total_embedding_tokens / 1000
         ) * metrics.embedding_cost_per_1k
-        summary_cost = (
+        summary_input_cost = (
             metrics.total_summary_prompt_tokens / 1000
-        ) * metrics.summary_input_cost_per_1k + (
+        ) * metrics.summary_input_cost_per_1k
+        summary_output_cost = (
             metrics.total_summary_completion_tokens / 1000
         ) * metrics.summary_output_cost_per_1k
 
-        if embedding_cost == 0 and summary_cost == 0:
+        total_cost = embedding_cost + summary_input_cost + summary_output_cost
+
+        if total_cost == 0:
             ax.text(
                 0.5,
                 0.5,
@@ -272,12 +263,12 @@ class TelemetryVisualizer:
             ax.set_title("Cost Breakdown")
             return
 
-        costs = [embedding_cost, summary_cost]
-        labels = ["Embeddings", "Summaries"]
-        colors = ["#ff9999", "#66b3ff"]
+        costs = [embedding_cost, summary_input_cost, summary_output_cost]
+        labels = ["Embeddings", "Summary Input", "Summary Output"]
+        colors = ["#ff9999", "#66b3ff", "#99ff99"]
 
         ax.pie(costs, labels=labels, colors=colors, autopct="%1.1f%%", startangle=90)
-        ax.set_title(f"Cost Breakdown (Total: ${sum(costs):.4f})")
+        ax.set_title(f"Cost Breakdown (Total: ${total_cost:.4f})")
 
     def _plot_batch_efficiency(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot embedding batch efficiency with clear explanations."""
@@ -331,7 +322,7 @@ class TelemetryVisualizer:
         )
 
         # Calculate and display efficiency metrics
-        utilization_pct = batch_eff["batch_utilization"]
+        efficiency_pct = batch_eff["batch_utilization"]
         total_batches = batch_eff["total_batches"]
         total_embeddings = batch_eff["total_embeddings"]
 
@@ -339,17 +330,17 @@ class TelemetryVisualizer:
         ax.set_ylabel("Number of Batches")
         ax.set_title(
             f"Embedding Batch Efficiency\n"
-            f"Utilization: {utilization_pct:.1f}% "
+            f"Efficiency: {efficiency_pct:.1f}% "
             f"({total_embeddings} embeddings in {total_batches} batches)"
         )
         ax.legend(loc="upper right")
         ax.grid(True, alpha=0.3, axis="y")
 
-        # Add text explanation of utilization metric
+        # Add text explanation of efficiency metric
         ax.text(
             0.02,
             0.98,
-            "Utilization: Average batch size vs 95th percentile\n"
+            "Efficiency: % of embeddings that were batched\n"
             "Higher values = better API efficiency",
             transform=ax.transAxes,
             va="top",
@@ -370,7 +361,7 @@ class TelemetryVisualizer:
             ax.text(
                 0.5,
                 0.5,
-                "✅ No Retries Needed\n\nAll summary attempts succeeded on first try.\n"
+                "No Retries Needed\n\nAll summary attempts succeeded on first try.\n"
                 f"Total successful attempts: {retry_data['successful_attempts']}",
                 ha="center",
                 va="center",
@@ -447,25 +438,49 @@ class TelemetryVisualizer:
                 fontsize=8,
             )
 
-    def _plot_summary_accuracy(self, metrics: dict, ax: plt.Axes) -> None:
-        """Plot summary accuracy distribution."""
-        if "summary_accuracy" not in metrics or not metrics["summary_accuracy"]:
-            ax.text(
-                0.5,
-                0.5,
-                "No summary accuracy data available",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-            )
-            ax.set_title("Summary Accuracy Distribution")
-            return
+    def _extract_summary_deviations_from_telemetry(
+        self, telemetry: dict
+    ) -> list[float]:
+        """Extract summary accuracy deviations from telemetry data.
 
-        # Extract deviation data
+        Returns:
+            List of deviation percentages from chunk_size target
+        """
         deviations = []
-        for target_size, stats in metrics["summary_accuracy"].items():
-            if "deviations" in stats:
-                deviations.extend(stats["deviations"])
+        parsed_data = telemetry if isinstance(telemetry, dict) else {}
+
+        # Process all documents
+        for doc_name, doc_data in parsed_data.get("documents", {}).items():
+            # Get the chunk size for this document
+            chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
+            if chunk_size <= 0:
+                continue
+
+            # Process all nodes
+            nodes = doc_data.get("nodes", [])
+            for node in nodes:
+                # Only process summary nodes (height > 0)
+                height = node.get("height", node.get("level", 0))
+                if height > 0:
+                    # Look for accepted summary attempts
+                    summary_attempts = node.get("summary_attempts", [])
+                    for attempt in summary_attempts:
+                        if attempt.get("status") == "accepted":
+                            actual_tokens = attempt.get("actual_tokens", 0)
+                            if actual_tokens > 0:
+                                # Calculate deviation percentage
+                                deviation = (
+                                    (actual_tokens - chunk_size) / chunk_size * 100
+                                )
+                                deviations.append(deviation)
+                                break  # Only use the accepted attempt
+
+        return deviations
+
+    def _plot_summary_accuracy(self, telemetry: dict, ax: plt.Axes) -> None:
+        """Plot summary accuracy distribution."""
+        # Extract deviations from telemetry
+        deviations = self._extract_summary_deviations_from_telemetry(telemetry)
 
         if not deviations:
             ax.text(
@@ -484,7 +499,7 @@ class TelemetryVisualizer:
         ax.axvline(0, color="green", linestyle="--", label="Target", linewidth=2)
 
         # Add median line
-        median_dev = np.median(deviations)
+        median_dev = float(np.median(deviations))
         ax.axvline(
             median_dev,
             color="red",
@@ -496,7 +511,7 @@ class TelemetryVisualizer:
         ax.set_xlabel("Deviation from Target Token Count (%)")
         ax.set_ylabel("Frequency")
         ax.set_title(
-            "Summary Length Accuracy\n(How well summaries hit target token counts)"
+            "Summary Length Accuracy\n(Distribution of deviations from target chunk size)"
         )
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -628,26 +643,29 @@ class TelemetryVisualizer:
             y="actual_tokens",
             hue="level",  # Assign x to hue to fix deprecation warning
             ax=ax,
-            inner="quartile",  # Show quartiles
+            inner=None,  # Remove noisy quartile lines
             palette="Set2",
             legend=False,  # Don't show legend since it's redundant with x-axis
         )
 
-        # Add target token reference lines if available
-        if "target_tokens" in df.columns:
-            level_names = df["level"].unique()
-            for i, level_name in enumerate(level_names):
-                level_data = df[df["level"] == level_name]
-                if len(level_data) > 0:
-                    target = level_data["target_tokens"].iloc[0]
-                    if target > 0:
-                        ax.axhline(
-                            y=target,
-                            color="red",
-                            linestyle="--",
-                            alpha=0.5,
-                            label="Target" if i == 0 else "",
-                        )
+        # Add single target line at chunk_size from telemetry
+        # Get chunk_size from telemetry metadata
+        chunk_size = None
+        parsed_data = telemetry if isinstance(telemetry, dict) else {}
+        for doc_name, doc_data in parsed_data.get("documents", {}).items():
+            chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
+            if chunk_size > 0:
+                break  # Use the first valid chunk_size found
+
+        if chunk_size and chunk_size > 0:
+            ax.axhline(
+                y=chunk_size,
+                color="red",
+                linestyle="--",
+                alpha=0.7,
+                linewidth=2,
+                label="Target",
+            )
 
         ax.set_xlabel("Tree Level")
         ax.set_ylabel("Token Count")

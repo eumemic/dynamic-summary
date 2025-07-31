@@ -275,9 +275,10 @@ class TestBatchEfficiency:
         assert result["total_embeddings"] == 3
         assert result["batch_sizes"] == [3, 2]
         assert result["avg_batch_size"] == 2.5
-        # Utilization now uses 95th percentile: 2.5 / 2.95 * 100 ≈ 84.75%
-        # (95th percentile of [2, 3] = 2.95)
-        assert result["batch_utilization"] == pytest.approx(84.75, rel=0.01)
+        # Efficiency: percentage of embeddings that were batched
+        # Batch size 3 → 2 embeddings batched, Batch size 2 → 1 embedding batched
+        # Total batched: 3, Total embeddings: 3 → 100% efficiency
+        assert result["batch_utilization"] == pytest.approx(100.0, rel=0.01)
 
     def test_batch_efficiency_empty_data(self) -> None:
         """Test batch efficiency with empty telemetry."""
