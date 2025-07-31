@@ -408,6 +408,25 @@ def generate_comparison_report(
     return "\n".join(report), has_regression
 
 
+def _load_thresholds() -> dict[str, float]:
+    """Load regression thresholds from environment variables."""
+    return {
+        "summary_token": float(
+            os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
+        ),
+        "avg_deviation": float(
+            os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+        ),
+        "median_deviation": float(
+            os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
+        ),
+        "std_deviation": float(
+            os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
+        ),
+        "p95": float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0")),
+    }
+
+
 def _compare_files(baseline_file: Path, current_file: Path, output: str | None) -> None:
     """Compare two telemetry files and generate a report."""
     # Load benchmarks
@@ -428,21 +447,7 @@ def _compare_files(baseline_file: Path, current_file: Path, output: str | None) 
         click.echo("Using baseline chunk size for comparison\n", err=True)
 
     # Get thresholds from environment
-    thresholds = {
-        "summary_token": float(
-            os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
-        ),
-        "avg_deviation": float(
-            os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
-        ),
-        "median_deviation": float(
-            os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
-        ),
-        "std_deviation": float(
-            os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
-        ),
-        "p95": float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0")),
-    }
+    thresholds = _load_thresholds()
 
     # Generate comparison report
     report, has_regression = generate_comparison_report(
@@ -512,6 +517,7 @@ def _compare_directories(
     # Track overall results
     all_reports = []
     any_regression = False
+    any_error = False
 
     for baseline_file, current_file in matches:
         click.echo(f"Comparing {baseline_file.name}...")
@@ -529,21 +535,7 @@ def _compare_directories(
                 )
 
             # Get thresholds from environment
-            thresholds = {
-                "summary_token": float(
-                    os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
-                ),
-                "avg_deviation": float(
-                    os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
-                ),
-                "median_deviation": float(
-                    os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
-                ),
-                "std_deviation": float(
-                    os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
-                ),
-                "p95": float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0")),
-            }
+            thresholds = _load_thresholds()
 
             # Generate comparison report
             report, has_regression = generate_comparison_report(
@@ -565,6 +557,7 @@ def _compare_directories(
         except Exception as e:
             click.echo(f"  ❌ Error: {e}", err=True)
             all_reports.append(f"## {baseline_file.name}\n\n❌ Error: {e}")
+            any_error = True
 
     # Combine all reports
     combined_report = f"# Directory Comparison Report\n\n**Baseline:** {baseline_dir}\n**Current:** {current_dir}\n\n---\n\n"
@@ -579,7 +572,7 @@ def _compare_directories(
         click.echo(combined_report)
 
     # Exit with appropriate code
-    if any_regression:
+    if any_regression or any_error:
         sys.exit(1)
     else:
         sys.exit(0)
