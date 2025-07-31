@@ -38,10 +38,6 @@ jobs:
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@beta
-        env:
-          # Attempt to disable prompt caching to prevent stale reviews
-          # Note: This is based on community reports, not official docs
-          DISABLE_PROMPT_CACHING: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
