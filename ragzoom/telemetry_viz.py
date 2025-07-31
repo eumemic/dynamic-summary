@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -49,6 +49,13 @@ matplotlib.rcParams["font.size"] = DEFAULT_FONT_SIZE
 
 class TelemetryVisualizer:
     """Generate visualizations from telemetry data."""
+
+    # Histogram binning constants
+    SMALL_BIN_THRESHOLD = 20
+    MEDIUM_BIN_THRESHOLD = 100
+    SMALL_BIN_WIDTH = 5
+    MEDIUM_BIN_WIDTH = 10
+    LARGE_BIN_COUNT = 20
 
     def __init__(self, output_dir: Path) -> None:
         """Initialize visualizer with output directory."""
@@ -135,6 +142,40 @@ class TelemetryVisualizer:
             summary_input_cost_per_1k=SUMMARY_INPUT_COST_PER_1K,
             summary_output_cost_per_1k=SUMMARY_OUTPUT_COST_PER_1K,
         )
+
+    def _calculate_histogram_bins(
+        self, batch_sizes: list[float]
+    ) -> tuple[list[int] | int, Literal["left", "mid", "right"]]:
+        """Calculate appropriate histogram bins based on data distribution.
+
+        Args:
+            batch_sizes: List of batch sizes to analyze
+
+        Returns:
+            Tuple of (bins, align) where:
+            - bins: Either a list of bin edges or an integer number of bins
+            - align: 'left' for discrete bins, 'mid' for continuous bins
+        """
+        unique_sizes = sorted(set(batch_sizes))
+        max_size = int(max(batch_sizes))
+
+        if len(unique_sizes) <= 10 and max_size <= self.SMALL_BIN_THRESHOLD:
+            # For small discrete values, use exact bins for each value
+            bins: list[int] | int = list(range(0, max_size + 2))  # 0, 1, 2, ..., max+1
+            align: Literal["left", "mid", "right"] = "left"
+        elif max_size <= self.MEDIUM_BIN_THRESHOLD:
+            # For medium ranges, use fixed-width bins
+            bin_width = (
+                self.SMALL_BIN_WIDTH if max_size <= 50 else self.MEDIUM_BIN_WIDTH
+            )
+            bins = list(range(0, max_size + bin_width, bin_width))
+            align = "left"
+        else:
+            # For large ranges, use automatic binning
+            bins = self.LARGE_BIN_COUNT
+            align = "mid"
+
+        return bins, align
 
     def _plot_amplification_by_level(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
@@ -263,47 +304,18 @@ class TelemetryVisualizer:
         batch_sizes = batch_eff["batch_sizes"]
         avg_batch_size = batch_eff["avg_batch_size"]
 
-        # Create histogram with proper binning
-        # Use intelligent binning strategy based on data distribution
-        unique_sizes = sorted(set(batch_sizes))
-        max_size = max(batch_sizes)
+        # Calculate appropriate histogram bins
+        hist_bins, align = self._calculate_histogram_bins(batch_sizes)
 
-        if len(unique_sizes) <= 10 and max_size <= 20:
-            # For small discrete values, use exact bins for each value
-            hist_bins: list[int] | int = list(
-                range(0, max_size + 2)
-            )  # 0, 1, 2, ..., max+1
-            n, bins_result, patches = ax.hist(
-                batch_sizes,
-                bins=hist_bins,
-                alpha=0.7,
-                edgecolor="black",
-                color="skyblue",
-                align="left",
-            )
-        elif max_size <= 100:
-            # For medium ranges, use bins of width 5 or 10
-            bin_width = 5 if max_size <= 50 else 10
-            hist_bins = list(range(0, max_size + bin_width, bin_width))
-            n, bins_result, patches = ax.hist(
-                batch_sizes,
-                bins=hist_bins,
-                alpha=0.7,
-                edgecolor="black",
-                color="skyblue",
-                align="left",
-            )
-        else:
-            # For large ranges, use 20 bins
-            hist_bins = 20
-            n, bins_result, patches = ax.hist(
-                batch_sizes,
-                bins=hist_bins,
-                alpha=0.7,
-                edgecolor="black",
-                color="skyblue",
-                align="mid",
-            )
+        # Create histogram with intelligent binning
+        n, _, patches = ax.hist(
+            batch_sizes,
+            bins=hist_bins,
+            alpha=0.7,
+            edgecolor="black",
+            color="skyblue",
+            align=align,
+        )
 
         # Add average line
         ax.axvline(
@@ -555,6 +567,8 @@ class TelemetryVisualizer:
 
     def _plot_token_distributions(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot token count distributions by tree level using violin plots."""
+        # TODO: Consider refactoring this method to extract data preparation logic
+        # into a separate method for better readability and testability
         import pandas as pd
 
         # Extract token data by level from telemetry
