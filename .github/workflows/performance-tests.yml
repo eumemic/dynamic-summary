@@ -1,16 +1,18 @@
-name: Performance Tests
+name: 📊 Performance Tests
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches: [ master ]
-    # Only run performance tests when code or this workflow changes
-    paths:
-      - 'ragzoom/**'
-      - 'tests/**'
-      - 'pyproject.toml'
-      - 'requirements*.txt'
-      - '.github/workflows/performance-tests.yml'
+    # Skip performance tests for docs-only changes (but run for code/test/dependency changes)
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.claude/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/workflows/*'
+      - '!.github/workflows/performance-tests.yml'
 
 permissions:
   contents: read
@@ -19,7 +21,7 @@ permissions:
 
 jobs:
   benchmark:
-    name: Run Performance Benchmarks
+    name: 📊 Performance Report
     runs-on: ubuntu-latest
     # Skip on draft PRs to save expensive benchmark runs
     if: github.event.pull_request.draft != true
@@ -100,9 +102,12 @@ jobs:
       - name: Compare results
         id: compare
         run: |
+          set +e  # Don't exit on error, we handle exit codes manually
           # Check if we have baseline results
           if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/telemetry_100_tokens.json" ]; then
             echo "## 📊 Performance Report" > report.md
+            echo "" >> report.md
+            echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" >> report.md
             echo "" >> report.md
             echo "⚠️ No baseline benchmarks available." >> report.md
             echo "" >> report.md
@@ -157,12 +162,30 @@ jobs:
               echo "📊 Running multi-file benchmark comparison..."
               ragzoom-telemetry compare baseline_results/ benchmark_results/ --output report.md
               comparison_exit_code=$?
+              
+              # Add workflow link to the top of the report
+              if [ -f report.md ]; then
+                # Create a temporary file with the link
+                echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
+                echo "" >> report_with_link.md
+                cat report.md >> report_with_link.md
+                mv report_with_link.md report.md
+              fi
             elif [ -f "baseline_results/telemetry_100_tokens.json" ] && [ -f "benchmark_results/telemetry_100_tokens.json" ]; then
               # TODO: Remove this single-file fallback after migration period
               # Once all baselines in master are multi-file, we can remove this branch
               echo "📊 Running single-file benchmark comparison (legacy mode)..."
               ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output report.md
               comparison_exit_code=$?
+              
+              # Add workflow link to the top of the report
+              if [ -f report.md ]; then
+                # Create a temporary file with the link
+                echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
+                echo "" >> report_with_link.md
+                cat report.md >> report_with_link.md
+                mv report_with_link.md report.md
+              fi
             else
               echo "❌ Expected benchmark files not found" > report.md
               echo "" >> report.md
@@ -175,14 +198,8 @@ jobs:
             
             if [ $comparison_exit_code -ne 0 ]; then
               echo "REGRESSION=true" >> $GITHUB_OUTPUT
-              # The compare command should have written an error report to report.md
-              echo "⚠️ Comparison command exited with code $comparison_exit_code" >> report.md
-              echo "Available files:" >> report.md
-              echo "Baseline:" >> report.md
-              ls -la baseline_results/*.json 2>/dev/null || echo "  (no JSON files)" >> report.md
-              echo "Current:" >> report.md
-              ls -la benchmark_results/*.json 2>/dev/null || echo "  (no JSON files)" >> report.md
-              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              # The compare command already wrote the complete report to report.md
+              # No need to append debug information
             fi
           fi
           
@@ -191,7 +208,8 @@ jobs:
             cat report.md >> $GITHUB_STEP_SUMMARY
             
             # Also save as output for PR comment
-            # Use a unique delimiter to avoid conflicts with content
+            # GitHub Actions requires a unique delimiter for multi-line outputs
+            # to prevent injection attacks. Using openssl is the recommended approach.
             delimiter="$(openssl rand -hex 16)"
             {
               echo "report<<${delimiter}"
@@ -200,6 +218,9 @@ jobs:
               echo "${delimiter}"
             } >> $GITHUB_OUTPUT
           fi
+          
+          # Exit with success - regression detection is handled by separate step
+          exit 0
       
       - name: Comment PR with results
         uses: actions/github-script@v7

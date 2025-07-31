@@ -271,11 +271,15 @@ def _calculate_cost_amplification(
 
     Cost amplification = (actual cost / theoretical minimum cost)
 
+    Uses completion_tokens for both actual and theoretical costs to eliminate
+    variability from tokenizer differences. This focuses the metric on what we
+    control (prompt overhead) rather than external factors.
+
     Args:
         prompt_tokens: Tokens in the API prompt
         completion_tokens: Tokens in the API completion
         input_text_tokens: Tokens in the original text being summarized
-        actual_tokens: Actual tokens in the generated summary
+        actual_tokens: Actual tokens in the generated summary (unused, kept for compatibility)
         config: Configuration with pricing information
 
     Returns:
@@ -287,10 +291,11 @@ def _calculate_cost_amplification(
         + completion_tokens * config.summary_output_cost_per_1k
     ) / 1000
 
-    # Calculate theoretical minimum cost
+    # Calculate theoretical minimum cost using completion_tokens instead of actual_tokens
+    # This eliminates noise from tokenizer differences between local and API counting
     min_cost = (
         input_text_tokens * config.summary_input_cost_per_1k
-        + actual_tokens * config.summary_output_cost_per_1k
+        + completion_tokens * config.summary_output_cost_per_1k
     ) / 1000
 
     # Return amplification factor with zero check
