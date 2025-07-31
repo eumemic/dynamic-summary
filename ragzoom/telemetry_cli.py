@@ -4,8 +4,25 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
+
+from ragzoom.config import RagZoomConfig
+from ragzoom.telemetry import (
+    analyze_retry_patterns,
+    compute_amplification_metrics,
+    compute_batch_efficiency,
+)
+from ragzoom.telemetry_config import (
+    EMOJI_THRESHOLD_MINOR,
+    EMOJI_THRESHOLD_NEGLIGIBLE,
+)
+
+# Type aliases for complex dictionaries
+MetricsDict = dict[str, Any]
+TelemetryDict = dict[str, Any]
+ThresholdsDict = dict[str, float]
 
 # Check for optional telemetry dependencies
 # Note: telemetry_viz.py also imports these but this check provides
@@ -22,17 +39,6 @@ try:
 except ImportError as e:
     TELEMETRY_DEPS_AVAILABLE = False
     MISSING_DEPS = str(e)
-
-from ragzoom.config import RagZoomConfig
-from ragzoom.telemetry import (
-    analyze_retry_patterns,
-    compute_amplification_metrics,
-    compute_batch_efficiency,
-)
-from ragzoom.telemetry_config import (
-    EMOJI_THRESHOLD_MINOR,
-    EMOJI_THRESHOLD_NEGLIGIBLE,
-)
 
 
 def _check_telemetry_deps() -> None:
@@ -178,7 +184,7 @@ For debugging, try running the commands manually to see detailed error messages.
         click.echo(report)
 
 
-def load_single_benchmark(filepath: Path) -> tuple[int, dict]:
+def load_single_benchmark(filepath: Path) -> tuple[int, MetricsDict]:
     """Load a telemetry benchmark file and extract chunk size and computed metrics.
 
     Returns:
@@ -268,7 +274,7 @@ def format_value(value: float, metric_type: str) -> str:
 
 
 def check_regression(
-    change_pct: float, metric_name: str, thresholds: dict[str, float]
+    change_pct: float, metric_name: str, thresholds: ThresholdsDict
 ) -> bool:
     """Check if a metric change represents a regression."""
     # Map metric names to threshold types
@@ -288,11 +294,11 @@ def check_regression(
 
 
 def generate_comparison_report(
-    baseline_metrics: dict,
-    current_metrics: dict,
+    baseline_metrics: MetricsDict,
+    current_metrics: MetricsDict,
     baseline_name: str,
     current_name: str,
-    thresholds: dict[str, float] | None = None,
+    thresholds: ThresholdsDict | None = None,
 ) -> tuple[str, bool]:
     """Generate comparison report between two benchmarks.
 
@@ -300,13 +306,7 @@ def generate_comparison_report(
         Tuple of (report_text, has_regression)
     """
     if thresholds is None:
-        thresholds = {
-            "summary_token": 10.0,
-            "avg_deviation": 20.0,
-            "median_deviation": 20.0,
-            "std_deviation": 30.0,
-            "p95": 25.0,
-        }
+        thresholds = _load_thresholds()
 
     report = []
     has_regression = False
@@ -408,7 +408,7 @@ def generate_comparison_report(
     return "\n".join(report), has_regression
 
 
-def _load_thresholds() -> dict[str, float]:
+def _load_thresholds() -> ThresholdsDict:
     """Load regression thresholds from environment variables."""
     return {
         "summary_token": float(
@@ -520,7 +520,7 @@ def _compare_directories(
     any_error = False
 
     for baseline_file, current_file in matches:
-        click.echo(f"Comparing {baseline_file.name}...")
+        click.echo(f"Comparing {baseline_file.name}...", err=True)
 
         try:
             # Load benchmarks
@@ -550,9 +550,9 @@ def _compare_directories(
 
             if has_regression:
                 any_regression = True
-                click.echo("  ❌ Regression detected")
+                click.echo("  ❌ Regression detected", err=True)
             else:
-                click.echo("  ✅ No regression")
+                click.echo("  ✅ No regression", err=True)
 
         except Exception as e:
             click.echo(f"  ❌ Error: {e}", err=True)
@@ -572,6 +572,8 @@ def _compare_directories(
         click.echo(combined_report)
 
     # Exit with appropriate code
+    # Exit with code 1 if any regressions were detected OR any errors occurred during comparison
+    # This ensures CI fails if either performance degrades or comparison process fails
     if any_regression or any_error:
         sys.exit(1)
     else:
