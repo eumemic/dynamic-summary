@@ -111,25 +111,7 @@ jobs:
                 if grep -q '"error"' "$file"; then
                   echo "- ❌ Benchmark failed to run" >> report.md
                 else
-                  python -c "
-import json
-from ragzoom.config import RagZoomConfig
-from ragzoom.telemetry import compute_metrics_from_telemetry
-
-with open('$file') as f:
-    data = json.load(f)
-
-config = RagZoomConfig(
-    openai_api_key='dummy',
-    embedding_cost_per_1k=0.0001,
-    summary_input_cost_per_1k=0.0025,
-    summary_output_cost_per_1k=0.01
-)
-metrics = compute_metrics_from_telemetry(data['telemetry'], config)
-print(f'- Throughput: {metrics.tokens_per_second:.1f} tokens/sec')
-print(f'- Time per 1K tokens: {metrics.time_per_1k_tokens:.2f}s')
-print(f'- Cost per 1K tokens: \${metrics.cost_per_1k_tokens:.4f}')
-" >> report.md
+                  python3 -c "import json; from ragzoom.config import RagZoomConfig; from ragzoom.telemetry import compute_metrics_from_telemetry; data = json.load(open('$file')); config = RagZoomConfig(openai_api_key='dummy', embedding_cost_per_1k=0.0001, summary_input_cost_per_1k=0.0025, summary_output_cost_per_1k=0.01); metrics = compute_metrics_from_telemetry(data['telemetry'], config); print(f'- Throughput: {metrics.tokens_per_second:.1f} tokens/sec'); print(f'- Time per 1K tokens: {metrics.time_per_1k_tokens:.2f}s'); print(f'- Cost per 1K tokens: \${metrics.cost_per_1k_tokens:.4f}')" >> report.md
                 fi
                 echo "" >> report.md
               fi
