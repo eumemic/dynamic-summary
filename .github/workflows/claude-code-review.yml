@@ -2,7 +2,7 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, ready_for_review]
     # Optional: Only run on specific file changes
     # paths:
     #   - "src/**/*.ts"
@@ -16,6 +16,9 @@ concurrency:
 
 jobs:
   claude-review:
+    # Skip on draft PRs
+    if: github.event.pull_request.draft != true
+    
     # Optional: Filter by PR author
     # if: |
     #   github.event.pull_request.user.login == 'external-contributor' ||
@@ -80,7 +83,9 @@ jobs:
             - Review PR comments for explanations about why certain issues may not be addressed
             - Look for any new issues introduced by the recent changes
             - Assess if new commits expand the scope beyond the original PR title/description
-              * If yes, suggest updates to the PR title and/or description to reflect the expanded scope
+              * Examples of scope expansion: adding unrelated features, fixing issues not mentioned in the PR, 
+                significant architectural changes beyond the stated goal, changing from bug fix to refactor
+              * If scope expanded, suggest specific updates to the PR title and/or description
             - If the PR references a GitHub issue, assess progress toward addressing it
 
           # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
