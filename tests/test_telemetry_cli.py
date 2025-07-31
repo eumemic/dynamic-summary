@@ -126,7 +126,10 @@ class TestTelemetryCompare:
         assert "Found 2 matching file pairs to compare" in result.output
         assert "telemetry_100_tokens.json" in result.output
         assert "telemetry_200_tokens.json" in result.output
-        assert "Directory Comparison Report" in result.output
+        assert "Multi-Chunk Performance Comparison" in result.output
+        assert "Amplification Metrics" in result.output
+        assert "100 tokens" in result.output
+        assert "200 tokens" in result.output
 
     def test_compare_directories_with_output(self, create_test_files, tmp_path):
         """Test comparing directories with output to file."""
@@ -151,9 +154,9 @@ class TestTelemetryCompare:
 
         # Check report contents
         report = output_file.read_text()
-        assert "Directory Comparison Report" in report
-        assert "telemetry_100_tokens.json" in report
-        assert "telemetry_200_tokens.json" in report
+        assert "Multi-Chunk Performance Comparison" in report
+        assert "100 tokens" in report
+        assert "200 tokens" in report
 
     def test_compare_directories_no_matches(self, tmp_path):
         """Test comparing directories with no matching files."""
@@ -250,7 +253,7 @@ class TestTelemetryCompare:
             )
 
         assert result.exit_code == 1
-        assert "Regression detected" in result.output
+        assert "Regression Detected" in result.output
 
 
 if __name__ == "__main__":

@@ -408,6 +408,143 @@ def generate_comparison_report(
     return "\n".join(report), has_regression
 
 
+def _generate_unified_comparison_report(
+    chunk_metrics: dict[int, dict[str, MetricsDict]],
+    baseline_name: str,
+    current_name: str,
+    thresholds: ThresholdsDict,
+) -> tuple[str, bool]:
+    """Generate a unified comparison report for multiple chunk sizes.
+
+    Args:
+        chunk_metrics: Dict mapping chunk_size -> {"baseline": metrics, "current": metrics}
+        baseline_name: Name for baseline (e.g., "baseline_results")
+        current_name: Name for current (e.g., "current_results")
+        thresholds: Regression thresholds
+
+    Returns:
+        Tuple of (report_text, has_regression)
+    """
+    report = []
+    has_regression = False
+
+    report.append("# 📊 Multi-Chunk Performance Comparison")
+    report.append("")
+    report.append(f"**Baseline:** {baseline_name}")
+    report.append(f"**Current:** {current_name}")
+    report.append("")
+
+    # Sort chunk sizes for consistent ordering
+    sorted_chunks = sorted(chunk_metrics.keys())
+
+    # Amplification Metrics Table
+    report.append("## 📈 Amplification Metrics")
+    report.append("")
+    report.append("| Chunk Size | Metric | Baseline | Current | Change |")
+    report.append("|------------|--------|----------|---------|--------|")
+
+    for chunk_size in sorted_chunks:
+        baseline_metrics = chunk_metrics[chunk_size]["baseline"]["amplification"]
+        current_metrics = chunk_metrics[chunk_size]["current"]["amplification"]
+
+        # Cost amplification (main metric)
+        baseline_val = baseline_metrics.get("median_cost", 0)
+        current_val = current_metrics.get("median_cost", 0)
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            if check_regression(change_pct, "Median Cost Amplification", thresholds):
+                has_regression = True
+                emoji += " ❌"
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+
+        report.append(
+            f"| {chunk_size} tokens | Median Cost Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
+        )
+
+        # Input amplification (sub-metric)
+        baseline_val = baseline_metrics.get("median_input", 0)
+        current_val = current_metrics.get("median_input", 0)
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+        report.append(
+            f"| | ├─ Input Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
+        )
+
+        # Output amplification (sub-metric)
+        baseline_val = baseline_metrics.get("median_output", 0)
+        current_val = current_metrics.get("median_output", 0)
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+        report.append(
+            f"| | └─ Output Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
+        )
+
+    report.append("")
+
+    # Efficiency Metrics Table
+    report.append("## 📦 Efficiency Metrics")
+    report.append("")
+    report.append("| Chunk Size | Metric | Baseline | Current | Change |")
+    report.append("|------------|--------|----------|---------|--------|")
+
+    for chunk_size in sorted_chunks:
+        baseline_metrics = chunk_metrics[chunk_size]["baseline"]["efficiency"]
+        current_metrics = chunk_metrics[chunk_size]["current"]["efficiency"]
+
+        # Batch size
+        baseline_val = baseline_metrics.get("avg_embedding_batch_size", 0)
+        current_val = current_metrics.get("avg_embedding_batch_size", 0)
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+        report.append(
+            f"| {chunk_size} tokens | Avg Embedding Batch Size | {baseline_val:.1f} | {current_val:.1f} | {change_str} |"
+        )
+
+        # Batch utilization
+        baseline_val = baseline_metrics.get("batch_utilization", 0)
+        current_val = current_metrics.get("batch_utilization", 0)
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            # For utilization, decrease might be bad
+            if "Utilization" in "Batch Utilization" and change_pct < 0:
+                emoji = "⚠️" if abs(change_pct) > EMOJI_THRESHOLD_MINOR else ""
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+        report.append(
+            f"| | Batch Utilization | {baseline_val:.1f}% | {current_val:.1f}% | {change_str} |"
+        )
+
+    report.append("")
+
+    # Summary
+    if has_regression:
+        report.append("## ❌ Regression Detected")
+        report.append("")
+        report.append(
+            "Performance regressions were detected in one or more chunk sizes. Please review the metrics above."
+        )
+    else:
+        report.append("## ✅ No Regressions")
+        report.append("")
+        report.append(
+            "All metrics across all chunk sizes are within acceptable thresholds."
+        )
+
+    return "\n".join(report), has_regression
+
+
 def _load_thresholds() -> ThresholdsDict:
     """Load regression thresholds from environment variables."""
     return {
@@ -514,10 +651,10 @@ def _compare_directories(
 
     click.echo(f"📊 Found {len(matches)} matching file pairs to compare\n")
 
-    # Track overall results
-    all_reports = []
-    any_regression = False
+    # Track overall results and collect metrics by chunk size
+    chunk_metrics: dict[int, dict[str, MetricsDict]] = {}
     any_error = False
+    error_messages = []
 
     for baseline_file, current_file in matches:
         click.echo(f"Comparing {baseline_file.name}...", err=True)
@@ -534,34 +671,45 @@ def _compare_directories(
                     err=True,
                 )
 
-            # Get thresholds from environment
-            thresholds = _load_thresholds()
+            # Use baseline chunk size as the key
+            chunk_size = baseline_chunk_size
+            chunk_metrics[chunk_size] = {
+                "baseline": baseline_metrics,
+                "current": current_metrics,
+            }
 
-            # Generate comparison report
-            report, has_regression = generate_comparison_report(
-                baseline_metrics,
-                current_metrics,
-                f"{baseline_dir.name}/{baseline_file.name}",
-                f"{current_dir.name}/{current_file.name}",
-                thresholds,
-            )
-
-            all_reports.append(f"## {baseline_file.name}\n\n{report}")
-
-            if has_regression:
-                any_regression = True
-                click.echo("  ❌ Regression detected", err=True)
-            else:
-                click.echo("  ✅ No regression", err=True)
+            click.echo("  ✅ Loaded successfully", err=True)
 
         except Exception as e:
             click.echo(f"  ❌ Error: {e}", err=True)
-            all_reports.append(f"## {baseline_file.name}\n\n❌ Error: {e}")
+            error_messages.append(f"Error loading {baseline_file.name}: {e}")
             any_error = True
 
-    # Combine all reports
-    combined_report = f"# Directory Comparison Report\n\n**Baseline:** {baseline_dir}\n**Current:** {current_dir}\n\n---\n\n"
-    combined_report += "\n\n---\n\n".join(all_reports)
+    # Generate unified report if we have any successful comparisons
+    if chunk_metrics:
+        thresholds = _load_thresholds()
+        combined_report, any_regression = _generate_unified_comparison_report(
+            chunk_metrics,
+            baseline_dir.name,
+            current_dir.name,
+            thresholds,
+        )
+
+        # Append error messages if any
+        if error_messages:
+            combined_report += "\n\n## ⚠️ Errors Encountered\n\n"
+            for error_msg in error_messages:
+                combined_report += f"- {error_msg}\n"
+    else:
+        # All files failed to load
+        combined_report = "# ❌ Directory Comparison Failed\n\n"
+        combined_report += (
+            f"**Baseline:** {baseline_dir}\n**Current:** {current_dir}\n\n"
+        )
+        combined_report += "No files could be successfully compared:\n\n"
+        for error_msg in error_messages:
+            combined_report += f"- {error_msg}\n"
+        any_regression = True  # Treat total failure as regression
 
     # Output report
     if output:
