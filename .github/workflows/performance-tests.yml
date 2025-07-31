@@ -196,14 +196,8 @@ jobs:
             
             if [ $comparison_exit_code -ne 0 ]; then
               echo "REGRESSION=true" >> $GITHUB_OUTPUT
-              # The compare command should have written an error report to report.md
-              echo "⚠️ Comparison command exited with code $comparison_exit_code" >> report.md
-              echo "Available files:" >> report.md
-              echo "Baseline:" >> report.md
-              ls -la baseline_results/*.json 2>/dev/null || echo "  (no JSON files)" >> report.md
-              echo "Current:" >> report.md
-              ls -la benchmark_results/*.json 2>/dev/null || echo "  (no JSON files)" >> report.md
-              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              # The compare command already wrote the complete report to report.md
+              # No need to append debug information
             fi
           fi
           

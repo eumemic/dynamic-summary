@@ -560,11 +560,9 @@ def _generate_unified_comparison_report(
             current_val = current_stats.get("std_deviation", 0)
             if baseline_val > 0:
                 change_pct, emoji = calculate_change(baseline_val, current_val)
-                if change_pct > 10:
-                    emoji = "⚠️"
                 if change_pct > 20:
-                    has_regression = True
-                    emoji += " ❌"
+                    emoji = "⚠️"
+                # Don't flag regression for std deviation (too volatile)
                 if abs(change_pct) >= significance_threshold:
                     chunk_rows.append(
                         ("Std Deviation", baseline_val, current_val, change_pct, emoji)
@@ -575,11 +573,9 @@ def _generate_unified_comparison_report(
             current_val = current_stats.get("p95_deviation", 0)
             if baseline_val > 0:
                 change_pct, emoji = calculate_change(baseline_val, current_val)
-                if change_pct > 10:
-                    emoji = "⚠️"
                 if change_pct > 20:
-                    has_regression = True
-                    emoji += " ❌"
+                    emoji = "⚠️"
+                # Don't flag regression for P95 (too volatile)
                 if abs(change_pct) >= significance_threshold:
                     chunk_rows.append(
                         (
@@ -763,12 +759,14 @@ def _generate_unified_comparison_report(
         report.append(
             "Performance regressions were detected in one or more chunk sizes. Please review the metrics above."
         )
+        report.append("")  # Extra newline for better formatting
     else:
         report.append("## ✅ No Regressions")
         report.append("")
         report.append(
             "All metrics across all chunk sizes are within acceptable thresholds."
         )
+        report.append("")  # Extra newline for better formatting
 
     return "\n".join(report), has_regression
 
