@@ -302,7 +302,7 @@ class TelemetryVisualizer:
         hist_bins, align = self._calculate_histogram_bins(batch_sizes)
 
         # Create histogram with intelligent binning
-        n, _, patches = ax.hist(
+        _, _, patches = ax.hist(
             batch_sizes,
             bins=hist_bins,
             alpha=0.7,
