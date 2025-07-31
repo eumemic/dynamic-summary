@@ -16,6 +16,7 @@ from ragzoom.telemetry import (
     compute_metrics_from_telemetry,
 )
 from ragzoom.telemetry_config import (
+    CHANGE_SIGNIFICANCE_THRESHOLD,
     EMOJI_THRESHOLD_MINOR,
     EMOJI_THRESHOLD_NEGLIGIBLE,
 )
@@ -445,6 +446,11 @@ def _generate_unified_comparison_report(
     report = []
     has_regression = False
 
+    # Get the change significance threshold
+    significance_threshold = thresholds.get(
+        "change_significance", CHANGE_SIGNIFICANCE_THRESHOLD
+    )
+
     report.append("# 📊 Performance Report")
     report.append("")
 
@@ -478,9 +484,9 @@ def _generate_unified_comparison_report(
                 if change_pct > 10:
                     emoji = "⚠️"
                 if change_pct > 20:
-                    emoji = "❌"
                     has_regression = True
-                if abs(change_pct) >= 1.0:  # Only show if >= 1% change
+                    emoji = "❌"
+                if abs(change_pct) >= significance_threshold:
                     summary_rows.append(
                         f"| {chunk_size} tokens | Avg Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_pct:+.1f}% {emoji} |"
                     )
@@ -493,9 +499,9 @@ def _generate_unified_comparison_report(
                 if change_pct > 10:
                     emoji = "⚠️"
                 if change_pct > 20:
-                    emoji = "❌"
                     has_regression = True
-                if abs(change_pct) >= 1.0:
+                    emoji = "❌"
+                if abs(change_pct) >= significance_threshold:
                     summary_rows.append(
                         f"| | Median Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_pct:+.1f}% {emoji} |"
                     )
@@ -508,9 +514,9 @@ def _generate_unified_comparison_report(
                 if change_pct > 10:
                     emoji = "⚠️"
                 if change_pct > 20:
-                    emoji = "❌"
                     has_regression = True
-                if abs(change_pct) >= 1.0:
+                    emoji = "❌"
+                if abs(change_pct) >= significance_threshold:
                     summary_rows.append(
                         f"| | Std Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_pct:+.1f}% {emoji} |"
                     )
@@ -523,9 +529,9 @@ def _generate_unified_comparison_report(
                 if change_pct > 10:
                     emoji = "⚠️"
                 if change_pct > 20:
-                    emoji = "❌"
                     has_regression = True
-                if abs(change_pct) >= 1.0:
+                    emoji = "❌"
+                if abs(change_pct) >= significance_threshold:
                     summary_rows.append(
                         f"| | P95 Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_pct:+.1f}% {emoji} |"
                     )
@@ -535,7 +541,9 @@ def _generate_unified_comparison_report(
         report.append("|------------|--------|----------|---------|--------|")
         report.extend(summary_rows)
     else:
-        report.append("No significant changes (all metrics within ±1%)")
+        report.append(
+            f"No significant changes (all metrics within ±{significance_threshold:.0f}%)"
+        )
 
     report.append("")
 
@@ -556,7 +564,7 @@ def _generate_unified_comparison_report(
             if check_regression(change_pct, "Median Cost Amplification", thresholds):
                 has_regression = True
                 emoji += " ❌"
-            if abs(change_pct) >= 1.0:
+            if abs(change_pct) >= significance_threshold:
                 amplification_rows.append(
                     f"| {chunk_size} tokens | Median Cost Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_pct:+.1f}% {emoji} |"
                 )
@@ -566,7 +574,7 @@ def _generate_unified_comparison_report(
         current_val = current_metrics.get("median_input", 0)
         if baseline_val > 0:
             change_pct, emoji = calculate_change(baseline_val, current_val)
-            if abs(change_pct) >= 1.0:
+            if abs(change_pct) >= significance_threshold:
                 amplification_rows.append(
                     f"| | ├─ Input Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_pct:+.1f}% {emoji} |"
                 )
@@ -576,7 +584,7 @@ def _generate_unified_comparison_report(
         current_val = current_metrics.get("median_output", 0)
         if baseline_val > 0:
             change_pct, emoji = calculate_change(baseline_val, current_val)
-            if abs(change_pct) >= 1.0:
+            if abs(change_pct) >= significance_threshold:
                 amplification_rows.append(
                     f"| | └─ Output Amplification | {baseline_val:.2f}x | {current_val:.2f}x | {change_pct:+.1f}% {emoji} |"
                 )
@@ -586,7 +594,9 @@ def _generate_unified_comparison_report(
         report.append("|------------|--------|----------|---------|--------|")
         report.extend(amplification_rows)
     else:
-        report.append("No significant changes (all metrics within ±1%)")
+        report.append(
+            f"No significant changes (all metrics within ±{significance_threshold:.0f}%)"
+        )
 
     report.append("")
 
@@ -604,7 +614,7 @@ def _generate_unified_comparison_report(
         current_val = current_metrics.get("avg_embedding_batch_size", 0)
         if baseline_val > 0:
             change_pct, emoji = calculate_change(baseline_val, current_val)
-            if abs(change_pct) >= 1.0:
+            if abs(change_pct) >= significance_threshold:
                 efficiency_rows.append(
                     f"| {chunk_size} tokens | Avg Embedding Batch Size | {baseline_val:.1f} | {current_val:.1f} | {change_pct:+.1f}% {emoji} |"
                 )
@@ -615,9 +625,9 @@ def _generate_unified_comparison_report(
         if baseline_val > 0:
             change_pct, emoji = calculate_change(baseline_val, current_val)
             # For utilization, decrease might be bad
-            if "Utilization" in "Batch Utilization" and change_pct < 0:
-                emoji = "⚠️" if abs(change_pct) > EMOJI_THRESHOLD_MINOR else ""
-            if abs(change_pct) >= 1.0:
+            if change_pct < 0 and abs(change_pct) > EMOJI_THRESHOLD_MINOR:
+                emoji = "⚠️"
+            if abs(change_pct) >= significance_threshold:
                 efficiency_rows.append(
                     f"| | Batch Utilization | {baseline_val:.1f}% | {current_val:.1f}% | {change_pct:+.1f}% {emoji} |"
                 )
@@ -627,7 +637,9 @@ def _generate_unified_comparison_report(
         report.append("|------------|--------|----------|---------|--------|")
         report.extend(efficiency_rows)
     else:
-        report.append("No significant changes (all metrics within ±1%)")
+        report.append(
+            f"No significant changes (all metrics within ±{significance_threshold:.0f}%)"
+        )
 
     report.append("")
 
@@ -664,6 +676,11 @@ def _load_thresholds() -> ThresholdsDict:
             os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
         ),
         "p95": float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0")),
+        "change_significance": float(
+            os.getenv(
+                "PERF_CHANGE_SIGNIFICANCE_THRESHOLD", str(CHANGE_SIGNIFICANCE_THRESHOLD)
+            )
+        ),
     }
 
 
