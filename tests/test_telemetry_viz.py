@@ -7,6 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Skip all tests in this module if matplotlib is not available
+pytest.importorskip("matplotlib")
+pytest.importorskip("seaborn")
+pytest.importorskip("pandas")
+
 from ragzoom.telemetry_viz import TelemetryVisualizer
 
 
