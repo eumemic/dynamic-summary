@@ -50,7 +50,7 @@ jobs:
             - FIRST review on this PR: Use the full review format from .claude/commands/review.md
             - SUBSEQUENT reviews: Use this concise format focusing only on changes since last review:
               
-              ## Incremental Review - Changes Since Last Review
+              ## Review Updates
               
               ### Fixed Issues:
               ✅ <concise description of what was fixed - 1-2 sentences>
@@ -67,6 +67,8 @@ jobs:
               
               ### Summary
               <Brief assessment of progress and remaining work - 2-3 sentences max>
+              
+              Note: Omit any sections that have no items (e.g., if no new issues, omit "New Issues Found")
             
             - For subsequent reviews: 
               * Focus on the diff between the commit you last reviewed and the current HEAD
