@@ -166,13 +166,33 @@ def test_performance_comparison():
     if not output_dir.exists():
         pytest.skip("No benchmark results to compare")
 
+    # Import needed for computing metrics from telemetry
+    from ragzoom.config import RagZoomConfig
+    from ragzoom.telemetry import compute_metrics_from_telemetry
+
     # Load all results
     results = {}
-    for file in output_dir.glob("metrics_*_tokens.json"):
+    for file in output_dir.glob("telemetry_*_tokens.json"):
         with open(file) as f:
             data = json.load(f)
             chunk_size = data["config"]["leaf_tokens"]
-            results[chunk_size] = data["metrics"]
+
+            # Compute metrics from telemetry data
+            config = RagZoomConfig(
+                openai_api_key="dummy",
+                embedding_cost_per_1k=0.0001,
+                summary_input_cost_per_1k=0.0025,
+                summary_output_cost_per_1k=0.01,
+            )
+            metrics = compute_metrics_from_telemetry(data["telemetry"], config)
+
+            # Store computed metrics for comparison
+            results[chunk_size] = {
+                "tokens_per_second": metrics.tokens_per_second,
+                "embedding_tokens_per_1k": metrics.embedding_tokens_per_1k,
+                "summary_tokens_per_1k": metrics.summary_tokens_per_1k,
+                "cost_per_1k_tokens": metrics.cost_per_1k_tokens,
+            }
 
     if len(results) < 2:
         pytest.skip("Need at least 2 benchmark results to compare")
@@ -188,10 +208,10 @@ def test_performance_comparison():
         m = results[chunk_size]
         print(
             f"{chunk_size:<12} "
-            f"{m['timing']['tokens_per_second']:<12.1f} "
-            f"{m['efficiency']['embedding_tokens_per_1k']:<10.1f} "
-            f"{m['efficiency']['summary_tokens_per_1k']:<12.1f} "
-            f"${m['efficiency']['cost_per_1k_tokens']:<9.4f}"
+            f"{m['tokens_per_second']:<12.1f} "
+            f"{m['embedding_tokens_per_1k']:<10.1f} "
+            f"{m['summary_tokens_per_1k']:<12.1f} "
+            f"${m['cost_per_1k_tokens']:<9.4f}"
         )
 
 
