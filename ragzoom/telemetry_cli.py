@@ -21,6 +21,7 @@ from ragzoom.telemetry_config import (
 )
 
 # Type aliases for complex dictionaries
+# Note: More specific typing would require extensive refactoring due to mixed types
 MetricsDict = dict[str, Any]
 TelemetryDict = dict[str, Any]
 ThresholdsDict = dict[str, float]
@@ -582,7 +583,7 @@ def _generate_unified_comparison_report(
                 if abs(change_pct) >= significance_threshold:
                     chunk_rows.append(
                         (
-                            "P95 Deviation (%)",
+                            "P95 Deviation",
                             baseline_val,
                             current_val,
                             change_pct,

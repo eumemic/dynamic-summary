@@ -132,7 +132,8 @@ class SummaryStats:
         """95th percentile of deviations."""
         if not self.deviations:
             return 0.0
-        # Need at least 2 values for quantiles
+        # statistics.quantiles() requires at least 2 values to compute quantiles
+        # For a single value, the 95th percentile is just that value
         if len(self.deviations) < 2:
             return max(self.deviations)
         # For small samples, use numpy-style percentile calculation
