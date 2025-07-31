@@ -7,7 +7,6 @@ and analysis.
 """
 
 import logging
-import statistics
 import threading
 import time
 from dataclasses import dataclass, field
@@ -36,141 +35,6 @@ logger = logging.getLogger(__name__)
 #   3. Document the changes in this version history
 # - Minor additions that don't break parsing can use minor version bumps (e.g., 1.0 -> 1.1)
 TELEMETRY_FORMAT_VERSION = "2.0"
-
-
-@dataclass
-class SummaryStats:
-    """Statistics for summaries at a specific target size."""
-
-    count: int = 0
-    total_tokens: int = 0
-    total_deviation: float = 0.0
-    over_target_count: int = 0
-    under_target_count: int = 0
-    max_overage_percent: float = 0.0
-    max_underage_percent: float = 0.0
-
-    # Distribution tracking
-    deviations: list[float] = field(default_factory=list)
-    histogram_buckets: dict[str, int] = field(
-        default_factory=lambda: {
-            "0-10%": 0,
-            "10-25%": 0,
-            "25-50%": 0,
-            "50-100%": 0,
-            "100%+": 0,
-        }
-    )
-
-    def add_summary(self, target: int, actual: int) -> None:
-        """Record a summary result."""
-        self.count += 1
-        self.total_tokens += actual
-
-        deviation_percent = abs(actual - target) / target * 100
-        self.total_deviation += deviation_percent
-
-        # Track deviation for distribution analysis
-        self.deviations.append(deviation_percent)
-
-        # Update histogram bucket
-        if deviation_percent <= 10:
-            self.histogram_buckets["0-10%"] += 1
-        elif deviation_percent <= 25:
-            self.histogram_buckets["10-25%"] += 1
-        elif deviation_percent <= 50:
-            self.histogram_buckets["25-50%"] += 1
-        elif deviation_percent <= 100:
-            self.histogram_buckets["50-100%"] += 1
-        else:
-            self.histogram_buckets["100%+"] += 1
-
-        if actual > target:
-            self.over_target_count += 1
-            overage = (actual - target) / target * 100
-            self.max_overage_percent = max(self.max_overage_percent, overage)
-        else:
-            self.under_target_count += 1
-            underage = (target - actual) / target * 100
-            self.max_underage_percent = max(self.max_underage_percent, underage)
-
-    @property
-    def avg_tokens(self) -> float:
-        """Average summary size in tokens."""
-        return self.total_tokens / self.count if self.count > 0 else 0
-
-    @property
-    def avg_deviation_percent(self) -> float:
-        """Average absolute deviation from target."""
-        return self.total_deviation / self.count if self.count > 0 else 0
-
-    @property
-    def percent_over_target(self) -> float:
-        """Percentage of summaries over target."""
-        return self.over_target_count / self.count * 100 if self.count > 0 else 0
-
-    @property
-    def percent_under_target(self) -> float:
-        """Percentage of summaries under target."""
-        return self.under_target_count / self.count * 100 if self.count > 0 else 0
-
-    @property
-    def median_deviation_percent(self) -> float:
-        """Median deviation from target (more robust than mean)."""
-        if not self.deviations:
-            return 0.0
-        return statistics.median(self.deviations)
-
-    @property
-    def percentile_50(self) -> float:
-        """50th percentile (median) of deviations."""
-        return self.median_deviation_percent
-
-    @property
-    def percentile_90(self) -> float:
-        """90th percentile of deviations."""
-        if not self.deviations:
-            return 0.0
-        return statistics.quantiles(self.deviations, n=10)[8]  # 9th of 9 cut points
-
-    @property
-    def percentile_95(self) -> float:
-        """95th percentile of deviations."""
-        if not self.deviations:
-            return 0.0
-        # statistics.quantiles() requires at least 2 values to compute quantiles
-        # For a single value, the 95th percentile is just that value
-        if len(self.deviations) < 2:
-            return max(self.deviations)
-        # For small samples, use numpy-style percentile calculation
-        if len(self.deviations) < 20:
-            sorted_vals = sorted(self.deviations)
-            index = 0.95 * (len(sorted_vals) - 1)
-            lower = int(index)
-            upper = lower + 1
-            if upper >= len(sorted_vals):
-                return sorted_vals[-1]
-            weight = index - lower
-            return sorted_vals[lower] * (1 - weight) + sorted_vals[upper] * weight
-        return statistics.quantiles(self.deviations, n=20)[18]  # 19th of 19 cut points
-
-    @property
-    def std_deviation_percent(self) -> float:
-        """Standard deviation of deviation percentages."""
-        if len(self.deviations) < 2:
-            return 0.0
-        return statistics.stdev(self.deviations)
-
-    @property
-    def histogram(self) -> dict[str, dict[str, float]]:
-        """Histogram with counts and percentages for each bucket."""
-        if self.count == 0:
-            return {}
-
-        result = {}
-        for bucket, count in self.histogram_buckets.items():
-            result[bucket] = {"count": count, "percentage": (count / self.count) * 100}
-        return result
 
 
 @dataclass
@@ -339,9 +203,6 @@ class TelemetryCollector:
         self.chunks_created = 0
 
         # Pricing configuration (stored for metadata)
-        self.embedding_cost_per_1k = config.embedding_cost_per_1k
-        self.summary_input_cost_per_1k = config.summary_input_cost_per_1k
-        self.summary_output_cost_per_1k = config.summary_output_cost_per_1k
 
         # API usage tracking
         self.embedding_api_calls = 0
@@ -352,17 +213,6 @@ class TelemetryCollector:
 
         # Batch tracking
         self.embedding_batch_sizes: list[int] = []
-
-        # Summary accuracy by target size
-        self.summary_stats: dict[int, SummaryStats] = {}
-
-        # Amplification tracking (per-operation)
-        self.input_amplifications: list[float] = []
-        self.output_amplifications: list[float] = []
-        self.cost_amplifications: list[float] = []
-
-        # Amplifications by tree height
-        self.amplifications_by_height: dict[int, dict[str, list[float]]] = {}
 
         # Tree structure
         self.tree_height = 0
@@ -495,7 +345,7 @@ class TelemetryCollector:
         completion_tokens: int,
         input_text_tokens: int,
     ) -> None:
-        """Record summary generation result with size tracking and amplification metrics.
+        """Record summary generation result with size tracking.
 
         Args:
             target_tokens: Target size for summary
@@ -507,52 +357,6 @@ class TelemetryCollector:
         self.summary_api_calls += 1
         self.total_summary_prompt_tokens += prompt_tokens
         self.total_summary_completion_tokens += completion_tokens
-
-        # Track accuracy by target size
-        if target_tokens not in self.summary_stats:
-            self.summary_stats[target_tokens] = SummaryStats()
-
-        self.summary_stats[target_tokens].add_summary(target_tokens, actual_tokens)
-
-        # Calculate amplification factors
-        if input_text_tokens > 0:
-            input_amplification = prompt_tokens / input_text_tokens
-            output_amplification = (
-                completion_tokens / actual_tokens if actual_tokens > 0 else 1.0
-            )
-
-            # Calculate cost-weighted amplification
-            # Cost amplification = (actual cost / theoretical minimum cost)
-            # Uses completion_tokens for both to eliminate tokenizer variability
-            actual_cost = (
-                prompt_tokens * self.summary_input_cost_per_1k
-                + completion_tokens * self.summary_output_cost_per_1k
-            ) / 1000
-
-            min_cost = (
-                input_text_tokens * self.summary_input_cost_per_1k
-                + completion_tokens * self.summary_output_cost_per_1k
-            ) / 1000
-
-            cost_amplification = actual_cost / min_cost if min_cost > 0 else 1.0
-
-            # Record per-operation amplifications
-            self.input_amplifications.append(input_amplification)
-            self.output_amplifications.append(output_amplification)
-            self.cost_amplifications.append(cost_amplification)
-
-            # Track by height
-            height = self._current_height
-            if height not in self.amplifications_by_height:
-                self.amplifications_by_height[height] = {
-                    "input": [],
-                    "output": [],
-                    "cost": [],
-                }
-
-            self.amplifications_by_height[height]["input"].append(input_amplification)
-            self.amplifications_by_height[height]["output"].append(output_amplification)
-            self.amplifications_by_height[height]["cost"].append(cost_amplification)
 
         self._update_memory_usage()
 
@@ -587,59 +391,6 @@ class TelemetryCollector:
         self.summary_api_calls += 1
         self.total_summary_prompt_tokens += prompt_tokens
         self.total_summary_completion_tokens += completion_tokens
-
-        # Only update result metrics if accepted
-        if status == "accepted":
-            # Update result-specific metrics (accuracy, amplification)
-            # Track accuracy by target size
-            if target_tokens not in self.summary_stats:
-                self.summary_stats[target_tokens] = SummaryStats()
-
-            self.summary_stats[target_tokens].add_summary(target_tokens, actual_tokens)
-
-            # Calculate amplification factors
-            if input_text_tokens > 0:
-                input_amplification = prompt_tokens / input_text_tokens
-                output_amplification = (
-                    completion_tokens / actual_tokens if actual_tokens > 0 else 1.0
-                )
-
-                # Calculate cost-weighted amplification
-                # Cost amplification = (actual cost / theoretical minimum cost)
-                # Uses completion_tokens for both to eliminate tokenizer variability
-                actual_cost = (
-                    prompt_tokens * self.summary_input_cost_per_1k
-                    + completion_tokens * self.summary_output_cost_per_1k
-                ) / 1000
-
-                min_cost = (
-                    input_text_tokens * self.summary_input_cost_per_1k
-                    + completion_tokens * self.summary_output_cost_per_1k
-                ) / 1000
-
-                cost_amplification = actual_cost / min_cost if min_cost > 0 else 1.0
-
-                # Record per-operation amplifications
-                self.input_amplifications.append(input_amplification)
-                self.output_amplifications.append(output_amplification)
-                self.cost_amplifications.append(cost_amplification)
-
-                # Track by height
-                height = self._current_height
-                if height not in self.amplifications_by_height:
-                    self.amplifications_by_height[height] = {
-                        "input": [],
-                        "output": [],
-                        "cost": [],
-                    }
-
-                self.amplifications_by_height[height]["input"].append(
-                    input_amplification
-                )
-                self.amplifications_by_height[height]["output"].append(
-                    output_amplification
-                )
-                self.amplifications_by_height[height]["cost"].append(cost_amplification)
 
         # Update telemetry
         if node_id not in self.node_telemetry:

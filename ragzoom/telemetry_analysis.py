@@ -7,12 +7,12 @@ and other insights from historical benchmark data.
 
 import logging
 import os
-from dataclasses import dataclass
+import statistics
+from dataclasses import dataclass, field
 from statistics import median
 from typing import Any
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.telemetry_collection import SummaryStats
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,78 @@ SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0"]
 
 # Default token estimate for leaf nodes when source tokens are not available
 DEFAULT_LEAF_TOKEN_ESTIMATE = 150
+
+
+@dataclass
+class SummaryStats:
+    """Statistics for summaries at a specific target size, computed from telemetry."""
+
+    count: int = 0
+    total_tokens: int = 0
+    total_deviation: float = 0.0
+    over_target_count: int = 0
+    under_target_count: int = 0
+    max_overage_percent: float = 0.0
+    max_underage_percent: float = 0.0
+    deviations: list[float] = field(default_factory=list)
+    histogram: dict[str, dict[str, float]] = field(default_factory=dict)
+
+    @property
+    def avg_tokens(self) -> float:
+        """Average summary size in tokens."""
+        return self.total_tokens / self.count if self.count > 0 else 0
+
+    @property
+    def avg_deviation_percent(self) -> float:
+        """Average absolute deviation from target."""
+        return self.total_deviation / self.count if self.count > 0 else 0
+
+    @property
+    def percent_over_target(self) -> float:
+        """Percentage of summaries over target."""
+        return self.over_target_count / self.count * 100 if self.count > 0 else 0
+
+    @property
+    def percent_under_target(self) -> float:
+        """Percentage of summaries under target."""
+        return self.under_target_count / self.count * 100 if self.count > 0 else 0
+
+    @property
+    def median_deviation_percent(self) -> float:
+        """Median deviation from target (more robust than mean)."""
+        if not self.deviations:
+            return 0.0
+        return median(self.deviations)
+
+    @property
+    def percentile_50(self) -> float:
+        """50th percentile (median) of deviations."""
+        return self.median_deviation_percent
+
+    @property
+    def percentile_90(self) -> float:
+        """90th percentile of deviations."""
+        if not self.deviations:
+            return 0.0
+        if len(self.deviations) < 2:
+            return max(self.deviations)
+        return _compute_percentile(self.deviations, 0.9)
+
+    @property
+    def percentile_95(self) -> float:
+        """95th percentile of deviations."""
+        if not self.deviations:
+            return 0.0
+        if len(self.deviations) < 2:
+            return max(self.deviations)
+        return _compute_percentile(self.deviations, 0.95)
+
+    @property
+    def std_deviation_percent(self) -> float:
+        """Standard deviation of deviation percentages."""
+        if len(self.deviations) < 2:
+            return 0.0
+        return statistics.stdev(self.deviations)
 
 
 class TelemetryThresholds:
@@ -458,6 +530,104 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
     return result
 
 
+def compute_summary_stats_from_telemetry(
+    telemetry_data: dict,
+) -> dict[int, SummaryStats]:
+    """Compute summary statistics from raw telemetry data.
+
+    Args:
+        telemetry_data: Parsed telemetry data
+
+    Returns:
+        Dictionary mapping target sizes to SummaryStats objects
+    """
+    parsed_data = parse_telemetry_format(telemetry_data)
+    summary_stats_by_target: dict[int, SummaryStats] = {}
+
+    # Process all documents
+    for doc_type, doc_data in parsed_data["documents"].items():
+        nodes = doc_data.get("nodes", [])
+
+        for node in nodes:
+            # Process summary attempts for non-leaf nodes
+            summary_attempts = node.get("summary_attempts", [])
+
+            for attempt in summary_attempts:
+                # Only process accepted attempts for summary stats
+                if attempt.get("status") == "accepted":
+                    target_tokens = attempt.get("target_tokens", 0)
+                    actual_tokens = attempt.get("actual_tokens", 0)
+
+                    if target_tokens > 0 and actual_tokens > 0:
+                        # Create stats object if needed
+                        if target_tokens not in summary_stats_by_target:
+                            summary_stats_by_target[target_tokens] = SummaryStats()
+
+                        stats = summary_stats_by_target[target_tokens]
+
+                        # Update basic counts
+                        stats.count += 1
+                        stats.total_tokens += actual_tokens
+
+                        # Calculate deviation
+                        deviation_percent = (
+                            abs(actual_tokens - target_tokens) / target_tokens * 100
+                        )
+                        stats.total_deviation += deviation_percent
+                        stats.deviations.append(deviation_percent)
+
+                        # Track over/under target
+                        if actual_tokens > target_tokens:
+                            stats.over_target_count += 1
+                            overage = (
+                                (actual_tokens - target_tokens) / target_tokens * 100
+                            )
+                            stats.max_overage_percent = max(
+                                stats.max_overage_percent, overage
+                            )
+                        else:
+                            stats.under_target_count += 1
+                            underage = (
+                                (target_tokens - actual_tokens) / target_tokens * 100
+                            )
+                            stats.max_underage_percent = max(
+                                stats.max_underage_percent, underage
+                            )
+
+    # Compute histograms for each target size
+    for target_size, stats in summary_stats_by_target.items():
+        if stats.count > 0:
+            histogram_buckets = {
+                "0-10%": 0,
+                "10-25%": 0,
+                "25-50%": 0,
+                "50-100%": 0,
+                "100%+": 0,
+            }
+
+            for deviation in stats.deviations:
+                if deviation <= 10:
+                    histogram_buckets["0-10%"] += 1
+                elif deviation <= 25:
+                    histogram_buckets["10-25%"] += 1
+                elif deviation <= 50:
+                    histogram_buckets["25-50%"] += 1
+                elif deviation <= 100:
+                    histogram_buckets["50-100%"] += 1
+                else:
+                    histogram_buckets["100%+"] += 1
+
+            # Convert to percentage format
+            stats.histogram = {}
+            for bucket, count in histogram_buckets.items():
+                stats.histogram[bucket] = {
+                    "count": count,
+                    "percentage": (count / stats.count) * 100,
+                }
+
+    return summary_stats_by_target
+
+
 @dataclass
 class ComputedMetrics:
     """Computed metrics from telemetry data.
@@ -560,7 +730,6 @@ def compute_metrics_from_telemetry(
     min_timestamp = float("inf")
     max_timestamp = 0.0
     embedding_batches = set()
-    summary_stats_by_target = {}
 
     # Process all documents
     for doc_type, doc_data in parsed_data["documents"].items():
@@ -645,17 +814,6 @@ def compute_metrics_from_telemetry(
                 metrics_data["output_amplifications"].append(output_amplification)
                 metrics_data["cost_amplifications"].append(cost_amplification)
 
-                # Track summary accuracy for the final accepted attempt
-                target_tokens = final_attempt.get("target_tokens", 0)
-                if target_tokens > 0:
-                    config_leaf_tokens = config.leaf_tokens
-                    if config_leaf_tokens not in summary_stats_by_target:
-                        summary_stats_by_target[config_leaf_tokens] = SummaryStats()
-
-                    summary_stats_by_target[config_leaf_tokens].add_summary(
-                        config_leaf_tokens, node_final_summary_tokens
-                    )
-
             # Count chunks (leaf nodes)
             # v1.0: check node_type, v2.0: check height == 0
             height = node.get("height", node.get("level", 0))
@@ -668,8 +826,8 @@ def compute_metrics_from_telemetry(
         metrics_data["start_time"] = min_timestamp
         metrics_data["end_time"] = max_timestamp
 
-    # Set summary stats
-    metrics_data["summary_stats"] = summary_stats_by_target
+    # Compute summary stats from raw telemetry
+    metrics_data["summary_stats"] = compute_summary_stats_from_telemetry(telemetry_data)
 
     # Calculate total source tokens from all documents
     total_source_tokens = 0

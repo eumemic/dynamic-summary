@@ -506,9 +506,9 @@ class TestFullMetricsComputation:
         assert len(metrics.input_amplifications) == 1
         assert len(metrics.output_amplifications) == 1
 
-        # Check summary stats (bucketed by config.leaf_tokens)
-        assert config.leaf_tokens in metrics.summary_stats
-        assert metrics.summary_stats[config.leaf_tokens].count == 1
+        # Check summary stats (bucketed by actual target_tokens from telemetry)
+        assert 100 in metrics.summary_stats  # The test data has target_tokens=100
+        assert metrics.summary_stats[100].count == 1
 
         # Check batch sizes
         assert len(metrics.embedding_batch_sizes) == 2
