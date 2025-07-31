@@ -62,6 +62,8 @@ pip install ragzoom[telemetry]
 
 This approach was chosen over a separate package to eliminate circular dependencies and maintenance overhead while preserving clean separation.
 
+**For comprehensive telemetry documentation**: See `docs/telemetry.md`
+
 ## 8. Custom Claude Commands
 
 Custom slash commands are stored in `.claude/commands/` as markdown files:
@@ -113,3 +115,4 @@ ragzoom serve               # Start API server
 ### Common Troubleshooting
 - **Segmentation Faults:** If `pytest` crashes with a `Segmentation fault`, the local `chroma_db/` directory is almost certainly corrupted. Delete it and restart: `rm -rf chroma_db/`
 - **Pre-commit Hook Issues:** If pre-commit hooks fail, they'll automatically fix most issues. Just re-commit after they run.
+- **Performance Issues:** For telemetry analysis and benchmarking, see `docs/telemetry.md`

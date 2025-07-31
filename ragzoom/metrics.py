@@ -132,6 +132,20 @@ class SummaryStats:
         """95th percentile of deviations."""
         if not self.deviations:
             return 0.0
+        # statistics.quantiles() requires at least 2 values to compute quantiles
+        # For a single value, the 95th percentile is just that value
+        if len(self.deviations) < 2:
+            return max(self.deviations)
+        # For small samples, use numpy-style percentile calculation
+        if len(self.deviations) < 20:
+            sorted_vals = sorted(self.deviations)
+            index = 0.95 * (len(sorted_vals) - 1)
+            lower = int(index)
+            upper = lower + 1
+            if upper >= len(sorted_vals):
+                return sorted_vals[-1]
+            weight = index - lower
+            return sorted_vals[lower] * (1 - weight) + sorted_vals[upper] * weight
         return statistics.quantiles(self.deviations, n=20)[18]  # 19th of 19 cut points
 
     @property
@@ -705,6 +719,7 @@ class IndexingMetricsReporter:
 
             # Calculate cost-weighted amplification
             # Cost amplification = (actual cost / theoretical minimum cost)
+            # Uses completion_tokens for both to eliminate tokenizer variability
             actual_cost = (
                 prompt_tokens * self.metrics.summary_input_cost_per_1k
                 + completion_tokens * self.metrics.summary_output_cost_per_1k
@@ -712,7 +727,7 @@ class IndexingMetricsReporter:
 
             min_cost = (
                 input_text_tokens * self.metrics.summary_input_cost_per_1k
-                + actual_tokens * self.metrics.summary_output_cost_per_1k
+                + completion_tokens * self.metrics.summary_output_cost_per_1k
             ) / 1000
 
             cost_amplification = actual_cost / min_cost if min_cost > 0 else 1.0
@@ -795,6 +810,7 @@ class IndexingMetricsReporter:
 
                 # Calculate cost-weighted amplification
                 # Cost amplification = (actual cost / theoretical minimum cost)
+                # Uses completion_tokens for both to eliminate tokenizer variability
                 actual_cost = (
                     prompt_tokens * self.metrics.summary_input_cost_per_1k
                     + completion_tokens * self.metrics.summary_output_cost_per_1k
@@ -802,7 +818,7 @@ class IndexingMetricsReporter:
 
                 min_cost = (
                     input_text_tokens * self.metrics.summary_input_cost_per_1k
-                    + actual_tokens * self.metrics.summary_output_cost_per_1k
+                    + completion_tokens * self.metrics.summary_output_cost_per_1k
                 ) / 1000
 
                 cost_amplification = actual_cost / min_cost if min_cost > 0 else 1.0
