@@ -126,7 +126,7 @@ Status values:
 
 ```python
 import json
-from ragzoom.telemetry import (
+from ragzoom.telemetry_analysis import (
     compute_amplification_metrics,
     analyze_retry_patterns,
     compute_batch_efficiency,
@@ -192,7 +192,7 @@ for reason, count in retry_patterns['rejection_reasons'].items():
 ### Full Metrics Reconstruction
 
 ```python
-# Reconstruct complete IndexingMetrics from telemetry
+# Compute metrics from telemetry data
 metrics = compute_metrics_from_telemetry(telemetry, config)
 
 print(f"Total duration: {metrics.total_duration_seconds:.2f}s")
@@ -269,7 +269,7 @@ The visualization script also generates markdown reports with:
 
 ```python
 # Example: Find nodes with highest amplification
-from ragzoom.telemetry import parse_telemetry_format
+from ragzoom.telemetry_analysis import parse_telemetry_format
 
 parsed = parse_telemetry_format(telemetry)
 high_amp_nodes = []

@@ -8,10 +8,10 @@ import pytest
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.metrics import (
-    IndexingMetricsReporter,
+from ragzoom.telemetry_collection import (
     NodeTelemetry,
     SummaryAttempt,
+    TelemetryCollector,
 )
 
 
@@ -67,23 +67,23 @@ class TestTelemetryCollection:
         )
 
     @pytest.fixture
-    def reporter(self, config: RagZoomConfig) -> IndexingMetricsReporter:
+    def reporter(self, config: RagZoomConfig) -> TelemetryCollector:
         """Create test reporter."""
-        return IndexingMetricsReporter(
+        return TelemetryCollector(
             document_id="test-doc",
             source_tokens=1000,
             config=config,
         )
 
-    def test_track_node_created(self, reporter: IndexingMetricsReporter) -> None:
+    def test_track_node_created(self, reporter: TelemetryCollector) -> None:
         """Test node creation tracking."""
         reporter.track_node_created(
             node_id="leaf-1",
             height=0,
         )
 
-        assert "leaf-1" in reporter.metrics.node_telemetry
-        node = reporter.metrics.node_telemetry["leaf-1"]
+        assert "leaf-1" in reporter.node_telemetry
+        node = reporter.node_telemetry["leaf-1"]
         assert node.height == 0
         # Verify span fields removed
         assert not hasattr(node, "span_start")
@@ -91,7 +91,7 @@ class TestTelemetryCollection:
         # Verify node_type field removed
         assert not hasattr(node, "node_type")
 
-    def test_record_embedding_v2(self, reporter: IndexingMetricsReporter) -> None:
+    def test_record_embedding_v2(self, reporter: TelemetryCollector) -> None:
         """Test v2 embedding recording with node-level detail."""
         # First track nodes
         reporter.track_node_created("node-1", 0)
@@ -107,22 +107,22 @@ class TestTelemetryCollection:
         )
 
         # Check aggregate metrics
-        assert reporter.metrics.embedding_api_calls == 1
-        assert reporter.metrics.total_embedding_tokens == 93
+        assert reporter.embedding_api_calls == 1
+        assert reporter.total_embedding_tokens == 93
 
         # Check telemetry
-        node1 = reporter.metrics.node_telemetry["node-1"]
+        node1 = reporter.node_telemetry["node-1"]
         assert node1.embedding is not None
         assert node1.embedding.text_tokens == 45
         assert node1.embedding.batch_size == 2
         assert node1.embedding.batch_position == 0
         assert node1.embedding.model == "text-embedding-3-small"
 
-        node2 = reporter.metrics.node_telemetry["node-2"]
+        node2 = reporter.node_telemetry["node-2"]
         assert node2.embedding is not None
         assert node2.embedding.batch_position == 1
 
-    def test_record_summary_attempt_v2(self, reporter: IndexingMetricsReporter) -> None:
+    def test_record_summary_attempt_v2(self, reporter: TelemetryCollector) -> None:
         """Test v2 summary recording with telemetry."""
         # Track a summary node
         reporter.track_node_created("parent-1", 1)
@@ -157,12 +157,12 @@ class TestTelemetryCollection:
         )
 
         # Check aggregate metrics
-        assert reporter.metrics.summary_api_calls == 2
-        assert reporter.metrics.total_summary_prompt_tokens == 500
-        assert reporter.metrics.total_summary_completion_tokens == 225
+        assert reporter.summary_api_calls == 2
+        assert reporter.total_summary_prompt_tokens == 500
+        assert reporter.total_summary_completion_tokens == 225
 
         # Check telemetry
-        node = reporter.metrics.node_telemetry["parent-1"]
+        node = reporter.node_telemetry["parent-1"]
         assert len(node.summary_attempts) == 2
 
         # First attempt (failed)
@@ -180,7 +180,7 @@ class TestTelemetryCollection:
         assert attempt2.start_time > attempt1.end_time
         assert attempt2.end_time > attempt2.start_time
 
-    def test_backward_compatibility(self, reporter: IndexingMetricsReporter) -> None:
+    def test_backward_compatibility(self, reporter: TelemetryCollector) -> None:
         """Test that old methods still work without telemetry."""
         # Use old method
         reporter.record_embedding_call(
@@ -189,11 +189,11 @@ class TestTelemetryCollection:
         )
 
         # Check aggregate metrics work
-        assert reporter.metrics.embedding_api_calls == 1
-        assert reporter.metrics.total_embedding_tokens == 143
+        assert reporter.embedding_api_calls == 1
+        assert reporter.total_embedding_tokens == 143
 
         # No telemetry should be created
-        assert len(reporter.metrics.node_telemetry) == 0
+        assert len(reporter.node_telemetry) == 0
 
 
 class TestTelemetryIntegration:
@@ -259,7 +259,7 @@ class TestTelemetryIntegration:
 
             # Create reporter for metrics
             source_tokens = len(builder.splitter.tokenizer.encode(test_text))
-            reporter = IndexingMetricsReporter(
+            reporter = TelemetryCollector(
                 document_id="telemetry-test",
                 source_tokens=source_tokens,
                 config=config,
@@ -274,15 +274,19 @@ class TestTelemetryIntegration:
                 reporter=reporter,
             )
 
-        # Get final metrics
-        metrics = reporter.finalize()
+        # Get final telemetry data
+        telemetry_data = reporter.finalize()
 
         # Verify telemetry was collected
-        assert len(metrics.node_telemetry) > 0
+        assert "documents" in telemetry_data
+        assert "telemetry-test" in telemetry_data["documents"]
+
+        nodes = telemetry_data["documents"]["telemetry-test"]["nodes"]
+        assert len(nodes) > 0
 
         # Count node types by height (height 0 = leaves)
-        leaf_count = sum(1 for n in metrics.node_telemetry.values() if n.height == 0)
-        summary_count = sum(1 for n in metrics.node_telemetry.values() if n.height > 0)
+        leaf_count = sum(1 for n in nodes if n["height"] == 0)
+        summary_count = sum(1 for n in nodes if n["height"] > 0)
 
         # Should have multiple leaves from our test text
         assert leaf_count >= 3
@@ -290,24 +294,29 @@ class TestTelemetryIntegration:
         assert summary_count >= 1
 
         # Every node should have embedding telemetry
-        for node_id, node_data in metrics.node_telemetry.items():
-            assert node_data.embedding is not None, f"Node {node_id} missing embedding"
-            assert node_data.embedding.model in [
+        for node_data in nodes:
+            assert (
+                "embedding" in node_data
+            ), f"Node {node_data['node_id']} missing embedding"
+            assert node_data["embedding"]["model"] in [
                 "text-embedding-3-small",
                 "mock-embedding",
             ]
 
             # Summary nodes (height > 0) should have summary attempts
-            if node_data.height > 0:
-                assert len(node_data.summary_attempts) > 0
+            if node_data["height"] > 0:
+                assert "summary_attempts" in node_data
+                assert len(node_data["summary_attempts"]) > 0
                 # At least one attempt should be accepted
-                assert any(a.status == "accepted" for a in node_data.summary_attempts)
+                assert any(
+                    a["status"] == "accepted" for a in node_data["summary_attempts"]
+                )
 
     def test_telemetry_serialization(self, base_config: RagZoomConfig) -> None:
         """Test that telemetry can be serialized to JSON."""
         import json
 
-        reporter = IndexingMetricsReporter("test", 1000, base_config)
+        reporter = TelemetryCollector("test", 1000, base_config)
 
         # Create some telemetry
         reporter.track_node_created("node-1", 0)
@@ -318,7 +327,7 @@ class TestTelemetryIntegration:
 
         # Convert to dict format (like benchmark output)
         telemetry_dict = {}
-        for node_id, node_data in reporter.metrics.node_telemetry.items():
+        for node_id, node_data in reporter.node_telemetry.items():
             telemetry_dict[node_id] = node_data.to_telemetry_dict()
 
         # Should be JSON serializable

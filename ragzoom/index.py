@@ -16,10 +16,10 @@ from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.metrics import IndexingMetrics, IndexingMetricsReporter
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
+from ragzoom.telemetry_collection import TelemetryCollector
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ class TreeBuilder:
         right_text: str,
         target_tokens: int,
         prev_context: str | None = None,
-        reporter: IndexingMetricsReporter | None = None,
+        reporter: TelemetryCollector | None = None,
         parent_id: str | None = None,
     ) -> str:
         """Summarize text using LLM."""
@@ -213,8 +213,8 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        reporter: IndexingMetricsReporter = ...,
-    ) -> tuple[str, IndexingMetrics]: ...
+        reporter: TelemetryCollector = ...,
+    ) -> tuple[str, dict]: ...
 
     async def _add_document_impl(
         self,
@@ -222,8 +222,8 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        reporter: IndexingMetricsReporter | None = None,
-    ) -> str | tuple[str, IndexingMetrics]:
+        reporter: TelemetryCollector | None = None,
+    ) -> str | tuple[str, dict]:
         """Add a document to the tree, creating leaf nodes.
 
         Returns:
@@ -462,10 +462,10 @@ Here's the content to summarize:"""
                         f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
                     )
 
-            # Finalize metrics if reporter was used
+            # Finalize telemetry if collector was used
             if reporter:
-                metrics = reporter.finalize()
-                return document_id, metrics
+                telemetry = reporter.finalize()
+                return document_id, telemetry
 
             return document_id
         finally:
@@ -485,41 +485,65 @@ Here's the content to summarize:"""
             self.add_document_async(text, document_id, file_path, show_progress)
         )
 
+    def add_document_with_telemetry(
+        self,
+        text: str,
+        document_id: str | None = None,
+        file_path: str | None = None,
+        show_progress: bool = False,
+    ) -> tuple[str, dict]:
+        """Add document and return telemetry data. Used for benchmarking.
+
+        This is a convenience method that creates a TelemetryCollector internally
+        and returns the collected telemetry data. For production use, add_document() is preferred
+        as it doesn't have the overhead of telemetry collection.
+
+        The dual-method pattern ensures:
+        - Normal indexing (add_document) has zero telemetry overhead
+        - Benchmarking gets detailed telemetry without modifying core logic
+        - Internal implementation (_add_document_impl) remains flexible
+
+        Returns:
+            Tuple of (document_id, telemetry_dict)
+        """
+        # Create collector internally with config for pricing
+        source_tokens = len(self.splitter.tokenizer.encode(text))
+        collector = TelemetryCollector(
+            document_id or "benchmark", source_tokens, self.config
+        )
+
+        # Run indexing with collector - will return (doc_id, telemetry)
+        result = asyncio.run(
+            self._add_document_impl(
+                text, document_id, file_path, show_progress, collector
+            )
+        )
+
+        # Extract tuple returned when collector is provided
+        # Type checker knows result is a tuple because we passed a collector
+        doc_id, telemetry = result
+        return doc_id, telemetry
+
+    # TODO: Remove this deprecated method in next major version
     def add_document_with_metrics(
         self,
         text: str,
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = False,
-    ) -> tuple[str, IndexingMetrics]:
-        """Add document and return metrics. Used for benchmarking.
+    ) -> tuple[str, dict]:
+        """Deprecated: Use add_document_with_telemetry instead.
 
-        This is a convenience method that creates an IndexingMetricsReporter internally
-        and returns the collected metrics. For production use, add_document() is preferred
-        as it doesn't have the overhead of metrics collection.
+        This method is kept for backward compatibility but returns telemetry dict
+        instead of IndexingMetrics.
 
-        The dual-method pattern ensures:
-        - Normal indexing (add_document) has zero metrics overhead
-        - Benchmarking gets detailed metrics without modifying core logic
-        - Internal implementation (_add_document_impl) remains flexible
+        Returns:
+            tuple[str, dict]: Document ID and telemetry data dictionary
+                (previously returned IndexingMetrics object)
         """
-        # Create reporter internally with config for pricing
-        source_tokens = len(self.splitter.tokenizer.encode(text))
-        reporter = IndexingMetricsReporter(
-            document_id or "benchmark", source_tokens, self.config
+        return self.add_document_with_telemetry(
+            text, document_id, file_path, show_progress
         )
-
-        # Run indexing with reporter - will return (doc_id, metrics)
-        result = asyncio.run(
-            self._add_document_impl(
-                text, document_id, file_path, show_progress, reporter
-            )
-        )
-
-        # Extract tuple returned when reporter is provided
-        # Type checker knows result is a tuple because we passed a reporter
-        doc_id, metrics = result
-        return doc_id, metrics
 
     async def add_document_async(
         self,
@@ -543,7 +567,7 @@ Here's the content to summarize:"""
         right_text: str,
         prev_context: str | None,
         document_id: str | None,
-        reporter: IndexingMetricsReporter | None = None,
+        reporter: TelemetryCollector | None = None,
     ) -> tuple[str, str, list[float]]:
         """Process a single node pair - generate summary and embedding."""
         parent_id = self._generate_node_id()
@@ -653,7 +677,7 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         progress: AsyncProgressWrapper | None = None,
         overall_start_time: float | None = None,
-        reporter: IndexingMetricsReporter | None = None,
+        reporter: TelemetryCollector | None = None,
     ) -> str:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
         current_level_ids = leaf_ids

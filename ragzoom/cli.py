@@ -213,7 +213,7 @@ def index(
                     "document_id": doc_id,
                     "file_path": str(path.absolute()),
                 },
-                "telemetry": metrics.get_telemetry_data(doc_id, config.leaf_tokens),
+                "telemetry": metrics,
             }
 
             with open(output_file, "w") as f:
