@@ -201,7 +201,7 @@ def index(
 
             click.echo(f"\n📁 Saving telemetry to {output_file}...")
 
-            # Create output with config, document info, telemetry, and metrics for compatibility
+            # Create output with config, document info, and telemetry data
             telemetry_data = {
                 "config": {
                     "leaf_tokens": config.leaf_tokens,
@@ -214,7 +214,6 @@ def index(
                     "file_path": str(path.absolute()),
                 },
                 "telemetry": metrics.get_telemetry_data(doc_id, config.leaf_tokens),
-                "metrics": metrics.to_dict(),  # Include for backward compatibility
             }
 
             with open(output_file, "w") as f:
