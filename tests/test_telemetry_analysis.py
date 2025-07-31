@@ -3,7 +3,7 @@
 import pytest
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.telemetry import (
+from ragzoom.telemetry_analysis import (
     TelemetryAnalysisError,
     analyze_retry_patterns,
     compute_amplification_metrics,

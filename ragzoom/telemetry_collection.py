@@ -1,4 +1,10 @@
-"""Performance metrics collection for RagZoom indexing."""
+"""Telemetry data collection for RagZoom indexing.
+
+This module provides data structures and collection mechanisms for raw telemetry data
+during indexing operations. All analysis and metric computation is done separately
+in telemetry_analysis.py to maintain a clean separation between data collection
+and analysis.
+"""
 
 import logging
 import statistics
@@ -282,240 +288,18 @@ class NodeTelemetry:
         return result
 
 
-@dataclass
-class IndexingMetrics:
-    """Complete metrics from an indexing operation."""
+class TelemetryCollector:
+    """Collects raw telemetry data during indexing operations.
 
-    # Timing
-    start_time: float
-    end_time: float
+    This collector gathers raw performance data without computing any derived metrics.
+    All metric computation is done separately during analysis to maintain clean
+    separation of concerns.
 
-    # Document info
-    source_document_tokens: int
-    chunks_created: int
-
-    # Cost configuration (per 1K tokens) - must be provided, no defaults
-    embedding_cost_per_1k: float
-    summary_input_cost_per_1k: float
-    summary_output_cost_per_1k: float
-
-    # API usage
-    embedding_api_calls: int = 0
-    summary_api_calls: int = 0
-    total_embedding_tokens: int = 0
-    total_summary_prompt_tokens: int = 0
-    total_summary_completion_tokens: int = 0
-
-    # Batch tracking
-    embedding_batch_sizes: list[int] = field(default_factory=list)
-
-    # Summary accuracy by target size
-    summary_stats: dict[int, SummaryStats] = field(default_factory=dict)
-
-    # Amplification tracking (per-operation)
-    input_amplifications: list[float] = field(default_factory=list)
-    output_amplifications: list[float] = field(default_factory=list)
-    cost_amplifications: list[float] = field(default_factory=list)
-
-    # Amplifications by tree height
-    amplifications_by_height: dict[int, dict[str, list[float]]] = field(
-        default_factory=dict
-    )
-
-    # Tree structure
-    tree_height: int = 0
-    nodes_per_height: list[int] = field(default_factory=list)
-
-    # Memory usage (in MB)
-    peak_memory_mb: float = 0.0
-    memory_start_mb: float = 0.0
-    memory_end_mb: float = 0.0
-
-    # Raw telemetry data
-    node_telemetry: dict[str, NodeTelemetry] = field(default_factory=dict)
-
-    @property
-    def total_duration_seconds(self) -> float:
-        """Total indexing time in seconds."""
-        return self.end_time - self.start_time
-
-    @property
-    def tokens_per_second(self) -> float:
-        """Source document tokens processed per second."""
-        duration = self.total_duration_seconds
-        return self.source_document_tokens / duration if duration > 0 else 0
-
-    @property
-    def time_per_1k_tokens(self) -> float:
-        """Time to process 1000 source tokens."""
-        if self.source_document_tokens > 0:
-            return self.total_duration_seconds / (self.source_document_tokens / 1000)
-        return 0
-
-    @property
-    def avg_embedding_batch_size(self) -> float:
-        """Average embedding batch size."""
-        if self.embedding_batch_sizes:
-            return sum(self.embedding_batch_sizes) / len(self.embedding_batch_sizes)
-        return 0
-
-    @property
-    def total_api_calls(self) -> int:
-        """Total API calls made."""
-        return self.embedding_api_calls + self.summary_api_calls
-
-    @property
-    def embedding_tokens_per_1k(self) -> float:
-        """Embedding tokens used per 1K source tokens."""
-        if self.source_document_tokens > 0:
-            return self.total_embedding_tokens / (self.source_document_tokens / 1000)
-        return 0
-
-    @property
-    def summary_tokens_per_1k(self) -> float:
-        """Summary tokens (prompt + completion) per 1K source tokens."""
-        total_summary_tokens = (
-            self.total_summary_prompt_tokens + self.total_summary_completion_tokens
-        )
-        if self.source_document_tokens > 0:
-            return total_summary_tokens / (self.source_document_tokens / 1000)
-        return 0
-
-    @property
-    def api_calls_per_1k(self) -> float:
-        """API calls per 1K source tokens."""
-        if self.source_document_tokens > 0:
-            return self.total_api_calls / (self.source_document_tokens / 1000)
-        return 0
-
-    @property
-    def cost_per_1k_tokens(self) -> float:
-        """Estimated cost per 1K source tokens using configured pricing."""
-        embedding_cost = (
-            self.total_embedding_tokens / 1000
-        ) * self.embedding_cost_per_1k
-        prompt_cost = (
-            self.total_summary_prompt_tokens / 1000
-        ) * self.summary_input_cost_per_1k
-        completion_cost = (
-            self.total_summary_completion_tokens / 1000
-        ) * self.summary_output_cost_per_1k
-
-        total_cost = embedding_cost + prompt_cost + completion_cost
-
-        if self.source_document_tokens > 0:
-            return total_cost / (self.source_document_tokens / 1000)
-        return 0
-
-    @property
-    def memory_usage_mb(self) -> float:
-        """Peak memory usage during indexing in MB."""
-        return self.peak_memory_mb - self.memory_start_mb
-
-    @property
-    def median_cost_amplification(self) -> float:
-        """Median cost amplification factor across all operations."""
-        if not self.cost_amplifications:
-            return 0.0
-        return statistics.median(self.cost_amplifications)
-
-    @property
-    def cost_amplification_p90(self) -> float:
-        """90th percentile of cost amplification."""
-        if not self.cost_amplifications:
-            return 0.0
-        # Use more precise percentile calculation
-        n = len(self.cost_amplifications)
-        if n == 1:
-            return self.cost_amplifications[0]
-        # For small samples, use linear interpolation between closest values
-        sorted_values = sorted(self.cost_amplifications)
-        # Calculate the exact position for 90th percentile
-        pos = (n - 1) * 0.9
-        lower = int(pos)
-        upper = min(lower + 1, n - 1)
-        fraction = pos - lower
-        # Linear interpolation
-        return sorted_values[lower] + fraction * (
-            sorted_values[upper] - sorted_values[lower]
-        )
-
-    @property
-    def cost_amplification_p95(self) -> float:
-        """95th percentile of cost amplification."""
-        if not self.cost_amplifications:
-            return 0.0
-        # Use more precise percentile calculation
-        n = len(self.cost_amplifications)
-        if n == 1:
-            return self.cost_amplifications[0]
-        # For small samples, use linear interpolation between closest values
-        sorted_values = sorted(self.cost_amplifications)
-        # Calculate the exact position for 95th percentile
-        pos = (n - 1) * 0.95
-        lower = int(pos)
-        upper = min(lower + 1, n - 1)
-        fraction = pos - lower
-        # Linear interpolation
-        return sorted_values[lower] + fraction * (
-            sorted_values[upper] - sorted_values[lower]
-        )
-
-    @property
-    def median_input_amplification(self) -> float:
-        """Median input amplification factor."""
-        if not self.input_amplifications:
-            return 0.0
-        return statistics.median(self.input_amplifications)
-
-    @property
-    def median_output_amplification(self) -> float:
-        """Median output amplification factor."""
-        if not self.output_amplifications:
-            return 0.0
-        return statistics.median(self.output_amplifications)
-
-    def get_telemetry_data(self, document_id: str, chunk_size: int) -> dict:
-        """Export raw telemetry data in standard format for analysis.
-
-        Args:
-            document_id: Document identifier for the telemetry
-            chunk_size: Chunk size used for indexing (for metadata)
-
-        Returns:
-            Dictionary in telemetry format version 1.0
-        """
-        # Convert all node telemetry to dict format
-        nodes_data = []
-        for node in self.node_telemetry.values():
-            nodes_data.append(node.to_telemetry_dict())
-
-        # Sort nodes by creation time for consistent output
-        nodes_data.sort(key=lambda x: x["created_at"])
-
-        return {
-            "format_version": TELEMETRY_FORMAT_VERSION,
-            "documents": {
-                document_id: {
-                    "metadata": {
-                        "source_document_tokens": self.source_document_tokens,
-                        "chunk_size": chunk_size,
-                        "indexed_at": self.start_time,
-                    },
-                    "nodes": nodes_data,
-                }
-            },
-        }
-
-
-class IndexingMetricsReporter:
-    """Collects performance metrics during indexing with minimal intrusion.
-
-    Design decisions:
-    - Metrics collection is completely optional via the reporter parameter
-    - Errors in metrics collection are silently ignored to never interfere with indexing
-    - The reporter pattern avoids polluting core logic with metrics concerns
-    - All metrics are collected in a single pass during normal indexing flow
+    Design principles:
+    - Telemetry collection is optional and never interferes with indexing
+    - Only raw data is collected (no computed aggregations)
+    - Zero overhead when not enabled
+    - Thread-safe for concurrent operations
     """
 
     def __init__(
@@ -524,44 +308,66 @@ class IndexingMetricsReporter:
         source_tokens: int,
         config: RagZoomConfig,
     ):
-        """Initialize reporter for a document.
+        """Initialize telemetry collector for a document.
 
         Args:
             document_id: Document being indexed
             source_tokens: Total tokens in source document
-            config: Config for cost estimation (required for pricing)
+            config: Config containing pricing information for telemetry metadata
         """
         self.document_id = document_id
+        self.source_tokens = source_tokens
+        self.config = config
 
-        # Initialize metrics with config-based pricing
-        if not config:
-            raise ValueError(
-                "RagZoomConfig is required for metrics collection to provide pricing information"
-            )
+        # Initialize telemetry data storage
+        self.start_time = time.time()
+        self.end_time = 0.0
+        self.chunks_created = 0
 
-        # Get current process for memory tracking
+        # Pricing configuration (stored for metadata)
+        self.embedding_cost_per_1k = config.embedding_cost_per_1k
+        self.summary_input_cost_per_1k = config.summary_input_cost_per_1k
+        self.summary_output_cost_per_1k = config.summary_output_cost_per_1k
+
+        # API usage tracking
+        self.embedding_api_calls = 0
+        self.summary_api_calls = 0
+        self.total_embedding_tokens = 0
+        self.total_summary_prompt_tokens = 0
+        self.total_summary_completion_tokens = 0
+
+        # Batch tracking
+        self.embedding_batch_sizes: list[int] = []
+
+        # Summary accuracy by target size
+        self.summary_stats: dict[int, SummaryStats] = {}
+
+        # Amplification tracking (per-operation)
+        self.input_amplifications: list[float] = []
+        self.output_amplifications: list[float] = []
+        self.cost_amplifications: list[float] = []
+
+        # Amplifications by tree height
+        self.amplifications_by_height: dict[int, dict[str, list[float]]] = {}
+
+        # Tree structure
+        self.tree_height = 0
+        self.nodes_per_height: list[int] = []
+
+        # Memory tracking
         self.process = psutil.Process()
-
-        # Get initial memory usage
         memory_info = self.process.memory_info()
-        initial_memory_mb = memory_info.rss / 1024 / 1024
+        self.memory_start_mb = memory_info.rss / 1024 / 1024
+        self.peak_memory_mb = self.memory_start_mb
+        self.memory_end_mb = 0.0
 
-        self.metrics = IndexingMetrics(
-            start_time=time.time(),
-            end_time=0,
-            source_document_tokens=source_tokens,
-            chunks_created=0,
-            embedding_cost_per_1k=config.embedding_cost_per_1k,
-            summary_input_cost_per_1k=config.summary_input_cost_per_1k,
-            summary_output_cost_per_1k=config.summary_output_cost_per_1k,
-            memory_start_mb=initial_memory_mb,
-            peak_memory_mb=initial_memory_mb,
-        )
+        # Node telemetry storage
+        self.node_telemetry: dict[str, NodeTelemetry] = {}
+
+        # Internal state
         self._current_height = 0
         self._nodes_at_current_height = 0
-        # Track pending embeddings for batch processing
         self._pending_embeddings: dict[str, NodeTelemetry] = {}
-        # Thread-safe lock for memory updates
         self._memory_lock = threading.Lock()
 
     def track_node_created(
@@ -579,7 +385,7 @@ class IndexingMetricsReporter:
             node_id=node_id,
             height=height,
         )
-        self.metrics.node_telemetry[node_id] = telemetry
+        self.node_telemetry[node_id] = telemetry
 
         # Also track pending for embedding batch correlation
         if height == 0:  # Leaf nodes have height 0
@@ -597,15 +403,15 @@ class IndexingMetricsReporter:
             with self._memory_lock:
                 memory_info = self.process.memory_info()
                 current_memory_mb = memory_info.rss / 1024 / 1024
-                if current_memory_mb > self.metrics.peak_memory_mb:
-                    self.metrics.peak_memory_mb = current_memory_mb
+                if current_memory_mb > self.peak_memory_mb:
+                    self.peak_memory_mb = current_memory_mb
         except Exception as e:
             # Log but don't fail indexing due to memory tracking issues
             logger.warning(f"Failed to update memory usage: {e}")
 
     def record_chunk_created(self, chunk_id: str, tokens: int) -> None:
         """Called when a chunk is created during splitting."""
-        self.metrics.chunks_created += 1
+        self.chunks_created += 1
         # Track for leaf-height nodes
         if self._current_height == 0:
             self._nodes_at_current_height += 1
@@ -618,9 +424,9 @@ class IndexingMetricsReporter:
             batch_size: Number of texts in batch
             token_counts: Token count for each text
         """
-        self.metrics.embedding_api_calls += 1
-        self.metrics.embedding_batch_sizes.append(batch_size)
-        self.metrics.total_embedding_tokens += sum(token_counts)
+        self.embedding_api_calls += 1
+        self.embedding_batch_sizes.append(batch_size)
+        self.total_embedding_tokens += sum(token_counts)
         self._update_memory_usage()
 
     def record_embedding_call_v2(
@@ -647,7 +453,7 @@ class IndexingMetricsReporter:
         # Update telemetry
         end_time = time.time()
         for position, (node_id, token_count) in enumerate(node_embeddings):
-            if node_id not in self.metrics.node_telemetry:
+            if node_id not in self.node_telemetry:
                 # This indicates a bug - nodes should be tracked before embeddings
                 logger.error(
                     f"Node {node_id} not found in telemetry. "
@@ -658,7 +464,7 @@ class IndexingMetricsReporter:
                     f"Nodes must be tracked with track_node_created() before embedding."
                 )
 
-            self.metrics.node_telemetry[node_id].embedding = EmbeddingTelemetry(
+            self.node_telemetry[node_id].embedding = EmbeddingTelemetry(
                 text_tokens=token_count,
                 batch_size=batch_size,
                 batch_position=position,
@@ -684,17 +490,15 @@ class IndexingMetricsReporter:
             completion_tokens: Tokens in completion
             input_text_tokens: Tokens in the text being summarized (left + right)
         """
-        self.metrics.summary_api_calls += 1
-        self.metrics.total_summary_prompt_tokens += prompt_tokens
-        self.metrics.total_summary_completion_tokens += completion_tokens
+        self.summary_api_calls += 1
+        self.total_summary_prompt_tokens += prompt_tokens
+        self.total_summary_completion_tokens += completion_tokens
 
         # Track accuracy by target size
-        if target_tokens not in self.metrics.summary_stats:
-            self.metrics.summary_stats[target_tokens] = SummaryStats()
+        if target_tokens not in self.summary_stats:
+            self.summary_stats[target_tokens] = SummaryStats()
 
-        self.metrics.summary_stats[target_tokens].add_summary(
-            target_tokens, actual_tokens
-        )
+        self.summary_stats[target_tokens].add_summary(target_tokens, actual_tokens)
 
         # Calculate amplification factors
         if input_text_tokens > 0:
@@ -706,40 +510,34 @@ class IndexingMetricsReporter:
             # Calculate cost-weighted amplification
             # Cost amplification = (actual cost / theoretical minimum cost)
             actual_cost = (
-                prompt_tokens * self.metrics.summary_input_cost_per_1k
-                + completion_tokens * self.metrics.summary_output_cost_per_1k
+                prompt_tokens * self.summary_input_cost_per_1k
+                + completion_tokens * self.summary_output_cost_per_1k
             ) / 1000
 
             min_cost = (
-                input_text_tokens * self.metrics.summary_input_cost_per_1k
-                + actual_tokens * self.metrics.summary_output_cost_per_1k
+                input_text_tokens * self.summary_input_cost_per_1k
+                + actual_tokens * self.summary_output_cost_per_1k
             ) / 1000
 
             cost_amplification = actual_cost / min_cost if min_cost > 0 else 1.0
 
             # Record per-operation amplifications
-            self.metrics.input_amplifications.append(input_amplification)
-            self.metrics.output_amplifications.append(output_amplification)
-            self.metrics.cost_amplifications.append(cost_amplification)
+            self.input_amplifications.append(input_amplification)
+            self.output_amplifications.append(output_amplification)
+            self.cost_amplifications.append(cost_amplification)
 
             # Track by height
             height = self._current_height
-            if height not in self.metrics.amplifications_by_height:
-                self.metrics.amplifications_by_height[height] = {
+            if height not in self.amplifications_by_height:
+                self.amplifications_by_height[height] = {
                     "input": [],
                     "output": [],
                     "cost": [],
                 }
 
-            self.metrics.amplifications_by_height[height]["input"].append(
-                input_amplification
-            )
-            self.metrics.amplifications_by_height[height]["output"].append(
-                output_amplification
-            )
-            self.metrics.amplifications_by_height[height]["cost"].append(
-                cost_amplification
-            )
+            self.amplifications_by_height[height]["input"].append(input_amplification)
+            self.amplifications_by_height[height]["output"].append(output_amplification)
+            self.amplifications_by_height[height]["cost"].append(cost_amplification)
 
         self._update_memory_usage()
 
@@ -771,20 +569,18 @@ class IndexingMetricsReporter:
             rejection_reason: Optional reason for rejection
         """
         # Update aggregate metrics
-        self.metrics.summary_api_calls += 1
-        self.metrics.total_summary_prompt_tokens += prompt_tokens
-        self.metrics.total_summary_completion_tokens += completion_tokens
+        self.summary_api_calls += 1
+        self.total_summary_prompt_tokens += prompt_tokens
+        self.total_summary_completion_tokens += completion_tokens
 
         # Only update result metrics if accepted
         if status == "accepted":
             # Update result-specific metrics (accuracy, amplification)
             # Track accuracy by target size
-            if target_tokens not in self.metrics.summary_stats:
-                self.metrics.summary_stats[target_tokens] = SummaryStats()
+            if target_tokens not in self.summary_stats:
+                self.summary_stats[target_tokens] = SummaryStats()
 
-            self.metrics.summary_stats[target_tokens].add_summary(
-                target_tokens, actual_tokens
-            )
+            self.summary_stats[target_tokens].add_summary(target_tokens, actual_tokens)
 
             # Calculate amplification factors
             if input_text_tokens > 0:
@@ -796,43 +592,41 @@ class IndexingMetricsReporter:
                 # Calculate cost-weighted amplification
                 # Cost amplification = (actual cost / theoretical minimum cost)
                 actual_cost = (
-                    prompt_tokens * self.metrics.summary_input_cost_per_1k
-                    + completion_tokens * self.metrics.summary_output_cost_per_1k
+                    prompt_tokens * self.summary_input_cost_per_1k
+                    + completion_tokens * self.summary_output_cost_per_1k
                 ) / 1000
 
                 min_cost = (
-                    input_text_tokens * self.metrics.summary_input_cost_per_1k
-                    + actual_tokens * self.metrics.summary_output_cost_per_1k
+                    input_text_tokens * self.summary_input_cost_per_1k
+                    + actual_tokens * self.summary_output_cost_per_1k
                 ) / 1000
 
                 cost_amplification = actual_cost / min_cost if min_cost > 0 else 1.0
 
                 # Record per-operation amplifications
-                self.metrics.input_amplifications.append(input_amplification)
-                self.metrics.output_amplifications.append(output_amplification)
-                self.metrics.cost_amplifications.append(cost_amplification)
+                self.input_amplifications.append(input_amplification)
+                self.output_amplifications.append(output_amplification)
+                self.cost_amplifications.append(cost_amplification)
 
                 # Track by height
                 height = self._current_height
-                if height not in self.metrics.amplifications_by_height:
-                    self.metrics.amplifications_by_height[height] = {
+                if height not in self.amplifications_by_height:
+                    self.amplifications_by_height[height] = {
                         "input": [],
                         "output": [],
                         "cost": [],
                     }
 
-                self.metrics.amplifications_by_height[height]["input"].append(
+                self.amplifications_by_height[height]["input"].append(
                     input_amplification
                 )
-                self.metrics.amplifications_by_height[height]["output"].append(
+                self.amplifications_by_height[height]["output"].append(
                     output_amplification
                 )
-                self.metrics.amplifications_by_height[height]["cost"].append(
-                    cost_amplification
-                )
+                self.amplifications_by_height[height]["cost"].append(cost_amplification)
 
         # Update telemetry
-        if node_id not in self.metrics.node_telemetry:
+        if node_id not in self.node_telemetry:
             # This indicates a bug - nodes should be tracked before summaries
             logger.error(
                 f"Node {node_id} not found in telemetry for summary attempt. "
@@ -855,7 +649,7 @@ class IndexingMetricsReporter:
             end_time=time.time(),
             rejection_reason=rejection_reason,
         )
-        self.metrics.node_telemetry[node_id].summary_attempts.append(attempt)
+        self.node_telemetry[node_id].summary_attempts.append(attempt)
 
         self._update_memory_usage()
 
@@ -868,28 +662,65 @@ class IndexingMetricsReporter:
         """
         # Record nodes from previous height when moving to new height
         if height > self._current_height:
-            self.metrics.nodes_per_height.append(self._nodes_at_current_height)
+            self.nodes_per_height.append(self._nodes_at_current_height)
             self._current_height = height
             self._nodes_at_current_height = nodes_created
         else:
             self._nodes_at_current_height = nodes_created
 
-        self.metrics.tree_height = max(self.metrics.tree_height, height)
+        self.tree_height = max(self.tree_height, height)
         self._update_memory_usage()
 
-    def finalize(self) -> IndexingMetrics:
-        """Compute final metrics after indexing completes."""
-        self.metrics.end_time = time.time()
+    def finalize(self) -> dict:
+        """Finalize telemetry collection and return raw telemetry data.
+
+        Returns:
+            Dictionary containing all collected telemetry data in standard format
+        """
+        self.end_time = time.time()
 
         # Record final height
         if self._nodes_at_current_height > 0:
-            self.metrics.nodes_per_height.append(self._nodes_at_current_height)
+            self.nodes_per_height.append(self._nodes_at_current_height)
 
         # Record final memory usage
         try:
             memory_info = self.process.memory_info()
-            self.metrics.memory_end_mb = memory_info.rss / 1024 / 1024
+            self.memory_end_mb = memory_info.rss / 1024 / 1024
         except Exception:
-            self.metrics.memory_end_mb = self.metrics.peak_memory_mb
+            self.memory_end_mb = self.peak_memory_mb
 
-        return self.metrics
+        # Return telemetry data in standard format
+        return self.get_telemetry_data(self.document_id, self.config.leaf_tokens)
+
+    def get_telemetry_data(self, document_id: str, chunk_size: int) -> dict:
+        """Export raw telemetry data in standard format for analysis.
+
+        Args:
+            document_id: Document identifier for the telemetry
+            chunk_size: Chunk size used for indexing (for metadata)
+
+        Returns:
+            Dictionary in telemetry format
+        """
+        # Convert all node telemetry to dict format
+        nodes_data = []
+        for node in self.node_telemetry.values():
+            nodes_data.append(node.to_telemetry_dict())
+
+        # Sort nodes by creation time for consistent output
+        nodes_data.sort(key=lambda x: x["created_at"])
+
+        return {
+            "format_version": TELEMETRY_FORMAT_VERSION,
+            "documents": {
+                document_id: {
+                    "metadata": {
+                        "source_document_tokens": self.source_tokens,
+                        "chunk_size": chunk_size,
+                        "indexed_at": self.start_time,
+                    },
+                    "nodes": nodes_data,
+                }
+            },
+        }
