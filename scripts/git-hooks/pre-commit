@@ -116,7 +116,7 @@ run_jscpd() {
             echo "[JSCPD] Starting..."
             # Run with silent flag, capture output
             local tmpfile=$(mktemp)
-            npx jscpd@latest ragzoom/ --config .jscpd.json --exitCode 1 > "$tmpfile" 2>&1
+            npx jscpd@latest ragzoom/ --config .jscpd.json > "$tmpfile" 2>&1
             local result=$?
             if [ $result -ne 0 ]; then
                 echo "[JSCPD] ❌ Code duplication found!"
