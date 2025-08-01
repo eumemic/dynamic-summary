@@ -124,7 +124,7 @@ def index(
 
         # Index with or without metrics based on telemetry flag
         if telemetry_file:
-            doc_id, metrics = tree_builder.add_document_with_metrics(
+            doc_id, metrics = tree_builder.add_document_with_telemetry(
                 text,
                 document_id=document_id,
                 file_path=str(path.absolute()),
