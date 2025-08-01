@@ -21,7 +21,7 @@ concurrency:
 jobs:
   # Combined static analysis job (saves 3 runner initializations)
   static-analysis:
-    name: Static Analysis (Lint, Format, Type, Security)
+    name: Static Analysis (Linting, Formatting, Deduplication, Types, Security)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

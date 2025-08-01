@@ -1,4 +1,4 @@
-name: 📊 Performance Tests
+name: Performance Tests
 
 on:
   pull_request:
@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   benchmark:
-    name: 📊 Performance Report
+    name: Performance Report
     runs-on: ubuntu-latest
     # Skip on draft PRs to save expensive benchmark runs
     if: github.event.pull_request.draft != true
