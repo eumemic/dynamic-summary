@@ -1,0 +1,254 @@
+[
+  {
+    "id": 1,
+    "file1": "ragzoom/validate.py",
+    "file2": "ragzoom/validate.py", 
+    "lines1": "390-402",
+    "lines2": "338-353",
+    "rating": 1,
+    "reason": "Different validation functions with similar docstring structure but completely different logic (left-balanced vs equal-leaf-depth validation)"
+  },
+  {
+    "id": 2,
+    "file1": "ragzoom/tree_viz.py",
+    "file2": "ragzoom/tree_viz.py",
+    "lines1": "55-61", 
+    "lines2": "49-54",
+    "rating": 5,
+    "reason": "Identical position calculation returning (span_start - doc_start, span_end - doc_start) duplicated in two methods"
+  },
+  {
+    "id": 3,
+    "file1": "ragzoom/tree_viz.py",
+    "file2": "ragzoom/tree_viz.py",
+    "lines1": "389-395",
+    "lines2": "375-380", 
+    "rating": 5,
+    "reason": "Identical priority calculation and painting logic for nodes, should be extracted to helper method"
+  },
+  {
+    "id": 4,
+    "file1": "ragzoom/telemetry_analysis.py",
+    "file2": "ragzoom/telemetry_analysis.py",
+    "lines1": "470-486",
+    "lines2": "394-464",
+    "rating": 5,
+    "reason": "Identical document/node iteration pattern with height checking logic duplicated across functions"
+  },
+  {
+    "id": 5,
+    "file1": "ragzoom/telemetry_analysis.py", 
+    "file2": "ragzoom/telemetry_analysis.py",
+    "lines1": "545-552",
+    "lines2": "204-459",
+    "rating": 4,
+    "reason": "Same document/node processing loop structure duplicated, should use shared iteration helper"
+  },
+  {
+    "id": 6,
+    "file1": "ragzoom/telemetry_analysis.py",
+    "file2": "ragzoom/telemetry_viz.py",
+    "lines1": "761-768",
+    "lines2": "463-226",
+    "rating": 2,
+    "reason": "Similar token tracking variable initialization but in different files for different purposes (analysis vs visualization)"
+  },
+  {
+    "id": 7,
+    "file1": "ragzoom/telemetry_analysis.py",
+    "file2": "ragzoom/telemetry_analysis.py", 
+    "lines1": "779-786",
+    "lines2": "233-240",
+    "rating": 5,
+    "reason": "Identical token accumulation logic duplicated within same file"
+  },
+  {
+    "id": 8,
+    "file1": "ragzoom/telemetry_analysis.py",
+    "file2": "ragzoom/telemetry_analysis.py",
+    "lines1": "792-812",
+    "lines2": "246-266",
+    "rating": 5, 
+    "reason": "Identical amplification calculation logic with input/output/cost calculations duplicated"
+  },
+  {
+    "id": 9,
+    "file1": "ragzoom/store.py",
+    "file2": "ragzoom/store.py",
+    "lines1": "742-763",
+    "lines2": "680-701",
+    "rating": 5,
+    "reason": "Nearly identical SQL migration pattern for dropping columns, only differs in column name"
+  },
+  {
+    "id": 10,
+    "file1": "ragzoom/retrieve.py",
+    "file2": "ragzoom/retrieve.py",
+    "lines1": "210-221",
+    "lines2": "66-79",
+    "rating": 1,
+    "reason": "Standard async/sync wrapper pattern - retrieve() wraps retrieve_async(), this is idiomatic Python"
+  },
+  {
+    "id": 11,
+    "file1": "ragzoom/index.py",
+    "file2": "ragzoom/retrieve.py",
+    "lines1": "54-63",
+    "lines2": "54-548",
+    "rating": 5,
+    "reason": "Identical OpenAI embedding API call with dimensions parameter handling duplicated across files"
+  },
+  {
+    "id": 12,
+    "file1": "ragzoom/index.py",
+    "file2": "ragzoom/retrieve.py",
+    "lines1": "73-80",
+    "lines2": "54-61",
+    "rating": 5,
+    "reason": "Same OpenAI embedding API call pattern, only return statement differs slightly"
+  },
+  {
+    "id": 13,
+    "file1": "ragzoom/index.py",
+    "file2": "ragzoom/index.py",
+    "lines1": "209-216",
+    "lines2": "199-206",
+    "rating": 1,
+    "reason": "Python @overload decorators for type hints - this is standard typing pattern, not duplication"
+  },
+  {
+    "id": 14,
+    "file1": "ragzoom/index.py",
+    "file2": "ragzoom/index.py",
+    "lines1": "219-225",
+    "lines2": "200-216",
+    "rating": 1,
+    "reason": "Continuation of @overload pattern - multiple overloads with different signatures are expected"
+  },
+  {
+    "id": 15,
+    "file1": "ragzoom/index.py",
+    "file2": "ragzoom/index.py",
+    "lines1": "476-482",
+    "lines2": "200-206",
+    "rating": 1,
+    "reason": "Different methods with similar signatures - add_document vs deprecated add_document_async"
+  },
+  {
+    "id": 16,
+    "file1": "ragzoom/index.py",
+    "file2": "ragzoom/index.py",
+    "lines1": "493-508",
+    "lines2": "216-217",
+    "rating": 1,
+    "reason": "Method signature and its docstring - not actual code duplication"
+  },
+  {
+    "id": 17,
+    "file1": "ragzoom/index.py",
+    "file2": "ragzoom/index.py",
+    "lines1": "528-543",
+    "lines2": "200-217",
+    "rating": 2,
+    "reason": "Deprecated method intentionally kept for backward compatibility with similar signature"
+  },
+  {
+    "id": 18,
+    "file1": "ragzoom/index.py",
+    "file2": "ragzoom/index.py",
+    "lines1": "548-555",
+    "lines2": "200-483",
+    "rating": 1,
+    "reason": "add_document_async method with similar signature to add_document - different methods"
+  },
+  {
+    "id": 19,
+    "file1": "ragzoom/index.py",
+    "file2": "ragzoom/index.py",
+    "lines1": "845-854",
+    "lines2": "167-412",
+    "rating": 5,
+    "reason": "Identical telemetry recording pattern for embeddings that should be extracted to helper"
+  },
+  {
+    "id": 20,
+    "file1": "ragzoom/dynamic_tiling.py",
+    "file2": "ragzoom/tree_viz.py",
+    "lines1": "20-26",
+    "lines2": "287-292",
+    "rating": 5,
+    "reason": "Identical TileCandidate dataclass definition duplicated across files"
+  },
+  {
+    "id": 21,
+    "file1": "ragzoom/dynamic_tiling.py",
+    "file2": "ragzoom/dynamic_tiling.py",
+    "lines1": "204-210",
+    "lines2": "123-129",
+    "rating": 5,
+    "reason": "Identical child node retrieval pattern duplicated within same file"
+  },
+  {
+    "id": 22,
+    "file1": "ragzoom/cli.py",
+    "file2": "ragzoom/cli.py",
+    "lines1": "134-141",
+    "lines2": "127-133",
+    "rating": 2,
+    "reason": "Similar function call pattern but with different contexts and variable assignments"
+  },
+  {
+    "id": 23,
+    "file1": "ragzoom/cli.py",
+    "file2": "ragzoom/store.py",
+    "lines1": "148-155",
+    "lines2": "406-413",
+    "rating": 5,
+    "reason": "Same SQL query for filtering leaf nodes duplicated between CLI and store"
+  },
+  {
+    "id": 24,
+    "file1": "ragzoom/cli.py",
+    "file2": "ragzoom/cli.py",
+    "lines1": "315-321",
+    "lines2": "87-93",
+    "rating": 5,
+    "reason": "Identical validation setup pattern repeated across CLI commands"
+  },
+  {
+    "id": 25,
+    "file1": "ragzoom/cli.py",
+    "file2": "ragzoom/cli.py",
+    "lines1": "439-445",
+    "lines2": "225-231",
+    "rating": 2,
+    "reason": "Similar error handling pattern but in different command contexts"
+  },
+  {
+    "id": 26,
+    "file1": "ragzoom/cli.py",
+    "file2": "ragzoom/cli.py",
+    "lines1": "528-534",
+    "lines2": "110-114",
+    "rating": 5,
+    "reason": "Identical document deletion logic (delete nodes + delete record) duplicated"
+  },
+  {
+    "id": 27,
+    "file1": "ragzoom/api.py",
+    "file2": "ragzoom/cli.py",
+    "lines1": "8-14",
+    "lines2": "12-16",
+    "rating": 2,
+    "reason": "Similar imports are expected across modules that use the same components"
+  },
+  {
+    "id": 28,
+    "file1": "ragzoom/api.py",
+    "file2": "ragzoom/store.py",
+    "lines1": "158-165",
+    "lines2": "406-413",
+    "rating": 5,
+    "reason": "Same SQL query for leaf nodes duplicated between API and store"
+  }
+]

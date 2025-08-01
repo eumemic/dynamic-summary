@@ -1,0 +1,29 @@
+{
+  "threshold": 2,
+  "reporters": ["json", "console"],
+  "ignore": [
+    "**/__pycache__/**",
+    "**/test_*",
+    "**/tests/**",
+    "**/*.pyc",
+    "**/build/**",
+    "**/dist/**",
+    "**/.git/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "**/env/**",
+    "**/node_modules/**",
+    "**/.pytest_cache/**",
+    "**/.mypy_cache/**",
+    "**/.ruff_cache/**",
+    "**/htmlcov/**",
+    "**/.coverage"
+  ],
+  "format": ["python", "javascript", "typescript", "yaml", "json", "markdown"],
+  "minLines": 12,
+  "minTokens": 16,
+  "output": "./",
+  "silent": false,
+  "blame": false,
+  "gitignore": true
+}
