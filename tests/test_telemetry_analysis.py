@@ -599,6 +599,83 @@ class TestFullMetricsComputation:
         assert metrics.output_amplifications[0] == pytest.approx(3.75, rel=0.01)
 
 
+class TestCostAmplificationCalculation:
+    """Test the _calculate_cost_amplification function directly."""
+
+    @pytest.fixture
+    def config(self) -> RagZoomConfig:
+        """Create test config with known pricing."""
+        return RagZoomConfig(
+            openai_api_key="test-key",
+            summary_input_cost_per_1k=0.0025,  # $0.0025 per 1k input tokens
+            summary_output_cost_per_1k=0.01,  # $0.01 per 1k output tokens
+        )
+
+    def test_cost_amplification_with_retries(self, config: RagZoomConfig) -> None:
+        """Test cost amplification calculation with retry attempts."""
+        from ragzoom.telemetry_analysis import _calculate_cost_amplification
+
+        # Example: 3 attempts with rejected summaries
+        total_prompt_tokens = 480  # 150 + 160 + 170 (includes retries)
+        total_completion_tokens = 300  # 120 + 100 + 80 (all attempts)
+        input_text_tokens = 100  # Original text
+        final_summary_tokens = 80  # Only the accepted summary
+
+        amplification = _calculate_cost_amplification(
+            total_prompt_tokens,
+            total_completion_tokens,
+            input_text_tokens,
+            final_summary_tokens,
+            config,
+        )
+
+        # Calculate expected amplification manually
+        # Actual cost: 480 * 0.0025/1k + 300 * 0.01/1k = 0.0012 + 0.003 = 0.0042
+        # Min cost: 100 * 0.0025/1k + 80 * 0.01/1k = 0.00025 + 0.0008 = 0.00105
+        # Amplification: 0.0042 / 0.00105 = 4.0
+        assert amplification == pytest.approx(4.0, rel=0.01)
+
+    def test_cost_amplification_no_retries(self, config: RagZoomConfig) -> None:
+        """Test cost amplification with no retries (single attempt)."""
+        from ragzoom.telemetry_analysis import _calculate_cost_amplification
+
+        # Single successful attempt
+        total_prompt_tokens = 150  # Just one attempt
+        total_completion_tokens = 100  # Just one attempt
+        input_text_tokens = 100  # Original text
+        final_summary_tokens = 100  # Same as completion
+
+        amplification = _calculate_cost_amplification(
+            total_prompt_tokens,
+            total_completion_tokens,
+            input_text_tokens,
+            final_summary_tokens,
+            config,
+        )
+
+        # With no retries, amplification is just from prompt overhead
+        # Actual: 150 * 0.0025/1k + 100 * 0.01/1k = 0.000375 + 0.001 = 0.001375
+        # Min: 100 * 0.0025/1k + 100 * 0.01/1k = 0.00025 + 0.001 = 0.00125
+        # Amplification: 0.001375 / 0.00125 = 1.1
+        assert amplification == pytest.approx(1.1, rel=0.01)
+
+    def test_cost_amplification_zero_check(self, config: RagZoomConfig) -> None:
+        """Test cost amplification handles zero tokens gracefully."""
+        from ragzoom.telemetry_analysis import _calculate_cost_amplification
+
+        # Edge case: zero tokens
+        amplification = _calculate_cost_amplification(
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            input_text_tokens=0,
+            final_summary_tokens=0,
+            config=config,
+        )
+
+        # Should return 1.0 when min_cost is 0
+        assert amplification == 1.0
+
+
 class TestBackwardCompatibility:
     """Test backward compatibility with v1.0 telemetry format."""
 

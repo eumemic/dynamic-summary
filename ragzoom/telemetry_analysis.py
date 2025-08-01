@@ -232,41 +232,40 @@ def _compute_percentile(values: list[float], percentile: float) -> float:
 
 
 def _calculate_cost_amplification(
-    prompt_tokens: int,
-    completion_tokens: int,
+    total_prompt_tokens: int,
+    total_completion_tokens: int,
     input_text_tokens: int,
-    actual_tokens: int,
+    final_summary_tokens: int,
     config: RagZoomConfig,
 ) -> float:
     """Calculate cost-weighted amplification factor.
 
     Cost amplification = (actual cost / theoretical minimum cost)
 
-    Uses completion_tokens for both actual and theoretical costs to eliminate
-    variability from tokenizer differences. This focuses the metric on what we
-    control (prompt overhead) rather than external factors.
+    Measures the cost inefficiency from prompt overhead and retry attempts.
+    The theoretical minimum represents sending just the raw text and receiving
+    the final summary in a single attempt.
 
     Args:
-        prompt_tokens: Tokens in the API prompt
-        completion_tokens: Tokens in the API completion
+        total_prompt_tokens: Total prompt tokens across all attempts
+        total_completion_tokens: Total completion tokens across all attempts
         input_text_tokens: Tokens in the original text being summarized
-        actual_tokens: Actual tokens in the generated summary (unused, kept for compatibility)
+        final_summary_tokens: Tokens in the final accepted summary
         config: Configuration with pricing information
 
     Returns:
         Cost amplification factor (1.0 = no amplification)
     """
-    # Calculate actual cost
+    # Calculate actual cost (what we paid across all attempts)
     actual_cost = (
-        prompt_tokens * config.summary_input_cost_per_1k
-        + completion_tokens * config.summary_output_cost_per_1k
+        total_prompt_tokens * config.summary_input_cost_per_1k
+        + total_completion_tokens * config.summary_output_cost_per_1k
     ) / 1000
 
-    # Calculate theoretical minimum cost using completion_tokens instead of actual_tokens
-    # This eliminates noise from tokenizer differences between local and API counting
+    # Calculate theoretical minimum cost (input text → final summary in one shot)
     min_cost = (
         input_text_tokens * config.summary_input_cost_per_1k
-        + completion_tokens * config.summary_output_cost_per_1k
+        + final_summary_tokens * config.summary_output_cost_per_1k
     ) / 1000
 
     # Return amplification factor with zero check
