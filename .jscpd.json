@@ -29,5 +29,8 @@
   "silent": false,
   "blame": false,
   "maxLines": 1000,
-  "maxSize": "100KB"
+  "maxSize": "100KB",
+  "ignorePattern": [
+    "Synchronous wrapper for .*_async"
+  ]
 }
