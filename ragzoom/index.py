@@ -150,7 +150,9 @@ class TreeBuilder:
                         * self.config.summary_reduction_factors[retry_count - 1]
                     )
                 else:
-                    adjusted_target = int(target_tokens * 0.8)  # Fallback
+                    adjusted_target = int(
+                        target_tokens * self.config.summary_fallback_reduction
+                    )  # Fallback
 
                 deviation = current_tokens - adjusted_target
                 deviation_pct_display = (deviation / adjusted_target) * 100
@@ -450,11 +452,17 @@ Here's the content to summarize:"""
                 )
                 content = response.choices[0].message.content
                 if not content:
-                    raise ValueError("Empty response from LLM")
-
-                summary = content.strip()
-                if not summary:
-                    raise ValueError("Summary is empty after stripping whitespace")
+                    logger.warning(
+                        f"{node_info}Empty response from LLM, using original text"
+                    )
+                    summary = combined_text
+                else:
+                    summary = content.strip()
+                    if not summary:
+                        logger.warning(
+                            f"{node_info}Summary is empty after stripping whitespace, using original text"
+                        )
+                        summary = combined_text
 
                 # Check if summary needs correction
                 summary_tokens = self.splitter.tokenizer.encode(summary)
