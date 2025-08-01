@@ -356,6 +356,12 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
         - rejection_reasons: Distribution of rejection reasons
         - nodes_with_retries: Number of nodes that required retries
         - total_nodes_with_summaries: Total number of nodes with summary attempts
+        - retry_distribution: Dict mapping retry count (0, 1, 2, 3+) to node count
+        - avg_retries_per_node: Average number of retries per node
+        - max_retries: Maximum retries for any single node
+        - retry_time_seconds: Total time spent on retry attempts
+        - avg_time_per_retry: Average time per retry attempt
+        - time_wasted_on_rejections: Total time spent on rejected attempts
     """
     parsed_data = parse_telemetry_format(telemetry_data)
 
@@ -366,6 +372,13 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
     rejection_reasons: dict[str, int] = {}
     nodes_with_retries = 0
     total_nodes_with_summaries = 0
+
+    # New metrics for retry distribution and timing
+    retry_distribution: dict[int, int] = {0: 0, 1: 0, 2: 0, 3: 0}  # 3 means 3+
+    max_retries = 0
+    total_retry_time = 0.0
+    total_rejected_time = 0.0
+    total_retries_per_node = 0
 
     # Process all documents
     for doc_type, doc_data in parsed_data["documents"].items():
@@ -386,26 +399,51 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
 
             total_nodes_with_summaries += 1
             node_has_retry = False
+            node_retry_count = 0
+            node_retry_time = 0.0
+            node_rejected_time = 0.0
 
-            for attempt in summary_attempts:
+            for attempt_idx, attempt in enumerate(summary_attempts):
                 total_attempts += 1
-                is_retry = attempt.get("is_retry", False)
                 status = attempt.get("status", "unknown")
+
+                # Calculate time for this attempt if available
+                start_time = attempt.get("start_time", 0)
+                end_time = attempt.get("end_time", 0)
+                attempt_time = end_time - start_time if end_time > start_time else 0
+
+                # In v2 format: first attempt (index 0) is initial, rest are retries
+                # In v1 format: check the is_retry field for backward compatibility
+                is_retry = attempt.get("is_retry", attempt_idx > 0)
 
                 if is_retry:
                     retry_attempts += 1
                     node_has_retry = True
+                    node_retry_count += 1
+                    node_retry_time += attempt_time
                     if status == "accepted":
                         successful_retries += 1
+                    else:
+                        node_rejected_time += attempt_time
 
                 if status == "accepted":
                     successful_attempts += 1
                 elif status in ["rejected_over", "rejected_under", "error"]:
                     reason = attempt.get("rejection_reason", status)
                     rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+                    if not is_retry:  # Also count rejected time for initial attempts
+                        node_rejected_time += attempt_time
 
             if node_has_retry:
                 nodes_with_retries += 1
+
+            # Track retry distribution and totals
+            retry_bucket = min(node_retry_count, 3)  # Cap at 3+ for distribution
+            retry_distribution[retry_bucket] += 1
+            max_retries = max(max_retries, node_retry_count)
+            total_retries_per_node += node_retry_count
+            total_retry_time += node_retry_time
+            total_rejected_time += node_rejected_time
 
     # Calculate metrics
     result = {
@@ -417,13 +455,30 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
         "rejection_reasons": rejection_reasons,
         "nodes_with_retries": nodes_with_retries,
         "total_nodes_with_summaries": total_nodes_with_summaries,
+        # New distribution metrics
+        "retry_distribution": {
+            "0": retry_distribution[0],
+            "1": retry_distribution[1],
+            "2": retry_distribution[2],
+            "3+": retry_distribution[3],
+        },
+        "avg_retries_per_node": 0.0,
+        "max_retries": max_retries,
+        # New timing metrics
+        "retry_time_seconds": total_retry_time,
+        "avg_time_per_retry": 0.0,
+        "time_wasted_on_rejections": total_rejected_time,
     }
 
     if total_nodes_with_summaries > 0:
         result["retry_rate"] = (nodes_with_retries / total_nodes_with_summaries) * 100
+        result["avg_retries_per_node"] = (
+            total_retries_per_node / total_nodes_with_summaries
+        )
 
     if retry_attempts > 0:
         result["retry_success_rate"] = (successful_retries / retry_attempts) * 100
+        result["avg_time_per_retry"] = total_retry_time / retry_attempts
 
     return result
 

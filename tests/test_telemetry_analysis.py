@@ -370,6 +370,15 @@ class TestRetryAnalysis:
         assert result["rejection_reasons"]["20% under target"] == 1
         assert result["rejection_reasons"]["API timeout"] == 1
 
+        # New metrics should be present
+        assert "retry_distribution" in result
+        assert result["retry_distribution"]["0"] == 1  # summary-2 has 0 retries
+        assert (
+            result["retry_distribution"]["1"] == 2
+        )  # summary-1 and summary-3 have 1 retry each
+        assert result["avg_retries_per_node"] == pytest.approx(0.67, rel=0.01)  # 2/3
+        assert result["max_retries"] == 1
+
     def test_retry_analysis_no_retries(self) -> None:
         """Test retry analysis with no retries."""
         telemetry_data = {
@@ -398,6 +407,78 @@ class TestRetryAnalysis:
         assert result["retry_rate"] == 0.0
         assert result["retry_attempts"] == 0
         assert result["nodes_with_retries"] == 0
+
+    def test_analyze_retry_patterns_v2_format(self) -> None:
+        """Test retry analysis with v2.0 format (no is_retry field)."""
+        telemetry_data = {
+            "format_version": "2.0",
+            "documents": {
+                "test_doc": {
+                    "metadata": {},
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "height": 1,  # Non-leaf node
+                            "summary_attempts": [
+                                {
+                                    "status": "rejected_over",
+                                    "rejection_reason": "25% over target",
+                                    "start_time": 1000.0,
+                                    "end_time": 1002.0,
+                                },
+                                {
+                                    "status": "rejected_under",
+                                    "rejection_reason": "15% under target",
+                                    "start_time": 1002.0,
+                                    "end_time": 1004.0,
+                                },
+                                {
+                                    "status": "accepted",
+                                    "start_time": 1004.0,
+                                    "end_time": 1006.0,
+                                },
+                            ],
+                        },
+                        {
+                            "node_id": "node-2",
+                            "height": 1,
+                            "summary_attempts": [
+                                {
+                                    "status": "accepted",
+                                    "start_time": 1000.0,
+                                    "end_time": 1003.0,
+                                }
+                            ],
+                        },
+                    ],
+                }
+            },
+        }
+
+        result = analyze_retry_patterns(telemetry_data)
+
+        # 2 nodes, 1 needed retries
+        assert result["total_nodes_with_summaries"] == 2
+        assert result["nodes_with_retries"] == 1
+        assert result["retry_rate"] == 50.0
+
+        # 4 total attempts (3 + 1), 2 retries, 1 successful retry
+        assert result["total_attempts"] == 4
+        assert result["successful_attempts"] == 2
+        assert result["retry_attempts"] == 2
+        assert result["retry_success_rate"] == 50.0
+
+        # Retry distribution
+        assert result["retry_distribution"]["0"] == 1  # node-2
+        assert result["retry_distribution"]["1"] == 0
+        assert result["retry_distribution"]["2"] == 1  # node-1
+        assert result["avg_retries_per_node"] == 1.0  # 2 retries / 2 nodes
+        assert result["max_retries"] == 2
+
+        # Timing metrics
+        assert result["retry_time_seconds"] == 4.0  # 2s + 2s for the two retries
+        assert result["avg_time_per_retry"] == 2.0  # 4s / 2 retries
+        assert result["time_wasted_on_rejections"] == 4.0  # Both retries were rejected
 
 
 class TestFullMetricsComputation:
