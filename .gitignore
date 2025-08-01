@@ -75,3 +75,7 @@ telemetry-*.json
 telemetry.json
 benchmark_results/
 telemetry_reports/
+
+# Code duplication reports
+jscpd-report.json
+report/

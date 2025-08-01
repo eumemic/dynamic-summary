@@ -21,7 +21,7 @@ concurrency:
 jobs:
   # Combined static analysis job (saves 3 runner initializations)
   static-analysis:
-    name: Static Analysis (Lint, Format, Type, Security)
+    name: Static Analysis (Linting, Formatting, Deduplication, Types, Security)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,6 +78,12 @@ jobs:
         run: |
           echo "::group::Bandit Security Check"
           bandit -r ragzoom/ -ll
+          echo "::endgroup::"
+      
+      - name: Check for code duplication
+        run: |
+          echo "::group::Code Duplication Check"
+          npx jscpd@latest ragzoom/ --config .jscpd.json
           echo "::endgroup::"
 
   # Fast tests (excluding slow and integration tests)

@@ -11,9 +11,9 @@ import click
 from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import (
     analyze_retry_patterns,
-    compute_amplification_metrics,
     compute_batch_efficiency,
     compute_metrics_from_telemetry,
+    get_amplification_summary,
 )
 from ragzoom.telemetry_config import (
     CHANGE_SIGNIFICANCE_THRESHOLD,
@@ -118,14 +118,16 @@ def load_single_benchmark(filepath: Path) -> tuple[int, MetricsDict]:
         summary_output_cost_per_1k=0.01,
     )
 
-    # Compute metrics from telemetry
+    # Compute all metrics from telemetry (single source of truth)
     telemetry = data["telemetry"]
-    amplification = compute_amplification_metrics(telemetry, config)
+    full_metrics = compute_metrics_from_telemetry(telemetry, config)
+
+    # Extract amplification summary from full metrics
+    amplification = get_amplification_summary(full_metrics)
+
+    # Compute other analysis independently
     batch_efficiency = compute_batch_efficiency(telemetry)
     retry_patterns = analyze_retry_patterns(telemetry)
-
-    # Compute full metrics to extract summary stats
-    full_metrics = compute_metrics_from_telemetry(telemetry, config)
 
     # Extract summary accuracy stats
     summary_accuracy = {}

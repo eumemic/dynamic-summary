@@ -153,6 +153,42 @@ The `mypy` check can sometimes be noisy, flagging pre-existing issues in files y
 mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
 ```
 
+### 4.5. Code Duplication Detection
+
+The project maintains a **zero-duplication policy** using [jscpd](https://github.com/kucherenko/jscpd).
+
+**Configuration**: `.jscpd.json` (threshold: 0%, min 11 lines/15 tokens)
+
+**Running**:
+```bash
+npx jscpd@latest ragzoom/
+```
+
+**Fixing Duplications**:
+- Extract common code into utilities
+- Use inheritance/composition
+- Create shared constants
+- Apply DRY principle
+
+**Legitimate False Positives**:
+
+Some patterns are intentionally similar. Use your judgment - common examples include:
+- Async/sync wrapper methods
+- Protocol/interface implementations
+- Generated code that can't be refactored
+
+Mark with `jscpd:ignore` comments and explain why:
+```python
+# jscpd:ignore-start
+def retrieve(self, ...):  # Intentional: async/sync wrapper pattern
+# jscpd:ignore-end
+```
+
+**Avoid marking as false positive**:
+- Deprecated code (delete it instead)
+- "Almost identical" logic (parameterize the differences)
+- Copy-pasted implementations (extract shared code)
+
 ## 5. Test Markers and Categories
 
 ### Test Markers

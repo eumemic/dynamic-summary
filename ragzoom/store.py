@@ -3,7 +3,7 @@
 import hashlib
 import logging
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, cast
@@ -645,130 +645,15 @@ class Store:
 
                     # Migration: Drop is_dirty column if present
                     if "is_dirty" in columns:
-                        logger.info("Found deprecated is_dirty column, dropping it...")
-                        try:
-                            # SQLite doesn't support DROP COLUMN directly in older versions
-                            # We need to recreate the table without the is_dirty column
-                            conn.execute(text("BEGIN TRANSACTION"))
-
-                            # Create new table without is_dirty column
-                            conn.execute(
-                                text(
-                                    """
-                                CREATE TABLE tree_nodes_new (
-                                    id VARCHAR NOT NULL PRIMARY KEY,
-                                    parent_id VARCHAR,
-                                    left_child_id VARCHAR,
-                                    right_child_id VARCHAR,
-                                    span_start INTEGER NOT NULL,
-                                    span_end INTEGER NOT NULL,
-                                    text TEXT NOT NULL,
-                                    summary TEXT,
-                                    is_pinned INTEGER DEFAULT 0,
-                                    last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
-                                    access_count INTEGER DEFAULT 0,
-                                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                                    document_id VARCHAR,
-                                    FOREIGN KEY(parent_id) REFERENCES tree_nodes (id),
-                                    FOREIGN KEY(document_id) REFERENCES documents (id)
-                                )
-                            """
-                                )
-                            )
-
-                            # Copy data from old table (excluding is_dirty column)
-                            conn.execute(
-                                text(
-                                    """
-                                INSERT INTO tree_nodes_new
-                                SELECT id, parent_id, left_child_id, right_child_id,
-                                       span_start, span_end, text, summary,
-                                       is_pinned, last_accessed, access_count,
-                                       created_at, document_id
-                                FROM tree_nodes
-                            """
-                                )
-                            )
-
-                            # Drop old table and rename new one
-                            conn.execute(text("DROP TABLE tree_nodes"))
-                            conn.execute(
-                                text("ALTER TABLE tree_nodes_new RENAME TO tree_nodes")
-                            )
-
-                            conn.execute(text("COMMIT"))
-                            logger.info(
-                                "Successfully dropped is_dirty column from tree_nodes table"
-                            )
-                        except Exception as e:
-                            conn.execute(text("ROLLBACK"))
-                            logger.error(f"Failed to drop is_dirty column: {e}")
-                            raise
+                        self._drop_column_migration(conn, "is_dirty")
 
                     # Migration: Drop depth column if present
                     elif "depth" in columns:
-                        logger.info("Found deprecated depth column, dropping it...")
-                        try:
-                            # SQLite doesn't support DROP COLUMN directly in older versions
-                            # We need to recreate the table without the depth column
-                            conn.execute(text("BEGIN TRANSACTION"))
-
-                            # Create new table without depth column
-                            conn.execute(
-                                text(
-                                    """
-                                CREATE TABLE tree_nodes_new (
-                                    id VARCHAR NOT NULL PRIMARY KEY,
-                                    parent_id VARCHAR,
-                                    left_child_id VARCHAR,
-                                    right_child_id VARCHAR,
-                                    span_start INTEGER NOT NULL,
-                                    span_end INTEGER NOT NULL,
-                                    text TEXT NOT NULL,
-                                    summary TEXT,
-                                    is_pinned INTEGER DEFAULT 0,
-                                    last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
-                                    access_count INTEGER DEFAULT 0,
-                                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                                    document_id VARCHAR,
-                                    FOREIGN KEY(parent_id) REFERENCES tree_nodes (id),
-                                    FOREIGN KEY(document_id) REFERENCES documents (id)
-                                )
-                            """
-                                )
-                            )
-
-                            # Copy data from old table (excluding depth column)
-                            conn.execute(
-                                text(
-                                    """
-                                INSERT INTO tree_nodes_new
-                                SELECT id, parent_id, left_child_id, right_child_id,
-                                       span_start, span_end, text, summary,
-                                       is_pinned, last_accessed, access_count,
-                                       created_at, document_id
-                                FROM tree_nodes
-                            """
-                                )
-                            )
-
-                            # Drop old table and rename new one
-                            conn.execute(text("DROP TABLE tree_nodes"))
-                            conn.execute(
-                                text("ALTER TABLE tree_nodes_new RENAME TO tree_nodes")
-                            )
-
-                            conn.execute(text("COMMIT"))
-                            logger.info(
-                                "Successfully dropped depth column from tree_nodes table"
-                            )
-
-                            # Also clean up ChromaDB metadata
-                            self._clean_chromadb_metadata()
-                        except Exception as e:
-                            conn.execute(text("ROLLBACK"))
-                            logger.error(f"Failed to drop depth column: {e}")
-                            raise
+                        self._drop_column_migration(
+                            conn,
+                            "depth",
+                            cleanup_callback=self._clean_chromadb_metadata,
+                        )
                 else:
                     logger.debug(
                         "tree_nodes table does not exist yet, will be created by SQLAlchemy"
@@ -777,6 +662,81 @@ class Store:
             logger.debug(
                 f"Migration check failed (this is normal for new databases): {e}"
             )
+
+    def _drop_column_migration(
+        self,
+        conn: Any,
+        column_name: str,
+        cleanup_callback: Callable[[], None] | None = None,
+    ) -> None:
+        """Drop a column from tree_nodes table using SQLite table recreation pattern.
+
+        Args:
+            conn: Database connection
+            column_name: Name of column to drop
+            cleanup_callback: Optional callback to run after successful migration
+        """
+        logger.info(f"Found deprecated {column_name} column, dropping it...")
+        try:
+            # SQLite doesn't support DROP COLUMN directly in older versions
+            # We need to recreate the table without the column
+            conn.execute(text("BEGIN TRANSACTION"))
+
+            # Create new table without the specified column
+            conn.execute(
+                text(
+                    """
+                CREATE TABLE tree_nodes_new (
+                    id VARCHAR NOT NULL PRIMARY KEY,
+                    parent_id VARCHAR,
+                    left_child_id VARCHAR,
+                    right_child_id VARCHAR,
+                    span_start INTEGER NOT NULL,
+                    span_end INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    summary TEXT,
+                    is_pinned INTEGER DEFAULT 0,
+                    last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    access_count INTEGER DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    document_id VARCHAR,
+                    FOREIGN KEY(parent_id) REFERENCES tree_nodes (id),
+                    FOREIGN KEY(document_id) REFERENCES documents (id)
+                )
+            """
+                )
+            )
+
+            # Copy data from old table (excluding the dropped column)
+            conn.execute(
+                text(
+                    """
+                INSERT INTO tree_nodes_new
+                SELECT id, parent_id, left_child_id, right_child_id,
+                       span_start, span_end, text, summary,
+                       is_pinned, last_accessed, access_count,
+                       created_at, document_id
+                FROM tree_nodes
+            """
+                )
+            )
+
+            # Drop old table and rename new one
+            conn.execute(text("DROP TABLE tree_nodes"))
+            conn.execute(text("ALTER TABLE tree_nodes_new RENAME TO tree_nodes"))
+
+            conn.execute(text("COMMIT"))
+            logger.info(
+                f"Successfully dropped {column_name} column from tree_nodes table"
+            )
+
+            # Run cleanup callback if provided
+            if cleanup_callback:
+                cleanup_callback()
+        except Exception as e:
+            conn.execute(text("ROLLBACK"))
+            logger.error(f"Failed to drop {column_name} column: {e}")
+            raise
 
     def _clean_chromadb_metadata(self):
         """Clean up deprecated fields from ChromaDB metadata."""

@@ -1,0 +1,36 @@
+{
+  "threshold": 0,
+  "reporters": ["json", "console"],
+  "ignore": [
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/test_*",
+    "**/tests/**",
+    "**/.git/**",
+    "**/node_modules/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/*.egg-info/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/.mypy_cache/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    "**/htmlcov/**",
+    "**/.coverage",
+    "**/*.log"
+  ],
+  "format": ["python", "javascript", "typescript", "yaml", "json", "markdown"],
+  "absolute": false,
+  "gitignore": true,
+  "minLines": 11,
+  "minTokens": 15,
+  "output": "./",
+  "silent": false,
+  "blame": false,
+  "maxLines": 1000,
+  "maxSize": "100KB",
+  "ignorePattern": [
+    "Synchronous wrapper for .*_async"
+  ]
+}
