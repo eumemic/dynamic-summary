@@ -1,7 +1,8 @@
 """Validation functions for RagZoom to ensure correctness of indexing and retrieval."""
 
 import logging
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from ragzoom.store import Store, TreeNode
 
@@ -19,7 +20,7 @@ def set_validation_enabled(enabled: bool) -> None:
     # Don't log when enabling validation - we only want to see errors
 
 
-def validate(validation_fn: Callable[[], Optional[str]], context: str = "") -> None:
+def validate(validation_fn: Callable[[], str | None], context: str = "") -> None:
     """Run validation function if validation is enabled.
 
     Args:
@@ -43,7 +44,7 @@ def validate(validation_fn: Callable[[], Optional[str]], context: str = "") -> N
 
 def validate_document_coverage(
     original_text: str, leaf_nodes: list[TreeNode]
-) -> Optional[str]:
+) -> str | None:
     """Validate that leaf nodes cover the entire document.
 
     Args:
@@ -88,7 +89,7 @@ def validate_document_coverage(
 
 def validate_chunk_sizes(
     leaf_nodes: list[TreeNode], target_tokens: int, tolerance: float = 0.2
-) -> Optional[str]:
+) -> str | None:
     """Validate that chunk sizes are within tolerance of target.
 
     Args:
@@ -138,8 +139,8 @@ def validate_chunk_sizes(
 
 
 def validate_tree_structure(
-    store: Store, document_id: str, original_text: Optional[str] = None
-) -> Optional[str]:
+    store: Store, document_id: str, original_text: str | None = None
+) -> str | None:
     """Validate tree structure integrity.
 
     Args:
@@ -240,9 +241,9 @@ def validate_tiling(
     tiling: list[str],  # List of node IDs
     store: Store,
     document_id: str,
-    original_text: Optional[str] = None,
-    budget_tokens: Optional[int] = None,
-) -> Optional[str]:
+    original_text: str | None = None,
+    budget_tokens: int | None = None,
+) -> str | None:
     """Validate that a tiling has no overlaps, no duplicates, and (optionally) covers the document.
 
     Args:
@@ -332,7 +333,7 @@ def validate_tiling(
     return None  # Valid tiling
 
 
-def validate_tree_is_left_balanced(store: Store, document_id: str) -> Optional[str]:
+def validate_tree_is_left_balanced(store: Store, document_id: str) -> str | None:
     """Validate that the indexed tree is left-balanced.
 
     A left-balanced tree means internal nodes have either:
@@ -384,7 +385,7 @@ def validate_tree_is_left_balanced(store: Store, document_id: str) -> Optional[s
     return None  # Tree is left-balanced
 
 
-def validate_equal_leaf_depth(store: Store, document_id: str) -> Optional[str]:
+def validate_equal_leaf_depth(store: Store, document_id: str) -> str | None:
     """Validate that all leaf nodes are at the same (maximal) depth.
 
     This ensures consistent abstraction levels across the tree and prevents
@@ -463,7 +464,7 @@ async def validate_summary_faithfulness(
     right_text: str,
     openai_client: Any,
     model: str = "gpt-4o",
-) -> Optional[str]:
+) -> str | None:
     """Validate that a summary faithfully represents its children's content.
 
     This uses a cheap LLM to verify the summary contains only information

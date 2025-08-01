@@ -23,30 +23,62 @@ Get code through CI successfully with minimal back-and-forth. Monitor CI, fix is
 ## Workflow
 
 1. **Create PR**: If no PR exists, create one (reference related issues with "Fixes #123")
-2. **Monitor**: Watch CI status with `gh pr checks --watch --fail-fast`
-3. **Fix Immediately**: When issues found:
-   - Stop monitoring
-   - Fix ALL issues (CI failures, review comments)
-   - Commit and push fixes using /commit
-4. **Iterate**: Continue monitoring and fixing until all checks pass
+
+2. **Monitor CI with fail-fast**: Use `gh pr checks --watch --fail-fast`
+   - Exits immediately on first CI failure
+   - Fix the failure, commit, and resume monitoring
+   - Continues until all checks pass
+
+3. **Read Reviews**: Once all CI checks pass (build complete):
+   - Check for reviews: `gh pr view --comments`
+   - Look for automated review feedback (e.g., claude-review)
+   - If issues found, fix them and return to step 2
+
+4. **Assess Performance Tradeoffs**: After all CI checks pass:
+   - Find latest performance report in PR comments
+   - Analyze performance changes in context of PR objectives
+   - Consider acceptable tradeoffs (e.g., slightly higher cost for better accuracy)
+   - If tradeoffs seem reasonable for the PR's goals, proceed
+   - If concerning, discuss with user before declaring PR ready
+
+5. **Success Criteria**:
+   - All CI checks pass
+   - All review feedback read and addressed
+   - Performance changes are reasonable given PR objectives
+   - Any performance tradeoffs are justified by improvements elsewhere
+   - No outstanding issues to fix
 
 ## Key Principles
 
-- **Fail fast**: `--fail-fast` flag exits on first CI failure
-- **Batch fixes**: Multiple commits locally, one push to minimize CI runs
-- **Be proactive**: Auto-fix build/test/lint issues
+- **Fail fast**: `--fail-fast` flag exits on first CI failure for quick fixes
+- **Reviews after CI**: Read reviews only after all checks pass
+- **Batch fixes**: Fix all issues before pushing
+- **Be proactive**: Auto-fix build/test/lint/security issues
 - **Ask first**: For style preferences and non-blocking suggestions
 
 ## Issue Priority
 
-**Auto-fix**: Build failures, test failures, linting, missing imports
+**Auto-fix**: Build failures, test failures, linting, missing imports, security issues
 **Ask first**: Reviewer nits, refactoring suggestions, style preferences
+**Must address**: Any issues marked as "Critical" or "Important" in code reviews
 
 ## Final Output
 
-When complete, always include:
+Before declaring PR ready:
+1. Verify all CI checks passed
+2. Read and address all code review comments
+3. Ensure no CHANGES_REQUESTED reviews
+
+Only then output:
 ```
 ✅ PR ready for review
+PR #N: https://github.com/owner/repo/pull/N
+```
+
+If reviews found issues that were fixed, mention:
+```
+✅ All review comments addressed
+✅ PR ready for final review
 PR #N: https://github.com/owner/repo/pull/N
 ```
 
@@ -56,17 +88,39 @@ PR #N: https://github.com/owner/repo/pull/N
 Creating PR...
 ✅ PR #42: https://github.com/owner/repo/pull/42
 
-Monitoring CI...
+Monitoring CI with fail-fast...
 ❌ Build failed: missing import
 
 Fixing import issue...
 ✅ Fixed and ready to commit
-
-(User runs /commit to push the fix)
+(User runs /commit)
 
 Resuming CI monitoring...
-✅ All checks passed!
+✅ All CI checks passed!
 
+Checking for code reviews...
+📝 Found claude-review with feedback:
+- Temp file conflicts in pre-commit hook
+- Missing safety check for branch reset
+
+Fixing review issues...
+✅ Fixed all issues - ready to commit
+(User runs /commit)
+
+Resuming CI monitoring...
+✅ All CI checks passed!
+
+Checking for code reviews...
+✅ No new issues found
+
+Assessing performance changes...
+📊 Performance Report Analysis:
+- Throughput: -4.3% on 200 tokens (acceptable variation)
+- Cost: +4.2% on 200 tokens (minor increase)
+- Context: PR adds improved accuracy features
+✅ Performance tradeoffs justified by accuracy improvements
+
+✅ PR ready for review
 PR #42: https://github.com/owner/repo/pull/42
 ```
 

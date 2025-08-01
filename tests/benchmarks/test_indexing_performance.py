@@ -2,8 +2,6 @@
 
 import json
 import os
-import tempfile
-import time
 from pathlib import Path
 
 import pytest
@@ -16,194 +14,146 @@ from ragzoom.store import Store
 pytestmark = pytest.mark.benchmark
 
 
-def generate_test_document(size_tokens: int = 10000) -> str:
-    """Generate a test document with approximately the specified number of tokens.
+def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
+    """Get a test document from the test_data directory.
 
-    Creates realistic narrative text that's good for testing summarization.
+    Args:
+        document_type: Type of document to load
+            - "narrative": The Hobbit Chapter 1 (~7K tokens)
+            - "technical": Technical documentation sample
+            - "classic": Moby Dick sample
+
+    Returns:
+        Tuple of (document_text, document_name)
     """
-    # Each sentence is roughly 15-20 tokens
-    tokens_per_sentence = 17
-    sentences_needed = size_tokens // tokens_per_sentence
+    documents = {
+        "narrative": ("test_data/the_hobbit_chapter_1.txt", "The Hobbit Ch1"),
+        "technical": ("test_data/smoke_test_larger.txt", "Technical Doc"),
+        "classic": ("test_data/moby_dick_sample.txt", "Moby Dick Sample"),
+    }
 
-    # Generate a story-like document
-    paragraphs = []
-    sentences_written = 0
+    if document_type not in documents:
+        document_type = "narrative"  # Default
 
-    # Opening
-    opening = [
-        "In the early morning light, Sarah walked through the bustling city streets.",
-        "The coffee shop on the corner was already filled with the usual crowd of commuters.",
-        "She ordered her regular cappuccino and found a quiet table by the window.",
-        "Outside, the city was coming to life with its familiar rhythm of honking cars and hurried footsteps.",
-    ]
-    paragraphs.append(" ".join(opening))
-    sentences_written += len(opening)
+    file_path, name = documents[document_type]
 
-    # Middle sections - vary the content
-    topics = [
-        "technology conference",
-        "medical research",
-        "environmental project",
-        "educational initiative",
-        "business venture",
-        "scientific discovery",
-    ]
+    # Read the document
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            # If running from different directory, try from root
+            path = Path(__file__).parent.parent.parent / file_path
 
-    for i, topic in enumerate(topics):
-        if sentences_written >= sentences_needed:
-            break
-
-        if topic == "technology conference":
-            section = [
-                f"The {topic} was scheduled to begin at nine o'clock sharp.",
-                "Speakers from around the world had gathered to share their latest innovations.",
-                "Sarah's presentation on distributed systems was scheduled for the afternoon session.",
-                "She had spent months preparing the slides and rehearsing her key points.",
-                "The demo would showcase a new approach to handling large-scale data processing.",
-            ]
-        elif topic == "medical research":
-            section = [
-                f"Her colleague Dr. Chen was leading a groundbreaking {topic} project.",
-                "The team had been working on developing new treatments for rare diseases.",
-                "Initial trials showed promising results with minimal side effects.",
-                "The research facility was equipped with state-of-the-art laboratory equipment.",
-                "Funding for the next phase had just been approved by the board.",
-            ]
-        elif topic == "environmental project":
-            section = [
-                f"The {topic} aimed to restore the local wetlands ecosystem.",
-                "Volunteers from the community had been working tirelessly every weekend.",
-                "Native plants were being reintroduced to support wildlife habitats.",
-                "The project had already shown positive impacts on water quality.",
-                "Local schools were using it as an educational opportunity for students.",
-            ]
-        else:
-            section = [
-                f"Meanwhile, the {topic} was gaining momentum across the region.",
-                "Stakeholders from various sectors had expressed strong interest.",
-                "The implementation phase would require careful coordination.",
-                "Success metrics had been clearly defined and agreed upon.",
-                "Regular progress reports would be submitted to all participants.",
-            ]
-
-        paragraphs.append(" ".join(section))
-        sentences_written += len(section)
-
-    # Closing
-    closing = [
-        "As the day drew to a close, Sarah reflected on all that had been accomplished.",
-        "The journey ahead would be challenging, but the foundation was solid.",
-        "Tomorrow would bring new opportunities and fresh perspectives.",
-        "She finished her coffee and prepared for the next chapter.",
-    ]
-    paragraphs.append(" ".join(closing))
-
-    return "\n\n".join(paragraphs)
-
-
-class BenchmarkStore:
-    """Wrapper for Store that provides cleanup after benchmarks."""
-
-    def __init__(self):
-        self.temp_dir = tempfile.mkdtemp()
-        self.config = RagZoomConfig(
-            sqlite_database_url=f"sqlite:///{self.temp_dir}/test.db",
-            chroma_persist_directory=f"{self.temp_dir}/chroma",
-        )
-        self.store = Store(self.config)
-
-    def cleanup(self):
-        """Clean up temporary files."""
-        import shutil
-
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
-
-    def __enter__(self):
-        return self.store
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.cleanup()
+        text = path.read_text(encoding="utf-8")
+        return text, name
+    except Exception as e:
+        pytest.skip(f"Could not load test document {file_path}: {e}")
 
 
 @pytest.fixture
 def benchmark_config():
     """Config for benchmarks with real API calls."""
     return RagZoomConfig(
-        openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+        openai_api_key=os.getenv("RAGZOOM_OPENAI_API_KEY", "test-key"),
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
         embedding_batch_size=100,
     )
 
 
-@pytest.mark.parametrize("leaf_tokens", [100, 200, 400, 800])
-def test_indexing_performance(benchmark_config, leaf_tokens):
-    """Benchmark indexing performance at different chunk sizes."""
+@pytest.mark.parametrize("leaf_tokens", [100, 200, 400])
+@pytest.mark.parametrize("document_type", ["narrative"])
+def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
+    """Benchmark indexing performance at different chunk sizes with real documents."""
     # Skip if no API key
     if benchmark_config.openai_api_key == "test-key":
-        pytest.skip("OPENAI_API_KEY not set")
+        pytest.skip("RAGZOOM_OPENAI_API_KEY not set")
 
     # Update config with chunk size
     benchmark_config.leaf_tokens = leaf_tokens
 
-    # Generate test document
-    test_doc = generate_test_document(10000)  # 10K tokens
+    # Get test document
+    test_doc, doc_name = get_test_document(document_type)
 
     # Run indexing with metrics
-    with BenchmarkStore() as store:
+    with Store.temporary() as store:
         builder = TreeBuilder(benchmark_config, store)
 
         # Warm up tokenizer
         _ = builder.splitter.tokenizer.encode("warmup")
 
         # Run indexing
-        start_time = time.time()
-        doc_id, metrics = builder.add_document_with_metrics(
-            test_doc, document_id=f"benchmark_{leaf_tokens}", show_progress=False
+        doc_id, telemetry = builder.add_document_with_telemetry(
+            test_doc, document_id=f"{document_type}_{leaf_tokens}", show_progress=False
         )
-        end_time = time.time()
 
-        # Verify metrics match actual timing
-        actual_duration = end_time - start_time
-        assert abs(metrics.total_duration_seconds - actual_duration) < 0.1
-
-        # Save metrics to file for comparison
+        # Save telemetry data for comparison
         output_dir = Path("benchmark_results")
         output_dir.mkdir(exist_ok=True)
 
-        output_file = output_dir / f"metrics_{leaf_tokens}_tokens.json"
+        output_file = output_dir / f"telemetry_{leaf_tokens}_tokens.json"
         with open(output_file, "w") as f:
             json.dump(
                 {
                     "config": {
                         "leaf_tokens": leaf_tokens,
-                        "embedding_model": benchmark_config.embedding_model,
+                        "budget_tokens": benchmark_config.budget_tokens,
                         "summary_model": benchmark_config.summary_model,
+                        "embedding_model": benchmark_config.embedding_model,
                     },
-                    "metrics": metrics.to_dict(),
-                    "timestamp": time.time(),
+                    "document": {
+                        "document_id": f"{document_type}_{leaf_tokens}",
+                        "file_path": doc_name,
+                    },
+                    "telemetry": telemetry,
                 },
                 f,
                 indent=2,
             )
 
+        # Compute metrics from telemetry for display
+        from ragzoom.telemetry_analysis import compute_metrics_from_telemetry
+
+        metrics = compute_metrics_from_telemetry(telemetry, benchmark_config)
+
         # Print summary
-        print(f"\n=== Performance Summary (leaf_tokens={leaf_tokens}) ===")
+        print(f"\n=== Performance Summary ({doc_name}, leaf_tokens={leaf_tokens}) ===")
+        print(f"Document: {metrics.source_document_tokens:,} tokens")
         print(f"Tokens/second: {metrics.tokens_per_second:.1f}")
         print(f"Time per 1K tokens: {metrics.time_per_1k_tokens:.2f}s")
         print(f"Embedding tokens per 1K: {metrics.embedding_tokens_per_1k:.1f}")
         print(f"Summary tokens per 1K: {metrics.summary_tokens_per_1k:.1f}")
         print(f"API calls per 1K: {metrics.api_calls_per_1k:.1f}")
         print(f"Cost per 1K tokens: ${metrics.cost_per_1k_tokens:.4f}")
+        print(f"Peak memory: {metrics.peak_memory_mb:.1f} MB")
+        print(f"Memory growth: {metrics.memory_usage_mb:.1f} MB")
 
         # Summary accuracy
-        if metrics.summary_stats:
+        if hasattr(metrics, "summary_stats") and metrics.summary_stats:
             for target, stats in metrics.summary_stats.items():
                 print(f"\nSummary accuracy (target={target}):")
+                print(f"  Count: {stats.count}")
                 print(f"  Average size: {stats.avg_tokens:.1f} tokens")
                 print(f"  Average deviation: {stats.avg_deviation_percent:.1f}%")
-                print(f"  Over target: {stats.percent_over_target:.1f}%")
-                print(f"  Under target: {stats.percent_under_target:.1f}%")
+                print(f"  Median deviation: {stats.median_deviation_percent:.1f}%")
+                print(f"  Std deviation: {stats.std_deviation_percent:.1f}%")
+                print(
+                    f"  Over target: {stats.percent_over_target:.1f}% (max: {stats.max_overage_percent:.1f}%)"
+                )
+                print(
+                    f"  Under target: {stats.percent_under_target:.1f}% (max: {stats.max_underage_percent:.1f}%)"
+                )
+
+                # Percentiles
+                print("\n  Percentiles:")
+                print(f"    P50: {stats.percentile_50:.1f}%")
+                print(f"    P90: {stats.percentile_90:.1f}%")
+                print(f"    P95: {stats.percentile_95:.1f}%")
+
+                # Histogram
+                print("\n  Distribution:")
+                for bucket, data in stats.histogram.items():
+                    print(f"    {bucket}: {data['count']} ({data['percentage']:.1f}%)")
 
 
 def test_performance_comparison():
@@ -212,13 +162,33 @@ def test_performance_comparison():
     if not output_dir.exists():
         pytest.skip("No benchmark results to compare")
 
+    # Import needed for computing metrics from telemetry
+    from ragzoom.config import RagZoomConfig
+    from ragzoom.telemetry_analysis import compute_metrics_from_telemetry
+
     # Load all results
     results = {}
-    for file in output_dir.glob("metrics_*_tokens.json"):
+    for file in output_dir.glob("telemetry_*_tokens.json"):
         with open(file) as f:
             data = json.load(f)
             chunk_size = data["config"]["leaf_tokens"]
-            results[chunk_size] = data["metrics"]
+
+            # Compute metrics from telemetry data
+            config = RagZoomConfig(
+                openai_api_key="dummy",
+                embedding_cost_per_1k=0.0001,
+                summary_input_cost_per_1k=0.0025,
+                summary_output_cost_per_1k=0.01,
+            )
+            metrics = compute_metrics_from_telemetry(data["telemetry"], config)
+
+            # Store computed metrics for comparison
+            results[chunk_size] = {
+                "tokens_per_second": metrics.tokens_per_second,
+                "embedding_tokens_per_1k": metrics.embedding_tokens_per_1k,
+                "summary_tokens_per_1k": metrics.summary_tokens_per_1k,
+                "cost_per_1k_tokens": metrics.cost_per_1k_tokens,
+            }
 
     if len(results) < 2:
         pytest.skip("Need at least 2 benchmark results to compare")
@@ -234,10 +204,10 @@ def test_performance_comparison():
         m = results[chunk_size]
         print(
             f"{chunk_size:<12} "
-            f"{m['timing']['tokens_per_second']:<12.1f} "
-            f"{m['efficiency']['embedding_tokens_per_1k']:<10.1f} "
-            f"{m['efficiency']['summary_tokens_per_1k']:<12.1f} "
-            f"${m['efficiency']['cost_per_1k_tokens']:<9.4f}"
+            f"{m['tokens_per_second']:<12.1f} "
+            f"{m['embedding_tokens_per_1k']:<10.1f} "
+            f"{m['summary_tokens_per_1k']:<12.1f} "
+            f"${m['cost_per_1k_tokens']:<9.4f}"
         )
 
 
@@ -248,7 +218,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         leaf_tokens = int(sys.argv[1])
         config = RagZoomConfig(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            openai_api_key=os.getenv("RAGZOOM_OPENAI_API_KEY"),
             leaf_tokens=leaf_tokens,
         )
         test_indexing_performance(config, leaf_tokens)

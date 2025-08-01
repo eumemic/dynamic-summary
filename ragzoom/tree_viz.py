@@ -1,7 +1,7 @@
 """ASCII tree visualization for tiling display."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any
 
 import tiktoken
 
@@ -228,12 +228,12 @@ def build_ascii_tree(
     store: Store,
     document_id: str,
     width: int = 120,
-    coverage_map: Optional[dict[str, bool]] = None,
-    seed_node_ids: Optional[set[str]] = None,
-    position_resolver: Optional[PositionResolver] = None,
-    node_infos: Optional[list[Any]] = None,  # List of NodeInfo objects
+    coverage_map: dict[str, bool] | None = None,
+    seed_node_ids: set[str] | None = None,
+    position_resolver: PositionResolver | None = None,
+    node_infos: list[Any] | None = None,  # List of NodeInfo objects
     use_token_coords: bool = False,
-    preloaded_nodes: Optional[dict[str, "TreeNode"]] = None,
+    preloaded_nodes: dict[str, "TreeNode"] | None = None,
 ) -> str:
     """Build an ASCII tree visualization showing the tiling structure.
 

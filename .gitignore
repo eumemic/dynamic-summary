@@ -69,3 +69,9 @@ Thumbs.db
 
 # Git worktrees
 worktrees/
+# Benchmark/telemetry result files
+benchmark-*.json
+telemetry-*.json
+telemetry.json
+benchmark_results/
+telemetry_reports/

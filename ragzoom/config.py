@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -84,7 +84,7 @@ class RagZoomConfig(BaseSettings):
     embedding_model: str = Field(
         default="text-embedding-3-small", description="OpenAI embedding model"
     )
-    embedding_dimensions: Optional[int] = Field(
+    embedding_dimensions: int | None = Field(
         default=None, description="Embedding dimensions (None=use model default)"
     )
 
@@ -109,7 +109,7 @@ class RagZoomConfig(BaseSettings):
     )
 
     # Pricing configuration
-    pricing_file: Optional[str] = Field(
+    pricing_file: str | None = Field(
         default=None,
         description="Path to JSON file with LLM pricing (defaults to ragzoom/pricing.json)",
     )

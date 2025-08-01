@@ -5,7 +5,6 @@ import logging
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from dotenv import load_dotenv
@@ -13,7 +12,6 @@ from dotenv import load_dotenv
 from ragzoom.assemble import Assembler
 from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.metrics import IndexingMetrics
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store, TreeNode
 from ragzoom.tree_viz import build_ascii_tree
@@ -32,76 +30,6 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
 # Keep ragzoom.index at INFO to show batch progress
-
-
-def display_metrics(metrics: IndexingMetrics) -> None:
-    """Display detailed performance metrics in a user-friendly format."""
-    click.echo("\n📊 PERFORMANCE METRICS")
-    click.echo(f"{'='*50}")
-
-    click.echo("\n⏱️  Timing:")
-    click.echo(f"  Total duration: {metrics.total_duration_seconds:.2f} seconds")
-    click.echo(f"  Throughput: {metrics.tokens_per_second:.1f} tokens/sec")
-    click.echo(f"  Time per 1K tokens: {metrics.time_per_1k_tokens:.2f} seconds")
-
-    click.echo("\n📄 Document:")
-    click.echo(f"  Source tokens: {metrics.source_document_tokens:,}")
-    click.echo(f"  Chunks created: {metrics.chunks_created}")
-    click.echo(f"  Tree height: {metrics.tree_height}")
-    click.echo(f"  Nodes per level: {metrics.nodes_per_level}")
-
-    click.echo("\n🔌 API Usage:")
-    click.echo(f"  Total API calls: {metrics.total_api_calls}")
-    click.echo(f"  Embedding calls: {metrics.embedding_api_calls}")
-    click.echo(f"  Summary calls: {metrics.summary_api_calls}")
-    click.echo(f"  Avg embedding batch size: {metrics.avg_embedding_batch_size:.1f}")
-
-    click.echo("\n🪙 Token Usage:")
-    click.echo(f"  Embedding tokens: {metrics.total_embedding_tokens:,}")
-    click.echo(f"  Summary prompt tokens: {metrics.total_summary_prompt_tokens:,}")
-    click.echo(
-        f"  Summary completion tokens: {metrics.total_summary_completion_tokens:,}"
-    )
-    click.echo(
-        f"  Embedding tokens per 1K source: {metrics.embedding_tokens_per_1k:.1f}"
-    )
-    click.echo(f"  Summary tokens per 1K source: {metrics.summary_tokens_per_1k:.1f}")
-
-    click.echo("\n💰 Cost Analysis:")
-    click.echo(f"  Cost per 1K source tokens: ${metrics.cost_per_1k_tokens:.4f}")
-    total_cost = metrics.cost_per_1k_tokens * metrics.source_document_tokens / 1000
-    click.echo(f"  Total estimated cost: ${total_cost:.4f}")
-
-    if metrics.summary_stats:
-        click.echo("\n📏 Summary Accuracy:")
-        for target_size, stats in sorted(metrics.summary_stats.items()):
-            click.echo(f"\n  Target {target_size} tokens:")
-            click.echo(f"    Count: {stats.count}")
-            click.echo(f"    Average size: {stats.avg_tokens:.1f} tokens")
-            click.echo(f"    Average deviation: {stats.avg_deviation_percent:.1f}%")
-            click.echo(
-                f"    Over target: {stats.percent_over_target:.1f}% (max: {stats.max_overage_percent:.1f}%)"
-            )
-            click.echo(
-                f"    Under target: {stats.percent_under_target:.1f}% (max: {stats.max_underage_percent:.1f}%)"
-            )
-
-    if metrics.retry_stats:
-        click.echo("\n🔄 Summary Retries:")
-        click.echo(f"  Total retries: {metrics.total_retries}")
-        click.echo(
-            f"  Retries per 1K source tokens: {metrics.retries_per_1k_tokens:.1f}"
-        )
-        click.echo(
-            f"  Average retries per summary: {metrics.avg_retries_per_summary:.1f}"
-        )
-
-        if len(metrics.retry_stats) > 1:
-            click.echo("\n  By tree level:")
-            for level, retry_stat in sorted(metrics.retry_stats.items()):
-                click.echo(
-                    f"    Level {level}: avg {retry_stat.avg_retries:.1f}, min {retry_stat.min_retries}, max {retry_stat.max_retries} ({retry_stat.count} summaries)"
-                )
 
 
 @click.group()
@@ -139,24 +67,29 @@ def cli(ctx: click.Context) -> None:
     is_flag=True,
     help="Show debug information including token usage statistics",
 )
-@click.option("--benchmark", is_flag=True, help="Enable performance metrics collection")
 @click.option(
-    "--benchmark-output", type=click.Path(), help="Save benchmark results to JSON file"
+    "--telemetry",
+    "telemetry_file",
+    type=click.Path(),
+    is_flag=False,
+    flag_value="telemetry.json",
+    default=None,
+    help="Save telemetry data to JSON file (default: telemetry.json)",
 )
 @click.pass_context
 def index(
     ctx: click.Context,
     file_path: str,
-    document_id: Optional[str],
+    document_id: str | None,
     clear: bool,
     no_progress: bool,
     max_concurrent: int,
     validate: bool,
     debug: bool,
-    benchmark: bool,
-    benchmark_output: Optional[str],
+    telemetry_file: str | None,
 ) -> None:
     """Index a document from file."""
+
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
 
@@ -195,9 +128,9 @@ def index(
         store = ctx.obj["store"]
         tree_builder = TreeBuilder(config, store, max_concurrent=max_concurrent)
 
-        # Index with or without metrics based on benchmark flag
-        if benchmark:
-            doc_id, metrics = tree_builder.add_document_with_metrics(
+        # Index with telemetry if requested
+        if telemetry_file:
+            doc_id, telemetry = tree_builder.add_document_with_telemetry(
                 text,
                 document_id=document_id,
                 file_path=str(path.absolute()),
@@ -275,20 +208,32 @@ def index(
                 "\n💡 Debug information (including token usage statistics) logged to stderr"
             )
 
-        # Display and save metrics if benchmark mode
-        if benchmark:
-            display_metrics(metrics)
+        # Save telemetry if requested
+        if telemetry_file:
+            # telemetry_file will be either the flag_value or the user-provided path
+            output_file = telemetry_file
 
-            # Save to JSON if requested
-            if benchmark_output:
-                click.echo(f"\n📁 Saving metrics to {benchmark_output}...")
-                metrics_dict = metrics.to_dict()
-                metrics_dict["document_id"] = doc_id
-                metrics_dict["file_path"] = str(path.absolute())
+            click.echo(f"\n📁 Saving telemetry to {output_file}...")
 
-                with open(benchmark_output, "w") as f:
-                    json.dump(metrics_dict, f, indent=2)
-                click.echo(f"✅ Metrics saved to {benchmark_output}")
+            # Create output with config, document info, and telemetry data
+            telemetry_data = {
+                "config": {
+                    "leaf_tokens": config.leaf_tokens,
+                    "budget_tokens": config.budget_tokens,
+                    "summary_model": config.summary_model,
+                    "embedding_model": config.embedding_model,
+                },
+                "document": {
+                    "document_id": doc_id,
+                    "file_path": str(path.absolute()),
+                },
+                "telemetry": telemetry,
+            }
+
+            with open(output_file, "w") as f:
+                json.dump(telemetry_data, f, indent=2)
+
+            click.echo(f"✅ Telemetry saved to {output_file}")
 
     except Exception as e:
         click.echo(f"❌ Error indexing document: {e}", err=True)
@@ -373,11 +318,11 @@ def query(
     ctx: click.Context,
     query_text: str,
     document_id: str,
-    n_max: Optional[int],
-    token_budget: Optional[int],
+    n_max: int | None,
+    token_budget: int | None,
     debug: bool,
     validate: bool,
-    viz_width: Optional[int],
+    viz_width: int | None,
     viz_coords: str,
 ) -> None:
     """Query the system and get a summary."""
@@ -570,7 +515,7 @@ def serve(host: str, port: int, reload: bool) -> None:
 @click.option("--document-id", "-d", help="Clear only a specific document")
 @click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
-def clear(ctx: click.Context, document_id: Optional[str], confirm: bool) -> None:
+def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
     """Clear data from the database.
 
     Without --document-id, clears all data.
@@ -692,6 +637,11 @@ def export(ctx: click.Context, input_file: str, output_file: str, format: str) -
     except Exception as e:
         click.echo(f"❌ Error exporting: {e}", err=True)
         sys.exit(1)
+
+
+# Telemetry commands are available via optional dependencies
+# Install with: pip install ragzoom[telemetry]
+# Usage: ragzoom-telemetry analyze|compare|visualize
 
 
 if __name__ == "__main__":

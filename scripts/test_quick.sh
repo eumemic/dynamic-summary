@@ -9,9 +9,9 @@
 pattern=$1
 
 if [ -z "$pattern" ]; then
-    echo "Running all tests..."
-    time pytest tests/ -v --tb=short
+    echo "Running all tests (excluding benchmarks)..."
+    time pytest tests/ -v --tb=short -m "not benchmark"
 else
-    echo "Running tests matching '$pattern'..."
-    time pytest tests/ -k "$pattern" -v --tb=short
+    echo "Running tests matching '$pattern' (excluding benchmarks)..."
+    time pytest tests/ -k "$pattern" -v --tb=short -m "not benchmark"
 fi

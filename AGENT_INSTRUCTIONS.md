@@ -39,7 +39,32 @@ For detailed understanding of the core tiling algorithm:
 
 @include docs/deep-dives/tiling-algorithm.md
 
-## 7. Custom Claude Commands
+## 7. Telemetry Tools Architecture
+
+### Optional Dependencies Design
+The telemetry analysis commands (`analyze`, `compare`, `visualize`) use optional dependencies to:
+
+- **Avoid heavy deps in main package**: Matplotlib, seaborn, pandas only installed when needed
+- **Clean separation**: Developer tools vs end-user features 
+- **Single package maintenance**: No circular dependencies, simpler versioning
+- **Idiomatic Python**: Follows PEP 517/518 standards with `[project.optional-dependencies]`
+
+**Installation**:
+```bash
+# Core package only
+pip install ragzoom
+
+# With telemetry tools
+pip install ragzoom[telemetry]
+```
+
+**Usage**: `ragzoom-telemetry analyze|compare|visualize` (separate CLI entry point)
+
+This approach was chosen over a separate package to eliminate circular dependencies and maintenance overhead while preserving clean separation.
+
+**For comprehensive telemetry documentation**: See `docs/telemetry.md`
+
+## 8. Custom Claude Commands
 
 Custom slash commands are stored in `.claude/commands/` as markdown files:
 - `/commit` - Create atomic commits and push to origin
@@ -73,13 +98,7 @@ cd worktrees/worktree-N && claude
 
 ### Key Commands
 ```bash
-# Testing
-pytest tests/ -m "not slow and not integration" -n 8  # Fast tests only
-./scripts/test_quick.sh                                # Quick test runner
-
-# Type checking & linting  
-dmypy run -- ragzoom/        # Fast type checking with daemon
-ruff check ragzoom/ tests/   # Linting
+# Note: Testing, type checking & linting all run automatically via pre-commit hooks
 
 # Core operations
 ragzoom index <file> [--document-id ID] [--clear] [--validate]
@@ -95,4 +114,5 @@ ragzoom serve               # Start API server
 
 ### Common Troubleshooting
 - **Segmentation Faults:** If `pytest` crashes with a `Segmentation fault`, the local `chroma_db/` directory is almost certainly corrupted. Delete it and restart: `rm -rf chroma_db/`
-- **Persistent `mypy` Errors:** The `dmypy` daemon can sometimes get into a bad state. Run a full check: `mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs`
+- **Pre-commit Hook Issues:** If pre-commit hooks fail, they'll automatically fix most issues. Just re-commit after they run.
+- **Performance Issues:** For telemetry analysis and benchmarking, see `docs/telemetry.md`
