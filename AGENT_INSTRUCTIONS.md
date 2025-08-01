@@ -24,6 +24,7 @@ This file contains comprehensive instructions for any AI agent working on this r
 - **No Unauthorized Commits:** Never commit code unless explicitly directed to by the user.
 - **Atomic Commits:** When asked to commit, group changes into small, logical, atomic commits with clear messages. Do not lump unrelated changes together.
 - **Don't Deprecate, Delete:** Do not leave old code paths behind a feature flag or comment them out. Remove them. The git history will preserve them if we ever need to look back.
+- **Zero Code Duplication:** This codebase maintains a strict zero-duplication policy. Always refactor duplicated code. Only mark legitimate false positives (like async/sync wrappers) with `jscpd:ignore` comments and clear justification. See `docs/developer-guide.md` section 4.5 for detailed guidelines.
 
 ## 4. System Architecture & Technical Documentation
 
@@ -98,7 +99,7 @@ cd worktrees/worktree-N && claude
 
 ### Key Commands
 ```bash
-# Note: Testing, type checking & linting all run automatically via pre-commit hooks
+# Note: Testing, type checking, linting & duplication detection all run automatically via pre-commit hooks
 
 # Core operations
 ragzoom index <file> [--document-id ID] [--clear] [--validate]

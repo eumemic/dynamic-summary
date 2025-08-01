@@ -16,6 +16,7 @@ from ragzoom.telemetry_analysis import (
     compute_amplification_metrics,
     compute_batch_efficiency,
     compute_metrics_from_telemetry,
+    get_amplification_summary,
     get_telemetry_thresholds,
 )
 from ragzoom.telemetry_config import (
@@ -729,10 +730,15 @@ class TelemetryVisualizer:
             telemetry = data["telemetry"]
             config = self._create_config_from_metrics(data.get("metrics", {}))
 
-            amp = compute_amplification_metrics(telemetry, config)
+            # Compute all metrics once (single source of truth)
+            metrics = compute_metrics_from_telemetry(telemetry, config)
+
+            # Extract amplification summary from metrics
+            amp = get_amplification_summary(metrics)
+
+            # Compute other analysis independently
             batch = compute_batch_efficiency(telemetry)
             retry = analyze_retry_patterns(telemetry)
-            metrics = compute_metrics_from_telemetry(telemetry, config)
 
             cost_amps.append(amp["median_cost"])
             batch_utils.append(batch["batch_utilization"])

@@ -196,112 +196,11 @@ def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -
         - median_output: Median output amplification
         - by_height: Amplification metrics broken down by tree height
     """
-    parsed_data = parse_telemetry_format(telemetry_data)
+    # Use compute_metrics_from_telemetry as the single source of truth
+    metrics = compute_metrics_from_telemetry(telemetry_data, config)
 
-    all_cost_amplifications = []
-    all_input_amplifications = []
-    all_output_amplifications = []
-    amplifications_by_height: dict[int, dict[str, list[float]]] = {}
-
-    # Process all documents
-    for doc_type, doc_data in parsed_data["documents"].items():
-        nodes = doc_data.get("nodes", [])
-
-        for node in nodes:
-            # Only process summary nodes
-            # v1.0: check node_type, v2.0: check height > 0
-            # Get height (compatible with both v1.0 and v2.0)
-            height = node.get("height", node.get("level", 0))
-            is_leaf = node.get("node_type") == "leaf" or height == 0
-            if is_leaf:
-                continue
-
-            summary_attempts = node.get("summary_attempts", [])
-
-            # Track cumulative tokens for this node across all attempts
-            node_total_prompt_tokens = 0
-            node_total_completion_tokens = 0
-            node_input_text_tokens = 0
-            node_final_summary_tokens = 0
-            has_accepted = False
-
-            # Accumulate tokens from ALL attempts
-            for attempt in summary_attempts:
-                prompt_tokens = attempt.get("prompt_tokens", 0)
-                completion_tokens = attempt.get("completion_tokens", 0)
-
-                node_total_prompt_tokens += prompt_tokens
-                node_total_completion_tokens += completion_tokens
-
-                # Track the input text tokens (should be same across attempts)
-                if node_input_text_tokens == 0:
-                    node_input_text_tokens = attempt.get("input_text_tokens", 0)
-
-                # Track the final accepted attempt's output
-                if attempt.get("status") == "accepted":
-                    has_accepted = True
-                    node_final_summary_tokens = attempt.get("actual_tokens", 0)
-
-            # Calculate amplification using ALL attempts' tokens
-            if has_accepted and node_input_text_tokens > 0:
-                # Input amplification = total prompt tokens / original text tokens
-                input_amplification = node_total_prompt_tokens / node_input_text_tokens
-
-                # Output amplification = total completion tokens / final summary tokens
-                output_amplification = (
-                    node_total_completion_tokens / node_final_summary_tokens
-                    if node_final_summary_tokens > 0
-                    else 1.0
-                )
-
-                # Calculate cost-weighted amplification using cumulative tokens
-                cost_amplification = _calculate_cost_amplification(
-                    node_total_prompt_tokens,
-                    node_total_completion_tokens,
-                    node_input_text_tokens,
-                    node_final_summary_tokens,
-                    config,
-                )
-
-                # Collect amplifications
-                all_cost_amplifications.append(cost_amplification)
-                all_input_amplifications.append(input_amplification)
-                all_output_amplifications.append(output_amplification)
-
-                # Track by height
-                if height not in amplifications_by_height:
-                    amplifications_by_height[height] = {
-                        "input": [],
-                        "output": [],
-                        "cost": [],
-                    }
-
-                amplifications_by_height[height]["input"].append(input_amplification)
-                amplifications_by_height[height]["output"].append(output_amplification)
-                amplifications_by_height[height]["cost"].append(cost_amplification)
-
-    # Compute summary statistics
-    result = {
-        "median_cost": 0.0,
-        "cost_p90": 0.0,
-        "cost_p95": 0.0,
-        "median_input": 0.0,
-        "median_output": 0.0,
-        "by_height": amplifications_by_height,
-    }
-
-    if all_cost_amplifications:
-        result["median_cost"] = median(all_cost_amplifications)
-        result["cost_p90"] = _compute_percentile(all_cost_amplifications, 0.9)
-        result["cost_p95"] = _compute_percentile(all_cost_amplifications, 0.95)
-
-    if all_input_amplifications:
-        result["median_input"] = median(all_input_amplifications)
-
-    if all_output_amplifications:
-        result["median_output"] = median(all_output_amplifications)
-
-    return result
+    # Extract summary statistics from the computed metrics
+    return get_amplification_summary(metrics)
 
 
 def _compute_percentile(values: list[float], percentile: float) -> float:
@@ -684,6 +583,44 @@ class ComputedMetrics:
     nodes_per_height: list[int]
 
 
+def get_amplification_summary(metrics: ComputedMetrics) -> dict:
+    """Compute amplification summary statistics from raw metrics.
+
+    Args:
+        metrics: ComputedMetrics object containing raw amplification data
+
+    Returns:
+        Dictionary containing amplification summary statistics:
+        - median_cost: Median cost amplification
+        - cost_p90: 90th percentile cost amplification
+        - cost_p95: 95th percentile cost amplification
+        - median_input: Median input amplification
+        - median_output: Median output amplification
+        - by_height: Amplification metrics broken down by tree height
+    """
+    result = {
+        "median_cost": 0.0,
+        "cost_p90": 0.0,
+        "cost_p95": 0.0,
+        "median_input": 0.0,
+        "median_output": 0.0,
+        "by_height": metrics.amplifications_by_height,
+    }
+
+    if metrics.cost_amplifications:
+        result["median_cost"] = median(metrics.cost_amplifications)
+        result["cost_p90"] = _compute_percentile(metrics.cost_amplifications, 0.9)
+        result["cost_p95"] = _compute_percentile(metrics.cost_amplifications, 0.95)
+
+    if metrics.input_amplifications:
+        result["median_input"] = median(metrics.input_amplifications)
+
+    if metrics.output_amplifications:
+        result["median_output"] = median(metrics.output_amplifications)
+
+    return result
+
+
 def compute_metrics_from_telemetry(
     telemetry_data: dict, config: RagZoomConfig
 ) -> ComputedMetrics:
@@ -813,6 +750,25 @@ def compute_metrics_from_telemetry(
                 metrics_data["input_amplifications"].append(input_amplification)
                 metrics_data["output_amplifications"].append(output_amplification)
                 metrics_data["cost_amplifications"].append(cost_amplification)
+
+                # Track amplifications by height
+                # Need height - already computed earlier for leaf check
+                node_height = node.get("height", node.get("level", 0))
+                if node_height not in metrics_data["amplifications_by_height"]:
+                    metrics_data["amplifications_by_height"][node_height] = {
+                        "input": [],
+                        "output": [],
+                        "cost": [],
+                    }
+                metrics_data["amplifications_by_height"][node_height]["input"].append(
+                    input_amplification
+                )
+                metrics_data["amplifications_by_height"][node_height]["output"].append(
+                    output_amplification
+                )
+                metrics_data["amplifications_by_height"][node_height]["cost"].append(
+                    cost_amplification
+                )
 
             # Count chunks (leaf nodes)
             # v1.0: check node_type, v2.0: check height == 0

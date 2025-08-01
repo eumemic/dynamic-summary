@@ -524,27 +524,6 @@ Here's the content to summarize:"""
         doc_id, telemetry = result
         return doc_id, telemetry
 
-    # TODO: Remove this deprecated method in next major version
-    def add_document_with_metrics(
-        self,
-        text: str,
-        document_id: str | None = None,
-        file_path: str | None = None,
-        show_progress: bool = False,
-    ) -> tuple[str, dict]:
-        """Deprecated: Use add_document_with_telemetry instead.
-
-        This method is kept for backward compatibility but returns telemetry dict
-        instead of IndexingMetrics.
-
-        Returns:
-            tuple[str, dict]: Document ID and telemetry data dictionary
-                (previously returned IndexingMetrics object)
-        """
-        return self.add_document_with_telemetry(
-            text, document_id, file_path, show_progress
-        )
-
     async def add_document_async(
         self,
         text: str,
