@@ -42,6 +42,29 @@ def validate(validation_fn: Callable[[], str | None], context: str = "") -> None
         os._exit(1)  # Use os._exit to ensure immediate termination
 
 
+def _validate_with_nodes(
+    store: Store,
+    document_id: str,
+    validator: Callable[[list[TreeNode]], str | None],
+    empty_error: str = "No nodes found for document",
+) -> str | None:
+    """Base validation helper that handles common node retrieval.
+
+    Args:
+        store: Storage instance
+        document_id: Document to validate
+        validator: Function that validates the nodes
+        empty_error: Error message if no nodes found
+
+    Returns:
+        Error message if invalid, None if valid
+    """
+    nodes = store.get_all_nodes_for_document(document_id)
+    if not nodes:
+        return empty_error
+    return validator(nodes)
+
+
 def validate_document_coverage(
     original_text: str, leaf_nodes: list[TreeNode]
 ) -> str | None:
@@ -341,48 +364,41 @@ def validate_tree_is_left_balanced(store: Store, document_id: str) -> str | None
     2. Both left and right children
 
     No node can have only a right child without a left child.
-
-    Args:
-        store: Storage instance
-        document_id: Document to validate
-
-    Returns:
-        Error message if invalid, None if valid
     """
-    nodes = store.get_all_nodes_for_document(document_id)
-    if not nodes:
-        return "No nodes found for document"
 
-    # A single-node tree is valid
-    if len(nodes) == 1:
-        node = nodes[0]
-        if node.left_child_id is not None or node.right_child_id is not None:
-            return f"Invalid tree: node {node.id} references non-existent children"
-        return None
+    def check_balance(nodes: list[TreeNode]) -> str | None:
+        # A single-node tree is valid
+        if len(nodes) == 1:
+            node = nodes[0]
+            if node.left_child_id is not None or node.right_child_id is not None:
+                return f"Invalid tree: node {node.id} references non-existent children"
+            return None
 
-    # Build a set of valid node IDs for quick lookup
-    node_ids = {node.id for node in nodes}
+        # Build a set of valid node IDs for quick lookup
+        node_ids = {node.id for node in nodes}
 
-    # Check each node
-    for node in nodes:
-        has_left = node.left_child_id is not None
-        has_right = node.right_child_id is not None
+        # Check each node
+        for node in nodes:
+            has_left = node.left_child_id is not None
+            has_right = node.right_child_id is not None
 
-        # Check invalid state: right child without left child
-        if has_right and not has_left:
-            return (
-                f"Tree is not left-balanced: node {node.id} has a right child but no left child. "
-                f"In a left-balanced tree, nodes must have a left child before having a right child."
-            )
+            # Check invalid state: right child without left child
+            if has_right and not has_left:
+                return (
+                    f"Tree is not left-balanced: node {node.id} has a right child but no left child. "
+                    f"In a left-balanced tree, nodes must have a left child before having a right child."
+                )
 
-        # Verify child references are valid
-        if has_left and node.left_child_id not in node_ids:
-            return f"Invalid tree: node {node.id} references non-existent left child {node.left_child_id}"
+            # Verify child references are valid
+            if has_left and node.left_child_id not in node_ids:
+                return f"Invalid tree: node {node.id} references non-existent left child {node.left_child_id}"
 
-        if has_right and node.right_child_id not in node_ids:
-            return f"Invalid tree: node {node.id} references non-existent right child {node.right_child_id}"
+            if has_right and node.right_child_id not in node_ids:
+                return f"Invalid tree: node {node.id} references non-existent right child {node.right_child_id}"
 
-    return None  # Tree is left-balanced
+        return None  # Tree is left-balanced
+
+    return _validate_with_nodes(store, document_id, check_balance)
 
 
 def validate_equal_leaf_depth(store: Store, document_id: str) -> str | None:
@@ -390,72 +406,65 @@ def validate_equal_leaf_depth(store: Store, document_id: str) -> str | None:
 
     This ensures consistent abstraction levels across the tree and prevents
     mixing of raw text and summaries at different heights.
-
-    Args:
-        store: Storage instance
-        document_id: Document to validate
-
-    Returns:
-        Error message if invalid, None if valid
     """
-    nodes = store.get_all_nodes_for_document(document_id)
-    if not nodes:
-        return "No nodes found for document"
 
-    # Build node lookup and identify leaf nodes
-    node_lookup = {node.id: node for node in nodes}
-    leaf_nodes = []
+    def check_leaf_depths(nodes: list[TreeNode]) -> str | None:
+        # Build node lookup and identify leaf nodes
+        node_lookup = {node.id: node for node in nodes}
+        leaf_nodes = []
 
-    for node in nodes:
-        # A node is a leaf if it has no children
-        if node.left_child_id is None and node.right_child_id is None:
-            leaf_nodes.append(node)
+        for node in nodes:
+            # A node is a leaf if it has no children
+            if node.left_child_id is None and node.right_child_id is None:
+                leaf_nodes.append(node)
 
-    if not leaf_nodes:
-        return "No leaf nodes found"
+        if not leaf_nodes:
+            return "No leaf nodes found"
 
-    # Find root node (node with no parent)
-    root_node = None
-    for node in nodes:
-        if node.parent_id is None:
-            root_node = node
-            break
+        # Find root node (node with no parent)
+        root_node = None
+        for node in nodes:
+            if node.parent_id is None:
+                root_node = node
+                break
 
-    if not root_node:
-        return "No root node found"
+        if not root_node:
+            return "No root node found"
 
-    # Calculate depth for each leaf node
-    def get_depth(node_id: str) -> int:
-        """Calculate depth from node to root."""
-        depth = 0
-        current_id = node_id
-        while current_id != root_node.id:
-            node = node_lookup.get(current_id)
-            if not node or not node.parent_id:
-                return -1  # Invalid tree structure
-            current_id = node.parent_id
-            depth += 1
-        return depth
+        # Calculate depth for each leaf node
+        def get_depth(node_id: str) -> int:
+            """Calculate depth from node to root."""
+            depth = 0
+            current_id = node_id
+            while current_id != root_node.id:
+                node = node_lookup.get(current_id)
+                if not node or not node.parent_id:
+                    return -1  # Invalid tree structure
+                current_id = node.parent_id
+                depth += 1
+            return depth
 
-    # Get depths of all leaf nodes
-    leaf_depths = []
-    for leaf in leaf_nodes:
-        depth = get_depth(leaf.id)
-        if depth == -1:
-            return f"Invalid tree structure: leaf node {leaf.id} cannot reach root"
-        leaf_depths.append((leaf.id, depth))
+        # Get depths of all leaf nodes
+        leaf_depths = []
+        for leaf in leaf_nodes:
+            depth = get_depth(leaf.id)
+            if depth == -1:
+                return f"Invalid tree structure: leaf node {leaf.id} cannot reach root"
+            leaf_depths.append((leaf.id, depth))
 
-    # Check if all depths are the same
-    if leaf_depths:
-        first_depth = leaf_depths[0][1]
-        for leaf_id, depth in leaf_depths:
-            if depth != first_depth:
-                return (
-                    f"Leaf nodes at different depths: {leaf_depths[0][0]} at depth {first_depth}, "
-                    f"{leaf_id} at depth {depth}. All leaves should be at the same depth."
-                )
+        # Check if all depths are the same
+        if leaf_depths:
+            first_depth = leaf_depths[0][1]
+            for leaf_id, depth in leaf_depths:
+                if depth != first_depth:
+                    return (
+                        f"Leaf nodes at different depths: {leaf_depths[0][0]} at depth {first_depth}, "
+                        f"{leaf_id} at depth {depth}. All leaves should be at the same depth."
+                    )
 
-    return None  # All leaves at same depth
+        return None  # All leaves at same depth
+
+    return _validate_with_nodes(store, document_id, check_leaf_depths)
 
 
 async def validate_summary_faithfulness(

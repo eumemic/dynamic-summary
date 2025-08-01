@@ -207,6 +207,7 @@ class Retriever:
             nodes=nodes,
         )
 
+    # jscpd:ignore-start
     def retrieve(
         self,
         query: str,
@@ -219,6 +220,7 @@ class Retriever:
         Creates a new event loop if needed to run the async version.
         For async contexts, use retrieve_async directly.
         """
+        # jscpd:ignore-end
         return asyncio.run(
             self.retrieve_async(query, n_max, budget_tokens, document_id)
         )
