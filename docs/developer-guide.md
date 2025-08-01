@@ -155,33 +155,39 @@ mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
 
 ### 4.5. Code Duplication Detection
 
-The project uses [jscpd](https://github.com/kucherenko/jscpd) to detect copy-paste code duplication across the codebase. This helps maintain code quality by identifying opportunities for refactoring.
+The project maintains a **zero-duplication policy** using [jscpd](https://github.com/kucherenko/jscpd).
 
-**Configuration**: `.jscpd.json`
-- Minimum lines: 11
-- Minimum tokens: 15
-- Threshold: 2% maximum duplication allowed
+**Configuration**: `.jscpd.json` (threshold: 0%, min 11 lines/15 tokens)
 
-**Running Locally**:
+**Running**:
 ```bash
-# Check for duplications
-npx jscpd@latest ragzoom/ --config .jscpd.json
-
-# Check specific files
-npx jscpd@latest ragzoom/telemetry_*.py --config .jscpd.json
+npx jscpd@latest ragzoom/
 ```
 
-**CI Integration**:
-- Runs automatically in the `static-analysis` job
-- Pre-commit hooks also check for duplication
-- Build fails if duplication exceeds threshold
-
 **Fixing Duplications**:
-When duplication is detected, consider:
-1. Extracting common code into utility functions
-2. Using inheritance or composition for similar classes
-3. Creating shared constants or configuration
-4. For legitimate duplication (e.g., similar but distinct logic), document why it's necessary
+- Extract common code into utilities
+- Use inheritance/composition
+- Create shared constants
+- Apply DRY principle
+
+**Legitimate False Positives**:
+
+Some patterns are intentionally similar. Use your judgment - common examples include:
+- Async/sync wrapper methods
+- Protocol/interface implementations
+- Generated code that can't be refactored
+
+Mark with `jscpd:ignore` comments and explain why:
+```python
+# jscpd:ignore-start
+def retrieve(self, ...):  # Intentional: async/sync wrapper pattern
+# jscpd:ignore-end
+```
+
+**Avoid marking as false positive**:
+- Deprecated code (delete it instead)
+- "Almost identical" logic (parameterize the differences)
+- Copy-pasted implementations (extract shared code)
 
 ## 5. Test Markers and Categories
 
