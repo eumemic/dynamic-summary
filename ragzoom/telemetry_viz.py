@@ -134,9 +134,6 @@ class TelemetryVisualizer:
 
         print(f"Saved visualization to {output_path}")
 
-        # Also generate markdown report
-        self._generate_markdown_report(data, telemetry, config, chunk_size)
-
     def _create_config_from_metrics(self, metrics: dict[str, Any]) -> RagZoomConfig:
         """Create a config object from metrics data for cost calculations."""
         return RagZoomConfig(
@@ -678,33 +675,6 @@ class TelemetryVisualizer:
         # Add legend if target lines were added
         if ax.lines:
             ax.legend(loc="upper right")
-
-    def _generate_markdown_report(
-        self, data: dict, telemetry: dict, config: RagZoomConfig, chunk_size: int
-    ) -> None:
-        """Generate a markdown report alongside visualizations."""
-        report_path = self.output_dir / f"telemetry_report_{chunk_size}_tokens.md"
-
-        with open(report_path, "w") as f:
-            f.write(f"# Telemetry Report - {chunk_size} Token Chunks\n\n")
-
-            # Add metrics summary
-            amplification = compute_amplification_metrics(telemetry, config)
-            batch_eff = compute_batch_efficiency(telemetry)
-            retry_patterns = analyze_retry_patterns(telemetry)
-
-            f.write("## Summary Metrics\n\n")
-            f.write(
-                f"- **Median Cost Amplification**: {amplification['median_cost']:.2f}x\n"
-            )
-            f.write(f"- **Batch Utilization**: {batch_eff['batch_utilization']:.1f}%\n")
-            f.write(f"- **Retry Rate**: {retry_patterns['retry_rate']:.1f}%\n")
-            f.write("\n")
-
-            f.write("## Visualizations\n\n")
-            f.write(f"![Telemetry Analysis](telemetry_{chunk_size}_tokens.png)\n")
-
-        print(f"Saved markdown report to {report_path}")
 
     def visualize_comparison(
         self, results_dir: Path, output_format: str = "png"
