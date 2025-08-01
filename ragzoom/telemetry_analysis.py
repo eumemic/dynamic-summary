@@ -17,7 +17,7 @@ from ragzoom.config import RagZoomConfig
 logger = logging.getLogger(__name__)
 
 # Current supported telemetry format versions
-SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0"]
+SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0", "3.0"]
 
 # Default token estimate for leaf nodes when source tokens are not available
 DEFAULT_LEAF_TOKEN_ESTIMATE = 150
@@ -146,13 +146,13 @@ class TelemetryAnalysisError(Exception):
 
 
 def parse_telemetry_format(telemetry_data: dict) -> dict:
-    """Parse telemetry data, handling version differences gracefully.
+    """Parse telemetry data, handling version differences and migrating to v3.0.
 
     Args:
         telemetry_data: Raw telemetry data from benchmark file
 
     Returns:
-        Parsed telemetry data in standardized format
+        Parsed telemetry data in v3.0 format (flat structure)
 
     Raises:
         TelemetryAnalysisError: If format version is unsupported
@@ -160,7 +160,18 @@ def parse_telemetry_format(telemetry_data: dict) -> dict:
     if not isinstance(telemetry_data, dict):
         raise TelemetryAnalysisError("Telemetry data must be a dictionary")
 
-    format_version = telemetry_data.get("format_version")
+    # Handle nested v1.0/v2.0 format from CLI output
+    if "telemetry" in telemetry_data and "config" in telemetry_data:
+        # This is the old CLI wrapper format
+        config = telemetry_data["config"]
+        actual_telemetry = telemetry_data["telemetry"]
+        format_version = actual_telemetry.get("format_version")
+    else:
+        # Direct telemetry data
+        format_version = telemetry_data.get("format_version")
+        actual_telemetry = telemetry_data
+        config = None
+
     if not format_version:
         raise TelemetryAnalysisError("Missing format_version in telemetry data")
 
@@ -170,14 +181,76 @@ def parse_telemetry_format(telemetry_data: dict) -> dict:
             f"Supported versions: {SUPPORTED_TELEMETRY_VERSIONS}"
         )
 
-    documents = telemetry_data.get("documents", {})
-    if not isinstance(documents, dict):
-        raise TelemetryAnalysisError("Invalid documents structure in telemetry data")
+    # If already v3.0, return as-is
+    if format_version == "3.0":
+        return dict(actual_telemetry)
 
-    return {
-        "format_version": format_version,
-        "documents": documents,
-    }
+    # Migrate from v1.0/v2.0 to v3.0
+    if format_version in ["1.0", "2.0"]:
+        documents = actual_telemetry.get("documents", {})
+        if not isinstance(documents, dict):
+            raise TelemetryAnalysisError(
+                "Invalid documents structure in telemetry data"
+            )
+
+        # Extract the single document (v1.0/v2.0 always have exactly one)
+        if not documents:
+            # Return empty v3.0 format
+            return {
+                "format_version": "3.0",
+                "document_id": "unknown",
+                "source_document_tokens": 0,
+                "chunk_size": 0,
+                "indexed_at": 0,
+                "models": {
+                    "summary": "unknown",
+                    "embedding": "unknown",
+                },
+                "nodes": [],
+            }
+
+        doc_id, doc_data = next(iter(documents.items()))
+        metadata = doc_data.get("metadata", {})
+        nodes = doc_data.get("nodes", [])
+
+        # Build v3.0 format
+        v3_data = {
+            "format_version": "3.0",
+            "document_id": doc_id,
+            "source_document_tokens": metadata.get("source_document_tokens", 0),
+            "chunk_size": metadata.get("chunk_size", 0),
+            "indexed_at": metadata.get("indexed_at", 0),
+            "nodes": nodes,
+        }
+
+        # Add models if available from config wrapper
+        if config:
+            v3_data["models"] = {
+                "summary": config.get("summary_model", "unknown"),
+                "embedding": config.get("embedding_model", "unknown"),
+            }
+        else:
+            # Try to infer from first node with embedding/summary
+            summary_model = "unknown"
+            embedding_model = "unknown"
+
+            for node in nodes:
+                if node.get("embedding") and embedding_model == "unknown":
+                    embedding_model = node["embedding"].get("model", "unknown")
+                if node.get("summary_attempts") and summary_model == "unknown":
+                    attempts = node["summary_attempts"]
+                    if attempts:
+                        summary_model = attempts[0].get("model", "unknown")
+
+            v3_data["models"] = {
+                "summary": summary_model,
+                "embedding": embedding_model,
+            }
+
+        return v3_data
+
+    # This shouldn't happen given the version check above
+    raise TelemetryAnalysisError(f"Unhandled telemetry version: {format_version}")
 
 
 def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -> dict:
@@ -235,7 +308,7 @@ def _calculate_cost_amplification(
     prompt_tokens: int,
     completion_tokens: int,
     input_text_tokens: int,
-    actual_tokens: int,
+    actual_tokens: int,  # Unused, kept for compatibility
     config: RagZoomConfig,
 ) -> float:
     """Calculate cost-weighted amplification factor.
@@ -292,29 +365,28 @@ def compute_batch_efficiency(telemetry_data: dict) -> dict:
     batch_sizes = []
     total_embeddings = 0
 
-    # Process all documents
-    for doc_type, doc_data in parsed_data["documents"].items():
-        nodes = doc_data.get("nodes", [])
+    # Process nodes directly (v3.0 format)
+    nodes = parsed_data.get("nodes", [])
 
-        # Track batches by collecting unique (batch_size, timestamp) pairs
-        seen_batches = set()
+    # Track batches by collecting unique (batch_size, timestamp) pairs
+    seen_batches = set()
 
-        for node in nodes:
-            embedding = node.get("embedding")
-            if not embedding:
-                continue
+    for node in nodes:
+        embedding = node.get("embedding")
+        if not embedding:
+            continue
 
-            batch_size = embedding.get("batch_size", 1)
-            # v1.0: use timestamp, v2.0: use start_time
-            timestamp = embedding.get("timestamp", embedding.get("start_time", 0))
-            batch_key = (batch_size, timestamp)
+        batch_size = embedding.get("batch_size", 1)
+        # v1.0: use timestamp, v2.0: use start_time
+        timestamp = embedding.get("timestamp", embedding.get("start_time", 0))
+        batch_key = (batch_size, timestamp)
 
-            # Only count each batch once
-            if batch_key not in seen_batches:
-                batch_sizes.append(batch_size)
-                seen_batches.add(batch_key)
+        # Only count each batch once
+        if batch_key not in seen_batches:
+            batch_sizes.append(batch_size)
+            seen_batches.add(batch_key)
 
-            total_embeddings += 1
+        total_embeddings += 1
 
     # Calculate metrics
     result = {
@@ -368,45 +440,44 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
     nodes_with_retries = 0
     total_nodes_with_summaries = 0
 
-    # Process all documents
-    for doc_type, doc_data in parsed_data["documents"].items():
-        nodes = doc_data.get("nodes", [])
+    # Process nodes directly (v3.0 format)
+    nodes = parsed_data.get("nodes", [])
 
-        for node in nodes:
-            # Only process summary nodes
-            # v1.0: check node_type, v2.0: check height > 0
-            # Get height (compatible with both v1.0 and v2.0)
-            height = node.get("height", node.get("level", 0))
-            is_leaf = node.get("node_type") == "leaf" or height == 0
-            if is_leaf:
-                continue
+    for node in nodes:
+        # Only process summary nodes
+        # v1.0: check node_type, v2.0: check height > 0
+        # Get height (compatible with both v1.0 and v2.0)
+        height = node.get("height", node.get("level", 0))
+        is_leaf = node.get("node_type") == "leaf" or height == 0
+        if is_leaf:
+            continue
 
-            summary_attempts = node.get("summary_attempts", [])
-            if not summary_attempts:
-                continue
+        summary_attempts = node.get("summary_attempts", [])
+        if not summary_attempts:
+            continue
 
-            total_nodes_with_summaries += 1
-            node_has_retry = False
+        total_nodes_with_summaries += 1
+        node_has_retry = False
 
-            for attempt in summary_attempts:
-                total_attempts += 1
-                is_retry = attempt.get("is_retry", False)
-                status = attempt.get("status", "unknown")
+        for attempt in summary_attempts:
+            total_attempts += 1
+            is_retry = attempt.get("is_retry", False)
+            status = attempt.get("status", "unknown")
 
-                if is_retry:
-                    retry_attempts += 1
-                    node_has_retry = True
-                    if status == "accepted":
-                        successful_retries += 1
-
+            if is_retry:
+                retry_attempts += 1
+                node_has_retry = True
                 if status == "accepted":
-                    successful_attempts += 1
-                elif status in ["rejected_over", "rejected_under", "error"]:
-                    reason = attempt.get("rejection_reason", status)
-                    rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+                    successful_retries += 1
 
-            if node_has_retry:
-                nodes_with_retries += 1
+            if status == "accepted":
+                successful_attempts += 1
+            elif status in ["rejected_over", "rejected_under", "error"]:
+                reason = attempt.get("rejection_reason", status)
+                rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+
+        if node_has_retry:
+            nodes_with_retries += 1
 
     # Calculate metrics
     result = {
@@ -443,58 +514,53 @@ def compute_summary_stats_from_telemetry(
     parsed_data = parse_telemetry_format(telemetry_data)
     summary_stats_by_target: dict[int, SummaryStats] = {}
 
-    # Process all documents
-    for doc_type, doc_data in parsed_data["documents"].items():
-        nodes = doc_data.get("nodes", [])
+    # Process nodes directly (v3.0 format)
+    nodes = parsed_data.get("nodes", [])
 
-        for node in nodes:
-            # Process summary attempts for non-leaf nodes
-            summary_attempts = node.get("summary_attempts", [])
+    for node in nodes:
+        # Process summary attempts for non-leaf nodes
+        summary_attempts = node.get("summary_attempts", [])
 
-            for attempt in summary_attempts:
-                # Only process accepted attempts for summary stats
-                if attempt.get("status") == "accepted":
-                    target_tokens = attempt.get("target_tokens", 0)
-                    actual_tokens = attempt.get("actual_tokens", 0)
+        for attempt in summary_attempts:
+            # Only process accepted attempts for summary stats
+            if attempt.get("status") == "accepted":
+                target_tokens = attempt.get("target_tokens", 0)
+                actual_tokens = attempt.get("actual_tokens", 0)
 
-                    if target_tokens > 0 and actual_tokens > 0:
-                        # Create stats object if needed
-                        if target_tokens not in summary_stats_by_target:
-                            summary_stats_by_target[target_tokens] = SummaryStats()
+                if target_tokens > 0 and actual_tokens > 0:
+                    # Create stats object if needed
+                    if target_tokens not in summary_stats_by_target:
+                        summary_stats_by_target[target_tokens] = SummaryStats()
 
-                        stats = summary_stats_by_target[target_tokens]
+                    stats = summary_stats_by_target[target_tokens]
 
-                        # Update basic counts
-                        stats.count += 1
-                        stats.total_tokens += actual_tokens
+                    # Update basic counts
+                    stats.count += 1
+                    stats.total_tokens += actual_tokens
 
-                        # Calculate deviation
-                        deviation_percent = (
-                            abs(actual_tokens - target_tokens) / target_tokens * 100
+                    # Calculate deviation
+                    deviation_percent = (
+                        abs(actual_tokens - target_tokens) / target_tokens * 100
+                    )
+                    stats.total_deviation += deviation_percent
+                    stats.deviations.append(deviation_percent)
+
+                    # Track over/under target
+                    if actual_tokens > target_tokens:
+                        stats.over_target_count += 1
+                        overage = (actual_tokens - target_tokens) / target_tokens * 100
+                        stats.max_overage_percent = max(
+                            stats.max_overage_percent, overage
                         )
-                        stats.total_deviation += deviation_percent
-                        stats.deviations.append(deviation_percent)
-
-                        # Track over/under target
-                        if actual_tokens > target_tokens:
-                            stats.over_target_count += 1
-                            overage = (
-                                (actual_tokens - target_tokens) / target_tokens * 100
-                            )
-                            stats.max_overage_percent = max(
-                                stats.max_overage_percent, overage
-                            )
-                        else:
-                            stats.under_target_count += 1
-                            underage = (
-                                (target_tokens - actual_tokens) / target_tokens * 100
-                            )
-                            stats.max_underage_percent = max(
-                                stats.max_underage_percent, underage
-                            )
+                    else:
+                        stats.under_target_count += 1
+                        underage = (target_tokens - actual_tokens) / target_tokens * 100
+                        stats.max_underage_percent = max(
+                            stats.max_underage_percent, underage
+                        )
 
     # Compute histograms for each target size
-    for target_size, stats in summary_stats_by_target.items():
+    for _, stats in summary_stats_by_target.items():
         if stats.count > 0:
             histogram_buckets = {
                 "0-10%": 0,
@@ -668,114 +734,113 @@ def compute_metrics_from_telemetry(
     max_timestamp = 0.0
     embedding_batches = set()
 
-    # Process all documents
-    for doc_type, doc_data in parsed_data["documents"].items():
-        nodes = doc_data.get("nodes", [])
+    # Process nodes directly (v3.0 format)
+    nodes = parsed_data.get("nodes", [])
 
-        for node in nodes:
-            created_at = node.get("created_at", 0)
-            min_timestamp = min(min_timestamp, created_at)
-            max_timestamp = max(max_timestamp, created_at)
+    for node in nodes:
+        created_at = node.get("created_at", 0)
+        min_timestamp = min(min_timestamp, created_at)
+        max_timestamp = max(max_timestamp, created_at)
 
-            # Process embedding telemetry
-            embedding = node.get("embedding")
-            if embedding:
-                text_tokens = embedding.get("text_tokens", 0)
-                batch_size = embedding.get("batch_size", 1)
-                # v1.0: use timestamp, v2.0: use start_time
-                timestamp = embedding.get("timestamp", embedding.get("start_time", 0))
+        # Process embedding telemetry
+        embedding = node.get("embedding")
+        if embedding:
+            text_tokens = embedding.get("text_tokens", 0)
+            batch_size = embedding.get("batch_size", 1)
+            # v1.0: use timestamp, v2.0: use start_time
+            timestamp = embedding.get("timestamp", embedding.get("start_time", 0))
 
-                metrics_data["total_embedding_tokens"] += text_tokens
+            metrics_data["total_embedding_tokens"] += text_tokens
 
-                # Track unique batches by (batch_size, timestamp)
-                batch_key = (batch_size, timestamp)
-                if batch_key not in embedding_batches:
-                    embedding_batches.add(batch_key)
-                    metrics_data["embedding_api_calls"] += 1
-                    metrics_data["embedding_batch_sizes"].append(batch_size)
+            # Track unique batches by (batch_size, timestamp)
+            batch_key = (batch_size, timestamp)
+            if batch_key not in embedding_batches:
+                embedding_batches.add(batch_key)
+                metrics_data["embedding_api_calls"] += 1
+                metrics_data["embedding_batch_sizes"].append(batch_size)
 
-            # Process summary attempts
-            summary_attempts = node.get("summary_attempts", [])
+        # Process summary attempts
+        summary_attempts = node.get("summary_attempts", [])
 
-            # Track cumulative tokens for this node across all attempts
-            node_total_prompt_tokens = 0
-            node_total_completion_tokens = 0
-            node_input_text_tokens = 0
-            node_final_summary_tokens = 0
-            final_attempt = None
+        # Track cumulative tokens for this node across all attempts
+        node_total_prompt_tokens = 0
+        node_total_completion_tokens = 0
+        node_input_text_tokens = 0
+        node_final_summary_tokens = 0
+        final_attempt = None
 
-            for attempt in summary_attempts:
-                metrics_data["summary_api_calls"] += 1
-                prompt_tokens = attempt.get("prompt_tokens", 0)
-                completion_tokens = attempt.get("completion_tokens", 0)
+        for attempt in summary_attempts:
+            metrics_data["summary_api_calls"] += 1
+            prompt_tokens = attempt.get("prompt_tokens", 0)
+            completion_tokens = attempt.get("completion_tokens", 0)
 
-                metrics_data["total_summary_prompt_tokens"] += prompt_tokens
-                metrics_data["total_summary_completion_tokens"] += completion_tokens
+            metrics_data["total_summary_prompt_tokens"] += prompt_tokens
+            metrics_data["total_summary_completion_tokens"] += completion_tokens
 
-                # Accumulate tokens for amplification calculation
-                node_total_prompt_tokens += prompt_tokens
-                node_total_completion_tokens += completion_tokens
+            # Accumulate tokens for amplification calculation
+            node_total_prompt_tokens += prompt_tokens
+            node_total_completion_tokens += completion_tokens
 
-                # Track the input text tokens (should be same across attempts)
-                if node_input_text_tokens == 0:
-                    node_input_text_tokens = attempt.get("input_text_tokens", 0)
+            # Track the input text tokens (should be same across attempts)
+            if node_input_text_tokens == 0:
+                node_input_text_tokens = attempt.get("input_text_tokens", 0)
 
-                # Track the final accepted attempt
-                if attempt.get("status") == "accepted":
-                    final_attempt = attempt
-                    node_final_summary_tokens = attempt.get("actual_tokens", 0)
+            # Track the final accepted attempt
+            if attempt.get("status") == "accepted":
+                final_attempt = attempt
+                node_final_summary_tokens = attempt.get("actual_tokens", 0)
 
-            # Calculate amplification using ALL attempts' tokens
-            if summary_attempts and node_input_text_tokens > 0 and final_attempt:
-                # Input amplification = total prompt tokens / original text tokens
-                input_amplification = node_total_prompt_tokens / node_input_text_tokens
+        # Calculate amplification using ALL attempts' tokens
+        if summary_attempts and node_input_text_tokens > 0 and final_attempt:
+            # Input amplification = total prompt tokens / original text tokens
+            input_amplification = node_total_prompt_tokens / node_input_text_tokens
 
-                # Output amplification = total completion tokens / final summary tokens
-                output_amplification = (
-                    node_total_completion_tokens / node_final_summary_tokens
-                    if node_final_summary_tokens > 0
-                    else 1.0
-                )
+            # Output amplification = total completion tokens / final summary tokens
+            output_amplification = (
+                node_total_completion_tokens / node_final_summary_tokens
+                if node_final_summary_tokens > 0
+                else 1.0
+            )
 
-                # Calculate cost-weighted amplification using cumulative tokens
-                cost_amplification = _calculate_cost_amplification(
-                    node_total_prompt_tokens,
-                    node_total_completion_tokens,
-                    node_input_text_tokens,
-                    node_final_summary_tokens,
-                    config,
-                )
+            # Calculate cost-weighted amplification using cumulative tokens
+            cost_amplification = _calculate_cost_amplification(
+                node_total_prompt_tokens,
+                node_total_completion_tokens,
+                node_input_text_tokens,
+                node_final_summary_tokens,
+                config,
+            )
 
-                # Record amplifications
-                metrics_data["input_amplifications"].append(input_amplification)
-                metrics_data["output_amplifications"].append(output_amplification)
-                metrics_data["cost_amplifications"].append(cost_amplification)
+            # Record amplifications
+            metrics_data["input_amplifications"].append(input_amplification)
+            metrics_data["output_amplifications"].append(output_amplification)
+            metrics_data["cost_amplifications"].append(cost_amplification)
 
-                # Track amplifications by height
-                # Need height - already computed earlier for leaf check
-                node_height = node.get("height", node.get("level", 0))
-                if node_height not in metrics_data["amplifications_by_height"]:
-                    metrics_data["amplifications_by_height"][node_height] = {
-                        "input": [],
-                        "output": [],
-                        "cost": [],
-                    }
-                metrics_data["amplifications_by_height"][node_height]["input"].append(
-                    input_amplification
-                )
-                metrics_data["amplifications_by_height"][node_height]["output"].append(
-                    output_amplification
-                )
-                metrics_data["amplifications_by_height"][node_height]["cost"].append(
-                    cost_amplification
-                )
+            # Track amplifications by height
+            # Need height - already computed earlier for leaf check
+            node_height = node.get("height", node.get("level", 0))
+            if node_height not in metrics_data["amplifications_by_height"]:
+                metrics_data["amplifications_by_height"][node_height] = {
+                    "input": [],
+                    "output": [],
+                    "cost": [],
+                }
+            metrics_data["amplifications_by_height"][node_height]["input"].append(
+                input_amplification
+            )
+            metrics_data["amplifications_by_height"][node_height]["output"].append(
+                output_amplification
+            )
+            metrics_data["amplifications_by_height"][node_height]["cost"].append(
+                cost_amplification
+            )
 
-            # Count chunks (leaf nodes)
-            # v1.0: check node_type, v2.0: check height == 0
-            height = node.get("height", node.get("level", 0))
-            is_leaf = node.get("node_type") == "leaf" or height == 0
-            if is_leaf:
-                metrics_data["chunks_created"] += 1
+        # Count chunks (leaf nodes)
+        # v1.0: check node_type, v2.0: check height == 0
+        height = node.get("height", node.get("level", 0))
+        is_leaf = node.get("node_type") == "leaf" or height == 0
+        if is_leaf:
+            metrics_data["chunks_created"] += 1
 
     # Set timing
     if min_timestamp != float("inf"):
@@ -785,39 +850,19 @@ def compute_metrics_from_telemetry(
     # Compute summary stats from raw telemetry
     metrics_data["summary_stats"] = compute_summary_stats_from_telemetry(telemetry_data)
 
-    # Calculate total source tokens from all documents
-    total_source_tokens = 0
-    for doc_data in parsed_data["documents"].values():
-        # Try to get source tokens from metadata first (new format)
-        metadata = doc_data.get("metadata", {})
-        if "source_document_tokens" in metadata:
-            total_source_tokens += metadata["source_document_tokens"]
-        else:
-            # Fallback: estimate from leaf nodes for backward compatibility
-            leaf_count = sum(
-                1
-                for node in doc_data.get("nodes", [])
-                if node.get("node_type") == "leaf"
-            )
-            # Rough estimate: assume average leaf size
-            # This is only used for old telemetry data without metadata
-            estimated_tokens = leaf_count * DEFAULT_LEAF_TOKEN_ESTIMATE
-            total_source_tokens += estimated_tokens
-            logger.warning(
-                f"Source tokens not found in telemetry metadata, using estimate: {estimated_tokens}"
-            )
-
-    metrics_data["source_document_tokens"] = total_source_tokens
+    # Get source tokens from v3.0 format (top level)
+    metrics_data["source_document_tokens"] = parsed_data.get(
+        "source_document_tokens", 0
+    )
 
     # Tree structure analysis (estimate from height info)
     tree_height = 0
     nodes_per_height_dict: dict[int, int] = {}
-    for doc_data in parsed_data["documents"].values():
-        for node in doc_data.get("nodes", []):
-            # v1.0: level, v2.0: height
-            height = node.get("height", node.get("level", 0))
-            tree_height = max(tree_height, height)
-            nodes_per_height_dict[height] = nodes_per_height_dict.get(height, 0) + 1
+    for node in nodes:
+        # v1.0: level, v2.0: height
+        height = node.get("height", node.get("level", 0))
+        tree_height = max(tree_height, height)
+        nodes_per_height_dict[height] = nodes_per_height_dict.get(height, 0) + 1
 
     metrics_data["tree_height"] = tree_height
     metrics_data["nodes_per_height"] = [
