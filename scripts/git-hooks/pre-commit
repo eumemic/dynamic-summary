@@ -109,12 +109,41 @@ run_mypy() {
     return 0
 }
 
+# Function to run jscpd
+run_jscpd() {
+    if command -v npx &> /dev/null; then
+        if [ -n "$modified_files" ]; then
+            echo "[JSCPD] Starting..."
+            # Run with silent flag, capture output
+            local tmpfile=$(mktemp)
+            npx jscpd@latest ragzoom/ --exitCode 1 > "$tmpfile" 2>&1
+            local result=$?
+            if [ $result -ne 0 ]; then
+                echo "[JSCPD] ❌ Code duplication found!"
+                # Show full output on failure
+                cat "$tmpfile"
+                rm -f "$tmpfile"
+                return 1
+            else
+                echo "[JSCPD] ✅ Passed!"
+                return 0
+            fi
+        else
+            echo "[JSCPD] Skipped (no Python files)"
+            return 0
+        fi
+    else
+        echo "[JSCPD] Skipped (npx not available)"
+        return 0
+    fi
+}
+
 # Create temporary files for storing results
 tmpdir=$(mktemp -d)
 # Set up trap to clean up temp files and kill any background processes on exit
 cleanup() {
     # Kill any background processes that might still be running
-    kill $pid_tests $pid_mypy $pid_ruff $pid_black 2>/dev/null || true
+    kill $pid_tests $pid_mypy $pid_ruff $pid_black $pid_jscpd 2>/dev/null || true
     # Clean up temp directory
     rm -rf "$tmpdir"
 }
@@ -133,15 +162,19 @@ pid_ruff=$!
 (run_black > "$tmpdir/black.output" 2>&1; echo $? > "$tmpdir/black.result") &
 pid_black=$!
 
+(run_jscpd > "$tmpdir/jscpd.output" 2>&1; echo $? > "$tmpdir/jscpd.result") &
+pid_jscpd=$!
+
 # Wait for all background jobs to complete
 echo ""
-wait $pid_tests $pid_mypy $pid_ruff $pid_black
+wait $pid_tests $pid_mypy $pid_ruff $pid_black $pid_jscpd
 
-# Display output in predictable order: tests, mypy, ruff, black
+# Display output in predictable order: tests, mypy, ruff, black, jscpd
 cat "$tmpdir/tests.output" 2>/dev/null
 cat "$tmpdir/mypy.output" 2>/dev/null
 cat "$tmpdir/ruff.output" 2>/dev/null
 cat "$tmpdir/black.output" 2>/dev/null
+cat "$tmpdir/jscpd.output" 2>/dev/null
 
 # Re-add any files that were auto-formatted
 if [ -n "$modified_files" ]; then
@@ -168,6 +201,11 @@ fi
 
 # Check mypy results
 if [ -f "$tmpdir/mypy.result" ] && [ "$(cat "$tmpdir/mypy.result")" -ne 0 ]; then
+    failed=1
+fi
+
+# Check jscpd results
+if [ -f "$tmpdir/jscpd.result" ] && [ "$(cat "$tmpdir/jscpd.result")" -ne 0 ]; then
     failed=1
 fi
 
