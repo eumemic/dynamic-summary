@@ -276,7 +276,6 @@ def _format_summary_accuracy_section(
     """
     report: list[str] = []
     has_regression = False
-    # significance_threshold = thresholds.get("change_significance", 10.0)  # Currently unused in this function
 
     baseline_summary = baseline_metrics.get("summary_accuracy", {})
     current_summary = current_metrics.get("summary_accuracy", {})
