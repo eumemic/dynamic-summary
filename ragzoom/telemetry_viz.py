@@ -203,15 +203,10 @@ class TelemetryVisualizer:
 
         for level in levels:
             level_data = amplification["by_height"][level]
-            cost_medians.append(
-                np.median(level_data["cost"]) if level_data["cost"] else 0
-            )
-            input_medians.append(
-                np.median(level_data["input"]) if level_data["input"] else 0
-            )
-            output_medians.append(
-                np.median(level_data["output"]) if level_data["output"] else 0
-            )
+            # Use the median values directly from TypedDict structure
+            cost_medians.append(level_data.get("median_cost", 0.0))
+            input_medians.append(level_data.get("median_input", 0.0))
+            output_medians.append(level_data.get("median_output", 0.0))
 
         x = np.arange(len(levels))
         width = 0.25
@@ -226,7 +221,7 @@ class TelemetryVisualizer:
             "Token & Cost Amplification by Tree Level\n(Lower is better - shows summarization efficiency)"
         )
         ax.set_xticks(x)
-        ax.set_xticklabels(levels)
+        ax.set_xticklabels([str(level) for level in levels])
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -288,7 +283,9 @@ class TelemetryVisualizer:
         avg_batch_size = batch_eff["avg_batch_size"]
 
         # Calculate appropriate histogram bins
-        hist_bins, align = self._calculate_histogram_bins(batch_sizes)
+        hist_bins, align = self._calculate_histogram_bins(
+            [float(size) for size in batch_sizes]
+        )
 
         # Create histogram with intelligent binning
         _, _, patches = ax.hist(

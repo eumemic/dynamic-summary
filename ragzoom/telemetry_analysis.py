@@ -13,6 +13,12 @@ from statistics import median
 from typing import Any
 
 from ragzoom.config import RagZoomConfig
+from ragzoom.telemetry_types import (
+    AmplificationSummaryDict,
+    BatchEfficiencyDict,
+    RetryAnalysisDict,
+    TelemetryDataDict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +151,7 @@ class TelemetryAnalysisError(Exception):
     pass
 
 
-def parse_telemetry_format(telemetry_data: dict) -> dict:
+def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
     """Parse telemetry data, handling version differences gracefully.
 
     Args:
@@ -174,13 +180,17 @@ def parse_telemetry_format(telemetry_data: dict) -> dict:
     if not isinstance(documents, dict):
         raise TelemetryAnalysisError("Invalid documents structure in telemetry data")
 
-    return {
+    # Return as TypedDict - cast is safe after validation
+    result: TelemetryDataDict = {
         "format_version": format_version,
         "documents": documents,
     }
+    return result
 
 
-def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -> dict:
+def compute_amplification_metrics(
+    telemetry_data: dict, config: RagZoomConfig
+) -> AmplificationSummaryDict:
     """Compute amplification metrics from telemetry data.
 
     Args:
@@ -272,7 +282,7 @@ def _calculate_cost_amplification(
     return actual_cost / min_cost if min_cost > 0 else 1.0
 
 
-def compute_batch_efficiency(telemetry_data: dict) -> dict:
+def compute_batch_efficiency(telemetry_data: dict) -> BatchEfficiencyDict:
     """Analyze embedding batch utilization from telemetry data.
 
     Args:
@@ -316,31 +326,43 @@ def compute_batch_efficiency(telemetry_data: dict) -> dict:
             total_embeddings += 1
 
     # Calculate metrics
-    result = {
+    result: BatchEfficiencyDict = {
         "avg_batch_size": 0.0,
-        "batch_sizes": batch_sizes,
-        "total_batches": len(batch_sizes),
+        "batch_sizes": batch_sizes,  # Legacy field
+        "total_batches": len(batch_sizes),  # Legacy field
         "total_embeddings": total_embeddings,
         "batch_utilization": 0.0,
+        "batched_embeddings": 0,  # Will be calculated below
+        "single_embeddings": 0,  # Will be calculated below
+        "max_batch_size": max(batch_sizes) if batch_sizes else 0,
+        "batch_size_distribution": {},  # Will be calculated below
     }
 
     if batch_sizes:
         avg_batch_size = sum(batch_sizes) / len(batch_sizes)
         result["avg_batch_size"] = avg_batch_size
-        # Batch efficiency: percentage of embeddings that benefited from batching.
-        # For each batch of size N, (N-1) embeddings were batched together rather
-        # than sent individually.
+
+        # Calculate additional metrics
         batched_embeddings = sum(max(0, batch_size - 1) for batch_size in batch_sizes)
+        single_embeddings = sum(1 for batch_size in batch_sizes if batch_size == 1)
+
+        result["batched_embeddings"] = batched_embeddings
+        result["single_embeddings"] = single_embeddings
         result["batch_utilization"] = (
             (batched_embeddings / total_embeddings) * 100
             if total_embeddings > 0
             else 0.0
         )
 
+        # Calculate batch size distribution
+        from collections import Counter
+
+        result["batch_size_distribution"] = dict(Counter(batch_sizes))
+
     return result
 
 
-def analyze_retry_patterns(telemetry_data: dict) -> dict:
+def analyze_retry_patterns(telemetry_data: dict) -> RetryAnalysisDict:
     """Analyze summary retry patterns from telemetry data.
 
     Args:
@@ -430,7 +452,8 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
                     successful_attempts += 1
                 elif status in ["rejected_over", "rejected_under", "error"]:
                     reason = attempt.get("rejection_reason", status)
-                    rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+                    if reason:  # Type guard to ensure reason is not None
+                        rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
                     if not is_retry:  # Also count rejected time for initial attempts
                         node_rejected_time += attempt_time
 
@@ -446,7 +469,7 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
             total_rejected_time += node_rejected_time
 
     # Calculate metrics
-    result = {
+    result: RetryAnalysisDict = {
         "retry_rate": 0.0,
         "total_attempts": total_attempts,
         "successful_attempts": successful_attempts,
@@ -637,7 +660,7 @@ class ComputedMetrics:
     nodes_per_height: list[int]
 
 
-def get_amplification_summary(metrics: ComputedMetrics) -> dict:
+def get_amplification_summary(metrics: ComputedMetrics) -> AmplificationSummaryDict:
     """Compute amplification summary statistics from raw metrics.
 
     Args:
@@ -652,13 +675,25 @@ def get_amplification_summary(metrics: ComputedMetrics) -> dict:
         - median_output: Median output amplification
         - by_height: Amplification metrics broken down by tree height
     """
-    result = {
+    result: AmplificationSummaryDict = {
         "median_cost": 0.0,
         "cost_p90": 0.0,
         "cost_p95": 0.0,
         "median_input": 0.0,
         "median_output": 0.0,
-        "by_height": metrics.amplifications_by_height,
+        "by_height": {
+            height: {
+                "median_cost": median(data["cost"]) if data["cost"] else 0.0,
+                "median_input": median(data["input"]) if data["input"] else 0.0,
+                "median_output": median(data["output"]) if data["output"] else 0.0,
+                "count": len(data["cost"]),
+                # Legacy field names for backward compatibility
+                "cost": median(data["cost"]) if data["cost"] else 0.0,
+                "input": median(data["input"]) if data["input"] else 0.0,
+                "output": median(data["output"]) if data["output"] else 0.0,
+            }
+            for height, data in metrics.amplifications_by_height.items()
+        },
     }
 
     if metrics.cost_amplifications:

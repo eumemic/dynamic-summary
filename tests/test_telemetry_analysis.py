@@ -174,9 +174,13 @@ class TestAmplificationMetrics:
 
         # Check by-height breakdown (should work even with v1.0 data)
         assert 1 in result["by_height"]
-        assert len(result["by_height"][1]["input"]) == 2
-        assert len(result["by_height"][1]["output"]) == 2
-        assert len(result["by_height"][1]["cost"]) == 2
+        height_1_data = result["by_height"][1]
+        assert height_1_data["count"] == 2  # Two nodes at height 1
+        assert height_1_data["median_input"] == pytest.approx(1.375, rel=0.01)
+        assert height_1_data["median_output"] == pytest.approx(1.05, rel=0.01)
+        # Legacy fields should also be present for backward compatibility
+        assert height_1_data["input"] == pytest.approx(1.375, rel=0.01)
+        assert height_1_data["output"] == pytest.approx(1.05, rel=0.01)
 
     def test_amplification_metrics_empty_data(self, config: RagZoomConfig) -> None:
         """Test amplification metrics with empty telemetry."""
