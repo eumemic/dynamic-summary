@@ -83,7 +83,7 @@ jobs:
       - name: Check for code duplication
         run: |
           echo "::group::Code Duplication Check"
-          npx jscpd@latest ragzoom/
+          npx jscpd@latest ragzoom/ --config .jscpd.json
           echo "::endgroup::"
 
   # Fast tests (excluding slow and integration tests)

@@ -153,6 +153,36 @@ The `mypy` check can sometimes be noisy, flagging pre-existing issues in files y
 mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
 ```
 
+### 4.5. Code Duplication Detection
+
+The project uses [jscpd](https://github.com/kucherenko/jscpd) to detect copy-paste code duplication across the codebase. This helps maintain code quality by identifying opportunities for refactoring.
+
+**Configuration**: `.jscpd.json`
+- Minimum lines: 11
+- Minimum tokens: 15
+- Threshold: 2% maximum duplication allowed
+
+**Running Locally**:
+```bash
+# Check for duplications
+npx jscpd@latest ragzoom/ --config .jscpd.json
+
+# Check specific files
+npx jscpd@latest ragzoom/telemetry_*.py --config .jscpd.json
+```
+
+**CI Integration**:
+- Runs automatically in the `static-analysis` job
+- Pre-commit hooks also check for duplication
+- Build fails if duplication exceeds threshold
+
+**Fixing Duplications**:
+When duplication is detected, consider:
+1. Extracting common code into utility functions
+2. Using inheritance or composition for similar classes
+3. Creating shared constants or configuration
+4. For legitimate duplication (e.g., similar but distinct logic), document why it's necessary
+
 ## 5. Test Markers and Categories
 
 ### Test Markers
