@@ -69,102 +69,6 @@ def cli() -> None:
     pass
 
 
-@cli.command("analyze")
-@click.argument("telemetry_file", type=click.Path(exists=True))
-@click.option(
-    "--output",
-    type=click.Path(),
-    help="Output file for analysis report (defaults to stdout)",
-)
-def analyze(telemetry_file: str, output: str | None) -> None:
-    """Analyze telemetry data from a benchmark file."""
-    try:
-        # Load telemetry data
-        with open(telemetry_file) as f:
-            data = json.load(f)
-
-        if "telemetry" not in data:
-            click.echo("❌ No telemetry data found in file", err=True)
-            sys.exit(1)
-
-        telemetry = data["telemetry"]
-
-        # Create config for analysis
-        config = RagZoomConfig()
-
-        # Compute all metrics
-        try:
-            amplification = compute_amplification_metrics(telemetry, config)
-            batch_efficiency = compute_batch_efficiency(telemetry)
-            retry_patterns = analyze_retry_patterns(telemetry)
-        except Exception as e:
-            click.echo(f"❌ Error analyzing telemetry: {e}", err=True)
-            sys.exit(1)
-
-        # Format report
-        report = []
-        report.append("TELEMETRY ANALYSIS REPORT")
-        report.append("=" * 60)
-        report.append("")
-
-        # Amplification metrics
-        report.append("📈 Amplification Metrics:")
-        report.append(
-            f"  Median cost amplification: {amplification['median_cost']:.2f}x"
-        )
-        report.append(f"  90th percentile cost: {amplification['cost_p90']:.2f}x")
-        report.append(f"  95th percentile cost: {amplification['cost_p95']:.2f}x")
-        report.append(
-            f"  Median input amplification: {amplification['median_input']:.2f}x"
-        )
-        report.append(
-            f"  Median output amplification: {amplification['median_output']:.2f}x"
-        )
-        report.append("")
-
-        # Batch efficiency
-        report.append("📦 Batch Efficiency:")
-        report.append(f"  Total batches: {batch_efficiency['total_batches']}")
-        report.append(f"  Total embeddings: {batch_efficiency['total_embeddings']}")
-        report.append(f"  Average batch size: {batch_efficiency['avg_batch_size']:.1f}")
-        report.append(
-            f"  Batch utilization: {batch_efficiency['batch_utilization']:.1f}%"
-        )
-        report.append("")
-
-        # Retry patterns
-        report.append("🔄 Retry Patterns:")
-        report.append(f"  Total attempts: {retry_patterns['total_attempts']}")
-        report.append(f"  Successful attempts: {retry_patterns['successful_attempts']}")
-        report.append(f"  Retry rate: {retry_patterns['retry_rate']:.1f}%")
-        report.append(
-            f"  Retry success rate: {retry_patterns['retry_success_rate']:.1f}%"
-        )
-
-        if retry_patterns["rejection_reasons"]:
-            report.append("  Rejection reasons:")
-            for reason, count in sorted(
-                retry_patterns["rejection_reasons"].items(),
-                key=lambda x: x[1],
-                reverse=True,
-            ):
-                report.append(f"    - {reason}: {count}")
-
-        report.append("")
-
-        # Output report
-        report_text = "\n".join(report)
-        if output:
-            Path(output).write_text(report_text)
-            click.echo(f"✅ Analysis report saved to {output}")
-        else:
-            click.echo(report_text)
-
-    except Exception as e:
-        click.echo(f"❌ Error: {e}", err=True)
-        sys.exit(1)
-
-
 def _write_error_report(error_msg: str, output: str | None) -> None:
     """Write error report to output file or stdout."""
     report = f"""## ❌ Performance Comparison Failed
@@ -353,6 +257,263 @@ def check_regression(
     return change_pct > threshold
 
 
+def _format_summary_accuracy_section(
+    baseline_metrics: MetricsDict,
+    current_metrics: MetricsDict,
+    thresholds: ThresholdsDict,
+    chunk_size: int | None = None,
+) -> tuple[list[str], bool]:
+    """Format summary accuracy section for reports.
+
+    Args:
+        baseline_metrics: Baseline metrics dict
+        current_metrics: Current metrics dict
+        thresholds: Regression thresholds
+        chunk_size: Chunk size to look for in summary_accuracy data
+
+    Returns:
+        Tuple of (report lines, has_regression)
+    """
+    report: list[str] = []
+    has_regression = False
+    # significance_threshold = thresholds.get("change_significance", 10.0)  # Currently unused in this function
+
+    baseline_summary = baseline_metrics.get("summary_accuracy", {})
+    current_summary = current_metrics.get("summary_accuracy", {})
+
+    if not baseline_summary or not current_summary:
+        return report, has_regression
+
+    # For single file comparison, try to find the chunk size
+    if chunk_size is None:
+        # Use the first available chunk size
+        chunk_sizes = set(baseline_summary.keys()) & set(current_summary.keys())
+        if chunk_sizes:
+            chunk_size = sorted(chunk_sizes)[0]
+        else:
+            return report, has_regression
+
+    baseline_stats = baseline_summary.get(chunk_size, {})
+    current_stats = current_summary.get(chunk_size, {})
+
+    if not baseline_stats or not current_stats:
+        return report, has_regression
+
+    report.append("### 📏 Summary Size Accuracy")
+    report.append("")
+    report.append("| Metric | Baseline | Current | Change |")
+    report.append("|--------|----------|---------|--------|")
+
+    # Average Deviation
+    baseline_val = baseline_stats.get("avg_deviation", 0)
+    current_val = current_stats.get("avg_deviation", 0)
+    if baseline_val > 0:
+        change_pct, emoji = calculate_change(baseline_val, current_val)
+        # For deviations, increase is bad
+        if change_pct > 10:
+            emoji = "⚠️"
+        if change_pct > 30:
+            has_regression = True
+            emoji += " ❌"
+        change_str = f"{change_pct:+.1f}% {emoji}"
+        report.append(
+            f"| Average Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_str} |"
+        )
+
+    # Median Deviation
+    baseline_val = baseline_stats.get("median_deviation", 0)
+    current_val = current_stats.get("median_deviation", 0)
+    if baseline_val > 0:
+        change_pct, emoji = calculate_change(baseline_val, current_val)
+        if change_pct > 10:
+            emoji = "⚠️"
+        if change_pct > 30:
+            has_regression = True
+            emoji += " ❌"
+        change_str = f"{change_pct:+.1f}% {emoji}"
+        report.append(
+            f"| Median Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_str} |"
+        )
+
+    # P95 Deviation
+    baseline_val = baseline_stats.get("p95_deviation", 0)
+    current_val = current_stats.get("p95_deviation", 0)
+    if baseline_val > 0:
+        change_pct, emoji = calculate_change(baseline_val, current_val)
+        if change_pct > 20:
+            emoji = "⚠️"
+        change_str = f"{change_pct:+.1f}% {emoji}"
+        report.append(
+            f"| P95 Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_str} |"
+        )
+
+    report.append("")
+    return report, has_regression
+
+
+def _format_amplification_section(
+    baseline_metrics: MetricsDict,
+    current_metrics: MetricsDict,
+    thresholds: ThresholdsDict,
+) -> tuple[list[str], bool]:
+    """Format amplification metrics section.
+
+    Returns:
+        Tuple of (report lines, has_regression)
+    """
+    report: list[str] = []
+    has_regression = False
+
+    baseline_amp = baseline_metrics.get("amplification", {})
+    current_amp = current_metrics.get("amplification", {})
+
+    if not baseline_amp or not current_amp:
+        return report, has_regression
+
+    report.append("### 📈 Amplification Metrics")
+    report.append("")
+    report.append("| Metric | Baseline | Current | Change |")
+    report.append("|--------|----------|---------|--------|")
+
+    metrics = [
+        ("Median Cost Amplification", "median_cost", ""),
+        ("90th Percentile Cost", "cost_p90", ""),
+        ("95th Percentile Cost", "cost_p95", ""),
+        ("Median Input Amplification", "median_input", ""),
+        ("Median Output Amplification", "median_output", ""),
+    ]
+
+    for display_name, key, unit in metrics:
+        baseline_val = baseline_amp.get(key, 0)
+        current_val = current_amp.get(key, 0)
+
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            change_str = f"{change_pct:+.1f}% {emoji}"
+
+            # Check for regression
+            if check_regression(change_pct, display_name, thresholds):
+                has_regression = True
+                change_str += " ❌"
+        else:
+            change_str = "N/A"
+
+        report.append(
+            f"| {display_name} | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
+        )
+
+    report.append("")
+    return report, has_regression
+
+
+def _format_efficiency_section(
+    baseline_metrics: MetricsDict,
+    current_metrics: MetricsDict,
+) -> list[str]:
+    """Format efficiency metrics section."""
+    report: list[str] = []
+
+    baseline_eff = baseline_metrics.get("efficiency", {})
+    current_eff = current_metrics.get("efficiency", {})
+
+    if not baseline_eff or not current_eff:
+        return report
+
+    report.append("### 📦 Efficiency Metrics")
+    report.append("")
+    report.append("| Metric | Baseline | Current | Change |")
+    report.append("|--------|----------|---------|--------|")
+
+    metrics = [
+        ("Avg Embedding Batch Size", "avg_embedding_batch_size", ""),
+        ("Batch Utilization", "batch_utilization", "percent"),
+    ]
+
+    for display_name, key, metric_type in metrics:
+        baseline_val = baseline_eff.get(key, 0)
+        current_val = current_eff.get(key, 0)
+
+        if baseline_val > 0:
+            change_pct, emoji = calculate_change(baseline_val, current_val)
+            # For efficiency metrics, decrease might be bad
+            if "Utilization" in display_name and change_pct < 0:
+                emoji = "⚠️" if abs(change_pct) > EMOJI_THRESHOLD_MINOR else ""
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+
+        baseline_fmt = format_value(baseline_val, metric_type)
+        current_fmt = format_value(current_val, metric_type)
+
+        report.append(
+            f"| {display_name} | {baseline_fmt} | {current_fmt} | {change_str} |"
+        )
+
+    report.append("")
+    return report
+
+
+def _format_retry_patterns_section(
+    baseline_metrics: MetricsDict,
+    current_metrics: MetricsDict,
+) -> list[str]:
+    """Format retry patterns section if there are retries."""
+    report: list[str] = []
+
+    baseline_retry = baseline_metrics.get("retry_patterns", {})
+    current_retry = current_metrics.get("retry_patterns", {})
+
+    if not baseline_retry or not current_retry:
+        return report
+
+    # Only show if there are retries
+    baseline_rate = baseline_retry.get("retry_rate", 0)
+    current_rate = current_retry.get("retry_rate", 0)
+
+    if baseline_rate == 0 and current_rate == 0:
+        return report
+
+    report.append("### 🔄 Retry Patterns")
+    report.append("")
+    report.append("| Metric | Baseline | Current | Change |")
+    report.append("|--------|----------|---------|--------|")
+
+    # Retry rate
+    if baseline_rate > 0 or current_rate > 0:
+        if baseline_rate > 0:
+            change_pct, emoji = calculate_change(baseline_rate, current_rate)
+            if change_pct > 50:
+                emoji = "⚠️"
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "New retries ⚠️"
+
+        report.append(
+            f"| Retry Rate | {baseline_rate:.1f}% | {current_rate:.1f}% | {change_str} |"
+        )
+
+    # Success rate
+    baseline_success = baseline_retry.get("retry_success_rate", 0)
+    current_success = current_retry.get("retry_success_rate", 0)
+
+    if baseline_rate > 0 or current_rate > 0:
+        if baseline_success > 0:
+            change_pct, emoji = calculate_change(baseline_success, current_success)
+            # For success rate, decrease is bad
+            if change_pct < -10:
+                emoji = "⚠️"
+            change_str = f"{change_pct:+.1f}% {emoji}"
+        else:
+            change_str = "N/A"
+
+        report.append(
+            f"| Retry Success Rate | {baseline_success:.1f}% | {current_success:.1f}% | {change_str} |"
+        )
+
+    report.append("")
+    return report
+
+
 def generate_comparison_report(
     baseline_metrics: MetricsDict,
     current_metrics: MetricsDict,
@@ -377,81 +538,27 @@ def generate_comparison_report(
     report.append(f"**Current:** {current_name}")
     report.append("")
 
-    # Compare amplification metrics
-    baseline_amp = baseline_metrics.get("amplification", {})
-    current_amp = current_metrics.get("amplification", {})
+    # Summary accuracy section (NEW - was computed but not shown)
+    summary_lines, summary_regression = _format_summary_accuracy_section(
+        baseline_metrics, current_metrics, thresholds
+    )
+    report.extend(summary_lines)
+    has_regression = has_regression or summary_regression
 
-    if baseline_amp and current_amp:
-        report.append("### 📈 Amplification Metrics")
-        report.append("")
-        report.append("| Metric | Baseline | Current | Change |")
-        report.append("|--------|----------|---------|--------|")
+    # Amplification metrics section (using new helper)
+    amp_lines, amp_regression = _format_amplification_section(
+        baseline_metrics, current_metrics, thresholds
+    )
+    report.extend(amp_lines)
+    has_regression = has_regression or amp_regression
 
-        metrics = [
-            ("Median Cost Amplification", "median_cost", ""),
-            ("90th Percentile Cost", "cost_p90", ""),
-            ("95th Percentile Cost", "cost_p95", ""),
-            ("Median Input Amplification", "median_input", ""),
-            ("Median Output Amplification", "median_output", ""),
-        ]
+    # Efficiency metrics section (using new helper)
+    eff_lines = _format_efficiency_section(baseline_metrics, current_metrics)
+    report.extend(eff_lines)
 
-        for display_name, key, unit in metrics:
-            baseline_val = baseline_amp.get(key, 0)
-            current_val = current_amp.get(key, 0)
-
-            if baseline_val > 0:
-                change_pct, emoji = calculate_change(baseline_val, current_val)
-                change_str = f"{change_pct:+.1f}% {emoji}"
-
-                # Check for regression
-                if check_regression(change_pct, display_name, thresholds):
-                    has_regression = True
-                    change_str += " ❌"
-            else:
-                change_str = "N/A"
-
-            report.append(
-                f"| {display_name} | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
-            )
-
-        report.append("")
-
-    # Compare efficiency metrics
-    baseline_eff = baseline_metrics.get("efficiency", {})
-    current_eff = current_metrics.get("efficiency", {})
-
-    if baseline_eff and current_eff:
-        report.append("### 📦 Efficiency Metrics")
-        report.append("")
-        report.append("| Metric | Baseline | Current | Change |")
-        report.append("|--------|----------|---------|--------|")
-
-        metrics = [
-            ("Avg Embedding Batch Size", "avg_embedding_batch_size", ""),
-            ("Batch Utilization", "batch_utilization", "percent"),
-        ]
-
-        for display_name, key, metric_type in metrics:
-            baseline_val = baseline_eff.get(key, 0)
-            current_val = current_eff.get(key, 0)
-
-            if baseline_val > 0:
-                change_pct, emoji = calculate_change(baseline_val, current_val)
-                # For efficiency metrics, decrease might be bad
-                if "Utilization" in display_name and change_pct < 0:
-                    emoji = "⚠️" if abs(change_pct) > EMOJI_THRESHOLD_MINOR else ""
-                change_str = f"{change_pct:+.1f}% {emoji}"
-            else:
-                change_str = "N/A"
-
-            baseline_fmt = format_value(baseline_val, metric_type)
-            current_fmt = format_value(current_val, metric_type)
-
-            report.append(
-                f"| {display_name} | {baseline_fmt} | {current_fmt} | {change_str} |"
-            )
-
-        report.append("")
+    # Retry patterns section (NEW)
+    retry_lines = _format_retry_patterns_section(baseline_metrics, current_metrics)
+    report.extend(retry_lines)
 
     # Summary
     if has_regression:
