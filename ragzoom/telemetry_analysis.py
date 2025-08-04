@@ -13,6 +13,12 @@ from statistics import median
 from typing import Any
 
 from ragzoom.config import RagZoomConfig
+from ragzoom.telemetry_types import (
+    AmplificationSummaryDict,
+    BatchEfficiencyDict,
+    RetryAnalysisDict,
+    TelemetryDataDict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +26,9 @@ logger = logging.getLogger(__name__)
 SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0"]
 
 # Default token estimate for leaf nodes when source tokens are not available
+# This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
+# estimate for backward compatibility with old telemetry data that didn't track source tokens.
+# The actual chunk size may vary, but this provides a reasonable approximation for cost metrics.
 DEFAULT_LEAF_TOKEN_ESTIMATE = 150
 
 
@@ -145,7 +154,7 @@ class TelemetryAnalysisError(Exception):
     pass
 
 
-def parse_telemetry_format(telemetry_data: dict) -> dict:
+def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
     """Parse telemetry data, handling version differences gracefully.
 
     Args:
@@ -174,13 +183,17 @@ def parse_telemetry_format(telemetry_data: dict) -> dict:
     if not isinstance(documents, dict):
         raise TelemetryAnalysisError("Invalid documents structure in telemetry data")
 
-    return {
+    # Return as TypedDict - cast is safe after validation
+    result: TelemetryDataDict = {
         "format_version": format_version,
         "documents": documents,
     }
+    return result
 
 
-def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -> dict:
+def compute_amplification_metrics(
+    telemetry_data: dict, config: RagZoomConfig
+) -> AmplificationSummaryDict:
     """Compute amplification metrics from telemetry data.
 
     Args:
@@ -232,48 +245,47 @@ def _compute_percentile(values: list[float], percentile: float) -> float:
 
 
 def _calculate_cost_amplification(
-    prompt_tokens: int,
-    completion_tokens: int,
+    total_prompt_tokens: int,
+    total_completion_tokens: int,
     input_text_tokens: int,
-    actual_tokens: int,
+    final_summary_tokens: int,
     config: RagZoomConfig,
 ) -> float:
     """Calculate cost-weighted amplification factor.
 
     Cost amplification = (actual cost / theoretical minimum cost)
 
-    Uses completion_tokens for both actual and theoretical costs to eliminate
-    variability from tokenizer differences. This focuses the metric on what we
-    control (prompt overhead) rather than external factors.
+    Measures the cost inefficiency from prompt overhead and retry attempts.
+    The theoretical minimum represents sending just the raw text and receiving
+    the final summary in a single attempt.
 
     Args:
-        prompt_tokens: Tokens in the API prompt
-        completion_tokens: Tokens in the API completion
+        total_prompt_tokens: Total prompt tokens across all attempts
+        total_completion_tokens: Total completion tokens across all attempts
         input_text_tokens: Tokens in the original text being summarized
-        actual_tokens: Actual tokens in the generated summary (unused, kept for compatibility)
+        final_summary_tokens: Tokens in the final accepted summary
         config: Configuration with pricing information
 
     Returns:
         Cost amplification factor (1.0 = no amplification)
     """
-    # Calculate actual cost
+    # Calculate actual cost (what we paid across all attempts)
     actual_cost = (
-        prompt_tokens * config.summary_input_cost_per_1k
-        + completion_tokens * config.summary_output_cost_per_1k
+        total_prompt_tokens * config.summary_input_cost_per_1k
+        + total_completion_tokens * config.summary_output_cost_per_1k
     ) / 1000
 
-    # Calculate theoretical minimum cost using completion_tokens instead of actual_tokens
-    # This eliminates noise from tokenizer differences between local and API counting
+    # Calculate theoretical minimum cost (input text → final summary in one shot)
     min_cost = (
         input_text_tokens * config.summary_input_cost_per_1k
-        + completion_tokens * config.summary_output_cost_per_1k
+        + final_summary_tokens * config.summary_output_cost_per_1k
     ) / 1000
 
     # Return amplification factor with zero check
     return actual_cost / min_cost if min_cost > 0 else 1.0
 
 
-def compute_batch_efficiency(telemetry_data: dict) -> dict:
+def compute_batch_efficiency(telemetry_data: dict) -> BatchEfficiencyDict:
     """Analyze embedding batch utilization from telemetry data.
 
     Args:
@@ -317,31 +329,43 @@ def compute_batch_efficiency(telemetry_data: dict) -> dict:
             total_embeddings += 1
 
     # Calculate metrics
-    result = {
+    result: BatchEfficiencyDict = {
         "avg_batch_size": 0.0,
-        "batch_sizes": batch_sizes,
-        "total_batches": len(batch_sizes),
+        "batch_sizes": batch_sizes,  # Legacy field
+        "total_batches": len(batch_sizes),  # Legacy field
         "total_embeddings": total_embeddings,
         "batch_utilization": 0.0,
+        "batched_embeddings": 0,  # Will be calculated below
+        "single_embeddings": 0,  # Will be calculated below
+        "max_batch_size": max(batch_sizes) if batch_sizes else 0,
+        "batch_size_distribution": {},  # Will be calculated below
     }
 
     if batch_sizes:
         avg_batch_size = sum(batch_sizes) / len(batch_sizes)
         result["avg_batch_size"] = avg_batch_size
-        # Batch efficiency: percentage of embeddings that benefited from batching.
-        # For each batch of size N, (N-1) embeddings were batched together rather
-        # than sent individually.
+
+        # Calculate additional metrics
         batched_embeddings = sum(max(0, batch_size - 1) for batch_size in batch_sizes)
+        single_embeddings = sum(1 for batch_size in batch_sizes if batch_size == 1)
+
+        result["batched_embeddings"] = batched_embeddings
+        result["single_embeddings"] = single_embeddings
         result["batch_utilization"] = (
             (batched_embeddings / total_embeddings) * 100
             if total_embeddings > 0
             else 0.0
         )
 
+        # Calculate batch size distribution
+        from collections import Counter
+
+        result["batch_size_distribution"] = dict(Counter(batch_sizes))
+
     return result
 
 
-def analyze_retry_patterns(telemetry_data: dict) -> dict:
+def analyze_retry_patterns(telemetry_data: dict) -> RetryAnalysisDict:
     """Analyze summary retry patterns from telemetry data.
 
     Args:
@@ -357,6 +381,12 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
         - rejection_reasons: Distribution of rejection reasons
         - nodes_with_retries: Number of nodes that required retries
         - total_nodes_with_summaries: Total number of nodes with summary attempts
+        - retry_distribution: Dict mapping retry count (0, 1, 2, 3+) to node count
+        - avg_retries_per_node: Average number of retries per node
+        - max_retries: Maximum retries for any single node
+        - retry_time_seconds: Total time spent on retry attempts
+        - avg_time_per_retry: Average time per retry attempt
+        - time_wasted_on_rejections: Total time spent on rejected attempts
     """
     parsed_data = parse_telemetry_format(telemetry_data)
 
@@ -367,6 +397,13 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
     rejection_reasons: dict[str, int] = {}
     nodes_with_retries = 0
     total_nodes_with_summaries = 0
+
+    # New metrics for retry distribution and timing
+    retry_distribution: dict[int, int] = {0: 0, 1: 0, 2: 0, 3: 0}  # 3 means 3+
+    max_retries = 0
+    total_retry_time = 0.0
+    total_rejected_time = 0.0
+    total_retries_per_node = 0
 
     # Process all documents
     for doc_type, doc_data in parsed_data["documents"].items():
@@ -387,29 +424,55 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
 
             total_nodes_with_summaries += 1
             node_has_retry = False
+            node_retry_count = 0
+            node_retry_time = 0.0
+            node_rejected_time = 0.0
 
-            for attempt in summary_attempts:
+            for attempt_idx, attempt in enumerate(summary_attempts):
                 total_attempts += 1
-                is_retry = attempt.get("is_retry", False)
                 status = attempt.get("status", "unknown")
+
+                # Calculate time for this attempt if available
+                start_time = attempt.get("start_time", 0)
+                end_time = attempt.get("end_time", 0)
+                attempt_time = end_time - start_time if end_time > start_time else 0
+
+                # In v2 format: first attempt (index 0) is initial, rest are retries
+                # In v1 format: check the is_retry field for backward compatibility
+                is_retry = attempt.get("is_retry", attempt_idx > 0)
 
                 if is_retry:
                     retry_attempts += 1
                     node_has_retry = True
+                    node_retry_count += 1
+                    node_retry_time += attempt_time
                     if status == "accepted":
                         successful_retries += 1
+                    else:
+                        node_rejected_time += attempt_time
 
                 if status == "accepted":
                     successful_attempts += 1
                 elif status in ["rejected_over", "rejected_under", "error"]:
                     reason = attempt.get("rejection_reason", status)
-                    rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+                    if reason:  # Type guard to ensure reason is not None
+                        rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+                    if not is_retry:  # Also count rejected time for initial attempts
+                        node_rejected_time += attempt_time
 
             if node_has_retry:
                 nodes_with_retries += 1
 
+            # Track retry distribution and totals
+            retry_bucket = min(node_retry_count, 3)  # Cap at 3+ for distribution
+            retry_distribution[retry_bucket] += 1
+            max_retries = max(max_retries, node_retry_count)
+            total_retries_per_node += node_retry_count
+            total_retry_time += node_retry_time
+            total_rejected_time += node_rejected_time
+
     # Calculate metrics
-    result = {
+    result: RetryAnalysisDict = {
         "retry_rate": 0.0,
         "total_attempts": total_attempts,
         "successful_attempts": successful_attempts,
@@ -418,13 +481,30 @@ def analyze_retry_patterns(telemetry_data: dict) -> dict:
         "rejection_reasons": rejection_reasons,
         "nodes_with_retries": nodes_with_retries,
         "total_nodes_with_summaries": total_nodes_with_summaries,
+        # New distribution metrics
+        "retry_distribution": {
+            "0": retry_distribution[0],
+            "1": retry_distribution[1],
+            "2": retry_distribution[2],
+            "3+": retry_distribution[3],
+        },
+        "avg_retries_per_node": 0.0,
+        "max_retries": max_retries,
+        # New timing metrics
+        "retry_time_seconds": total_retry_time,
+        "avg_time_per_retry": 0.0,
+        "time_wasted_on_rejections": total_rejected_time,
     }
 
     if total_nodes_with_summaries > 0:
         result["retry_rate"] = (nodes_with_retries / total_nodes_with_summaries) * 100
+        result["avg_retries_per_node"] = (
+            total_retries_per_node / total_nodes_with_summaries
+        )
 
     if retry_attempts > 0:
         result["retry_success_rate"] = (successful_retries / retry_attempts) * 100
+        result["avg_time_per_retry"] = total_retry_time / retry_attempts
 
     return result
 
@@ -583,7 +663,7 @@ class ComputedMetrics:
     nodes_per_height: list[int]
 
 
-def get_amplification_summary(metrics: ComputedMetrics) -> dict:
+def get_amplification_summary(metrics: ComputedMetrics) -> AmplificationSummaryDict:
     """Compute amplification summary statistics from raw metrics.
 
     Args:
@@ -598,13 +678,25 @@ def get_amplification_summary(metrics: ComputedMetrics) -> dict:
         - median_output: Median output amplification
         - by_height: Amplification metrics broken down by tree height
     """
-    result = {
+    result: AmplificationSummaryDict = {
         "median_cost": 0.0,
         "cost_p90": 0.0,
         "cost_p95": 0.0,
         "median_input": 0.0,
         "median_output": 0.0,
-        "by_height": metrics.amplifications_by_height,
+        "by_height": {
+            height: {
+                "median_cost": median(data["cost"]) if data["cost"] else 0.0,
+                "median_input": median(data["input"]) if data["input"] else 0.0,
+                "median_output": median(data["output"]) if data["output"] else 0.0,
+                "count": len(data["cost"]),
+                # Legacy field names for backward compatibility
+                "cost": median(data["cost"]) if data["cost"] else 0.0,
+                "input": median(data["input"]) if data["input"] else 0.0,
+                "output": median(data["output"]) if data["output"] else 0.0,
+            }
+            for height, data in metrics.amplifications_by_height.items()
+        },
     }
 
     if metrics.cost_amplifications:
@@ -726,15 +818,18 @@ def compute_metrics_from_telemetry(
                     node_final_summary_tokens = attempt.get("actual_tokens", 0)
 
             # Calculate amplification using ALL attempts' tokens
-            if summary_attempts and node_input_text_tokens > 0 and final_attempt:
+            if (
+                summary_attempts
+                and node_input_text_tokens > 0
+                and final_attempt
+                and node_final_summary_tokens > 0  # Ensure we have valid final tokens
+            ):
                 # Input amplification = total prompt tokens / original text tokens
                 input_amplification = node_total_prompt_tokens / node_input_text_tokens
 
                 # Output amplification = total completion tokens / final summary tokens
                 output_amplification = (
                     node_total_completion_tokens / node_final_summary_tokens
-                    if node_final_summary_tokens > 0
-                    else 1.0
                 )
 
                 # Calculate cost-weighted amplification using cumulative tokens
