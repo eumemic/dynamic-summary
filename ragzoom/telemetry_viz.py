@@ -1,4 +1,9 @@
-"""Telemetry visualization classes and functions."""
+"""Telemetry visualization classes and functions.
+
+NOTE: This module provides visualization for telemetry data, focusing on token usage,
+costs, batch efficiency, and retry patterns. For programmatic analysis, use the
+simplified metrics in telemetry_cli.py.
+"""
 
 import json
 from pathlib import Path
@@ -13,10 +18,8 @@ from matplotlib.gridspec import GridSpec
 from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import (
     analyze_retry_patterns,
-    compute_amplification_metrics,
     compute_batch_efficiency,
     compute_metrics_from_telemetry,
-    get_amplification_summary,
     get_telemetry_thresholds,
 )
 from ragzoom.telemetry_config import (
@@ -82,11 +85,11 @@ class TelemetryVisualizer:
 
         # Create figure with subplots
         fig = plt.figure(figsize=(FIGURE_WIDTH, FIGURE_HEIGHT))
-        gs = GridSpec(6, 2, figure=fig, hspace=0.3, wspace=0.3)
+        gs = GridSpec(6, 2, figure=fig, hspace=0.3, wspace=0.3, top=0.96)
 
-        # 1. Amplification by Level
+        # 1. Token usage by Tree Level
         ax1 = fig.add_subplot(gs[0, :])
-        self._plot_amplification_by_level(telemetry, config, ax1)
+        self._plot_token_usage_by_tree_level(telemetry, config, ax1)
 
         # 2. Cost Breakdown
         ax2 = fig.add_subplot(gs[1, 0])
@@ -115,7 +118,7 @@ class TelemetryVisualizer:
         # Add title and metadata
         chunk_size = data["config"]["leaf_tokens"]
         fig.suptitle(
-            f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=0.995
+            f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=0.98
         )
 
         # Save figure
@@ -178,63 +181,94 @@ class TelemetryVisualizer:
 
         return bins, align
 
-    def _plot_amplification_by_level(
+    def _plot_token_usage_by_tree_level(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
     ) -> None:
-        """Plot amplification metrics by tree level."""
-        amplification = compute_amplification_metrics(telemetry, config)
+        """Plot token usage by tree level with stacked bars."""
+        # Group tokens by height
+        tokens_by_height: dict[int, dict[str, list[float]]] = {}
 
-        if not amplification["by_height"]:
+        # Parse telemetry to extract tokens per level
+        parsed_data = (
+            telemetry
+            if "format_version" in telemetry
+            else telemetry.get("telemetry", {})
+        )
+
+        for doc_type, doc_data in parsed_data.get("documents", {}).items():
+            for node in doc_data.get("nodes", []):
+                height = node.get("height", node.get("level", 0))
+                if height == 0:
+                    continue  # Skip leaf nodes
+
+                # Get token counts for this node
+                for attempt in node.get("summary_attempts", []):
+                    if attempt.get("status") == "accepted":
+                        prompt_tokens = attempt.get("prompt_tokens", 0)
+                        completion_tokens = attempt.get("completion_tokens", 0)
+
+                        if height not in tokens_by_height:
+                            tokens_by_height[height] = {
+                                "prompt_tokens": [],
+                                "completion_tokens": [],
+                            }
+
+                        tokens_by_height[height]["prompt_tokens"].append(prompt_tokens)
+                        tokens_by_height[height]["completion_tokens"].append(
+                            completion_tokens
+                        )
+                        break
+
+        if not tokens_by_height:
             ax.text(
                 0.5,
                 0.5,
-                "No amplification data available",
+                "No token data available",
                 ha="center",
                 va="center",
                 transform=ax.transAxes,
             )
-            ax.set_title("Amplification by Tree Level")
+            ax.set_title("Token Usage by Tree Level")
             return
 
-        levels = sorted(amplification["by_height"].keys())
-        cost_medians = []
-        input_medians = []
-        output_medians = []
+        levels = sorted(tokens_by_height.keys())
+        avg_prompt_tokens = []
+        avg_completion_tokens = []
 
         for level in levels:
-            level_data = amplification["by_height"][level]
-            # Extract median values with proper validation
-            cost_median = level_data.get("median_cost")
-            input_median = level_data.get("median_input")
-            output_median = level_data.get("median_output")
-
-            # Log warning if data is missing but continue with defaults
-            if cost_median is None or input_median is None or output_median is None:
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Missing amplification data for level {level}")
-
-            cost_medians.append(cost_median if cost_median is not None else 0.0)
-            input_medians.append(input_median if input_median is not None else 0.0)
-            output_medians.append(output_median if output_median is not None else 0.0)
+            level_data = tokens_by_height[level]
+            avg_prompt_tokens.append(np.mean(level_data["prompt_tokens"]))
+            avg_completion_tokens.append(np.mean(level_data["completion_tokens"]))
 
         x = np.arange(len(levels))
-        width = 0.25
+        width = 0.6
 
-        ax.bar(x - width, cost_medians, width, label="Cost", alpha=0.8)
-        ax.bar(x, input_medians, width, label="Input", alpha=0.8)
-        ax.bar(x + width, output_medians, width, label="Output", alpha=0.8)
+        # Create stacked bars
+        ax.bar(
+            x,
+            avg_prompt_tokens,
+            width,
+            label="Input Tokens",
+            alpha=0.8,
+            color="#66b3ff",
+        )
+        ax.bar(
+            x,
+            avg_completion_tokens,
+            width,
+            bottom=avg_prompt_tokens,
+            label="Output Tokens",
+            alpha=0.8,
+            color="#99ff99",
+        )
 
         ax.set_xlabel("Tree Level")
-        ax.set_ylabel("Amplification Factor")
-        ax.set_title(
-            "Token & Cost Amplification by Tree Level\n(Lower is better - shows summarization efficiency)"
-        )
+        ax.set_ylabel("Average Tokens per Node")
+        ax.set_title("Token Usage by Tree Level")
         ax.set_xticks(x)
         ax.set_xticklabels([str(level) for level in levels])
         ax.legend()
-        ax.grid(True, alpha=0.3)
+        ax.grid(True, alpha=0.3, axis="y")
 
     def _plot_cost_breakdown(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
@@ -739,14 +773,32 @@ class TelemetryVisualizer:
             # Compute all metrics once (single source of truth)
             metrics = compute_metrics_from_telemetry(telemetry, config)
 
-            # Extract amplification summary from metrics
-            amp = get_amplification_summary(metrics)
-
             # Compute other analysis independently
             batch = compute_batch_efficiency(telemetry)
             retry = analyze_retry_patterns(telemetry)
 
-            cost_amps.append(amp["median_cost"])
+            # Calculate average cost per node
+            num_nodes = len(
+                [
+                    n
+                    for doc in telemetry.get("documents", {}).values()
+                    for n in doc.get("nodes", [])
+                    if n.get("height", 0) > 0
+                ]
+            )
+            # Calculate total cost from token counts
+            total_cost = (
+                metrics.total_embedding_tokens / 1000 * metrics.embedding_cost_per_1k
+                + metrics.total_summary_prompt_tokens
+                / 1000
+                * metrics.summary_input_cost_per_1k
+                + metrics.total_summary_completion_tokens
+                / 1000
+                * metrics.summary_output_cost_per_1k
+            )
+            avg_cost = (total_cost / num_nodes) if num_nodes > 0 else 0
+
+            cost_amps.append(avg_cost)
             batch_utils.append(batch["batch_utilization"])
             retry_rates.append(retry["retry_rate"])
             # Calculate total cost from metrics
@@ -760,12 +812,12 @@ class TelemetryVisualizer:
             ) * metrics.summary_output_cost_per_1k
             total_costs.append(embedding_cost + summary_cost)
 
-        # Plot 1: Cost Amplification
+        # Plot 1: Average Cost per Node
         ax = axes[0, 0]
         ax.plot(chunk_sizes, cost_amps, "o-", markersize=8)
         ax.set_xlabel("Chunk Size (tokens)")
-        ax.set_ylabel("Median Cost Amplification")
-        ax.set_title("Cost Amplification vs Chunk Size")
+        ax.set_ylabel("Average Cost per Node ($)")
+        ax.set_title("Cost per Node vs Chunk Size")
         ax.grid(True, alpha=0.3)
 
         # Plot 2: Batch Utilization
