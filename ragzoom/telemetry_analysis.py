@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0"]
 
 # Default token estimate for leaf nodes when source tokens are not available
+# This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
+# estimate for backward compatibility with old telemetry data that didn't track source tokens.
+# The actual chunk size may vary, but this provides a reasonable approximation for cost metrics.
 DEFAULT_LEAF_TOKEN_ESTIMATE = 150
 
 
@@ -815,15 +818,18 @@ def compute_metrics_from_telemetry(
                     node_final_summary_tokens = attempt.get("actual_tokens", 0)
 
             # Calculate amplification using ALL attempts' tokens
-            if summary_attempts and node_input_text_tokens > 0 and final_attempt:
+            if (
+                summary_attempts
+                and node_input_text_tokens > 0
+                and final_attempt
+                and node_final_summary_tokens > 0  # Ensure we have valid final tokens
+            ):
                 # Input amplification = total prompt tokens / original text tokens
                 input_amplification = node_total_prompt_tokens / node_input_text_tokens
 
                 # Output amplification = total completion tokens / final summary tokens
                 output_amplification = (
                     node_total_completion_tokens / node_final_summary_tokens
-                    if node_final_summary_tokens > 0
-                    else 1.0
                 )
 
                 # Calculate cost-weighted amplification using cumulative tokens

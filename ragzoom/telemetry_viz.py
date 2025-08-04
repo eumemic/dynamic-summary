@@ -203,10 +203,21 @@ class TelemetryVisualizer:
 
         for level in levels:
             level_data = amplification["by_height"][level]
-            # Use the median values directly from TypedDict structure
-            cost_medians.append(level_data.get("median_cost", 0.0))
-            input_medians.append(level_data.get("median_input", 0.0))
-            output_medians.append(level_data.get("median_output", 0.0))
+            # Extract median values with proper validation
+            cost_median = level_data.get("median_cost")
+            input_median = level_data.get("median_input")
+            output_median = level_data.get("median_output")
+
+            # Log warning if data is missing but continue with defaults
+            if cost_median is None or input_median is None or output_median is None:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Missing amplification data for level {level}")
+
+            cost_medians.append(cost_median if cost_median is not None else 0.0)
+            input_medians.append(input_median if input_median is not None else 0.0)
+            output_medians.append(output_median if output_median is not None else 0.0)
 
         x = np.arange(len(levels))
         width = 0.25
@@ -571,8 +582,6 @@ class TelemetryVisualizer:
 
     def _plot_token_distributions(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot token count distributions by tree level using violin plots."""
-        # TODO: Consider refactoring this method to extract data preparation logic
-        # into a separate method for better readability and testability
         import pandas as pd
 
         # Extract token data by level from telemetry
