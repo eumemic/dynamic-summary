@@ -87,9 +87,9 @@ class TelemetryVisualizer:
         fig = plt.figure(figsize=(FIGURE_WIDTH, FIGURE_HEIGHT))
         gs = GridSpec(6, 2, figure=fig, hspace=0.3, wspace=0.3, top=0.96)
 
-        # 1. Token usage by Level
+        # 1. Token usage by Tree Level
         ax1 = fig.add_subplot(gs[0, :])
-        self._plot_token_usage_by_level(telemetry, config, ax1)
+        self._plot_token_usage_by_tree_level(telemetry, config, ax1)
 
         # 2. Cost Breakdown
         ax2 = fig.add_subplot(gs[1, 0])
@@ -181,7 +181,7 @@ class TelemetryVisualizer:
 
         return bins, align
 
-    def _plot_token_usage_by_level(
+    def _plot_token_usage_by_tree_level(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
     ) -> None:
         """Plot token usage by tree level with stacked bars."""

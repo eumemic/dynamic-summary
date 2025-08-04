@@ -216,6 +216,37 @@ class TestSimplifiedMetrics:
         # Should return empty metrics (no summary attempts)
         assert result.metrics_by_chunk_size == {}
 
+    def test_simplified_metrics_cost_calculations(
+        self, config: RagZoomConfig, sample_telemetry: dict
+    ) -> None:
+        """Test that cost calculations in simplified metrics are correct."""
+        result = compute_simplified_metrics(sample_telemetry, config)
+
+        # Verify cost calculations for the chunk size
+        for chunk_size, metrics in result.metrics_by_chunk_size.items():
+            cost_metrics = metrics["cost"]
+
+            # Check that cost metrics exist and are reasonable
+            assert "usd_per_node" in cost_metrics
+            assert "total_prompt_tokens" in cost_metrics
+            assert "total_completion_tokens" in cost_metrics
+            assert cost_metrics["usd_per_node"] > 0
+            assert cost_metrics["total_prompt_tokens"] > 0
+
+            # Verify cost calculation is correct
+            # Based on sample data: 2 nodes with 250 + 300 = 550 prompt tokens, 90 + 110 = 200 completion tokens
+            # Cost = (550 / 1000 * 0.0025) + (200 / 1000 * 0.01) = 0.001375 + 0.002 = 0.003375
+            expected_total_cost = 0.003375
+            # USD per node (2 nodes)
+            expected_usd_per_node = expected_total_cost / 2
+            assert cost_metrics["usd_per_node"] == pytest.approx(
+                expected_usd_per_node, rel=0.01
+            )
+
+            # Verify token counts
+            assert cost_metrics["total_prompt_tokens"] == 550
+            assert cost_metrics["total_completion_tokens"] == 200
+
 
 class TestBatchEfficiency:
     """Test batch efficiency analysis."""

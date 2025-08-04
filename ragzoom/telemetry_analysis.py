@@ -35,7 +35,10 @@ SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0"]
 # This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
 # estimate for backward compatibility with old telemetry data that didn't track source tokens.
 # The actual chunk size may vary, but this provides a reasonable approximation for cost metrics.
-DEFAULT_LEAF_TOKEN_ESTIMATE = 150
+# This can be overridden via the RAGZOOM_DEFAULT_LEAF_TOKEN_ESTIMATE environment variable.
+DEFAULT_LEAF_TOKEN_ESTIMATE = int(
+    os.getenv("RAGZOOM_DEFAULT_LEAF_TOKEN_ESTIMATE", "150")
+)
 
 
 # ============================================================================
