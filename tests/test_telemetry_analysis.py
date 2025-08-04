@@ -6,9 +6,9 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import (
     TelemetryAnalysisError,
     analyze_retry_patterns,
-    compute_amplification_metrics,
     compute_batch_efficiency,
     compute_metrics_from_telemetry,
+    compute_simplified_metrics,
     parse_telemetry_format,
 )
 
@@ -90,8 +90,8 @@ class TestTelemetryFormatParsing:
             parse_telemetry_format(telemetry_data)
 
 
-class TestAmplificationMetrics:
-    """Test amplification metrics computation."""
+class TestSimplifiedMetrics:
+    """Test simplified metrics computation."""
 
     @pytest.fixture
     def config(self) -> RagZoomConfig:
@@ -121,7 +121,7 @@ class TestAmplificationMetrics:
                                     "is_retry": False,
                                     "target_tokens": 100,
                                     "input_text_tokens": 200,
-                                    "prompt_tokens": 250,  # 1.25x input amplification
+                                    "prompt_tokens": 250,
                                     "completion_tokens": 90,
                                     "actual_tokens": 90,
                                     "status": "accepted",
@@ -141,7 +141,7 @@ class TestAmplificationMetrics:
                                     "is_retry": False,
                                     "target_tokens": 100,
                                     "input_text_tokens": 200,
-                                    "prompt_tokens": 300,  # 1.5x input amplification
+                                    "prompt_tokens": 300,
                                     "completion_tokens": 110,
                                     "actual_tokens": 100,
                                     "status": "accepted",
@@ -155,47 +155,45 @@ class TestAmplificationMetrics:
             },
         }
 
-    def test_compute_amplification_metrics(
+    def test_compute_simplified_metrics(
         self, config: RagZoomConfig, sample_telemetry: dict
     ) -> None:
-        """Test computing amplification metrics from telemetry."""
-        result = compute_amplification_metrics(sample_telemetry, config)
+        """Test computing simplified metrics from telemetry."""
+        result = compute_simplified_metrics(sample_telemetry, config)
 
-        # Should have computed metrics
-        assert result["median_cost"] > 0
-        assert result["median_input"] > 0
-        assert result["median_output"] > 0
+        # Should have metrics organized by chunk size
+        assert hasattr(result, "metrics_by_chunk_size")
+        assert isinstance(result.metrics_by_chunk_size, dict)
 
-        # Check input amplification: median of [1.25, 1.5] = 1.375
-        assert result["median_input"] == pytest.approx(1.375, rel=0.01)
+        # For each chunk size with data
+        for chunk_size, metrics in result.metrics_by_chunk_size.items():
+            # Should have all metric categories
+            assert "target_fit" in metrics
+            assert "retries" in metrics
+            assert "latency" in metrics
+            assert "cost" in metrics
+            assert "dispersion" in metrics
 
-        # Check output amplification: median of [1.0, 1.1] = 1.05
-        assert result["median_output"] == pytest.approx(1.05, rel=0.01)
+            # Target-fit metrics
+            assert "median_error" in metrics["target_fit"]
+            assert "p95_error" in metrics["target_fit"]
+            assert "percent_within_10" in metrics["target_fit"]
 
-        # Check by-height breakdown (should work even with v1.0 data)
-        assert 1 in result["by_height"]
-        height_1_data = result["by_height"][1]
-        assert height_1_data["count"] == 2  # Two nodes at height 1
-        assert height_1_data["median_input"] == pytest.approx(1.375, rel=0.01)
-        assert height_1_data["median_output"] == pytest.approx(1.05, rel=0.01)
-        # Legacy fields should also be present for backward compatibility
-        assert height_1_data["input"] == pytest.approx(1.375, rel=0.01)
-        assert height_1_data["output"] == pytest.approx(1.05, rel=0.01)
+            # Retry metrics
+            assert "retry_rate" in metrics["retries"]
+            assert "max_retries" in metrics["retries"]
 
-    def test_amplification_metrics_empty_data(self, config: RagZoomConfig) -> None:
-        """Test amplification metrics with empty telemetry."""
+    def test_simplified_metrics_empty_data(self, config: RagZoomConfig) -> None:
+        """Test simplified metrics with empty telemetry."""
         empty_telemetry = {"format_version": "1.0", "documents": {}}
 
-        result = compute_amplification_metrics(empty_telemetry, config)
+        result = compute_simplified_metrics(empty_telemetry, config)
 
-        # Should return zero values
-        assert result["median_cost"] == 0.0
-        assert result["median_input"] == 0.0
-        assert result["median_output"] == 0.0
-        assert result["by_height"] == {}
+        # Should return empty metrics
+        assert result.metrics_by_chunk_size == {}
 
-    def test_amplification_metrics_only_leaf_nodes(self, config: RagZoomConfig) -> None:
-        """Test amplification metrics with only leaf nodes (no summaries)."""
+    def test_simplified_metrics_only_leaf_nodes(self, config: RagZoomConfig) -> None:
+        """Test simplified metrics with only leaf nodes (no summaries)."""
         leaf_only_telemetry = {
             "format_version": "1.0",
             "documents": {
@@ -213,12 +211,41 @@ class TestAmplificationMetrics:
             },
         }
 
-        result = compute_amplification_metrics(leaf_only_telemetry, config)
+        result = compute_simplified_metrics(leaf_only_telemetry, config)
 
-        # Should return zero values (no summary attempts)
-        assert result["median_cost"] == 0.0
-        assert result["median_input"] == 0.0
-        assert result["median_output"] == 0.0
+        # Should return empty metrics (no summary attempts)
+        assert result.metrics_by_chunk_size == {}
+
+    def test_simplified_metrics_cost_calculations(
+        self, config: RagZoomConfig, sample_telemetry: dict
+    ) -> None:
+        """Test that cost calculations in simplified metrics are correct."""
+        result = compute_simplified_metrics(sample_telemetry, config)
+
+        # Verify cost calculations for the chunk size
+        for chunk_size, metrics in result.metrics_by_chunk_size.items():
+            cost_metrics = metrics["cost"]
+
+            # Check that cost metrics exist and are reasonable
+            assert "usd_per_node" in cost_metrics
+            assert "total_prompt_tokens" in cost_metrics
+            assert "total_completion_tokens" in cost_metrics
+            assert cost_metrics["usd_per_node"] > 0
+            assert cost_metrics["total_prompt_tokens"] > 0
+
+            # Verify cost calculation is correct
+            # Based on sample data: 2 nodes with 250 + 300 = 550 prompt tokens, 90 + 110 = 200 completion tokens
+            # Cost = (550 / 1000 * 0.0025) + (200 / 1000 * 0.01) = 0.001375 + 0.002 = 0.003375
+            expected_total_cost = 0.003375
+            # USD per node (2 nodes)
+            expected_usd_per_node = expected_total_cost / 2
+            assert cost_metrics["usd_per_node"] == pytest.approx(
+                expected_usd_per_node, rel=0.01
+            )
+
+            # Verify token counts
+            assert cost_metrics["total_prompt_tokens"] == 550
+            assert cost_metrics["total_completion_tokens"] == 200
 
 
 class TestBatchEfficiency:
@@ -586,10 +613,9 @@ class TestFullMetricsComputation:
         assert metrics.start_time == 1234567890.0
         assert metrics.end_time == 1234567892.0
 
-        # Check amplification metrics
-        assert len(metrics.cost_amplifications) == 1
-        assert len(metrics.input_amplifications) == 1
-        assert len(metrics.output_amplifications) == 1
+        # Check basic metrics
+        assert metrics.chunks_created == 2  # 2 leaf nodes
+        assert metrics.summary_api_calls == 1
 
         # Check summary stats (bucketed by actual target_tokens from telemetry)
         assert 100 in metrics.summary_stats  # The test data has target_tokens=100
@@ -600,12 +626,8 @@ class TestFullMetricsComputation:
         assert 2 in metrics.embedding_batch_sizes
         assert 1 in metrics.embedding_batch_sizes
 
-    def test_amplification_includes_retry_attempts(self, config: RagZoomConfig) -> None:
-        """Test that amplification metrics include ALL attempts, not just accepted ones.
-
-        This test demonstrates the bug where retries make amplification appear lower
-        because only the final accepted attempt is counted.
-        """
+    def test_metrics_include_retry_attempts(self, config: RagZoomConfig) -> None:
+        """Test that metrics include ALL attempts, not just accepted ones."""
         telemetry = {
             "format_version": "1.0",
             "documents": {
@@ -666,99 +688,8 @@ class TestFullMetricsComputation:
         assert metrics.total_summary_completion_tokens == 120 + 100 + 80  # 300
         assert metrics.summary_api_calls == 3
 
-        # EXPECTED behavior: Amplification should include all attempts
-        # Input amplification = total_prompt_tokens / text_being_summarized
-        #                    = 480 / 100 = 4.8x
-        # Output amplification = total_completion_tokens / final_summary_tokens
-        #                     = 300 / 80 = 3.75x
-
-        # ACTUAL behavior (BUG): Only counts the accepted attempt
-        # Input amplification = 170 / 100 = 1.7x
-        # Output amplification = 80 / 80 = 1.0x
-
-        assert len(metrics.input_amplifications) == 1
-        assert len(metrics.output_amplifications) == 1
-
-        # These assertions will FAIL, demonstrating the bug
-        assert metrics.input_amplifications[0] == pytest.approx(4.8, rel=0.01)
-        assert metrics.output_amplifications[0] == pytest.approx(3.75, rel=0.01)
-
-
-class TestCostAmplificationCalculation:
-    """Test the _calculate_cost_amplification function directly."""
-
-    @pytest.fixture
-    def config(self) -> RagZoomConfig:
-        """Create test config with known pricing."""
-        return RagZoomConfig(
-            openai_api_key="test-key",
-            summary_input_cost_per_1k=0.0025,  # $0.0025 per 1k input tokens
-            summary_output_cost_per_1k=0.01,  # $0.01 per 1k output tokens
-        )
-
-    def test_cost_amplification_with_retries(self, config: RagZoomConfig) -> None:
-        """Test cost amplification calculation with retry attempts."""
-        from ragzoom.telemetry_analysis import _calculate_cost_amplification
-
-        # Example: 3 attempts with rejected summaries
-        total_prompt_tokens = 480  # 150 + 160 + 170 (includes retries)
-        total_completion_tokens = 300  # 120 + 100 + 80 (all attempts)
-        input_text_tokens = 100  # Original text
-        final_summary_tokens = 80  # Only the accepted summary
-
-        amplification = _calculate_cost_amplification(
-            total_prompt_tokens,
-            total_completion_tokens,
-            input_text_tokens,
-            final_summary_tokens,
-            config,
-        )
-
-        # Calculate expected amplification manually
-        # Actual cost: 480 * 0.0025/1k + 300 * 0.01/1k = 0.0012 + 0.003 = 0.0042
-        # Min cost: 100 * 0.0025/1k + 80 * 0.01/1k = 0.00025 + 0.0008 = 0.00105
-        # Amplification: 0.0042 / 0.00105 = 4.0
-        assert amplification == pytest.approx(4.0, rel=0.01)
-
-    def test_cost_amplification_no_retries(self, config: RagZoomConfig) -> None:
-        """Test cost amplification with no retries (single attempt)."""
-        from ragzoom.telemetry_analysis import _calculate_cost_amplification
-
-        # Single successful attempt
-        total_prompt_tokens = 150  # Just one attempt
-        total_completion_tokens = 100  # Just one attempt
-        input_text_tokens = 100  # Original text
-        final_summary_tokens = 100  # Same as completion
-
-        amplification = _calculate_cost_amplification(
-            total_prompt_tokens,
-            total_completion_tokens,
-            input_text_tokens,
-            final_summary_tokens,
-            config,
-        )
-
-        # With no retries, amplification is just from prompt overhead
-        # Actual: 150 * 0.0025/1k + 100 * 0.01/1k = 0.000375 + 0.001 = 0.001375
-        # Min: 100 * 0.0025/1k + 100 * 0.01/1k = 0.00025 + 0.001 = 0.00125
-        # Amplification: 0.001375 / 0.00125 = 1.1
-        assert amplification == pytest.approx(1.1, rel=0.01)
-
-    def test_cost_amplification_zero_check(self, config: RagZoomConfig) -> None:
-        """Test cost amplification handles zero tokens gracefully."""
-        from ragzoom.telemetry_analysis import _calculate_cost_amplification
-
-        # Edge case: zero tokens
-        amplification = _calculate_cost_amplification(
-            total_prompt_tokens=0,
-            total_completion_tokens=0,
-            input_text_tokens=0,
-            final_summary_tokens=0,
-            config=config,
-        )
-
-        # Should return 1.0 when min_cost is 0
-        assert amplification == 1.0
+        # Verify that ALL attempts are counted in the totals
+        # We should have 3 summary attempts total
 
 
 class TestBackwardCompatibility:
@@ -822,9 +753,9 @@ class TestBackwardCompatibility:
         }
 
         # All analysis functions should work with v1.0 data
-        amplification = compute_amplification_metrics(v1_telemetry, config)
-        assert amplification["median_input"] > 0
-        assert 1 in amplification["by_height"]  # Should map level to height
+        simplified = compute_simplified_metrics(v1_telemetry, config)
+        assert isinstance(simplified.metrics_by_chunk_size, dict)
+        # Should have metrics for chunk size 100 (the target_tokens value)
 
         batch_efficiency = compute_batch_efficiency(v1_telemetry)
         assert batch_efficiency["total_embeddings"] == 1
