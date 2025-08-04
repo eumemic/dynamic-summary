@@ -131,7 +131,7 @@ Status values:
 ```python
 import json
 from ragzoom.telemetry_analysis import (
-    compute_amplification_metrics,
+    compute_simplified_metrics,
     analyze_retry_patterns,
     compute_batch_efficiency,
     compute_metrics_from_telemetry
@@ -151,24 +151,32 @@ config = RagZoomConfig(
 )
 ```
 
-### Computing Amplification Metrics
+### Computing Simplified Metrics
 
-Amplification metrics show how much overhead is introduced by the API calls:
+The simplified metrics system provides actionable insights at the chunk-size level:
 
 ```python
-amplification = compute_amplification_metrics(telemetry, config)
+result = compute_simplified_metrics(telemetry, config)
 
-print(f"Median cost amplification: {amplification['median_cost']:.2f}x")
-print(f"90th percentile cost: {amplification['cost_p90']:.2f}x")
-print(f"Median input amplification: {amplification['median_input']:.2f}x")
-print(f"Median output amplification: {amplification['median_output']:.2f}x")
-
-# Analyze by height
-for height, data in amplification['by_height'].items():
-    print(f"\nHeight {height}:")
-    print(f"  Input: {np.median(data['input']):.2f}x")
-    print(f"  Output: {np.median(data['output']):.2f}x")
-    print(f"  Cost: {np.median(data['cost']):.2f}x")
+for chunk_size, metrics in result.metrics_by_chunk_size.items():
+    print(f"\nChunk size: {chunk_size} tokens")
+    
+    # Target-fit metrics (how close summaries are to target)
+    print(f"  Target-fit median error: {metrics['target_fit']['median_error']:.1f}%")
+    print(f"  Target-fit p95 error: {metrics['target_fit']['p95_error']:.1f}%")
+    print(f"  Within 10% of target: {metrics['target_fit']['percent_within_10']:.1f}%")
+    
+    # Retry metrics
+    print(f"  Retry rate: {metrics['retries']['retry_rate']:.1f}%")
+    print(f"  Max retries: {metrics['retries']['max_retries']}")
+    
+    # Cost metrics (actual USD costs)
+    print(f"  Avg cost per node: ${metrics['cost']['avg_cost_per_node']:.6f}")
+    print(f"  Total cost: ${metrics['cost']['total_cost']:.4f}")
+    
+    # Latency metrics
+    print(f"  Avg latency: {metrics['latency']['avg_ms']:.0f}ms")
+    print(f"  P95 latency: {metrics['latency']['p95_ms']:.0f}ms")
 ```
 
 ### Analyzing Batch Efficiency
@@ -216,13 +224,13 @@ ragzoom-telemetry visualize benchmark_results/telemetry_200_tokens.json
 ```
 
 This generates:
-- Amplification patterns by tree height
+- Token usage and cost by tree level
 - Cost breakdown pie chart
 - Batch efficiency histogram
 - Retry pattern analysis
 - Summary accuracy distribution
 - Node creation timeline
-- Token usage heatmap
+- Token count distributions by level
 
 ### Comparison Visualization
 
@@ -246,19 +254,20 @@ ragzoom-telemetry visualize benchmark_results/ --output-dir reports/
 
 The visualization script also generates markdown reports with:
 - Executive summary of key metrics
-- Detailed amplification analysis
+- Target-fit accuracy analysis
 - Batch efficiency statistics
 - Retry pattern breakdown
+- Cost analysis per chunk size
 - Actionable recommendations
 
 ## Performance Optimization
 
 ### Identifying Bottlenecks
 
-1. **High Cost Amplification** (>2.0x)
-   - Indicates inefficient prompt templates
-   - Check for unnecessary context in prompts
-   - Consider prompt optimization
+1. **Poor Target-Fit** (>20% median error)
+   - Summaries consistently missing target size
+   - Review prompt instructions for clarity
+   - Consider adjusting chunk size targets
 
 2. **Low Batch Utilization** (<50%)
    - Increase `embedding_batch_size` in config
@@ -269,26 +278,35 @@ The visualization script also generates markdown reports with:
    - Adjust prompt instructions
    - Consider more flexible target ranges
 
+4. **High Cost per Node** (track over time)
+   - Compare costs across chunk sizes
+   - Identify optimal chunk size for your use case
+   - Monitor for cost regressions
+
 ### Optimization Strategies
 
 ```python
-# Example: Find nodes with highest amplification
+# Example: Find nodes with poor target-fit
 from ragzoom.telemetry_analysis import parse_telemetry_format
 
 parsed = parse_telemetry_format(telemetry)
-high_amp_nodes = []
+poor_fit_nodes = []
 
 for doc_data in parsed["documents"].values():
+    chunk_size = doc_data.get("metadata", {}).get("chunk_size", 100)
     for node in doc_data["nodes"]:
         if node["height"] > 0:  # Summary nodes have height > 0
             for attempt in node.get("summary_attempts", []):
                 if attempt["status"] == "accepted":
-                    amp = attempt["prompt_tokens"] / attempt["input_text_tokens"]
-                    if amp > 3.0:
-                        high_amp_nodes.append({
+                    actual = attempt["actual_tokens"]
+                    error_pct = abs((actual - chunk_size) / chunk_size * 100)
+                    if error_pct > 20:
+                        poor_fit_nodes.append({
                             "node_id": node["node_id"],
                             "height": node["height"],
-                            "amplification": amp
+                            "error_pct": error_pct,
+                            "actual": actual,
+                            "target": chunk_size
                         })
 ```
 
@@ -354,27 +372,27 @@ The telemetry analysis tools use configurable thresholds for identifying perform
 
 ```bash
 # Analysis thresholds (defaults shown)
-export RAGZOOM_HIGH_INPUT_AMPLIFICATION_THRESHOLD=3.0       # High input amplification warning
-export RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD=2.0        # High cost amplification warning  
-export RAGZOOM_GOOD_COST_AMPLIFICATION_THRESHOLD=1.5        # Good cost amplification target
+export RAGZOOM_HIGH_TARGET_FIT_ERROR_THRESHOLD=20           # High target-fit error warning (%)
+export RAGZOOM_GOOD_TARGET_FIT_THRESHOLD=10                 # Good target-fit threshold (%)
 export RAGZOOM_HIGH_RETRY_RATE_THRESHOLD=20                 # High retry rate warning (%)
 export RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD=70          # Good batch utilization target (%)
 export RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD=50           # Low batch utilization warning (%)
 export RAGZOOM_MULTIPLE_RETRY_THRESHOLD=1                   # Multiple retry detection
+export RAGZOOM_HIGH_COST_PER_NODE_THRESHOLD=0.001           # High cost per node warning ($)
 ```
 
 **Examples:**
 
 ```bash
 # Use stricter thresholds for production monitoring
-export RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD=1.8
+export RAGZOOM_HIGH_TARGET_FIT_ERROR_THRESHOLD=15
 export RAGZOOM_HIGH_RETRY_RATE_THRESHOLD=15
-ragzoom telemetry analyze production_metrics.json
+ragzoom-telemetry analyze production_metrics.json
 
 # Relaxed thresholds for development
-export RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD=3.0
+export RAGZOOM_HIGH_TARGET_FIT_ERROR_THRESHOLD=30
 export RAGZOOM_HIGH_RETRY_RATE_THRESHOLD=30
-ragzoom telemetry visualize dev_metrics.json
+ragzoom-telemetry visualize dev_metrics.json
 ```
 
 These thresholds affect:
@@ -460,9 +478,9 @@ def analyze_telemetry(telemetry_data):
    - Use CI integration for automated checks
 
 2. **Cost Monitoring**
-   - Set up alerts for cost amplification > 3.0x
-   - Track cost trends over time
-   - Optimize high-cost operations first
+   - Track cost per node across chunk sizes
+   - Monitor total costs for budget management
+   - Compare costs between different models
 
 3. **Performance Tracking**
    - Monitor throughput (tokens/second)

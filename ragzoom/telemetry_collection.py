@@ -15,6 +15,7 @@ from typing import Literal
 import psutil
 
 from ragzoom.config import RagZoomConfig
+from ragzoom.telemetry_types import NodeTelemetryDict
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +121,12 @@ class NodeTelemetry:
     # Timing
     created_at: float = field(default_factory=time.time)
 
-    def to_telemetry_dict(self) -> dict:
+    def to_telemetry_dict(self) -> NodeTelemetryDict:
         """Convert to telemetry format for analysis.
 
         Returns a dictionary in the format expected by telemetry analysis tools.
         """
-        result = {
+        result: NodeTelemetryDict = {
             "node_id": self.node_id,
             "height": self.height,
             "created_at": self.created_at,
@@ -144,9 +145,11 @@ class NodeTelemetry:
 
         # Add summary attempts if present
         if self.summary_attempts:
-            attempts_list: list[dict] = []
+            from ragzoom.telemetry_types import SummaryAttemptDict
+
+            attempts_list: list[SummaryAttemptDict] = []
             for attempt in self.summary_attempts:
-                attempt_dict = {
+                attempt_dict: SummaryAttemptDict = {
                     "target_tokens": attempt.target_tokens,
                     "input_text_tokens": attempt.input_text_tokens,
                     "prompt_tokens": attempt.prompt_tokens,
