@@ -174,9 +174,13 @@ class TestAmplificationMetrics:
 
         # Check by-height breakdown (should work even with v1.0 data)
         assert 1 in result["by_height"]
-        assert len(result["by_height"][1]["input"]) == 2
-        assert len(result["by_height"][1]["output"]) == 2
-        assert len(result["by_height"][1]["cost"]) == 2
+        height_1_data = result["by_height"][1]
+        assert height_1_data["count"] == 2  # Two nodes at height 1
+        assert height_1_data["median_input"] == pytest.approx(1.375, rel=0.01)
+        assert height_1_data["median_output"] == pytest.approx(1.05, rel=0.01)
+        # Legacy fields should also be present for backward compatibility
+        assert height_1_data["input"] == pytest.approx(1.375, rel=0.01)
+        assert height_1_data["output"] == pytest.approx(1.05, rel=0.01)
 
     def test_amplification_metrics_empty_data(self, config: RagZoomConfig) -> None:
         """Test amplification metrics with empty telemetry."""
@@ -370,6 +374,15 @@ class TestRetryAnalysis:
         assert result["rejection_reasons"]["20% under target"] == 1
         assert result["rejection_reasons"]["API timeout"] == 1
 
+        # New metrics should be present
+        assert "retry_distribution" in result
+        assert result["retry_distribution"]["0"] == 1  # summary-2 has 0 retries
+        assert (
+            result["retry_distribution"]["1"] == 2
+        )  # summary-1 and summary-3 have 1 retry each
+        assert result["avg_retries_per_node"] == pytest.approx(0.67, rel=0.01)  # 2/3
+        assert result["max_retries"] == 1
+
     def test_retry_analysis_no_retries(self) -> None:
         """Test retry analysis with no retries."""
         telemetry_data = {
@@ -398,6 +411,78 @@ class TestRetryAnalysis:
         assert result["retry_rate"] == 0.0
         assert result["retry_attempts"] == 0
         assert result["nodes_with_retries"] == 0
+
+    def test_analyze_retry_patterns_v2_format(self) -> None:
+        """Test retry analysis with v2.0 format (no is_retry field)."""
+        telemetry_data = {
+            "format_version": "2.0",
+            "documents": {
+                "test_doc": {
+                    "metadata": {},
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "height": 1,  # Non-leaf node
+                            "summary_attempts": [
+                                {
+                                    "status": "rejected_over",
+                                    "rejection_reason": "25% over target",
+                                    "start_time": 1000.0,
+                                    "end_time": 1002.0,
+                                },
+                                {
+                                    "status": "rejected_under",
+                                    "rejection_reason": "15% under target",
+                                    "start_time": 1002.0,
+                                    "end_time": 1004.0,
+                                },
+                                {
+                                    "status": "accepted",
+                                    "start_time": 1004.0,
+                                    "end_time": 1006.0,
+                                },
+                            ],
+                        },
+                        {
+                            "node_id": "node-2",
+                            "height": 1,
+                            "summary_attempts": [
+                                {
+                                    "status": "accepted",
+                                    "start_time": 1000.0,
+                                    "end_time": 1003.0,
+                                }
+                            ],
+                        },
+                    ],
+                }
+            },
+        }
+
+        result = analyze_retry_patterns(telemetry_data)
+
+        # 2 nodes, 1 needed retries
+        assert result["total_nodes_with_summaries"] == 2
+        assert result["nodes_with_retries"] == 1
+        assert result["retry_rate"] == 50.0
+
+        # 4 total attempts (3 + 1), 2 retries, 1 successful retry
+        assert result["total_attempts"] == 4
+        assert result["successful_attempts"] == 2
+        assert result["retry_attempts"] == 2
+        assert result["retry_success_rate"] == 50.0
+
+        # Retry distribution
+        assert result["retry_distribution"]["0"] == 1  # node-2
+        assert result["retry_distribution"]["1"] == 0
+        assert result["retry_distribution"]["2"] == 1  # node-1
+        assert result["avg_retries_per_node"] == 1.0  # 2 retries / 2 nodes
+        assert result["max_retries"] == 2
+
+        # Timing metrics
+        assert result["retry_time_seconds"] == 4.0  # 2s + 2s for the two retries
+        assert result["avg_time_per_retry"] == 2.0  # 4s / 2 retries
+        assert result["time_wasted_on_rejections"] == 4.0  # Both retries were rejected
 
 
 class TestFullMetricsComputation:
@@ -597,6 +682,83 @@ class TestFullMetricsComputation:
         # These assertions will FAIL, demonstrating the bug
         assert metrics.input_amplifications[0] == pytest.approx(4.8, rel=0.01)
         assert metrics.output_amplifications[0] == pytest.approx(3.75, rel=0.01)
+
+
+class TestCostAmplificationCalculation:
+    """Test the _calculate_cost_amplification function directly."""
+
+    @pytest.fixture
+    def config(self) -> RagZoomConfig:
+        """Create test config with known pricing."""
+        return RagZoomConfig(
+            openai_api_key="test-key",
+            summary_input_cost_per_1k=0.0025,  # $0.0025 per 1k input tokens
+            summary_output_cost_per_1k=0.01,  # $0.01 per 1k output tokens
+        )
+
+    def test_cost_amplification_with_retries(self, config: RagZoomConfig) -> None:
+        """Test cost amplification calculation with retry attempts."""
+        from ragzoom.telemetry_analysis import _calculate_cost_amplification
+
+        # Example: 3 attempts with rejected summaries
+        total_prompt_tokens = 480  # 150 + 160 + 170 (includes retries)
+        total_completion_tokens = 300  # 120 + 100 + 80 (all attempts)
+        input_text_tokens = 100  # Original text
+        final_summary_tokens = 80  # Only the accepted summary
+
+        amplification = _calculate_cost_amplification(
+            total_prompt_tokens,
+            total_completion_tokens,
+            input_text_tokens,
+            final_summary_tokens,
+            config,
+        )
+
+        # Calculate expected amplification manually
+        # Actual cost: 480 * 0.0025/1k + 300 * 0.01/1k = 0.0012 + 0.003 = 0.0042
+        # Min cost: 100 * 0.0025/1k + 80 * 0.01/1k = 0.00025 + 0.0008 = 0.00105
+        # Amplification: 0.0042 / 0.00105 = 4.0
+        assert amplification == pytest.approx(4.0, rel=0.01)
+
+    def test_cost_amplification_no_retries(self, config: RagZoomConfig) -> None:
+        """Test cost amplification with no retries (single attempt)."""
+        from ragzoom.telemetry_analysis import _calculate_cost_amplification
+
+        # Single successful attempt
+        total_prompt_tokens = 150  # Just one attempt
+        total_completion_tokens = 100  # Just one attempt
+        input_text_tokens = 100  # Original text
+        final_summary_tokens = 100  # Same as completion
+
+        amplification = _calculate_cost_amplification(
+            total_prompt_tokens,
+            total_completion_tokens,
+            input_text_tokens,
+            final_summary_tokens,
+            config,
+        )
+
+        # With no retries, amplification is just from prompt overhead
+        # Actual: 150 * 0.0025/1k + 100 * 0.01/1k = 0.000375 + 0.001 = 0.001375
+        # Min: 100 * 0.0025/1k + 100 * 0.01/1k = 0.00025 + 0.001 = 0.00125
+        # Amplification: 0.001375 / 0.00125 = 1.1
+        assert amplification == pytest.approx(1.1, rel=0.01)
+
+    def test_cost_amplification_zero_check(self, config: RagZoomConfig) -> None:
+        """Test cost amplification handles zero tokens gracefully."""
+        from ragzoom.telemetry_analysis import _calculate_cost_amplification
+
+        # Edge case: zero tokens
+        amplification = _calculate_cost_amplification(
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            input_text_tokens=0,
+            final_summary_tokens=0,
+            config=config,
+        )
+
+        # Should return 1.0 when min_cost is 0
+        assert amplification == 1.0
 
 
 class TestBackwardCompatibility:
