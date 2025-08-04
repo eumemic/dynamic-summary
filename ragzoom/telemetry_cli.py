@@ -231,6 +231,23 @@ def _check_metrics_for_regressions(
         ):
             has_regression = True
 
+        # Check p95 error regression (absolute error increase > 30%)
+        if _check_for_regression(
+            abs(base_metrics["target_fit"]["p95_error"]),
+            abs(curr_metrics["target_fit"]["p95_error"]),
+            threshold_pct=30.0,
+        ):
+            has_regression = True
+
+        # Check within ±10 tokens regression (> 30% decrease)
+        if _check_for_regression(
+            base_metrics["target_fit"]["percent_within_10"],
+            curr_metrics["target_fit"]["percent_within_10"],
+            threshold_pct=30.0,
+            higher_is_better=True,
+        ):
+            has_regression = True
+
         # Check retry rate regression (> 50% increase)
         if _check_for_regression(
             base_metrics["retries"]["retry_rate"],
@@ -247,11 +264,19 @@ def _check_metrics_for_regressions(
         ):
             has_regression = True
 
-        # Check cost regression (> 10% increase)
+        # Check cost regression (> 15% increase)
         if _check_for_regression(
             base_metrics["cost"]["usd_per_node"],
             curr_metrics["cost"]["usd_per_node"],
-            threshold_pct=10.0,
+            threshold_pct=15.0,
+        ):
+            has_regression = True
+
+        # Check MAD regression (> 50% increase)
+        if _check_for_regression(
+            base_metrics["dispersion"]["mad"],
+            curr_metrics["dispersion"]["mad"],
+            threshold_pct=50.0,
         ):
             has_regression = True
 
@@ -334,6 +359,31 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
         ):
             has_regression = True
 
+        # Check p95 error regression (absolute error increase > 30%)
+        if _check_for_regression(
+            abs(baseline_metrics["target_fit"]["p95_error"]),
+            abs(current_metrics["target_fit"]["p95_error"]),
+            threshold_pct=30.0,
+        ):
+            has_regression = True
+
+        # Check within ±10 tokens regression (> 30% decrease)
+        if _check_for_regression(
+            baseline_metrics["target_fit"]["percent_within_10"],
+            current_metrics["target_fit"]["percent_within_10"],
+            threshold_pct=30.0,
+            higher_is_better=True,
+        ):
+            has_regression = True
+
+        # Check retry rate regression (> 50% increase)
+        if _check_for_regression(
+            baseline_metrics["retries"]["retry_rate"],
+            current_metrics["retries"]["retry_rate"],
+            threshold_pct=50.0,
+        ):
+            has_regression = True
+
         if _check_for_regression(
             baseline_metrics["latency"]["median_seconds"],
             current_metrics["latency"]["median_seconds"],
@@ -345,6 +395,14 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
             baseline_metrics["cost"]["usd_per_node"],
             current_metrics["cost"]["usd_per_node"],
             threshold_pct=15.0,
+        ):
+            has_regression = True
+
+        # Check MAD regression (> 50% increase)
+        if _check_for_regression(
+            baseline_metrics["dispersion"]["mad"],
+            current_metrics["dispersion"]["mad"],
+            threshold_pct=50.0,
         ):
             has_regression = True
 
@@ -470,74 +528,81 @@ def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) 
         chunk_label = f"{chunk_size} tokens"
 
         # Target-fit metrics - include chunk size in first row
-        _format_table_row(
+        _format_comparison_row(
             chunk_label,
             "Median error",
             base_metrics["target_fit"]["median_error"],
             curr_metrics["target_fit"]["median_error"],
             "tokens",
+            output_format="text",
             signed=True,
             is_error_metric=True,
             regression_threshold=30.0,
         )
-        _format_table_row(
+        _format_comparison_row(
             "",
             "p95 error",
             base_metrics["target_fit"]["p95_error"],
             curr_metrics["target_fit"]["p95_error"],
             "tokens",
+            output_format="text",
             signed=True,
             is_error_metric=True,
             regression_threshold=30.0,
         )
-        _format_table_row(
+        _format_comparison_row(
             "",
             "Within ±10 tokens",
             base_metrics["target_fit"]["percent_within_10"],
             curr_metrics["target_fit"]["percent_within_10"],
             "%",
+            output_format="text",
             higher_is_better=True,
             regression_threshold=30.0,
         )
 
         # Retry metrics
-        _format_table_row(
+        _format_comparison_row(
             "",
             "Retry rate",
             base_metrics["retries"]["retry_rate"],
             curr_metrics["retries"]["retry_rate"],
             "",
+            output_format="text",
             regression_threshold=50.0,
         )
 
         # Latency metrics
-        _format_table_row(
+        _format_comparison_row(
             "",
             "Median time/node",
             base_metrics["latency"]["median_seconds"],
             curr_metrics["latency"]["median_seconds"],
             "s",
+            output_format="text",
             regression_threshold=20.0,
         )
 
         # Cost metrics
-        _format_table_row(
+        _format_comparison_row(
             "",
             "USD per node",
             base_metrics["cost"]["usd_per_node"],
             curr_metrics["cost"]["usd_per_node"],
             "",
+            output_format="text",
             is_cost=True,
             regression_threshold=15.0,  # Match markdown format threshold
         )
 
         # Dispersion metrics
-        _format_table_row(
+        _format_comparison_row(
             "",
             "MAD",
             base_metrics["dispersion"]["mad"],
             curr_metrics["dispersion"]["mad"],
             "tokens",
+            output_format="text",
             regression_threshold=50.0,  # 50% increase in MAD is a regression
         )
 
@@ -572,12 +637,13 @@ def _prepare_row_data(
     return base_str, curr_str, change_str
 
 
-def _format_table_row(
-    chunk_size_str: str,
+def _format_comparison_row(
+    category: str,
     metric: str,
     baseline: float,
     current: float,
     unit: str,
+    output_format: str = "text",
     signed: bool = False,
     higher_is_better: bool = False,
     is_cost: bool = False,
@@ -585,7 +651,8 @@ def _format_table_row(
     regression_threshold: float | None = None,
     is_error_metric: bool = False,
 ) -> None:
-    """Format a single row in the text comparison table."""
+    """Format a single row in the comparison table (text or markdown)."""
+    for_table = output_format == "markdown"
     base_str, curr_str, change_str = _prepare_row_data(
         baseline,
         current,
@@ -596,13 +663,18 @@ def _format_table_row(
         is_integer,
         regression_threshold,
         is_error_metric,
-        for_table=False,
+        for_table=for_table,
     )
 
-    # Format the row - chunk_size_str is empty for data rows
-    click.echo(
-        f"{chunk_size_str:<12} | {metric:<20} | {base_str:>12} | {curr_str:>12} | {change_str:>12}"
-    )
+    if output_format == "markdown":
+        click.echo(
+            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} |"
+        )
+    else:
+        # Text format - category is empty for data rows
+        click.echo(
+            f"{category:<12} | {metric:<20} | {base_str:>12} | {curr_str:>12} | {change_str:>12}"
+        )
 
 
 def _format_value(
@@ -732,108 +804,85 @@ def _format_markdown_comparison(
         chunk_label = f"**{chunk_size} tokens**"
 
         # Target-fit metrics - include chunk size in first row
-        _add_table_row(
+        _format_comparison_row(
             chunk_label,
             "Median error",
             base_metrics["target_fit"]["median_error"],
             curr_metrics["target_fit"]["median_error"],
             "tokens",
+            output_format="markdown",
             signed=True,
             is_error_metric=True,
             regression_threshold=30.0,  # 30% increase in absolute error is a regression
         )
-        _add_table_row(
+        _format_comparison_row(
             "",
             "p95 error",
             base_metrics["target_fit"]["p95_error"],
             curr_metrics["target_fit"]["p95_error"],
             "tokens",
+            output_format="markdown",
             signed=True,
             is_error_metric=True,
             regression_threshold=30.0,  # 30% increase in absolute error is a regression
         )
-        _add_table_row(
+        _format_comparison_row(
             "",
             "Within ±10 tokens",
             base_metrics["target_fit"]["percent_within_10"],
             curr_metrics["target_fit"]["percent_within_10"],
             "%",
+            output_format="markdown",
             higher_is_better=True,
             regression_threshold=30.0,  # 30% decrease is a regression
         )
 
         # Retry metrics
-        _add_table_row(
+        _format_comparison_row(
             "",
             "Retry rate",
             base_metrics["retries"]["retry_rate"],
             curr_metrics["retries"]["retry_rate"],
             "",
+            output_format="markdown",
             regression_threshold=50.0,  # 50% increase in retry rate is a regression
         )
 
         # Latency metrics
-        _add_table_row(
+        _format_comparison_row(
             "",
             "Median time/node",
             base_metrics["latency"]["median_seconds"],
             curr_metrics["latency"]["median_seconds"],
             "s",
+            output_format="markdown",
             regression_threshold=20.0,  # 20% increase in latency is a regression
         )
 
         # Cost metrics
-        _add_table_row(
+        _format_comparison_row(
             "",
             "USD per node",
             base_metrics["cost"]["usd_per_node"],
             curr_metrics["cost"]["usd_per_node"],
             "",
+            output_format="markdown",
             is_cost=True,
             regression_threshold=15.0,  # 15% increase in cost is a regression
         )
 
         # Dispersion metrics
-        _add_table_row(
+        _format_comparison_row(
             "",
             "MAD",
             base_metrics["dispersion"]["mad"],
             curr_metrics["dispersion"]["mad"],
             "tokens",
+            output_format="markdown",
             regression_threshold=50.0,  # 50% increase in MAD is a regression (more inconsistent)
         )
 
     click.echo("")
-
-
-def _add_table_row(
-    category: str,
-    metric: str,
-    baseline: float,
-    current: float,
-    unit: str,
-    signed: bool = False,
-    higher_is_better: bool = False,
-    is_cost: bool = False,
-    is_integer: bool = False,
-    regression_threshold: float | None = None,
-    is_error_metric: bool = False,
-) -> None:
-    """Add a row to the markdown table."""
-    base_str, curr_str, change_str = _prepare_row_data(
-        baseline,
-        current,
-        unit,
-        signed,
-        higher_is_better,
-        is_cost,
-        is_integer,
-        regression_threshold,
-        is_error_metric,
-        for_table=True,
-    )
-
-    click.echo(f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} |")
 
 
 if __name__ == "__main__":
