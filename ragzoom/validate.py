@@ -146,18 +146,16 @@ def validate_chunk_sizes(
             undersized.append((node.id, tokens))
 
     if oversized:
-        logger.warning(
-            f"Found {len(oversized)} oversized chunks (>{max_allowed} tokens)"
-        )
+        logger.debug(f"Found {len(oversized)} oversized chunks (>{max_allowed} tokens)")
         for node_id, tokens in oversized[:5]:  # Show first 5
-            logger.warning(f"  {node_id}: {tokens} tokens")
+            logger.debug(f"  {node_id}: {tokens} tokens")
 
     if undersized:
-        logger.warning(
+        logger.debug(
             f"Found {len(undersized)} undersized chunks (<{min_allowed} tokens)"
         )
         for node_id, tokens in undersized[:5]:  # Show first 5
-            logger.warning(f"  {node_id}: {tokens} tokens")
+            logger.debug(f"  {node_id}: {tokens} tokens")
 
     # Success - no need to log
     return None  # No errors
