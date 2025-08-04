@@ -119,30 +119,6 @@ class RetryAnalysisDict(TypedDict):
     time_wasted_on_rejections: float
 
 
-class AmplificationByHeightDict(TypedDict):
-    """Type definition for amplification metrics by height."""
-
-    median_cost: float
-    median_input: float
-    median_output: float
-    count: int
-    # Legacy field names used by visualization
-    cost: NotRequired[float]
-    input: NotRequired[float]
-    output: NotRequired[float]
-
-
-class AmplificationSummaryDict(TypedDict):
-    """Type definition for amplification summary statistics."""
-
-    median_cost: float
-    cost_p90: float
-    cost_p95: float
-    median_input: float
-    median_output: float
-    by_height: dict[int, AmplificationByHeightDict]
-
-
 class BatchEfficiencyDict(TypedDict):
     """Type definition for batch efficiency results."""
 

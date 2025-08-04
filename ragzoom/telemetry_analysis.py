@@ -21,7 +21,6 @@ from typing import Any
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_types import (
-    AmplificationSummaryDict,
     BatchEfficiencyDict,
     RetryAnalysisDict,
     TelemetryDataDict,
@@ -41,6 +40,9 @@ DEFAULT_LEAF_TOKEN_ESTIMATE = 150
 
 # ============================================================================
 # NEW SIMPLIFIED METRICS
+# ============================================================================
+# The functions below are the new simplified telemetry metrics system.
+# They focus on actionable insights at the chunk-size level only.
 # ============================================================================
 
 
@@ -317,6 +319,15 @@ def compute_dispersion_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
     return {"mad": mad}
 
 
+# ============================================================================
+# LEGACY METRICS (PRESERVED FOR TELEMETRY_VIZ.PY)
+# ============================================================================
+# The functions below are from the old telemetry system and are preserved
+# ONLY for backward compatibility with telemetry_viz.py visualization tool.
+# For new development, use the simplified metrics above.
+# ============================================================================
+
+
 def _compute_percentile(values: list[float], percentile: float) -> float:
     """Compute percentile using linear interpolation.
 
@@ -423,9 +434,6 @@ class TelemetryThresholds:
     """Configurable thresholds for telemetry analysis and visualization.
 
     Thresholds can be overridden via environment variables:
-    - RAGZOOM_HIGH_INPUT_AMPLIFICATION_THRESHOLD (default: 3.0)
-    - RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD (default: 2.0)
-    - RAGZOOM_GOOD_COST_AMPLIFICATION_THRESHOLD (default: 1.5)
     - RAGZOOM_HIGH_RETRY_RATE_THRESHOLD (default: 20)
     - RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD (default: 70)
     - RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD (default: 50)
@@ -433,15 +441,6 @@ class TelemetryThresholds:
     """
 
     def __init__(self) -> None:
-        self.high_input_amplification = float(
-            os.getenv("RAGZOOM_HIGH_INPUT_AMPLIFICATION_THRESHOLD", "3.0")
-        )
-        self.high_cost_amplification = float(
-            os.getenv("RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD", "2.0")
-        )
-        self.good_cost_amplification = float(
-            os.getenv("RAGZOOM_GOOD_COST_AMPLIFICATION_THRESHOLD", "1.5")
-        )
         self.high_retry_rate = float(
             os.getenv("RAGZOOM_HIGH_RETRY_RATE_THRESHOLD", "20")
         )
@@ -504,66 +503,6 @@ def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
         "documents": documents,
     }
     return result
-
-
-def compute_amplification_metrics(
-    telemetry_data: dict, config: RagZoomConfig
-) -> AmplificationSummaryDict:
-    """Compute amplification metrics from telemetry data.
-
-    Args:
-        telemetry_data: Parsed telemetry data
-        config: Configuration for cost calculations
-
-    Returns:
-        Dictionary containing amplification metrics
-    """
-    # Use compute_metrics_from_telemetry as the single source of truth
-    metrics = compute_metrics_from_telemetry(telemetry_data, config)
-
-    # Extract summary statistics from the computed metrics
-    return get_amplification_summary(metrics)
-
-
-def _calculate_cost_amplification(
-    total_prompt_tokens: int,
-    total_completion_tokens: int,
-    input_text_tokens: int,
-    final_summary_tokens: int,
-    config: RagZoomConfig,
-) -> float:
-    """Calculate cost-weighted amplification factor.
-
-    Cost amplification = (actual cost / theoretical minimum cost)
-
-    Measures the cost inefficiency from prompt overhead and retry attempts.
-    The theoretical minimum represents sending just the raw text and receiving
-    the final summary in a single attempt.
-
-    Args:
-        total_prompt_tokens: Total prompt tokens across all attempts
-        total_completion_tokens: Total completion tokens across all attempts
-        input_text_tokens: Tokens in the original text being summarized
-        final_summary_tokens: Tokens in the final accepted summary
-        config: Configuration with pricing information
-
-    Returns:
-        Cost amplification factor (1.0 = no amplification)
-    """
-    # Calculate actual cost (what we paid across all attempts)
-    actual_cost = (
-        total_prompt_tokens * config.summary_input_cost_per_1k
-        + total_completion_tokens * config.summary_output_cost_per_1k
-    ) / 1000
-
-    # Calculate theoretical minimum cost (input text → final summary in one shot)
-    min_cost = (
-        input_text_tokens * config.summary_input_cost_per_1k
-        + final_summary_tokens * config.summary_output_cost_per_1k
-    ) / 1000
-
-    # Return amplification factor with zero check
-    return actual_cost / min_cost if min_cost > 0 else 1.0
 
 
 def compute_batch_efficiency(telemetry_data: dict) -> BatchEfficiencyDict:
@@ -873,8 +812,8 @@ def compute_summary_stats_from_telemetry(
 class ComputedMetrics:
     """Computed metrics from telemetry data.
 
-    This provides the same attributes that were previously computed by IndexingMetrics,
-    but calculated from raw telemetry data during analysis.
+    This provides attributes that were previously computed by IndexingMetrics,
+    calculated from raw telemetry data during analysis.
     """
 
     # Timing
@@ -916,57 +855,9 @@ class ComputedMetrics:
 
     # Collections
     embedding_batch_sizes: list[int]
-    input_amplifications: list[float]
-    output_amplifications: list[float]
-    cost_amplifications: list[float]
     summary_stats: dict[int, SummaryStats]
-    amplifications_by_height: dict[int, dict[str, list[float]]]
     tree_height: int
     nodes_per_height: list[int]
-
-
-def get_amplification_summary(metrics: ComputedMetrics) -> AmplificationSummaryDict:
-    """Compute amplification summary statistics from raw metrics.
-
-    Args:
-        metrics: ComputedMetrics object containing raw amplification data
-
-    Returns:
-        Dictionary containing amplification summary statistics
-    """
-    result: AmplificationSummaryDict = {
-        "median_cost": 0.0,
-        "cost_p90": 0.0,
-        "cost_p95": 0.0,
-        "median_input": 0.0,
-        "median_output": 0.0,
-        "by_height": {
-            height: {
-                "median_cost": median(data["cost"]) if data["cost"] else 0.0,
-                "median_input": median(data["input"]) if data["input"] else 0.0,
-                "median_output": median(data["output"]) if data["output"] else 0.0,
-                "count": len(data["cost"]),
-                # Legacy field names for backward compatibility
-                "cost": median(data["cost"]) if data["cost"] else 0.0,
-                "input": median(data["input"]) if data["input"] else 0.0,
-                "output": median(data["output"]) if data["output"] else 0.0,
-            }
-            for height, data in metrics.amplifications_by_height.items()
-        },
-    }
-
-    if metrics.cost_amplifications:
-        result["median_cost"] = median(metrics.cost_amplifications)
-        result["cost_p90"] = _compute_percentile(metrics.cost_amplifications, 0.9)
-        result["cost_p95"] = _compute_percentile(metrics.cost_amplifications, 0.95)
-
-    if metrics.input_amplifications:
-        result["median_input"] = median(metrics.input_amplifications)
-
-    if metrics.output_amplifications:
-        result["median_output"] = median(metrics.output_amplifications)
-
-    return result
 
 
 def compute_metrics_from_telemetry(
@@ -1004,11 +895,7 @@ def compute_metrics_from_telemetry(
         "total_summary_prompt_tokens": 0,
         "total_summary_completion_tokens": 0,
         "summary_api_calls": 0,
-        "input_amplifications": [],
-        "output_amplifications": [],
-        "cost_amplifications": [],
         "summary_stats": {},
-        "amplifications_by_height": {},  # Initialize empty dict
     }
 
     # Track various metrics as we process telemetry
@@ -1049,8 +936,6 @@ def compute_metrics_from_telemetry(
             node_total_prompt_tokens = 0
             node_total_completion_tokens = 0
             node_input_text_tokens = 0
-            node_final_summary_tokens = 0
-            final_attempt = None
 
             for attempt in summary_attempts:
                 metrics_data["summary_api_calls"] += 1
@@ -1060,7 +945,7 @@ def compute_metrics_from_telemetry(
                 metrics_data["total_summary_prompt_tokens"] += prompt_tokens
                 metrics_data["total_summary_completion_tokens"] += completion_tokens
 
-                # Accumulate tokens for amplification calculation
+                # Accumulate tokens for cost calculation
                 node_total_prompt_tokens += prompt_tokens
                 node_total_completion_tokens += completion_tokens
 
@@ -1070,56 +955,10 @@ def compute_metrics_from_telemetry(
 
                 # Track the final accepted attempt
                 if attempt.get("status") == "accepted":
-                    final_attempt = attempt
-                    node_final_summary_tokens = attempt.get("actual_tokens", 0)
+                    # Just track that we found an accepted attempt
+                    pass
 
-            # Calculate amplification using ALL attempts' tokens
-            if (
-                summary_attempts
-                and node_input_text_tokens > 0
-                and final_attempt
-                and node_final_summary_tokens > 0  # Ensure we have valid final tokens
-            ):
-                # Input amplification = total prompt tokens / original text tokens
-                input_amplification = node_total_prompt_tokens / node_input_text_tokens
-
-                # Output amplification = total completion tokens / final summary tokens
-                output_amplification = (
-                    node_total_completion_tokens / node_final_summary_tokens
-                )
-
-                # Calculate cost-weighted amplification using cumulative tokens
-                cost_amplification = _calculate_cost_amplification(
-                    node_total_prompt_tokens,
-                    node_total_completion_tokens,
-                    node_input_text_tokens,
-                    node_final_summary_tokens,
-                    config,
-                )
-
-                # Record amplifications
-                metrics_data["input_amplifications"].append(input_amplification)
-                metrics_data["output_amplifications"].append(output_amplification)
-                metrics_data["cost_amplifications"].append(cost_amplification)
-
-                # Track amplifications by height
-                # Need height - already computed earlier for leaf check
-                node_height = node.get("height", node.get("level", 0))
-                if node_height not in metrics_data["amplifications_by_height"]:
-                    metrics_data["amplifications_by_height"][node_height] = {
-                        "input": [],
-                        "output": [],
-                        "cost": [],
-                    }
-                metrics_data["amplifications_by_height"][node_height]["input"].append(
-                    input_amplification
-                )
-                metrics_data["amplifications_by_height"][node_height]["output"].append(
-                    output_amplification
-                )
-                metrics_data["amplifications_by_height"][node_height]["cost"].append(
-                    cost_amplification
-                )
+            # Token counts have been accumulated above for cost calculations.
 
             # Count chunks (leaf nodes)
             # v1.0: check node_type, v2.0: check height == 0

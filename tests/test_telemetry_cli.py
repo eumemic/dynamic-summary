@@ -115,7 +115,7 @@ class TestTelemetryCompare:
 
         # Create current files with slight modifications
         current_data = copy.deepcopy(sample_telemetry_data)
-        # Increase amplification slightly
+        # Increase token usage slightly
         current_data["documents"]["test.txt"]["nodes"][1]["summary_attempts"][0][
             "prompt_tokens"
         ] = 210  # 5% increase, under threshold
