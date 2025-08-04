@@ -174,7 +174,6 @@ class TestTelemetryCompare:
             print(f"Exception: {result.exception}")
 
         assert result.exit_code == 0
-        assert "Found 2 matching file pairs to compare" in result.output
         # Check for unified table format with chunk sizes
         assert "100 tokens" in result.output
         assert "200 tokens" in result.output
@@ -198,7 +197,6 @@ class TestTelemetryCompare:
         )
 
         assert result.exit_code == 0
-        assert "Found 2 matching file pairs to compare" in result.output
         # Check for markdown format
         assert "| Chunk Size |" in result.output or "| Metric |" in result.output
 

@@ -223,7 +223,7 @@ def _check_metrics_for_regressions(
         base_metrics = baseline.metrics_by_chunk_size[chunk_size]
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
 
-        # Check target-fit regression (median error increase > 30%)
+        # Check target-fit regression (median absolute error increase > 30%)
         if _check_for_regression(
             abs(base_metrics["target_fit"]["median_error"]),
             abs(curr_metrics["target_fit"]["median_error"]),
@@ -273,8 +273,6 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
             err=True,
         )
         sys.exit(1)
-
-    click.echo(f"Found {len(matches)} matching file pairs to compare\n")
 
     # Collect all metrics from all files
     all_chunk_metrics = {}  # chunk_size -> (baseline_metrics, current_metrics)
@@ -328,10 +326,10 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
     for chunk_size in all_chunk_metrics:
         baseline_metrics, current_metrics = all_chunk_metrics[chunk_size]
 
-        # Check key metrics for regression
+        # Check key metrics for regression (using absolute values for error metrics)
         if _check_for_regression(
-            baseline_metrics["target_fit"]["median_error"],
-            current_metrics["target_fit"]["median_error"],
+            abs(baseline_metrics["target_fit"]["median_error"]),
+            abs(current_metrics["target_fit"]["median_error"]),
             threshold_pct=30.0,
         ):
             has_regression = True
@@ -479,6 +477,7 @@ def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) 
             curr_metrics["target_fit"]["median_error"],
             "tokens",
             signed=True,
+            is_error_metric=True,
             regression_threshold=30.0,
         )
         _format_table_row(
@@ -488,6 +487,8 @@ def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) 
             curr_metrics["target_fit"]["p95_error"],
             "tokens",
             signed=True,
+            is_error_metric=True,
+            regression_threshold=30.0,
         )
         _format_table_row(
             "",
@@ -496,6 +497,7 @@ def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) 
             curr_metrics["target_fit"]["percent_within_10"],
             "%",
             higher_is_better=True,
+            regression_threshold=30.0,
         )
 
         # Retry metrics
@@ -526,7 +528,7 @@ def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) 
             curr_metrics["cost"]["usd_per_node"],
             "",
             is_cost=True,
-            regression_threshold=10.0,
+            regression_threshold=15.0,  # Match markdown format threshold
         )
 
         # Dispersion metrics
@@ -536,11 +538,38 @@ def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) 
             base_metrics["dispersion"]["mad"],
             curr_metrics["dispersion"]["mad"],
             "tokens",
+            regression_threshold=50.0,  # 50% increase in MAD is a regression
         )
 
         # Add separator between chunk sizes (except for last one)
         if chunk_size != max(chunk_sizes):
             click.echo("-" * len(header))
+
+
+def _prepare_row_data(
+    baseline: float,
+    current: float,
+    unit: str,
+    signed: bool = False,
+    higher_is_better: bool = False,
+    is_cost: bool = False,
+    is_integer: bool = False,
+    regression_threshold: float | None = None,
+    is_error_metric: bool = False,
+    for_table: bool = False,
+) -> tuple[str, str, str]:
+    """Prepare formatted strings for a comparison row."""
+    base_str = _format_value(baseline, unit, is_cost, is_integer, signed)
+    curr_str = _format_value(current, unit, is_cost, is_integer, signed)
+    change_str = _calculate_change(
+        baseline,
+        current,
+        higher_is_better,
+        regression_threshold=regression_threshold,
+        is_error_metric=is_error_metric,
+        for_table=for_table,
+    )
+    return base_str, curr_str, change_str
 
 
 def _format_table_row(
@@ -554,12 +583,20 @@ def _format_table_row(
     is_cost: bool = False,
     is_integer: bool = False,
     regression_threshold: float | None = None,
+    is_error_metric: bool = False,
 ) -> None:
-    """Format a single row in the comparison table."""
-    base_str = _format_value(baseline, unit, is_cost, is_integer, signed)
-    curr_str = _format_value(current, unit, is_cost, is_integer, signed)
-    change_str = _calculate_change(
-        baseline, current, higher_is_better, regression_threshold
+    """Format a single row in the text comparison table."""
+    base_str, curr_str, change_str = _prepare_row_data(
+        baseline,
+        current,
+        unit,
+        signed,
+        higher_is_better,
+        is_cost,
+        is_integer,
+        regression_threshold,
+        is_error_metric,
+        for_table=False,
     )
 
     # Format the row - chunk_size_str is empty for data rows
@@ -600,20 +637,45 @@ def _calculate_change(
     higher_is_better: bool = False,
     regression_threshold: float | None = None,
     for_table: bool = False,
+    is_error_metric: bool = False,
 ) -> str:
-    """Calculate and format the change between baseline and current values."""
-    if baseline == 0:
-        return "—" if for_table else "N/A"
+    """Calculate and format the change between baseline and current values.
 
-    change_pct = ((current - baseline) / abs(baseline)) * 100
+    Args:
+        baseline: Baseline value
+        current: Current value
+        higher_is_better: If True, higher values are better
+        regression_threshold: Percentage threshold for marking as regression
+        for_table: If True, use table-friendly formatting
+        is_error_metric: If True, compare absolute values (for error metrics)
+    """
+    # For error metrics, we compare absolute values
+    if is_error_metric:
+        baseline_val = abs(baseline)
+        current_val = abs(current)
 
-    # Determine if change is good or bad
-    if higher_is_better:
-        is_improvement = current > baseline
-        is_regression = regression_threshold and change_pct < -regression_threshold
-    else:
-        is_improvement = current < baseline
+        if baseline_val == 0:
+            return "—" if for_table else "N/A"
+
+        # Calculate percentage change in absolute error
+        change_pct = ((current_val - baseline_val) / baseline_val) * 100
+
+        # For error metrics, lower absolute value is always better
+        is_improvement = current_val < baseline_val
         is_regression = regression_threshold and change_pct > regression_threshold
+    else:
+        if baseline == 0:
+            return "—" if for_table else "N/A"
+
+        change_pct = ((current - baseline) / abs(baseline)) * 100
+
+        # Determine if change is good or bad
+        if higher_is_better:
+            is_improvement = current > baseline
+            is_regression = regression_threshold and change_pct < -regression_threshold
+        else:
+            is_improvement = current < baseline
+            is_regression = regression_threshold and change_pct > regression_threshold
 
     # Add emoji for significant changes
     if is_regression:
@@ -677,6 +739,8 @@ def _format_markdown_comparison(
             curr_metrics["target_fit"]["median_error"],
             "tokens",
             signed=True,
+            is_error_metric=True,
+            regression_threshold=30.0,  # 30% increase in absolute error is a regression
         )
         _add_table_row(
             "",
@@ -685,6 +749,8 @@ def _format_markdown_comparison(
             curr_metrics["target_fit"]["p95_error"],
             "tokens",
             signed=True,
+            is_error_metric=True,
+            regression_threshold=30.0,  # 30% increase in absolute error is a regression
         )
         _add_table_row(
             "",
@@ -693,6 +759,7 @@ def _format_markdown_comparison(
             curr_metrics["target_fit"]["percent_within_10"],
             "%",
             higher_is_better=True,
+            regression_threshold=30.0,  # 30% decrease is a regression
         )
 
         # Retry metrics
@@ -702,6 +769,7 @@ def _format_markdown_comparison(
             base_metrics["retries"]["retry_rate"],
             curr_metrics["retries"]["retry_rate"],
             "",
+            regression_threshold=50.0,  # 50% increase in retry rate is a regression
         )
 
         # Latency metrics
@@ -711,6 +779,7 @@ def _format_markdown_comparison(
             base_metrics["latency"]["median_seconds"],
             curr_metrics["latency"]["median_seconds"],
             "s",
+            regression_threshold=20.0,  # 20% increase in latency is a regression
         )
 
         # Cost metrics
@@ -721,6 +790,7 @@ def _format_markdown_comparison(
             curr_metrics["cost"]["usd_per_node"],
             "",
             is_cost=True,
+            regression_threshold=15.0,  # 15% increase in cost is a regression
         )
 
         # Dispersion metrics
@@ -730,6 +800,7 @@ def _format_markdown_comparison(
             base_metrics["dispersion"]["mad"],
             curr_metrics["dispersion"]["mad"],
             "tokens",
+            regression_threshold=50.0,  # 50% increase in MAD is a regression (more inconsistent)
         )
 
     click.echo("")
@@ -745,11 +816,22 @@ def _add_table_row(
     higher_is_better: bool = False,
     is_cost: bool = False,
     is_integer: bool = False,
+    regression_threshold: float | None = None,
+    is_error_metric: bool = False,
 ) -> None:
     """Add a row to the markdown table."""
-    base_str = _format_value(baseline, unit, is_cost, is_integer, signed)
-    curr_str = _format_value(current, unit, is_cost, is_integer, signed)
-    change_str = _calculate_change(baseline, current, higher_is_better, for_table=True)
+    base_str, curr_str, change_str = _prepare_row_data(
+        baseline,
+        current,
+        unit,
+        signed,
+        higher_is_better,
+        is_cost,
+        is_integer,
+        regression_threshold,
+        is_error_metric,
+        for_table=True,
+    )
 
     click.echo(f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} |")
 
