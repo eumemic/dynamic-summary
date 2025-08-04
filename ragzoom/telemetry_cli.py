@@ -384,19 +384,29 @@ def visualize(input_path: str, output_dir: str, format: str, compare: bool) -> N
 
 
 def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) -> None:
-    """Format comparison as plain text."""
+    """Format comparison as plain text table with all chunk sizes."""
+
+    # Build table header
+    click.echo("\n" + "=" * 80)
+    click.echo("Performance Comparison Report")
+    click.echo("=" * 80)
+
+    # Table headers
+    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>12} | {'Current':>12} | {'Change':>12}"
+    click.echo("\n" + header)
+    click.echo("-" * len(header))
 
     for chunk_size in sorted(chunk_sizes):
         base_metrics = baseline.metrics_by_chunk_size[chunk_size]
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
 
-        click.echo(f"\n{'='*60}")
-        click.echo(f"  Chunk Size: {chunk_size} tokens")
-        click.echo(f"{'='*60}")
+        # Chunk size header row
+        chunk_label = f"{chunk_size} tokens"
+        click.echo(f"{chunk_label:<12} |{' '*21}|{' '*13}|{' '*13}|")
 
-        # Target-fit comparison
-        click.echo("\n📏 Target-fit Accuracy")
-        _compare_metric(
+        # Target-fit metrics
+        _format_table_row(
+            "",
             "Median error",
             base_metrics["target_fit"]["median_error"],
             curr_metrics["target_fit"]["median_error"],
@@ -404,73 +414,91 @@ def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) 
             signed=True,
             regression_threshold=30.0,
         )
-        _compare_metric(
+        _format_table_row(
+            "",
             "p95 error",
             base_metrics["target_fit"]["p95_error"],
             curr_metrics["target_fit"]["p95_error"],
             "tokens",
             signed=True,
         )
-        _compare_metric(
-            "Within ±10",
+        _format_table_row(
+            "",
+            "Within ±10 tokens",
             base_metrics["target_fit"]["percent_within_10"],
             curr_metrics["target_fit"]["percent_within_10"],
             "%",
             higher_is_better=True,
         )
 
-        # Retry comparison
-        click.echo("\n🔄 Retry Efficiency")
-        _compare_metric(
+        # Retry metrics
+        _format_table_row(
+            "",
             "Retry rate",
             base_metrics["retries"]["retry_rate"],
             curr_metrics["retries"]["retry_rate"],
             "",
             regression_threshold=50.0,
         )
-        _compare_metric(
-            "Max retries",
-            base_metrics["retries"]["max_retries"],
-            curr_metrics["retries"]["max_retries"],
-            "",
-            is_integer=True,
-        )
 
-        # Latency comparison
-        click.echo("\n⏱️  Latency")
-        _compare_metric(
-            "Median time",
+        # Latency metrics
+        _format_table_row(
+            "",
+            "Median time/node",
             base_metrics["latency"]["median_seconds"],
             curr_metrics["latency"]["median_seconds"],
             "s",
             regression_threshold=20.0,
         )
-        _compare_metric(
-            "p95 time",
-            base_metrics["latency"]["p95_seconds"],
-            curr_metrics["latency"]["p95_seconds"],
-            "s",
-        )
 
-        # Cost comparison
-        click.echo("\n💰 Cost")
-        _compare_metric(
-            "USD/node",
+        # Cost metrics
+        _format_table_row(
+            "",
+            "USD per node",
             base_metrics["cost"]["usd_per_node"],
             curr_metrics["cost"]["usd_per_node"],
-            "$",
+            "",
             is_cost=True,
             regression_threshold=10.0,
         )
 
-        # Dispersion comparison
-        click.echo("\n📊 Consistency")
-        _compare_metric(
+        # Dispersion metrics
+        _format_table_row(
+            "",
             "MAD",
             base_metrics["dispersion"]["mad"],
             curr_metrics["dispersion"]["mad"],
             "tokens",
         )
+
+        # Add separator between chunk sizes (except for last one)
+        if chunk_size != max(chunk_sizes):
+            click.echo("-" * len(header))
+
+
+def _format_table_row(
+    chunk_size_str: str,
+    metric: str,
+    baseline: float,
+    current: float,
+    unit: str,
+    signed: bool = False,
+    higher_is_better: bool = False,
+    is_cost: bool = False,
+    is_integer: bool = False,
+    regression_threshold: float | None = None,
+) -> None:
+    """Format a single row in the comparison table."""
+    base_str = _format_value(baseline, unit, is_cost, is_integer, signed)
+    curr_str = _format_value(current, unit, is_cost, is_integer, signed)
+    change_str = _calculate_change(
+        baseline, current, higher_is_better, regression_threshold
+    )
+
+    # Format the row - chunk_size_str is empty for data rows
+    click.echo(
+        f"{chunk_size_str:<12} | {metric:<20} | {base_str:>12} | {curr_str:>12} | {change_str:>12}"
+    )
 
 
 def _format_value(
@@ -560,23 +588,31 @@ def _compare_metric(
 def _format_markdown_comparison(
     baseline: Any, current: Any, chunk_sizes: set[int]
 ) -> None:
-    """Format comparison as markdown table."""
+    """Format comparison as markdown table with all chunk sizes."""
 
     click.echo("# Performance Comparison Report\n")
+
+    # Create unified table
+    click.echo("| Chunk Size | Metric | Baseline | Current | Change |")
+    click.echo("|------------|--------|----------|---------|--------|")
 
     for chunk_size in sorted(chunk_sizes):
         base_metrics = baseline.metrics_by_chunk_size[chunk_size]
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
 
-        click.echo(f"## Chunk Size: {chunk_size} tokens\n")
-
-        # Create table
-        click.echo("| Category | Metric | Baseline | Current | Change |")
-        click.echo("|----------|--------|----------|---------|--------|")
-
-        # Target-fit
+        # Add chunk size header row
         _add_table_row(
-            "**Target-fit**",
+            f"**{chunk_size} tokens**",
+            "",
+            0,
+            0,
+            "",
+            skip_values=True,
+        )
+
+        # Target-fit metrics
+        _add_table_row(
+            "",
             "Median error",
             base_metrics["target_fit"]["median_error"],
             curr_metrics["target_fit"]["median_error"],
@@ -593,73 +629,34 @@ def _format_markdown_comparison(
         )
         _add_table_row(
             "",
-            "% within ±10",
+            "Within ±10 tokens",
             base_metrics["target_fit"]["percent_within_10"],
             curr_metrics["target_fit"]["percent_within_10"],
             "%",
             higher_is_better=True,
         )
-        _add_table_row(
-            "",
-            "Max overshoot",
-            base_metrics["target_fit"]["max_overshoot"],
-            curr_metrics["target_fit"]["max_overshoot"],
-            "",
-            is_integer=True,
-        )
-        _add_table_row(
-            "",
-            "Max undershoot",
-            base_metrics["target_fit"]["max_undershoot"],
-            curr_metrics["target_fit"]["max_undershoot"],
-            "",
-            is_integer=True,
-            signed=True,
-        )
 
-        # Retries
+        # Retry metrics
         _add_table_row(
-            "**Retries**",
+            "",
             "Retry rate",
             base_metrics["retries"]["retry_rate"],
             curr_metrics["retries"]["retry_rate"],
             "",
         )
-        _add_table_row(
-            "",
-            "Max retries",
-            base_metrics["retries"]["max_retries"],
-            curr_metrics["retries"]["max_retries"],
-            "",
-            is_integer=True,
-        )
 
-        # Latency
+        # Latency metrics
         _add_table_row(
-            "**Latency**",
+            "",
             "Median time/node",
             base_metrics["latency"]["median_seconds"],
             curr_metrics["latency"]["median_seconds"],
             "s",
         )
-        _add_table_row(
-            "",
-            "p95 time/node",
-            base_metrics["latency"]["p95_seconds"],
-            curr_metrics["latency"]["p95_seconds"],
-            "s",
-        )
-        _add_table_row(
-            "",
-            "Total indexing",
-            base_metrics["latency"]["total_indexing_seconds"],
-            curr_metrics["latency"]["total_indexing_seconds"],
-            "s",
-        )
 
-        # Cost
+        # Cost metrics
         _add_table_row(
-            "**Cost**",
+            "",
             "USD per node",
             base_metrics["cost"]["usd_per_node"],
             curr_metrics["cost"]["usd_per_node"],
@@ -667,16 +664,16 @@ def _format_markdown_comparison(
             is_cost=True,
         )
 
-        # Dispersion
+        # Dispersion metrics
         _add_table_row(
-            "**Consistency**",
+            "",
             "MAD",
             base_metrics["dispersion"]["mad"],
             curr_metrics["dispersion"]["mad"],
             "tokens",
         )
 
-        click.echo("")
+    click.echo("")
 
 
 def _add_table_row(
@@ -689,13 +686,22 @@ def _add_table_row(
     higher_is_better: bool = False,
     is_cost: bool = False,
     is_integer: bool = False,
+    skip_values: bool = False,
 ) -> None:
     """Add a row to the markdown table."""
-    base_str = _format_value(baseline, unit, is_cost, is_integer, signed)
-    curr_str = _format_value(current, unit, is_cost, is_integer, signed)
-    change_str = _calculate_change(baseline, current, higher_is_better, for_table=True)
+    if skip_values:
+        # This is a header row for a chunk size
+        click.echo(f"| {category} | | | | |")
+    else:
+        base_str = _format_value(baseline, unit, is_cost, is_integer, signed)
+        curr_str = _format_value(current, unit, is_cost, is_integer, signed)
+        change_str = _calculate_change(
+            baseline, current, higher_is_better, for_table=True
+        )
 
-    click.echo(f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} |")
+        click.echo(
+            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} |"
+        )
 
 
 if __name__ == "__main__":

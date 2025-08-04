@@ -155,10 +155,10 @@ class TestTelemetryCompare:
                 )
 
         assert result.exit_code == 0
-        # Check for new simplified metrics format
-        assert "Chunk Size: 100 tokens" in result.output
-        assert "Target-fit Accuracy" in result.output
-        assert "Retry Efficiency" in result.output
+        # Check for new table format
+        assert "100 tokens" in result.output
+        assert "Median error" in result.output
+        assert "Retry rate" in result.output
 
     def test_compare_directories(self, create_test_files):
         """Test comparing two directories with matching files."""
@@ -177,10 +177,10 @@ class TestTelemetryCompare:
         assert "Found 2 matching file pairs to compare" in result.output
         assert "telemetry_100_tokens.json" in result.output
         assert "telemetry_200_tokens.json" in result.output
-        # Check for new simplified metrics format
-        assert "Target-fit Accuracy" in result.output
-        assert "Chunk Size: 100 tokens" in result.output
-        assert "Chunk Size: 200 tokens" in result.output
+        # Check for new table format
+        assert "100 tokens" in result.output
+        assert "200 tokens" in result.output
+        assert "Median error" in result.output
 
     def test_compare_directories_with_output(self, create_test_files, tmp_path):
         """Test comparing directories with markdown output."""
@@ -201,7 +201,7 @@ class TestTelemetryCompare:
         assert result.exit_code == 0
         assert "Found 2 matching file pairs to compare" in result.output
         # Check for markdown format
-        assert "| Category |" in result.output or "## Chunk Size:" in result.output
+        assert "| Chunk Size |" in result.output or "| Metric |" in result.output
 
     def test_compare_directories_no_matches(self, tmp_path):
         """Test comparing directories with no matching files."""
