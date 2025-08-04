@@ -10,6 +10,17 @@ import click
 from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import compute_simplified_metrics
 
+# Regression detection thresholds (percentage increases that trigger build failure)
+REGRESSION_THRESHOLDS = {
+    "median_error": 30.0,  # Median error absolute increase > 30%
+    "p95_error": 50.0,  # p95 error absolute increase > 50%
+    "percent_within_10": 30.0,  # Within ±10 tokens decrease > 30% (higher_is_better)
+    "retry_rate": 50.0,  # Retry rate increase > 50%
+    "latency": 20.0,  # Latency increase > 20%
+    "cost": 15.0,  # Cost increase > 15%
+    "mad": 50.0,  # MAD increase > 50%
+}
+
 
 def _match_telemetry_files(dir1: Path, dir2: Path) -> list[tuple[Path, Path]]:
     """Match telemetry files between two directories by filename.
@@ -223,60 +234,60 @@ def _check_metrics_for_regressions(
         base_metrics = baseline.metrics_by_chunk_size[chunk_size]
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
 
-        # Check target-fit regression (median absolute error increase > 30%)
+        # Check target-fit regression (median absolute error increase)
         if _check_for_regression(
             abs(base_metrics["target_fit"]["median_error"]),
             abs(curr_metrics["target_fit"]["median_error"]),
-            threshold_pct=30.0,
+            threshold_pct=REGRESSION_THRESHOLDS["median_error"],
         ):
             has_regression = True
 
-        # Check p95 error regression (absolute error increase > 30%)
+        # Check p95 error regression (absolute error increase)
         if _check_for_regression(
             abs(base_metrics["target_fit"]["p95_error"]),
             abs(curr_metrics["target_fit"]["p95_error"]),
-            threshold_pct=30.0,
+            threshold_pct=REGRESSION_THRESHOLDS["p95_error"],
         ):
             has_regression = True
 
-        # Check within ±10 tokens regression (> 30% decrease)
+        # Check within ±10 tokens regression (decrease)
         if _check_for_regression(
             base_metrics["target_fit"]["percent_within_10"],
             curr_metrics["target_fit"]["percent_within_10"],
-            threshold_pct=30.0,
+            threshold_pct=REGRESSION_THRESHOLDS["percent_within_10"],
             higher_is_better=True,
         ):
             has_regression = True
 
-        # Check retry rate regression (> 50% increase)
+        # Check retry rate regression (increase)
         if _check_for_regression(
             base_metrics["retries"]["retry_rate"],
             curr_metrics["retries"]["retry_rate"],
-            threshold_pct=50.0,
+            threshold_pct=REGRESSION_THRESHOLDS["retry_rate"],
         ):
             has_regression = True
 
-        # Check latency regression (> 20% increase)
+        # Check latency regression (increase)
         if _check_for_regression(
             base_metrics["latency"]["median_seconds"],
             curr_metrics["latency"]["median_seconds"],
-            threshold_pct=20.0,
+            threshold_pct=REGRESSION_THRESHOLDS["latency"],
         ):
             has_regression = True
 
-        # Check cost regression (> 15% increase)
+        # Check cost regression (increase)
         if _check_for_regression(
             base_metrics["cost"]["usd_per_node"],
             curr_metrics["cost"]["usd_per_node"],
-            threshold_pct=15.0,
+            threshold_pct=REGRESSION_THRESHOLDS["cost"],
         ):
             has_regression = True
 
-        # Check MAD regression (> 50% increase)
+        # Check MAD regression (increase)
         if _check_for_regression(
             base_metrics["dispersion"]["mad"],
             curr_metrics["dispersion"]["mad"],
-            threshold_pct=50.0,
+            threshold_pct=REGRESSION_THRESHOLDS["mad"],
         ):
             has_regression = True
 
@@ -355,54 +366,56 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
         if _check_for_regression(
             abs(baseline_metrics["target_fit"]["median_error"]),
             abs(current_metrics["target_fit"]["median_error"]),
-            threshold_pct=30.0,
+            threshold_pct=REGRESSION_THRESHOLDS["median_error"],
         ):
             has_regression = True
 
-        # Check p95 error regression (absolute error increase > 30%)
+        # Check p95 error regression (absolute error increase)
         if _check_for_regression(
             abs(baseline_metrics["target_fit"]["p95_error"]),
             abs(current_metrics["target_fit"]["p95_error"]),
-            threshold_pct=30.0,
+            threshold_pct=REGRESSION_THRESHOLDS["p95_error"],
         ):
             has_regression = True
 
-        # Check within ±10 tokens regression (> 30% decrease)
+        # Check within ±10 tokens regression (decrease)
         if _check_for_regression(
             baseline_metrics["target_fit"]["percent_within_10"],
             current_metrics["target_fit"]["percent_within_10"],
-            threshold_pct=30.0,
+            threshold_pct=REGRESSION_THRESHOLDS["percent_within_10"],
             higher_is_better=True,
         ):
             has_regression = True
 
-        # Check retry rate regression (> 50% increase)
+        # Check retry rate regression (increase)
         if _check_for_regression(
             baseline_metrics["retries"]["retry_rate"],
             current_metrics["retries"]["retry_rate"],
-            threshold_pct=50.0,
+            threshold_pct=REGRESSION_THRESHOLDS["retry_rate"],
         ):
             has_regression = True
 
+        # Check latency regression (increase)
         if _check_for_regression(
             baseline_metrics["latency"]["median_seconds"],
             current_metrics["latency"]["median_seconds"],
-            threshold_pct=20.0,
+            threshold_pct=REGRESSION_THRESHOLDS["latency"],
         ):
             has_regression = True
 
+        # Check cost regression (increase)
         if _check_for_regression(
             baseline_metrics["cost"]["usd_per_node"],
             current_metrics["cost"]["usd_per_node"],
-            threshold_pct=15.0,
+            threshold_pct=REGRESSION_THRESHOLDS["cost"],
         ):
             has_regression = True
 
-        # Check MAD regression (> 50% increase)
+        # Check MAD regression (increase)
         if _check_for_regression(
             baseline_metrics["dispersion"]["mad"],
             current_metrics["dispersion"]["mad"],
-            threshold_pct=50.0,
+            threshold_pct=REGRESSION_THRESHOLDS["mad"],
         ):
             has_regression = True
 
@@ -508,6 +521,93 @@ def visualize(input_path: str, output_dir: str, format: str, compare: bool) -> N
         sys.exit(1)
 
 
+def _format_metrics_for_chunk(
+    chunk_label: str,
+    base_metrics: dict,
+    curr_metrics: dict,
+    output_format: str,
+) -> None:
+    """Format all metrics for a single chunk size."""
+    # Target-fit metrics - include chunk size in first row
+    _format_comparison_row(
+        chunk_label,
+        "Median error",
+        base_metrics["target_fit"]["median_error"],
+        curr_metrics["target_fit"]["median_error"],
+        "tokens",
+        output_format=output_format,
+        signed=True,
+        is_error_metric=True,
+        regression_threshold=REGRESSION_THRESHOLDS["median_error"],
+    )
+    _format_comparison_row(
+        "",
+        "p95 error",
+        base_metrics["target_fit"]["p95_error"],
+        curr_metrics["target_fit"]["p95_error"],
+        "tokens",
+        output_format=output_format,
+        signed=True,
+        is_error_metric=True,
+        regression_threshold=REGRESSION_THRESHOLDS["p95_error"],
+    )
+    _format_comparison_row(
+        "",
+        "Within ±10 tokens",
+        base_metrics["target_fit"]["percent_within_10"],
+        curr_metrics["target_fit"]["percent_within_10"],
+        "%",
+        output_format=output_format,
+        higher_is_better=True,
+        regression_threshold=REGRESSION_THRESHOLDS["percent_within_10"],
+    )
+
+    # Retry metrics
+    _format_comparison_row(
+        "",
+        "Retry rate",
+        base_metrics["retries"]["retry_rate"],
+        curr_metrics["retries"]["retry_rate"],
+        "",
+        output_format=output_format,
+        regression_threshold=REGRESSION_THRESHOLDS["retry_rate"],
+    )
+
+    # Latency metrics
+    _format_comparison_row(
+        "",
+        "Median time/node",
+        base_metrics["latency"]["median_seconds"],
+        curr_metrics["latency"]["median_seconds"],
+        "s",
+        output_format=output_format,
+        regression_threshold=REGRESSION_THRESHOLDS["latency"],
+    )
+
+    # Cost metrics
+    _format_comparison_row(
+        "",
+        "USD per node",
+        base_metrics["cost"]["usd_per_node"],
+        curr_metrics["cost"]["usd_per_node"],
+        "",
+        output_format=output_format,
+        is_cost=True,
+        regression_threshold=REGRESSION_THRESHOLDS["cost"],
+    )
+
+    # Dispersion metrics
+    _format_comparison_row(
+        "",
+        "MAD",
+        base_metrics["dispersion"]["mad"],
+        curr_metrics["dispersion"]["mad"],
+        "tokens",
+        output_format=output_format,
+        regression_threshold=REGRESSION_THRESHOLDS["mad"],
+    )
+
+
 def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) -> None:
     """Format comparison as plain text table with all chunk sizes."""
 
@@ -526,85 +626,7 @@ def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) 
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
 
         chunk_label = f"{chunk_size} tokens"
-
-        # Target-fit metrics - include chunk size in first row
-        _format_comparison_row(
-            chunk_label,
-            "Median error",
-            base_metrics["target_fit"]["median_error"],
-            curr_metrics["target_fit"]["median_error"],
-            "tokens",
-            output_format="text",
-            signed=True,
-            is_error_metric=True,
-            regression_threshold=30.0,
-        )
-        _format_comparison_row(
-            "",
-            "p95 error",
-            base_metrics["target_fit"]["p95_error"],
-            curr_metrics["target_fit"]["p95_error"],
-            "tokens",
-            output_format="text",
-            signed=True,
-            is_error_metric=True,
-            regression_threshold=30.0,
-        )
-        _format_comparison_row(
-            "",
-            "Within ±10 tokens",
-            base_metrics["target_fit"]["percent_within_10"],
-            curr_metrics["target_fit"]["percent_within_10"],
-            "%",
-            output_format="text",
-            higher_is_better=True,
-            regression_threshold=30.0,
-        )
-
-        # Retry metrics
-        _format_comparison_row(
-            "",
-            "Retry rate",
-            base_metrics["retries"]["retry_rate"],
-            curr_metrics["retries"]["retry_rate"],
-            "",
-            output_format="text",
-            regression_threshold=50.0,
-        )
-
-        # Latency metrics
-        _format_comparison_row(
-            "",
-            "Median time/node",
-            base_metrics["latency"]["median_seconds"],
-            curr_metrics["latency"]["median_seconds"],
-            "s",
-            output_format="text",
-            regression_threshold=20.0,
-        )
-
-        # Cost metrics
-        _format_comparison_row(
-            "",
-            "USD per node",
-            base_metrics["cost"]["usd_per_node"],
-            curr_metrics["cost"]["usd_per_node"],
-            "",
-            output_format="text",
-            is_cost=True,
-            regression_threshold=15.0,  # Match markdown format threshold
-        )
-
-        # Dispersion metrics
-        _format_comparison_row(
-            "",
-            "MAD",
-            base_metrics["dispersion"]["mad"],
-            curr_metrics["dispersion"]["mad"],
-            "tokens",
-            output_format="text",
-            regression_threshold=50.0,  # 50% increase in MAD is a regression
-        )
+        _format_metrics_for_chunk(chunk_label, base_metrics, curr_metrics, "text")
 
         # Add separator between chunk sizes (except for last one)
         if chunk_size != max(chunk_sizes):
@@ -802,85 +824,7 @@ def _format_markdown_comparison(
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
 
         chunk_label = f"**{chunk_size} tokens**"
-
-        # Target-fit metrics - include chunk size in first row
-        _format_comparison_row(
-            chunk_label,
-            "Median error",
-            base_metrics["target_fit"]["median_error"],
-            curr_metrics["target_fit"]["median_error"],
-            "tokens",
-            output_format="markdown",
-            signed=True,
-            is_error_metric=True,
-            regression_threshold=30.0,  # 30% increase in absolute error is a regression
-        )
-        _format_comparison_row(
-            "",
-            "p95 error",
-            base_metrics["target_fit"]["p95_error"],
-            curr_metrics["target_fit"]["p95_error"],
-            "tokens",
-            output_format="markdown",
-            signed=True,
-            is_error_metric=True,
-            regression_threshold=30.0,  # 30% increase in absolute error is a regression
-        )
-        _format_comparison_row(
-            "",
-            "Within ±10 tokens",
-            base_metrics["target_fit"]["percent_within_10"],
-            curr_metrics["target_fit"]["percent_within_10"],
-            "%",
-            output_format="markdown",
-            higher_is_better=True,
-            regression_threshold=30.0,  # 30% decrease is a regression
-        )
-
-        # Retry metrics
-        _format_comparison_row(
-            "",
-            "Retry rate",
-            base_metrics["retries"]["retry_rate"],
-            curr_metrics["retries"]["retry_rate"],
-            "",
-            output_format="markdown",
-            regression_threshold=50.0,  # 50% increase in retry rate is a regression
-        )
-
-        # Latency metrics
-        _format_comparison_row(
-            "",
-            "Median time/node",
-            base_metrics["latency"]["median_seconds"],
-            curr_metrics["latency"]["median_seconds"],
-            "s",
-            output_format="markdown",
-            regression_threshold=20.0,  # 20% increase in latency is a regression
-        )
-
-        # Cost metrics
-        _format_comparison_row(
-            "",
-            "USD per node",
-            base_metrics["cost"]["usd_per_node"],
-            curr_metrics["cost"]["usd_per_node"],
-            "",
-            output_format="markdown",
-            is_cost=True,
-            regression_threshold=15.0,  # 15% increase in cost is a regression
-        )
-
-        # Dispersion metrics
-        _format_comparison_row(
-            "",
-            "MAD",
-            base_metrics["dispersion"]["mad"],
-            curr_metrics["dispersion"]["mad"],
-            "tokens",
-            output_format="markdown",
-            regression_threshold=50.0,  # 50% increase in MAD is a regression (more inconsistent)
-        )
+        _format_metrics_for_chunk(chunk_label, base_metrics, curr_metrics, "markdown")
 
     click.echo("")
 
