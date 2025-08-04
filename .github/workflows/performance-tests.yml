@@ -160,7 +160,7 @@ jobs:
             if [ "$baseline_count" -gt 1 ]; then
               # New style: directory comparison for multiple chunk sizes
               echo "📊 Running multi-file benchmark comparison..."
-              ragzoom-telemetry compare baseline_results/ benchmark_results/ --output report.md
+              ragzoom-telemetry compare baseline_results/ benchmark_results/ --output markdown > report.md
               comparison_exit_code=$?
               
               # Add workflow link to the top of the report
@@ -175,7 +175,7 @@ jobs:
               # TODO: Remove this single-file fallback after migration period
               # Once all baselines in master are multi-file, we can remove this branch
               echo "📊 Running single-file benchmark comparison (legacy mode)..."
-              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output report.md
+              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output markdown > report.md
               comparison_exit_code=$?
               
               # Add workflow link to the top of the report
