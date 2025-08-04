@@ -1,7 +1,7 @@
 """Tests for telemetry CLI commands."""
 
+import copy
 import json
-from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -15,74 +15,80 @@ class TestTelemetryCompare:
     @pytest.fixture
     def sample_telemetry_data(self):
         """Create sample telemetry data for testing."""
+        # Return just the telemetry structure, not wrapped in another object
         return {
             "format_version": "2.0",
-            "config": {"leaf_tokens": 100},
-            "document": {"path": "test.txt", "total_chunks": 10},
-            "telemetry": {
-                "format_version": "2.0",
-                "documents": {
-                    "test.txt": {
-                        "metadata": {"source_document_tokens": 1000},
-                        "nodes": [
-                            {
-                                "node_id": "node1",
-                                "height": 0,
-                                "created_at": 1234567890.0,
-                                "embedding": {
-                                    "text_tokens": 100,
-                                    "batch_size": 10,
-                                    "start_time": 1234567890.0,
-                                },
+            "documents": {
+                "test.txt": {
+                    "metadata": {
+                        "source_document_tokens": 1000,
+                        "indexing_start": 1234567890.0,
+                        "indexing_end": 1234567900.0,
+                    },
+                    "nodes": [
+                        {
+                            "node_id": "node1",
+                            "height": 0,
+                            "created_at": 1234567890.0,
+                            "embedding": {
+                                "text_tokens": 100,
+                                "batch_size": 10,
+                                "start_time": 1234567890.0,
                             },
-                            {
-                                "node_id": "node2",
-                                "height": 1,
-                                "created_at": 1234567891.0,
-                                "summary_attempts": [
-                                    {
-                                        "status": "accepted",
-                                        "prompt_tokens": 200,
-                                        "completion_tokens": 50,
-                                        "input_text_tokens": 100,
-                                        "actual_tokens": 50,
-                                        "target_tokens": 100,
-                                    }
-                                ],
-                            },
-                            {
-                                "node_id": "node3",
-                                "height": 1,
-                                "created_at": 1234567892.0,
-                                "summary_attempts": [
-                                    {
-                                        "status": "accepted",
-                                        "prompt_tokens": 210,
-                                        "completion_tokens": 48,
-                                        "input_text_tokens": 100,
-                                        "actual_tokens": 48,
-                                        "target_tokens": 100,
-                                    }
-                                ],
-                            },
-                            {
-                                "node_id": "node4",
-                                "height": 1,
-                                "created_at": 1234567893.0,
-                                "summary_attempts": [
-                                    {
-                                        "status": "accepted",
-                                        "prompt_tokens": 195,
-                                        "completion_tokens": 52,
-                                        "input_text_tokens": 100,
-                                        "actual_tokens": 52,
-                                        "target_tokens": 100,
-                                    }
-                                ],
-                            },
-                        ],
-                    }
-                },
+                        },
+                        {
+                            "node_id": "node2",
+                            "height": 1,
+                            "created_at": 1234567891.0,
+                            "summary_attempts": [
+                                {
+                                    "status": "accepted",
+                                    "prompt_tokens": 200,
+                                    "completion_tokens": 50,
+                                    "input_text_tokens": 100,
+                                    "actual_tokens": 50,
+                                    "target_tokens": 100,
+                                    "start_time": 1234567891.0,
+                                    "end_time": 1234567892.0,
+                                }
+                            ],
+                        },
+                        {
+                            "node_id": "node3",
+                            "height": 1,
+                            "created_at": 1234567892.0,
+                            "summary_attempts": [
+                                {
+                                    "status": "accepted",
+                                    "prompt_tokens": 210,
+                                    "completion_tokens": 48,
+                                    "input_text_tokens": 100,
+                                    "actual_tokens": 48,
+                                    "target_tokens": 100,
+                                    "start_time": 1234567892.0,
+                                    "end_time": 1234567893.0,
+                                }
+                            ],
+                        },
+                        {
+                            "node_id": "node4",
+                            "height": 1,
+                            "created_at": 1234567893.0,
+                            "summary_attempts": [
+                                {
+                                    "status": "accepted",
+                                    "prompt_tokens": 195,
+                                    "completion_tokens": 52,
+                                    "input_text_tokens": 100,
+                                    "actual_tokens": 52,
+                                    "target_tokens": 100,
+                                    "start_time": 1234567893.0,
+                                    "end_time": 1234567894.0,
+                                }
+                            ],
+                        },
+                    ],
+                }
             },
         }
 
@@ -99,26 +105,26 @@ class TestTelemetryCompare:
         baseline_100.write_text(json.dumps(sample_telemetry_data))
 
         baseline_200 = baseline_dir / "telemetry_200_tokens.json"
-        data_200 = sample_telemetry_data.copy()
-        data_200["config"]["leaf_tokens"] = 200
+        data_200 = copy.deepcopy(sample_telemetry_data)
+        # Change target_tokens to 200 for all summary nodes
+        for i in [1, 2, 3]:
+            data_200["documents"]["test.txt"]["nodes"][i]["summary_attempts"][0][
+                "target_tokens"
+            ] = 200
         baseline_200.write_text(json.dumps(data_200))
 
         # Create current files with slight modifications
-        current_data = sample_telemetry_data.copy()
-        # Increase amplification slightly
-        current_data["telemetry"]["documents"]["test.txt"]["nodes"][1][
-            "summary_attempts"
-        ][0][
+        current_data = copy.deepcopy(sample_telemetry_data)
+        # Increase token usage slightly
+        current_data["documents"]["test.txt"]["nodes"][1]["summary_attempts"][0][
             "prompt_tokens"
         ] = 210  # 5% increase, under threshold
 
         current_100 = current_dir / "telemetry_100_tokens.json"
         current_100.write_text(json.dumps(current_data))
 
-        current_data_200 = data_200.copy()
-        current_data_200["telemetry"]["documents"]["test.txt"]["nodes"][1][
-            "summary_attempts"
-        ][0][
+        current_data_200 = copy.deepcopy(data_200)
+        current_data_200["documents"]["test.txt"]["nodes"][1]["summary_attempts"][0][
             "prompt_tokens"
         ] = 210  # Only 5% increase, under threshold
         current_200 = current_dir / "telemetry_200_tokens.json"
@@ -149,11 +155,10 @@ class TestTelemetryCompare:
                 )
 
         assert result.exit_code == 0
-        assert (
-            "Performance Report" in result.output
-            or "Performance Comparison Report" in result.output
-        )
-        assert "Amplification Metrics" in result.output
+        # Check for new table format
+        assert "100 tokens" in result.output
+        assert "Median error" in result.output
+        assert "Retry rate" in result.output
 
     def test_compare_directories(self, create_test_files):
         """Test comparing two directories with matching files."""
@@ -169,18 +174,15 @@ class TestTelemetryCompare:
             print(f"Exception: {result.exception}")
 
         assert result.exit_code == 0
-        assert "Found 2 matching file pairs to compare" in result.output
-        assert "telemetry_100_tokens.json" in result.output
-        assert "telemetry_200_tokens.json" in result.output
-        assert "Performance Report" in result.output
-        assert "Amplification Metrics" in result.output
+        # Check for unified table format with chunk sizes
         assert "100 tokens" in result.output
         assert "200 tokens" in result.output
+        assert "Median error" in result.output
+        # Should be a unified table, not separate sections per file
 
     def test_compare_directories_with_output(self, create_test_files, tmp_path):
-        """Test comparing directories with output to file."""
+        """Test comparing directories with markdown output."""
         baseline_dir, current_dir = create_test_files
-        output_file = tmp_path / "comparison_report.md"
 
         runner = CliRunner()
         result = runner.invoke(
@@ -190,19 +192,13 @@ class TestTelemetryCompare:
                 str(baseline_dir),
                 str(current_dir),
                 "--output",
-                str(output_file),
+                "markdown",
             ],
         )
 
         assert result.exit_code == 0
-        assert output_file.exists()
-        assert "Combined comparison report saved to" in result.output
-
-        # Check report contents
-        report = output_file.read_text()
-        assert "Performance Report" in report
-        assert "100 tokens" in report
-        assert "200 tokens" in report
+        # Check for markdown format
+        assert "| Chunk Size |" in result.output or "| Metric |" in result.output
 
     def test_compare_directories_no_matches(self, tmp_path):
         """Test comparing directories with no matching files."""
@@ -232,7 +228,9 @@ class TestTelemetryCompare:
         result = runner.invoke(cli, ["compare", str(test_file), str(test_dir)])
 
         assert result.exit_code == 1
-        assert "Both arguments must be either files or directories" in result.output
+        assert (
+            "Error: Both arguments must be either files or directories" in result.output
+        )
 
     def test_file_matching_logic(self, tmp_path):
         """Test the file matching logic handles various naming patterns."""
@@ -267,40 +265,27 @@ class TestTelemetryCompare:
 
     def test_compare_with_regression(self, tmp_path, sample_telemetry_data):
         """Test that regressions are detected and exit code is 1."""
-        baseline_dir = tmp_path / "baseline"
-        current_dir = tmp_path / "current"
-        baseline_dir.mkdir()
-        current_dir.mkdir()
-
-        # Create baseline
-        baseline_file = baseline_dir / "telemetry_100_tokens.json"
+        baseline_file = tmp_path / "baseline.json"
         baseline_file.write_text(json.dumps(sample_telemetry_data))
 
         # Create current with significant regression
-        current_data = sample_telemetry_data.copy()
-        # Increase prompt tokens by >10% to trigger regression for all summary nodes
+        current_data = copy.deepcopy(sample_telemetry_data)
+        # Double the prompt tokens to trigger cost regression (>10% threshold)
         for i in [1, 2, 3]:  # All summary nodes
-            current_data["telemetry"]["documents"]["test.txt"]["nodes"][i][
-                "summary_attempts"
-            ][0]["prompt_tokens"] = (
-                current_data["telemetry"]["documents"]["test.txt"]["nodes"][i][
-                    "summary_attempts"
-                ][0]["prompt_tokens"]
+            current_data["documents"]["test.txt"]["nodes"][i]["summary_attempts"][0][
+                "prompt_tokens"
+            ] = (
+                current_data["documents"]["test.txt"]["nodes"][i]["summary_attempts"][
+                    0
+                ]["prompt_tokens"]
                 * 2
             )  # Double the prompt tokens
 
-        current_file = current_dir / "telemetry_100_tokens.json"
+        current_file = tmp_path / "current.json"
         current_file.write_text(json.dumps(current_data))
 
         runner = CliRunner()
-
-        # Set low threshold to ensure regression is detected
-        with patch.dict(
-            "os.environ", {"PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD": "5.0"}
-        ):
-            result = runner.invoke(
-                cli, ["compare", str(baseline_dir), str(current_dir)]
-            )
+        result = runner.invoke(cli, ["compare", str(baseline_file), str(current_file)])
 
         # Debug output
         if result.exit_code != 1:
@@ -308,7 +293,9 @@ class TestTelemetryCompare:
             print(f"Output:\n{result.output}")
 
         assert result.exit_code == 1
-        assert "Regression Detected" in result.output
+        assert (
+            "Performance regression detected" in result.output or "❌" in result.output
+        )
 
 
 if __name__ == "__main__":

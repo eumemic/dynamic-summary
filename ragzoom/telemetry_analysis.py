@@ -1,8 +1,15 @@
-"""Telemetry analysis tools for computing metrics from raw telemetry data.
+"""Telemetry analysis with simplified metrics.
 
-This module enables retroactive metric computation from telemetry data collected
-during indexing. It supports computing amplification metrics, retry analysis,
-and other insights from historical benchmark data.
+This module provides simplified, actionable metrics focused on:
+- Target-fit accuracy
+- Retry efficiency
+- Latency
+- Cost
+- Consistency (dispersion)
+
+All metrics are aggregated at the chunk-size level only (no tree-level breakdowns).
+
+Legacy functions are preserved for backward compatibility with telemetry_viz.py.
 """
 
 import logging
@@ -14,7 +21,6 @@ from typing import Any
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_types import (
-    AmplificationSummaryDict,
     BatchEfficiencyDict,
     RetryAnalysisDict,
     TelemetryDataDict,
@@ -29,7 +35,330 @@ SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0"]
 # This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
 # estimate for backward compatibility with old telemetry data that didn't track source tokens.
 # The actual chunk size may vary, but this provides a reasonable approximation for cost metrics.
-DEFAULT_LEAF_TOKEN_ESTIMATE = 150
+# This can be overridden via the RAGZOOM_DEFAULT_LEAF_TOKEN_ESTIMATE environment variable.
+DEFAULT_LEAF_TOKEN_ESTIMATE = int(
+    os.getenv("RAGZOOM_DEFAULT_LEAF_TOKEN_ESTIMATE", "150")
+)
+
+
+# ============================================================================
+# NEW SIMPLIFIED METRICS
+# ============================================================================
+# The functions below are the new simplified telemetry metrics system.
+# They focus on actionable insights at the chunk-size level only.
+# ============================================================================
+
+
+@dataclass
+class SimplifiedMetrics:
+    """Simplified metrics structure organized by chunk size."""
+
+    metrics_by_chunk_size: dict[int, dict[str, dict[str, float]]]
+
+
+def compute_simplified_metrics(
+    telemetry_data: dict, config: RagZoomConfig
+) -> SimplifiedMetrics:
+    """Compute simplified metrics from telemetry data.
+
+    Args:
+        telemetry_data: Raw telemetry data
+        config: Configuration with pricing information
+
+    Returns:
+        SimplifiedMetrics object with metrics organized by chunk size
+    """
+    parsed_data = parse_telemetry_format(telemetry_data)
+
+    # Group nodes by target chunk size
+    nodes_by_target: dict[int, list[dict[Any, Any]]] = {}
+
+    for doc_type, doc_data in parsed_data["documents"].items():
+        nodes = doc_data.get("nodes", [])
+
+        node: Any
+        for node in nodes:
+            # Skip leaf nodes (no summaries)
+            height = node.get("height", node.get("level", 0))
+            if height == 0:
+                continue
+
+            # Get the accepted summary attempt to find target size
+            summary_attempts = node.get("summary_attempts", [])
+            for attempt in summary_attempts:
+                if attempt.get("status") == "accepted":
+                    target_tokens = attempt.get("target_tokens", 0)
+                    if target_tokens > 0:
+                        if target_tokens not in nodes_by_target:
+                            nodes_by_target[target_tokens] = []
+                        nodes_by_target[target_tokens].append(node)
+                    break
+
+    # Compute metrics for each chunk size
+    metrics_by_chunk_size = {}
+    for target_size in sorted(nodes_by_target.keys()):
+        chunk_nodes: list[dict[Any, Any]] = nodes_by_target[target_size]
+        if chunk_nodes:
+            metrics_by_chunk_size[target_size] = {
+                "target_fit": compute_target_fit_metrics(chunk_nodes, target_size),
+                "retries": compute_retry_metrics(chunk_nodes),
+                "latency": compute_latency_metrics(chunk_nodes),
+                "cost": compute_cost_metrics(chunk_nodes, config),
+                "dispersion": compute_dispersion_metrics(chunk_nodes),
+            }
+
+    return SimplifiedMetrics(metrics_by_chunk_size=metrics_by_chunk_size)
+
+
+def compute_target_fit_metrics(
+    nodes: list[dict[Any, Any]], target_size: int
+) -> dict[str, float]:
+    """Compute target-fit accuracy metrics.
+
+    Returns:
+        - median_error: Median of (actual - target)
+        - p95_error: 95th percentile of (actual - target)
+        - percent_within_10: Percentage within ±10 tokens
+        - max_overshoot: Maximum positive error
+        - max_undershoot: Maximum negative error (most negative)
+    """
+    errors = []
+    within_10_count = 0
+    max_overshoot = 0
+    max_undershoot = 0
+
+    for node in nodes:
+        # Find accepted attempt
+        for attempt in node.get("summary_attempts", []):
+            if attempt.get("status") == "accepted":
+                actual_tokens = attempt.get("actual_tokens", 0)
+                if actual_tokens > 0:
+                    error = actual_tokens - target_size
+                    errors.append(error)
+
+                    if abs(error) <= 10:
+                        within_10_count += 1
+
+                    if error > max_overshoot:
+                        max_overshoot = error
+                    if error < max_undershoot:
+                        max_undershoot = error
+                break
+
+    if not errors:
+        return {
+            "median_error": 0.0,
+            "p95_error": 0.0,
+            "percent_within_10": 0.0,
+            "max_overshoot": 0.0,
+            "max_undershoot": 0.0,
+        }
+
+    sorted_errors = sorted(errors)
+    median_error = median(sorted_errors)
+    p95_error = _compute_percentile(sorted_errors, 0.95)
+    percent_within_10 = (within_10_count / len(errors)) * 100
+
+    return {
+        "median_error": median_error,
+        "p95_error": p95_error,
+        "percent_within_10": percent_within_10,
+        "max_overshoot": max_overshoot,
+        "max_undershoot": max_undershoot,
+    }
+
+
+def compute_retry_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
+    """Compute retry efficiency metrics.
+
+    Returns:
+        - retry_rate: Average extra attempts per node ((total_attempts - num_nodes) / num_nodes)
+        - max_retries: Maximum retries on any single node
+    """
+    total_attempts = 0
+    max_retries = 0
+
+    for node in nodes:
+        attempts = node.get("summary_attempts", [])
+        num_attempts = len(attempts)
+        total_attempts += num_attempts
+
+        # Retries = attempts - 1 (first attempt is not a retry)
+        node_retries = max(0, num_attempts - 1)
+        if node_retries > max_retries:
+            max_retries = node_retries
+
+    num_nodes = len(nodes)
+    retry_rate = ((total_attempts - num_nodes) / num_nodes) if num_nodes > 0 else 0.0
+
+    return {
+        "retry_rate": retry_rate,
+        "max_retries": max_retries,
+    }
+
+
+def compute_latency_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
+    """Compute latency metrics.
+
+    Returns:
+        - median_seconds: Median wall-clock time per accepted summary (including retries)
+        - p95_seconds: 95th percentile latency
+        - total_indexing_seconds: Total time for all nodes
+    """
+    node_times = []
+    total_time = 0.0
+
+    for node in nodes:
+        # Calculate total time for this node (all attempts)
+        node_start = float("inf")
+        node_end = 0.0
+
+        for attempt in node.get("summary_attempts", []):
+            start_time = attempt.get("start_time", 0)
+            end_time = attempt.get("end_time", 0)
+
+            if start_time > 0:
+                node_start = min(node_start, start_time)
+            if end_time > 0:
+                node_end = max(node_end, end_time)
+
+        if node_start != float("inf") and node_end > node_start:
+            node_time = node_end - node_start
+            node_times.append(node_time)
+            total_time += node_time
+
+    if not node_times:
+        return {
+            "median_seconds": 0.0,
+            "p95_seconds": 0.0,
+            "total_indexing_seconds": 0.0,
+        }
+
+    sorted_times = sorted(node_times)
+    median_seconds = median(sorted_times)
+    p95_seconds = _compute_percentile(sorted_times, 0.95)
+
+    return {
+        "median_seconds": median_seconds,
+        "p95_seconds": p95_seconds,
+        "total_indexing_seconds": total_time,
+    }
+
+
+def compute_cost_metrics(
+    nodes: list[dict[Any, Any]], config: RagZoomConfig
+) -> dict[str, float]:
+    """Compute cost and token metrics.
+
+    Returns:
+        - total_prompt_tokens: Total prompt tokens across all nodes
+        - total_completion_tokens: Total completion tokens
+        - total_tokens: Sum of prompt and completion
+        - usd_per_node: Average cost per node (including embeddings and summaries)
+    """
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_embedding_tokens = 0
+
+    for node in nodes:
+        # Count embedding tokens
+        embedding = node.get("embedding")
+        if embedding:
+            total_embedding_tokens += embedding.get("text_tokens", 0)
+
+        # Count summary tokens (all attempts)
+        for attempt in node.get("summary_attempts", []):
+            total_prompt_tokens += attempt.get("prompt_tokens", 0)
+            total_completion_tokens += attempt.get("completion_tokens", 0)
+
+    total_tokens = (
+        total_prompt_tokens + total_completion_tokens + total_embedding_tokens
+    )
+
+    # Calculate costs
+    embedding_cost = (total_embedding_tokens / 1000) * config.embedding_cost_per_1k
+    prompt_cost = (total_prompt_tokens / 1000) * config.summary_input_cost_per_1k
+    completion_cost = (
+        total_completion_tokens / 1000
+    ) * config.summary_output_cost_per_1k
+    total_cost = embedding_cost + prompt_cost + completion_cost
+
+    num_nodes = len(nodes)
+    usd_per_node = (total_cost / num_nodes) if num_nodes > 0 else 0.0
+
+    return {
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+        "total_tokens": total_tokens,
+        "usd_per_node": usd_per_node,
+    }
+
+
+def compute_dispersion_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
+    """Compute dispersion metrics.
+
+    Returns:
+        - mad: Median Absolute Deviation of actual token counts
+    """
+    actual_tokens = []
+
+    for node in nodes:
+        # Find accepted attempt
+        for attempt in node.get("summary_attempts", []):
+            if attempt.get("status") == "accepted":
+                tokens = attempt.get("actual_tokens", 0)
+                if tokens > 0:
+                    actual_tokens.append(tokens)
+                break
+
+    if not actual_tokens:
+        return {"mad": 0.0}
+
+    # Calculate MAD: median(|x_i - median(x)|)
+    median_tokens = median(actual_tokens)
+    absolute_deviations = [abs(x - median_tokens) for x in actual_tokens]
+    mad = median(absolute_deviations)
+
+    return {"mad": mad}
+
+
+# ============================================================================
+# LEGACY METRICS (PRESERVED FOR TELEMETRY_VIZ.PY)
+# ============================================================================
+# The functions below are from the old telemetry system and are preserved
+# ONLY for backward compatibility with telemetry_viz.py visualization tool.
+# For new development, use the simplified metrics above.
+# ============================================================================
+
+
+def _compute_percentile(values: list[float], percentile: float) -> float:
+    """Compute percentile using linear interpolation.
+
+    Args:
+        values: Sorted list of values
+        percentile: Percentile to compute (0.0 to 1.0)
+
+    Returns:
+        Computed percentile value
+    """
+    if not values:
+        return 0.0
+
+    n = len(values)
+    if n == 1:
+        return values[0]
+
+    pos = (n - 1) * percentile
+    lower = int(pos)
+    upper = min(lower + 1, n - 1)
+    fraction = pos - lower
+
+    return values[lower] + fraction * (values[upper] - values[lower])
+
+
+# ============================================================================
+# LEGACY FUNCTIONS FOR BACKWARD COMPATIBILITY
+# ============================================================================
 
 
 @dataclass
@@ -108,9 +437,6 @@ class TelemetryThresholds:
     """Configurable thresholds for telemetry analysis and visualization.
 
     Thresholds can be overridden via environment variables:
-    - RAGZOOM_HIGH_INPUT_AMPLIFICATION_THRESHOLD (default: 3.0)
-    - RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD (default: 2.0)
-    - RAGZOOM_GOOD_COST_AMPLIFICATION_THRESHOLD (default: 1.5)
     - RAGZOOM_HIGH_RETRY_RATE_THRESHOLD (default: 20)
     - RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD (default: 70)
     - RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD (default: 50)
@@ -118,15 +444,6 @@ class TelemetryThresholds:
     """
 
     def __init__(self) -> None:
-        self.high_input_amplification = float(
-            os.getenv("RAGZOOM_HIGH_INPUT_AMPLIFICATION_THRESHOLD", "3.0")
-        )
-        self.high_cost_amplification = float(
-            os.getenv("RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD", "2.0")
-        )
-        self.good_cost_amplification = float(
-            os.getenv("RAGZOOM_GOOD_COST_AMPLIFICATION_THRESHOLD", "1.5")
-        )
         self.high_retry_rate = float(
             os.getenv("RAGZOOM_HIGH_RETRY_RATE_THRESHOLD", "20")
         )
@@ -191,100 +508,6 @@ def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
     return result
 
 
-def compute_amplification_metrics(
-    telemetry_data: dict, config: RagZoomConfig
-) -> AmplificationSummaryDict:
-    """Compute amplification metrics from telemetry data.
-
-    Args:
-        telemetry_data: Parsed telemetry data
-        config: Configuration for cost calculations
-
-    Returns:
-        Dictionary containing amplification metrics:
-        - median_cost: Median cost amplification
-        - cost_p90: 90th percentile cost amplification
-        - cost_p95: 95th percentile cost amplification
-        - median_input: Median input amplification
-        - median_output: Median output amplification
-        - by_height: Amplification metrics broken down by tree height
-    """
-    # Use compute_metrics_from_telemetry as the single source of truth
-    metrics = compute_metrics_from_telemetry(telemetry_data, config)
-
-    # Extract summary statistics from the computed metrics
-    return get_amplification_summary(metrics)
-
-
-def _compute_percentile(values: list[float], percentile: float) -> float:
-    """Compute percentile using linear interpolation (consistent with metrics.py).
-
-    Args:
-        values: List of numeric values
-        percentile: Percentile to compute (0.0 to 1.0, e.g., 0.9 for 90th percentile)
-
-    Returns:
-        The computed percentile value
-    """
-    if not values:
-        return 0.0
-
-    n = len(values)
-    if n == 1:
-        return values[0]
-
-    sorted_values = sorted(values)
-    pos = (n - 1) * percentile
-    lower = int(pos)
-    upper = min(lower + 1, n - 1)
-    fraction = pos - lower
-
-    return sorted_values[lower] + fraction * (
-        sorted_values[upper] - sorted_values[lower]
-    )
-
-
-def _calculate_cost_amplification(
-    total_prompt_tokens: int,
-    total_completion_tokens: int,
-    input_text_tokens: int,
-    final_summary_tokens: int,
-    config: RagZoomConfig,
-) -> float:
-    """Calculate cost-weighted amplification factor.
-
-    Cost amplification = (actual cost / theoretical minimum cost)
-
-    Measures the cost inefficiency from prompt overhead and retry attempts.
-    The theoretical minimum represents sending just the raw text and receiving
-    the final summary in a single attempt.
-
-    Args:
-        total_prompt_tokens: Total prompt tokens across all attempts
-        total_completion_tokens: Total completion tokens across all attempts
-        input_text_tokens: Tokens in the original text being summarized
-        final_summary_tokens: Tokens in the final accepted summary
-        config: Configuration with pricing information
-
-    Returns:
-        Cost amplification factor (1.0 = no amplification)
-    """
-    # Calculate actual cost (what we paid across all attempts)
-    actual_cost = (
-        total_prompt_tokens * config.summary_input_cost_per_1k
-        + total_completion_tokens * config.summary_output_cost_per_1k
-    ) / 1000
-
-    # Calculate theoretical minimum cost (input text → final summary in one shot)
-    min_cost = (
-        input_text_tokens * config.summary_input_cost_per_1k
-        + final_summary_tokens * config.summary_output_cost_per_1k
-    ) / 1000
-
-    # Return amplification factor with zero check
-    return actual_cost / min_cost if min_cost > 0 else 1.0
-
-
 def compute_batch_efficiency(telemetry_data: dict) -> BatchEfficiencyDict:
     """Analyze embedding batch utilization from telemetry data.
 
@@ -292,12 +515,7 @@ def compute_batch_efficiency(telemetry_data: dict) -> BatchEfficiencyDict:
         telemetry_data: Parsed telemetry data
 
     Returns:
-        Dictionary containing batch efficiency metrics:
-        - avg_batch_size: Average embedding batch size
-        - batch_sizes: List of all batch sizes
-        - total_batches: Total number of embedding batches
-        - total_embeddings: Total number of embeddings generated
-        - batch_utilization: Average utilization as percentage
+        Dictionary containing batch efficiency metrics
     """
     parsed_data = parse_telemetry_format(telemetry_data)
 
@@ -372,21 +590,7 @@ def analyze_retry_patterns(telemetry_data: dict) -> RetryAnalysisDict:
         telemetry_data: Parsed telemetry data
 
     Returns:
-        Dictionary containing retry analysis:
-        - retry_rate: Percentage of summaries that needed retry
-        - total_attempts: Total number of summary attempts
-        - successful_attempts: Number of accepted attempts
-        - retry_attempts: Number of retry attempts
-        - retry_success_rate: Percentage of retries that succeeded
-        - rejection_reasons: Distribution of rejection reasons
-        - nodes_with_retries: Number of nodes that required retries
-        - total_nodes_with_summaries: Total number of nodes with summary attempts
-        - retry_distribution: Dict mapping retry count (0, 1, 2, 3+) to node count
-        - avg_retries_per_node: Average number of retries per node
-        - max_retries: Maximum retries for any single node
-        - retry_time_seconds: Total time spent on retry attempts
-        - avg_time_per_retry: Average time per retry attempt
-        - time_wasted_on_rejections: Total time spent on rejected attempts
+        Dictionary containing retry analysis
     """
     parsed_data = parse_telemetry_format(telemetry_data)
 
@@ -611,8 +815,8 @@ def compute_summary_stats_from_telemetry(
 class ComputedMetrics:
     """Computed metrics from telemetry data.
 
-    This provides the same attributes that were previously computed by IndexingMetrics,
-    but calculated from raw telemetry data during analysis.
+    This provides attributes that were previously computed by IndexingMetrics,
+    calculated from raw telemetry data during analysis.
     """
 
     # Timing
@@ -654,63 +858,9 @@ class ComputedMetrics:
 
     # Collections
     embedding_batch_sizes: list[int]
-    input_amplifications: list[float]
-    output_amplifications: list[float]
-    cost_amplifications: list[float]
     summary_stats: dict[int, SummaryStats]
-    amplifications_by_height: dict[int, dict[str, list[float]]]
     tree_height: int
     nodes_per_height: list[int]
-
-
-def get_amplification_summary(metrics: ComputedMetrics) -> AmplificationSummaryDict:
-    """Compute amplification summary statistics from raw metrics.
-
-    Args:
-        metrics: ComputedMetrics object containing raw amplification data
-
-    Returns:
-        Dictionary containing amplification summary statistics:
-        - median_cost: Median cost amplification
-        - cost_p90: 90th percentile cost amplification
-        - cost_p95: 95th percentile cost amplification
-        - median_input: Median input amplification
-        - median_output: Median output amplification
-        - by_height: Amplification metrics broken down by tree height
-    """
-    result: AmplificationSummaryDict = {
-        "median_cost": 0.0,
-        "cost_p90": 0.0,
-        "cost_p95": 0.0,
-        "median_input": 0.0,
-        "median_output": 0.0,
-        "by_height": {
-            height: {
-                "median_cost": median(data["cost"]) if data["cost"] else 0.0,
-                "median_input": median(data["input"]) if data["input"] else 0.0,
-                "median_output": median(data["output"]) if data["output"] else 0.0,
-                "count": len(data["cost"]),
-                # Legacy field names for backward compatibility
-                "cost": median(data["cost"]) if data["cost"] else 0.0,
-                "input": median(data["input"]) if data["input"] else 0.0,
-                "output": median(data["output"]) if data["output"] else 0.0,
-            }
-            for height, data in metrics.amplifications_by_height.items()
-        },
-    }
-
-    if metrics.cost_amplifications:
-        result["median_cost"] = median(metrics.cost_amplifications)
-        result["cost_p90"] = _compute_percentile(metrics.cost_amplifications, 0.9)
-        result["cost_p95"] = _compute_percentile(metrics.cost_amplifications, 0.95)
-
-    if metrics.input_amplifications:
-        result["median_input"] = median(metrics.input_amplifications)
-
-    if metrics.output_amplifications:
-        result["median_output"] = median(metrics.output_amplifications)
-
-    return result
 
 
 def compute_metrics_from_telemetry(
@@ -748,11 +898,7 @@ def compute_metrics_from_telemetry(
         "total_summary_prompt_tokens": 0,
         "total_summary_completion_tokens": 0,
         "summary_api_calls": 0,
-        "input_amplifications": [],
-        "output_amplifications": [],
-        "cost_amplifications": [],
         "summary_stats": {},
-        "amplifications_by_height": {},  # Initialize empty dict
     }
 
     # Track various metrics as we process telemetry
@@ -793,8 +939,6 @@ def compute_metrics_from_telemetry(
             node_total_prompt_tokens = 0
             node_total_completion_tokens = 0
             node_input_text_tokens = 0
-            node_final_summary_tokens = 0
-            final_attempt = None
 
             for attempt in summary_attempts:
                 metrics_data["summary_api_calls"] += 1
@@ -804,7 +948,7 @@ def compute_metrics_from_telemetry(
                 metrics_data["total_summary_prompt_tokens"] += prompt_tokens
                 metrics_data["total_summary_completion_tokens"] += completion_tokens
 
-                # Accumulate tokens for amplification calculation
+                # Accumulate tokens for cost calculation
                 node_total_prompt_tokens += prompt_tokens
                 node_total_completion_tokens += completion_tokens
 
@@ -814,56 +958,10 @@ def compute_metrics_from_telemetry(
 
                 # Track the final accepted attempt
                 if attempt.get("status") == "accepted":
-                    final_attempt = attempt
-                    node_final_summary_tokens = attempt.get("actual_tokens", 0)
+                    # Just track that we found an accepted attempt
+                    pass
 
-            # Calculate amplification using ALL attempts' tokens
-            if (
-                summary_attempts
-                and node_input_text_tokens > 0
-                and final_attempt
-                and node_final_summary_tokens > 0  # Ensure we have valid final tokens
-            ):
-                # Input amplification = total prompt tokens / original text tokens
-                input_amplification = node_total_prompt_tokens / node_input_text_tokens
-
-                # Output amplification = total completion tokens / final summary tokens
-                output_amplification = (
-                    node_total_completion_tokens / node_final_summary_tokens
-                )
-
-                # Calculate cost-weighted amplification using cumulative tokens
-                cost_amplification = _calculate_cost_amplification(
-                    node_total_prompt_tokens,
-                    node_total_completion_tokens,
-                    node_input_text_tokens,
-                    node_final_summary_tokens,
-                    config,
-                )
-
-                # Record amplifications
-                metrics_data["input_amplifications"].append(input_amplification)
-                metrics_data["output_amplifications"].append(output_amplification)
-                metrics_data["cost_amplifications"].append(cost_amplification)
-
-                # Track amplifications by height
-                # Need height - already computed earlier for leaf check
-                node_height = node.get("height", node.get("level", 0))
-                if node_height not in metrics_data["amplifications_by_height"]:
-                    metrics_data["amplifications_by_height"][node_height] = {
-                        "input": [],
-                        "output": [],
-                        "cost": [],
-                    }
-                metrics_data["amplifications_by_height"][node_height]["input"].append(
-                    input_amplification
-                )
-                metrics_data["amplifications_by_height"][node_height]["output"].append(
-                    output_amplification
-                )
-                metrics_data["amplifications_by_height"][node_height]["cost"].append(
-                    cost_amplification
-                )
+            # Token counts have been accumulated above for cost calculations.
 
             # Count chunks (leaf nodes)
             # v1.0: check node_type, v2.0: check height == 0
