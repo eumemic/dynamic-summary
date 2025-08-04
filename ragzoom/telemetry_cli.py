@@ -400,13 +400,11 @@ def _format_text_comparison(baseline: Any, current: Any, chunk_sizes: set[int]) 
         base_metrics = baseline.metrics_by_chunk_size[chunk_size]
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
 
-        # Chunk size header row
         chunk_label = f"{chunk_size} tokens"
-        click.echo(f"{chunk_label:<12} |{' '*21}|{' '*13}|{' '*13}|")
 
-        # Target-fit metrics
+        # Target-fit metrics - include chunk size in first row
         _format_table_row(
-            "",
+            chunk_label,
             "Median error",
             base_metrics["target_fit"]["median_error"],
             curr_metrics["target_fit"]["median_error"],
@@ -600,19 +598,11 @@ def _format_markdown_comparison(
         base_metrics = baseline.metrics_by_chunk_size[chunk_size]
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
 
-        # Add chunk size header row
-        _add_table_row(
-            f"**{chunk_size} tokens**",
-            "",
-            0,
-            0,
-            "",
-            skip_values=True,
-        )
+        chunk_label = f"**{chunk_size} tokens**"
 
-        # Target-fit metrics
+        # Target-fit metrics - include chunk size in first row
         _add_table_row(
-            "",
+            chunk_label,
             "Median error",
             base_metrics["target_fit"]["median_error"],
             curr_metrics["target_fit"]["median_error"],
@@ -686,22 +676,13 @@ def _add_table_row(
     higher_is_better: bool = False,
     is_cost: bool = False,
     is_integer: bool = False,
-    skip_values: bool = False,
 ) -> None:
     """Add a row to the markdown table."""
-    if skip_values:
-        # This is a header row for a chunk size
-        click.echo(f"| {category} | | | | |")
-    else:
-        base_str = _format_value(baseline, unit, is_cost, is_integer, signed)
-        curr_str = _format_value(current, unit, is_cost, is_integer, signed)
-        change_str = _calculate_change(
-            baseline, current, higher_is_better, for_table=True
-        )
+    base_str = _format_value(baseline, unit, is_cost, is_integer, signed)
+    curr_str = _format_value(current, unit, is_cost, is_integer, signed)
+    change_str = _calculate_change(baseline, current, higher_is_better, for_table=True)
 
-        click.echo(
-            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} |"
-        )
+    click.echo(f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} |")
 
 
 if __name__ == "__main__":
