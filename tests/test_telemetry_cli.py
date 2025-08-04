@@ -175,12 +175,11 @@ class TestTelemetryCompare:
 
         assert result.exit_code == 0
         assert "Found 2 matching file pairs to compare" in result.output
-        assert "telemetry_100_tokens.json" in result.output
-        assert "telemetry_200_tokens.json" in result.output
-        # Check for new table format
+        # Check for unified table format with chunk sizes
         assert "100 tokens" in result.output
         assert "200 tokens" in result.output
         assert "Median error" in result.output
+        # Should be a unified table, not separate sections per file
 
     def test_compare_directories_with_output(self, create_test_files, tmp_path):
         """Test comparing directories with markdown output."""

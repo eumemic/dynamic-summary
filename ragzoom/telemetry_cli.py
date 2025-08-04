@@ -67,7 +67,8 @@ def analyze(telemetry_file: Path) -> None:
         telemetry_data = json.load(f)
 
     # Handle wrapped telemetry format (with config/document/telemetry fields)
-    if "telemetry" in telemetry_data and "format_version" not in telemetry_data:
+    # If data has 'telemetry' field but no 'documents' field, it's wrapped
+    if "telemetry" in telemetry_data and "documents" not in telemetry_data:
         telemetry_data = telemetry_data["telemetry"]
 
     # Compute metrics
@@ -152,29 +153,38 @@ def _check_for_regression(
         return change_pct > threshold_pct
 
 
+def _load_and_compute_metrics(file_path: Path) -> tuple[dict, Any]:
+    """Load telemetry file and compute simplified metrics.
+
+    Returns:
+        Tuple of (telemetry_data, simplified_metrics)
+    """
+    with open(file_path) as f:
+        data = json.load(f)
+
+    # Handle wrapped telemetry format (with config/document/telemetry fields)
+    # If data has 'telemetry' field but no 'documents' field, it's wrapped
+    if "telemetry" in data and "documents" not in data:
+        telemetry_data = data["telemetry"]
+    else:
+        telemetry_data = data
+
+    # Compute metrics
+    config = RagZoomConfig()
+    metrics = compute_simplified_metrics(telemetry_data, config)
+
+    return telemetry_data, metrics
+
+
 def _compare_files(baseline_file: Path, current_file: Path, output: str) -> bool:
     """Compare two telemetry files.
 
     Returns:
         True if regression detected
     """
-    # Load telemetry data
-    with open(baseline_file) as f:
-        baseline_data = json.load(f)
-
-    with open(current_file) as f:
-        current_data = json.load(f)
-
-    # Handle wrapped telemetry format (with config/document/telemetry fields)
-    if "telemetry" in baseline_data and "format_version" not in baseline_data:
-        baseline_data = baseline_data["telemetry"]
-    if "telemetry" in current_data and "format_version" not in current_data:
-        current_data = current_data["telemetry"]
-
-    # Compute metrics
-    config = RagZoomConfig()
-    baseline_metrics = compute_simplified_metrics(baseline_data, config)
-    current_metrics = compute_simplified_metrics(current_data, config)
+    # Load and compute metrics for both files
+    _, baseline_metrics = _load_and_compute_metrics(baseline_file)
+    _, current_metrics = _load_and_compute_metrics(current_file)
 
     # Find common chunk sizes
     baseline_sizes = set(baseline_metrics.metrics_by_chunk_size.keys())
@@ -266,22 +276,81 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
 
     click.echo(f"Found {len(matches)} matching file pairs to compare\n")
 
-    # Process each file pair
-    any_regression = False
+    # Collect all metrics from all files
+    all_chunk_metrics = {}  # chunk_size -> (baseline_metrics, current_metrics)
+
     for baseline_file, current_file in matches:
-        click.echo(f"\n{'='*70}")
-        click.echo(f"Comparing {baseline_file.name}")
-        click.echo(f"{'='*70}")
-
         try:
-            has_regression = _compare_files(baseline_file, current_file, output)
-            if has_regression:
-                any_regression = True
-                click.echo(f"⚠️  Regression detected in {baseline_file.name}", err=True)
-        except Exception as e:
-            click.echo(f"Error comparing {baseline_file.name}: {e}", err=True)
+            # Load and compute metrics for both files
+            _, baseline_metrics = _load_and_compute_metrics(baseline_file)
+            _, current_metrics = _load_and_compute_metrics(current_file)
 
-    return any_regression
+            # Store metrics for each chunk size
+            for chunk_size in baseline_metrics.metrics_by_chunk_size:
+                if chunk_size in current_metrics.metrics_by_chunk_size:
+                    all_chunk_metrics[chunk_size] = (
+                        baseline_metrics.metrics_by_chunk_size[chunk_size],
+                        current_metrics.metrics_by_chunk_size[chunk_size],
+                    )
+        except Exception as e:
+            click.echo(f"Error loading {baseline_file.name}: {e}", err=True)
+
+    if not all_chunk_metrics:
+        click.echo("No valid metrics found to compare", err=True)
+        sys.exit(1)
+
+    # Generate unified comparison table
+    # First, reorganize the data into the format expected by the existing comparison functions
+    from ragzoom.telemetry_analysis import SimplifiedMetrics
+
+    # Create pseudo SimplifiedMetrics objects with all chunk sizes
+    baseline_combined_dict = {}
+    current_combined_dict = {}
+
+    for chunk_size in sorted(all_chunk_metrics.keys()):
+        baseline_metrics, current_metrics = all_chunk_metrics[chunk_size]
+        baseline_combined_dict[chunk_size] = baseline_metrics
+        current_combined_dict[chunk_size] = current_metrics
+
+    baseline_combined = SimplifiedMetrics(metrics_by_chunk_size=baseline_combined_dict)
+    current_combined = SimplifiedMetrics(metrics_by_chunk_size=current_combined_dict)
+
+    # Use existing comparison formatting functions
+    chunk_sizes = set(all_chunk_metrics.keys())
+
+    if output == "markdown":
+        _format_markdown_comparison(baseline_combined, current_combined, chunk_sizes)
+    else:
+        _format_text_comparison(baseline_combined, current_combined, chunk_sizes)
+
+    # Check for regressions
+    has_regression = False
+    for chunk_size in all_chunk_metrics:
+        baseline_metrics, current_metrics = all_chunk_metrics[chunk_size]
+
+        # Check key metrics for regression
+        if _check_for_regression(
+            baseline_metrics["target_fit"]["median_error"],
+            current_metrics["target_fit"]["median_error"],
+            threshold_pct=30.0,
+        ):
+            has_regression = True
+
+        if _check_for_regression(
+            baseline_metrics["latency"]["median_seconds"],
+            current_metrics["latency"]["median_seconds"],
+            threshold_pct=20.0,
+        ):
+            has_regression = True
+
+        if _check_for_regression(
+            baseline_metrics["cost"]["usd_per_node"],
+            current_metrics["cost"]["usd_per_node"],
+            threshold_pct=15.0,
+        ):
+            has_regression = True
+
+    return has_regression
 
 
 @cli.command()
