@@ -146,7 +146,7 @@ jobs:
             
             # Test Python imports
             echo "🐍 Testing Python imports..."
-            python -c "from ragzoom.telemetry_analysis import compute_amplification_metrics; print('✅ ragzoom imports OK')" || {
+            python -c "from ragzoom.telemetry_analysis import compute_simplified_metrics; print('✅ ragzoom imports OK')" || {
               echo "❌ Failed to import ragzoom.telemetry module" > report.md
               echo "Check that ragzoom package was installed correctly before ragzoom-telemetry" >> report.md
               echo "REGRESSION=true" >> $GITHUB_OUTPUT
@@ -160,31 +160,48 @@ jobs:
             if [ "$baseline_count" -gt 1 ]; then
               # New style: directory comparison for multiple chunk sizes
               echo "📊 Running multi-file benchmark comparison..."
-              ragzoom-telemetry compare baseline_results/ benchmark_results/ --output report.md
+              # Run comparison and capture both output and exit code
+              # Use set +e to prevent immediate exit on error
+              set +e
+              ragzoom-telemetry compare baseline_results/ benchmark_results/ --output markdown > report.md 2>&1
               comparison_exit_code=$?
+              set -e
               
-              # Add workflow link to the top of the report
-              if [ -f report.md ]; then
+              # Add workflow link to the top of the report if it exists
+              if [ -f report.md ] && [ -s report.md ]; then
                 # Create a temporary file with the link
                 echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
                 echo "" >> report_with_link.md
                 cat report.md >> report_with_link.md
                 mv report_with_link.md report.md
+              else
+                echo "❌ Failed to generate comparison report" > report.md
+                echo "" >> report.md
+                echo "The telemetry comparison command failed to produce output." >> report.md
+                echo "Exit code: $comparison_exit_code" >> report.md
               fi
             elif [ -f "baseline_results/telemetry_100_tokens.json" ] && [ -f "benchmark_results/telemetry_100_tokens.json" ]; then
               # TODO: Remove this single-file fallback after migration period
               # Once all baselines in master are multi-file, we can remove this branch
               echo "📊 Running single-file benchmark comparison (legacy mode)..."
-              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output report.md
+              # Run comparison and capture both output and exit code
+              set +e
+              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output markdown > report.md 2>&1
               comparison_exit_code=$?
+              set -e
               
-              # Add workflow link to the top of the report
-              if [ -f report.md ]; then
+              # Add workflow link to the top of the report if it exists
+              if [ -f report.md ] && [ -s report.md ]; then
                 # Create a temporary file with the link
                 echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
                 echo "" >> report_with_link.md
                 cat report.md >> report_with_link.md
                 mv report_with_link.md report.md
+              else
+                echo "❌ Failed to generate comparison report" > report.md
+                echo "" >> report.md
+                echo "The telemetry comparison command failed to produce output." >> report.md
+                echo "Exit code: $comparison_exit_code" >> report.md
               fi
             else
               echo "❌ Expected benchmark files not found" > report.md
