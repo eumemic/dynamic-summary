@@ -9,7 +9,7 @@ from typing import Any
 import click
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.telemetry_analysis import compute_simplified_metrics
+from ragzoom.telemetry_analysis import SimplifiedMetrics, compute_simplified_metrics
 
 
 # Metric name constants for consistency
@@ -40,6 +40,15 @@ class MetricNames:
     TOTAL_TOKENS = "total_tokens"
     TOTAL_PROMPT_TOKENS = "total_prompt_tokens"
     TOTAL_COMPLETION_TOKENS = "total_completion_tokens"
+
+    # Threshold keys (for consistency in dictionary access)
+    MEDIAN_ERROR_KEY = "median_error"
+    P95_ERROR_KEY = "p95_error"
+    PERCENT_WITHIN_10_KEY = "percent_within_10"
+    RETRY_RATE_KEY = "retry_rate"
+    LATENCY_KEY = "latency"
+    COST_KEY = "cost"
+    MAD_KEY = "mad"
 
 
 @dataclass
@@ -422,8 +431,8 @@ def _check_single_metric_regression(
 
 
 def _check_metrics_for_regressions_with_thresholds(
-    baseline: Any,
-    current: Any,
+    baseline: SimplifiedMetrics,
+    current: SimplifiedMetrics,
     chunk_sizes: set[int],
     is_ci: bool = False,
 ) -> tuple[bool, dict[int, dict[str, DynamicThreshold]]]:
@@ -443,7 +452,7 @@ def _check_metrics_for_regressions_with_thresholds(
             "error_mad",
             "target_fit",
             "median_error",
-            "median_error",
+            MetricNames.MEDIAN_ERROR_KEY,
             use_absolute=True,
         ),
         MetricCheckConfig(
@@ -451,7 +460,7 @@ def _check_metrics_for_regressions_with_thresholds(
             "error_mad",
             "target_fit",
             "p95_error",
-            "p95_error",
+            MetricNames.P95_ERROR_KEY,
             use_absolute=True,
         ),
         MetricCheckConfig(
@@ -459,21 +468,31 @@ def _check_metrics_for_regressions_with_thresholds(
             "latency_mad",
             "latency",
             "median_seconds",
-            "latency",
-        ),
-        MetricCheckConfig(MetricNames.MAD, "mad", "dispersion", "mad", "mad"),
-        MetricCheckConfig(
-            MetricNames.RETRY_RATE, "retry_mad", "retries", "retry_rate", "retry_rate"
+            MetricNames.LATENCY_KEY,
         ),
         MetricCheckConfig(
-            MetricNames.USD_PER_NODE, "cost_mad", "cost", "usd_per_node", "cost"
+            MetricNames.MAD, "mad", "dispersion", "mad", MetricNames.MAD_KEY
+        ),
+        MetricCheckConfig(
+            MetricNames.RETRY_RATE,
+            "retry_mad",
+            "retries",
+            "retry_rate",
+            MetricNames.RETRY_RATE_KEY,
+        ),
+        MetricCheckConfig(
+            MetricNames.USD_PER_NODE,
+            "cost_mad",
+            "cost",
+            "usd_per_node",
+            MetricNames.COST_KEY,
         ),
         MetricCheckConfig(
             MetricNames.PERCENT_WITHIN_10,
             "percent_within_10_mad",
             "target_fit",
             "percent_within_10",
-            "percent_within_10",
+            MetricNames.PERCENT_WITHIN_10_KEY,
             higher_is_better=True,
         ),
     ]
@@ -694,7 +713,7 @@ def _format_metrics_for_chunk_with_thresholds(
         "Median error",
         base_metrics["target_fit"]["median_error"],
         curr_metrics["target_fit"]["median_error"],
-        thresholds["median_error"],
+        thresholds[MetricNames.MEDIAN_ERROR_KEY],
         output_format=output_format,
         signed=True,
         is_error_metric=True,
@@ -704,7 +723,7 @@ def _format_metrics_for_chunk_with_thresholds(
         "p95 error",
         base_metrics["target_fit"]["p95_error"],
         curr_metrics["target_fit"]["p95_error"],
-        thresholds["p95_error"],
+        thresholds[MetricNames.P95_ERROR_KEY],
         output_format=output_format,
         signed=True,
         is_error_metric=True,
@@ -716,7 +735,7 @@ def _format_metrics_for_chunk_with_thresholds(
         "Within ±10 tokens",
         base_metrics["target_fit"]["percent_within_10"],
         curr_metrics["target_fit"]["percent_within_10"],
-        thresholds["percent_within_10"],
+        thresholds[MetricNames.PERCENT_WITHIN_10_KEY],
         output_format=output_format,
         higher_is_better=True,
     )
@@ -727,7 +746,7 @@ def _format_metrics_for_chunk_with_thresholds(
         "Avg retries/node",
         base_metrics["retries"]["retry_rate"],
         curr_metrics["retries"]["retry_rate"],
-        thresholds["retry_rate"],
+        thresholds[MetricNames.RETRY_RATE_KEY],
         output_format=output_format,
     )
 
@@ -737,7 +756,7 @@ def _format_metrics_for_chunk_with_thresholds(
         "Median time/node",
         base_metrics["latency"]["median_seconds"],
         curr_metrics["latency"]["median_seconds"],
-        thresholds["latency"],
+        thresholds[MetricNames.LATENCY_KEY],
         output_format=output_format,
     )
 
@@ -747,7 +766,7 @@ def _format_metrics_for_chunk_with_thresholds(
         "USD per node",
         base_metrics["cost"]["usd_per_node"],
         curr_metrics["cost"]["usd_per_node"],
-        thresholds["cost"],
+        thresholds[MetricNames.COST_KEY],
         output_format=output_format,
         is_cost=True,
     )
@@ -758,14 +777,14 @@ def _format_metrics_for_chunk_with_thresholds(
         "MAD",
         base_metrics["dispersion"]["mad"],
         curr_metrics["dispersion"]["mad"],
-        thresholds["mad"],
+        thresholds[MetricNames.MAD_KEY],
         output_format=output_format,
     )
 
 
 def _format_text_comparison_with_thresholds(
-    baseline: Any,
-    current: Any,
+    baseline: SimplifiedMetrics,
+    current: SimplifiedMetrics,
     chunk_sizes: set[int],
     thresholds_by_chunk: dict[int, dict[str, DynamicThreshold]],
 ) -> None:
@@ -1168,8 +1187,8 @@ def _compare_metric(
 
 
 def _format_markdown_comparison_with_thresholds(
-    baseline: Any,
-    current: Any,
+    baseline: SimplifiedMetrics,
+    current: SimplifiedMetrics,
     chunk_sizes: set[int],
     thresholds_by_chunk: dict[int, dict[str, DynamicThreshold]],
 ) -> None:

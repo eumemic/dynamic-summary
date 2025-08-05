@@ -188,26 +188,26 @@ def compute_target_fit_metrics(
         error_std = 0.0
 
     # Calculate variance metrics for percent_within_10
-    # Convert node_within_10_list (0s and 1s) to percentages (0-100)
     if node_within_10_list:
-        # Each node contributes to the percentage, so we work with the binary values
-        # then multiply by 100 to get percentage points
-        median_within_10 = median(node_within_10_list) * 100
+        # Convert binary values (0s and 1s) to percentages once
+        percent_within_10_values = [w * 100 for w in node_within_10_list]
+
+        # Calculate median and MAD
+        median_within_10 = median(percent_within_10_values)
         absolute_deviations = [
-            abs(w * 100 - median_within_10) for w in node_within_10_list
+            abs(p - median_within_10) for p in percent_within_10_values
         ]
         percent_within_10_mad = median(absolute_deviations)
 
-        sorted_within_10 = sorted(w * 100 for w in node_within_10_list)
+        # Calculate IQR
+        sorted_within_10 = sorted(percent_within_10_values)
         p25_within_10 = _compute_percentile(sorted_within_10, 0.25)
         p75_within_10 = _compute_percentile(sorted_within_10, 0.75)
         percent_within_10_iqr = p75_within_10 - p25_within_10
 
-        if len(node_within_10_list) > 1:
-            # Convert to percentage points for std calculation
-            percent_within_10_std = statistics.stdev(
-                [w * 100 for w in node_within_10_list]
-            )
+        # Calculate standard deviation
+        if len(percent_within_10_values) > 1:
+            percent_within_10_std = statistics.stdev(percent_within_10_values)
         else:
             percent_within_10_std = 0.0
     else:
@@ -357,19 +357,6 @@ def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
     }
 
 
-def _calculate_cost(
-    prompt_tokens: int,
-    completion_tokens: int,
-    embedding_tokens: int,
-    config: RagZoomConfig,
-) -> float:
-    """Calculate cost in USD for given token counts."""
-    embedding_cost = (embedding_tokens / 1000) * config.embedding_cost_per_1k
-    prompt_cost = (prompt_tokens / 1000) * config.summary_input_cost_per_1k
-    completion_cost = (completion_tokens / 1000) * config.summary_output_cost_per_1k
-    return embedding_cost + prompt_cost + completion_cost
-
-
 def compute_cost_metrics(
     nodes: list[NodeTelemetryDict], config: RagZoomConfig
 ) -> dict[str, float]:
@@ -408,13 +395,13 @@ def compute_cost_metrics(
         total_prompt_tokens += node_prompt_tokens
         total_completion_tokens += node_completion_tokens
 
-        # Calculate per-node cost
-        node_cost = _calculate_cost(
-            node_prompt_tokens,
-            node_completion_tokens,
-            node_embedding_tokens,
-            config,
-        )
+        # Calculate per-node cost in USD
+        embedding_cost = (node_embedding_tokens / 1000) * config.embedding_cost_per_1k
+        prompt_cost = (node_prompt_tokens / 1000) * config.summary_input_cost_per_1k
+        completion_cost = (
+            node_completion_tokens / 1000
+        ) * config.summary_output_cost_per_1k
+        node_cost = embedding_cost + prompt_cost + completion_cost
         node_costs.append(node_cost)
 
     total_tokens = (
@@ -473,7 +460,6 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]
         - p75: 75th percentile
         - cv: Coefficient of variation (std/mean)
         - std: Standard deviation
-        - raw_values: List of actual token values (for dynamic thresholds)
     """
     actual_tokens = []
 
@@ -494,7 +480,6 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]
             "p75": 0.0,
             "cv": 0.0,
             "std": 0.0,
-            "raw_values": [],
         }
 
     # Calculate MAD: median(|x_i - median(x)|)
@@ -524,7 +509,6 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]
         "p75": p75,
         "cv": cv,
         "std": std,
-        "raw_values": actual_tokens,
     }
 
 
