@@ -157,14 +157,14 @@ def get_variance_emoji(
 
     Returns:
         Emoji indicating variance change significance:
-        - 🔴 = Significant variance increase (bad for stability)
-        - 🟡 = Significant variance decrease (good but notable change)
+        - 🟡 = Significant variance increase (notable but not a regression)
+        - 🟢 = Significant variance decrease (improved stability)
         - ⚪ = Insignificant variance change
     """
     if baseline_variance == 0:
         # Special case: any increase from zero variance is significant
         if variance_change > 0:
-            return "🔴"
+            return "🟡"  # Notable increase from perfect stability
         else:
             return "⚪"
 
@@ -174,11 +174,11 @@ def get_variance_emoji(
     if abs(variance_change) < significance_threshold:
         return "⚪"  # Change within normal fluctuation
 
-    # Variance increase is always bad, decrease is notable but good
+    # Variance increase is notable (yellow), decrease is good (green)
     if variance_change > 0:
-        return "🔴"  # Significant increase in variance (worse stability)
+        return "🟡"  # Significant increase in variance (notable, not a regression)
     else:
-        return "🟡"  # Significant decrease in variance (better stability, but notable)
+        return "🟢"  # Significant decrease in variance (improved stability)
 
 
 def compute_dynamic_threshold(
@@ -915,8 +915,10 @@ def _format_text_comparison_with_thresholds(
     click.echo("    🟢 = Significant improvement (>1σ baseline variance)")
     click.echo("    ⚪ = Insignificant change (<1σ baseline variance)")
     click.echo("  Variance change indicators:")
-    click.echo("    🔴 = Significant variance increase (>50% of baseline)")
-    click.echo("    🟡 = Significant variance decrease (>50% of baseline)")
+    click.echo("    🟡 = Significant variance increase (>50% of baseline, notable)")
+    click.echo(
+        "    🟢 = Significant variance decrease (>50% of baseline, improved stability)"
+    )
     click.echo("    ⚪ = Insignificant variance change (<50% of baseline)")
 
 

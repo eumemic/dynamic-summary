@@ -476,8 +476,10 @@ class TestTelemetryCompare:
         assert get_variance_emoji(-3.0, 10.0) == "⚪"  # -30% change
 
         # Significant variance changes (>50% of baseline)
-        assert get_variance_emoji(6.0, 10.0) == "🔴"  # 60% increase - bad
-        assert get_variance_emoji(-6.0, 10.0) == "🟡"  # 60% decrease - notable
+        assert get_variance_emoji(6.0, 10.0) == "🟡"  # 60% increase - notable
+        assert (
+            get_variance_emoji(-6.0, 10.0) == "🟢"
+        )  # 60% decrease - improved stability
 
 
 if __name__ == "__main__":
