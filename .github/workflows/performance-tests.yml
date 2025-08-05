@@ -170,15 +170,21 @@ jobs:
               git config user.name "github-actions[bot]"
               git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
               
-              # Create and push orphan branch with just the image
-              git switch --orphan $BRANCH
-              cp /tmp/comparison_200_tokens.png comparison_200_tokens.png
+              # Create a clean directory for the image branch
+              mkdir -p /tmp/image-branch
+              cp comparison_200_tokens.png /tmp/image-branch/
+              
+              # Create and push branch with just the image
+              cd /tmp/image-branch
+              git init
               git add comparison_200_tokens.png
               git commit -m "Telemetry visualization for PR #${{ github.event.pull_request.number }} (${{ github.sha }})"
+              git branch -M $BRANCH
+              git remote add origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
               git push -f origin $BRANCH
               
-              # Return to PR branch by checking out the merge commit
-              git checkout ${{ github.sha }}
+              # Return to main directory
+              cd -
               
               # Restore the file
               cp /tmp/comparison_200_tokens.png comparison_200_tokens.png
