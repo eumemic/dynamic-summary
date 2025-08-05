@@ -15,7 +15,7 @@ on:
       - '!.github/workflows/performance-tests.yml'
 
 permissions:
-  contents: read
+  contents: write      # Need write to push temporary branches
   pull-requests: write
   actions: read
 
@@ -111,6 +111,19 @@ jobs:
             if [ -f "comparison_200_tokens.png" ]; then
               echo "✅ Visualization generated successfully"
               echo "VISUALIZATION_GENERATED=true" >> $GITHUB_OUTPUT
+              
+              # Publish visualization to temporary branch for inline display
+              BRANCH=ci-telemetry-assets/${{ github.run_id }}
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git switch --orphan $BRANCH
+              git add comparison_200_tokens.png
+              git commit -m "Telemetry visualization for PR #${{ github.event.pull_request.number }} (${{ github.sha }})"
+              git push -f origin $BRANCH
+              
+              # Save the image URL for later use
+              echo "VISUALIZATION_URL=https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH/comparison_200_tokens.png" >> $GITHUB_OUTPUT
+              echo "📸 Image published to branch: $BRANCH"
             fi
           else
             echo "⚠️ Skipping visualization - missing telemetry_200_tokens.json files"
@@ -184,15 +197,17 @@ jobs:
               comparison_exit_code=$?
               set -e
               
-              # Add workflow link and visualization link to the top of the report if it exists
+              # Add workflow link and visualization to the top of the report if it exists
               if [ -f report.md ] && [ -s report.md ]; then
                 # Create a temporary file with the links
                 echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
                 
-                # Add visualization link if it was generated
+                # Add inline visualization if it was generated
                 if [ "${{ steps.visualize.outputs.VISUALIZATION_GENERATED }}" == "true" ]; then
                   echo "" >> report_with_link.md
-                  echo "📊 **[View side-by-side visualization (200 tokens)]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts)**" >> report_with_link.md
+                  echo "### 📊 Performance Visualization (200 tokens)" >> report_with_link.md
+                  echo "" >> report_with_link.md
+                  echo "![Telemetry Comparison](${{ steps.visualize.outputs.VISUALIZATION_URL }})" >> report_with_link.md
                 fi
                 
                 echo "" >> report_with_link.md
@@ -214,15 +229,17 @@ jobs:
               comparison_exit_code=$?
               set -e
               
-              # Add workflow link and visualization link to the top of the report if it exists
+              # Add workflow link and visualization to the top of the report if it exists
               if [ -f report.md ] && [ -s report.md ]; then
                 # Create a temporary file with the links
                 echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
                 
-                # Add visualization link if it was generated
+                # Add inline visualization if it was generated
                 if [ "${{ steps.visualize.outputs.VISUALIZATION_GENERATED }}" == "true" ]; then
                   echo "" >> report_with_link.md
-                  echo "📊 **[View side-by-side visualization (200 tokens)]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts)**" >> report_with_link.md
+                  echo "### 📊 Performance Visualization (200 tokens)" >> report_with_link.md
+                  echo "" >> report_with_link.md
+                  echo "![Telemetry Comparison](${{ steps.visualize.outputs.VISUALIZATION_URL }})" >> report_with_link.md
                 fi
                 
                 echo "" >> report_with_link.md
