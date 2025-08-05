@@ -300,48 +300,46 @@ jobs:
               echo "✅ Visualization generated successfully"
               echo "VISUALIZATION_GENERATED=true" >> $GITHUB_OUTPUT
               
-              # Publish visualization to temporary branch for inline display
-              BRANCH=ci-telemetry-assets/${{ github.run_id }}
+              # Publish visualization to GitHub Pages for inline display
+              # Use a subdirectory to organize images by run ID
+              IMAGE_PATH="ci-visualizations/${{ github.run_id }}/comparison_200_tokens.png"
               
-              # Save current state
-              cp comparison_200_tokens.png /tmp/comparison_200_tokens.png
+              # Clone gh-pages branch (or create if it doesn't exist)
+              cd /tmp
+              if git clone --depth 1 --branch gh-pages https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git gh-pages 2>/dev/null; then
+                echo "✅ Cloned existing gh-pages branch"
+                cd gh-pages
+              else
+                echo "📝 Creating new gh-pages branch"
+                mkdir gh-pages
+                cd gh-pages
+                git init
+                git checkout -b gh-pages
+                git remote add origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+              fi
               
-              # Create a clean directory for the image branch
-              mkdir -p /tmp/image-branch
-              cp comparison_200_tokens.png /tmp/image-branch/
-              
-              # Create and push branch with just the image
-              cd /tmp/image-branch
-              git init
+              # Configure git
               git config user.name "github-actions[bot]"
               git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git add comparison_200_tokens.png
-              git commit -m "Telemetry visualization for PR #${{ github.event.pull_request.number }} (${{ github.sha }})"
-              git branch -M $BRANCH
-              git remote add origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
-              git push -f origin $BRANCH
+              
+              # Create directory structure and copy image
+              mkdir -p $(dirname "$IMAGE_PATH")
+              cp ${{ github.workspace }}/comparison_200_tokens.png "$IMAGE_PATH"
+              
+              # Add and commit
+              git add "$IMAGE_PATH"
+              git commit -m "Add telemetry visualization for PR #${{ github.event.pull_request.number }} (run: ${{ github.run_id }})"
+              
+              # Push to gh-pages
+              git push origin gh-pages
               
               # Return to main directory
-              cd -
+              cd ${{ github.workspace }}
               
-              # Restore the file
-              cp /tmp/comparison_200_tokens.png comparison_200_tokens.png
-              
-              # Wait for the raw URL to become accessible (GitHub needs time to make new branches available)
-              VISUALIZATION_URL="https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH/comparison_200_tokens.png"
-              echo "⏳ Waiting for image to be accessible at $VISUALIZATION_URL..."
-              for i in {1..10}; do
-                if curl -f -s -o /dev/null "$VISUALIZATION_URL"; then
-                  echo "✅ Image is accessible after $i seconds"
-                  break
-                fi
-                echo "  Attempt $i/10: Image not yet accessible, waiting..."
-                sleep 2
-              done
-              
-              # Save the image URL for later use
+              # GitHub Pages URL format
+              VISUALIZATION_URL="https://eumemic.github.io/dynamic-summary/$IMAGE_PATH"
               echo "VISUALIZATION_URL=$VISUALIZATION_URL" >> $GITHUB_OUTPUT
-              echo "📸 Image published to branch: $BRANCH"
+              echo "📸 Image published to GitHub Pages: $VISUALIZATION_URL"
             fi
           else
             echo "⚠️ Skipping visualization - missing telemetry_200_tokens.json files"
