@@ -15,6 +15,7 @@ Legacy functions are preserved for backward compatibility with telemetry_viz.py.
 import logging
 import os
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from statistics import median
 from typing import Any
@@ -22,6 +23,7 @@ from typing import Any
 from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_types import (
     BatchEfficiencyDict,
+    NodeTelemetryDict,
     RetryAnalysisDict,
     TelemetryDataDict,
 )
@@ -71,7 +73,7 @@ def compute_simplified_metrics(
     parsed_data = parse_telemetry_format(telemetry_data)
 
     # Group nodes by target chunk size
-    nodes_by_target: dict[int, list[dict[Any, Any]]] = {}
+    nodes_by_target: dict[int, list[NodeTelemetryDict]] = {}
 
     for doc_type, doc_data in parsed_data["documents"].items():
         nodes = doc_data.get("nodes", [])
@@ -90,13 +92,13 @@ def compute_simplified_metrics(
                     if target_tokens > 0:
                         if target_tokens not in nodes_by_target:
                             nodes_by_target[target_tokens] = []
-                        nodes_by_target[target_tokens].append(node)  # type: ignore[arg-type]
+                        nodes_by_target[target_tokens].append(node)
                     break
 
     # Compute metrics for each chunk size
     metrics_by_chunk_size = {}
     for target_size in sorted(nodes_by_target.keys()):
-        chunk_nodes: list[dict[Any, Any]] = nodes_by_target[target_size]
+        chunk_nodes = nodes_by_target[target_size]
         if chunk_nodes:
             metrics_by_chunk_size[target_size] = {
                 "target_fit": compute_target_fit_metrics(chunk_nodes, target_size),
@@ -110,7 +112,7 @@ def compute_simplified_metrics(
 
 
 def compute_target_fit_metrics(
-    nodes: list[dict[Any, Any]], target_size: int
+    nodes: list[NodeTelemetryDict], target_size: int
 ) -> dict[str, float]:
     """Compute target-fit accuracy metrics.
 
@@ -228,7 +230,7 @@ def compute_target_fit_metrics(
     }
 
 
-def compute_retry_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
+def compute_retry_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
     """Compute retry efficiency metrics.
 
     Returns:
@@ -285,7 +287,7 @@ def compute_retry_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
     }
 
 
-def compute_latency_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
+def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
     """Compute latency metrics.
 
     Returns:
@@ -369,7 +371,7 @@ def _calculate_cost(
 
 
 def compute_cost_metrics(
-    nodes: list[dict[Any, Any]], config: RagZoomConfig
+    nodes: list[NodeTelemetryDict], config: RagZoomConfig
 ) -> dict[str, float]:
     """Compute cost and token metrics.
 
@@ -461,7 +463,7 @@ def compute_cost_metrics(
     }
 
 
-def compute_dispersion_metrics(nodes: list[dict[Any, Any]]) -> dict[str, Any]:
+def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]:
     """Compute comprehensive dispersion metrics.
 
     Returns:
@@ -535,7 +537,7 @@ def compute_dispersion_metrics(nodes: list[dict[Any, Any]]) -> dict[str, Any]:
 # ============================================================================
 
 
-def _compute_percentile(values: list[float], percentile: float) -> float:
+def _compute_percentile(values: Sequence[int | float], percentile: float) -> float:
     """Compute percentile using linear interpolation.
 
     Args:

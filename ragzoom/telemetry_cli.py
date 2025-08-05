@@ -51,6 +51,7 @@ class DynamicThreshold:
     k_factors: tuple[float, float]  # (k1_between_run, k2_baseline_uncertainty)
     metric_name: str
     is_computed: bool = True  # False if using static fallback
+    emoji_significance_sigma: float = 1.0  # Sigma threshold for emoji display
 
 
 @dataclass
@@ -64,6 +65,8 @@ class ThresholdConfig:
     - k2=2.0: Additional margin for baseline measurement uncertainty from limited samples
     - Total 5-sigma: Ensures <0.01% false positive rate for regression detection
     - ci_multiplier=1.5: Based on empirical observation that CI environments show ~1.5x higher variance
+    - emoji_significance_sigma=1.0: Changes beyond 1σ are considered statistically significant
+      for emoji display (✅/⚠️), while regression (❌) still requires exceeding the full threshold
 
     These values mean a metric must exceed 5 standard deviations from the baseline's
     internal variance to be flagged as a regression, effectively eliminating false
@@ -77,6 +80,9 @@ class ThresholdConfig:
     # Whether to detect CI environment and adjust k-factors
     adjust_for_ci: bool = True
     ci_multiplier: float = 1.5  # Additional multiplier for CI environments
+
+    # Emoji display configuration
+    emoji_significance_sigma: float = 1.0  # Sigma threshold for showing ✅/⚠️ emojis
 
 
 def compute_dynamic_threshold(
@@ -121,6 +127,7 @@ def compute_dynamic_threshold(
             k_factors=(0.0, 0.0),
             metric_name=metric_name,
             is_computed=False,
+            emoji_significance_sigma=config.emoji_significance_sigma,
         )
 
     # If variance is zero, don't enforce any threshold
@@ -132,6 +139,7 @@ def compute_dynamic_threshold(
             k_factors=(config.k1_between_run, config.k2_baseline_uncertainty),
             metric_name=metric_name,
             is_computed=False,  # Not computed from variance
+            emoji_significance_sigma=config.emoji_significance_sigma,
         )
 
     # Apply k-factors
@@ -152,6 +160,7 @@ def compute_dynamic_threshold(
         k_factors=(k1, k2),
         metric_name=metric_name,
         is_computed=True,
+        emoji_significance_sigma=config.emoji_significance_sigma,
     )
 
 
@@ -361,6 +370,57 @@ def _compare_files(baseline_file: Path, current_file: Path, output: str) -> bool
     return has_regression
 
 
+@dataclass
+class MetricCheckConfig:
+    """Configuration for checking a single metric."""
+
+    metric_name: str
+    variance_key: str
+    metric_group: str
+    metric_field: str
+    threshold_key: str
+    use_absolute: bool = False
+    higher_is_better: bool = False
+
+
+def _check_single_metric_regression(
+    base_metrics: dict[str, Any],
+    curr_metrics: dict[str, Any],
+    metric_config: MetricCheckConfig,
+    threshold_config: ThresholdConfig,
+    is_ci: bool,
+) -> tuple[bool, DynamicThreshold]:
+    """Check regression for a single metric.
+
+    Returns:
+        Tuple of (is_regressed, threshold)
+    """
+    # Compute threshold
+    threshold = compute_dynamic_threshold(
+        base_metrics,
+        metric_config.metric_name,
+        metric_config.variance_key,
+        threshold_config,
+        is_ci,
+    )
+
+    # Get values
+    base_val = base_metrics[metric_config.metric_group][metric_config.metric_field]
+    curr_val = curr_metrics[metric_config.metric_group][metric_config.metric_field]
+
+    # Apply absolute if needed
+    if metric_config.use_absolute:
+        base_val = abs(base_val)
+        curr_val = abs(curr_val)
+
+    # Check regression
+    is_regressed, _ = check_regression_with_dynamic_threshold(
+        base_val, curr_val, threshold, metric_config.higher_is_better
+    )
+
+    return is_regressed, threshold
+
+
 def _check_metrics_for_regressions_with_thresholds(
     baseline: Any,
     current: Any,
@@ -376,106 +436,61 @@ def _check_metrics_for_regressions_with_thresholds(
     config = ThresholdConfig()
     thresholds_by_chunk = {}
 
+    # Define metric configurations
+    metric_configs = [
+        MetricCheckConfig(
+            MetricNames.MEDIAN_ERROR,
+            "error_mad",
+            "target_fit",
+            "median_error",
+            "median_error",
+            use_absolute=True,
+        ),
+        MetricCheckConfig(
+            MetricNames.P95_ERROR,
+            "error_mad",
+            "target_fit",
+            "p95_error",
+            "p95_error",
+            use_absolute=True,
+        ),
+        MetricCheckConfig(
+            MetricNames.MEDIAN_SECONDS,
+            "latency_mad",
+            "latency",
+            "median_seconds",
+            "latency",
+        ),
+        MetricCheckConfig(MetricNames.MAD, "mad", "dispersion", "mad", "mad"),
+        MetricCheckConfig(
+            MetricNames.RETRY_RATE, "retry_mad", "retries", "retry_rate", "retry_rate"
+        ),
+        MetricCheckConfig(
+            MetricNames.USD_PER_NODE, "cost_mad", "cost", "usd_per_node", "cost"
+        ),
+        MetricCheckConfig(
+            MetricNames.PERCENT_WITHIN_10,
+            "percent_within_10_mad",
+            "target_fit",
+            "percent_within_10",
+            "percent_within_10",
+            higher_is_better=True,
+        ),
+    ]
+
     for chunk_size in chunk_sizes:
         base_metrics = baseline.metrics_by_chunk_size[chunk_size]
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
         chunk_thresholds = {}
 
-        # Check median error regression
-        threshold = compute_dynamic_threshold(
-            base_metrics, MetricNames.MEDIAN_ERROR, "error_mad", config, is_ci
-        )
-        chunk_thresholds["median_error"] = threshold
-        is_regressed, _ = check_regression_with_dynamic_threshold(
-            abs(base_metrics["target_fit"]["median_error"]),
-            abs(curr_metrics["target_fit"]["median_error"]),
-            threshold,
-        )
-        if is_regressed:
-            has_regression = True
-
-        # Check p95 error regression
-        threshold = compute_dynamic_threshold(
-            base_metrics, MetricNames.P95_ERROR, "error_mad", config, is_ci
-        )
-        chunk_thresholds["p95_error"] = threshold
-        is_regressed, _ = check_regression_with_dynamic_threshold(
-            abs(base_metrics["target_fit"]["p95_error"]),
-            abs(curr_metrics["target_fit"]["p95_error"]),
-            threshold,
-        )
-        if is_regressed:
-            has_regression = True
-
-        # Check latency regression
-        threshold = compute_dynamic_threshold(
-            base_metrics, MetricNames.MEDIAN_SECONDS, "latency_mad", config, is_ci
-        )
-        chunk_thresholds["latency"] = threshold
-        is_regressed, _ = check_regression_with_dynamic_threshold(
-            base_metrics["latency"]["median_seconds"],
-            curr_metrics["latency"]["median_seconds"],
-            threshold,
-        )
-        if is_regressed:
-            has_regression = True
-
-        # Check MAD regression
-        threshold = compute_dynamic_threshold(
-            base_metrics, MetricNames.MAD, "mad", config, is_ci
-        )
-        chunk_thresholds["mad"] = threshold
-        is_regressed, _ = check_regression_with_dynamic_threshold(
-            base_metrics["dispersion"]["mad"],
-            curr_metrics["dispersion"]["mad"],
-            threshold,
-        )
-        if is_regressed:
-            has_regression = True
-
-        # Check retry rate regression with dynamic threshold
-        threshold = compute_dynamic_threshold(
-            base_metrics, MetricNames.RETRY_RATE, "retry_mad", config, is_ci
-        )
-        chunk_thresholds["retry_rate"] = threshold
-        is_regressed, _ = check_regression_with_dynamic_threshold(
-            base_metrics["retries"]["retry_rate"],
-            curr_metrics["retries"]["retry_rate"],
-            threshold,
-        )
-        if is_regressed:
-            has_regression = True
-
-        # Check cost regression with dynamic threshold
-        threshold = compute_dynamic_threshold(
-            base_metrics, MetricNames.USD_PER_NODE, "cost_mad", config, is_ci
-        )
-        chunk_thresholds["cost"] = threshold
-        is_regressed, _ = check_regression_with_dynamic_threshold(
-            base_metrics["cost"]["usd_per_node"],
-            curr_metrics["cost"]["usd_per_node"],
-            threshold,
-        )
-        if is_regressed:
-            has_regression = True
-
-        # Check percent_within_10 regression with dynamic threshold
-        threshold = compute_dynamic_threshold(
-            base_metrics,
-            MetricNames.PERCENT_WITHIN_10,
-            "percent_within_10_mad",
-            config,
-            is_ci,
-        )
-        chunk_thresholds["percent_within_10"] = threshold
-        is_regressed, _ = check_regression_with_dynamic_threshold(
-            base_metrics["target_fit"]["percent_within_10"],
-            curr_metrics["target_fit"]["percent_within_10"],
-            threshold,
-            higher_is_better=True,  # Higher percentage within ±10 is better
-        )
-        if is_regressed:
-            has_regression = True
+        # Check each metric
+        for metric_config in metric_configs:
+            is_regressed, threshold = _check_single_metric_regression(
+                base_metrics, curr_metrics, metric_config, config, is_ci
+            )
+            chunk_thresholds[metric_config.threshold_key] = threshold
+            if is_regressed:
+                has_regression = True
 
         thresholds_by_chunk[chunk_size] = chunk_thresholds
 
@@ -1001,9 +1016,9 @@ def _determine_significance_emoji(
     Returns:
         Emoji string: ❌ for regression, ✅ for improvement, ⚠️ for degradation, empty for normal variance
     """
-    # Use 1-sigma (baseline variance) for meaningful changes, full threshold for regression
+    # Use configured sigma (baseline variance) for meaningful changes, full threshold for regression
     significance_threshold = (
-        threshold.baseline_variance
+        threshold.baseline_variance * threshold.emoji_significance_sigma
         if threshold.is_computed
         else threshold.absolute_value * 0.2  # 20% of threshold as fallback
     )

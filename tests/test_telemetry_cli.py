@@ -371,6 +371,7 @@ class TestTelemetryCompare:
             k_factors=(3.0, 2.0),
             metric_name="median_error",
             is_computed=True,
+            emoji_significance_sigma=1.0,
         )
 
         # Test for error metrics (lower is better)
