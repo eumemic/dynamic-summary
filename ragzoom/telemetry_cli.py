@@ -94,6 +94,45 @@ class ThresholdConfig:
     emoji_significance_sigma: float = 1.0  # Sigma threshold for showing ✅/⚠️ emojis
 
 
+def get_change_emoji(
+    change_percent: float, higher_is_better: bool, threshold: float = 1.0
+) -> str:
+    """Get emoji for metric change direction.
+
+    Args:
+        change_percent: Percentage change in the metric
+        higher_is_better: If True, positive change is good
+        threshold: Minimum percentage for non-neutral emoji (default 1%)
+
+    Returns:
+        Emoji indicating whether change is desirable: 🙂 (good), 😐 (neutral), 🙁 (bad)
+    """
+    if abs(change_percent) < threshold:
+        return "😐"
+
+    is_positive_change = change_percent > 0
+    is_desirable = (is_positive_change and higher_is_better) or (
+        not is_positive_change and not higher_is_better
+    )
+
+    return "🙂" if is_desirable else "🙁"
+
+
+def get_variance_emoji(variance_change_percent: float, threshold: float = 5.0) -> str:
+    """Get emoji for variance change (lower variance is always better).
+
+    Args:
+        variance_change_percent: Percentage change in variance/MAD
+        threshold: Minimum percentage for non-neutral emoji (default 5%)
+
+    Returns:
+        Emoji indicating variance change: 🙂 (decreased), 😐 (stable), 🙁 (increased)
+    """
+    if abs(variance_change_percent) < threshold:
+        return "😐"
+    return "🙂" if variance_change_percent < 0 else "🙁"
+
+
 def compute_dynamic_threshold(
     baseline_metrics: dict[str, Any],
     metric_name: str,
@@ -276,11 +315,6 @@ def analyze(telemetry_file: Path) -> None:
         click.echo(f"  Completion tokens:   {cost['total_completion_tokens']:,}")
         click.echo(f"  Total tokens:        {cost['total_tokens']:,}")
         click.echo(f"  USD per node:        ${cost['usd_per_node']:.4f}")
-
-        # Dispersion metrics
-        dispersion = chunk_metrics["dispersion"]
-        click.echo("\n📊 Consistency")
-        click.echo(f"  MAD:                 {dispersion['mad']:.1f} tokens")
 
     click.echo(f"\n{'='*60}\n")
 
@@ -721,6 +755,8 @@ def _format_metrics_for_chunk_with_thresholds(
         output_format=output_format,
         signed=True,
         is_error_metric=True,
+        baseline_variance=base_metrics["target_fit"]["error_mad"],
+        current_variance=curr_metrics["target_fit"]["error_mad"],
     )
     _format_comparison_row_with_threshold(
         "",
@@ -731,6 +767,8 @@ def _format_metrics_for_chunk_with_thresholds(
         output_format=output_format,
         signed=True,
         is_error_metric=True,
+        baseline_variance=base_metrics["target_fit"]["error_mad"],
+        current_variance=curr_metrics["target_fit"]["error_mad"],
     )
 
     # Percent within ±10 tokens (now with dynamic threshold)
@@ -742,6 +780,8 @@ def _format_metrics_for_chunk_with_thresholds(
         thresholds[MetricNames.PERCENT_WITHIN_10_KEY],
         output_format=output_format,
         higher_is_better=True,
+        baseline_variance=base_metrics["target_fit"]["percent_within_10_mad"],
+        current_variance=curr_metrics["target_fit"]["percent_within_10_mad"],
     )
 
     # Retry metrics
@@ -752,6 +792,8 @@ def _format_metrics_for_chunk_with_thresholds(
         curr_metrics["retries"]["retry_rate"],
         thresholds[MetricNames.RETRY_RATE_KEY],
         output_format=output_format,
+        baseline_variance=base_metrics["retries"]["retry_mad"],
+        current_variance=curr_metrics["retries"]["retry_mad"],
     )
 
     # Latency metrics
@@ -762,6 +804,8 @@ def _format_metrics_for_chunk_with_thresholds(
         curr_metrics["latency"]["median_seconds"],
         thresholds[MetricNames.LATENCY_KEY],
         output_format=output_format,
+        baseline_variance=base_metrics["latency"]["latency_mad"],
+        current_variance=curr_metrics["latency"]["latency_mad"],
     )
 
     # Cost metrics
@@ -773,16 +817,8 @@ def _format_metrics_for_chunk_with_thresholds(
         thresholds[MetricNames.COST_KEY],
         output_format=output_format,
         is_cost=True,
-    )
-
-    # Dispersion metrics
-    _format_comparison_row_with_threshold(
-        "",
-        "MAD",
-        base_metrics["dispersion"]["mad"],
-        curr_metrics["dispersion"]["mad"],
-        thresholds[MetricNames.MAD_KEY],
-        output_format=output_format,
+        baseline_variance=base_metrics["cost"]["cost_mad"],
+        current_variance=curr_metrics["cost"]["cost_mad"],
     )
 
 
@@ -795,12 +831,12 @@ def _format_text_comparison_with_thresholds(
     """Format comparison as plain text table with dynamic thresholds."""
 
     # Build table header
-    click.echo("\n" + "=" * 100)
+    click.echo("\n" + "=" * 130)
     click.echo("Performance Comparison Report")
-    click.echo("=" * 100)
+    click.echo("=" * 130)
 
-    # Table headers
-    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>12} | {'Current':>12} | {'Change':>20} | {'Threshold':>15}"
+    # Table headers - adjusted widths for variance display
+    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>35} | {'Threshold':>15}"
     click.echo("\n" + header)
     click.echo("-" * len(header))
 
@@ -819,12 +855,18 @@ def _format_text_comparison_with_thresholds(
             click.echo("-" * len(header))
 
     # Add footer with legend
-    click.echo("\n" + "=" * 100)
+    click.echo("\n" + "=" * 130)
     click.echo("\nLegend:")
-    click.echo("  ❌ = Regression detected (exceeds threshold)")
-    click.echo("  ✅ = Meaningful improvement (>1σ baseline variance)")
-    click.echo("  ⚠️ = Meaningful degradation but within threshold (>1σ but <5σ)")
-    click.echo("  (no emoji) = Change within normal variance (<1σ)")
+    click.echo("  Values: Shows metric ±variance (e.g., '50.0 ±2.0 tokens')")
+    click.echo("  Change format: absolute (percentage 🙂/😐/🙁, σ±percentage 🙂/😐/🙁)")
+    click.echo(
+        "    🙂 = Desirable direction | 😐 = No meaningful change | 🙁 = Undesirable direction"
+    )
+    click.echo("  Significance indicators:")
+    click.echo("    ❌ = Regression detected (exceeds threshold)")
+    click.echo("    ✅ = Meaningful improvement (>1σ baseline variance)")
+    click.echo("    ⚠️ = Meaningful degradation but within threshold (>1σ but <5σ)")
+    click.echo("    (no emoji) = Change within normal variance (<1σ)")
 
 
 def _prepare_row_data(
@@ -873,21 +915,30 @@ def _format_comparison_row_with_threshold(
     is_cost: bool = False,
     is_integer: bool = False,
     is_error_metric: bool = False,
+    baseline_variance: float | None = None,
+    current_variance: float | None = None,
 ) -> None:
     """Format a single row in the comparison table with dynamic threshold."""
     for_table = output_format == "markdown"
 
-    # Format baseline and current values
+    # Format baseline and current values with variance
     base_str = _format_value(
-        baseline, threshold.metric_name, is_cost, is_integer, signed
+        baseline, threshold.metric_name, is_cost, is_integer, signed, baseline_variance
     )
     curr_str = _format_value(
-        current, threshold.metric_name, is_cost, is_integer, signed
+        current, threshold.metric_name, is_cost, is_integer, signed, current_variance
     )
 
-    # Calculate change with threshold
+    # Calculate change with threshold and variance
     change_str = _calculate_change_with_threshold(
-        baseline, current, threshold, higher_is_better, is_error_metric, for_table
+        baseline,
+        current,
+        threshold,
+        higher_is_better,
+        is_error_metric,
+        for_table,
+        baseline_variance,
+        current_variance,
     )
 
     # Format threshold value
@@ -908,8 +959,9 @@ def _format_comparison_row_with_threshold(
         )
     else:
         # Text format - category is empty for data rows
+        # Adjust column widths for longer values with variance
         click.echo(
-            f"{category:<12} | {metric:<20} | {base_str:>12} | {curr_str:>12} | {change_str:<20} | {threshold_str:>15}"
+            f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<35} | {threshold_str:>15}"
         )
 
 
@@ -959,21 +1011,42 @@ def _format_value(
     is_cost: bool = False,
     is_integer: bool = False,
     signed: bool = False,
+    variance: float | None = None,
 ) -> str:
-    """Format a metric value with appropriate precision and units."""
+    """Format a metric value with appropriate precision and units, optionally with variance.
+
+    Args:
+        value: The metric value
+        metric_name: Name of the metric for unit lookup
+        is_cost: Whether this is a cost metric
+        is_integer: Whether to format as integer
+        signed: Whether to show sign
+        variance: Optional variance/MAD value to show as ±
+
+    Returns:
+        Formatted string like "50.0 ±2.0 tokens" or "$0.0010 ±0.0001"
+    """
     unit = _get_unit_for_metric(metric_name)
 
     if is_cost or unit == "$":
         formatted = f"${value:.4f}"
+        if variance is not None:
+            formatted += f" ±{variance:.4f}"
     elif is_integer:
         if signed:
             formatted = f"{value:+.0f}"
         else:
             formatted = f"{value:.0f}"
+        if variance is not None:
+            formatted += f" ±{variance:.0f}"
     elif signed:
         formatted = f"{value:+.1f}"
+        if variance is not None:
+            formatted += f" ±{variance:.1f}"
     else:
         formatted = f"{value:.2f}"
+        if variance is not None:
+            formatted += f" ±{variance:.2f}"
 
     if unit and unit != "$":
         formatted += f" {unit}"
@@ -1110,6 +1183,8 @@ def _calculate_change_with_threshold(
     higher_is_better: bool = False,
     is_error_metric: bool = False,
     for_table: bool = False,
+    baseline_variance: float | None = None,
+    current_variance: float | None = None,
 ) -> str:
     """Calculate and format the change between baseline and current values.
 
@@ -1120,9 +1195,11 @@ def _calculate_change_with_threshold(
         higher_is_better: If True, higher values are better
         is_error_metric: If True, compare absolute values (for error metrics)
         for_table: If True, use table-friendly formatting
+        baseline_variance: Optional baseline variance/MAD value
+        current_variance: Optional current variance/MAD value
 
     Returns:
-        Formatted string showing absolute and percentage change with emoji
+        Formatted string showing absolute and percentage change with emojis
     """
     # For error metrics, we compare absolute values
     if is_error_metric:
@@ -1140,13 +1217,33 @@ def _calculate_change_with_threshold(
     # Calculate percentage for display
     change_pct = (absolute_change / abs(baseline_val)) * 100
 
+    # Get directional emoji for the metric change
+    metric_emoji = get_change_emoji(change_pct, higher_is_better)
+
+    # Calculate variance change if both variances provided
+    variance_str = ""
+    if baseline_variance is not None and current_variance is not None:
+        if baseline_variance == 0:
+            if current_variance > 0:
+                variance_str = ", σ+∞ 🙁"
+            else:
+                variance_str = ", σ±0 😐"
+        else:
+            variance_change_pct = (
+                (current_variance - baseline_variance) / baseline_variance
+            ) * 100
+            variance_emoji = get_variance_emoji(variance_change_pct)
+            variance_str = f", σ{variance_change_pct:+.0f}% {variance_emoji}"
+
     # Determine significance and get emoji
-    emoji = _determine_significance_emoji(absolute_change, threshold, higher_is_better)
+    significance_emoji = _determine_significance_emoji(
+        absolute_change, threshold, higher_is_better
+    )
 
     # Format absolute change
     abs_str = _format_absolute_change(absolute_change, threshold.metric_name)
 
-    return f"{abs_str} ({change_pct:+.1f}%){emoji}"
+    return f"{abs_str} ({change_pct:+.1f}% {metric_emoji}{variance_str}){significance_emoji}"
 
 
 def _get_unit_for_metric(metric_name: str) -> str:

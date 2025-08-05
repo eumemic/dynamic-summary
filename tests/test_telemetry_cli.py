@@ -424,6 +424,40 @@ class TestTelemetryCompare:
         assert "Legend:" in result.output
         assert "Regression detected" in result.output
 
+    def test_emotional_feedback_functions(self):
+        """Test the emotional feedback emoji functions."""
+        from ragzoom.telemetry_cli import get_change_emoji, get_variance_emoji
+
+        # Test metric change emoji
+        # No change (below threshold)
+        assert get_change_emoji(0.5, higher_is_better=False) == "😐"
+        assert get_change_emoji(-0.5, higher_is_better=True) == "😐"
+
+        # Desirable changes
+        assert (
+            get_change_emoji(-10.0, higher_is_better=False) == "🙂"
+        )  # Lower is better, went down
+        assert (
+            get_change_emoji(10.0, higher_is_better=True) == "🙂"
+        )  # Higher is better, went up
+
+        # Undesirable changes
+        assert (
+            get_change_emoji(10.0, higher_is_better=False) == "🙁"
+        )  # Lower is better, went up
+        assert (
+            get_change_emoji(-10.0, higher_is_better=True) == "🙁"
+        )  # Higher is better, went down
+
+        # Test variance emoji
+        # No change (below threshold)
+        assert get_variance_emoji(3.0) == "😐"
+        assert get_variance_emoji(-3.0) == "😐"
+
+        # Variance changes (lower is always better)
+        assert get_variance_emoji(-20.0) == "🙂"  # Variance decreased - good
+        assert get_variance_emoji(20.0) == "🙁"  # Variance increased - bad
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
