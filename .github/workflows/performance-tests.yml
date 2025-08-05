@@ -336,11 +336,10 @@ jobs:
               # Return to main directory
               cd ${{ github.workspace }}
               
-              # Use raw GitHub URL (GitHub Pages may not be configured yet)
-              # Once GitHub Pages is enabled, this could use: https://eumemic.github.io/dynamic-summary/$IMAGE_PATH
-              VISUALIZATION_URL="https://raw.githubusercontent.com/${{ github.repository }}/gh-pages/$IMAGE_PATH"
+              # Use GitHub Pages URL (now that it's enabled)
+              VISUALIZATION_URL="https://eumemic.github.io/dynamic-summary/$IMAGE_PATH"
               echo "VISUALIZATION_URL=$VISUALIZATION_URL" >> $GITHUB_OUTPUT
-              echo "📸 Image published to gh-pages branch: $VISUALIZATION_URL"
+              echo "📸 Image published to GitHub Pages: $VISUALIZATION_URL"
             fi
           else
             echo "⚠️ Skipping visualization - missing telemetry_200_tokens.json files"
