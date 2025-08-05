@@ -302,6 +302,7 @@ class TestTelemetryCompare:
         from ragzoom.config import RagZoomConfig
         from ragzoom.telemetry_analysis import compute_simplified_metrics
         from ragzoom.telemetry_cli import (
+            MetricNames,
             ThresholdConfig,
             compute_dynamic_threshold,
         )
@@ -336,21 +337,22 @@ class TestTelemetryCompare:
 
         # The MAD comes from the actual data - errors are [-50, -52, -48]
         # Median error = -50, MAD = median([0, 2, 2]) = 2.0
-        # But we need to check if min_threshold is being applied
         expected_mad = metrics["target_fit"]["error_mad"]
-        if expected_mad < 3.0:  # If MAD is very small, min threshold applies
-            expected_threshold = config.min_thresholds["median_error"]
+        if expected_mad == 0.0:  # Zero variance means no threshold
+            assert threshold.absolute_value == float("inf")
+            assert not threshold.is_computed
         else:
             expected_threshold = (3.0 + 2.0) * expected_mad
-        assert threshold.absolute_value == expected_threshold
+            assert threshold.absolute_value == expected_threshold
+            assert threshold.is_computed
 
         # Test CI adjustment
         threshold_ci = compute_dynamic_threshold(
-            metrics, "median_error", "error_mad", config, is_ci=True
+            metrics, MetricNames.MEDIAN_ERROR, "error_mad", config, is_ci=True
         )
         # CI adjustment multiplies k-factors by 1.5
-        if expected_mad < 3.0:  # If MAD is very small, min threshold still applies
-            assert threshold_ci.absolute_value == config.min_thresholds["median_error"]
+        if expected_mad == 0.0:  # Zero variance means no threshold
+            assert threshold_ci.absolute_value == float("inf")
         else:
             expected_ci_threshold = (3.0 * 1.5 + 2.0 * 1.5) * expected_mad
             assert threshold_ci.absolute_value == expected_ci_threshold
@@ -417,10 +419,9 @@ class TestTelemetryCompare:
         result = runner.invoke(cli, ["compare", str(baseline_file), str(current_file)])
 
         assert result.exit_code == 0
-        # Check that dynamic thresholds are marked with asterisk
-        assert "*" in result.output  # Dynamic thresholds show asterisk
-        # Check that we have the legend explaining asterisks
-        assert "Threshold computed dynamically" in result.output
+        # Check that we have the legend
+        assert "Legend:" in result.output
+        assert "Regression detected" in result.output
 
 
 if __name__ == "__main__":

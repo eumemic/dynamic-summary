@@ -74,24 +74,9 @@ class ThresholdConfig:
     k1_between_run: float = 3.0  # Expected variance between runs (3-sigma)
     k2_baseline_uncertainty: float = 2.0  # Baseline uncertainty margin (2-sigma)
 
-    # Minimum thresholds (floors) to prevent too-tight bounds
-    min_thresholds: dict[str, float] | None = None
-
     # Whether to detect CI environment and adjust k-factors
     adjust_for_ci: bool = True
     ci_multiplier: float = 1.5  # Additional multiplier for CI environments
-
-    def __post_init__(self) -> None:
-        if self.min_thresholds is None:
-            self.min_thresholds = {
-                MetricNames.MEDIAN_ERROR: 15.0,  # tokens
-                MetricNames.P95_ERROR: 30.0,  # tokens
-                "latency": 0.5,  # seconds (legacy name for median_seconds)
-                MetricNames.COST: 0.0002,  # USD
-                MetricNames.MAD: 10.0,  # tokens
-                MetricNames.RETRY_RATE: 0.2,  # ratio
-                MetricNames.PERCENT_WITHIN_10: 10.0,  # percentage points
-            }
 
 
 def compute_dynamic_threshold(
@@ -129,16 +114,24 @@ def compute_dynamic_threshold(
     elif metric_name in [MetricNames.USD_PER_NODE, MetricNames.COST]:
         variance = baseline_metrics["cost"].get(variance_key, 0.0)
     else:
-        # For metrics without variance data, fall back to static threshold
-        min_value = 0.1
-        if config.min_thresholds is not None:
-            min_value = config.min_thresholds.get(metric_name, 0.1)
+        # For metrics without variance data, don't enforce any threshold
         return DynamicThreshold(
-            absolute_value=min_value,
+            absolute_value=float("inf"),
             baseline_variance=0.0,
             k_factors=(0.0, 0.0),
             metric_name=metric_name,
             is_computed=False,
+        )
+
+    # If variance is zero, don't enforce any threshold
+    # This handles cases like retry_rate when retries aren't implemented yet
+    if variance == 0.0:
+        return DynamicThreshold(
+            absolute_value=float("inf"),  # No regression possible
+            baseline_variance=0.0,
+            k_factors=(config.k1_between_run, config.k2_baseline_uncertainty),
+            metric_name=metric_name,
+            is_computed=False,  # Not computed from variance
         )
 
     # Apply k-factors
@@ -152,12 +145,6 @@ def compute_dynamic_threshold(
 
     # Calculate threshold
     threshold = (k1 + k2) * variance
-
-    # Apply minimum floor
-    min_threshold = 0.0
-    if config.min_thresholds is not None:
-        min_threshold = config.min_thresholds.get(metric_name, 0.0)
-    threshold = max(threshold, min_threshold)
 
     return DynamicThreshold(
         absolute_value=threshold,
@@ -796,7 +783,6 @@ def _format_text_comparison_with_thresholds(
     # Add footer with legend
     click.echo("\n" + "=" * 100)
     click.echo("\nLegend:")
-    click.echo("  * = Threshold computed dynamically from baseline variance")
     click.echo("  ❌ = Regression detected (exceeds threshold)")
     click.echo("  ✅ = Meaningful improvement (>1σ baseline variance)")
     click.echo("  ⚠️ = Meaningful degradation but within threshold (>1σ but <5σ)")
@@ -867,17 +853,16 @@ def _format_comparison_row_with_threshold(
     )
 
     # Format threshold value
-    unit = _get_unit_for_metric(threshold.metric_name)
-    if unit == "$":
-        threshold_str = f"±{unit}{threshold.absolute_value:.4f}"
-    elif unit:
-        threshold_str = f"±{threshold.absolute_value:.1f} {unit}"
+    if threshold.absolute_value == float("inf"):
+        threshold_str = "—"  # No threshold enforced
     else:
-        threshold_str = f"±{threshold.absolute_value:.2f}"
-
-    # Add asterisk if computed dynamically
-    if threshold.is_computed:
-        threshold_str += "*"
+        unit = _get_unit_for_metric(threshold.metric_name)
+        if unit == "$":
+            threshold_str = f"±{unit}{threshold.absolute_value:.4f}"
+        elif unit:
+            threshold_str = f"±{threshold.absolute_value:.1f} {unit}"
+        else:
+            threshold_str = f"±{threshold.absolute_value:.2f}"
 
     if output_format == "markdown":
         click.echo(
