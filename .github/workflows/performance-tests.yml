@@ -128,8 +128,8 @@ jobs:
               git commit -m "Telemetry visualization for PR #${{ github.event.pull_request.number }} (${{ github.sha }})"
               git push -f origin $BRANCH
               
-              # Return to PR branch 
-              git switch -f -
+              # Return to PR branch by checking out the merge commit
+              git checkout ${{ github.sha }}
               
               # Restore the file
               cp /tmp/comparison_200_tokens.png comparison_200_tokens.png
@@ -210,22 +210,7 @@ jobs:
               comparison_exit_code=$?
               set -e
               
-              # Add workflow link and visualization to the top of the report if it exists
-              if [ -f report.md ] && [ -s report.md ]; then
-                # Create a temporary file with the links
-                echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
-                
-                # Add inline visualization if it was generated
-                if [ "${{ steps.visualize.outputs.VISUALIZATION_GENERATED }}" == "true" ]; then
-                  echo "" >> report_with_link.md
-                  echo "### 📊 Performance Visualization (200 tokens)" >> report_with_link.md
-                  echo "" >> report_with_link.md
-                  echo "![Telemetry Comparison](${{ steps.visualize.outputs.VISUALIZATION_URL }})" >> report_with_link.md
-                fi
-                
-                echo "" >> report_with_link.md
-                cat report.md >> report_with_link.md
-                mv report_with_link.md report.md
+              # Report is ready as-is, no need to add visualization (handled in PR comment)
               else
                 echo "❌ Failed to generate comparison report" > report.md
                 echo "" >> report.md
@@ -242,22 +227,7 @@ jobs:
               comparison_exit_code=$?
               set -e
               
-              # Add workflow link and visualization to the top of the report if it exists
-              if [ -f report.md ] && [ -s report.md ]; then
-                # Create a temporary file with the links
-                echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
-                
-                # Add inline visualization if it was generated
-                if [ "${{ steps.visualize.outputs.VISUALIZATION_GENERATED }}" == "true" ]; then
-                  echo "" >> report_with_link.md
-                  echo "### 📊 Performance Visualization (200 tokens)" >> report_with_link.md
-                  echo "" >> report_with_link.md
-                  echo "![Telemetry Comparison](${{ steps.visualize.outputs.VISUALIZATION_URL }})" >> report_with_link.md
-                fi
-                
-                echo "" >> report_with_link.md
-                cat report.md >> report_with_link.md
-                mv report_with_link.md report.md
+              # Report is ready as-is, no need to add visualization (handled in PR comment)
               else
                 echo "❌ Failed to generate comparison report" > report.md
                 echo "" >> report.md
@@ -300,22 +270,63 @@ jobs:
           # Exit with success - regression detection is handled by separate step
           exit 0
       
-      - name: Comment PR with results
+      - name: Update PR comment with final results
         uses: actions/github-script@v7
         if: always()
         with:
           script: |
+            const identifier = '<!-- perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
             const report = `${{ steps.compare.outputs.report }}`;
+            const visualizationUrl = `${{ steps.visualize.outputs.VISUALIZATION_URL }}`;
             
-            const body = report || '❌ Performance benchmarks failed to run';
+            // Build final comment body
+            let body = `${identifier}\n## 📊 Performance Report\n\n`;
+            body += `_View [workflow run](${workflowUrl})_\n\n`;
             
-            // Create new comment for each run to track performance evolution
-            await github.rest.issues.createComment({
+            // Add visualization if it was generated
+            if (visualizationUrl) {
+              body += `### Performance Visualization (200 tokens)\n\n`;
+              body += `![Telemetry Comparison](${visualizationUrl})\n\n`;
+            }
+            
+            // Add the comparison report
+            if (report) {
+              body += `### Comparison Results\n\n`;
+              body += report;
+            } else {
+              body += '❌ Performance benchmarks failed to run';
+            }
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body
+              issue_number: context.issue.number
             });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && comment.body.includes(identifier)
+            );
+            
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+              console.log(`Updated comment with final results: ${botComment.id}`);
+            } else {
+              // Create new comment if somehow the initial one wasn't created
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
       
       - name: Fail if regression detected
         if: steps.compare.outputs.REGRESSION == 'true'
