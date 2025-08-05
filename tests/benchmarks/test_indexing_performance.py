@@ -112,25 +112,39 @@ def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
             )
 
         # Compute metrics from telemetry for display
-        from ragzoom.telemetry_analysis import compute_metrics_from_telemetry
+        from ragzoom.telemetry_analysis import (
+            compute_metrics_from_telemetry,
+            compute_simplified_metrics,
+        )
 
-        metrics = compute_metrics_from_telemetry(telemetry, benchmark_config)
+        # Get basic metrics for memory and timing info
+        basic_metrics = compute_metrics_from_telemetry(telemetry, benchmark_config)
+
+        # Get simplified metrics for the new metrics system
+        simplified = compute_simplified_metrics(telemetry, benchmark_config)
+
+        # Get metrics for this chunk size
+        chunk_metrics = simplified.metrics_by_chunk_size.get(leaf_tokens, {})
 
         # Print summary
         print(f"\n=== Performance Summary ({doc_name}, leaf_tokens={leaf_tokens}) ===")
-        print(f"Document: {metrics.source_document_tokens:,} tokens")
-        print(f"Tokens/second: {metrics.tokens_per_second:.1f}")
-        print(f"Time per 1K tokens: {metrics.time_per_1k_tokens:.2f}s")
-        print(f"Embedding tokens per 1K: {metrics.embedding_tokens_per_1k:.1f}")
-        print(f"Summary tokens per 1K: {metrics.summary_tokens_per_1k:.1f}")
-        print(f"API calls per 1K: {metrics.api_calls_per_1k:.1f}")
-        print(f"Cost per 1K tokens: ${metrics.cost_per_1k_tokens:.4f}")
-        print(f"Peak memory: {metrics.peak_memory_mb:.1f} MB")
-        print(f"Memory growth: {metrics.memory_usage_mb:.1f} MB")
+        print(f"Document: {basic_metrics.source_document_tokens:,} tokens")
+        print(f"Total duration: {basic_metrics.total_duration_seconds:.2f}s")
+        print(f"Total cost: ${basic_metrics.total_cost:.4f}")
+        print(f"Peak memory: {basic_metrics.peak_memory_mb:.1f} MB")
+        print(f"Memory growth: {basic_metrics.memory_usage_mb:.1f} MB")
+
+        # Print new simplified metrics if available
+        if chunk_metrics:
+            print("\n--- Simplified Metrics ---")
+            for category, values in chunk_metrics.items():
+                print(f"\n{category.title()}:")
+                for metric, value in values.items():
+                    print(f"  {metric}: {value:.2f}")
 
         # Summary accuracy
-        if hasattr(metrics, "summary_stats") and metrics.summary_stats:
-            for target, stats in metrics.summary_stats.items():
+        if hasattr(basic_metrics, "summary_stats") and basic_metrics.summary_stats:
+            for target, stats in basic_metrics.summary_stats.items():
                 print(f"\nSummary accuracy (target={target}):")
                 print(f"  Count: {stats.count}")
                 print(f"  Average size: {stats.avg_tokens:.1f} tokens")
@@ -164,7 +178,10 @@ def test_performance_comparison():
 
     # Import needed for computing metrics from telemetry
     from ragzoom.config import RagZoomConfig
-    from ragzoom.telemetry_analysis import compute_metrics_from_telemetry
+    from ragzoom.telemetry_analysis import (
+        compute_metrics_from_telemetry,
+        compute_simplified_metrics,
+    )
 
     # Load all results
     results = {}
@@ -180,14 +197,18 @@ def test_performance_comparison():
                 summary_input_cost_per_1k=0.0025,
                 summary_output_cost_per_1k=0.01,
             )
-            metrics = compute_metrics_from_telemetry(data["telemetry"], config)
+            basic_metrics = compute_metrics_from_telemetry(data["telemetry"], config)
+            simplified = compute_simplified_metrics(data["telemetry"], config)
 
-            # Store computed metrics for comparison
+            # Get chunk-specific metrics
+            chunk_metrics = simplified.metrics_by_chunk_size.get(chunk_size, {})
+
+            # Store metrics for comparison
             results[chunk_size] = {
-                "tokens_per_second": metrics.tokens_per_second,
-                "embedding_tokens_per_1k": metrics.embedding_tokens_per_1k,
-                "summary_tokens_per_1k": metrics.summary_tokens_per_1k,
-                "cost_per_1k_tokens": metrics.cost_per_1k_tokens,
+                "duration_seconds": basic_metrics.total_duration_seconds,
+                "total_cost": basic_metrics.total_cost,
+                "source_tokens": basic_metrics.source_document_tokens,
+                "chunk_metrics": chunk_metrics,
             }
 
     if len(results) < 2:
@@ -196,18 +217,24 @@ def test_performance_comparison():
     # Print comparison table
     print("\n=== Performance Comparison ===")
     print(
-        f"{'Chunk Size':<12} {'Tokens/sec':<12} {'Embed/1K':<10} {'Summary/1K':<12} {'Cost/1K':<10}"
+        f"{'Chunk Size':<12} {'Duration':<12} {'Total Cost':<12} {'Target-fit':<15} {'Retry Rate':<12}"
     )
-    print("-" * 60)
+    print("-" * 70)
 
     for chunk_size in sorted(results.keys()):
         m = results[chunk_size]
+        chunk_m = m["chunk_metrics"]
+
+        # Extract key metrics
+        target_fit = chunk_m.get("target_fit", {}).get("percent_within_10", 0)
+        retry_rate = chunk_m.get("retry_efficiency", {}).get("retry_rate", 0)
+
         print(
             f"{chunk_size:<12} "
-            f"{m['tokens_per_second']:<12.1f} "
-            f"{m['embedding_tokens_per_1k']:<10.1f} "
-            f"{m['summary_tokens_per_1k']:<12.1f} "
-            f"${m['cost_per_1k_tokens']:<9.4f}"
+            f"{m['duration_seconds']:<12.2f} "
+            f"${m['total_cost']:<11.4f} "
+            f"{target_fit:<15.1f} "
+            f"{retry_rate:<12.1f}"
         )
 
 
