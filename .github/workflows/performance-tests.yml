@@ -114,12 +114,25 @@ jobs:
               
               # Publish visualization to temporary branch for inline display
               BRANCH=ci-telemetry-assets/${{ github.run_id }}
+              
+              # Save current state
+              cp comparison_200_tokens.png /tmp/comparison_200_tokens.png
+              
               git config user.name "github-actions[bot]"
               git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              
+              # Create and push orphan branch with just the image
               git switch --orphan $BRANCH
+              cp /tmp/comparison_200_tokens.png comparison_200_tokens.png
               git add comparison_200_tokens.png
               git commit -m "Telemetry visualization for PR #${{ github.event.pull_request.number }} (${{ github.sha }})"
               git push -f origin $BRANCH
+              
+              # Return to PR branch 
+              git switch -f -
+              
+              # Restore the file
+              cp /tmp/comparison_200_tokens.png comparison_200_tokens.png
               
               # Save the image URL for later use
               echo "VISUALIZATION_URL=https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH/comparison_200_tokens.png" >> $GITHUB_OUTPUT
