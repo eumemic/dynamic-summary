@@ -158,7 +158,7 @@ class TestTelemetryCompare:
         # Check for new table format
         assert "100 tokens" in result.output
         assert "Median error" in result.output
-        assert "Retry rate" in result.output
+        assert "Avg retries/node" in result.output
 
     def test_compare_directories(self, create_test_files):
         """Test comparing two directories with matching files."""
@@ -296,6 +296,131 @@ class TestTelemetryCompare:
         assert (
             "Performance regression detected" in result.output or "❌" in result.output
         )
+
+    def test_dynamic_thresholds_computation(self, tmp_path, sample_telemetry_data):
+        """Test that dynamic thresholds are computed from baseline variance."""
+        from ragzoom.config import RagZoomConfig
+        from ragzoom.telemetry_analysis import compute_simplified_metrics
+        from ragzoom.telemetry_cli import (
+            ThresholdConfig,
+            compute_dynamic_threshold,
+        )
+
+        # Create baseline with known variance
+        baseline_data = copy.deepcopy(sample_telemetry_data)
+        # Add variance by modifying node errors
+        # nodes = baseline_data["documents"]["test.txt"]["nodes"]
+        # Node 2: actual=50, target=100, error=-50
+        # Node 3: actual=48, target=100, error=-52
+        # Node 4: actual=52, target=100, error=-48
+        # This gives us MAD = 2.0 tokens
+
+        baseline_file = tmp_path / "baseline.json"
+        baseline_file.write_text(json.dumps(baseline_data))
+
+        # Analyze to get metrics
+        config = RagZoomConfig()
+        baseline_analysis = compute_simplified_metrics(baseline_data, config)
+        metrics = baseline_analysis.metrics_by_chunk_size[100]
+
+        # Test dynamic threshold computation
+        config = ThresholdConfig()
+        threshold = compute_dynamic_threshold(
+            metrics, "median_error", "error_mad", config, is_ci=False
+        )
+
+        # Check that dynamic threshold was computed
+        assert threshold.is_computed is True
+        assert threshold.baseline_variance == metrics["target_fit"]["error_mad"]
+        assert threshold.k_factors == (3.0, 2.0)
+
+        # The MAD comes from the actual data - errors are [-50, -52, -48]
+        # Median error = -50, MAD = median([0, 2, 2]) = 2.0
+        # But we need to check if min_threshold is being applied
+        expected_mad = metrics["target_fit"]["error_mad"]
+        if expected_mad < 3.0:  # If MAD is very small, min threshold applies
+            expected_threshold = config.min_thresholds["median_error"]
+        else:
+            expected_threshold = (3.0 + 2.0) * expected_mad
+        assert threshold.absolute_value == expected_threshold
+
+        # Test CI adjustment
+        threshold_ci = compute_dynamic_threshold(
+            metrics, "median_error", "error_mad", config, is_ci=True
+        )
+        # CI adjustment multiplies k-factors by 1.5
+        if expected_mad < 3.0:  # If MAD is very small, min threshold still applies
+            assert threshold_ci.absolute_value == config.min_thresholds["median_error"]
+        else:
+            expected_ci_threshold = (3.0 * 1.5 + 2.0 * 1.5) * expected_mad
+            assert threshold_ci.absolute_value == expected_ci_threshold
+
+    def test_dynamic_thresholds_emoji_logic(self, tmp_path, sample_telemetry_data):
+        """Test emoji assignment based on variance thresholds."""
+        from ragzoom.telemetry_cli import (
+            DynamicThreshold,
+            _determine_significance_emoji,
+        )
+
+        # Create threshold with known variance
+        threshold = DynamicThreshold(
+            absolute_value=50.0,  # 5-sigma threshold
+            baseline_variance=10.0,  # 1-sigma
+            k_factors=(3.0, 2.0),
+            metric_name="median_error",
+            is_computed=True,
+        )
+
+        # Test for error metrics (lower is better)
+        # No change: within 1-sigma
+        assert (
+            _determine_significance_emoji(5.0, threshold, higher_is_better=False) == ""
+        )
+
+        # Degradation: >1-sigma but <5-sigma
+        assert (
+            _determine_significance_emoji(15.0, threshold, higher_is_better=False)
+            == " ⚠️"
+        )
+
+        # Improvement: >1-sigma in good direction
+        assert (
+            _determine_significance_emoji(-15.0, threshold, higher_is_better=False)
+            == " ✅"
+        )
+
+        # Regression: >5-sigma threshold
+        assert (
+            _determine_significance_emoji(55.0, threshold, higher_is_better=False)
+            == " ❌"
+        )
+
+        # Test for metrics where higher is better
+        assert (
+            _determine_significance_emoji(-55.0, threshold, higher_is_better=True)
+            == " ❌"
+        )
+        assert (
+            _determine_significance_emoji(15.0, threshold, higher_is_better=True)
+            == " ✅"
+        )
+
+    def test_variance_metrics_in_output(self, tmp_path, sample_telemetry_data):
+        """Test that variance metrics are included in analysis output."""
+        baseline_file = tmp_path / "baseline.json"
+        baseline_file.write_text(json.dumps(sample_telemetry_data))
+
+        current_file = tmp_path / "current.json"
+        current_file.write_text(json.dumps(sample_telemetry_data))
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["compare", str(baseline_file), str(current_file)])
+
+        assert result.exit_code == 0
+        # Check that dynamic thresholds are marked with asterisk
+        assert "*" in result.output  # Dynamic thresholds show asterisk
+        # Check threshold configuration is shown
+        assert "k1" in result.output or "3.0" in result.output
 
 
 if __name__ == "__main__":

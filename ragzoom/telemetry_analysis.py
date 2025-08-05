@@ -129,6 +129,8 @@ def compute_target_fit_metrics(
     within_10_count = 0
     max_overshoot = 0
     max_undershoot = 0
+    # Track per-node within_10 status for variance calculation
+    node_within_10_list = []
 
     for node in nodes:
         # Find accepted attempt
@@ -139,8 +141,11 @@ def compute_target_fit_metrics(
                     error = actual_tokens - target_size
                     errors.append(error)
 
-                    if abs(error) <= 10:
+                    is_within_10 = abs(error) <= 10
+                    if is_within_10:
                         within_10_count += 1
+                    # Store 1 if within ±10, 0 if not (for variance calculation)
+                    node_within_10_list.append(1.0 if is_within_10 else 0.0)
 
                     if error > max_overshoot:
                         max_overshoot = error
@@ -158,6 +163,9 @@ def compute_target_fit_metrics(
             "error_mad": 0.0,
             "error_iqr": 0.0,
             "error_std": 0.0,
+            "percent_within_10_mad": 0.0,
+            "percent_within_10_iqr": 0.0,
+            "percent_within_10_std": 0.0,
         }
 
     sorted_errors = sorted(errors)
@@ -178,6 +186,34 @@ def compute_target_fit_metrics(
     else:
         error_std = 0.0
 
+    # Calculate variance metrics for percent_within_10
+    # Convert node_within_10_list (0s and 1s) to percentages (0-100)
+    if node_within_10_list:
+        # Each node contributes to the percentage, so we work with the binary values
+        # then multiply by 100 to get percentage points
+        median_within_10 = median(node_within_10_list) * 100
+        absolute_deviations = [
+            abs(w * 100 - median_within_10) for w in node_within_10_list
+        ]
+        percent_within_10_mad = median(absolute_deviations)
+
+        sorted_within_10 = sorted(w * 100 for w in node_within_10_list)
+        p25_within_10 = _compute_percentile(sorted_within_10, 0.25)
+        p75_within_10 = _compute_percentile(sorted_within_10, 0.75)
+        percent_within_10_iqr = p75_within_10 - p25_within_10
+
+        if len(node_within_10_list) > 1:
+            # Convert to percentage points for std calculation
+            percent_within_10_std = statistics.stdev(
+                [w * 100 for w in node_within_10_list]
+            )
+        else:
+            percent_within_10_std = 0.0
+    else:
+        percent_within_10_mad = 0.0
+        percent_within_10_iqr = 0.0
+        percent_within_10_std = 0.0
+
     return {
         "median_error": median_error,
         "p95_error": p95_error,
@@ -187,6 +223,9 @@ def compute_target_fit_metrics(
         "error_mad": error_mad,
         "error_iqr": error_iqr,
         "error_std": error_std,
+        "percent_within_10_mad": percent_within_10_mad,
+        "percent_within_10_iqr": percent_within_10_iqr,
+        "percent_within_10_std": percent_within_10_std,
     }
 
 
@@ -196,9 +235,13 @@ def compute_retry_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
     Returns:
         - retry_rate: Average extra attempts per node ((total_attempts - num_nodes) / num_nodes)
         - max_retries: Maximum retries on any single node
+        - retry_mad: MAD of per-node retry counts (for dynamic thresholds)
+        - retry_iqr: IQR of per-node retry counts
+        - retry_std: Standard deviation of per-node retry counts
     """
     total_attempts = 0
     max_retries = 0
+    node_retries_list = []
 
     for node in nodes:
         attempts = node.get("summary_attempts", [])
@@ -207,15 +250,39 @@ def compute_retry_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
 
         # Retries = attempts - 1 (first attempt is not a retry)
         node_retries = max(0, num_attempts - 1)
+        node_retries_list.append(node_retries)
         if node_retries > max_retries:
             max_retries = node_retries
 
     num_nodes = len(nodes)
     retry_rate = ((total_attempts - num_nodes) / num_nodes) if num_nodes > 0 else 0.0
 
+    # Compute variance metrics for per-node retry counts
+    if node_retries_list:
+        median_retries = median(node_retries_list)
+        absolute_deviations = [abs(r - median_retries) for r in node_retries_list]
+        retry_mad = median(absolute_deviations)
+
+        sorted_retries = sorted(float(r) for r in node_retries_list)
+        p25_retries = _compute_percentile(sorted_retries, 0.25)
+        p75_retries = _compute_percentile(sorted_retries, 0.75)
+        retry_iqr = p75_retries - p25_retries
+
+        if len(node_retries_list) > 1:
+            retry_std = statistics.stdev(node_retries_list)
+        else:
+            retry_std = 0.0
+    else:
+        retry_mad = 0.0
+        retry_iqr = 0.0
+        retry_std = 0.0
+
     return {
         "retry_rate": retry_rate,
         "max_retries": max_retries,
+        "retry_mad": retry_mad,
+        "retry_iqr": retry_iqr,
+        "retry_std": retry_std,
     }
 
 
@@ -289,6 +356,19 @@ def compute_latency_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
     }
 
 
+def _calculate_cost(
+    prompt_tokens: int,
+    completion_tokens: int,
+    embedding_tokens: int,
+    config: RagZoomConfig,
+) -> float:
+    """Calculate cost in USD for given token counts."""
+    embedding_cost = (embedding_tokens / 1000) * config.embedding_cost_per_1k
+    prompt_cost = (prompt_tokens / 1000) * config.summary_input_cost_per_1k
+    completion_cost = (completion_tokens / 1000) * config.summary_output_cost_per_1k
+    return embedding_cost + prompt_cost + completion_cost
+
+
 def compute_cost_metrics(
     nodes: list[dict[Any, Any]], config: RagZoomConfig
 ) -> dict[str, float]:
@@ -299,21 +379,42 @@ def compute_cost_metrics(
         - total_completion_tokens: Total completion tokens
         - total_tokens: Sum of prompt and completion
         - usd_per_node: Average cost per node (including embeddings and summaries)
+        - cost_mad: MAD of per-node costs (for dynamic thresholds)
+        - cost_iqr: IQR of per-node costs
+        - cost_std: Standard deviation of per-node costs
     """
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_embedding_tokens = 0
+    node_costs = []
 
     for node in nodes:
+        node_prompt_tokens = 0
+        node_completion_tokens = 0
+        node_embedding_tokens = 0
+
         # Count embedding tokens
         embedding = node.get("embedding")
         if embedding:
-            total_embedding_tokens += embedding.get("text_tokens", 0)
+            node_embedding_tokens = embedding.get("text_tokens", 0)
+            total_embedding_tokens += node_embedding_tokens
 
         # Count summary tokens (all attempts)
         for attempt in node.get("summary_attempts", []):
-            total_prompt_tokens += attempt.get("prompt_tokens", 0)
-            total_completion_tokens += attempt.get("completion_tokens", 0)
+            node_prompt_tokens += attempt.get("prompt_tokens", 0)
+            node_completion_tokens += attempt.get("completion_tokens", 0)
+
+        total_prompt_tokens += node_prompt_tokens
+        total_completion_tokens += node_completion_tokens
+
+        # Calculate per-node cost
+        node_cost = _calculate_cost(
+            node_prompt_tokens,
+            node_completion_tokens,
+            node_embedding_tokens,
+            config,
+        )
+        node_costs.append(node_cost)
 
     total_tokens = (
         total_prompt_tokens + total_completion_tokens + total_embedding_tokens
@@ -330,11 +431,34 @@ def compute_cost_metrics(
     num_nodes = len(nodes)
     usd_per_node = (total_cost / num_nodes) if num_nodes > 0 else 0.0
 
+    # Compute variance metrics for per-node costs
+    if node_costs:
+        median_cost = median(node_costs)
+        absolute_deviations = [abs(c - median_cost) for c in node_costs]
+        cost_mad = median(absolute_deviations)
+
+        sorted_costs = sorted(node_costs)
+        p25_cost = _compute_percentile(sorted_costs, 0.25)
+        p75_cost = _compute_percentile(sorted_costs, 0.75)
+        cost_iqr = p75_cost - p25_cost
+
+        if len(node_costs) > 1:
+            cost_std = statistics.stdev(node_costs)
+        else:
+            cost_std = 0.0
+    else:
+        cost_mad = 0.0
+        cost_iqr = 0.0
+        cost_std = 0.0
+
     return {
         "total_prompt_tokens": total_prompt_tokens,
         "total_completion_tokens": total_completion_tokens,
         "total_tokens": total_tokens,
         "usd_per_node": usd_per_node,
+        "cost_mad": cost_mad,
+        "cost_iqr": cost_iqr,
+        "cost_std": cost_std,
     }
 
 
