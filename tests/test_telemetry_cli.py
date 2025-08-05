@@ -419,8 +419,8 @@ class TestTelemetryCompare:
         assert result.exit_code == 0
         # Check that dynamic thresholds are marked with asterisk
         assert "*" in result.output  # Dynamic thresholds show asterisk
-        # Check threshold configuration is shown
-        assert "k1" in result.output or "3.0" in result.output
+        # Check that we have the legend explaining asterisks
+        assert "Threshold computed dynamically" in result.output
 
 
 if __name__ == "__main__":

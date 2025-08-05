@@ -771,17 +771,8 @@ def _format_text_comparison_with_thresholds(
 
     # Build table header
     click.echo("\n" + "=" * 100)
-    click.echo("Performance Comparison Report (with Dynamic Thresholds)")
+    click.echo("Performance Comparison Report")
     click.echo("=" * 100)
-
-    # Show threshold configuration
-    config = ThresholdConfig()
-    click.echo("\nThreshold Configuration:")
-    click.echo(f"  Between-run variance factor (k1): {config.k1_between_run}")
-    click.echo(f"  Baseline uncertainty factor (k2): {config.k2_baseline_uncertainty}")
-    click.echo(
-        f"  Total multiplier: {config.k1_between_run + config.k2_baseline_uncertainty}x baseline variance"
-    )
 
     # Table headers
     header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>12} | {'Current':>12} | {'Change':>20} | {'Threshold':>15}"
@@ -1184,17 +1175,7 @@ def _format_markdown_comparison_with_thresholds(
 ) -> None:
     """Format comparison as markdown table with dynamic thresholds."""
 
-    click.echo("# Performance Comparison Report (with Dynamic Thresholds)\n")
-
-    # Show threshold configuration
-    config = ThresholdConfig()
-    click.echo("## Threshold Configuration")
-    click.echo(f"- Between-run variance factor (k1): {config.k1_between_run}")
-    click.echo(f"- Baseline uncertainty factor (k2): {config.k2_baseline_uncertainty}")
-    click.echo(
-        f"- Total multiplier: {config.k1_between_run + config.k2_baseline_uncertainty}x baseline variance"
-    )
-    click.echo("- \\* = dynamically computed from baseline variance\n")
+    click.echo("# Performance Comparison Report\n")
 
     # Create unified table
     click.echo("| Chunk Size | Metric | Baseline | Current | Change | Threshold |")
