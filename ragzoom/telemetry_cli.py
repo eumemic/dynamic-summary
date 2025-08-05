@@ -105,17 +105,17 @@ def get_change_emoji(
         threshold: Minimum percentage for non-neutral emoji (default 1%)
 
     Returns:
-        Emoji indicating whether change is desirable: 🙂 (good), 😐 (neutral), 🙁 (bad)
+        Emoji indicating whether change is desirable: 🟢 (good), 🟡 (neutral), 🔴 (bad)
     """
     if abs(change_percent) < threshold:
-        return "😐"
+        return "🟡"
 
     is_positive_change = change_percent > 0
     is_desirable = (is_positive_change and higher_is_better) or (
         not is_positive_change and not higher_is_better
     )
 
-    return "🙂" if is_desirable else "🙁"
+    return "🟢" if is_desirable else "🔴"
 
 
 def get_variance_emoji(variance_change_percent: float, threshold: float = 5.0) -> str:
@@ -126,11 +126,11 @@ def get_variance_emoji(variance_change_percent: float, threshold: float = 5.0) -
         threshold: Minimum percentage for non-neutral emoji (default 5%)
 
     Returns:
-        Emoji indicating variance change: 🙂 (decreased), 😐 (stable), 🙁 (increased)
+        Emoji indicating variance change: 🟢 (decreased), 🟡 (stable), 🔴 (increased)
     """
     if abs(variance_change_percent) < threshold:
-        return "😐"
-    return "🙂" if variance_change_percent < 0 else "🙁"
+        return "🟡"
+    return "🟢" if variance_change_percent < 0 else "🔴"
 
 
 def compute_dynamic_threshold(
@@ -831,12 +831,12 @@ def _format_text_comparison_with_thresholds(
     """Format comparison as plain text table with dynamic thresholds."""
 
     # Build table header
-    click.echo("\n" + "=" * 130)
+    click.echo("\n" + "=" * 120)
     click.echo("Performance Comparison Report")
-    click.echo("=" * 130)
+    click.echo("=" * 120)
 
-    # Table headers - adjusted widths for variance display
-    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>35} | {'Threshold':>15}"
+    # Table headers - adjusted widths for variance display and multi-line change
+    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>25} | {'Threshold':>15}"
     click.echo("\n" + header)
     click.echo("-" * len(header))
 
@@ -855,12 +855,12 @@ def _format_text_comparison_with_thresholds(
             click.echo("-" * len(header))
 
     # Add footer with legend
-    click.echo("\n" + "=" * 130)
+    click.echo("\n" + "=" * 120)
     click.echo("\nLegend:")
     click.echo("  Values: Shows metric ±variance (e.g., '50.0 ±2.0 tokens')")
-    click.echo("  Change format: absolute (percentage 🙂/😐/🙁, σ±percentage 🙂/😐/🙁)")
+    click.echo("  Change format: absolute (percentage 🟢/🟡/🔴, σ±percentage 🟢/🟡/🔴)")
     click.echo(
-        "    🙂 = Desirable direction | 😐 = No meaningful change | 🙁 = Undesirable direction"
+        "    🟢 = Desirable direction | 🟡 = No meaningful change | 🔴 = Undesirable direction"
     )
     click.echo("  Significance indicators:")
     click.echo("    ❌ = Regression detected (exceeds threshold)")
@@ -954,15 +954,28 @@ def _format_comparison_row_with_threshold(
             threshold_str = f"±{threshold.absolute_value:.2f}"
 
     if output_format == "markdown":
+        # For markdown, replace newlines with <br> for proper rendering
+        change_str_md = change_str.replace("\n", "<br>")
         click.echo(
-            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} | {threshold_str} |"
+            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
         )
     else:
-        # Text format - category is empty for data rows
-        # Adjust column widths for longer values with variance
-        click.echo(
-            f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<35} | {threshold_str:>15}"
-        )
+        # Text format - split change_str by newline for multi-line display
+        change_lines = change_str.split("\n")
+        if len(change_lines) == 2:
+            # First line with absolute change
+            click.echo(
+                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_lines[0]:<25} | {threshold_str:>15}"
+            )
+            # Second line with percentage and variance
+            click.echo(
+                f"{'':12} | {'':20} | {'':18} | {'':18} | {change_lines[1]:<25} | {'':15}"
+            )
+        else:
+            # Fallback for single line
+            click.echo(
+                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<25} | {threshold_str:>15}"
+            )
 
 
 def _format_comparison_row(
@@ -1225,9 +1238,9 @@ def _calculate_change_with_threshold(
     if baseline_variance is not None and current_variance is not None:
         if baseline_variance == 0:
             if current_variance > 0:
-                variance_str = ", σ+∞ 🙁"
+                variance_str = ", σ+∞ 🔴"
             else:
-                variance_str = ", σ±0 😐"
+                variance_str = ", σ±0 🟡"
         else:
             variance_change_pct = (
                 (current_variance - baseline_variance) / baseline_variance
@@ -1243,7 +1256,8 @@ def _calculate_change_with_threshold(
     # Format absolute change
     abs_str = _format_absolute_change(absolute_change, threshold.metric_name)
 
-    return f"{abs_str} ({change_pct:+.1f}% {metric_emoji}{variance_str}){significance_emoji}"
+    # Format with newline for better readability in tables
+    return f"{abs_str}\n({change_pct:+.1f}% {metric_emoji}{variance_str}){significance_emoji}"
 
 
 def _get_unit_for_metric(metric_name: str) -> str:

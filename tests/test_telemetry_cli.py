@@ -430,33 +430,33 @@ class TestTelemetryCompare:
 
         # Test metric change emoji
         # No change (below threshold)
-        assert get_change_emoji(0.5, higher_is_better=False) == "😐"
-        assert get_change_emoji(-0.5, higher_is_better=True) == "😐"
+        assert get_change_emoji(0.5, higher_is_better=False) == "🟡"
+        assert get_change_emoji(-0.5, higher_is_better=True) == "🟡"
 
         # Desirable changes
         assert (
-            get_change_emoji(-10.0, higher_is_better=False) == "🙂"
+            get_change_emoji(-10.0, higher_is_better=False) == "🟢"
         )  # Lower is better, went down
         assert (
-            get_change_emoji(10.0, higher_is_better=True) == "🙂"
+            get_change_emoji(10.0, higher_is_better=True) == "🟢"
         )  # Higher is better, went up
 
         # Undesirable changes
         assert (
-            get_change_emoji(10.0, higher_is_better=False) == "🙁"
+            get_change_emoji(10.0, higher_is_better=False) == "🔴"
         )  # Lower is better, went up
         assert (
-            get_change_emoji(-10.0, higher_is_better=True) == "🙁"
+            get_change_emoji(-10.0, higher_is_better=True) == "🔴"
         )  # Higher is better, went down
 
         # Test variance emoji
         # No change (below threshold)
-        assert get_variance_emoji(3.0) == "😐"
-        assert get_variance_emoji(-3.0) == "😐"
+        assert get_variance_emoji(3.0) == "🟡"
+        assert get_variance_emoji(-3.0) == "🟡"
 
         # Variance changes (lower is always better)
-        assert get_variance_emoji(-20.0) == "🙂"  # Variance decreased - good
-        assert get_variance_emoji(20.0) == "🙁"  # Variance increased - bad
+        assert get_variance_emoji(-20.0) == "🟢"  # Variance decreased - good
+        assert get_variance_emoji(20.0) == "🔴"  # Variance increased - bad
 
 
 if __name__ == "__main__":
