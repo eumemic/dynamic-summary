@@ -831,12 +831,12 @@ def _format_text_comparison_with_thresholds(
     """Format comparison as plain text table with dynamic thresholds."""
 
     # Build table header
-    click.echo("\n" + "=" * 120)
+    click.echo("\n" + "=" * 125)
     click.echo("Performance Comparison Report")
-    click.echo("=" * 120)
+    click.echo("=" * 125)
 
     # Table headers - adjusted widths for variance display and multi-line change
-    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>25} | {'Threshold':>15}"
+    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>30} | {'Threshold':>15}"
     click.echo("\n" + header)
     click.echo("-" * len(header))
 
@@ -855,10 +855,13 @@ def _format_text_comparison_with_thresholds(
             click.echo("-" * len(header))
 
     # Add footer with legend
-    click.echo("\n" + "=" * 120)
+    click.echo("\n" + "=" * 125)
     click.echo("\nLegend:")
     click.echo("  Values: Shows metric ±variance (e.g., '50.0 ±2.0 tokens')")
-    click.echo("  Change format: absolute (percentage 🟢/🟡/🔴, σ±percentage 🟢/🟡/🔴)")
+    click.echo("  Change format:")
+    click.echo("    Line 1: 🟢/🟡/🔴 absolute_change (percentage%) [significance]")
+    click.echo("    Line 2: 🟢/🟡/🔴 σ±variance_change (percentage%)")
+    click.echo("  Direction indicators:")
     click.echo(
         "    🟢 = Desirable direction | 🟡 = No meaningful change | 🔴 = Undesirable direction"
     )
@@ -965,16 +968,16 @@ def _format_comparison_row_with_threshold(
         if len(change_lines) == 2:
             # First line with absolute change
             click.echo(
-                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_lines[0]:<25} | {threshold_str:>15}"
+                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_lines[0]:<30} | {threshold_str:>15}"
             )
             # Second line with percentage and variance
             click.echo(
-                f"{'':12} | {'':20} | {'':18} | {'':18} | {change_lines[1]:<25} | {'':15}"
+                f"{'':12} | {'':20} | {'':18} | {'':18} | {change_lines[1]:<30} | {'':15}"
             )
         else:
             # Fallback for single line
             click.echo(
-                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<25} | {threshold_str:>15}"
+                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<30} | {threshold_str:>15}"
             )
 
 
@@ -1233,21 +1236,6 @@ def _calculate_change_with_threshold(
     # Get directional emoji for the metric change
     metric_emoji = get_change_emoji(change_pct, higher_is_better)
 
-    # Calculate variance change if both variances provided
-    variance_str = ""
-    if baseline_variance is not None and current_variance is not None:
-        if baseline_variance == 0:
-            if current_variance > 0:
-                variance_str = ", σ+∞ 🔴"
-            else:
-                variance_str = ", σ±0 🟡"
-        else:
-            variance_change_pct = (
-                (current_variance - baseline_variance) / baseline_variance
-            ) * 100
-            variance_emoji = get_variance_emoji(variance_change_pct)
-            variance_str = f", σ{variance_change_pct:+.0f}% {variance_emoji}"
-
     # Determine significance and get emoji
     significance_emoji = _determine_significance_emoji(
         absolute_change, threshold, higher_is_better
@@ -1256,8 +1244,41 @@ def _calculate_change_with_threshold(
     # Format absolute change
     abs_str = _format_absolute_change(absolute_change, threshold.metric_name)
 
-    # Format with newline for better readability in tables
-    return f"{abs_str}\n({change_pct:+.1f}% {metric_emoji}{variance_str}){significance_emoji}"
+    # Format first line: emoji + absolute + percentage + significance
+    line1 = f"{metric_emoji} {abs_str} ({change_pct:+.1f}%){significance_emoji}"
+
+    # Format variance change if both variances provided
+    if baseline_variance is not None and current_variance is not None:
+        variance_change = current_variance - baseline_variance
+
+        if baseline_variance == 0:
+            if current_variance > 0:
+                variance_emoji = "🔴"
+                variance_pct_str = " (+∞%)"
+            else:
+                variance_emoji = "🟡"
+                variance_pct_str = " (±0%)"
+        else:
+            variance_change_pct = (variance_change / baseline_variance) * 100
+            variance_emoji = get_variance_emoji(variance_change_pct)
+            variance_pct_str = f" ({variance_change_pct:+.0f}%)"
+
+        # Format variance absolute change based on metric type
+        unit = _get_unit_for_metric(threshold.metric_name)
+        if unit == "$":
+            variance_abs_str = f"σ{variance_change:+.4f}"
+        elif unit == "%":
+            # For percentage metrics, variance is in percentage points
+            variance_abs_str = f"σ{variance_change:+.1f}"
+        elif unit:
+            variance_abs_str = f"σ{variance_change:+.1f}"
+        else:
+            variance_abs_str = f"σ{variance_change:+.1f}"
+
+        line2 = f"\n{variance_emoji} {variance_abs_str}{variance_pct_str}"
+        return line1 + line2
+    else:
+        return line1
 
 
 def _get_unit_for_metric(metric_name: str) -> str:
