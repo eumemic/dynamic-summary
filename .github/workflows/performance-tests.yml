@@ -306,9 +306,6 @@ jobs:
               # Save current state
               cp comparison_200_tokens.png /tmp/comparison_200_tokens.png
               
-              git config user.name "github-actions[bot]"
-              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              
               # Create a clean directory for the image branch
               mkdir -p /tmp/image-branch
               cp comparison_200_tokens.png /tmp/image-branch/
@@ -316,6 +313,8 @@ jobs:
               # Create and push branch with just the image
               cd /tmp/image-branch
               git init
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
               git add comparison_200_tokens.png
               git commit -m "Telemetry visualization for PR #${{ github.event.pull_request.number }} (${{ github.sha }})"
               git branch -M $BRANCH
