@@ -364,6 +364,75 @@ ragzoom-telemetry visualize benchmark_results/telemetry_200_tokens.json
 ragzoom-telemetry visualize benchmark_results/ --compare --format pdf
 ```
 
+### Comparison Output Format
+
+The `compare` command provides a detailed performance comparison between baseline and current telemetry with:
+
+#### Inline Variance Display
+Metrics now show variance inline using the ±format:
+- `50.0 ±2.0 tok` - Median error of 50 tokens with MAD (Median Absolute Deviation) of 2
+- `$0.0010 ±0.0001` - Cost with variance
+
+#### Two-Line Change Format
+Changes are displayed on two lines for clarity:
+```
+Line 1: [emoji] absolute_change (percentage%)
+Line 2: [emoji] σ±variance_change (percentage%)
+```
+
+Example:
+```
+🟢 -247.0 tok (-58.7%)
+🟡 σ+18 (+30%)
+```
+
+#### Color-Coded Significance Indicators
+
+**Metric Changes:**
+- 🔴 = **Regression detected** - Exceeds dynamic threshold (>5σ baseline variance)
+- 🟡 = **Significant undesirable change** - Notable but not a regression (>1σ)
+- 🟢 = **Significant improvement** - Desirable change (>1σ)
+- ⚪ = **Insignificant change** - Within normal variance (<1σ)
+
+**Variance Changes:**
+- 🟡 = **Variance increase** - Notable but doesn't trigger regression
+- 🟢 = **Variance decrease** - Improved stability
+- ⚪ = **Insignificant variance change** - Within normal fluctuation (<50% of baseline)
+
+#### Dynamic Thresholds
+
+RagZoom uses **variance-based dynamic thresholds** instead of fixed percentages:
+
+```
+threshold = (k1 + k2) × baseline_variance
+
+Where:
+- k1 = 3.0 (covers 99.7% of normal distribution for between-run variance)
+- k2 = 2.0 (additional margin for baseline measurement uncertainty)
+- Total = 5σ threshold (>99.99% confidence for regression detection)
+```
+
+This approach:
+- **Eliminates false positives** from natural LLM non-determinism
+- **Adapts to each metric's inherent variability**
+- **CI environments** get 1.5x multiplier for higher variance
+
+#### Example Output
+
+```
+Performance Comparison Report
+================================================================================
+
+Chunk Size | Metric              |         Baseline |          Current | Change                                     | Threshold
+-----------|---------------------|------------------|------------------|--------------------------------------------|-----------
+100 tok    | Median Error        |   -23.0 ±2.0 tok |   -24.2 ±2.4 tok | ⚪ +0.0 tok (+0.0%)                        | 10.0 tok
+           |                     |                  |                  | 🟡 σ+0.4 (+20%)                            |
+100 tok    | p95 Error           |   +36.0 ±5.0 tok |   +59.0 ±7.0 tok | 🟡 +23.0 tok (+63.9%)                      | 25.0 tok
+           |                     |                  |                  | 🟡 σ+2.0 (+40%)                            |
+100 tok    | Cost                | $0.0002 ±0.0000  | $0.0002 ±0.0000  | ⚪ +$0.0000 (+0.5%)                        | $0.0001
+           |                     |                  |                  | ⚪ σ-0.0000 (-2%)                           |
+```
+
 ### Configuration Options
 
 #### Threshold Configuration

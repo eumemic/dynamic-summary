@@ -15,14 +15,16 @@ Legacy functions are preserved for backward compatibility with telemetry_viz.py.
 import logging
 import os
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from statistics import median
-from typing import Any
+from typing import Any, overload
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_types import (
     BatchEfficiencyDict,
     ModelsDict,
+    NodeTelemetryDict,
     RetryAnalysisDict,
     TelemetryDataDict,
 )
@@ -72,12 +74,11 @@ def compute_simplified_metrics(
     parsed_data = parse_telemetry_format(telemetry_data)
 
     # Group nodes by target chunk size
-    nodes_by_target: dict[int, list[dict[Any, Any]]] = {}
+    nodes_by_target: dict[int, list[NodeTelemetryDict]] = {}
 
     # In v3.0, nodes are at the top level
     nodes = parsed_data.get("nodes", [])
 
-    node: Any
     for node in nodes:
         # Skip leaf nodes (no summaries)
         height = node.get("height", node.get("level", 0))
@@ -98,7 +99,7 @@ def compute_simplified_metrics(
     # Compute metrics for each chunk size
     metrics_by_chunk_size = {}
     for target_size in sorted(nodes_by_target.keys()):
-        chunk_nodes: list[dict[Any, Any]] = nodes_by_target[target_size]
+        chunk_nodes = nodes_by_target[target_size]
         if chunk_nodes:
             metrics_by_chunk_size[target_size] = {
                 "target_fit": compute_target_fit_metrics(chunk_nodes, target_size),
@@ -112,7 +113,7 @@ def compute_simplified_metrics(
 
 
 def compute_target_fit_metrics(
-    nodes: list[dict[Any, Any]], target_size: int
+    nodes: list[NodeTelemetryDict], target_size: int
 ) -> dict[str, float]:
     """Compute target-fit accuracy metrics.
 
@@ -122,11 +123,16 @@ def compute_target_fit_metrics(
         - percent_within_10: Percentage within ±10 tokens
         - max_overshoot: Maximum positive error
         - max_undershoot: Maximum negative error (most negative)
+        - error_mad: MAD of errors (for dynamic thresholds)
+        - error_iqr: IQR of errors
+        - error_std: Standard deviation of errors
     """
     errors = []
     within_10_count = 0
     max_overshoot = 0
     max_undershoot = 0
+    # Track per-node within_10 status for variance calculation
+    node_within_10_list = []
 
     for node in nodes:
         # Find accepted attempt
@@ -137,8 +143,11 @@ def compute_target_fit_metrics(
                     error = actual_tokens - target_size
                     errors.append(error)
 
-                    if abs(error) <= 10:
+                    is_within_10 = abs(error) <= 10
+                    if is_within_10:
                         within_10_count += 1
+                    # Store 1 if within ±10, 0 if not (for variance calculation)
+                    node_within_10_list.append(1.0 if is_within_10 else 0.0)
 
                     if error > max_overshoot:
                         max_overshoot = error
@@ -153,6 +162,12 @@ def compute_target_fit_metrics(
             "percent_within_10": 0.0,
             "max_overshoot": 0.0,
             "max_undershoot": 0.0,
+            "error_mad": 0.0,
+            "error_iqr": 0.0,
+            "error_std": 0.0,
+            "percent_within_10_mad": 0.0,
+            "percent_within_10_iqr": 0.0,
+            "percent_within_10_std": 0.0,
         }
 
     sorted_errors = sorted(errors)
@@ -160,24 +175,75 @@ def compute_target_fit_metrics(
     p95_error = _compute_percentile(sorted_errors, 0.95)
     percent_within_10 = (within_10_count / len(errors)) * 100
 
+    # Calculate variance metrics for errors
+    absolute_deviations = [abs(e - median_error) for e in errors]
+    error_mad = median(absolute_deviations)
+
+    p25_error = _compute_percentile(sorted_errors, 0.25)
+    p75_error = _compute_percentile(sorted_errors, 0.75)
+    error_iqr = p75_error - p25_error
+
+    if len(errors) > 1:
+        error_std = statistics.stdev(errors)
+    else:
+        error_std = 0.0
+
+    # Calculate variance metrics for percent_within_10
+    if node_within_10_list:
+        # Convert binary values (0s and 1s) to percentages once
+        percent_within_10_values = [w * 100 for w in node_within_10_list]
+
+        # Calculate median and MAD
+        median_within_10 = median(percent_within_10_values)
+        absolute_deviations = [
+            abs(p - median_within_10) for p in percent_within_10_values
+        ]
+        percent_within_10_mad = median(absolute_deviations)
+
+        # Calculate IQR
+        sorted_within_10 = sorted(percent_within_10_values)
+        p25_within_10 = _compute_percentile(sorted_within_10, 0.25)
+        p75_within_10 = _compute_percentile(sorted_within_10, 0.75)
+        percent_within_10_iqr = p75_within_10 - p25_within_10
+
+        # Calculate standard deviation
+        if len(percent_within_10_values) > 1:
+            percent_within_10_std = statistics.stdev(percent_within_10_values)
+        else:
+            percent_within_10_std = 0.0
+    else:
+        percent_within_10_mad = 0.0
+        percent_within_10_iqr = 0.0
+        percent_within_10_std = 0.0
+
     return {
         "median_error": median_error,
         "p95_error": p95_error,
         "percent_within_10": percent_within_10,
         "max_overshoot": max_overshoot,
         "max_undershoot": max_undershoot,
+        "error_mad": error_mad,
+        "error_iqr": error_iqr,
+        "error_std": error_std,
+        "percent_within_10_mad": percent_within_10_mad,
+        "percent_within_10_iqr": percent_within_10_iqr,
+        "percent_within_10_std": percent_within_10_std,
     }
 
 
-def compute_retry_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
+def compute_retry_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
     """Compute retry efficiency metrics.
 
     Returns:
         - retry_rate: Average extra attempts per node ((total_attempts - num_nodes) / num_nodes)
         - max_retries: Maximum retries on any single node
+        - retry_mad: MAD of per-node retry counts (for dynamic thresholds)
+        - retry_iqr: IQR of per-node retry counts
+        - retry_std: Standard deviation of per-node retry counts
     """
     total_attempts = 0
     max_retries = 0
+    node_retries_list = []
 
     for node in nodes:
         attempts = node.get("summary_attempts", [])
@@ -186,25 +252,52 @@ def compute_retry_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
 
         # Retries = attempts - 1 (first attempt is not a retry)
         node_retries = max(0, num_attempts - 1)
+        node_retries_list.append(node_retries)
         if node_retries > max_retries:
             max_retries = node_retries
 
     num_nodes = len(nodes)
     retry_rate = ((total_attempts - num_nodes) / num_nodes) if num_nodes > 0 else 0.0
 
+    # Compute variance metrics for per-node retry counts
+    if node_retries_list:
+        median_retries = median(node_retries_list)
+        absolute_deviations = [abs(r - median_retries) for r in node_retries_list]
+        retry_mad = median(absolute_deviations)
+
+        sorted_retries = sorted(float(r) for r in node_retries_list)
+        p25_retries = _compute_percentile(sorted_retries, 0.25)
+        p75_retries = _compute_percentile(sorted_retries, 0.75)
+        retry_iqr = p75_retries - p25_retries
+
+        if len(node_retries_list) > 1:
+            retry_std = statistics.stdev(node_retries_list)
+        else:
+            retry_std = 0.0
+    else:
+        retry_mad = 0.0
+        retry_iqr = 0.0
+        retry_std = 0.0
+
     return {
         "retry_rate": retry_rate,
         "max_retries": max_retries,
+        "retry_mad": retry_mad,
+        "retry_iqr": retry_iqr,
+        "retry_std": retry_std,
     }
 
 
-def compute_latency_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
+def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
     """Compute latency metrics.
 
     Returns:
         - median_seconds: Median wall-clock time per accepted summary (including retries)
         - p95_seconds: 95th percentile latency
         - total_indexing_seconds: Total time for all nodes
+        - latency_mad: MAD of latencies (for dynamic thresholds)
+        - latency_iqr: IQR of latencies
+        - latency_std: Standard deviation of latencies
     """
     node_times = []
     total_time = 0.0
@@ -233,21 +326,40 @@ def compute_latency_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
             "median_seconds": 0.0,
             "p95_seconds": 0.0,
             "total_indexing_seconds": 0.0,
+            "latency_mad": 0.0,
+            "latency_iqr": 0.0,
+            "latency_std": 0.0,
         }
 
     sorted_times = sorted(node_times)
     median_seconds = median(sorted_times)
     p95_seconds = _compute_percentile(sorted_times, 0.95)
 
+    # Calculate variance metrics for latency
+    absolute_deviations = [abs(t - median_seconds) for t in node_times]
+    latency_mad = median(absolute_deviations)
+
+    p25_latency = _compute_percentile(sorted_times, 0.25)
+    p75_latency = _compute_percentile(sorted_times, 0.75)
+    latency_iqr = p75_latency - p25_latency
+
+    if len(node_times) > 1:
+        latency_std = statistics.stdev(node_times)
+    else:
+        latency_std = 0.0
+
     return {
         "median_seconds": median_seconds,
         "p95_seconds": p95_seconds,
         "total_indexing_seconds": total_time,
+        "latency_mad": latency_mad,
+        "latency_iqr": latency_iqr,
+        "latency_std": latency_std,
     }
 
 
 def compute_cost_metrics(
-    nodes: list[dict[Any, Any]], config: RagZoomConfig
+    nodes: list[NodeTelemetryDict], config: RagZoomConfig
 ) -> dict[str, float]:
     """Compute cost and token metrics.
 
@@ -256,21 +368,42 @@ def compute_cost_metrics(
         - total_completion_tokens: Total completion tokens
         - total_tokens: Sum of prompt and completion
         - usd_per_node: Average cost per node (including embeddings and summaries)
+        - cost_mad: MAD of per-node costs (for dynamic thresholds)
+        - cost_iqr: IQR of per-node costs
+        - cost_std: Standard deviation of per-node costs
     """
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_embedding_tokens = 0
+    node_costs = []
 
     for node in nodes:
+        node_prompt_tokens = 0
+        node_completion_tokens = 0
+        node_embedding_tokens = 0
+
         # Count embedding tokens
         embedding = node.get("embedding")
         if embedding:
-            total_embedding_tokens += embedding.get("text_tokens", 0)
+            node_embedding_tokens = embedding.get("text_tokens", 0)
+            total_embedding_tokens += node_embedding_tokens
 
         # Count summary tokens (all attempts)
         for attempt in node.get("summary_attempts", []):
-            total_prompt_tokens += attempt.get("prompt_tokens", 0)
-            total_completion_tokens += attempt.get("completion_tokens", 0)
+            node_prompt_tokens += attempt.get("prompt_tokens", 0)
+            node_completion_tokens += attempt.get("completion_tokens", 0)
+
+        total_prompt_tokens += node_prompt_tokens
+        total_completion_tokens += node_completion_tokens
+
+        # Calculate per-node cost in USD
+        embedding_cost = (node_embedding_tokens / 1000) * config.embedding_cost_per_1k
+        prompt_cost = (node_prompt_tokens / 1000) * config.summary_input_cost_per_1k
+        completion_cost = (
+            node_completion_tokens / 1000
+        ) * config.summary_output_cost_per_1k
+        node_cost = embedding_cost + prompt_cost + completion_cost
+        node_costs.append(node_cost)
 
     total_tokens = (
         total_prompt_tokens + total_completion_tokens + total_embedding_tokens
@@ -287,19 +420,47 @@ def compute_cost_metrics(
     num_nodes = len(nodes)
     usd_per_node = (total_cost / num_nodes) if num_nodes > 0 else 0.0
 
+    # Compute variance metrics for per-node costs
+    if node_costs:
+        median_cost = median(node_costs)
+        absolute_deviations = [abs(c - median_cost) for c in node_costs]
+        cost_mad = median(absolute_deviations)
+
+        sorted_costs = sorted(node_costs)
+        p25_cost = _compute_percentile(sorted_costs, 0.25)
+        p75_cost = _compute_percentile(sorted_costs, 0.75)
+        cost_iqr = p75_cost - p25_cost
+
+        if len(node_costs) > 1:
+            cost_std = statistics.stdev(node_costs)
+        else:
+            cost_std = 0.0
+    else:
+        cost_mad = 0.0
+        cost_iqr = 0.0
+        cost_std = 0.0
+
     return {
         "total_prompt_tokens": total_prompt_tokens,
         "total_completion_tokens": total_completion_tokens,
         "total_tokens": total_tokens,
         "usd_per_node": usd_per_node,
+        "cost_mad": cost_mad,
+        "cost_iqr": cost_iqr,
+        "cost_std": cost_std,
     }
 
 
-def compute_dispersion_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
-    """Compute dispersion metrics.
+def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]:
+    """Compute comprehensive dispersion metrics.
 
     Returns:
         - mad: Median Absolute Deviation of actual token counts
+        - iqr: Interquartile range (75th - 25th percentile)
+        - p25: 25th percentile
+        - p75: 75th percentile
+        - cv: Coefficient of variation (std/mean)
+        - std: Standard deviation
     """
     actual_tokens = []
 
@@ -313,14 +474,43 @@ def compute_dispersion_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
                 break
 
     if not actual_tokens:
-        return {"mad": 0.0}
+        return {
+            "mad": 0.0,
+            "iqr": 0.0,
+            "p25": 0.0,
+            "p75": 0.0,
+            "cv": 0.0,
+            "std": 0.0,
+        }
 
     # Calculate MAD: median(|x_i - median(x)|)
     median_tokens = median(actual_tokens)
     absolute_deviations = [abs(x - median_tokens) for x in actual_tokens]
     mad = median(absolute_deviations)
 
-    return {"mad": mad}
+    # Calculate additional metrics
+    sorted_tokens = sorted(actual_tokens)
+    p25 = _compute_percentile(sorted_tokens, 0.25)
+    p75 = _compute_percentile(sorted_tokens, 0.75)
+    iqr = p75 - p25
+
+    # Calculate CV (coefficient of variation)
+    mean_tokens = sum(actual_tokens) / len(actual_tokens)
+    if mean_tokens > 0 and len(actual_tokens) > 1:
+        std = statistics.stdev(actual_tokens)
+        cv = std / mean_tokens
+    else:
+        std = 0.0
+        cv = 0.0
+
+    return {
+        "mad": mad,
+        "iqr": iqr,
+        "p25": p25,
+        "p75": p75,
+        "cv": cv,
+        "std": std,
+    }
 
 
 # ============================================================================
@@ -332,7 +522,17 @@ def compute_dispersion_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
 # ============================================================================
 
 
-def _compute_percentile(values: list[float], percentile: float) -> float:
+@overload
+def _compute_percentile(values: Sequence[int], percentile: float) -> float: ...
+
+
+@overload
+def _compute_percentile(values: Sequence[float], percentile: float) -> float: ...
+
+
+def _compute_percentile(
+    values: Sequence[int] | Sequence[float], percentile: float
+) -> float:
     """Compute percentile using linear interpolation.
 
     Args:
