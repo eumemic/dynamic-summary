@@ -105,10 +105,10 @@ def get_change_emoji(
         threshold: Minimum percentage for non-neutral emoji (default 1%)
 
     Returns:
-        Emoji indicating whether change is desirable: 🟢 (good), 🟡 (neutral), 🔴 (bad)
+        Emoji indicating whether change is desirable: 🟢 (good), ⚪ (neutral), 🔴 (bad)
     """
     if abs(change_percent) < threshold:
-        return "🟡"
+        return "⚪"
 
     is_positive_change = change_percent > 0
     is_desirable = (is_positive_change and higher_is_better) or (
@@ -126,10 +126,10 @@ def get_variance_emoji(variance_change_percent: float, threshold: float = 5.0) -
         threshold: Minimum percentage for non-neutral emoji (default 5%)
 
     Returns:
-        Emoji indicating variance change: 🟢 (decreased), 🟡 (stable), 🔴 (increased)
+        Emoji indicating variance change: 🟢 (decreased), ⚪ (stable), 🔴 (increased)
     """
     if abs(variance_change_percent) < threshold:
-        return "🟡"
+        return "⚪"
     return "🟢" if variance_change_percent < 0 else "🔴"
 
 
@@ -831,12 +831,12 @@ def _format_text_comparison_with_thresholds(
     """Format comparison as plain text table with dynamic thresholds."""
 
     # Build table header
-    click.echo("\n" + "=" * 130)
+    click.echo("\n" + "=" * 133)
     click.echo("Performance Comparison Report")
-    click.echo("=" * 130)
+    click.echo("=" * 133)
 
     # Table headers - adjusted widths for variance display and multi-line change
-    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>35} | {'Threshold':>15}"
+    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>38} | {'Threshold':>15}"
     click.echo("\n" + header)
     click.echo("-" * len(header))
 
@@ -855,15 +855,15 @@ def _format_text_comparison_with_thresholds(
             click.echo("-" * len(header))
 
     # Add footer with legend
-    click.echo("\n" + "=" * 130)
+    click.echo("\n" + "=" * 133)
     click.echo("\nLegend:")
-    click.echo("  Values: Shows metric ±variance (e.g., '50.0 ±2.0 tokens')")
+    click.echo("  Values: Shows metric ±variance (e.g., '50.0 ±2.0 tok')")
     click.echo("  Change format:")
-    click.echo("    Line 1: 🟢/🟡/🔴 absolute_change (percentage%) [significance]")
-    click.echo("    Line 2: 🟢/🟡/🔴 σ±variance_change (percentage%)")
+    click.echo("    Line 1: 🟢/⚪/🔴 absolute_change (percentage%) [significance]")
+    click.echo("    Line 2: 🟢/⚪/🔴 σ±variance_change (percentage%)")
     click.echo("  Direction indicators:")
     click.echo(
-        "    🟢 = Desirable direction | 🟡 = No meaningful change | 🔴 = Undesirable direction"
+        "    🟢 = Desirable direction | ⚪ = No meaningful change | 🔴 = Undesirable direction"
     )
     click.echo("  Significance indicators:")
     click.echo("    ❌ = Regression detected (exceeds threshold)")
@@ -968,16 +968,16 @@ def _format_comparison_row_with_threshold(
         if len(change_lines) == 2:
             # First line with absolute change
             click.echo(
-                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_lines[0]:<35} | {threshold_str:>15}"
+                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_lines[0]:<38} | {threshold_str:>15}"
             )
             # Second line with percentage and variance
             click.echo(
-                f"{'':12} | {'':20} | {'':18} | {'':18} | {change_lines[1]:<35} | {'':15}"
+                f"{'':12} | {'':20} | {'':18} | {'':18} | {change_lines[1]:<38} | {'':15}"
             )
         else:
             # Fallback for single line
             click.echo(
-                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<35} | {threshold_str:>15}"
+                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<38} | {threshold_str:>15}"
             )
 
 
@@ -1284,20 +1284,20 @@ def _calculate_change_with_threshold(
 def _get_unit_for_metric(metric_name: str) -> str:
     """Get the appropriate unit for a metric."""
     units = {
-        MetricNames.MEDIAN_ERROR: "tokens",
-        MetricNames.P95_ERROR: "tokens",
+        MetricNames.MEDIAN_ERROR: "tok",
+        MetricNames.P95_ERROR: "tok",
         MetricNames.MEDIAN_SECONDS: "s",
         MetricNames.P95_SECONDS: "s",
         MetricNames.COST: "$",
         MetricNames.USD_PER_NODE: "$",
-        MetricNames.MAD: "tokens",
+        MetricNames.MAD: "tok",
         MetricNames.RETRY_RATE: "",  # Ratio, no unit
         MetricNames.MAX_RETRIES: "",  # Count, no unit
         MetricNames.PERCENT_WITHIN_10: "%",
         "percent": "%",  # For backward compatibility with _prepare_row_data
-        MetricNames.TOTAL_TOKENS: "tokens",
-        MetricNames.TOTAL_PROMPT_TOKENS: "tokens",
-        MetricNames.TOTAL_COMPLETION_TOKENS: "tokens",
+        MetricNames.TOTAL_TOKENS: "tok",
+        MetricNames.TOTAL_PROMPT_TOKENS: "tok",
+        MetricNames.TOTAL_COMPLETION_TOKENS: "tok",
     }
     return units.get(metric_name, "")
 
