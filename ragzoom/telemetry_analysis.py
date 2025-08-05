@@ -121,6 +121,9 @@ def compute_target_fit_metrics(
         - percent_within_10: Percentage within ±10 tokens
         - max_overshoot: Maximum positive error
         - max_undershoot: Maximum negative error (most negative)
+        - error_mad: MAD of errors (for dynamic thresholds)
+        - error_iqr: IQR of errors
+        - error_std: Standard deviation of errors
     """
     errors = []
     within_10_count = 0
@@ -152,6 +155,9 @@ def compute_target_fit_metrics(
             "percent_within_10": 0.0,
             "max_overshoot": 0.0,
             "max_undershoot": 0.0,
+            "error_mad": 0.0,
+            "error_iqr": 0.0,
+            "error_std": 0.0,
         }
 
     sorted_errors = sorted(errors)
@@ -159,12 +165,28 @@ def compute_target_fit_metrics(
     p95_error = _compute_percentile(sorted_errors, 0.95)
     percent_within_10 = (within_10_count / len(errors)) * 100
 
+    # Calculate variance metrics for errors
+    absolute_deviations = [abs(e - median_error) for e in errors]
+    error_mad = median(absolute_deviations)
+
+    p25_error = _compute_percentile(sorted_errors, 0.25)
+    p75_error = _compute_percentile(sorted_errors, 0.75)
+    error_iqr = p75_error - p25_error
+
+    if len(errors) > 1:
+        error_std = statistics.stdev(errors)
+    else:
+        error_std = 0.0
+
     return {
         "median_error": median_error,
         "p95_error": p95_error,
         "percent_within_10": percent_within_10,
         "max_overshoot": max_overshoot,
         "max_undershoot": max_undershoot,
+        "error_mad": error_mad,
+        "error_iqr": error_iqr,
+        "error_std": error_std,
     }
 
 
@@ -204,6 +226,9 @@ def compute_latency_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
         - median_seconds: Median wall-clock time per accepted summary (including retries)
         - p95_seconds: 95th percentile latency
         - total_indexing_seconds: Total time for all nodes
+        - latency_mad: MAD of latencies (for dynamic thresholds)
+        - latency_iqr: IQR of latencies
+        - latency_std: Standard deviation of latencies
     """
     node_times = []
     total_time = 0.0
@@ -232,16 +257,35 @@ def compute_latency_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
             "median_seconds": 0.0,
             "p95_seconds": 0.0,
             "total_indexing_seconds": 0.0,
+            "latency_mad": 0.0,
+            "latency_iqr": 0.0,
+            "latency_std": 0.0,
         }
 
     sorted_times = sorted(node_times)
     median_seconds = median(sorted_times)
     p95_seconds = _compute_percentile(sorted_times, 0.95)
 
+    # Calculate variance metrics for latency
+    absolute_deviations = [abs(t - median_seconds) for t in node_times]
+    latency_mad = median(absolute_deviations)
+
+    p25_latency = _compute_percentile(sorted_times, 0.25)
+    p75_latency = _compute_percentile(sorted_times, 0.75)
+    latency_iqr = p75_latency - p25_latency
+
+    if len(node_times) > 1:
+        latency_std = statistics.stdev(node_times)
+    else:
+        latency_std = 0.0
+
     return {
         "median_seconds": median_seconds,
         "p95_seconds": p95_seconds,
         "total_indexing_seconds": total_time,
+        "latency_mad": latency_mad,
+        "latency_iqr": latency_iqr,
+        "latency_std": latency_std,
     }
 
 
@@ -294,11 +338,17 @@ def compute_cost_metrics(
     }
 
 
-def compute_dispersion_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
-    """Compute dispersion metrics.
+def compute_dispersion_metrics(nodes: list[dict[Any, Any]]) -> dict[str, Any]:
+    """Compute comprehensive dispersion metrics.
 
     Returns:
         - mad: Median Absolute Deviation of actual token counts
+        - iqr: Interquartile range (75th - 25th percentile)
+        - p25: 25th percentile
+        - p75: 75th percentile
+        - cv: Coefficient of variation (std/mean)
+        - std: Standard deviation
+        - raw_values: List of actual token values (for dynamic thresholds)
     """
     actual_tokens = []
 
@@ -312,14 +362,45 @@ def compute_dispersion_metrics(nodes: list[dict[Any, Any]]) -> dict[str, float]:
                 break
 
     if not actual_tokens:
-        return {"mad": 0.0}
+        return {
+            "mad": 0.0,
+            "iqr": 0.0,
+            "p25": 0.0,
+            "p75": 0.0,
+            "cv": 0.0,
+            "std": 0.0,
+            "raw_values": [],
+        }
 
     # Calculate MAD: median(|x_i - median(x)|)
     median_tokens = median(actual_tokens)
     absolute_deviations = [abs(x - median_tokens) for x in actual_tokens]
     mad = median(absolute_deviations)
 
-    return {"mad": mad}
+    # Calculate additional metrics
+    sorted_tokens = sorted(actual_tokens)
+    p25 = _compute_percentile(sorted_tokens, 0.25)
+    p75 = _compute_percentile(sorted_tokens, 0.75)
+    iqr = p75 - p25
+
+    # Calculate CV (coefficient of variation)
+    mean_tokens = sum(actual_tokens) / len(actual_tokens)
+    if mean_tokens > 0 and len(actual_tokens) > 1:
+        std = statistics.stdev(actual_tokens)
+        cv = std / mean_tokens
+    else:
+        std = 0.0
+        cv = 0.0
+
+    return {
+        "mad": mad,
+        "iqr": iqr,
+        "p25": p25,
+        "p75": p75,
+        "cv": cv,
+        "std": std,
+        "raw_values": actual_tokens,
+    }
 
 
 # ============================================================================
