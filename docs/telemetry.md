@@ -246,14 +246,19 @@ This creates a side-by-side visualization showing both telemetry results in para
 
 The plots share scales where appropriate for direct visual comparison.
 
-### Output Formats
+### Output Options
 
 ```bash
-# Generate PDF reports
-ragzoom-telemetry visualize file1.json file2.json --format pdf
+# Default output: visualization.png in current directory
+ragzoom-telemetry visualize telemetry.json
 
-# Specify output directory
-ragzoom-telemetry visualize telemetry.json --output-dir reports/
+# Specify custom output path
+ragzoom-telemetry visualize baseline.json -o analysis.png
+ragzoom-telemetry visualize baseline.json current.json -o comparison.pdf
+
+# Format is inferred from extension, or use --format
+ragzoom-telemetry visualize telemetry.json --format pdf
+ragzoom-telemetry visualize telemetry.json -o report --format svg
 ```
 
 ### Generated Reports
@@ -371,8 +376,8 @@ ragzoom-telemetry visualize baseline.json
 # Generate side-by-side comparison of two files
 ragzoom-telemetry visualize baseline.json current.json
 
-# Specify output format and directory
-ragzoom-telemetry visualize before.json after.json --format pdf --output-dir reports/
+# Specify output format and path
+ragzoom-telemetry visualize before.json after.json -o reports/comparison.pdf
 ```
 
 ### Comparison Output Format

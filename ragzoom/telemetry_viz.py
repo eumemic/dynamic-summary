@@ -55,10 +55,11 @@ class TelemetryVisualizer:
     MEDIUM_BIN_WIDTH = 10
     LARGE_BIN_COUNT = 20
 
-    def __init__(self, output_dir: Path) -> None:
-        """Initialize visualizer with output directory."""
-        self.output_dir = output_dir
-        self.output_dir.mkdir(exist_ok=True, parents=True)
+    def __init__(self, output_path: Path) -> None:
+        """Initialize visualizer with output file path."""
+        self.output_path = output_path
+        # Ensure parent directory exists
+        self.output_path.parent.mkdir(exist_ok=True, parents=True)
         self.thresholds = get_telemetry_thresholds()
 
     def load_benchmark_data(self, file_path: Path) -> dict[str, Any]:
@@ -122,7 +123,6 @@ class TelemetryVisualizer:
         )
 
         # Save figure
-        output_path = self.output_dir / f"telemetry_{chunk_size}_tokens.{output_format}"
         # Suppress layout and font warnings for cleaner output
         import warnings
 
@@ -133,10 +133,10 @@ class TelemetryVisualizer:
             )
             warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
             plt.tight_layout()
-            plt.savefig(output_path, bbox_inches="tight")
+            plt.savefig(self.output_path, bbox_inches="tight")
         plt.close()
 
-        print(f"Saved visualization to {output_path}")
+        print(f"Saved visualization to {self.output_path}")
 
     def _create_config_from_metrics(self, metrics: dict[str, Any]) -> RagZoomConfig:
         """Create a config object from metrics data for cost calculations."""
@@ -289,10 +289,6 @@ class TelemetryVisualizer:
         ax7_right.set_title("Token Distributions", fontsize=12)
 
         # Save figure
-        output_path = (
-            self.output_dir / f"comparison_{file1.stem}_vs_{file2.stem}.{output_format}"
-        )
-
         # Suppress warnings about tight_layout
         import warnings
 
@@ -303,10 +299,10 @@ class TelemetryVisualizer:
             )
             warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
             plt.tight_layout()
-            plt.savefig(output_path, bbox_inches="tight", dpi=SAVE_DPI)
+            plt.savefig(self.output_path, bbox_inches="tight", dpi=SAVE_DPI)
         plt.close()
 
-        print(f"Saved side-by-side comparison to {output_path}")
+        print(f"Saved side-by-side comparison to {self.output_path}")
 
     def _plot_token_usage_by_tree_level(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes

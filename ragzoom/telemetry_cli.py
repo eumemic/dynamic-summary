@@ -727,23 +727,26 @@ def compare(baseline_path: str, current_path: str, output: str) -> None:
 @cli.command("visualize")
 @click.argument("input_paths", nargs=-1, required=True, type=click.Path(exists=True))
 @click.option(
-    "--output-dir",
+    "-o",
+    "--output",
     type=click.Path(),
-    default="telemetry_reports",
-    help="Output directory for visualizations",
+    default=None,
+    help="Output file path (default: visualization.<format>)",
 )
 @click.option(
     "--format",
     type=click.Choice(["png", "pdf", "svg"]),
     default="png",
-    help="Output format (default: png)",
+    help="Output format when -o is not specified or has no extension (default: png)",
 )
-def visualize(input_paths: tuple[str, ...], output_dir: str, format: str) -> None:
+def visualize(input_paths: tuple[str, ...], output: str | None, format: str) -> None:
     """Generate visualizations from one or two telemetry files.
 
     Examples:
         ragzoom-telemetry visualize baseline.json
         ragzoom-telemetry visualize baseline.json current.json
+        ragzoom-telemetry visualize baseline.json -o analysis.png
+        ragzoom-telemetry visualize baseline.json current.json -o comparison.pdf
     """
     # Check dependencies first
     _check_telemetry_deps()
@@ -751,7 +754,21 @@ def visualize(input_paths: tuple[str, ...], output_dir: str, format: str) -> Non
     try:
         from ragzoom.telemetry_viz import TelemetryVisualizer
 
-        visualizer = TelemetryVisualizer(Path(output_dir))
+        # Determine output path and format
+        if output:
+            output_path = Path(output)
+            # Infer format from extension if present
+            if output_path.suffix and output_path.suffix[1:] in ["png", "pdf", "svg"]:
+                format = output_path.suffix[1:]
+            elif not output_path.suffix:
+                # No extension, add format
+                output_path = output_path.with_suffix(f".{format}")
+        else:
+            # Default output path in current directory
+            output_path = Path(f"visualization.{format}")
+
+        # Create visualizer with output path
+        visualizer = TelemetryVisualizer(output_path)
 
         if len(input_paths) == 1:
             # Single file visualization
@@ -760,7 +777,7 @@ def visualize(input_paths: tuple[str, ...], output_dir: str, format: str) -> Non
                 click.echo(f"❌ Error: {input_paths[0]} is not a file")
                 sys.exit(1)
             visualizer.visualize_single_benchmark(file_path, format)
-            click.echo(f"✅ Generated visualization for {file_path.name}")
+            click.echo(f"✅ Generated visualization: {output_path}")
 
         elif len(input_paths) == 2:
             # Side-by-side comparison
@@ -772,16 +789,14 @@ def visualize(input_paths: tuple[str, ...], output_dir: str, format: str) -> Non
                 sys.exit(1)
 
             visualizer.visualize_side_by_side(file1, file2, format)
-            click.echo(
-                f"✅ Generated side-by-side comparison: {file1.name} vs {file2.name}"
-            )
+            click.echo(f"✅ Generated side-by-side comparison: {output_path}")
 
         else:
             click.echo("❌ Error: Please provide 1 or 2 telemetry JSON files")
-            click.echo("  Usage: ragzoom-telemetry visualize <file1> [file2]")
+            click.echo(
+                "  Usage: ragzoom-telemetry visualize <file1> [file2] [-o output.png]"
+            )
             sys.exit(1)
-
-        click.echo(f"📊 Output saved to {output_dir}/")
 
     except Exception as e:
         click.echo(f"❌ Error generating visualizations: {e}", err=True)
