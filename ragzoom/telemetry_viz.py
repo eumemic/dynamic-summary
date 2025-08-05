@@ -209,7 +209,7 @@ class TelemetryVisualizer:
 
         # Add super title
         fig.suptitle(
-            f"Side-by-Side Comparison: {file1.stem} vs {file2.stem}",
+            "Side-by-Side Comparison: Baseline vs Current",
             fontsize=16,
             y=0.98,
         )
@@ -217,11 +217,11 @@ class TelemetryVisualizer:
         # 1. Token usage by Tree Level
         ax1_left = fig.add_subplot(gs[0, 0])
         self._plot_token_usage_by_tree_level(telemetry1, config1, ax1_left)
-        ax1_left.set_title(f"Token Usage - {file1.stem}", fontsize=12)
+        ax1_left.set_title("Token Usage by Tree Level", fontsize=12)
 
         ax1_right = fig.add_subplot(gs[0, 1])
         self._plot_token_usage_by_tree_level(telemetry2, config2, ax1_right)
-        ax1_right.set_title(f"Token Usage - {file2.stem}", fontsize=12)
+        ax1_right.set_title("Token Usage by Tree Level", fontsize=12)
 
         # Share y-axis scale for better comparison
         max_y = max(ax1_left.get_ylim()[1], ax1_right.get_ylim()[1])
@@ -231,38 +231,38 @@ class TelemetryVisualizer:
         # 2. Cost Breakdown
         ax2_left = fig.add_subplot(gs[1, 0])
         self._plot_cost_breakdown(telemetry1, config1, ax2_left)
-        ax2_left.set_title(f"Cost Breakdown - {file1.stem}", fontsize=12)
+        ax2_left.set_title("Cost Breakdown", fontsize=12)
 
         ax2_right = fig.add_subplot(gs[1, 1])
         self._plot_cost_breakdown(telemetry2, config2, ax2_right)
-        ax2_right.set_title(f"Cost Breakdown - {file2.stem}", fontsize=12)
+        ax2_right.set_title("Cost Breakdown", fontsize=12)
 
         # 3. Batch Efficiency
         ax3_left = fig.add_subplot(gs[2, 0])
         self._plot_batch_efficiency(telemetry1, ax3_left)
-        ax3_left.set_title(f"Batch Efficiency - {file1.stem}", fontsize=12)
+        ax3_left.set_title("Batch Efficiency", fontsize=12)
 
         ax3_right = fig.add_subplot(gs[2, 1])
         self._plot_batch_efficiency(telemetry2, ax3_right)
-        ax3_right.set_title(f"Batch Efficiency - {file2.stem}", fontsize=12)
+        ax3_right.set_title("Batch Efficiency", fontsize=12)
 
         # 4. Retry Patterns
         ax4_left = fig.add_subplot(gs[3, 0])
         self._plot_retry_patterns(telemetry1, ax4_left)
-        ax4_left.set_title(f"Retry Patterns - {file1.stem}", fontsize=12)
+        ax4_left.set_title("Retry Patterns", fontsize=12)
 
         ax4_right = fig.add_subplot(gs[3, 1])
         self._plot_retry_patterns(telemetry2, ax4_right)
-        ax4_right.set_title(f"Retry Patterns - {file2.stem}", fontsize=12)
+        ax4_right.set_title("Retry Patterns", fontsize=12)
 
         # 5. Summary Accuracy
         ax5_left = fig.add_subplot(gs[4, 0])
         self._plot_summary_accuracy(telemetry1, ax5_left)
-        ax5_left.set_title(f"Summary Accuracy - {file1.stem}", fontsize=12)
+        ax5_left.set_title("Summary Accuracy", fontsize=12)
 
         ax5_right = fig.add_subplot(gs[4, 1])
         self._plot_summary_accuracy(telemetry2, ax5_right)
-        ax5_right.set_title(f"Summary Accuracy - {file2.stem}", fontsize=12)
+        ax5_right.set_title("Summary Accuracy", fontsize=12)
 
         # Share x-axis scale for accuracy plots
         min_x = min(ax5_left.get_xlim()[0], ax5_right.get_xlim()[0])
@@ -273,20 +273,20 @@ class TelemetryVisualizer:
         # 6. Node Timeline
         ax6_left = fig.add_subplot(gs[5, 0])
         self._plot_node_timeline(telemetry1, ax6_left)
-        ax6_left.set_title(f"Node Timeline - {file1.stem}", fontsize=12)
+        ax6_left.set_title("Node Creation Timeline", fontsize=12)
 
         ax6_right = fig.add_subplot(gs[5, 1])
         self._plot_node_timeline(telemetry2, ax6_right)
-        ax6_right.set_title(f"Node Timeline - {file2.stem}", fontsize=12)
+        ax6_right.set_title("Node Creation Timeline", fontsize=12)
 
         # 7. Token Distributions
         ax7_left = fig.add_subplot(gs[6, 0])
         self._plot_token_distributions(telemetry1, ax7_left)
-        ax7_left.set_title(f"Token Distributions - {file1.stem}", fontsize=12)
+        ax7_left.set_title("Token Distributions", fontsize=12)
 
         ax7_right = fig.add_subplot(gs[6, 1])
         self._plot_token_distributions(telemetry2, ax7_right)
-        ax7_right.set_title(f"Token Distributions - {file2.stem}", fontsize=12)
+        ax7_right.set_title("Token Distributions", fontsize=12)
 
         # Save figure
         output_path = (
