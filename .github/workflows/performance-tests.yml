@@ -99,6 +99,23 @@ jobs:
             echo "REGRESSION=true" >> $GITHUB_OUTPUT
           fi
       
+      - name: Generate visualization for 200 tokens
+        id: visualize
+        run: |
+          # Generate side-by-side visualization for 200 tokens if both files exist
+          if [ -f "baseline_results/telemetry_200_tokens.json" ] && [ -f "benchmark_results/telemetry_200_tokens.json" ]; then
+            echo "📊 Generating side-by-side visualization for 200 tokens..."
+            ragzoom-telemetry visualize baseline_results/telemetry_200_tokens.json benchmark_results/telemetry_200_tokens.json -o comparison_200_tokens.png || {
+              echo "⚠️ Failed to generate visualization"
+            }
+            if [ -f "comparison_200_tokens.png" ]; then
+              echo "✅ Visualization generated successfully"
+              echo "VISUALIZATION_GENERATED=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "⚠️ Skipping visualization - missing telemetry_200_tokens.json files"
+          fi
+      
       - name: Compare results
         id: compare
         run: |
@@ -167,10 +184,17 @@ jobs:
               comparison_exit_code=$?
               set -e
               
-              # Add workflow link to the top of the report if it exists
+              # Add workflow link and visualization link to the top of the report if it exists
               if [ -f report.md ] && [ -s report.md ]; then
-                # Create a temporary file with the link
+                # Create a temporary file with the links
                 echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
+                
+                # Add visualization link if it was generated
+                if [ "${{ steps.visualize.outputs.VISUALIZATION_GENERATED }}" == "true" ]; then
+                  echo "" >> report_with_link.md
+                  echo "📊 **[View side-by-side visualization (200 tokens)]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts)**" >> report_with_link.md
+                fi
+                
                 echo "" >> report_with_link.md
                 cat report.md >> report_with_link.md
                 mv report_with_link.md report.md
@@ -190,10 +214,17 @@ jobs:
               comparison_exit_code=$?
               set -e
               
-              # Add workflow link to the top of the report if it exists
+              # Add workflow link and visualization link to the top of the report if it exists
               if [ -f report.md ] && [ -s report.md ]; then
-                # Create a temporary file with the link
+                # Create a temporary file with the links
                 echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
+                
+                # Add visualization link if it was generated
+                if [ "${{ steps.visualize.outputs.VISUALIZATION_GENERATED }}" == "true" ]; then
+                  echo "" >> report_with_link.md
+                  echo "📊 **[View side-by-side visualization (200 tokens)]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID#artifacts)**" >> report_with_link.md
+                fi
+                
                 echo "" >> report_with_link.md
                 cat report.md >> report_with_link.md
                 mv report_with_link.md report.md
@@ -271,3 +302,4 @@ jobs:
             baseline_results/
             benchmark_results/
             report.md
+            comparison_200_tokens.png
