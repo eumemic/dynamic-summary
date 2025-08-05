@@ -18,7 +18,7 @@ import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from statistics import median
-from typing import Any
+from typing import Any, overload
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_types import (
@@ -521,7 +521,17 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]
 # ============================================================================
 
 
-def _compute_percentile(values: Sequence[int | float], percentile: float) -> float:
+@overload
+def _compute_percentile(values: Sequence[int], percentile: float) -> float: ...
+
+
+@overload
+def _compute_percentile(values: Sequence[float], percentile: float) -> float: ...
+
+
+def _compute_percentile(
+    values: Sequence[int] | Sequence[float], percentile: float
+) -> float:
     """Compute percentile using linear interpolation.
 
     Args:

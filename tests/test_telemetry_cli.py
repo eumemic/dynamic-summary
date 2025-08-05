@@ -339,7 +339,7 @@ class TestTelemetryCompare:
         # Median error = -50, MAD = median([0, 2, 2]) = 2.0
         expected_mad = metrics["target_fit"]["error_mad"]
         if expected_mad == 0.0:  # Zero variance means no threshold
-            assert threshold.absolute_value == float("inf")
+            assert threshold.absolute_value is None
             assert not threshold.is_computed
         else:
             expected_threshold = (3.0 + 2.0) * expected_mad
@@ -352,7 +352,7 @@ class TestTelemetryCompare:
         )
         # CI adjustment multiplies k-factors by 1.5
         if expected_mad == 0.0:  # Zero variance means no threshold
-            assert threshold_ci.absolute_value == float("inf")
+            assert threshold_ci.absolute_value is None
         else:
             expected_ci_threshold = (3.0 * 1.5 + 2.0 * 1.5) * expected_mad
             assert threshold_ci.absolute_value == expected_ci_threshold

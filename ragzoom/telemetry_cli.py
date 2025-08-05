@@ -55,7 +55,7 @@ class MetricNames:
 class DynamicThreshold:
     """Represents a threshold computed from baseline variance."""
 
-    absolute_value: float
+    absolute_value: float | None  # None means no threshold enforcement
     baseline_variance: float
     k_factors: tuple[float, float]  # (k1_between_run, k2_baseline_uncertainty)
     metric_name: str
@@ -131,7 +131,7 @@ def compute_dynamic_threshold(
     else:
         # For metrics without variance data, don't enforce any threshold
         return DynamicThreshold(
-            absolute_value=float("inf"),
+            absolute_value=None,
             baseline_variance=0.0,
             k_factors=(0.0, 0.0),
             metric_name=metric_name,
@@ -143,7 +143,7 @@ def compute_dynamic_threshold(
     # This handles cases like retry_rate when retries aren't implemented yet
     if variance == 0.0:
         return DynamicThreshold(
-            absolute_value=float("inf"),  # No regression possible
+            absolute_value=None,  # No regression possible
             baseline_variance=0.0,
             k_factors=(config.k1_between_run, config.k2_baseline_uncertainty),
             metric_name=metric_name,
@@ -303,6 +303,10 @@ def check_regression_with_dynamic_threshold(
         Tuple of (is_regression, absolute_change)
     """
     absolute_change = current_val - baseline_val
+
+    # If no threshold is set, no regression is possible
+    if threshold.absolute_value is None:
+        return False, absolute_change
 
     if higher_is_better:
         # For metrics where higher is better, regression is a decrease beyond threshold
@@ -887,7 +891,7 @@ def _format_comparison_row_with_threshold(
     )
 
     # Format threshold value
-    if threshold.absolute_value == float("inf"):
+    if threshold.absolute_value is None:
         threshold_str = "—"  # No threshold enforced
     else:
         unit = _get_unit_for_metric(threshold.metric_name)
@@ -1035,6 +1039,10 @@ def _determine_significance_emoji(
     Returns:
         Emoji string: ❌ for regression, ✅ for improvement, ⚠️ for degradation, empty for normal variance
     """
+    # If no threshold is set, no significance can be determined
+    if threshold.absolute_value is None:
+        return ""
+
     # Use configured sigma (baseline variance) for meaningful changes, full threshold for regression
     significance_threshold = (
         threshold.baseline_variance * threshold.emoji_significance_sigma
