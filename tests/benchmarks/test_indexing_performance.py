@@ -156,8 +156,13 @@ def test_performance_comparison():
     results = {}
     for file in output_dir.glob("telemetry_*_tokens.json"):
         with open(file) as f:
-            data = json.load(f)
-            chunk_size = data["config"]["leaf_tokens"]
+            telemetry = json.load(f)
+            # Extract chunk size from telemetry data (v3.0 format)
+            chunk_size = telemetry.get("chunk_size", 0)
+
+            # Skip if no chunk size found
+            if not chunk_size:
+                continue
 
             # Compute metrics from telemetry data
             config = RagZoomConfig(
@@ -166,8 +171,8 @@ def test_performance_comparison():
                 summary_input_cost_per_1k=0.0025,
                 summary_output_cost_per_1k=0.01,
             )
-            basic_metrics = compute_metrics_from_telemetry(data["telemetry"], config)
-            simplified = compute_simplified_metrics(data["telemetry"], config)
+            basic_metrics = compute_metrics_from_telemetry(telemetry, config)
+            simplified = compute_simplified_metrics(telemetry, config)
 
             # Get chunk-specific metrics
             chunk_metrics = simplified.metrics_by_chunk_size.get(chunk_size, {})
