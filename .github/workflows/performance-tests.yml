@@ -327,8 +327,20 @@ jobs:
               # Restore the file
               cp /tmp/comparison_200_tokens.png comparison_200_tokens.png
               
+              # Wait for the raw URL to become accessible (GitHub needs time to make new branches available)
+              VISUALIZATION_URL="https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH/comparison_200_tokens.png"
+              echo "⏳ Waiting for image to be accessible at $VISUALIZATION_URL..."
+              for i in {1..10}; do
+                if curl -f -s -o /dev/null "$VISUALIZATION_URL"; then
+                  echo "✅ Image is accessible after $i seconds"
+                  break
+                fi
+                echo "  Attempt $i/10: Image not yet accessible, waiting..."
+                sleep 2
+              done
+              
               # Save the image URL for later use
-              echo "VISUALIZATION_URL=https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH/comparison_200_tokens.png" >> $GITHUB_OUTPUT
+              echo "VISUALIZATION_URL=$VISUALIZATION_URL" >> $GITHUB_OUTPUT
               echo "📸 Image published to branch: $BRANCH"
             fi
           else
