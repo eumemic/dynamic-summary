@@ -34,7 +34,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const identifier = '<!-- perf-report-comment -->';
+            const identifier = '<!-- github-actions-perf-report-comment -->';
             const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
             
             // Initial comment body
@@ -55,7 +55,8 @@ jobs:
             console.log(`Found ${comments.length} total comments on PR`);
             
             const botComment = comments.find(comment => 
-              comment.body && comment.body.includes(identifier)
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
             );
             
             if (botComment) {
@@ -110,8 +111,7 @@ jobs:
           # Install main package with telemetry dependencies
           pip install -e .[telemetry]
       
-      - name: Run PR benchmarks
-        id: benchmark
+      - name: Setup benchmark environment
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -127,18 +127,157 @@ jobs:
           else
             echo "✅ RAGZOOM_OPENAI_API_KEY is configured"
           fi
-          # Run benchmarks for different chunk sizes
           mkdir -p benchmark_results
-          
-          for chunk_size in 100 200 400; do
-            echo "Running PR benchmark with chunk_size=$chunk_size"
-            if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-$chunk_size" -v; then
-              echo "❌ Benchmark failed for chunk_size=$chunk_size"
-              echo "Creating error result file..."
-              echo '{"error": "Benchmark failed to run", "chunk_size": "'$chunk_size'"}' > "benchmark_results/telemetry_${chunk_size}_tokens.json"
-              echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
-            fi
-          done
+      
+      - name: Run benchmark - 100 tokens
+        id: benchmark_100
+        env:
+          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Running PR benchmark with chunk_size=100"
+          if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-100" -v; then
+            echo "❌ Benchmark failed for chunk_size=100"
+            echo "Creating error result file..."
+            echo '{"error": "Benchmark failed to run", "chunk_size": "100"}' > "benchmark_results/telemetry_100_tokens.json"
+            echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Update comment - 100 tokens complete
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const body = `${identifier}
+            ## 📊 Performance Report
+            
+            _View [workflow run](${workflowUrl})_
+            
+            ⏳ **Progress:**
+            - ✅ 100 tokens benchmark complete
+            - ⏱️ Running 200 tokens benchmark...`;
+            
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            }
+      
+      - name: Run benchmark - 200 tokens
+        id: benchmark_200
+        env:
+          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Running PR benchmark with chunk_size=200"
+          if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-200" -v; then
+            echo "❌ Benchmark failed for chunk_size=200"
+            echo "Creating error result file..."
+            echo '{"error": "Benchmark failed to run", "chunk_size": "200"}' > "benchmark_results/telemetry_200_tokens.json"
+            echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Update comment - 200 tokens complete
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const body = `${identifier}
+            ## 📊 Performance Report
+            
+            _View [workflow run](${workflowUrl})_
+            
+            ⏳ **Progress:**
+            - ✅ 100 tokens benchmark complete
+            - ✅ 200 tokens benchmark complete
+            - ⏱️ Running 400 tokens benchmark...`;
+            
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            }
+      
+      - name: Run benchmark - 400 tokens
+        id: benchmark_400
+        env:
+          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Running PR benchmark with chunk_size=400"
+          if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-400" -v; then
+            echo "❌ Benchmark failed for chunk_size=400"
+            echo "Creating error result file..."
+            echo '{"error": "Benchmark failed to run", "chunk_size": "400"}' > "benchmark_results/telemetry_400_tokens.json"
+            echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Update comment - benchmarks complete
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const body = `${identifier}
+            ## 📊 Performance Report
+            
+            _View [workflow run](${workflowUrl})_
+            
+            ⏳ **Progress:**
+            - ✅ 100 tokens benchmark complete
+            - ✅ 200 tokens benchmark complete
+            - ✅ 400 tokens benchmark complete
+            - ⏱️ Generating visualization...`;
+            
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            }
       
       - name: Check benchmark execution
         id: benchmark_check
@@ -196,6 +335,45 @@ jobs:
           else
             echo "⚠️ Skipping visualization - missing telemetry_200_tokens.json files"
           fi
+      
+      - name: Update comment - visualization complete
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const body = `${identifier}
+            ## 📊 Performance Report
+            
+            _View [workflow run](${workflowUrl})_
+            
+            ⏳ **Progress:**
+            - ✅ 100 tokens benchmark complete
+            - ✅ 200 tokens benchmark complete
+            - ✅ 400 tokens benchmark complete
+            - ✅ Visualization generated
+            - ⏱️ Generating comparison report...`;
+            
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            }
       
       - name: Compare results
         id: compare
@@ -318,7 +496,7 @@ jobs:
         if: always()
         with:
           script: |
-            const identifier = '<!-- perf-report-comment -->';
+            const identifier = '<!-- github-actions-perf-report-comment -->';
             const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
             const report = `${{ steps.compare.outputs.report }}`;
             const visualizationUrl = `${{ steps.visualize.outputs.VISUALIZATION_URL }}`;
@@ -349,7 +527,8 @@ jobs:
             });
             
             const botComment = comments.find(comment => 
-              comment.body && comment.body.includes(identifier)
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
             );
             
             if (botComment) {
