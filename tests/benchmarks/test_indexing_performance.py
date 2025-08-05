@@ -88,28 +88,13 @@ def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
         )
 
         # Save telemetry data for comparison
+        # Note: telemetry is already in v3.0 format from add_document_with_telemetry()
         output_dir = Path("benchmark_results")
         output_dir.mkdir(exist_ok=True)
 
         output_file = output_dir / f"telemetry_{leaf_tokens}_tokens.json"
         with open(output_file, "w") as f:
-            json.dump(
-                {
-                    "config": {
-                        "leaf_tokens": leaf_tokens,
-                        "budget_tokens": benchmark_config.budget_tokens,
-                        "summary_model": benchmark_config.summary_model,
-                        "embedding_model": benchmark_config.embedding_model,
-                    },
-                    "document": {
-                        "document_id": f"{document_type}_{leaf_tokens}",
-                        "file_path": doc_name,
-                    },
-                    "telemetry": telemetry,
-                },
-                f,
-                indent=2,
-            )
+            json.dump(telemetry, f, indent=2)
 
         # Compute metrics from telemetry for display
         from ragzoom.telemetry_analysis import (
