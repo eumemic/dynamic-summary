@@ -76,7 +76,6 @@ def compute_simplified_metrics(
     for doc_type, doc_data in parsed_data["documents"].items():
         nodes = doc_data.get("nodes", [])
 
-        node: Any
         for node in nodes:
             # Skip leaf nodes (no summaries)
             height = node.get("height", node.get("level", 0))
@@ -91,7 +90,7 @@ def compute_simplified_metrics(
                     if target_tokens > 0:
                         if target_tokens not in nodes_by_target:
                             nodes_by_target[target_tokens] = []
-                        nodes_by_target[target_tokens].append(node)
+                        nodes_by_target[target_tokens].append(node)  # type: ignore[arg-type]
                     break
 
     # Compute metrics for each chunk size

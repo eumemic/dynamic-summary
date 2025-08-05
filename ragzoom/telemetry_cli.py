@@ -12,6 +12,36 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import compute_simplified_metrics
 
 
+# Metric name constants for consistency
+class MetricNames:
+    """Constants for metric names used throughout the telemetry system."""
+
+    # Target-fit metrics
+    MEDIAN_ERROR = "median_error"
+    P95_ERROR = "p95_error"
+    PERCENT_WITHIN_10 = "percent_within_10"
+
+    # Latency metrics
+    MEDIAN_SECONDS = "median_seconds"
+    P95_SECONDS = "p95_seconds"
+
+    # Cost metrics
+    USD_PER_NODE = "usd_per_node"
+    COST = "cost"
+
+    # Retry metrics
+    RETRY_RATE = "retry_rate"
+    MAX_RETRIES = "max_retries"
+
+    # Dispersion metrics
+    MAD = "mad"
+
+    # Token metrics
+    TOTAL_TOKENS = "total_tokens"
+    TOTAL_PROMPT_TOKENS = "total_prompt_tokens"
+    TOTAL_COMPLETION_TOKENS = "total_completion_tokens"
+
+
 @dataclass
 class DynamicThreshold:
     """Represents a threshold computed from baseline variance."""
@@ -54,13 +84,13 @@ class ThresholdConfig:
     def __post_init__(self) -> None:
         if self.min_thresholds is None:
             self.min_thresholds = {
-                "median_error": 15.0,  # tokens
-                "p95_error": 30.0,  # tokens
-                "latency": 0.5,  # seconds
-                "cost": 0.0002,  # USD
-                "mad": 10.0,  # tokens
-                "retry_rate": 0.2,  # ratio
-                "percent_within_10": 10.0,  # percentage points
+                MetricNames.MEDIAN_ERROR: 15.0,  # tokens
+                MetricNames.P95_ERROR: 30.0,  # tokens
+                "latency": 0.5,  # seconds (legacy name for median_seconds)
+                MetricNames.COST: 0.0002,  # USD
+                MetricNames.MAD: 10.0,  # tokens
+                MetricNames.RETRY_RATE: 0.2,  # ratio
+                MetricNames.PERCENT_WITHIN_10: 10.0,  # percentage points
             }
 
 
@@ -84,15 +114,19 @@ def compute_dynamic_threshold(
         DynamicThreshold with computed absolute threshold
     """
     # Extract variance from the appropriate metric group
-    if metric_name in ["median_error", "p95_error", "percent_within_10"]:
+    if metric_name in [
+        MetricNames.MEDIAN_ERROR,
+        MetricNames.P95_ERROR,
+        MetricNames.PERCENT_WITHIN_10,
+    ]:
         variance = baseline_metrics["target_fit"].get(variance_key, 0.0)
-    elif metric_name in ["median_seconds"]:
+    elif metric_name in [MetricNames.MEDIAN_SECONDS]:
         variance = baseline_metrics["latency"].get(variance_key, 0.0)
-    elif metric_name == "mad":
+    elif metric_name == MetricNames.MAD:
         variance = baseline_metrics["dispersion"].get("mad", 0.0)
-    elif metric_name == "retry_rate":
+    elif metric_name == MetricNames.RETRY_RATE:
         variance = baseline_metrics["retries"].get(variance_key, 0.0)
-    elif metric_name in ["usd_per_node", "cost"]:
+    elif metric_name in [MetricNames.USD_PER_NODE, MetricNames.COST]:
         variance = baseline_metrics["cost"].get(variance_key, 0.0)
     else:
         # For metrics without variance data, fall back to static threshold
@@ -362,7 +396,7 @@ def _check_metrics_for_regressions_with_thresholds(
 
         # Check median error regression
         threshold = compute_dynamic_threshold(
-            base_metrics, "median_error", "error_mad", config, is_ci
+            base_metrics, MetricNames.MEDIAN_ERROR, "error_mad", config, is_ci
         )
         chunk_thresholds["median_error"] = threshold
         is_regressed, _ = check_regression_with_dynamic_threshold(
@@ -375,7 +409,7 @@ def _check_metrics_for_regressions_with_thresholds(
 
         # Check p95 error regression
         threshold = compute_dynamic_threshold(
-            base_metrics, "p95_error", "error_mad", config, is_ci
+            base_metrics, MetricNames.P95_ERROR, "error_mad", config, is_ci
         )
         chunk_thresholds["p95_error"] = threshold
         is_regressed, _ = check_regression_with_dynamic_threshold(
@@ -388,7 +422,7 @@ def _check_metrics_for_regressions_with_thresholds(
 
         # Check latency regression
         threshold = compute_dynamic_threshold(
-            base_metrics, "median_seconds", "latency_mad", config, is_ci
+            base_metrics, MetricNames.MEDIAN_SECONDS, "latency_mad", config, is_ci
         )
         chunk_thresholds["latency"] = threshold
         is_regressed, _ = check_regression_with_dynamic_threshold(
@@ -400,7 +434,9 @@ def _check_metrics_for_regressions_with_thresholds(
             has_regression = True
 
         # Check MAD regression
-        threshold = compute_dynamic_threshold(base_metrics, "mad", "mad", config, is_ci)
+        threshold = compute_dynamic_threshold(
+            base_metrics, MetricNames.MAD, "mad", config, is_ci
+        )
         chunk_thresholds["mad"] = threshold
         is_regressed, _ = check_regression_with_dynamic_threshold(
             base_metrics["dispersion"]["mad"],
@@ -412,7 +448,7 @@ def _check_metrics_for_regressions_with_thresholds(
 
         # Check retry rate regression with dynamic threshold
         threshold = compute_dynamic_threshold(
-            base_metrics, "retry_rate", "retry_mad", config, is_ci
+            base_metrics, MetricNames.RETRY_RATE, "retry_mad", config, is_ci
         )
         chunk_thresholds["retry_rate"] = threshold
         is_regressed, _ = check_regression_with_dynamic_threshold(
@@ -425,7 +461,7 @@ def _check_metrics_for_regressions_with_thresholds(
 
         # Check cost regression with dynamic threshold
         threshold = compute_dynamic_threshold(
-            base_metrics, "usd_per_node", "cost_mad", config, is_ci
+            base_metrics, MetricNames.USD_PER_NODE, "cost_mad", config, is_ci
         )
         chunk_thresholds["cost"] = threshold
         is_regressed, _ = check_regression_with_dynamic_threshold(
@@ -438,7 +474,11 @@ def _check_metrics_for_regressions_with_thresholds(
 
         # Check percent_within_10 regression with dynamic threshold
         threshold = compute_dynamic_threshold(
-            base_metrics, "percent_within_10", "percent_within_10_mad", config, is_ci
+            base_metrics,
+            MetricNames.PERCENT_WITHIN_10,
+            "percent_within_10_mad",
+            config,
+            is_ci,
         )
         chunk_thresholds["percent_within_10"] = threshold
         is_regressed, _ = check_regression_with_dynamic_threshold(
@@ -1094,20 +1134,20 @@ def _calculate_change_with_threshold(
 def _get_unit_for_metric(metric_name: str) -> str:
     """Get the appropriate unit for a metric."""
     units = {
-        "median_error": "tokens",
-        "p95_error": "tokens",
-        "median_seconds": "s",
-        "p95_seconds": "s",
-        "cost": "$",
-        "usd_per_node": "$",
-        "mad": "tokens",
-        "retry_rate": "",  # Ratio, no unit
-        "max_retries": "",  # Count, no unit
-        "percent_within_10": "%",
+        MetricNames.MEDIAN_ERROR: "tokens",
+        MetricNames.P95_ERROR: "tokens",
+        MetricNames.MEDIAN_SECONDS: "s",
+        MetricNames.P95_SECONDS: "s",
+        MetricNames.COST: "$",
+        MetricNames.USD_PER_NODE: "$",
+        MetricNames.MAD: "tokens",
+        MetricNames.RETRY_RATE: "",  # Ratio, no unit
+        MetricNames.MAX_RETRIES: "",  # Count, no unit
+        MetricNames.PERCENT_WITHIN_10: "%",
         "percent": "%",  # For backward compatibility with _prepare_row_data
-        "total_tokens": "tokens",
-        "total_prompt_tokens": "tokens",
-        "total_completion_tokens": "tokens",
+        MetricNames.TOTAL_TOKENS: "tokens",
+        MetricNames.TOTAL_PROMPT_TOKENS: "tokens",
+        MetricNames.TOTAL_COMPLETION_TOKENS: "tokens",
     }
     return units.get(metric_name, "")
 
