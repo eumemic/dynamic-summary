@@ -142,32 +142,16 @@ def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
                 for metric, value in values.items():
                     print(f"  {metric}: {value:.2f}")
 
-        # Summary accuracy
+        # Summary accuracy (simplified - using only available properties)
         if hasattr(basic_metrics, "summary_stats") and basic_metrics.summary_stats:
             for target, stats in basic_metrics.summary_stats.items():
                 print(f"\nSummary accuracy (target={target}):")
                 print(f"  Count: {stats.count}")
                 print(f"  Average size: {stats.avg_tokens:.1f} tokens")
-                print(f"  Average deviation: {stats.avg_deviation_percent:.1f}%")
-                print(f"  Median deviation: {stats.median_deviation_percent:.1f}%")
-                print(f"  Std deviation: {stats.std_deviation_percent:.1f}%")
-                print(
-                    f"  Over target: {stats.percent_over_target:.1f}% (max: {stats.max_overage_percent:.1f}%)"
-                )
-                print(
-                    f"  Under target: {stats.percent_under_target:.1f}% (max: {stats.max_underage_percent:.1f}%)"
-                )
-
-                # Percentiles
-                print("\n  Percentiles:")
-                print(f"    P50: {stats.percentile_50:.1f}%")
-                print(f"    P90: {stats.percentile_90:.1f}%")
-                print(f"    P95: {stats.percentile_95:.1f}%")
-
-                # Histogram
-                print("\n  Distribution:")
-                for bucket, data in stats.histogram.items():
-                    print(f"    {bucket}: {data['count']} ({data['percentage']:.1f}%)")
+                print(f"  Average deviation: {stats.avg_deviation:.1f} tokens")
+                print(f"  Std deviation: {stats.std_deviation:.1f} tokens")
+                print(f"  Over target: {stats.over_target_count}")
+                print(f"  Under target: {stats.under_target_count}")
 
 
 def test_performance_comparison():
