@@ -95,42 +95,90 @@ class ThresholdConfig:
 
 
 def get_change_emoji(
-    change_percent: float, higher_is_better: bool, threshold: float = 1.0
+    absolute_change: float,
+    higher_is_better: bool,
+    threshold: DynamicThreshold | None = None,
 ) -> str:
-    """Get emoji for metric change direction.
+    """Get emoji for metric change based on significance and direction.
 
     Args:
-        change_percent: Percentage change in the metric
+        absolute_change: Absolute change in the metric
         higher_is_better: If True, positive change is good
-        threshold: Minimum percentage for non-neutral emoji (default 1%)
+        threshold: Dynamic threshold with variance information
 
     Returns:
-        Emoji indicating whether change is desirable: 🟢 (good), ⚪ (neutral), 🔴 (bad)
+        Emoji indicating change significance and direction:
+        - 🔴 = Regression detected (exceeds full threshold)
+        - 🟡 = Significant undesirable change (>1σ in bad direction)
+        - 🟢 = Significant improvement (>1σ in good direction)
+        - ⚪ = Insignificant change (<1σ)
     """
-    if abs(change_percent) < threshold:
+    if threshold is None or threshold.baseline_variance == 0:
+        # Fallback to simple direction-based logic if no threshold
         return "⚪"
 
-    is_positive_change = change_percent > 0
+    # Check for regression (exceeds full threshold)
+    if threshold.absolute_value is not None:
+        if higher_is_better:
+            if absolute_change < -threshold.absolute_value:
+                return "🔴"  # Regression: significant decrease when higher is better
+        else:
+            if absolute_change > threshold.absolute_value:
+                return "🔴"  # Regression: significant increase when lower is better
+
+    # Check for significance (>1σ baseline variance)
+    significance_threshold = (
+        threshold.baseline_variance * threshold.emoji_significance_sigma
+    )
+
+    if abs(absolute_change) < significance_threshold:
+        return "⚪"  # Change within normal variance
+
+    # Determine if change is desirable
+    is_positive_change = absolute_change > 0
     is_desirable = (is_positive_change and higher_is_better) or (
         not is_positive_change and not higher_is_better
     )
 
-    return "🟢" if is_desirable else "🔴"
+    return "🟢" if is_desirable else "🟡"  # Significant change
 
 
-def get_variance_emoji(variance_change_percent: float, threshold: float = 5.0) -> str:
-    """Get emoji for variance change (lower variance is always better).
+def get_variance_emoji(
+    variance_change: float,
+    baseline_variance: float,
+    significance_factor: float = 0.5,
+) -> str:
+    """Get emoji for variance change based on dynamic significance.
 
     Args:
-        variance_change_percent: Percentage change in variance/MAD
-        threshold: Minimum percentage for non-neutral emoji (default 5%)
+        variance_change: Absolute change in variance/MAD
+        baseline_variance: Baseline variance value
+        significance_factor: Multiplier for baseline to determine significance (default 0.5 = 50% change)
 
     Returns:
-        Emoji indicating variance change: 🟢 (decreased), ⚪ (stable), 🔴 (increased)
+        Emoji indicating variance change significance:
+        - 🔴 = Significant variance increase (bad for stability)
+        - 🟡 = Significant variance decrease (good but notable change)
+        - ⚪ = Insignificant variance change
     """
-    if abs(variance_change_percent) < threshold:
-        return "⚪"
-    return "🟢" if variance_change_percent < 0 else "🔴"
+    if baseline_variance == 0:
+        # Special case: any increase from zero variance is significant
+        if variance_change > 0:
+            return "🔴"
+        else:
+            return "⚪"
+
+    # Use relative change threshold (e.g., 50% of baseline variance)
+    significance_threshold = baseline_variance * significance_factor
+
+    if abs(variance_change) < significance_threshold:
+        return "⚪"  # Change within normal fluctuation
+
+    # Variance increase is always bad, decrease is notable but good
+    if variance_change > 0:
+        return "🔴"  # Significant increase in variance (worse stability)
+    else:
+        return "🟡"  # Significant decrease in variance (better stability, but notable)
 
 
 def compute_dynamic_threshold(
@@ -859,17 +907,17 @@ def _format_text_comparison_with_thresholds(
     click.echo("\nLegend:")
     click.echo("  Values: Shows metric ±variance (e.g., '50.0 ±2.0 tok')")
     click.echo("  Change format:")
-    click.echo("    Line 1: 🟢/⚪/🔴 absolute_change (percentage%) [significance]")
-    click.echo("    Line 2: 🟢/⚪/🔴 σ±variance_change (percentage%)")
-    click.echo("  Direction indicators:")
-    click.echo(
-        "    🟢 = Desirable direction | ⚪ = No meaningful change | 🔴 = Undesirable direction"
-    )
-    click.echo("  Significance indicators:")
-    click.echo("    ❌ = Regression detected (exceeds threshold)")
-    click.echo("    ✅ = Meaningful improvement (>1σ baseline variance)")
-    click.echo("    ⚠️ = Meaningful degradation but within threshold (>1σ but <5σ)")
-    click.echo("    (no emoji) = Change within normal variance (<1σ)")
+    click.echo("    Line 1: [emoji] absolute_change (percentage%)")
+    click.echo("    Line 2: [emoji] σ±variance_change (percentage%)")
+    click.echo("  Metric change indicators:")
+    click.echo("    🔴 = Regression detected (exceeds dynamic threshold)")
+    click.echo("    🟡 = Significant undesirable change (>1σ baseline variance)")
+    click.echo("    🟢 = Significant improvement (>1σ baseline variance)")
+    click.echo("    ⚪ = Insignificant change (<1σ baseline variance)")
+    click.echo("  Variance change indicators:")
+    click.echo("    🔴 = Significant variance increase (>50% of baseline)")
+    click.echo("    🟡 = Significant variance decrease (>50% of baseline)")
+    click.echo("    ⚪ = Insignificant variance change (<50% of baseline)")
 
 
 def _prepare_row_data(
@@ -1113,52 +1161,6 @@ def _calculate_change(
     return f"{change_pct:+.1f}%{emoji}"
 
 
-def _determine_significance_emoji(
-    absolute_change: float,
-    threshold: DynamicThreshold,
-    higher_is_better: bool,
-) -> str:
-    """Determine emoji based on change significance.
-
-    Args:
-        absolute_change: The absolute change value
-        threshold: Dynamic threshold with variance information
-        higher_is_better: If True, higher values are better
-
-    Returns:
-        Emoji string: ❌ for regression, ✅ for improvement, ⚠️ for degradation, empty for normal variance
-    """
-    # If no threshold is set, no significance can be determined
-    if threshold.absolute_value is None:
-        return ""
-
-    # Use configured sigma (baseline variance) for meaningful changes, full threshold for regression
-    significance_threshold = (
-        threshold.baseline_variance * threshold.emoji_significance_sigma
-        if threshold.is_computed
-        else threshold.absolute_value * 0.2  # 20% of threshold as fallback
-    )
-
-    # Check regression using full threshold
-    if higher_is_better:
-        is_regression = absolute_change < -threshold.absolute_value
-        is_improvement = absolute_change > significance_threshold
-        is_degradation = absolute_change < -significance_threshold
-    else:
-        is_regression = absolute_change > threshold.absolute_value
-        is_improvement = absolute_change < -significance_threshold
-        is_degradation = absolute_change > significance_threshold
-
-    if is_regression:
-        return " ❌"  # Regression detected
-    elif is_improvement:
-        return " ✅"  # Meaningful improvement
-    elif is_degradation:
-        return " ⚠️"  # Meaningful degradation (but not regression)
-    else:
-        return ""  # Change within normal variance
-
-
 def _format_absolute_change(
     absolute_change: float,
     metric_name: str,
@@ -1233,34 +1235,30 @@ def _calculate_change_with_threshold(
     # Calculate percentage for display
     change_pct = (absolute_change / abs(baseline_val)) * 100
 
-    # Get directional emoji for the metric change
-    metric_emoji = get_change_emoji(change_pct, higher_is_better)
-
-    # Determine significance and get emoji
-    significance_emoji = _determine_significance_emoji(
-        absolute_change, threshold, higher_is_better
-    )
+    # Get emoji based on significance and direction
+    metric_emoji = get_change_emoji(absolute_change, higher_is_better, threshold)
 
     # Format absolute change
     abs_str = _format_absolute_change(absolute_change, threshold.metric_name)
 
-    # Format first line: emoji + absolute + percentage + significance
-    line1 = f"{metric_emoji} {abs_str} ({change_pct:+.1f}%){significance_emoji}"
+    # Format first line: emoji + absolute + percentage (no extra significance emoji)
+    line1 = f"{metric_emoji} {abs_str} ({change_pct:+.1f}%)"
 
     # Format variance change if both variances provided
     if baseline_variance is not None and current_variance is not None:
         variance_change = current_variance - baseline_variance
 
+        # Get variance emoji based on dynamic significance
+        variance_emoji = get_variance_emoji(variance_change, baseline_variance)
+
+        # Calculate percentage for display
         if baseline_variance == 0:
             if current_variance > 0:
-                variance_emoji = "🔴"
                 variance_pct_str = " (+∞%)"
             else:
-                variance_emoji = "🟡"
                 variance_pct_str = " (±0%)"
         else:
             variance_change_pct = (variance_change / baseline_variance) * 100
-            variance_emoji = get_variance_emoji(variance_change_pct)
             variance_pct_str = f" ({variance_change_pct:+.0f}%)"
 
         # Format variance absolute change based on metric type

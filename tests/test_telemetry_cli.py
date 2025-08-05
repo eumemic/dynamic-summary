@@ -361,7 +361,7 @@ class TestTelemetryCompare:
         """Test emoji assignment based on variance thresholds."""
         from ragzoom.telemetry_cli import (
             DynamicThreshold,
-            _determine_significance_emoji,
+            get_change_emoji,
         )
 
         # Create threshold with known variance
@@ -377,35 +377,30 @@ class TestTelemetryCompare:
         # Test for error metrics (lower is better)
         # No change: within 1-sigma
         assert (
-            _determine_significance_emoji(5.0, threshold, higher_is_better=False) == ""
+            get_change_emoji(5.0, higher_is_better=False, threshold=threshold) == "⚪"
         )
 
         # Degradation: >1-sigma but <5-sigma
         assert (
-            _determine_significance_emoji(15.0, threshold, higher_is_better=False)
-            == " ⚠️"
+            get_change_emoji(15.0, higher_is_better=False, threshold=threshold) == "🟡"
         )
 
         # Improvement: >1-sigma in good direction
         assert (
-            _determine_significance_emoji(-15.0, threshold, higher_is_better=False)
-            == " ✅"
+            get_change_emoji(-15.0, higher_is_better=False, threshold=threshold) == "🟢"
         )
 
         # Regression: >5-sigma threshold
         assert (
-            _determine_significance_emoji(55.0, threshold, higher_is_better=False)
-            == " ❌"
+            get_change_emoji(55.0, higher_is_better=False, threshold=threshold) == "🔴"
         )
 
         # Test for metrics where higher is better
         assert (
-            _determine_significance_emoji(-55.0, threshold, higher_is_better=True)
-            == " ❌"
+            get_change_emoji(-55.0, higher_is_better=True, threshold=threshold) == "🔴"
         )
         assert (
-            _determine_significance_emoji(15.0, threshold, higher_is_better=True)
-            == " ✅"
+            get_change_emoji(15.0, higher_is_better=True, threshold=threshold) == "🟢"
         )
 
     def test_variance_metrics_in_output(self, tmp_path, sample_telemetry_data):
@@ -426,37 +421,63 @@ class TestTelemetryCompare:
 
     def test_emotional_feedback_functions(self):
         """Test the emotional feedback emoji functions."""
-        from ragzoom.telemetry_cli import get_change_emoji, get_variance_emoji
+        from ragzoom.telemetry_cli import (
+            DynamicThreshold,
+            get_change_emoji,
+            get_variance_emoji,
+        )
 
-        # Test metric change emoji
-        # No change (below threshold)
-        assert get_change_emoji(0.5, higher_is_better=False) == "⚪"
-        assert get_change_emoji(-0.5, higher_is_better=True) == "⚪"
+        # Create a simple threshold for testing
+        threshold = DynamicThreshold(
+            absolute_value=100.0,
+            baseline_variance=10.0,
+            k_factors=(3.0, 2.0),
+            metric_name="test_metric",
+            is_computed=True,
+            emoji_significance_sigma=1.0,
+        )
 
-        # Desirable changes
+        # Test metric change emoji with threshold
+        # No change (below 1-sigma threshold of 10.0)
         assert (
-            get_change_emoji(-10.0, higher_is_better=False) == "🟢"
-        )  # Lower is better, went down
+            get_change_emoji(5.0, higher_is_better=False, threshold=threshold) == "⚪"
+        )
         assert (
-            get_change_emoji(10.0, higher_is_better=True) == "🟢"
-        )  # Higher is better, went up
+            get_change_emoji(-5.0, higher_is_better=True, threshold=threshold) == "⚪"
+        )
 
-        # Undesirable changes
+        # Significant desirable changes (>1-sigma)
         assert (
-            get_change_emoji(10.0, higher_is_better=False) == "🔴"
-        )  # Lower is better, went up
+            get_change_emoji(-15.0, higher_is_better=False, threshold=threshold) == "🟢"
+        )
         assert (
-            get_change_emoji(-10.0, higher_is_better=True) == "🔴"
-        )  # Higher is better, went down
+            get_change_emoji(15.0, higher_is_better=True, threshold=threshold) == "🟢"
+        )
 
-        # Test variance emoji
-        # No change (below threshold)
-        assert get_variance_emoji(3.0) == "⚪"
-        assert get_variance_emoji(-3.0) == "⚪"
+        # Significant undesirable changes (>1-sigma but <threshold)
+        assert (
+            get_change_emoji(15.0, higher_is_better=False, threshold=threshold) == "🟡"
+        )
+        assert (
+            get_change_emoji(-15.0, higher_is_better=True, threshold=threshold) == "🟡"
+        )
 
-        # Variance changes (lower is always better)
-        assert get_variance_emoji(-20.0) == "🟢"  # Variance decreased - good
-        assert get_variance_emoji(20.0) == "🔴"  # Variance increased - bad
+        # Regression (exceeds full threshold of 100.0)
+        assert (
+            get_change_emoji(101.0, higher_is_better=False, threshold=threshold) == "🔴"
+        )
+        assert (
+            get_change_emoji(-101.0, higher_is_better=True, threshold=threshold) == "🔴"
+        )
+
+        # Test variance emoji (new signature with baseline)
+        # No change (below 50% threshold)
+        assert get_variance_emoji(3.0, 10.0) == "⚪"  # 30% change
+        assert get_variance_emoji(-3.0, 10.0) == "⚪"  # -30% change
+
+        # Significant variance changes (>50% of baseline)
+        assert get_variance_emoji(6.0, 10.0) == "🔴"  # 60% increase - bad
+        assert get_variance_emoji(-6.0, 10.0) == "🟡"  # 60% decrease - notable
 
 
 if __name__ == "__main__":
