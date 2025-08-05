@@ -213,13 +213,15 @@ print(f"Peak memory: {metrics.peak_memory_mb:.1f} MB")
 
 ### Basic Visualization
 
-Visualize a single benchmark:
+The `visualize` command supports two modes:
+
+#### Single File Visualization
 
 ```bash
-ragzoom-telemetry visualize benchmark_results/telemetry_200_tokens.json
+ragzoom-telemetry visualize telemetry.json
 ```
 
-This generates:
+This generates a comprehensive report with:
 - Token usage and cost by tree level
 - Cost breakdown pie chart
 - Batch efficiency histogram
@@ -228,22 +230,30 @@ This generates:
 - Node creation timeline
 - Token count distributions by level
 
-### Comparison Visualization
+#### Side-by-Side Comparison
 
-Compare multiple benchmarks:
+Compare two telemetry files directly:
 
 ```bash
-ragzoom-telemetry visualize benchmark_results/ --compare
+ragzoom-telemetry visualize baseline.json current.json
 ```
+
+This creates a side-by-side visualization showing both telemetry results in parallel, making it easy to spot differences in:
+- Performance characteristics
+- Cost efficiency
+- Retry patterns
+- Token distributions
+
+The plots share scales where appropriate for direct visual comparison.
 
 ### Output Formats
 
 ```bash
 # Generate PDF reports
-ragzoom-telemetry visualize benchmark_results/ --format pdf
+ragzoom-telemetry visualize file1.json file2.json --format pdf
 
 # Specify output directory
-ragzoom-telemetry visualize benchmark_results/ --output-dir reports/
+ragzoom-telemetry visualize telemetry.json --output-dir reports/
 ```
 
 ### Generated Reports
@@ -355,9 +365,14 @@ ragzoom-telemetry analyze benchmark_results/telemetry_200_tokens.json
 # Compare two benchmarks
 ragzoom-telemetry compare baseline.json current.json
 
-# Generate visualizations
-ragzoom-telemetry visualize benchmark_results/telemetry_200_tokens.json
-ragzoom-telemetry visualize benchmark_results/ --compare --format pdf
+# Generate visualizations for a single file
+ragzoom-telemetry visualize baseline.json
+
+# Generate side-by-side comparison of two files
+ragzoom-telemetry visualize baseline.json current.json
+
+# Specify output format and directory
+ragzoom-telemetry visualize before.json after.json --format pdf --output-dir reports/
 ```
 
 ### Comparison Output Format

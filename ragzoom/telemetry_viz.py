@@ -181,6 +181,133 @@ class TelemetryVisualizer:
 
         return bins, align
 
+    def visualize_side_by_side(
+        self, file1: Path, file2: Path, output_format: str = "png"
+    ) -> None:
+        """Create side-by-side visualizations of two telemetry files."""
+        print(f"Creating side-by-side comparison: {file1.name} vs {file2.name}")
+
+        # Load both datasets
+        data1 = self.load_benchmark_data(file1)
+        data2 = self.load_benchmark_data(file2)
+
+        if "telemetry" not in data1:
+            print(f"Warning: No telemetry data found in {file1}")
+            return
+        if "telemetry" not in data2:
+            print(f"Warning: No telemetry data found in {file2}")
+            return
+
+        telemetry1 = data1["telemetry"]
+        telemetry2 = data2["telemetry"]
+        config1 = self._create_config_from_metrics(data1.get("metrics", {}))
+        config2 = self._create_config_from_metrics(data2.get("metrics", {}))
+
+        # Create figure with side-by-side subplots (7 rows × 2 columns)
+        fig = plt.figure(figsize=(20, 28))  # Wider and taller for side-by-side
+        gs = GridSpec(7, 2, figure=fig, hspace=0.3, wspace=0.3, top=0.96)
+
+        # Add super title
+        fig.suptitle(
+            f"Side-by-Side Comparison: {file1.stem} vs {file2.stem}",
+            fontsize=16,
+            y=0.98,
+        )
+
+        # 1. Token usage by Tree Level
+        ax1_left = fig.add_subplot(gs[0, 0])
+        self._plot_token_usage_by_tree_level(telemetry1, config1, ax1_left)
+        ax1_left.set_title(f"Token Usage - {file1.stem}", fontsize=12)
+
+        ax1_right = fig.add_subplot(gs[0, 1])
+        self._plot_token_usage_by_tree_level(telemetry2, config2, ax1_right)
+        ax1_right.set_title(f"Token Usage - {file2.stem}", fontsize=12)
+
+        # Share y-axis scale for better comparison
+        max_y = max(ax1_left.get_ylim()[1], ax1_right.get_ylim()[1])
+        ax1_left.set_ylim(0, max_y)
+        ax1_right.set_ylim(0, max_y)
+
+        # 2. Cost Breakdown
+        ax2_left = fig.add_subplot(gs[1, 0])
+        self._plot_cost_breakdown(telemetry1, config1, ax2_left)
+        ax2_left.set_title(f"Cost Breakdown - {file1.stem}", fontsize=12)
+
+        ax2_right = fig.add_subplot(gs[1, 1])
+        self._plot_cost_breakdown(telemetry2, config2, ax2_right)
+        ax2_right.set_title(f"Cost Breakdown - {file2.stem}", fontsize=12)
+
+        # 3. Batch Efficiency
+        ax3_left = fig.add_subplot(gs[2, 0])
+        self._plot_batch_efficiency(telemetry1, ax3_left)
+        ax3_left.set_title(f"Batch Efficiency - {file1.stem}", fontsize=12)
+
+        ax3_right = fig.add_subplot(gs[2, 1])
+        self._plot_batch_efficiency(telemetry2, ax3_right)
+        ax3_right.set_title(f"Batch Efficiency - {file2.stem}", fontsize=12)
+
+        # 4. Retry Patterns
+        ax4_left = fig.add_subplot(gs[3, 0])
+        self._plot_retry_patterns(telemetry1, ax4_left)
+        ax4_left.set_title(f"Retry Patterns - {file1.stem}", fontsize=12)
+
+        ax4_right = fig.add_subplot(gs[3, 1])
+        self._plot_retry_patterns(telemetry2, ax4_right)
+        ax4_right.set_title(f"Retry Patterns - {file2.stem}", fontsize=12)
+
+        # 5. Summary Accuracy
+        ax5_left = fig.add_subplot(gs[4, 0])
+        self._plot_summary_accuracy(telemetry1, ax5_left)
+        ax5_left.set_title(f"Summary Accuracy - {file1.stem}", fontsize=12)
+
+        ax5_right = fig.add_subplot(gs[4, 1])
+        self._plot_summary_accuracy(telemetry2, ax5_right)
+        ax5_right.set_title(f"Summary Accuracy - {file2.stem}", fontsize=12)
+
+        # Share x-axis scale for accuracy plots
+        min_x = min(ax5_left.get_xlim()[0], ax5_right.get_xlim()[0])
+        max_x = max(ax5_left.get_xlim()[1], ax5_right.get_xlim()[1])
+        ax5_left.set_xlim(min_x, max_x)
+        ax5_right.set_xlim(min_x, max_x)
+
+        # 6. Node Timeline
+        ax6_left = fig.add_subplot(gs[5, 0])
+        self._plot_node_timeline(telemetry1, ax6_left)
+        ax6_left.set_title(f"Node Timeline - {file1.stem}", fontsize=12)
+
+        ax6_right = fig.add_subplot(gs[5, 1])
+        self._plot_node_timeline(telemetry2, ax6_right)
+        ax6_right.set_title(f"Node Timeline - {file2.stem}", fontsize=12)
+
+        # 7. Token Distributions
+        ax7_left = fig.add_subplot(gs[6, 0])
+        self._plot_token_distributions(telemetry1, ax7_left)
+        ax7_left.set_title(f"Token Distributions - {file1.stem}", fontsize=12)
+
+        ax7_right = fig.add_subplot(gs[6, 1])
+        self._plot_token_distributions(telemetry2, ax7_right)
+        ax7_right.set_title(f"Token Distributions - {file2.stem}", fontsize=12)
+
+        # Save figure
+        output_path = (
+            self.output_dir / f"comparison_{file1.stem}_vs_{file2.stem}.{output_format}"
+        )
+
+        # Suppress warnings about tight_layout
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="This figure includes Axes that are not compatible with tight_layout",
+            )
+            warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+            plt.tight_layout()
+            plt.savefig(output_path, bbox_inches="tight", dpi=SAVE_DPI)
+        plt.close()
+
+        print(f"Saved side-by-side comparison to {output_path}")
+
     def _plot_token_usage_by_tree_level(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
     ) -> None:
@@ -716,130 +843,3 @@ class TelemetryVisualizer:
         # Add legend if target lines were added
         if ax.lines:
             ax.legend(loc="upper right")
-
-    def visualize_comparison(
-        self, results_dir: Path, output_format: str = "png"
-    ) -> None:
-        """Create comparison visualizations between multiple benchmarks."""
-        json_files = list(results_dir.glob("telemetry_*_tokens.json"))
-
-        if len(json_files) < 2:
-            print("Need at least 2 benchmark files for comparison")
-            return
-
-        # Load all benchmarks
-        benchmarks = {}
-        for file in json_files:
-            data = self.load_benchmark_data(file)
-            if "telemetry" in data and "config" in data:
-                chunk_size = data["config"]["leaf_tokens"]
-                benchmarks[chunk_size] = data
-
-        if len(benchmarks) < 2:
-            print("Need at least 2 benchmarks with telemetry data for comparison")
-            return
-
-        # Create comparison plots
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        fig.suptitle("Benchmark Comparison", fontsize=16)
-
-        # Plot comparisons
-        self._plot_comparison_metrics(benchmarks, axes)
-
-        plt.tight_layout()
-        output_path = self.output_dir / f"comparison.{output_format}"
-        plt.savefig(output_path, bbox_inches="tight")
-        plt.close()
-
-        print(f"Saved comparison visualization to {output_path}")
-
-    def _plot_comparison_metrics(
-        self, benchmarks: dict[int, dict], axes: np.ndarray
-    ) -> None:
-        """Plot comparison metrics across benchmarks."""
-        chunk_sizes = sorted(benchmarks.keys())
-
-        # Collect metrics for each benchmark
-        cost_amps = []
-        batch_utils = []
-        retry_rates = []
-        total_costs = []
-
-        for chunk_size in chunk_sizes:
-            data = benchmarks[chunk_size]
-            telemetry = data["telemetry"]
-            config = self._create_config_from_metrics(data.get("metrics", {}))
-
-            # Compute all metrics once (single source of truth)
-            metrics = compute_metrics_from_telemetry(telemetry, config)
-
-            # Compute other analysis independently
-            batch = compute_batch_efficiency(telemetry)
-            retry = analyze_retry_patterns(telemetry)
-
-            # Calculate average cost per node
-            num_nodes = len(
-                [
-                    n
-                    for doc in telemetry.get("documents", {}).values()
-                    for n in doc.get("nodes", [])
-                    if n.get("height", 0) > 0
-                ]
-            )
-            # Calculate total cost from token counts
-            total_cost = (
-                metrics.total_embedding_tokens / 1000 * metrics.embedding_cost_per_1k
-                + metrics.total_summary_prompt_tokens
-                / 1000
-                * metrics.summary_input_cost_per_1k
-                + metrics.total_summary_completion_tokens
-                / 1000
-                * metrics.summary_output_cost_per_1k
-            )
-            avg_cost = (total_cost / num_nodes) if num_nodes > 0 else 0
-
-            cost_amps.append(avg_cost)
-            batch_utils.append(batch["batch_utilization"])
-            retry_rates.append(retry["retry_rate"])
-            # Calculate total cost from metrics
-            embedding_cost = (
-                metrics.total_embedding_tokens / 1000
-            ) * metrics.embedding_cost_per_1k
-            summary_cost = (
-                metrics.total_summary_prompt_tokens / 1000
-            ) * metrics.summary_input_cost_per_1k + (
-                metrics.total_summary_completion_tokens / 1000
-            ) * metrics.summary_output_cost_per_1k
-            total_costs.append(embedding_cost + summary_cost)
-
-        # Plot 1: Average Cost per Node
-        ax = axes[0, 0]
-        ax.plot(chunk_sizes, cost_amps, "o-", markersize=8)
-        ax.set_xlabel("Chunk Size (tokens)")
-        ax.set_ylabel("Average Cost per Node ($)")
-        ax.set_title("Cost per Node vs Chunk Size")
-        ax.grid(True, alpha=0.3)
-
-        # Plot 2: Batch Utilization
-        ax = axes[0, 1]
-        ax.plot(chunk_sizes, batch_utils, "o-", markersize=8, color="green")
-        ax.set_xlabel("Chunk Size (tokens)")
-        ax.set_ylabel("Batch Utilization (%)")
-        ax.set_title("Batch Utilization vs Chunk Size")
-        ax.grid(True, alpha=0.3)
-
-        # Plot 3: Retry Rate
-        ax = axes[1, 0]
-        ax.plot(chunk_sizes, retry_rates, "o-", markersize=8, color="red")
-        ax.set_xlabel("Chunk Size (tokens)")
-        ax.set_ylabel("Retry Rate (%)")
-        ax.set_title("Retry Rate vs Chunk Size")
-        ax.grid(True, alpha=0.3)
-
-        # Plot 4: Total Cost
-        ax = axes[1, 1]
-        ax.plot(chunk_sizes, total_costs, "o-", markersize=8, color="purple")
-        ax.set_xlabel("Chunk Size (tokens)")
-        ax.set_ylabel("Total Cost ($)")
-        ax.set_title("Total Cost vs Chunk Size")
-        ax.grid(True, alpha=0.3)

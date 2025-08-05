@@ -725,7 +725,7 @@ def compare(baseline_path: str, current_path: str, output: str) -> None:
 
 
 @cli.command("visualize")
-@click.argument("input_path", type=click.Path(exists=True))
+@click.argument("input_paths", nargs=-1, required=True, type=click.Path(exists=True))
 @click.option(
     "--output-dir",
     type=click.Path(),
@@ -738,13 +738,13 @@ def compare(baseline_path: str, current_path: str, output: str) -> None:
     default="png",
     help="Output format (default: png)",
 )
-@click.option(
-    "--compare",
-    is_flag=True,
-    help="Generate comparison visualizations when input is a directory",
-)
-def visualize(input_path: str, output_dir: str, format: str, compare: bool) -> None:
-    """Generate visualizations from telemetry data."""
+def visualize(input_paths: tuple[str, ...], output_dir: str, format: str) -> None:
+    """Generate visualizations from one or two telemetry files.
+
+    Examples:
+        ragzoom-telemetry visualize baseline.json
+        ragzoom-telemetry visualize baseline.json current.json
+    """
     # Check dependencies first
     _check_telemetry_deps()
 
@@ -752,33 +752,36 @@ def visualize(input_path: str, output_dir: str, format: str, compare: bool) -> N
         from ragzoom.telemetry_viz import TelemetryVisualizer
 
         visualizer = TelemetryVisualizer(Path(output_dir))
-        input_path_obj = Path(input_path)
 
-        if input_path_obj.is_file():
+        if len(input_paths) == 1:
             # Single file visualization
-            visualizer.visualize_single_benchmark(input_path_obj, format)
-        elif input_path_obj.is_dir():
-            # Directory of benchmarks
-            json_files = list(input_path_obj.glob("telemetry_*_tokens.json"))
-            # Also support new telemetry.json files
-            json_files.extend(input_path_obj.glob("telemetry*.json"))
+            file_path = Path(input_paths[0])
+            if not file_path.is_file():
+                click.echo(f"❌ Error: {input_paths[0]} is not a file")
+                sys.exit(1)
+            visualizer.visualize_single_benchmark(file_path, format)
+            click.echo(f"✅ Generated visualization for {file_path.name}")
 
-            if not json_files:
-                click.echo(f"❌ No benchmark files found in {input_path}")
+        elif len(input_paths) == 2:
+            # Side-by-side comparison
+            file1 = Path(input_paths[0])
+            file2 = Path(input_paths[1])
+
+            if not file1.is_file() or not file2.is_file():
+                click.echo("❌ Error: Both inputs must be files")
                 sys.exit(1)
 
-            # Visualize each file
-            for file in json_files:
-                visualizer.visualize_single_benchmark(file, format)
+            visualizer.visualize_side_by_side(file1, file2, format)
+            click.echo(
+                f"✅ Generated side-by-side comparison: {file1.name} vs {file2.name}"
+            )
 
-            # Generate comparison if requested
-            if compare and len(json_files) >= 2:
-                visualizer.visualize_comparison(input_path_obj, format)
         else:
-            click.echo(f"❌ Error: {input_path} not found")
+            click.echo("❌ Error: Please provide 1 or 2 telemetry JSON files")
+            click.echo("  Usage: ragzoom-telemetry visualize <file1> [file2]")
             sys.exit(1)
 
-        click.echo("\n✅ Visualization complete!")
+        click.echo(f"📊 Output saved to {output_dir}/")
 
     except Exception as e:
         click.echo(f"❌ Error generating visualizations: {e}", err=True)
