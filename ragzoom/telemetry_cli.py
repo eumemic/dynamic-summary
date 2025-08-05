@@ -831,12 +831,12 @@ def _format_text_comparison_with_thresholds(
     """Format comparison as plain text table with dynamic thresholds."""
 
     # Build table header
-    click.echo("\n" + "=" * 125)
+    click.echo("\n" + "=" * 130)
     click.echo("Performance Comparison Report")
-    click.echo("=" * 125)
+    click.echo("=" * 130)
 
     # Table headers - adjusted widths for variance display and multi-line change
-    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>30} | {'Threshold':>15}"
+    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>35} | {'Threshold':>15}"
     click.echo("\n" + header)
     click.echo("-" * len(header))
 
@@ -855,7 +855,7 @@ def _format_text_comparison_with_thresholds(
             click.echo("-" * len(header))
 
     # Add footer with legend
-    click.echo("\n" + "=" * 125)
+    click.echo("\n" + "=" * 130)
     click.echo("\nLegend:")
     click.echo("  Values: Shows metric ±variance (e.g., '50.0 ±2.0 tokens')")
     click.echo("  Change format:")
@@ -968,16 +968,16 @@ def _format_comparison_row_with_threshold(
         if len(change_lines) == 2:
             # First line with absolute change
             click.echo(
-                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_lines[0]:<30} | {threshold_str:>15}"
+                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_lines[0]:<35} | {threshold_str:>15}"
             )
             # Second line with percentage and variance
             click.echo(
-                f"{'':12} | {'':20} | {'':18} | {'':18} | {change_lines[1]:<30} | {'':15}"
+                f"{'':12} | {'':20} | {'':18} | {'':18} | {change_lines[1]:<35} | {'':15}"
             )
         else:
             # Fallback for single line
             click.echo(
-                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<30} | {threshold_str:>15}"
+                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<35} | {threshold_str:>15}"
             )
 
 
