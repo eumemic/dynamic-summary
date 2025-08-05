@@ -211,12 +211,6 @@ jobs:
               set -e
               
               # Report is ready as-is, no need to add visualization (handled in PR comment)
-              else
-                echo "❌ Failed to generate comparison report" > report.md
-                echo "" >> report.md
-                echo "The telemetry comparison command failed to produce output." >> report.md
-                echo "Exit code: $comparison_exit_code" >> report.md
-              fi
             elif [ -f "baseline_results/telemetry_100_tokens.json" ] && [ -f "benchmark_results/telemetry_100_tokens.json" ]; then
               # TODO: Remove this single-file fallback after migration period
               # Once all baselines in master are multi-file, we can remove this branch
@@ -228,12 +222,6 @@ jobs:
               set -e
               
               # Report is ready as-is, no need to add visualization (handled in PR comment)
-              else
-                echo "❌ Failed to generate comparison report" > report.md
-                echo "" >> report.md
-                echo "The telemetry comparison command failed to produce output." >> report.md
-                echo "Exit code: $comparison_exit_code" >> report.md
-              fi
             else
               echo "❌ Expected benchmark files not found" > report.md
               echo "" >> report.md
