@@ -755,12 +755,25 @@ def visualize(input_paths: tuple[str, ...], output: str | None, format: str) -> 
         from ragzoom.telemetry_viz import TelemetryVisualizer
 
         # Determine output path and format
+        supported_formats = ["png", "pdf", "svg"]
+
         if output:
             output_path = Path(output)
             # Infer format from extension if present
-            if output_path.suffix and output_path.suffix[1:] in ["png", "pdf", "svg"]:
-                format = output_path.suffix[1:]
-            elif not output_path.suffix:
+            if output_path.suffix:
+                inferred_format = output_path.suffix[1:].lower()
+                if inferred_format in supported_formats:
+                    format = inferred_format
+                else:
+                    # Warn about unsupported format and use --format parameter
+                    click.echo(
+                        f"⚠️ Warning: Unsupported format '.{inferred_format}'. "
+                        f"Using --format={format} instead.",
+                        err=True,
+                    )
+                    # Replace the extension with the correct one
+                    output_path = output_path.with_suffix(f".{format}")
+            else:
                 # No extension, add format
                 output_path = output_path.with_suffix(f".{format}")
         else:

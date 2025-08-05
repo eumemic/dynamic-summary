@@ -6,6 +6,7 @@ simplified metrics in telemetry_cli.py.
 """
 
 import json
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -58,9 +59,31 @@ class TelemetryVisualizer:
     def __init__(self, output_path: Path) -> None:
         """Initialize visualizer with output file path."""
         self.output_path = output_path
-        # Ensure parent directory exists
-        self.output_path.parent.mkdir(exist_ok=True, parents=True)
         self.thresholds = get_telemetry_thresholds()
+
+    def _ensure_output_dir(self) -> None:
+        """Ensure the output directory exists, creating it if necessary."""
+        self.output_path.parent.mkdir(exist_ok=True, parents=True)
+
+    def _suppress_matplotlib_warnings(self) -> AbstractContextManager[None]:
+        """Context manager to suppress common matplotlib warnings."""
+        import warnings
+        from collections.abc import Iterator
+        from contextlib import contextmanager
+
+        @contextmanager
+        def suppress() -> Iterator[None]:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="This figure includes Axes that are not compatible with tight_layout",
+                )
+                warnings.filterwarnings(
+                    "ignore", category=UserWarning, module="matplotlib"
+                )
+                yield
+
+        return suppress()
 
     def load_benchmark_data(self, file_path: Path) -> dict[str, Any]:
         """Load benchmark data from JSON file."""
@@ -123,15 +146,8 @@ class TelemetryVisualizer:
         )
 
         # Save figure
-        # Suppress layout and font warnings for cleaner output
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="This figure includes Axes that are not compatible with tight_layout",
-            )
-            warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+        self._ensure_output_dir()
+        with self._suppress_matplotlib_warnings():
             plt.tight_layout()
             plt.savefig(self.output_path, bbox_inches="tight")
         plt.close()
@@ -182,9 +198,20 @@ class TelemetryVisualizer:
         return bins, align
 
     def visualize_side_by_side(
-        self, file1: Path, file2: Path, output_format: str = "png"
+        self,
+        file1: Path,
+        file2: Path,
+        output_format: str = "png",
+        figsize: tuple[int, int] | None = None,
     ) -> None:
-        """Create side-by-side visualizations of two telemetry files."""
+        """Create side-by-side visualizations of two telemetry files.
+
+        Args:
+            file1: Path to first telemetry file
+            file2: Path to second telemetry file
+            output_format: Output format (png, pdf, svg)
+            figsize: Optional figure size (width, height) in inches. Defaults to (20, 28).
+        """
         print(f"Creating side-by-side comparison: {file1.name} vs {file2.name}")
 
         # Load both datasets
@@ -204,7 +231,9 @@ class TelemetryVisualizer:
         config2 = self._create_config_from_metrics(data2.get("metrics", {}))
 
         # Create figure with side-by-side subplots (7 rows × 2 columns)
-        fig = plt.figure(figsize=(20, 28))  # Wider and taller for side-by-side
+        if figsize is None:
+            figsize = (20, 28)  # Default size for 7x2 grid
+        fig = plt.figure(figsize=figsize)
         gs = GridSpec(7, 2, figure=fig, hspace=0.3, wspace=0.3, top=0.96)
 
         # Add super title
@@ -289,15 +318,8 @@ class TelemetryVisualizer:
         ax7_right.set_title("Token Distributions", fontsize=12)
 
         # Save figure
-        # Suppress warnings about tight_layout
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="This figure includes Axes that are not compatible with tight_layout",
-            )
-            warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+        self._ensure_output_dir()
+        with self._suppress_matplotlib_warnings():
             plt.tight_layout()
             plt.savefig(self.output_path, bbox_inches="tight", dpi=SAVE_DPI)
         plt.close()
