@@ -27,7 +27,8 @@ class TestTelemetryVisualizer:
     @pytest.fixture
     def visualizer(self, temp_output_dir: Path) -> TelemetryVisualizer:
         """Create a TelemetryVisualizer instance."""
-        return TelemetryVisualizer(temp_output_dir)
+        output_path = temp_output_dir / "test_viz.png"
+        return TelemetryVisualizer(output_path)
 
     @pytest.fixture
     def sample_telemetry_data(self) -> dict:
@@ -92,8 +93,9 @@ class TestTelemetryVisualizer:
 
     def test_visualizer_initialization(self, temp_output_dir: Path) -> None:
         """Test TelemetryVisualizer initialization."""
-        visualizer = TelemetryVisualizer(temp_output_dir)
-        assert visualizer.output_dir == temp_output_dir
+        output_path = temp_output_dir / "test_viz.png"
+        visualizer = TelemetryVisualizer(output_path)
+        assert visualizer.output_path == output_path
         assert temp_output_dir.exists()
         assert hasattr(visualizer, "thresholds")
 
