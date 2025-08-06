@@ -296,6 +296,16 @@ class TelemetryVisualizer:
         self._plot_batch_efficiency(telemetry2, ax3_right)
         ax3_right.set_title("Batch Efficiency", fontsize=12)
 
+        # Share axes for batch efficiency comparison
+        min_x = min(ax3_left.get_xlim()[0], ax3_right.get_xlim()[0])
+        max_x = max(ax3_left.get_xlim()[1], ax3_right.get_xlim()[1])
+        ax3_left.set_xlim(min_x, max_x)
+        ax3_right.set_xlim(min_x, max_x)
+
+        max_y = max(ax3_left.get_ylim()[1], ax3_right.get_ylim()[1])
+        ax3_left.set_ylim(0, max_y)
+        ax3_right.set_ylim(0, max_y)
+
         # 4. Retry Patterns
         ax4_left = fig.add_subplot(gs[3, 0])
         self._plot_retry_patterns(telemetry1, ax4_left)
@@ -304,6 +314,11 @@ class TelemetryVisualizer:
         ax4_right = fig.add_subplot(gs[3, 1])
         self._plot_retry_patterns(telemetry2, ax4_right)
         ax4_right.set_title("Retry Patterns", fontsize=12)
+
+        # Share y-axis for retry patterns comparison
+        max_y = max(ax4_left.get_ylim()[1], ax4_right.get_ylim()[1])
+        ax4_left.set_ylim(0, max_y)
+        ax4_right.set_ylim(0, max_y)
 
         # 5. Summary Accuracy
         ax5_left = fig.add_subplot(gs[4, 0])
@@ -314,11 +329,15 @@ class TelemetryVisualizer:
         self._plot_summary_accuracy(telemetry2, ax5_right)
         ax5_right.set_title("Summary Accuracy", fontsize=12)
 
-        # Share x-axis scale for accuracy plots
+        # Share both axes for accuracy plots comparison
         min_x = min(ax5_left.get_xlim()[0], ax5_right.get_xlim()[0])
         max_x = max(ax5_left.get_xlim()[1], ax5_right.get_xlim()[1])
         ax5_left.set_xlim(min_x, max_x)
         ax5_right.set_xlim(min_x, max_x)
+
+        max_y = max(ax5_left.get_ylim()[1], ax5_right.get_ylim()[1])
+        ax5_left.set_ylim(0, max_y)
+        ax5_right.set_ylim(0, max_y)
 
         # 6. Node Timeline
         ax6_left = fig.add_subplot(gs[5, 0])
@@ -329,6 +348,15 @@ class TelemetryVisualizer:
         self._plot_node_timeline(telemetry2, ax6_right)
         ax6_right.set_title("Node Creation Timeline", fontsize=12)
 
+        # Share both axes for timeline comparison
+        max_x = max(ax6_left.get_xlim()[1], ax6_right.get_xlim()[1])
+        ax6_left.set_xlim(0, max_x)
+        ax6_right.set_xlim(0, max_x)
+
+        max_y = max(ax6_left.get_ylim()[1], ax6_right.get_ylim()[1])
+        ax6_left.set_ylim(0, max_y)
+        ax6_right.set_ylim(0, max_y)
+
         # 7. Token Distributions
         ax7_left = fig.add_subplot(gs[6, 0])
         self._plot_token_distributions(telemetry1, ax7_left)
@@ -337,6 +365,12 @@ class TelemetryVisualizer:
         ax7_right = fig.add_subplot(gs[6, 1])
         self._plot_token_distributions(telemetry2, ax7_right)
         ax7_right.set_title("Token Distributions", fontsize=12)
+
+        # Share y-axis for token distributions comparison
+        min_y = min(ax7_left.get_ylim()[0], ax7_right.get_ylim()[0])
+        max_y = max(ax7_left.get_ylim()[1], ax7_right.get_ylim()[1])
+        ax7_left.set_ylim(min_y, max_y)
+        ax7_right.set_ylim(min_y, max_y)
 
         # Save figure
         self._ensure_output_dir()
