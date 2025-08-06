@@ -4,9 +4,10 @@
 
 echo "Running pre-commit checks..."
 
+# Find the repository root (works from .git/hooks/ or worktree hooks)
+GIT_ROOT="$(git rev-parse --show-toplevel)"
 # Source common Python check functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../python-checks-common.sh"
+source "$GIT_ROOT/scripts/python-checks-common.sh"
 
 # Get the list of modified Python files
 modified_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$')
@@ -80,7 +81,8 @@ pid_tests=$!
 pid_jscpd=$!
 
 # Run Python checks (black, ruff, mypy) in parallel using common function
-# Pass target directories and modified files check
+# Note: mypy only checks ragzoom directory (tests don't need strict type checking)
+# Black and ruff check both ragzoom and tests directories
 (run_python_checks_parallel "ragzoom tests" "$modified_files" "true" > "$tmpdir/python_checks.output" 2>&1; echo $? > "$tmpdir/python_checks.result") &
 pid_python_checks=$!
 
