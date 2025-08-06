@@ -115,7 +115,7 @@ class TelemetryVisualizer:
 
         # Create figure with subplots
         fig = plt.figure(figsize=(FIGURE_WIDTH, FIGURE_HEIGHT))
-        gs = GridSpec(6, 2, figure=fig, hspace=0.3, wspace=0.3, top=0.96)
+        gs = GridSpec(6, 2, figure=fig, hspace=0.3, wspace=0.15, top=0.96)
 
         # 1. Token usage by Tree Level
         ax1 = fig.add_subplot(gs[0, :])
@@ -255,7 +255,7 @@ class TelemetryVisualizer:
         if figsize is None:
             figsize = (20, 28)  # Default size for 7x2 grid
         fig = plt.figure(figsize=figsize)
-        gs = GridSpec(7, 2, figure=fig, hspace=0.3, wspace=0.3, top=0.96)
+        gs = GridSpec(7, 2, figure=fig, hspace=0.3, wspace=0.15, top=0.96)
 
         # Add super title
         fig.suptitle(
