@@ -17,11 +17,16 @@ class TestTelemetryFormatParsing:
     """Test telemetry format parsing."""
 
     def test_parse_valid_telemetry_format(self) -> None:
-        """Test parsing valid telemetry format."""
+        """Test parsing v1.0 telemetry format migrates to v3.0."""
         telemetry_data = {
             "format_version": "1.0",
             "documents": {
                 "test_doc": {
+                    "metadata": {
+                        "source_document_tokens": 5000,
+                        "chunk_size": 200,
+                        "indexed_at": 1234567890.0,
+                    },
                     "nodes": [
                         {
                             "node_id": "node-1",
@@ -30,21 +35,31 @@ class TestTelemetryFormatParsing:
                             "span": [0, 100],
                             "created_at": 1234567890.0,
                         }
-                    ]
+                    ],
                 }
             },
         }
 
         result = parse_telemetry_format(telemetry_data)
-        assert result["format_version"] == "1.0"
-        assert "test_doc" in result["documents"]
+        # Should be migrated to v3.0
+        assert result["format_version"] == "3.0"
+        assert result["document_id"] == "test_doc"
+        assert result["source_document_tokens"] == 5000
+        assert result["chunk_size"] == 200
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["node_id"] == "node-1"
 
     def test_parse_v2_telemetry_format(self) -> None:
-        """Test parsing v2.0 telemetry format."""
+        """Test parsing v2.0 telemetry format migrates to v3.0."""
         telemetry_data = {
             "format_version": "2.0",
             "documents": {
                 "test_doc": {
+                    "metadata": {
+                        "source_document_tokens": 5000,
+                        "chunk_size": 200,
+                        "indexed_at": 1234567890.0,
+                    },
                     "nodes": [
                         {
                             "node_id": "node-1",
@@ -52,14 +67,140 @@ class TestTelemetryFormatParsing:
                             "created_at": 1234567890.0,
                             # v2.0 doesn't have node_type or span fields
                         }
-                    ]
+                    ],
                 }
             },
         }
 
         result = parse_telemetry_format(telemetry_data)
-        assert result["format_version"] == "2.0"
-        assert "test_doc" in result["documents"]
+        # Should be migrated to v3.0
+        assert result["format_version"] == "3.0"
+        assert result["document_id"] == "test_doc"
+        assert result["source_document_tokens"] == 5000
+        assert result["chunk_size"] == 200
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["node_id"] == "node-1"
+
+    def test_parse_v3_telemetry_format(self) -> None:
+        """Test parsing v3.0 telemetry format (already flat)."""
+        telemetry_data = {
+            "format_version": "3.0",
+            "document_id": "test_doc",
+            "source_document_tokens": 5000,
+            "chunk_size": 200,
+            "indexed_at": 1234567890.0,
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
+            "nodes": [
+                {
+                    "node_id": "node-1",
+                    "height": 0,
+                    "created_at": 1234567890.0,
+                }
+            ],
+        }
+
+        result = parse_telemetry_format(telemetry_data)
+        # Should remain as v3.0
+        assert result["format_version"] == "3.0"
+        assert result["document_id"] == "test_doc"
+        assert result["source_document_tokens"] == 5000
+        assert result["chunk_size"] == 200
+        assert result["models"]["summary"] == "gpt-4o-mini"
+        assert result["models"]["embedding"] == "text-embedding-3-small"
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["node_id"] == "node-1"
+
+    def test_parse_cli_wrapper_format_migration(self) -> None:
+        """Test parsing old CLI wrapper format migrates to v3.0."""
+        # This is the format the CLI used to output before v3.0
+        cli_wrapper_data = {
+            "config": {
+                "leaf_tokens": 200,
+                "budget_tokens": 8000,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
+            },
+            "document": {
+                "document_id": "example.pdf",
+                "file_path": "/path/to/example.pdf",
+            },
+            "telemetry": {
+                "format_version": "2.0",
+                "documents": {
+                    "example.pdf": {
+                        "metadata": {
+                            "source_document_tokens": 7500,
+                            "chunk_size": 200,
+                            "indexed_at": 1234567890.0,
+                        },
+                        "nodes": [
+                            {
+                                "node_id": "node-1",
+                                "height": 0,
+                                "created_at": 1234567890.0,
+                                "embedding": {
+                                    "text_tokens": 150,
+                                    "batch_size": 10,
+                                    "batch_position": 3,
+                                    "model": "text-embedding-3-small",
+                                    "start_time": 1234567890.0,
+                                    "end_time": 1234567890.5,
+                                },
+                            },
+                            {
+                                "node_id": "node-2",
+                                "height": 1,
+                                "created_at": 1234567890.2,
+                                "summary_attempts": [
+                                    {
+                                        "target_tokens": 100,
+                                        "input_text_tokens": 300,
+                                        "prompt_tokens": 320,
+                                        "completion_tokens": 95,
+                                        "actual_tokens": 95,
+                                        "status": "accepted",
+                                        "model": "gpt-4o-mini",
+                                        "start_time": 1234567890.1,
+                                        "end_time": 1234567890.3,
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                },
+            },
+        }
+
+        result = parse_telemetry_format(cli_wrapper_data)
+
+        # Should be migrated to v3.0
+        assert result["format_version"] == "3.0"
+        assert result["document_id"] == "example.pdf"
+        assert result["source_document_tokens"] == 7500
+        assert result["chunk_size"] == 200
+        assert result["indexed_at"] == 1234567890.0
+
+        # Models should be extracted from config
+        assert result["models"]["summary"] == "gpt-4o-mini"
+        assert result["models"]["embedding"] == "text-embedding-3-small"
+
+        # Nodes should be flattened
+        assert len(result["nodes"]) == 2
+        assert result["nodes"][0]["node_id"] == "node-1"
+        assert result["nodes"][1]["node_id"] == "node-2"
+
+        # Node data should be preserved
+        assert result["nodes"][0]["embedding"]["model"] == "text-embedding-3-small"
+        assert result["nodes"][1]["summary_attempts"][0]["model"] == "gpt-4o-mini"
+
+        # Should NOT have nested documents or config/document wrappers
+        assert "documents" not in result
+        assert "config" not in result
+        assert "document" not in result
+        assert "telemetry" not in result
 
     def test_parse_missing_format_version(self) -> None:
         """Test parsing telemetry without format version."""
@@ -70,7 +211,7 @@ class TestTelemetryFormatParsing:
 
     def test_parse_unsupported_format_version(self) -> None:
         """Test parsing telemetry with unsupported format version."""
-        telemetry_data = {"format_version": "3.0", "documents": {}}
+        telemetry_data = {"format_version": "4.0", "documents": {}}
 
         with pytest.raises(
             TelemetryAnalysisError, match="Unsupported telemetry format version"
