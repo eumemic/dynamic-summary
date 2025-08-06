@@ -27,9 +27,14 @@ logger = logging.getLogger(__name__)
 #   - Renamed 'level' to 'height' throughout
 #   - Added start_time/end_time to EmbeddingTelemetry and SummaryAttempt
 #   - Removed timestamp field in favor of start_time/end_time
+# - 3.0: Flattened structure to eliminate redundancy:
+#   - Removed nested "documents" dict (always single document)
+#   - Moved metadata fields to top level
+#   - Added models field at top level
+#   - Eliminated duplicate document_id and chunk_size fields
 #
 # Current format version (increment for breaking changes)
-TELEMETRY_FORMAT_VERSION = "2.0"
+TELEMETRY_FORMAT_VERSION = "3.0"
 
 
 @dataclass
@@ -465,7 +470,7 @@ class TelemetryCollector:
             chunk_size: Chunk size used for indexing (for metadata)
 
         Returns:
-            Dictionary in telemetry format
+            Dictionary in telemetry format v3.0 (flat structure)
         """
         # Convert all node telemetry to dict format
         nodes_data = []
@@ -477,14 +482,13 @@ class TelemetryCollector:
 
         return {
             "format_version": TELEMETRY_FORMAT_VERSION,
-            "documents": {
-                document_id: {
-                    "metadata": {
-                        "source_document_tokens": self.source_tokens,
-                        "chunk_size": chunk_size,
-                        "indexed_at": self.start_time,
-                    },
-                    "nodes": nodes_data,
-                }
+            "document_id": document_id,
+            "source_document_tokens": self.source_tokens,
+            "chunk_size": chunk_size,
+            "indexed_at": self.start_time,
+            "models": {
+                "summary": self.config.summary_model,
+                "embedding": self.config.embedding_model,
             },
+            "nodes": nodes_data,
         }
