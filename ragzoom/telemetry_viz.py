@@ -354,36 +354,39 @@ class TelemetryVisualizer:
         # Group tokens by height
         tokens_by_height: dict[int, dict[str, list[float]]] = {}
 
-        # Parse telemetry to extract tokens per level
-        parsed_data = (
-            telemetry
-            if "format_version" in telemetry
-            else telemetry.get("telemetry", {})
-        )
+        # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
+        nodes = []
+        if "documents" in telemetry:
+            # v1.0/v2.0 format with documents dictionary
+            for doc_type, doc_data in telemetry.get("documents", {}).items():
+                nodes.extend(doc_data.get("nodes", []))
+        else:
+            # v3.0 flat format
+            nodes = telemetry.get("nodes", [])
 
-        for doc_type, doc_data in parsed_data.get("documents", {}).items():
-            for node in doc_data.get("nodes", []):
-                height = node.get("height", node.get("level", 0))
-                if height == 0:
-                    continue  # Skip leaf nodes
+        # Process nodes
+        for node in nodes:
+            height = node.get("height", node.get("level", 0))
+            if height == 0:
+                continue  # Skip leaf nodes
 
-                # Get token counts for this node
-                for attempt in node.get("summary_attempts", []):
-                    if attempt.get("status") == "accepted":
-                        prompt_tokens = attempt.get("prompt_tokens", 0)
-                        completion_tokens = attempt.get("completion_tokens", 0)
+            # Get token counts for this node
+            for attempt in node.get("summary_attempts", []):
+                if attempt.get("status") == "accepted":
+                    prompt_tokens = attempt.get("prompt_tokens", 0)
+                    completion_tokens = attempt.get("completion_tokens", 0)
 
-                        if height not in tokens_by_height:
-                            tokens_by_height[height] = {
-                                "prompt_tokens": [],
-                                "completion_tokens": [],
-                            }
+                    if height not in tokens_by_height:
+                        tokens_by_height[height] = {
+                            "prompt_tokens": [],
+                            "completion_tokens": [],
+                        }
 
-                        tokens_by_height[height]["prompt_tokens"].append(prompt_tokens)
-                        tokens_by_height[height]["completion_tokens"].append(
-                            completion_tokens
-                        )
-                        break
+                    tokens_by_height[height]["prompt_tokens"].append(prompt_tokens)
+                    tokens_by_height[height]["completion_tokens"].append(
+                        completion_tokens
+                    )
+                    break
 
         if not tokens_by_height:
             ax.text(
@@ -652,34 +655,43 @@ class TelemetryVisualizer:
         Returns:
             List of deviation percentages from chunk_size target
         """
-        deviations = []
-        parsed_data = telemetry if isinstance(telemetry, dict) else {}
+        deviations: list[float] = []
 
-        # Process all documents
-        for doc_name, doc_data in parsed_data.get("documents", {}).items():
-            # Get the chunk size for this document
-            chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
-            if chunk_size <= 0:
-                continue
+        # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
+        chunk_size = 0
+        nodes = []
 
-            # Process all nodes
-            nodes = doc_data.get("nodes", [])
-            for node in nodes:
-                # Only process summary nodes (height > 0)
-                height = node.get("height", node.get("level", 0))
-                if height > 0:
-                    # Look for accepted summary attempts
-                    summary_attempts = node.get("summary_attempts", [])
-                    for attempt in summary_attempts:
-                        if attempt.get("status") == "accepted":
-                            actual_tokens = attempt.get("actual_tokens", 0)
-                            if actual_tokens > 0:
-                                # Calculate deviation percentage
-                                deviation = (
-                                    (actual_tokens - chunk_size) / chunk_size * 100
-                                )
-                                deviations.append(deviation)
-                                break  # Only use the accepted attempt
+        if "documents" in telemetry:
+            # v1.0/v2.0 format with documents dictionary
+            for doc_name, doc_data in telemetry.get("documents", {}).items():
+                chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
+                if chunk_size > 0:
+                    nodes = doc_data.get("nodes", [])
+                    break  # Use first document with valid chunk_size
+        else:
+            # v3.0 flat format
+            chunk_size = telemetry.get("chunk_size", 0)
+            nodes = telemetry.get("nodes", [])
+
+        # If no valid chunk_size found, return empty deviations
+        if chunk_size <= 0:
+            return deviations
+
+        # Process nodes
+        for node in nodes:
+            # Only process summary nodes (height > 0)
+            height = node.get("height", node.get("level", 0))
+            if height > 0:
+                # Look for accepted summary attempts
+                summary_attempts = node.get("summary_attempts", [])
+                for attempt in summary_attempts:
+                    if attempt.get("status") == "accepted":
+                        actual_tokens = attempt.get("actual_tokens", 0)
+                        if actual_tokens > 0:
+                            # Calculate deviation percentage
+                            deviation = (actual_tokens - chunk_size) / chunk_size * 100
+                            deviations.append(deviation)
+                            break  # Only use the accepted attempt
 
         return deviations
 
@@ -726,8 +738,17 @@ class TelemetryVisualizer:
         """Plot node creation timeline."""
         # Extract node creation times
         creation_times = []
-        for doc_data in telemetry.get("documents", {}).values():
-            for node in doc_data.get("nodes", []):
+
+        # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
+        if "documents" in telemetry:
+            # v1.0/v2.0 format with documents dictionary
+            for doc_data in telemetry.get("documents", {}).values():
+                for node in doc_data.get("nodes", []):
+                    if "created_at" in node:
+                        creation_times.append(node["created_at"])
+        else:
+            # v3.0 flat format
+            for node in telemetry.get("nodes", []):
                 if "created_at" in node:
                     creation_times.append(node["created_at"])
 
@@ -786,44 +807,51 @@ class TelemetryVisualizer:
 
         # Extract token data by level from telemetry
         token_data = []
-        parsed_data = telemetry if isinstance(telemetry, dict) else {}
 
-        for doc_type, doc_data in parsed_data.get("documents", {}).items():
-            nodes = doc_data.get("nodes", [])
+        # Extract nodes based on telemetry format (avoid duplication with refactor)
+        nodes = []
+        if "documents" in telemetry:
+            # v1.0/v2.0 format with documents dictionary
+            for doc_type, doc_data in telemetry.get("documents", {}).items():
+                nodes.extend(doc_data.get("nodes", []))
+        else:
+            # v3.0 flat format has nodes at root level
+            nodes = telemetry.get("nodes", [])
 
-            for node in nodes:
-                # Get height (compatible with both v1.0 and v2.0)
-                height = node.get("height", node.get("level", 0))
+        # Process nodes
+        for node in nodes:
+            # Get height (compatible with both v1.0 and v2.0)
+            height = node.get("height", node.get("level", 0))
 
-                # Extract token counts from summary attempts for summary nodes
-                if height > 0:  # Summary nodes
-                    summary_attempts = node.get("summary_attempts", [])
-                    for attempt in summary_attempts:
-                        if attempt.get("status") == "accepted":
-                            actual_tokens = attempt.get("actual_tokens", 0)
-                            target_tokens = attempt.get("target_tokens", 0)
-                            if actual_tokens > 0:
-                                token_data.append(
-                                    {
-                                        "level": f"Level {height}",
-                                        "actual_tokens": actual_tokens,
-                                        "target_tokens": target_tokens,
-                                        "node_type": "Summary",
-                                    }
-                                )
-                else:  # Leaf nodes
-                    # For leaf nodes, we can estimate from embedding data or use default
-                    embedding = node.get("embedding", {})
-                    text_tokens = embedding.get("text_tokens", 0)
-                    if text_tokens > 0:
-                        token_data.append(
-                            {
-                                "level": "Level 0 (Leaves)",
-                                "actual_tokens": text_tokens,
-                                "target_tokens": text_tokens,
-                                "node_type": "Leaf",
-                            }
-                        )
+            # Extract token counts from summary attempts for summary nodes
+            if height > 0:  # Summary nodes
+                summary_attempts = node.get("summary_attempts", [])
+                for attempt in summary_attempts:
+                    if attempt.get("status") == "accepted":
+                        actual_tokens = attempt.get("actual_tokens", 0)
+                        target_tokens = attempt.get("target_tokens", 0)
+                        if actual_tokens > 0:
+                            token_data.append(
+                                {
+                                    "level": f"Level {height}",
+                                    "actual_tokens": actual_tokens,
+                                    "target_tokens": target_tokens,
+                                    "node_type": "Summary",
+                                }
+                            )
+            else:  # Leaf nodes
+                # For leaf nodes, we can estimate from embedding data or use default
+                embedding = node.get("embedding", {})
+                text_tokens = embedding.get("text_tokens", 0)
+                if text_tokens > 0:
+                    token_data.append(
+                        {
+                            "level": "Level 0 (Leaves)",
+                            "actual_tokens": text_tokens,
+                            "target_tokens": text_tokens,
+                            "node_type": "Leaf",
+                        }
+                    )
 
         if not token_data:
             ax.text(
@@ -855,11 +883,15 @@ class TelemetryVisualizer:
         # Add single target line at chunk_size from telemetry
         # Get chunk_size from telemetry metadata
         chunk_size = None
-        parsed_data = telemetry if isinstance(telemetry, dict) else {}
-        for doc_name, doc_data in parsed_data.get("documents", {}).items():
-            chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
-            if chunk_size > 0:
-                break  # Use the first valid chunk_size found
+        if "documents" in telemetry:
+            # v1.0/v2.0 format
+            for doc_name, doc_data in telemetry.get("documents", {}).items():
+                chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
+                if chunk_size > 0:
+                    break  # Use the first valid chunk_size found
+        else:
+            # v3.0 flat format
+            chunk_size = telemetry.get("chunk_size", 0)
 
         if chunk_size and chunk_size > 0:
             ax.axhline(
