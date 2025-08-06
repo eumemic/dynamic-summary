@@ -27,5 +27,5 @@
     }
   },
   "last_updated": "2024-01-28",
-  "note": "Prices are per 1K tokens in USD. cache_discount is the multiplier for cached prompt tokens (0.5 = 50% discount). Update this file to reflect current OpenAI pricing."
+  "note": "Prices are per 1K tokens in USD. cache_discount is the multiplier for cached prompt tokens (0.5 = 50% discount). Update this file to reflect current pricing for your LLM provider."
 }
