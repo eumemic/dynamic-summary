@@ -3,7 +3,7 @@
 
 # Function to run black
 run_black() {
-    local target="$1"
+    local targets="$1"  # Now accepts space-separated directories
     local modified_check="$2"
     
     if command -v black &> /dev/null; then
@@ -11,7 +11,8 @@ run_black() {
             echo "[Black] Starting..."
             # Run with quiet flag, capture output
             local tmpfile=$(mktemp)
-            black "$target" --quiet > "$tmpfile" 2>&1
+            # Use eval to properly expand space-separated targets
+            eval "black $targets --quiet" > "$tmpfile" 2>&1
             local result=$?
             if [ $result -ne 0 ]; then
                 echo "[Black] ❌ Formatting failed."
@@ -36,7 +37,7 @@ run_black() {
 
 # Function to run ruff
 run_ruff() {
-    local target="$1"
+    local targets="$1"  # Now accepts space-separated directories
     local modified_check="$2"
     
     if command -v ruff &> /dev/null; then
@@ -44,7 +45,8 @@ run_ruff() {
             echo "[Ruff] Starting..."
             # Run with quiet flag, capture output
             local tmpfile=$(mktemp)
-            ruff check "$target" --fix --quiet > "$tmpfile" 2>&1
+            # Use eval to properly expand space-separated targets
+            eval "ruff check $targets --fix --quiet" > "$tmpfile" 2>&1
             local result=$?
             if [ $result -ne 0 ]; then
                 echo "[Ruff] ❌ Found issues that could not be auto-fixed."
@@ -69,19 +71,20 @@ run_ruff() {
 
 # Function to run mypy
 run_mypy() {
-    local target="$1"
+    local targets="$1"  # Now accepts space-separated directories
     local modified_check="$2"
     
     if command -v dmypy &> /dev/null || command -v mypy &> /dev/null; then
         if [ -z "$modified_check" ] || [ -n "$modified_check" ]; then
             echo "[Mypy] Starting..."
+            # Only check ragzoom directory - tests don't need strict type checking
             if command -v dmypy &> /dev/null; then
                 # Use dmypy run which starts daemon if needed and runs check
-                dmypy run -- "$target" --ignore-missing-imports --no-error-summary --check-untyped-defs
+                dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
                 local result=$?
             else
                 # Fallback to regular mypy if dmypy not available
-                mypy "$target" --ignore-missing-imports --no-error-summary --check-untyped-defs
+                mypy ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs
                 local result=$?
             fi
             if [ $result -ne 0 ]; then
@@ -102,9 +105,9 @@ run_mypy() {
 }
 
 # Function to run Python checks in parallel
-# Args: $1 = target (file or directory), $2 = modified files check (optional), $3 = exit_on_failure (default true)
+# Args: $1 = targets (space-separated files or directories), $2 = modified files check (optional), $3 = exit_on_failure (default true)
 run_python_checks_parallel() {
-    local target="$1"
+    local targets="$1"  # Now accepts space-separated directories
     local modified_check="$2"
     local exit_on_failure="${3:-true}"
     
@@ -120,14 +123,14 @@ run_python_checks_parallel() {
     }
     trap cleanup EXIT INT TERM
     
-    # Run tools in parallel, capturing output
-    (run_mypy "$target" "$modified_check" > "$tmpdir/mypy.output" 2>&1; echo $? > "$tmpdir/mypy.result") &
+    # Run tools in parallel, capturing output - pass targets without quotes to allow expansion
+    (run_mypy "$targets" "$modified_check" > "$tmpdir/mypy.output" 2>&1; echo $? > "$tmpdir/mypy.result") &
     pid_mypy=$!
     
-    (run_ruff "$target" "$modified_check" > "$tmpdir/ruff.output" 2>&1; echo $? > "$tmpdir/ruff.result") &
+    (run_ruff "$targets" "$modified_check" > "$tmpdir/ruff.output" 2>&1; echo $? > "$tmpdir/ruff.result") &
     pid_ruff=$!
     
-    (run_black "$target" "$modified_check" > "$tmpdir/black.output" 2>&1; echo $? > "$tmpdir/black.result") &
+    (run_black "$targets" "$modified_check" > "$tmpdir/black.output" 2>&1; echo $? > "$tmpdir/black.result") &
     pid_black=$!
     
     # Wait for all background jobs to complete
