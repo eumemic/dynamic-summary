@@ -100,12 +100,18 @@ class TelemetryVisualizer:
         # Load data
         data = self.load_benchmark_data(benchmark_path)
 
-        if "telemetry" not in data:
+        # Handle both wrapped and direct v3.0 formats
+        if "telemetry" in data:
+            # Legacy wrapped format: {"telemetry": {...}, "config": {...}}
+            telemetry = data["telemetry"]
+            config = self._create_config_from_metrics(data.get("metrics", {}))
+        elif "format_version" in data:
+            # Direct v3.0 format: {"format_version": "3.0", ...}
+            telemetry = data
+            config = self._create_config_from_metrics({})
+        else:
             print(f"Warning: No telemetry data found in {benchmark_path}")
             return
-
-        telemetry = data["telemetry"]
-        config = self._create_config_from_metrics(data.get("metrics", {}))
 
         # Create figure with subplots
         fig = plt.figure(figsize=(FIGURE_WIDTH, FIGURE_HEIGHT))
@@ -140,7 +146,12 @@ class TelemetryVisualizer:
         self._plot_token_distributions(telemetry, ax7)
 
         # Add title and metadata
-        chunk_size = data["config"]["leaf_tokens"]
+        if "config" in data:
+            # Legacy wrapped format
+            chunk_size = data["config"]["leaf_tokens"]
+        else:
+            # v3.0 format has chunk_size directly
+            chunk_size = telemetry.get("chunk_size", "Unknown")
         fig.suptitle(
             f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=0.98
         )
@@ -218,17 +229,27 @@ class TelemetryVisualizer:
         data1 = self.load_benchmark_data(file1)
         data2 = self.load_benchmark_data(file2)
 
-        if "telemetry" not in data1:
+        # Handle both wrapped and direct v3.0 formats for file1
+        if "telemetry" in data1:
+            telemetry1 = data1["telemetry"]
+            config1 = self._create_config_from_metrics(data1.get("metrics", {}))
+        elif "format_version" in data1:
+            telemetry1 = data1
+            config1 = self._create_config_from_metrics({})
+        else:
             print(f"Warning: No telemetry data found in {file1}")
             return
-        if "telemetry" not in data2:
+
+        # Handle both wrapped and direct v3.0 formats for file2
+        if "telemetry" in data2:
+            telemetry2 = data2["telemetry"]
+            config2 = self._create_config_from_metrics(data2.get("metrics", {}))
+        elif "format_version" in data2:
+            telemetry2 = data2
+            config2 = self._create_config_from_metrics({})
+        else:
             print(f"Warning: No telemetry data found in {file2}")
             return
-
-        telemetry1 = data1["telemetry"]
-        telemetry2 = data2["telemetry"]
-        config1 = self._create_config_from_metrics(data1.get("metrics", {}))
-        config2 = self._create_config_from_metrics(data2.get("metrics", {}))
 
         # Create figure with side-by-side subplots (7 rows × 2 columns)
         if figsize is None:
