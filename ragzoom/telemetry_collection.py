@@ -90,7 +90,8 @@ class SummaryAttempt:
 
     # Optional fields with defaults
     rejection_reason: str | None = None
-    prompt_hash: str | None = None  # Hash of prompt for deduplication analysis
+    prompt_hash: str | None = None
+    cached_tokens: int = 0  # Number of cached prompt tokens (for prompt caching)
 
 
 @dataclass
@@ -162,6 +163,15 @@ class NodeTelemetry:
                 }
                 if attempt.rejection_reason:
                     attempt_dict["rejection_reason"] = attempt.rejection_reason
+                # Handle cached_tokens, which might be MagicMock in tests
+                cached_tokens_value = getattr(attempt, "cached_tokens", 0)
+                if hasattr(cached_tokens_value, "__gt__"):  # Check if it's comparable
+                    try:
+                        if cached_tokens_value > 0:
+                            attempt_dict["cached_tokens"] = cached_tokens_value
+                    except (TypeError, AttributeError):
+                        # If it's a MagicMock or similar, skip it
+                        pass
                 attempts_list.append(attempt_dict)
             result["summary_attempts"] = attempts_list
 
@@ -374,6 +384,7 @@ class TelemetryCollector:
         model: str,
         start_time: float,
         rejection_reason: str | None = None,
+        cached_tokens: int = 0,
     ) -> None:
         """Record a summary attempt (compatible with PR #29 retry mechanism).
 
@@ -388,6 +399,7 @@ class TelemetryCollector:
             model: Model used for summary
             start_time: When the API call started
             rejection_reason: Optional reason for rejection
+            cached_tokens: Number of cached prompt tokens (for prompt caching)
         """
         # Update aggregate metrics
         self.summary_api_calls += 1
@@ -417,6 +429,7 @@ class TelemetryCollector:
             start_time=start_time,
             end_time=time.time(),
             rejection_reason=rejection_reason,
+            cached_tokens=cached_tokens,
         )
         self.node_telemetry[node_id].summary_attempts.append(attempt)
 

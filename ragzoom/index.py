@@ -9,6 +9,7 @@ from typing import Any, Literal, cast, overload
 
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN
+from openai.types.chat import ChatCompletionMessageParam
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
@@ -110,15 +111,159 @@ class TreeBuilder:
         half_size = len(tokens) // 2
         return min(self.config.leaf_tokens, half_size)
 
+    async def _make_summary_call(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        target_tokens: int | None,
+        node_info: str = "",
+    ) -> tuple[str, int, Any]:
+        """Make OpenAI API call and return summary, token count, and response.
+
+        Args:
+            messages: Conversation messages to send
+            target_tokens: Target token count for max_tokens parameter (None for no limit)
+            node_info: Optional node identifier for logging
+
+        Returns:
+            Tuple of (summary_text, token_count, raw_response)
+        """
+        # Build kwargs for the API call
+        api_kwargs = {
+            "model": self.config.summary_model,
+            "messages": messages,  # type: ignore
+            "temperature": self.config.summary_temperature,
+        }
+
+        # Only add max_tokens if specified
+        if target_tokens is not None:
+            api_kwargs["max_tokens"] = int(target_tokens * 1.5)  # Safety margin
+
+        response = await self.client.chat.completions.create(**api_kwargs)  # type: ignore
+
+        content = response.choices[0].message.content
+        if not content:
+            logger.warning(f"{node_info}Empty response from LLM")
+            raise ValueError("Empty response from LLM")
+
+        summary = content.strip()
+        if not summary:
+            logger.warning(f"{node_info}Summary is empty after stripping whitespace")
+            raise ValueError("Empty summary after stripping")
+
+        # Measure actual tokens
+        summary_tokens = self.splitter.tokenizer.encode(summary)
+        token_count = len(summary_tokens)
+
+        return summary, token_count, response
+
+    def _determine_summary_status(
+        self, actual_tokens: int, target_tokens: int
+    ) -> tuple[Literal["accepted", "rejected_over", "rejected_under"], str | None]:
+        """Determine if summary is accepted or rejected based on token count.
+
+        Args:
+            actual_tokens: Actual token count of the summary
+            target_tokens: Target token count
+
+        Returns:
+            Tuple of (status, rejection_reason)
+        """
+        deviation_pct = abs((actual_tokens - target_tokens) / target_tokens)
+
+        if deviation_pct <= self.config.summary_deviation_threshold:
+            return "accepted", None
+        elif actual_tokens > target_tokens:
+            rejection_reason = f"{int((actual_tokens - target_tokens) / target_tokens * 100)}% over target"
+            return "rejected_over", rejection_reason
+        else:
+            rejection_reason = f"{int((target_tokens - actual_tokens) / target_tokens * 100)}% under target"
+            return "rejected_under", rejection_reason
+
+    def _extract_cached_tokens(self, response: Any) -> int:
+        """Extract cached tokens from OpenAI response.
+
+        Args:
+            response: OpenAI API response object
+
+        Returns:
+            Number of cached tokens, or 0 if not available
+        """
+        if not (hasattr(response, "usage") and response.usage):
+            return 0
+
+        if not (
+            hasattr(response.usage, "prompt_tokens_details")
+            and response.usage.prompt_tokens_details
+        ):
+            return 0
+
+        details = response.usage.prompt_tokens_details
+        # Handle both dict and object cases
+        if isinstance(details, dict):
+            return int(details.get("cached_tokens", 0))
+        elif hasattr(details, "cached_tokens"):
+            return int(details.cached_tokens or 0)
+        return 0
+
+    async def _record_summary_telemetry(
+        self,
+        reporter: TelemetryCollector | None,
+        parent_id: str | None,
+        response: Any,
+        target_tokens: int,
+        input_text_tokens: int,
+        actual_tokens: int,
+        start_time: float,
+    ) -> None:
+        """Record telemetry for a summary attempt.
+
+        Args:
+            reporter: Telemetry collector instance
+            parent_id: Node ID for telemetry
+            response: OpenAI API response
+            target_tokens: Target token count
+            input_text_tokens: Input text token count
+            actual_tokens: Actual summary token count
+            start_time: When the API call started
+        """
+        if not (
+            reporter and parent_id and hasattr(response, "usage") and response.usage
+        ):
+            return
+
+        status, rejection_reason = self._determine_summary_status(
+            actual_tokens, target_tokens
+        )
+        cached_tokens = self._extract_cached_tokens(response)
+
+        reporter.record_summary_attempt_v2(
+            node_id=parent_id,
+            target_tokens=target_tokens,
+            input_text_tokens=input_text_tokens,
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            actual_tokens=actual_tokens,
+            status=status,
+            model=self.config.summary_model,
+            start_time=start_time,
+            rejection_reason=rejection_reason,
+            cached_tokens=cached_tokens,
+        )
+
     async def _retry_summary_correction(
         self,
         initial_summary: str,
         target_tokens: int,
+        messages: list[
+            ChatCompletionMessageParam
+        ],  # Conversation history for continuations
         parent_id: str | None = None,
         debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, int]:
         """Retry summary correction to get closer to target token count.
+
+        Uses conversation continuations to maintain context across retries.
 
         Returns:
             tuple: (best_summary, actual_retry_count)
@@ -177,13 +322,11 @@ class TreeBuilder:
                 else:
                     guidance = "Provide only the most critical events. Use extremely concise language."
 
-                prompt = f"""Please revise this summary to be shorter.
+                prompt = f"""Please revise your summary to be shorter.
 
-Current summary ({current_tokens} tokens):
-{summary}
-
-Target: {adjusted_target} tokens (you are {deviation_pct_display:.0f}% over target)
-To fix this, remove approximately {change_pct:.0f}% of the content.
+Your summary was {current_tokens} tokens, but the target is {adjusted_target} tokens.
+You are {deviation_pct_display:.0f}% over target.
+Please remove approximately {change_pct:.0f}% of the content.
 
 {guidance}
 
@@ -212,82 +355,46 @@ Provide ONLY the shortened summary, with no preamble or explanation."""
                 else:
                     guidance = "Significantly expand by including much more detail. Add complete sequences of events, full character actions, and comprehensive descriptions."
 
-                prompt = f"""Please expand this summary with more detail.
+                prompt = f"""Please expand your summary with more detail.
 
-Current summary ({current_tokens} tokens):
-{summary}
-
-Target: {target_tokens} tokens (you can add {deficit} more tokens)
-To fix this, expand by approximately {expansion_pct:.0f}%.
+Your summary was {current_tokens} tokens, but the target is {target_tokens} tokens.
+You can add {deficit} more tokens.
+Please expand by approximately {expansion_pct:.0f}%.
 
 {guidance}
 
 Provide ONLY the expanded summary, with no preamble or explanation."""
 
-            # Make retry request
+            # Make retry request using conversation continuation
             try:
-                retry_start = time.time()
-                retry_response = await self.client.chat.completions.create(
-                    model=self.config.summary_model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": f"You are a precise editor who adjusts text length to meet specific token targets. Target: approximately {target_tokens} tokens.",
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=self.config.summary_temperature,
-                    max_tokens=int(target_tokens * 1.5),  # Safety margin
-                )
+                # Append current summary as assistant response
+                messages.append({"role": "assistant", "content": summary})
+                # Append retry instruction as user message
+                messages.append({"role": "user", "content": prompt})
 
-                content = retry_response.choices[0].message.content
-                if not content:
-                    logger.warning(f"{node_info}Empty response from LLM during retry")
+                retry_start = time.time()
+                try:
+                    summary, new_token_count, retry_response = (
+                        await self._make_summary_call(
+                            messages, target_tokens, node_info
+                        )
+                    )
+                    actual_retries = retry_count  # Track that we performed this retry
+                    new_distance = abs(new_token_count - target_tokens)
+                except ValueError:
+                    logger.warning(f"{node_info}Failed to get valid retry response")
                     continue
 
-                summary = content.strip()
-                actual_retries = retry_count  # Track that we performed this retry
-
-                # Check new token count
-                new_tokens = self.splitter.tokenizer.encode(summary)
-                new_token_count = len(new_tokens)
-                new_distance = abs(new_token_count - target_tokens)
-
                 # Track retry attempt with telemetry
-                if (
-                    reporter
-                    and parent_id
-                    and hasattr(retry_response, "usage")
-                    and retry_response.usage
-                ):
-                    # Determine status for this retry
-                    new_deviation_pct = abs(
-                        (new_token_count - target_tokens) / target_tokens
-                    )
-                    if new_deviation_pct <= self.config.summary_deviation_threshold:
-                        status: Literal[
-                            "accepted", "rejected_over", "rejected_under", "error"
-                        ] = "accepted"
-                        rejection_reason = None
-                    elif new_token_count > target_tokens:
-                        status = "rejected_over"
-                        rejection_reason = f"{int((new_token_count - target_tokens) / target_tokens * 100)}% over target"
-                    else:
-                        status = "rejected_under"
-                        rejection_reason = f"{int((target_tokens - new_token_count) / target_tokens * 100)}% under target"
-
-                    reporter.record_summary_attempt_v2(
-                        node_id=parent_id,
-                        target_tokens=target_tokens,
-                        input_text_tokens=best_token_count,  # Previous attempt's tokens
-                        prompt_tokens=retry_response.usage.prompt_tokens,
-                        completion_tokens=retry_response.usage.completion_tokens,
-                        actual_tokens=new_token_count,
-                        status=status,
-                        model=self.config.summary_model,
-                        start_time=retry_start,
-                        rejection_reason=rejection_reason,
-                    )
+                await self._record_summary_telemetry(
+                    reporter=reporter,
+                    parent_id=parent_id,
+                    response=retry_response,
+                    target_tokens=target_tokens,
+                    input_text_tokens=best_token_count,  # Previous attempt's tokens
+                    actual_tokens=new_token_count,
+                    start_time=retry_start,
+                )
 
                 # Update best if improved
                 if (
@@ -434,8 +541,10 @@ Here's the content to summarize:"""
 
         async with self.semaphore:
             try:
+                node_info = f"[{parent_id}] " if parent_id else ""
+
                 # Build initial messages for conversation
-                messages: list[dict[str, Any]] = [
+                messages: list[ChatCompletionMessageParam] = [
                     {
                         "role": "system",
                         "content": f"You are a precise summarizer who creates detailed summaries of approximately {target_tokens} tokens. You ONLY use information explicitly provided in the input text. You NEVER add context or details from outside the given text. Aim to use 90-100% of the available token budget.",
@@ -444,71 +553,40 @@ Here's the content to summarize:"""
                 ]
 
                 start_time = time.time()
-                response = await self.client.chat.completions.create(
-                    model=self.config.summary_model,
-                    messages=messages,  # type: ignore
-                    temperature=self.config.summary_temperature,
-                    # No max_tokens limit - let LLM decide based on prompt instructions
-                )
-                content = response.choices[0].message.content
-                if not content:
-                    logger.warning(
-                        f"{node_info}Empty response from LLM, using original text"
+                try:
+                    summary, current_tokens, response = await self._make_summary_call(
+                        messages, target_tokens=None, node_info=node_info
                     )
+                except ValueError as e:
+                    logger.warning(f"{node_info}{e}, using original text")
                     summary = combined_text
-                else:
-                    summary = content.strip()
-                    if not summary:
-                        logger.warning(
-                            f"{node_info}Summary is empty after stripping whitespace, using original text"
-                        )
-                        summary = combined_text
+                    current_tokens = len(self.splitter.tokenizer.encode(summary))
+                    response = None
 
                 # Check if summary needs correction
-                summary_tokens = self.splitter.tokenizer.encode(summary)
-                current_tokens = len(summary_tokens)
-                deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
-
-                node_info = f"[{parent_id}] " if parent_id else ""
+                deviation_pct = (
+                    abs((current_tokens - target_tokens) / target_tokens)
+                    if response
+                    else 0
+                )
 
                 # Track the initial attempt with telemetry
-                if (
-                    reporter
-                    and parent_id
-                    and hasattr(response, "usage")
-                    and response.usage
-                ):
-                    # Determine initial status
-                    if deviation_pct <= self.config.summary_deviation_threshold:
-                        initial_status: Literal[
-                            "accepted", "rejected_over", "rejected_under", "error"
-                        ] = "accepted"
-                        initial_rejection = None
-                    elif current_tokens > target_tokens:
-                        initial_status = "rejected_over"
-                        initial_rejection = f"{int((current_tokens - target_tokens) / target_tokens * 100)}% over target"
-                    else:
-                        initial_status = "rejected_under"
-                        initial_rejection = f"{int((target_tokens - current_tokens) / target_tokens * 100)}% under target"
-
-                    reporter.record_summary_attempt_v2(
-                        node_id=parent_id,
+                if response:
+                    await self._record_summary_telemetry(
+                        reporter=reporter,
+                        parent_id=parent_id,
+                        response=response,
                         target_tokens=target_tokens,
                         input_text_tokens=input_text_tokens,
-                        prompt_tokens=response.usage.prompt_tokens,
-                        completion_tokens=response.usage.completion_tokens,
                         actual_tokens=current_tokens,
-                        status=initial_status,
-                        model=self.config.summary_model,
                         start_time=start_time,
-                        rejection_reason=initial_rejection,
                     )
 
                 # Use retry correction if deviation exceeds threshold
                 retry_count = 0
                 if deviation_pct > self.config.summary_deviation_threshold:
                     summary, retry_count = await self._retry_summary_correction(
-                        summary, target_tokens, parent_id, debug, reporter
+                        summary, target_tokens, messages, parent_id, debug, reporter
                     )
                     # Re-calculate final tokens for logging
                     final_tokens = len(self.splitter.tokenizer.encode(summary))

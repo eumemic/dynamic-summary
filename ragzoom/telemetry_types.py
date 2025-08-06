@@ -44,6 +44,10 @@ class SummaryAttemptDict(TypedDict):
     # Optional fields
     rejection_reason: NotRequired[str | None]
     prompt_hash: NotRequired[str | None]
+    cached_tokens: NotRequired[
+        int
+    ]  # Number of cached prompt tokens (for prompt caching)
+    prompt_tokens_details: NotRequired[dict]  # Full OpenAI prompt token details
 
     # v1 compatibility - removed in v2
     is_retry: NotRequired[bool]
