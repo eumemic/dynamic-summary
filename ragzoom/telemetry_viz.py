@@ -21,6 +21,7 @@ from ragzoom.telemetry_analysis import (
     analyze_retry_patterns,
     compute_batch_efficiency,
     compute_metrics_from_telemetry,
+    get_accepted_attempt,
     get_telemetry_thresholds,
 )
 from ragzoom.telemetry_config import (
@@ -405,22 +406,19 @@ class TelemetryVisualizer:
                 continue  # Skip leaf nodes
 
             # Get token counts for this node
-            for attempt in node.get("summary_attempts", []):
-                if attempt.get("status") == "accepted":
-                    prompt_tokens = attempt.get("prompt_tokens", 0)
-                    completion_tokens = attempt.get("completion_tokens", 0)
+            accepted_attempt, _ = get_accepted_attempt(node)
+            if accepted_attempt:
+                prompt_tokens = accepted_attempt.get("prompt_tokens", 0)
+                completion_tokens = accepted_attempt.get("completion_tokens", 0)
 
-                    if height not in tokens_by_height:
-                        tokens_by_height[height] = {
-                            "prompt_tokens": [],
-                            "completion_tokens": [],
-                        }
+                if height not in tokens_by_height:
+                    tokens_by_height[height] = {
+                        "prompt_tokens": [],
+                        "completion_tokens": [],
+                    }
 
-                    tokens_by_height[height]["prompt_tokens"].append(prompt_tokens)
-                    tokens_by_height[height]["completion_tokens"].append(
-                        completion_tokens
-                    )
-                    break
+                tokens_by_height[height]["prompt_tokens"].append(prompt_tokens)
+                tokens_by_height[height]["completion_tokens"].append(completion_tokens)
 
         if not tokens_by_height:
             ax.text(
@@ -717,15 +715,13 @@ class TelemetryVisualizer:
             height = node.get("height", node.get("level", 0))
             if height > 0:
                 # Look for accepted summary attempts
-                summary_attempts = node.get("summary_attempts", [])
-                for attempt in summary_attempts:
-                    if attempt.get("status") == "accepted":
-                        actual_tokens = attempt.get("actual_tokens", 0)
-                        if actual_tokens > 0:
-                            # Calculate deviation percentage
-                            deviation = (actual_tokens - chunk_size) / chunk_size * 100
-                            deviations.append(deviation)
-                            break  # Only use the accepted attempt
+                accepted_attempt, _ = get_accepted_attempt(node)
+                if accepted_attempt:
+                    actual_tokens = accepted_attempt.get("actual_tokens", 0)
+                    if actual_tokens > 0:
+                        # Calculate deviation percentage
+                        deviation = (actual_tokens - chunk_size) / chunk_size * 100
+                        deviations.append(deviation)
 
         return deviations
 
@@ -859,20 +855,19 @@ class TelemetryVisualizer:
 
             # Extract token counts from summary attempts for summary nodes
             if height > 0:  # Summary nodes
-                summary_attempts = node.get("summary_attempts", [])
-                for attempt in summary_attempts:
-                    if attempt.get("status") == "accepted":
-                        actual_tokens = attempt.get("actual_tokens", 0)
-                        target_tokens = attempt.get("target_tokens", 0)
-                        if actual_tokens > 0:
-                            token_data.append(
-                                {
-                                    "level": f"Level {height}",
-                                    "actual_tokens": actual_tokens,
-                                    "target_tokens": target_tokens,
-                                    "node_type": "Summary",
-                                }
-                            )
+                accepted_attempt, _ = get_accepted_attempt(node)
+                if accepted_attempt:
+                    actual_tokens = accepted_attempt.get("actual_tokens", 0)
+                    target_tokens = accepted_attempt.get("target_tokens", 0)
+                    if actual_tokens > 0:
+                        token_data.append(
+                            {
+                                "level": f"Level {height}",
+                                "actual_tokens": actual_tokens,
+                                "target_tokens": target_tokens,
+                                "node_type": "Summary",
+                            }
+                        )
             else:  # Leaf nodes
                 # For leaf nodes, we can estimate from embedding data or use default
                 embedding = node.get("embedding", {})

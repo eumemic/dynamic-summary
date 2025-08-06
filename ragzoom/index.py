@@ -5,7 +5,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from typing import Any, cast, overload
 
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN
@@ -156,29 +156,6 @@ class TreeBuilder:
 
         return summary, token_count, response
 
-    def _determine_summary_status(
-        self, actual_tokens: int, target_tokens: int
-    ) -> tuple[Literal["accepted", "rejected_over", "rejected_under"], str | None]:
-        """Determine if summary is accepted or rejected based on token count.
-
-        Args:
-            actual_tokens: Actual token count of the summary
-            target_tokens: Target token count
-
-        Returns:
-            Tuple of (status, rejection_reason)
-        """
-        deviation_pct = abs((actual_tokens - target_tokens) / target_tokens)
-
-        if deviation_pct <= self.config.summary_deviation_threshold:
-            return "accepted", None
-        elif actual_tokens > target_tokens:
-            rejection_reason = f"{int((actual_tokens - target_tokens) / target_tokens * 100)}% over target"
-            return "rejected_over", rejection_reason
-        else:
-            rejection_reason = f"{int((target_tokens - actual_tokens) / target_tokens * 100)}% under target"
-            return "rejected_under", rejection_reason
-
     def _extract_cached_tokens(self, response: Any) -> int:
         """Extract cached tokens from OpenAI response.
 
@@ -231,9 +208,6 @@ class TreeBuilder:
         ):
             return
 
-        status, rejection_reason = self._determine_summary_status(
-            actual_tokens, target_tokens
-        )
         cached_tokens = self._extract_cached_tokens(response)
 
         reporter.record_summary_attempt_v2(
@@ -243,10 +217,8 @@ class TreeBuilder:
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
             actual_tokens=actual_tokens,
-            status=status,
             model=self.config.summary_model,
             start_time=start_time,
-            rejection_reason=rejection_reason,
             cached_tokens=cached_tokens,
         )
 
@@ -261,20 +233,21 @@ class TreeBuilder:
         parent_id: str | None = None,
         debug: bool = False,
         reporter: TelemetryCollector | None = None,
-    ) -> tuple[str, int]:
+    ) -> tuple[str, int, int]:
         """Retry summary correction to get closer to target token count.
 
         Uses conversation continuations to maintain context across retries.
 
         Returns:
-            tuple: (best_summary, actual_retry_count)
+            tuple: (best_summary, actual_retry_count, best_attempt_index)
         """
         summary = initial_summary
         summary_tokens = self.splitter.tokenizer.encode(summary)
         best_summary = summary
         best_token_count = len(summary_tokens)
         best_distance_from_target = abs(best_token_count - target_tokens)
-        
+        best_attempt_index = 0  # Track which attempt was best (0 = initial)
+
         # Convert target to characters for retry prompts
         target_chars = int(target_tokens * local_char_ratio)
 
@@ -287,10 +260,10 @@ class TreeBuilder:
 
             # Stop if within threshold
             if deviation_pct <= self.config.summary_deviation_threshold:
-                return best_summary, actual_retries
+                return best_summary, actual_retries, best_attempt_index
 
             is_over_target = current_tokens > target_tokens
-            
+
             # Calculate current character count for prompt
             current_chars = len(summary)
 
@@ -305,13 +278,19 @@ class TreeBuilder:
                     adjusted_target_tokens = int(
                         target_tokens * self.config.summary_fallback_reduction
                     )  # Fallback
-                
+
                 # Convert to characters for the prompt
                 adjusted_target_chars = int(adjusted_target_tokens * local_char_ratio)
 
                 deviation_chars = current_chars - adjusted_target_chars
-                deviation_pct_display = (deviation_chars / adjusted_target_chars) * 100 if adjusted_target_chars > 0 else 100
-                change_pct = (deviation_chars / current_chars) * 100 if current_chars > 0 else 0
+                deviation_pct_display = (
+                    (deviation_chars / adjusted_target_chars) * 100
+                    if adjusted_target_chars > 0
+                    else 100
+                )
+                change_pct = (
+                    (deviation_chars / current_chars) * 100 if current_chars > 0 else 0
+                )
 
                 actual_deviation_pct = (
                     (current_tokens - target_tokens) / target_tokens
@@ -344,8 +323,12 @@ Provide ONLY the shortened summary, with no preamble or explanation."""
             else:
                 # Under target - request expansion
                 deficit_chars = target_chars - current_chars
-                deficit_pct = (deficit_chars / target_chars) * 100 if target_chars > 0 else 0
-                expansion_pct = (deficit_chars / current_chars) * 100 if current_chars > 0 else 0
+                deficit_pct = (
+                    (deficit_chars / target_chars) * 100 if target_chars > 0 else 0
+                )
+                expansion_pct = (
+                    (deficit_chars / current_chars) * 100 if current_chars > 0 else 0
+                )
 
                 if debug:
                     logger.info(
@@ -417,6 +400,7 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                     best_summary = summary
                     best_token_count = new_token_count
                     best_distance_from_target = new_distance
+                    best_attempt_index = actual_retries  # This retry is now the best
 
                     if debug:
                         logger.info(
@@ -438,7 +422,7 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                 logger.error(f"{node_info}Error during retry {retry_count}: {e}")
                 break
 
-        return best_summary, actual_retries
+        return best_summary, actual_retries, best_attempt_index
 
     async def _summarize_text(
         self,
@@ -459,10 +443,12 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
         combined_text = f"{left_text} {right_text}".strip()
         combined_tokens = self.splitter.tokenizer.encode(combined_text)
         current_token_count = len(combined_tokens)
-        
+
         # Calculate local character/token ratio for this specific text
         local_chars = len(combined_text)
-        local_char_ratio = local_chars / current_token_count if current_token_count > 0 else 4.5
+        local_char_ratio = (
+            local_chars / current_token_count if current_token_count > 0 else 4.5
+        )
 
         if current_token_count <= target_tokens:
             node_info = f"[{parent_id}] " if parent_id else ""
@@ -471,7 +457,7 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                 f"(target: {target_tokens}). Skipping summarization."
             )
 
-            # Record this as an accepted summary attempt for telemetry
+            # Record this as a summary attempt for telemetry (no LLM call made)
             if reporter and parent_id:
                 reporter.record_summary_attempt_v2(
                     node_id=parent_id,
@@ -480,10 +466,9 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                     prompt_tokens=0,  # No LLM call made
                     completion_tokens=0,  # No LLM call made
                     actual_tokens=current_token_count,
-                    status="accepted",
                     model="passthrough",  # Special model name for no-op
                     start_time=time.time(),
-                    rejection_reason=None,
+                    is_final=True,  # This is the only and final attempt
                 )
 
             return combined_text, 0  # No retries needed
@@ -507,7 +492,9 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
         # Convert target tokens to characters using local ratio
         target_chars = int(target_tokens * local_char_ratio)
         chars_to_remove = local_chars - target_chars
-        compression_ratio = (chars_to_remove / local_chars) * 100 if local_chars > 0 else 0
+        compression_ratio = (
+            (chars_to_remove / local_chars) * 100 if local_chars > 0 else 0
+        )
 
         # Build the summarization prompt using character targets
         instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context).
@@ -600,10 +587,23 @@ Here's the content to summarize:"""
 
                 # Use retry correction if deviation exceeds threshold
                 retry_count = 0
+                accepted_attempt = 0  # Default to first attempt
+
                 if deviation_pct > self.config.summary_deviation_threshold:
-                    summary, retry_count = await self._retry_summary_correction(
-                        summary, target_tokens, messages, local_char_ratio, parent_id, debug, reporter
+                    summary, retry_count, best_attempt_index = (
+                        await self._retry_summary_correction(
+                            summary,
+                            target_tokens,
+                            messages,
+                            local_char_ratio,
+                            parent_id,
+                            debug,
+                            reporter,
+                        )
                     )
+                    # The accepted attempt is the initial (0) plus the best retry index
+                    accepted_attempt = best_attempt_index
+
                     # Re-calculate final tokens for logging
                     final_tokens = len(self.splitter.tokenizer.encode(summary))
                     utilization_pct = (final_tokens / target_tokens) * 100
@@ -620,6 +620,10 @@ Here's the content to summarize:"""
                             f"{node_info}Summary complete: {current_tokens} tokens "
                             f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
                         )
+
+                # Mark which attempt was accepted
+                if reporter and parent_id:
+                    reporter.mark_accepted_attempt(parent_id, accepted_attempt)
 
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")

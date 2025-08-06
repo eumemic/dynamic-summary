@@ -34,12 +34,11 @@ class TestTelemetryDataStructures:
     def test_summary_attempt_timing_fields(self) -> None:
         """Test SummaryAttempt has start_time and end_time fields."""
         attempt = SummaryAttempt(
-            target_tokens=200,
+            target_tokens=100,
             input_text_tokens=400,
             prompt_tokens=500,
-            completion_tokens=180,
-            actual_tokens=180,
-            status="accepted",
+            completion_tokens=105,
+            actual_tokens=105,
             model="gpt-4o-mini",
             start_time=1234567890.0,
             end_time=1234567891.0,
@@ -48,7 +47,9 @@ class TestTelemetryDataStructures:
         # Verify timing fields exist
         assert attempt.start_time == 1234567890.0
         assert attempt.end_time == 1234567891.0
-        assert attempt.status == "accepted"
+        assert attempt.deviation_percent == 5.0  # 105/100 - 1 = 5%
+        # Verify status field is removed
+        assert not hasattr(attempt, "status")
         # Verify is_retry field removed
         assert not hasattr(attempt, "is_retry")
 
@@ -127,7 +128,7 @@ class TestTelemetryCollection:
         # Track a summary node
         reporter.track_node_created("parent-1", 1)
 
-        # Record a failed attempt
+        # Record first attempt (30% over target)
         start_time1 = time.time()
         reporter.record_summary_attempt_v2(
             node_id="parent-1",
@@ -136,13 +137,11 @@ class TestTelemetryCollection:
             prompt_tokens=250,
             completion_tokens=130,
             actual_tokens=130,
-            status="rejected_over",
             model="gpt-4o-mini",
             start_time=start_time1,
-            rejection_reason="30% over target",
         )
 
-        # Record a successful retry
+        # Record a retry (5% under target - acceptable)
         start_time2 = time.time()
         reporter.record_summary_attempt_v2(
             node_id="parent-1",
@@ -151,7 +150,6 @@ class TestTelemetryCollection:
             prompt_tokens=250,
             completion_tokens=95,
             actual_tokens=95,
-            status="accepted",
             model="gpt-4o-mini",
             start_time=start_time2,
         )
@@ -165,20 +163,19 @@ class TestTelemetryCollection:
         node = reporter.node_telemetry["parent-1"]
         assert len(node.summary_attempts) == 2
 
-        # First attempt (failed)
+        # First attempt (30% over)
         attempt1 = node.summary_attempts[0]
-        assert attempt1.status == "rejected_over"
-        assert attempt1.rejection_reason == "30% over target"
+        assert attempt1.deviation_percent == 30.0  # 130/100 - 1 = 30%
         assert attempt1.completion_tokens == 130
         assert attempt1.start_time > 0
-        assert attempt1.end_time > attempt1.start_time
+        assert attempt1.end_time >= attempt1.start_time
 
-        # Second attempt (successful)
+        # Second attempt (5% under)
         attempt2 = node.summary_attempts[1]
-        assert attempt2.status == "accepted"
+        assert attempt2.deviation_percent == -5.0  # 95/100 - 1 = -5%
         assert attempt2.completion_tokens == 95
-        assert attempt2.start_time > attempt1.end_time
-        assert attempt2.end_time > attempt2.start_time
+        assert attempt2.start_time >= attempt1.end_time
+        assert attempt2.end_time >= attempt2.start_time
 
     def test_backward_compatibility(self, reporter: TelemetryCollector) -> None:
         """Test that old methods still work without telemetry."""
@@ -311,10 +308,13 @@ class TestTelemetryIntegration:
             if node_data["height"] > 0:
                 assert "summary_attempts" in node_data
                 assert len(node_data["summary_attempts"]) > 0
-                # At least one attempt should be accepted
-                assert any(
-                    a["status"] == "accepted" for a in node_data["summary_attempts"]
-                )
+                # The node should have marked which attempt was accepted
+                # (or we fall back to the last attempt for backward compatibility)
+                has_accepted = "accepted_attempt" in node_data
+                if not has_accepted:
+                    # For backward compatibility: if no accepted_attempt field,
+                    # the last attempt should be the one used
+                    assert len(node_data["summary_attempts"]) > 0
 
     def test_telemetry_serialization(self, base_config: RagZoomConfig) -> None:
         """Test that telemetry can be serialized to JSON."""

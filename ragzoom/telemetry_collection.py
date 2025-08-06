@@ -10,7 +10,6 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Literal
 
 import psutil
 
@@ -53,9 +52,9 @@ class EmbeddingTelemetry:
 class SummaryAttempt:
     """Telemetry for a single summary attempt.
 
-    Designed to support PR #29's retry mechanism where summaries may be
-    regenerated if they don't meet size constraints. Each attempt is recorded
-    separately to enable analysis of retry patterns and costs.
+    Records raw metrics for each summary generation attempt without
+    categorizing as accepted/rejected. Analysis tools can compute
+    deviation and apply thresholds as needed.
 
     Attributes:
         target_tokens: Target size for the summary
@@ -63,12 +62,11 @@ class SummaryAttempt:
         prompt_tokens: Tokens used in the API prompt
         completion_tokens: Tokens reported by the OpenAI API
         actual_tokens: Tokens measured by our tokenizer from the generated text
-        status: Outcome - 'accepted', 'rejected_over', 'rejected_under', 'error'
         model: Model used for generation
         start_time: When this attempt started
         end_time: When this attempt completed
-        rejection_reason: Optional explanation for rejection
-        prompt_hash: Optional hash for deduplication analysis
+        cached_tokens: Number of cached prompt tokens (for prompt caching)
+        is_final: Whether this attempt was the one actually used
     """
 
     # Inputs
@@ -81,7 +79,6 @@ class SummaryAttempt:
 
     # Results
     actual_tokens: int  # Tokens we measure in the summary text
-    status: Literal["accepted", "rejected_over", "rejected_under", "error"]
 
     # Model info
     model: str
@@ -89,9 +86,15 @@ class SummaryAttempt:
     end_time: float
 
     # Optional fields with defaults
-    rejection_reason: str | None = None
-    prompt_hash: str | None = None
     cached_tokens: int = 0  # Number of cached prompt tokens (for prompt caching)
+    is_final: bool = False  # Whether this attempt was the one actually used
+
+    @property
+    def deviation_percent(self) -> float:
+        """Calculate deviation from target as a percentage."""
+        if self.target_tokens == 0:
+            return 0.0
+        return (self.actual_tokens - self.target_tokens) / self.target_tokens * 100
 
 
 @dataclass
@@ -107,6 +110,7 @@ class NodeTelemetry:
         height: Tree height (0 = leaves, increases up the tree)
         embedding: Embedding API call details (optional)
         summary_attempts: List of summary generation attempts
+        accepted_attempt: Index of the attempt that was actually used
         created_at: Timestamp when node was created
     """
 
@@ -118,6 +122,9 @@ class NodeTelemetry:
 
     # Summary telemetry (multiple attempts for retries)
     summary_attempts: list[SummaryAttempt] = field(default_factory=list)
+
+    # Which attempt was actually used (None means use last attempt for backward compat)
+    accepted_attempt: int | None = None
 
     # Timing
     created_at: float = field(default_factory=time.time)
@@ -156,13 +163,13 @@ class NodeTelemetry:
                     "prompt_tokens": attempt.prompt_tokens,
                     "completion_tokens": attempt.completion_tokens,
                     "actual_tokens": attempt.actual_tokens,
-                    "status": attempt.status,
                     "model": attempt.model,
                     "start_time": attempt.start_time,
                     "end_time": attempt.end_time,
                 }
-                if attempt.rejection_reason:
-                    attempt_dict["rejection_reason"] = attempt.rejection_reason
+                # Add is_final if True (omit if False for smaller JSON)
+                if attempt.is_final:
+                    attempt_dict["is_final"] = True
                 # Handle cached_tokens, which might be MagicMock in tests
                 cached_tokens_value = getattr(attempt, "cached_tokens", 0)
                 if hasattr(cached_tokens_value, "__gt__"):  # Check if it's comparable
@@ -174,6 +181,10 @@ class NodeTelemetry:
                         pass
                 attempts_list.append(attempt_dict)
             result["summary_attempts"] = attempts_list
+
+            # Add accepted_attempt index if set
+            if self.accepted_attempt is not None:
+                result["accepted_attempt"] = self.accepted_attempt
 
         return result
 
@@ -380,13 +391,12 @@ class TelemetryCollector:
         prompt_tokens: int,
         completion_tokens: int,
         actual_tokens: int,
-        status: Literal["accepted", "rejected_over", "rejected_under", "error"],
         model: str,
         start_time: float,
-        rejection_reason: str | None = None,
         cached_tokens: int = 0,
+        is_final: bool = False,
     ) -> None:
-        """Record a summary attempt (compatible with PR #29 retry mechanism).
+        """Record a summary attempt.
 
         Args:
             node_id: Node being summarized
@@ -395,11 +405,10 @@ class TelemetryCollector:
             prompt_tokens: Tokens in the prompt
             completion_tokens: Tokens in the completion (from API)
             actual_tokens: Actual tokens in summary text (measured)
-            status: Outcome of this attempt
             model: Model used for summary
             start_time: When the API call started
-            rejection_reason: Optional reason for rejection
             cached_tokens: Number of cached prompt tokens (for prompt caching)
+            is_final: Whether this attempt was the one actually used
         """
         # Update aggregate metrics
         self.summary_api_calls += 1
@@ -424,16 +433,30 @@ class TelemetryCollector:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             actual_tokens=actual_tokens,
-            status=status,
             model=model,
             start_time=start_time,
             end_time=time.time(),
-            rejection_reason=rejection_reason,
             cached_tokens=cached_tokens,
+            is_final=is_final,
         )
         self.node_telemetry[node_id].summary_attempts.append(attempt)
 
         self._update_memory_usage()
+
+    def mark_accepted_attempt(self, node_id: str, attempt_index: int) -> None:
+        """Mark which summary attempt was actually used for the node.
+
+        Args:
+            node_id: Node being summarized
+            attempt_index: Index of the accepted attempt (0-based)
+        """
+        if node_id not in self.node_telemetry:
+            logger.warning(
+                f"Node {node_id} not found in telemetry for marking accepted attempt"
+            )
+            return
+
+        self.node_telemetry[node_id].accepted_attempt = attempt_index
 
     def record_tree_height_complete(self, height: int, nodes_created: int) -> None:
         """Called when a tree height is complete.
