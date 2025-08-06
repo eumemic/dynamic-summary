@@ -277,11 +277,12 @@ class TestTelemetryIntegration:
         # Get final telemetry data
         telemetry_data = reporter.finalize()
 
-        # Verify telemetry was collected
-        assert "documents" in telemetry_data
-        assert "telemetry-test" in telemetry_data["documents"]
+        # Verify telemetry was collected (v3.0 format)
+        assert telemetry_data["format_version"] == "3.0"
+        assert telemetry_data["document_id"] == "telemetry-test"
+        assert "nodes" in telemetry_data
 
-        nodes = telemetry_data["documents"]["telemetry-test"]["nodes"]
+        nodes = telemetry_data["nodes"]
         assert len(nodes) > 0
 
         # Count node types by height (height 0 = leaves)
