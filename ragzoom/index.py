@@ -257,6 +257,7 @@ class TreeBuilder:
         messages: list[
             ChatCompletionMessageParam
         ],  # Conversation history for continuations
+        local_char_ratio: float,  # Character/token ratio for this text
         parent_id: str | None = None,
         debug: bool = False,
         reporter: TelemetryCollector | None = None,
@@ -273,6 +274,9 @@ class TreeBuilder:
         best_summary = summary
         best_token_count = len(summary_tokens)
         best_distance_from_target = abs(best_token_count - target_tokens)
+        
+        # Convert target to characters for retry prompts
+        target_chars = int(target_tokens * local_char_ratio)
 
         node_info = f"[{parent_id}] " if parent_id else ""
         actual_retries = 0
@@ -286,22 +290,28 @@ class TreeBuilder:
                 return best_summary, actual_retries
 
             is_over_target = current_tokens > target_tokens
+            
+            # Calculate current character count for prompt
+            current_chars = len(summary)
 
             if is_over_target:
                 # Progressive reduction for over-target
                 if retry_count <= len(self.config.summary_reduction_factors):
-                    adjusted_target = int(
+                    adjusted_target_tokens = int(
                         target_tokens
                         * self.config.summary_reduction_factors[retry_count - 1]
                     )
                 else:
-                    adjusted_target = int(
+                    adjusted_target_tokens = int(
                         target_tokens * self.config.summary_fallback_reduction
                     )  # Fallback
+                
+                # Convert to characters for the prompt
+                adjusted_target_chars = int(adjusted_target_tokens * local_char_ratio)
 
-                deviation = current_tokens - adjusted_target
-                deviation_pct_display = (deviation / adjusted_target) * 100
-                change_pct = (deviation / current_tokens) * 100
+                deviation_chars = current_chars - adjusted_target_chars
+                deviation_pct_display = (deviation_chars / adjusted_target_chars) * 100 if adjusted_target_chars > 0 else 100
+                change_pct = (deviation_chars / current_chars) * 100 if current_chars > 0 else 0
 
                 actual_deviation_pct = (
                     (current_tokens - target_tokens) / target_tokens
@@ -311,7 +321,7 @@ class TreeBuilder:
                         f"{node_info}Summary over target: {current_tokens} tokens "
                         f"(actual target: {target_tokens}, {actual_deviation_pct:.0f}% over). "
                         f"Retry {retry_count}/{self.config.summary_max_retries} - "
-                        f"Asking LLM to target {adjusted_target} tokens."
+                        f"Asking LLM to target {adjusted_target_chars} characters."
                     )
 
                 # Build reduction prompt
@@ -324,7 +334,7 @@ class TreeBuilder:
 
                 prompt = f"""Please revise your summary to be shorter.
 
-Your summary was {current_tokens} tokens, but the target is {adjusted_target} tokens.
+Your summary was {current_chars} characters, but the target is {adjusted_target_chars} characters.
 You are {deviation_pct_display:.0f}% over target.
 Please remove approximately {change_pct:.0f}% of the content.
 
@@ -333,16 +343,16 @@ Please remove approximately {change_pct:.0f}% of the content.
 Provide ONLY the shortened summary, with no preamble or explanation."""
             else:
                 # Under target - request expansion
-                deficit = target_tokens - current_tokens
-                deficit_pct = (deficit / target_tokens) * 100
-                expansion_pct = (deficit / current_tokens) * 100
+                deficit_chars = target_chars - current_chars
+                deficit_pct = (deficit_chars / target_chars) * 100 if target_chars > 0 else 0
+                expansion_pct = (deficit_chars / current_chars) * 100 if current_chars > 0 else 0
 
                 if debug:
                     logger.info(
                         f"{node_info}Summary under target: {current_tokens} tokens "
                         f"(target: {target_tokens}, {deficit_pct:.0f}% under). "
                         f"Retry {retry_count}/{self.config.summary_max_retries} - "
-                        f"Can add {deficit} more tokens."
+                        f"Can add {deficit_chars} more characters."
                     )
 
                 # Build expansion prompt
@@ -357,8 +367,8 @@ Provide ONLY the shortened summary, with no preamble or explanation."""
 
                 prompt = f"""Please expand your summary with more detail.
 
-Your summary was {current_tokens} tokens, but the target is {target_tokens} tokens.
-You can add {deficit} more tokens.
+Your summary was {current_chars} characters, but the target is {target_chars} characters.
+You can add {deficit_chars} more characters.
 Please expand by approximately {expansion_pct:.0f}%.
 
 {guidance}
@@ -449,6 +459,10 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
         combined_text = f"{left_text} {right_text}".strip()
         combined_tokens = self.splitter.tokenizer.encode(combined_text)
         current_token_count = len(combined_tokens)
+        
+        # Calculate local character/token ratio for this specific text
+        local_chars = len(combined_text)
+        local_char_ratio = local_chars / current_token_count if current_token_count > 0 else 4.5
 
         if current_token_count <= target_tokens:
             node_info = f"[{parent_id}] " if parent_id else ""
@@ -490,26 +504,28 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                 trimmed_prev = prev_context
 
         # Calculate compression stats for the prompt
-        tokens_to_remove = current_token_count - target_tokens
-        compression_ratio = (tokens_to_remove / current_token_count) * 100
+        # Convert target tokens to characters using local ratio
+        target_chars = int(target_tokens * local_char_ratio)
+        chars_to_remove = local_chars - target_chars
+        compression_ratio = (chars_to_remove / local_chars) * 100 if local_chars > 0 else 0
 
-        # Build the summarization prompt
+        # Build the summarization prompt using character targets
         instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context).
 
-TOKEN REQUIREMENTS:
-- The content to summarize is {current_token_count} tokens
-- Your target is {target_tokens} tokens
-- This means you need to compress {current_token_count} tokens into {target_tokens} tokens
-- That's a {compression_ratio:.0f}% compression (remove {tokens_to_remove} tokens)
+CHARACTER REQUIREMENTS:
+- The content to summarize is {local_chars} characters
+- Your target is {target_chars} characters
+- This means you need to compress {local_chars} characters into {target_chars} characters
+- That's a {compression_ratio:.0f}% compression (remove {chars_to_remove} characters)
 
 CRITICAL REQUIREMENTS:
 - Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
-- Your summary should be approximately {target_tokens} tokens (aim for 90-100% of this target)
-- The summary MUST NOT exceed {target_tokens} tokens. This is a HARD LIMIT.
-- IMPORTANT: Use as close to {target_tokens} tokens as possible. Do not be overly brief.
-- Include as much detail and information as will fit within the token budget
+- Your summary should be approximately {target_chars} characters (aim for 90-100% of this target)
+- The summary MUST NOT exceed {target_chars} characters. This is a HARD LIMIT.
+- IMPORTANT: Use as close to {target_chars} characters as possible. Do not be overly brief.
+- Include as much detail and information as will fit within the character budget
 - Make the summary as information-dense as possible, preserving names, numbers, and specific details
-- The summary should attempt to cover the full scope of the content from start to end, but abstract over details as necessary to stay under the token limit
+- The summary should attempt to cover the full scope of the content from start to end, but abstract over details as necessary to stay under the character limit
 - Focus on key events, facts, and themes ONLY from the provided text
 - Do NOT include any concrete information from BEFORE the <SUMMARIZE_TEXT> tag or AFTER the </SUMMARIZE_TEXT> tag in the summary
 - Do NOT complete a sentence that is cut off with information from outside the <SUMMARIZE_TEXT> block
@@ -547,7 +563,7 @@ Here's the content to summarize:"""
                 messages: list[ChatCompletionMessageParam] = [
                     {
                         "role": "system",
-                        "content": f"You are a precise summarizer who creates detailed summaries of approximately {target_tokens} tokens. You ONLY use information explicitly provided in the input text. You NEVER add context or details from outside the given text. Aim to use 90-100% of the available token budget.",
+                        "content": f"You are a precise summarizer who creates detailed summaries of approximately {target_chars} characters. You ONLY use information explicitly provided in the input text. You NEVER add context or details from outside the given text. Aim to use 90-100% of the available character budget.",
                     },
                     {"role": "user", "content": full_prompt},
                 ]
@@ -586,7 +602,7 @@ Here's the content to summarize:"""
                 retry_count = 0
                 if deviation_pct > self.config.summary_deviation_threshold:
                     summary, retry_count = await self._retry_summary_correction(
-                        summary, target_tokens, messages, parent_id, debug, reporter
+                        summary, target_tokens, messages, local_char_ratio, parent_id, debug, reporter
                     )
                     # Re-calculate final tokens for logging
                     final_tokens = len(self.splitter.tokenizer.encode(summary))
