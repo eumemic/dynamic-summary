@@ -1,7 +1,7 @@
 """Tests for telemetry CLI commands."""
 
+import copy
 import json
-from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -15,74 +15,80 @@ class TestTelemetryCompare:
     @pytest.fixture
     def sample_telemetry_data(self):
         """Create sample telemetry data for testing."""
+        # Return just the telemetry structure, not wrapped in another object
         return {
             "format_version": "2.0",
-            "config": {"leaf_tokens": 100},
-            "document": {"path": "test.txt", "total_chunks": 10},
-            "telemetry": {
-                "format_version": "2.0",
-                "documents": {
-                    "test.txt": {
-                        "metadata": {"source_document_tokens": 1000},
-                        "nodes": [
-                            {
-                                "node_id": "node1",
-                                "height": 0,
-                                "created_at": 1234567890.0,
-                                "embedding": {
-                                    "text_tokens": 100,
-                                    "batch_size": 10,
-                                    "start_time": 1234567890.0,
-                                },
+            "documents": {
+                "test.txt": {
+                    "metadata": {
+                        "source_document_tokens": 1000,
+                        "indexing_start": 1234567890.0,
+                        "indexing_end": 1234567900.0,
+                    },
+                    "nodes": [
+                        {
+                            "node_id": "node1",
+                            "height": 0,
+                            "created_at": 1234567890.0,
+                            "embedding": {
+                                "text_tokens": 100,
+                                "batch_size": 10,
+                                "start_time": 1234567890.0,
                             },
-                            {
-                                "node_id": "node2",
-                                "height": 1,
-                                "created_at": 1234567891.0,
-                                "summary_attempts": [
-                                    {
-                                        "status": "accepted",
-                                        "prompt_tokens": 200,
-                                        "completion_tokens": 50,
-                                        "input_text_tokens": 100,
-                                        "actual_tokens": 50,
-                                        "target_tokens": 100,
-                                    }
-                                ],
-                            },
-                            {
-                                "node_id": "node3",
-                                "height": 1,
-                                "created_at": 1234567892.0,
-                                "summary_attempts": [
-                                    {
-                                        "status": "accepted",
-                                        "prompt_tokens": 210,
-                                        "completion_tokens": 48,
-                                        "input_text_tokens": 100,
-                                        "actual_tokens": 48,
-                                        "target_tokens": 100,
-                                    }
-                                ],
-                            },
-                            {
-                                "node_id": "node4",
-                                "height": 1,
-                                "created_at": 1234567893.0,
-                                "summary_attempts": [
-                                    {
-                                        "status": "accepted",
-                                        "prompt_tokens": 195,
-                                        "completion_tokens": 52,
-                                        "input_text_tokens": 100,
-                                        "actual_tokens": 52,
-                                        "target_tokens": 100,
-                                    }
-                                ],
-                            },
-                        ],
-                    }
-                },
+                        },
+                        {
+                            "node_id": "node2",
+                            "height": 1,
+                            "created_at": 1234567891.0,
+                            "summary_attempts": [
+                                {
+                                    "status": "accepted",
+                                    "prompt_tokens": 200,
+                                    "completion_tokens": 50,
+                                    "input_text_tokens": 100,
+                                    "actual_tokens": 50,
+                                    "target_tokens": 100,
+                                    "start_time": 1234567891.0,
+                                    "end_time": 1234567892.0,
+                                }
+                            ],
+                        },
+                        {
+                            "node_id": "node3",
+                            "height": 1,
+                            "created_at": 1234567892.0,
+                            "summary_attempts": [
+                                {
+                                    "status": "accepted",
+                                    "prompt_tokens": 210,
+                                    "completion_tokens": 48,
+                                    "input_text_tokens": 100,
+                                    "actual_tokens": 48,
+                                    "target_tokens": 100,
+                                    "start_time": 1234567892.0,
+                                    "end_time": 1234567893.0,
+                                }
+                            ],
+                        },
+                        {
+                            "node_id": "node4",
+                            "height": 1,
+                            "created_at": 1234567893.0,
+                            "summary_attempts": [
+                                {
+                                    "status": "accepted",
+                                    "prompt_tokens": 195,
+                                    "completion_tokens": 52,
+                                    "input_text_tokens": 100,
+                                    "actual_tokens": 52,
+                                    "target_tokens": 100,
+                                    "start_time": 1234567893.0,
+                                    "end_time": 1234567894.0,
+                                }
+                            ],
+                        },
+                    ],
+                }
             },
         }
 
@@ -99,26 +105,26 @@ class TestTelemetryCompare:
         baseline_100.write_text(json.dumps(sample_telemetry_data))
 
         baseline_200 = baseline_dir / "telemetry_200_tokens.json"
-        data_200 = sample_telemetry_data.copy()
-        data_200["config"]["leaf_tokens"] = 200
+        data_200 = copy.deepcopy(sample_telemetry_data)
+        # Change target_tokens to 200 for all summary nodes
+        for i in [1, 2, 3]:
+            data_200["documents"]["test.txt"]["nodes"][i]["summary_attempts"][0][
+                "target_tokens"
+            ] = 200
         baseline_200.write_text(json.dumps(data_200))
 
         # Create current files with slight modifications
-        current_data = sample_telemetry_data.copy()
-        # Increase amplification slightly
-        current_data["telemetry"]["documents"]["test.txt"]["nodes"][1][
-            "summary_attempts"
-        ][0][
+        current_data = copy.deepcopy(sample_telemetry_data)
+        # Increase token usage slightly
+        current_data["documents"]["test.txt"]["nodes"][1]["summary_attempts"][0][
             "prompt_tokens"
         ] = 210  # 5% increase, under threshold
 
         current_100 = current_dir / "telemetry_100_tokens.json"
         current_100.write_text(json.dumps(current_data))
 
-        current_data_200 = data_200.copy()
-        current_data_200["telemetry"]["documents"]["test.txt"]["nodes"][1][
-            "summary_attempts"
-        ][0][
+        current_data_200 = copy.deepcopy(data_200)
+        current_data_200["documents"]["test.txt"]["nodes"][1]["summary_attempts"][0][
             "prompt_tokens"
         ] = 210  # Only 5% increase, under threshold
         current_200 = current_dir / "telemetry_200_tokens.json"
@@ -149,11 +155,10 @@ class TestTelemetryCompare:
                 )
 
         assert result.exit_code == 0
-        assert (
-            "Performance Report" in result.output
-            or "Performance Comparison Report" in result.output
-        )
-        assert "Amplification Metrics" in result.output
+        # Check for new table format
+        assert "100 tokens" in result.output
+        assert "Median error" in result.output
+        assert "Avg retries/node" in result.output
 
     def test_compare_directories(self, create_test_files):
         """Test comparing two directories with matching files."""
@@ -169,18 +174,15 @@ class TestTelemetryCompare:
             print(f"Exception: {result.exception}")
 
         assert result.exit_code == 0
-        assert "Found 2 matching file pairs to compare" in result.output
-        assert "telemetry_100_tokens.json" in result.output
-        assert "telemetry_200_tokens.json" in result.output
-        assert "Performance Report" in result.output
-        assert "Amplification Metrics" in result.output
+        # Check for unified table format with chunk sizes
         assert "100 tokens" in result.output
         assert "200 tokens" in result.output
+        assert "Median error" in result.output
+        # Should be a unified table, not separate sections per file
 
     def test_compare_directories_with_output(self, create_test_files, tmp_path):
-        """Test comparing directories with output to file."""
+        """Test comparing directories with markdown output."""
         baseline_dir, current_dir = create_test_files
-        output_file = tmp_path / "comparison_report.md"
 
         runner = CliRunner()
         result = runner.invoke(
@@ -190,19 +192,13 @@ class TestTelemetryCompare:
                 str(baseline_dir),
                 str(current_dir),
                 "--output",
-                str(output_file),
+                "markdown",
             ],
         )
 
         assert result.exit_code == 0
-        assert output_file.exists()
-        assert "Combined comparison report saved to" in result.output
-
-        # Check report contents
-        report = output_file.read_text()
-        assert "Performance Report" in report
-        assert "100 tokens" in report
-        assert "200 tokens" in report
+        # Check for markdown format
+        assert "| Chunk Size |" in result.output or "| Metric |" in result.output
 
     def test_compare_directories_no_matches(self, tmp_path):
         """Test comparing directories with no matching files."""
@@ -232,7 +228,9 @@ class TestTelemetryCompare:
         result = runner.invoke(cli, ["compare", str(test_file), str(test_dir)])
 
         assert result.exit_code == 1
-        assert "Both arguments must be either files or directories" in result.output
+        assert (
+            "Error: Both arguments must be either files or directories" in result.output
+        )
 
     def test_file_matching_logic(self, tmp_path):
         """Test the file matching logic handles various naming patterns."""
@@ -267,40 +265,27 @@ class TestTelemetryCompare:
 
     def test_compare_with_regression(self, tmp_path, sample_telemetry_data):
         """Test that regressions are detected and exit code is 1."""
-        baseline_dir = tmp_path / "baseline"
-        current_dir = tmp_path / "current"
-        baseline_dir.mkdir()
-        current_dir.mkdir()
-
-        # Create baseline
-        baseline_file = baseline_dir / "telemetry_100_tokens.json"
+        baseline_file = tmp_path / "baseline.json"
         baseline_file.write_text(json.dumps(sample_telemetry_data))
 
         # Create current with significant regression
-        current_data = sample_telemetry_data.copy()
-        # Increase prompt tokens by >10% to trigger regression for all summary nodes
+        current_data = copy.deepcopy(sample_telemetry_data)
+        # Double the prompt tokens to trigger cost regression (>10% threshold)
         for i in [1, 2, 3]:  # All summary nodes
-            current_data["telemetry"]["documents"]["test.txt"]["nodes"][i][
-                "summary_attempts"
-            ][0]["prompt_tokens"] = (
-                current_data["telemetry"]["documents"]["test.txt"]["nodes"][i][
-                    "summary_attempts"
-                ][0]["prompt_tokens"]
+            current_data["documents"]["test.txt"]["nodes"][i]["summary_attempts"][0][
+                "prompt_tokens"
+            ] = (
+                current_data["documents"]["test.txt"]["nodes"][i]["summary_attempts"][
+                    0
+                ]["prompt_tokens"]
                 * 2
             )  # Double the prompt tokens
 
-        current_file = current_dir / "telemetry_100_tokens.json"
+        current_file = tmp_path / "current.json"
         current_file.write_text(json.dumps(current_data))
 
         runner = CliRunner()
-
-        # Set low threshold to ensure regression is detected
-        with patch.dict(
-            "os.environ", {"PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD": "5.0"}
-        ):
-            result = runner.invoke(
-                cli, ["compare", str(baseline_dir), str(current_dir)]
-            )
+        result = runner.invoke(cli, ["compare", str(baseline_file), str(current_file)])
 
         # Debug output
         if result.exit_code != 1:
@@ -308,7 +293,193 @@ class TestTelemetryCompare:
             print(f"Output:\n{result.output}")
 
         assert result.exit_code == 1
-        assert "Regression Detected" in result.output
+        assert (
+            "Performance regression detected" in result.output or "❌" in result.output
+        )
+
+    def test_dynamic_thresholds_computation(self, tmp_path, sample_telemetry_data):
+        """Test that dynamic thresholds are computed from baseline variance."""
+        from ragzoom.config import RagZoomConfig
+        from ragzoom.telemetry_analysis import compute_simplified_metrics
+        from ragzoom.telemetry_cli import (
+            MetricNames,
+            ThresholdConfig,
+            compute_dynamic_threshold,
+        )
+
+        # Create baseline with known variance
+        baseline_data = copy.deepcopy(sample_telemetry_data)
+        # Add variance by modifying node errors
+        # nodes = baseline_data["documents"]["test.txt"]["nodes"]
+        # Node 2: actual=50, target=100, error=-50
+        # Node 3: actual=48, target=100, error=-52
+        # Node 4: actual=52, target=100, error=-48
+        # This gives us MAD = 2.0 tokens
+
+        baseline_file = tmp_path / "baseline.json"
+        baseline_file.write_text(json.dumps(baseline_data))
+
+        # Analyze to get metrics
+        config = RagZoomConfig()
+        baseline_analysis = compute_simplified_metrics(baseline_data, config)
+        metrics = baseline_analysis.metrics_by_chunk_size[100]
+
+        # Test dynamic threshold computation
+        config = ThresholdConfig()
+        threshold = compute_dynamic_threshold(
+            metrics, "median_error", "error_mad", config, is_ci=False
+        )
+
+        # Check that dynamic threshold was computed
+        assert threshold.is_computed is True
+        assert threshold.baseline_variance == metrics["target_fit"]["error_mad"]
+        assert threshold.k_factors == (3.0, 2.0)
+
+        # The MAD comes from the actual data - errors are [-50, -52, -48]
+        # Median error = -50, MAD = median([0, 2, 2]) = 2.0
+        expected_mad = metrics["target_fit"]["error_mad"]
+        if expected_mad == 0.0:  # Zero variance means no threshold
+            assert threshold.absolute_value is None
+            assert not threshold.is_computed
+        else:
+            expected_threshold = (3.0 + 2.0) * expected_mad
+            assert threshold.absolute_value == expected_threshold
+            assert threshold.is_computed
+
+        # Test CI adjustment
+        threshold_ci = compute_dynamic_threshold(
+            metrics, MetricNames.MEDIAN_ERROR, "error_mad", config, is_ci=True
+        )
+        # CI adjustment multiplies k-factors by 1.5
+        if expected_mad == 0.0:  # Zero variance means no threshold
+            assert threshold_ci.absolute_value is None
+        else:
+            expected_ci_threshold = (3.0 * 1.5 + 2.0 * 1.5) * expected_mad
+            assert threshold_ci.absolute_value == expected_ci_threshold
+
+    def test_dynamic_thresholds_emoji_logic(self, tmp_path, sample_telemetry_data):
+        """Test emoji assignment based on variance thresholds."""
+        from ragzoom.telemetry_cli import (
+            DynamicThreshold,
+            get_change_emoji,
+        )
+
+        # Create threshold with known variance
+        threshold = DynamicThreshold(
+            absolute_value=50.0,  # 5-sigma threshold
+            baseline_variance=10.0,  # 1-sigma
+            k_factors=(3.0, 2.0),
+            metric_name="median_error",
+            is_computed=True,
+            emoji_significance_sigma=1.0,
+        )
+
+        # Test for error metrics (lower is better)
+        # No change: within 1-sigma
+        assert (
+            get_change_emoji(5.0, higher_is_better=False, threshold=threshold) == "⚪"
+        )
+
+        # Degradation: >1-sigma but <5-sigma
+        assert (
+            get_change_emoji(15.0, higher_is_better=False, threshold=threshold) == "🟡"
+        )
+
+        # Improvement: >1-sigma in good direction
+        assert (
+            get_change_emoji(-15.0, higher_is_better=False, threshold=threshold) == "🟢"
+        )
+
+        # Regression: >5-sigma threshold
+        assert (
+            get_change_emoji(55.0, higher_is_better=False, threshold=threshold) == "🔴"
+        )
+
+        # Test for metrics where higher is better
+        assert (
+            get_change_emoji(-55.0, higher_is_better=True, threshold=threshold) == "🔴"
+        )
+        assert (
+            get_change_emoji(15.0, higher_is_better=True, threshold=threshold) == "🟢"
+        )
+
+    def test_variance_metrics_in_output(self, tmp_path, sample_telemetry_data):
+        """Test that variance metrics are included in analysis output."""
+        baseline_file = tmp_path / "baseline.json"
+        baseline_file.write_text(json.dumps(sample_telemetry_data))
+
+        current_file = tmp_path / "current.json"
+        current_file.write_text(json.dumps(sample_telemetry_data))
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["compare", str(baseline_file), str(current_file)])
+
+        assert result.exit_code == 0
+        # Check that we have the legend
+        assert "Legend:" in result.output
+        assert "Regression detected" in result.output
+
+    def test_emotional_feedback_functions(self):
+        """Test the emotional feedback emoji functions."""
+        from ragzoom.telemetry_cli import (
+            DynamicThreshold,
+            get_change_emoji,
+            get_variance_emoji,
+        )
+
+        # Create a simple threshold for testing
+        threshold = DynamicThreshold(
+            absolute_value=100.0,
+            baseline_variance=10.0,
+            k_factors=(3.0, 2.0),
+            metric_name="test_metric",
+            is_computed=True,
+            emoji_significance_sigma=1.0,
+        )
+
+        # Test metric change emoji with threshold
+        # No change (below 1-sigma threshold of 10.0)
+        assert (
+            get_change_emoji(5.0, higher_is_better=False, threshold=threshold) == "⚪"
+        )
+        assert (
+            get_change_emoji(-5.0, higher_is_better=True, threshold=threshold) == "⚪"
+        )
+
+        # Significant desirable changes (>1-sigma)
+        assert (
+            get_change_emoji(-15.0, higher_is_better=False, threshold=threshold) == "🟢"
+        )
+        assert (
+            get_change_emoji(15.0, higher_is_better=True, threshold=threshold) == "🟢"
+        )
+
+        # Significant undesirable changes (>1-sigma but <threshold)
+        assert (
+            get_change_emoji(15.0, higher_is_better=False, threshold=threshold) == "🟡"
+        )
+        assert (
+            get_change_emoji(-15.0, higher_is_better=True, threshold=threshold) == "🟡"
+        )
+
+        # Regression (exceeds full threshold of 100.0)
+        assert (
+            get_change_emoji(101.0, higher_is_better=False, threshold=threshold) == "🔴"
+        )
+        assert (
+            get_change_emoji(-101.0, higher_is_better=True, threshold=threshold) == "🔴"
+        )
+
+        # Test variance emoji (new signature with baseline)
+        # No change (below 50% threshold)
+        assert get_variance_emoji(3.0, 10.0) == "⚪"  # 30% change
+        assert get_variance_emoji(-3.0, 10.0) == "⚪"  # -30% change
+
+        # Significant variance changes (>50% of baseline)
+        assert get_variance_emoji(6.0, 10.0) == "🟡"  # 60% increase - notable
+        assert (
+            get_variance_emoji(-6.0, 10.0) == "🟢"
+        )  # 60% decrease - improved stability
 
 
 if __name__ == "__main__":

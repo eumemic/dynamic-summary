@@ -427,7 +427,7 @@ Here's the content to summarize:"""
 
         full_prompt = "\n\n".join(prompt_parts)
 
-        # Calculate input text tokens for amplification tracking
+        # Calculate input text tokens for metrics tracking
         input_text_tokens = len(self.splitter.tokenizer.encode(left_text)) + len(
             self.splitter.tokenizer.encode(right_text)
         )

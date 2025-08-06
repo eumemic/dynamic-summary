@@ -15,7 +15,7 @@ on:
       - '!.github/workflows/performance-tests.yml'
 
 permissions:
-  contents: read
+  contents: write      # Need write to push temporary branches
   pull-requests: write
   actions: read
 
@@ -29,6 +29,56 @@ jobs:
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
+      
+      - name: Create or update PR comment with initial status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            // Initial comment body
+            const body = `${identifier}
+            ## 📊 Performance Report
+            
+            _View [workflow run](${workflowUrl})_
+            
+            ⏳ **Running performance benchmarks...**`;
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            console.log(`Found ${comments.length} total comments on PR`);
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+              console.log(`Updated existing comment: ${botComment.id}`);
+            } else {
+              // Create new comment
+              console.log('No existing performance report comment found, creating new one');
+              const { data: newComment } = await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+              console.log(`Created new comment: ${newComment.id}`);
+            }
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -61,8 +111,7 @@ jobs:
           # Install main package with telemetry dependencies
           pip install -e .[telemetry]
       
-      - name: Run PR benchmarks
-        id: benchmark
+      - name: Setup benchmark environment
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -78,18 +127,157 @@ jobs:
           else
             echo "✅ RAGZOOM_OPENAI_API_KEY is configured"
           fi
-          # Run benchmarks for different chunk sizes
           mkdir -p benchmark_results
-          
-          for chunk_size in 100 200 400; do
-            echo "Running PR benchmark with chunk_size=$chunk_size"
-            if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-$chunk_size" -v; then
-              echo "❌ Benchmark failed for chunk_size=$chunk_size"
-              echo "Creating error result file..."
-              echo '{"error": "Benchmark failed to run", "chunk_size": "'$chunk_size'"}' > "benchmark_results/telemetry_${chunk_size}_tokens.json"
-              echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
-            fi
-          done
+      
+      - name: Run benchmark - 100 tokens
+        id: benchmark_100
+        env:
+          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Running PR benchmark with chunk_size=100"
+          if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-100" -v; then
+            echo "❌ Benchmark failed for chunk_size=100"
+            echo "Creating error result file..."
+            echo '{"error": "Benchmark failed to run", "chunk_size": "100"}' > "benchmark_results/telemetry_100_tokens.json"
+            echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Update comment - 100 tokens complete
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const body = `${identifier}
+            ## 📊 Performance Report
+            
+            _View [workflow run](${workflowUrl})_
+            
+            ⏳ **Progress:**
+            - ✅ 100 tokens benchmark complete
+            - ⏱️ Running 200 tokens benchmark...`;
+            
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            }
+      
+      - name: Run benchmark - 200 tokens
+        id: benchmark_200
+        env:
+          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Running PR benchmark with chunk_size=200"
+          if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-200" -v; then
+            echo "❌ Benchmark failed for chunk_size=200"
+            echo "Creating error result file..."
+            echo '{"error": "Benchmark failed to run", "chunk_size": "200"}' > "benchmark_results/telemetry_200_tokens.json"
+            echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Update comment - 200 tokens complete
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const body = `${identifier}
+            ## 📊 Performance Report
+            
+            _View [workflow run](${workflowUrl})_
+            
+            ⏳ **Progress:**
+            - ✅ 100 tokens benchmark complete
+            - ✅ 200 tokens benchmark complete
+            - ⏱️ Running 400 tokens benchmark...`;
+            
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            }
+      
+      - name: Run benchmark - 400 tokens
+        id: benchmark_400
+        env:
+          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Running PR benchmark with chunk_size=400"
+          if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-400" -v; then
+            echo "❌ Benchmark failed for chunk_size=400"
+            echo "Creating error result file..."
+            echo '{"error": "Benchmark failed to run", "chunk_size": "400"}' > "benchmark_results/telemetry_400_tokens.json"
+            echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Update comment - benchmarks complete
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const body = `${identifier}
+            ## 📊 Performance Report
+            
+            _View [workflow run](${workflowUrl})_
+            
+            ⏳ **Progress:**
+            - ✅ 100 tokens benchmark complete
+            - ✅ 200 tokens benchmark complete
+            - ✅ 400 tokens benchmark complete
+            - ⏱️ Generating visualization...`;
+            
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            }
       
       - name: Check benchmark execution
         id: benchmark_check
@@ -98,6 +286,103 @@ jobs:
             echo "❌ Critical benchmark failures detected"
             echo "REGRESSION=true" >> $GITHUB_OUTPUT
           fi
+      
+      - name: Generate visualization for 200 tokens
+        id: visualize
+        run: |
+          # Generate side-by-side visualization for 200 tokens if both files exist
+          if [ -f "baseline_results/telemetry_200_tokens.json" ] && [ -f "benchmark_results/telemetry_200_tokens.json" ]; then
+            echo "📊 Generating side-by-side visualization for 200 tokens..."
+            ragzoom-telemetry visualize baseline_results/telemetry_200_tokens.json benchmark_results/telemetry_200_tokens.json -o comparison_200_tokens.png || {
+              echo "⚠️ Failed to generate visualization"
+            }
+            if [ -f "comparison_200_tokens.png" ]; then
+              echo "✅ Visualization generated successfully"
+              echo "VISUALIZATION_GENERATED=true" >> $GITHUB_OUTPUT
+              
+              # Publish visualization to GitHub Pages for inline display
+              # Use a subdirectory to organize images by run ID
+              IMAGE_PATH="ci-visualizations/${{ github.run_id }}/comparison_200_tokens.png"
+              
+              # Clone gh-pages branch (or create if it doesn't exist)
+              cd /tmp
+              if git clone --depth 1 --branch gh-pages https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git gh-pages 2>/dev/null; then
+                echo "✅ Cloned existing gh-pages branch"
+                cd gh-pages
+              else
+                echo "📝 Creating new gh-pages branch"
+                mkdir gh-pages
+                cd gh-pages
+                git init
+                git checkout -b gh-pages
+                git remote add origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+              fi
+              
+              # Configure git
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              
+              # Create directory structure and copy image
+              mkdir -p $(dirname "$IMAGE_PATH")
+              cp ${{ github.workspace }}/comparison_200_tokens.png "$IMAGE_PATH"
+              
+              # Add and commit
+              git add "$IMAGE_PATH"
+              git commit -m "Add telemetry visualization for PR #${{ github.event.pull_request.number }} (run: ${{ github.run_id }})"
+              
+              # Push to gh-pages
+              git push origin gh-pages
+              
+              # Return to main directory
+              cd ${{ github.workspace }}
+              
+              # Use GitHub Pages URL (now that it's enabled)
+              VISUALIZATION_URL="https://eumemic.github.io/dynamic-summary/$IMAGE_PATH"
+              echo "VISUALIZATION_URL=$VISUALIZATION_URL" >> $GITHUB_OUTPUT
+              echo "📸 Image published to GitHub Pages: $VISUALIZATION_URL"
+            fi
+          else
+            echo "⚠️ Skipping visualization - missing telemetry_200_tokens.json files"
+          fi
+      
+      - name: Update comment - visualization complete
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const body = `${identifier}
+            ## 📊 Performance Report
+            
+            _View [workflow run](${workflowUrl})_
+            
+            ⏳ **Progress:**
+            - ✅ 100 tokens benchmark complete
+            - ✅ 200 tokens benchmark complete
+            - ✅ 400 tokens benchmark complete
+            - ✅ Visualization generated
+            - ⏱️ Generating comparison report...`;
+            
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            }
       
       - name: Compare results
         id: compare
@@ -125,7 +410,7 @@ jobs:
                 if grep -q '"error"' "$file"; then
                   echo "- ❌ Benchmark failed to run" >> report.md
                 else
-                  python3 -c "import json; from ragzoom.config import RagZoomConfig; from ragzoom.telemetry_analysis import compute_metrics_from_telemetry; data = json.load(open('$file')); config = RagZoomConfig(openai_api_key='dummy', embedding_cost_per_1k=0.0001, summary_input_cost_per_1k=0.0025, summary_output_cost_per_1k=0.01); metrics = compute_metrics_from_telemetry(data['telemetry'], config); print(f'- Throughput: {metrics.tokens_per_second:.1f} tokens/sec'); print(f'- Time per 1K tokens: {metrics.time_per_1k_tokens:.2f}s'); print(f'- Cost per 1K tokens: \${metrics.cost_per_1k_tokens:.4f}')" >> report.md
+                  python3 -c "import json; from ragzoom.config import RagZoomConfig; from ragzoom.telemetry_analysis import compute_metrics_from_telemetry; data = json.load(open('$file')); config = RagZoomConfig(openai_api_key='dummy', embedding_cost_per_1k=0.0001, summary_input_cost_per_1k=0.0025, summary_output_cost_per_1k=0.01); metrics = compute_metrics_from_telemetry(data['telemetry'], config); print(f'- Duration: {metrics.total_duration_seconds:.2f}s'); print(f'- Total cost: \${metrics.total_cost:.4f}'); print(f'- Document size: {metrics.source_document_tokens:,} tokens')" >> report.md
                 fi
                 echo "" >> report.md
               fi
@@ -146,7 +431,7 @@ jobs:
             
             # Test Python imports
             echo "🐍 Testing Python imports..."
-            python -c "from ragzoom.telemetry_analysis import compute_amplification_metrics; print('✅ ragzoom imports OK')" || {
+            python -c "from ragzoom.telemetry_analysis import compute_simplified_metrics; print('✅ ragzoom imports OK')" || {
               echo "❌ Failed to import ragzoom.telemetry module" > report.md
               echo "Check that ragzoom package was installed correctly before ragzoom-telemetry" >> report.md
               echo "REGRESSION=true" >> $GITHUB_OUTPUT
@@ -160,32 +445,25 @@ jobs:
             if [ "$baseline_count" -gt 1 ]; then
               # New style: directory comparison for multiple chunk sizes
               echo "📊 Running multi-file benchmark comparison..."
-              ragzoom-telemetry compare baseline_results/ benchmark_results/ --output report.md
+              # Run comparison and capture both output and exit code
+              # Use set +e to prevent immediate exit on error
+              set +e
+              ragzoom-telemetry compare baseline_results/ benchmark_results/ --output markdown > report.md 2>&1
               comparison_exit_code=$?
+              set -e
               
-              # Add workflow link to the top of the report
-              if [ -f report.md ]; then
-                # Create a temporary file with the link
-                echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
-                echo "" >> report_with_link.md
-                cat report.md >> report_with_link.md
-                mv report_with_link.md report.md
-              fi
+              # Report is ready as-is, no need to add visualization (handled in PR comment)
             elif [ -f "baseline_results/telemetry_100_tokens.json" ] && [ -f "benchmark_results/telemetry_100_tokens.json" ]; then
               # TODO: Remove this single-file fallback after migration period
               # Once all baselines in master are multi-file, we can remove this branch
               echo "📊 Running single-file benchmark comparison (legacy mode)..."
-              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output report.md
+              # Run comparison and capture both output and exit code
+              set +e
+              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output markdown > report.md 2>&1
               comparison_exit_code=$?
+              set -e
               
-              # Add workflow link to the top of the report
-              if [ -f report.md ]; then
-                # Create a temporary file with the link
-                echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report_with_link.md
-                echo "" >> report_with_link.md
-                cat report.md >> report_with_link.md
-                mv report_with_link.md report.md
-              fi
+              # Report is ready as-is, no need to add visualization (handled in PR comment)
             else
               echo "❌ Expected benchmark files not found" > report.md
               echo "" >> report.md
@@ -222,22 +500,64 @@ jobs:
           # Exit with success - regression detection is handled by separate step
           exit 0
       
-      - name: Comment PR with results
+      - name: Update PR comment with final results
         uses: actions/github-script@v7
         if: always()
         with:
           script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
             const report = `${{ steps.compare.outputs.report }}`;
+            const visualizationUrl = `${{ steps.visualize.outputs.VISUALIZATION_URL }}`;
             
-            const body = report || '❌ Performance benchmarks failed to run';
+            // Build final comment body
+            let body = `${identifier}\n## 📊 Performance Report\n\n`;
+            body += `_View [workflow run](${workflowUrl})_\n\n`;
             
-            // Create new comment for each run to track performance evolution
-            await github.rest.issues.createComment({
+            // Add visualization if it was generated
+            if (visualizationUrl) {
+              body += `### Performance Visualization (200 tokens)\n\n`;
+              body += `![Telemetry Comparison](${visualizationUrl})\n\n`;
+            }
+            
+            // Add the comparison report or error message
+            if (report) {
+              body += report;
+            } else {
+              body += '❌ **Performance benchmarks failed to run**\n\n';
+              body += 'Check the [workflow logs](' + workflowUrl + ') for details.';
+            }
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body
+              issue_number: context.issue.number
             });
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+              console.log(`Updated comment with final results: ${botComment.id}`);
+            } else {
+              // Create new comment if somehow the initial one wasn't created
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
       
       - name: Fail if regression detected
         if: steps.compare.outputs.REGRESSION == 'true'
@@ -254,3 +574,4 @@ jobs:
             baseline_results/
             benchmark_results/
             report.md
+            comparison_200_tokens.png

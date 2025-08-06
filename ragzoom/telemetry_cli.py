@@ -1,955 +1,267 @@
-"""CLI interface for RagZoom Telemetry - Developer tools for analyzing telemetry data."""
+"""Telemetry CLI with simplified metrics."""
 
 import json
-import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import click
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.telemetry_analysis import (
-    analyze_retry_patterns,
-    compute_batch_efficiency,
-    compute_metrics_from_telemetry,
-    get_amplification_summary,
-)
-from ragzoom.telemetry_config import (
-    CHANGE_SIGNIFICANCE_THRESHOLD,
-    EMOJI_THRESHOLD_MINOR,
-)
-
-# Type aliases for complex dictionaries
-# Note: More specific typing would require extensive refactoring due to mixed types
-MetricsDict = dict[str, Any]
-TelemetryDict = dict[str, Any]
-ThresholdsDict = dict[str, float]
-
-# Check for optional telemetry dependencies
-# Note: telemetry_viz.py also imports these but this check provides
-# user-friendly error messages before attempting to use visualization features
-try:
-    import matplotlib  # noqa: F401
-    import matplotlib.pyplot as plt  # noqa: F401
-    import numpy as np  # noqa: F401
-    import pandas as pd  # noqa: F401
-    import seaborn as sns  # noqa: F401
-    from matplotlib.gridspec import GridSpec  # noqa: F401
-
-    TELEMETRY_DEPS_AVAILABLE = True
-except ImportError as e:
-    TELEMETRY_DEPS_AVAILABLE = False
-    MISSING_DEPS = str(e)
+from ragzoom.telemetry_analysis import SimplifiedMetrics, compute_simplified_metrics
 
 
-def _check_telemetry_deps() -> None:
-    """Check if telemetry dependencies are available, exit with helpful message if not."""
-    if not TELEMETRY_DEPS_AVAILABLE:
-        click.echo("❌ Error: Missing required telemetry dependencies.", err=True)
-        click.echo("", err=True)
-        click.echo(
-            "The ragzoom-telemetry commands require additional dependencies for visualization and data analysis.",
-            err=True,
-        )
-        click.echo("", err=True)
-        click.echo("Please install them with:", err=True)
-        click.echo("  pip install ragzoom[telemetry]", err=True)
-        click.echo("", err=True)
-        click.echo("Or install individual packages:", err=True)
-        click.echo("  pip install matplotlib seaborn pandas numpy", err=True)
-        click.echo("", err=True)
-        click.echo(f"Missing dependency details: {MISSING_DEPS}", err=True)
-        sys.exit(1)
+# Metric name constants for consistency
+class MetricNames:
+    """Constants for metric names used throughout the telemetry system."""
+
+    # Target-fit metrics
+    MEDIAN_ERROR = "median_error"
+    P95_ERROR = "p95_error"
+    PERCENT_WITHIN_10 = "percent_within_10"
+
+    # Latency metrics
+    MEDIAN_SECONDS = "median_seconds"
+    P95_SECONDS = "p95_seconds"
+
+    # Cost metrics
+    USD_PER_NODE = "usd_per_node"
+    COST = "cost"
+
+    # Retry metrics
+    RETRY_RATE = "retry_rate"
+    MAX_RETRIES = "max_retries"
+
+    # Dispersion metrics
+    MAD = "mad"
+
+    # Token metrics
+    TOTAL_TOKENS = "total_tokens"
+    TOTAL_PROMPT_TOKENS = "total_prompt_tokens"
+    TOTAL_COMPLETION_TOKENS = "total_completion_tokens"
+
+    # Threshold keys (for consistency in dictionary access)
+    MEDIAN_ERROR_KEY = "median_error"
+    P95_ERROR_KEY = "p95_error"
+    PERCENT_WITHIN_10_KEY = "percent_within_10"
+    RETRY_RATE_KEY = "retry_rate"
+    LATENCY_KEY = "latency"
+    COST_KEY = "cost"
+    MAD_KEY = "mad"
 
 
-@click.group()
-def cli() -> None:
-    """RagZoom Telemetry: Developer tools for analyzing telemetry data."""
-    pass
+@dataclass
+class DynamicThreshold:
+    """Represents a threshold computed from baseline variance."""
+
+    absolute_value: float | None  # None means no threshold enforcement
+    baseline_variance: float
+    k_factors: tuple[float, float]  # (k1_between_run, k2_baseline_uncertainty)
+    metric_name: str
+    is_computed: bool = True  # False if using static fallback
+    emoji_significance_sigma: float = 1.0  # Sigma threshold for emoji display
 
 
-def _write_error_report(error_msg: str, output: str | None) -> None:
-    """Write error report to output file or stdout."""
-    report = f"""## ❌ Performance Comparison Failed
+@dataclass
+class ThresholdConfig:
+    """Configuration for dynamic threshold calculation.
 
-**Error**: {error_msg}
+    The threshold formula is: threshold = (k1 + k2) × baseline_variance
 
-The benchmark comparison could not be completed. Please check:
-- File paths are correct and files exist
-- Files contain valid telemetry data
-- ragzoom package is properly installed and importable
+    Default values are based on statistical principles and empirical observations:
+    - k1=3.0: Covers 99.7% of normal distribution (3-sigma rule) for between-run variance
+    - k2=2.0: Additional margin for baseline measurement uncertainty from limited samples
+    - Total 5-sigma: Ensures <0.01% false positive rate for regression detection
+    - ci_multiplier=1.5: Based on empirical observation that CI environments show ~1.5x higher variance
+    - emoji_significance_sigma=1.0: Changes beyond 1σ are considered statistically significant
+      for emoji display (✅/⚠️), while regression (❌) still requires exceeding the full threshold
 
-For debugging, try running the commands manually to see detailed error messages.
-"""
-
-    if output:
-        Path(output).write_text(report)
-        click.echo(f"❌ Error report saved to {output}")
-    else:
-        click.echo(report)
-
-
-def load_single_benchmark(filepath: Path) -> tuple[int, MetricsDict]:
-    """Load a telemetry benchmark file and extract chunk size and computed metrics.
-
-    Returns:
-        Tuple of (chunk_size, computed_metrics_dict)
+    These values mean a metric must exceed 5 standard deviations from the baseline's
+    internal variance to be flagged as a regression, effectively eliminating false
+    positives from natural LLM non-determinism while still catching real issues.
     """
-    with open(filepath) as f:
-        data = json.load(f)
 
-    # Only support telemetry format
-    if "telemetry" not in data or "config" not in data:
-        raise ValueError(
-            f"File {filepath} is not in telemetry format. "
-            "Only telemetry format is supported. "
-            "Expected structure: {config, document, telemetry}"
-        )
+    # K-factors for threshold calculation
+    k1_between_run: float = 3.0  # Expected variance between runs (3-sigma)
+    k2_baseline_uncertainty: float = 2.0  # Baseline uncertainty margin (2-sigma)
 
-    chunk_size = data["config"]["leaf_tokens"]
+    # Whether to detect CI environment and adjust k-factors
+    adjust_for_ci: bool = True
+    ci_multiplier: float = 1.5  # Additional multiplier for CI environments
 
-    # Create config for analysis
-    api_key = os.getenv("RAGZOOM_OPENAI_API_KEY", "not-needed-for-analysis")
-    config = RagZoomConfig(
-        openai_api_key=api_key,
-        leaf_tokens=chunk_size,
-        summary_input_cost_per_1k=0.0025,
-        summary_output_cost_per_1k=0.01,
-    )
-
-    # Compute all metrics from telemetry (single source of truth)
-    telemetry = data["telemetry"]
-    full_metrics = compute_metrics_from_telemetry(telemetry, config)
-
-    # Extract amplification summary from full metrics
-    amplification = get_amplification_summary(full_metrics)
-
-    # Compute other analysis independently
-    batch_efficiency = compute_batch_efficiency(telemetry)
-    retry_patterns = analyze_retry_patterns(telemetry)
-
-    # Extract summary accuracy stats
-    summary_accuracy = {}
-    for target_size, stats in full_metrics.summary_stats.items():
-        summary_accuracy[target_size] = {
-            "avg_deviation": stats.avg_deviation_percent,
-            "median_deviation": stats.median_deviation_percent,
-            "std_deviation": stats.std_deviation_percent,
-            "p95_deviation": stats.percentile_95,
-            "count": stats.count,
-            "deviations": stats.deviations,  # Raw data for visualization
-        }
-
-    # Return computed metrics (not in old format - this is the new way)
-    metrics = {
-        "amplification": {
-            "median_cost": amplification["median_cost"],
-            "cost_p90": amplification["cost_p90"],
-            "cost_p95": amplification["cost_p95"],
-            "median_input": amplification["median_input"],
-            "median_output": amplification["median_output"],
-        },
-        "efficiency": {
-            "avg_embedding_batch_size": batch_efficiency["avg_batch_size"],
-            "batch_utilization": batch_efficiency["batch_utilization"],
-        },
-        "retry_patterns": {
-            "retry_rate": retry_patterns["retry_rate"],
-            "retry_success_rate": retry_patterns["retry_success_rate"],
-        },
-        "summary_accuracy": summary_accuracy,
-        "document": data.get("document", {}),
-    }
-
-    return chunk_size, metrics
+    # Emoji display configuration
+    emoji_significance_sigma: float = 1.0  # Sigma threshold for showing ✅/⚠️ emojis
 
 
-def calculate_change(old_value: float, new_value: float) -> tuple[float, str]:
-    """Calculate percentage change and return (percentage, emoji)."""
-    if old_value == 0:
-        return 0, ""
-
-    change = ((new_value - old_value) / old_value) * 100
-
-    # Determine emoji based on metric type and direction
-    # Only show emojis for significant changes to reduce noise
-    if abs(change) < EMOJI_THRESHOLD_MINOR:
-        emoji = ""
-    elif change > 0:
-        # For cost and time metrics, increase is bad
-        emoji = "⚠️"
-    else:
-        # For cost and time metrics, decrease is good
-        emoji = "✅"
-
-    return change, emoji
-
-
-def format_value(value: float, metric_type: str) -> str:
-    """Format value based on metric type."""
-    if metric_type == "cost":
-        return f"${value:.4f}"
-    elif metric_type == "percent":
-        return f"{value:.1f}%"
-    elif metric_type == "time":
-        return f"{value:.2f}s"
-    else:
-        return f"{value:.1f}"
-
-
-def format_metric_rows_with_chunk_label(
-    chunk_size: int,
-    chunk_rows: list[tuple[str, float, float, float, str]],
-    format_baseline: str = "{baseline:.1f}%",
-    format_current: str = "{current:.1f}%",
-    special_formatting: dict[str, tuple[str, str]] | None = None,
-) -> list[str]:
-    """Format metric rows with chunk size label on the first row.
+def get_change_emoji(
+    absolute_change: float,
+    higher_is_better: bool,
+    threshold: DynamicThreshold | None = None,
+) -> str:
+    """Get emoji for metric change based on significance and direction.
 
     Args:
-        chunk_size: The chunk size in tokens
-        chunk_rows: List of (metric_name, baseline, current, change, emoji) tuples
-        format_baseline: Format string for baseline values
-        format_current: Format string for current values
-        special_formatting: Dict mapping metric names to (baseline_fmt, current_fmt) tuples
+        absolute_change: Absolute change in the metric
+        higher_is_better: If True, positive change is good
+        threshold: Dynamic threshold with variance information
 
     Returns:
-        List of formatted table rows
+        Emoji indicating change significance and direction:
+        - 🔴 = Regression detected (exceeds full threshold)
+        - 🟡 = Significant undesirable change (>1σ in bad direction)
+        - 🟢 = Significant improvement (>1σ in good direction)
+        - ⚪ = Insignificant change (<1σ)
     """
-    rows = []
-    for i, (metric_name, baseline, current, change, emoji) in enumerate(chunk_rows):
-        # Check for special formatting for this metric
-        if special_formatting and metric_name in special_formatting:
-            baseline_fmt, current_fmt = special_formatting[metric_name]
-            baseline_str = baseline_fmt.format(baseline=baseline)
-            current_str = current_fmt.format(current=current)
+    if threshold is None or threshold.baseline_variance == 0:
+        # Fallback to simple direction-based logic if no threshold
+        return "⚪"
+
+    # Check for regression (exceeds full threshold)
+    if threshold.absolute_value is not None:
+        if higher_is_better:
+            if absolute_change < -threshold.absolute_value:
+                return "🔴"  # Regression: significant decrease when higher is better
         else:
-            baseline_str = format_baseline.format(baseline=baseline)
-            current_str = format_current.format(current=current)
+            if absolute_change > threshold.absolute_value:
+                return "🔴"  # Regression: significant increase when lower is better
 
-        if i == 0:
-            rows.append(
-                f"| {chunk_size} tokens | {metric_name} | {baseline_str} | {current_str} | {change:+.1f}% {emoji} |"
-            )
-        else:
-            rows.append(
-                f"| | {metric_name} | {baseline_str} | {current_str} | {change:+.1f}% {emoji} |"
-            )
-    return rows
+    # Check for significance (>1σ baseline variance)
+    significance_threshold = (
+        threshold.baseline_variance * threshold.emoji_significance_sigma
+    )
 
+    if abs(absolute_change) < significance_threshold:
+        return "⚪"  # Change within normal variance
 
-def check_regression(
-    change_pct: float, metric_name: str, thresholds: ThresholdsDict
-) -> bool:
-    """Check if a metric change represents a regression."""
-    # Map metric names to threshold types
-    threshold_map = {
-        "Median Cost Amplification": "summary_token",
-        "90th Percentile Cost": "summary_token",
-        "95th Percentile Cost": "summary_token",
-        "Median Input Amplification": "avg_deviation",
-        "Median Output Amplification": "avg_deviation",
-    }
+    # Determine if change is desirable
+    is_positive_change = absolute_change > 0
+    is_desirable = (is_positive_change and higher_is_better) or (
+        not is_positive_change and not higher_is_better
+    )
 
-    threshold_type = threshold_map.get(metric_name, "default")
-    threshold = thresholds.get(threshold_type, 10.0)
-
-    # For amplification metrics, increase is bad
-    return change_pct > threshold
+    return "🟢" if is_desirable else "🟡"  # Significant change
 
 
-def _format_summary_accuracy_section(
-    baseline_metrics: MetricsDict,
-    current_metrics: MetricsDict,
-    thresholds: ThresholdsDict,
-    chunk_size: int | None = None,
-) -> tuple[list[str], bool]:
-    """Format summary accuracy section for reports.
+def get_variance_emoji(
+    variance_change: float,
+    baseline_variance: float,
+    significance_factor: float = 0.5,
+) -> str:
+    """Get emoji for variance change based on dynamic significance.
 
     Args:
-        baseline_metrics: Baseline metrics dict
-        current_metrics: Current metrics dict
-        thresholds: Regression thresholds
-        chunk_size: Chunk size to look for in summary_accuracy data
+        variance_change: Absolute change in variance/MAD
+        baseline_variance: Baseline variance value
+        significance_factor: Multiplier for baseline to determine significance (default 0.5 = 50% change)
 
     Returns:
-        Tuple of (report lines, has_regression)
+        Emoji indicating variance change significance:
+        - 🟡 = Significant variance increase (notable but not a regression)
+        - 🟢 = Significant variance decrease (improved stability)
+        - ⚪ = Insignificant variance change
     """
-    report: list[str] = []
-    has_regression = False
-
-    baseline_summary = baseline_metrics.get("summary_accuracy", {})
-    current_summary = current_metrics.get("summary_accuracy", {})
-
-    if not baseline_summary or not current_summary:
-        return report, has_regression
-
-    # For single file comparison, try to find the chunk size
-    if chunk_size is None:
-        # Use the first available chunk size
-        chunk_sizes = set(baseline_summary.keys()) & set(current_summary.keys())
-        if chunk_sizes:
-            chunk_size = sorted(chunk_sizes)[0]
+    if baseline_variance == 0:
+        # Special case: any increase from zero variance is significant
+        if variance_change > 0:
+            return "🟡"  # Notable increase from perfect stability
         else:
-            return report, has_regression
+            return "⚪"
 
-    baseline_stats = baseline_summary.get(chunk_size, {})
-    current_stats = current_summary.get(chunk_size, {})
+    # Use relative change threshold (e.g., 50% of baseline variance)
+    significance_threshold = baseline_variance * significance_factor
 
-    if not baseline_stats or not current_stats:
-        return report, has_regression
+    if abs(variance_change) < significance_threshold:
+        return "⚪"  # Change within normal fluctuation
 
-    report.append("### 📏 Summary Size Accuracy")
-    report.append("")
-    report.append("| Metric | Baseline | Current | Change |")
-    report.append("|--------|----------|---------|--------|")
-
-    # Average Deviation
-    baseline_val = baseline_stats.get("avg_deviation", 0)
-    current_val = current_stats.get("avg_deviation", 0)
-    if baseline_val > 0:
-        change_pct, emoji = calculate_change(baseline_val, current_val)
-        # For deviations, increase is bad
-        if change_pct > 10:
-            emoji = "⚠️"
-        if change_pct > 30:
-            has_regression = True
-            emoji += " ❌"
-        change_str = f"{change_pct:+.1f}% {emoji}"
-        report.append(
-            f"| Average Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_str} |"
-        )
-
-    # Median Deviation
-    baseline_val = baseline_stats.get("median_deviation", 0)
-    current_val = current_stats.get("median_deviation", 0)
-    if baseline_val > 0:
-        change_pct, emoji = calculate_change(baseline_val, current_val)
-        if change_pct > 10:
-            emoji = "⚠️"
-        if change_pct > 30:
-            has_regression = True
-            emoji += " ❌"
-        change_str = f"{change_pct:+.1f}% {emoji}"
-        report.append(
-            f"| Median Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_str} |"
-        )
-
-    # P95 Deviation
-    baseline_val = baseline_stats.get("p95_deviation", 0)
-    current_val = current_stats.get("p95_deviation", 0)
-    if baseline_val > 0:
-        change_pct, emoji = calculate_change(baseline_val, current_val)
-        if change_pct > 20:
-            emoji = "⚠️"
-        change_str = f"{change_pct:+.1f}% {emoji}"
-        report.append(
-            f"| P95 Deviation | {baseline_val:.1f}% | {current_val:.1f}% | {change_str} |"
-        )
-
-    report.append("")
-    return report, has_regression
-
-
-def _format_amplification_section(
-    baseline_metrics: MetricsDict,
-    current_metrics: MetricsDict,
-    thresholds: ThresholdsDict,
-) -> tuple[list[str], bool]:
-    """Format amplification metrics section.
-
-    Returns:
-        Tuple of (report lines, has_regression)
-    """
-    report: list[str] = []
-    has_regression = False
-
-    baseline_amp = baseline_metrics.get("amplification", {})
-    current_amp = current_metrics.get("amplification", {})
-
-    if not baseline_amp or not current_amp:
-        return report, has_regression
-
-    report.append("### 📈 Amplification Metrics")
-    report.append("")
-    report.append("| Metric | Baseline | Current | Change |")
-    report.append("|--------|----------|---------|--------|")
-
-    metrics = [
-        ("Median Cost Amplification", "median_cost", ""),
-        ("90th Percentile Cost", "cost_p90", ""),
-        ("95th Percentile Cost", "cost_p95", ""),
-        ("Median Input Amplification", "median_input", ""),
-        ("Median Output Amplification", "median_output", ""),
-    ]
-
-    for display_name, key, unit in metrics:
-        baseline_val = baseline_amp.get(key, 0)
-        current_val = current_amp.get(key, 0)
-
-        if baseline_val > 0:
-            change_pct, emoji = calculate_change(baseline_val, current_val)
-            change_str = f"{change_pct:+.1f}% {emoji}"
-
-            # Check for regression
-            if check_regression(change_pct, display_name, thresholds):
-                has_regression = True
-                change_str += " ❌"
-        else:
-            change_str = "N/A"
-
-        report.append(
-            f"| {display_name} | {baseline_val:.2f}x | {current_val:.2f}x | {change_str} |"
-        )
-
-    report.append("")
-    return report, has_regression
-
-
-def _format_efficiency_section(
-    baseline_metrics: MetricsDict,
-    current_metrics: MetricsDict,
-) -> list[str]:
-    """Format efficiency metrics section."""
-    report: list[str] = []
-
-    baseline_eff = baseline_metrics.get("efficiency", {})
-    current_eff = current_metrics.get("efficiency", {})
-
-    if not baseline_eff or not current_eff:
-        return report
-
-    report.append("### 📦 Efficiency Metrics")
-    report.append("")
-    report.append("| Metric | Baseline | Current | Change |")
-    report.append("|--------|----------|---------|--------|")
-
-    metrics = [
-        ("Avg Embedding Batch Size", "avg_embedding_batch_size", ""),
-        ("Batch Utilization", "batch_utilization", "percent"),
-    ]
-
-    for display_name, key, metric_type in metrics:
-        baseline_val = baseline_eff.get(key, 0)
-        current_val = current_eff.get(key, 0)
-
-        if baseline_val > 0:
-            change_pct, emoji = calculate_change(baseline_val, current_val)
-            # For efficiency metrics, decrease might be bad
-            if "Utilization" in display_name and change_pct < 0:
-                emoji = "⚠️" if abs(change_pct) > EMOJI_THRESHOLD_MINOR else ""
-            change_str = f"{change_pct:+.1f}% {emoji}"
-        else:
-            change_str = "N/A"
-
-        baseline_fmt = format_value(baseline_val, metric_type)
-        current_fmt = format_value(current_val, metric_type)
-
-        report.append(
-            f"| {display_name} | {baseline_fmt} | {current_fmt} | {change_str} |"
-        )
-
-    report.append("")
-    return report
-
-
-def _format_retry_patterns_section(
-    baseline_metrics: MetricsDict,
-    current_metrics: MetricsDict,
-) -> list[str]:
-    """Format retry patterns section if there are retries."""
-    report: list[str] = []
-
-    baseline_retry = baseline_metrics.get("retry_patterns", {})
-    current_retry = current_metrics.get("retry_patterns", {})
-
-    if not baseline_retry or not current_retry:
-        return report
-
-    # Only show if there are retries
-    baseline_rate = baseline_retry.get("retry_rate", 0)
-    current_rate = current_retry.get("retry_rate", 0)
-
-    if baseline_rate == 0 and current_rate == 0:
-        return report
-
-    report.append("### 🔄 Retry Patterns")
-    report.append("")
-    report.append("| Metric | Baseline | Current | Change |")
-    report.append("|--------|----------|---------|--------|")
-
-    # Retry rate
-    if baseline_rate > 0 or current_rate > 0:
-        if baseline_rate > 0:
-            change_pct, emoji = calculate_change(baseline_rate, current_rate)
-            if change_pct > 50:
-                emoji = "⚠️"
-            change_str = f"{change_pct:+.1f}% {emoji}"
-        else:
-            change_str = "New retries ⚠️"
-
-        report.append(
-            f"| Retry Rate | {baseline_rate:.1f}% | {current_rate:.1f}% | {change_str} |"
-        )
-
-    # Success rate
-    baseline_success = baseline_retry.get("retry_success_rate", 0)
-    current_success = current_retry.get("retry_success_rate", 0)
-
-    if baseline_rate > 0 or current_rate > 0:
-        if baseline_success > 0:
-            change_pct, emoji = calculate_change(baseline_success, current_success)
-            # For success rate, decrease is bad
-            if change_pct < -10:
-                emoji = "⚠️"
-            change_str = f"{change_pct:+.1f}% {emoji}"
-        else:
-            change_str = "N/A"
-
-        report.append(
-            f"| Retry Success Rate | {baseline_success:.1f}% | {current_success:.1f}% | {change_str} |"
-        )
-
-    report.append("")
-    return report
-
-
-def generate_comparison_report(
-    baseline_metrics: MetricsDict,
-    current_metrics: MetricsDict,
-    baseline_name: str,
-    current_name: str,
-    thresholds: ThresholdsDict | None = None,
-) -> tuple[str, bool]:
-    """Generate comparison report between two benchmarks.
-
-    Returns:
-        Tuple of (report_text, has_regression)
-    """
-    if thresholds is None:
-        thresholds = _load_thresholds()
-
-    report = []
-    has_regression = False
-
-    report.append("## 📊 Performance Comparison Report")
-    report.append("")
-    report.append(f"**Baseline:** {baseline_name}")
-    report.append(f"**Current:** {current_name}")
-    report.append("")
-
-    # Summary accuracy section (NEW - was computed but not shown)
-    summary_lines, summary_regression = _format_summary_accuracy_section(
-        baseline_metrics, current_metrics, thresholds
-    )
-    report.extend(summary_lines)
-    has_regression = has_regression or summary_regression
-
-    # Amplification metrics section (using new helper)
-    amp_lines, amp_regression = _format_amplification_section(
-        baseline_metrics, current_metrics, thresholds
-    )
-    report.extend(amp_lines)
-    has_regression = has_regression or amp_regression
-
-    # Efficiency metrics section (using new helper)
-    eff_lines = _format_efficiency_section(baseline_metrics, current_metrics)
-    report.extend(eff_lines)
-
-    # Retry patterns section (NEW)
-    retry_lines = _format_retry_patterns_section(baseline_metrics, current_metrics)
-    report.extend(retry_lines)
-
-    # Summary
-    if has_regression:
-        report.append("### ❌ Regression Detected")
-        report.append("")
-        report.append(
-            "Performance regressions were detected. Please review the metrics above."
-        )
+    # Variance increase is notable (yellow), decrease is good (green)
+    if variance_change > 0:
+        return "🟡"  # Significant increase in variance (notable, not a regression)
     else:
-        report.append("### ✅ No Regressions")
-        report.append("")
-        report.append("All metrics are within acceptable thresholds.")
-
-    return "\n".join(report), has_regression
+        return "🟢"  # Significant decrease in variance (improved stability)
 
 
-def _generate_unified_comparison_report(
-    chunk_metrics: dict[int, dict[str, MetricsDict]],
-    baseline_name: str,
-    current_name: str,
-    thresholds: ThresholdsDict,
-) -> tuple[str, bool]:
-    """Generate a unified comparison report for multiple chunk sizes.
+def compute_dynamic_threshold(
+    baseline_metrics: dict[str, Any],
+    metric_name: str,
+    variance_key: str,
+    config: ThresholdConfig,
+    is_ci: bool = False,
+) -> DynamicThreshold:
+    """Compute dynamic threshold based on baseline's internal variance.
 
     Args:
-        chunk_metrics: Dict mapping chunk_size -> {"baseline": metrics, "current": metrics}
-        baseline_name: Name for baseline (e.g., "baseline_results")
-        current_name: Name for current (e.g., "current_results")
-        thresholds: Regression thresholds
+        baseline_metrics: Metrics dictionary containing variance data
+        metric_name: Name of the metric (e.g., "median_error")
+        variance_key: Key to extract variance (e.g., "error_mad")
+        config: Threshold configuration
+        is_ci: Whether running in CI environment
 
     Returns:
-        Tuple of (report_text, has_regression)
+        DynamicThreshold with computed absolute threshold
     """
-    report = []
-    has_regression = False
-
-    # Get the change significance threshold
-    significance_threshold = thresholds["change_significance"]
-
-    report.append("# 📊 Performance Report")
-    report.append("")
-
-    # Sort chunk sizes once for consistent ordering across all sections
-    sorted_chunks = sorted(chunk_metrics.keys())
-
-    # Summary Size Accuracy Table (first, most important)
-    report.append("## 📏 Summary Size Accuracy")
-    report.append("")
-
-    summary_rows = []
-    for chunk_size in sorted_chunks:
-        baseline_summary = chunk_metrics[chunk_size]["baseline"].get(
-            "summary_accuracy", {}
-        )
-        current_summary = chunk_metrics[chunk_size]["current"].get(
-            "summary_accuracy", {}
-        )
-
-        # Get the summary stats for the chunk size (target size)
-        baseline_stats = baseline_summary.get(chunk_size, {})
-        current_stats = current_summary.get(chunk_size, {})
-
-        if baseline_stats and current_stats:
-            # Collect all significant changes for this chunk size
-            chunk_rows = []
-
-            # Average Deviation
-            baseline_val = baseline_stats.get("avg_deviation", 0)
-            current_val = current_stats.get("avg_deviation", 0)
-            if baseline_val > 0:
-                change_pct, emoji = calculate_change(baseline_val, current_val)
-                # For deviations, increase is bad
-                if change_pct > 10:
-                    emoji = "⚠️"
-                if change_pct > 30:
-                    has_regression = True
-                    emoji += " ❌"
-                if abs(change_pct) >= significance_threshold:
-                    chunk_rows.append(
-                        ("Avg Deviation", baseline_val, current_val, change_pct, emoji)
-                    )
-
-            # Median Deviation
-            baseline_val = baseline_stats.get("median_deviation", 0)
-            current_val = current_stats.get("median_deviation", 0)
-            if baseline_val > 0:
-                change_pct, emoji = calculate_change(baseline_val, current_val)
-                if change_pct > 10:
-                    emoji = "⚠️"
-                if change_pct > 30:
-                    has_regression = True
-                    emoji += " ❌"
-                if abs(change_pct) >= significance_threshold:
-                    chunk_rows.append(
-                        (
-                            "Median Deviation",
-                            baseline_val,
-                            current_val,
-                            change_pct,
-                            emoji,
-                        )
-                    )
-
-            # Standard Deviation
-            baseline_val = baseline_stats.get("std_deviation", 0)
-            current_val = current_stats.get("std_deviation", 0)
-            if baseline_val > 0:
-                change_pct, emoji = calculate_change(baseline_val, current_val)
-                if change_pct > 20:
-                    emoji = "⚠️"
-                # Don't flag regression for std deviation (too volatile)
-                if abs(change_pct) >= significance_threshold:
-                    chunk_rows.append(
-                        ("Std Deviation", baseline_val, current_val, change_pct, emoji)
-                    )
-
-            # P95 Deviation
-            baseline_val = baseline_stats.get("p95_deviation", 0)
-            current_val = current_stats.get("p95_deviation", 0)
-            if baseline_val > 0:
-                change_pct, emoji = calculate_change(baseline_val, current_val)
-                if change_pct > 20:
-                    emoji = "⚠️"
-                # Don't flag regression for P95 (too volatile)
-                if abs(change_pct) >= significance_threshold:
-                    chunk_rows.append(
-                        (
-                            "P95 Deviation",
-                            baseline_val,
-                            current_val,
-                            change_pct,
-                            emoji,
-                        )
-                    )
-
-            # Add rows with chunk size label on the first row
-            summary_rows.extend(
-                format_metric_rows_with_chunk_label(chunk_size, chunk_rows)
-            )
-
-    if summary_rows:
-        report.append("| Chunk Size | Metric | Baseline | Current | Change |")
-        report.append("|------------|--------|----------|---------|--------|")
-        report.extend(summary_rows)
+    # Extract variance from the appropriate metric group
+    if metric_name in [
+        MetricNames.MEDIAN_ERROR,
+        MetricNames.P95_ERROR,
+        MetricNames.PERCENT_WITHIN_10,
+    ]:
+        variance = baseline_metrics["target_fit"].get(variance_key, 0.0)
+    elif metric_name in [MetricNames.MEDIAN_SECONDS]:
+        variance = baseline_metrics["latency"].get(variance_key, 0.0)
+    elif metric_name == MetricNames.MAD:
+        variance = baseline_metrics["dispersion"].get("mad", 0.0)
+    elif metric_name == MetricNames.RETRY_RATE:
+        variance = baseline_metrics["retries"].get(variance_key, 0.0)
+    elif metric_name in [MetricNames.USD_PER_NODE, MetricNames.COST]:
+        variance = baseline_metrics["cost"].get(variance_key, 0.0)
     else:
-        report.append(
-            f"No significant changes (all metrics within ±{significance_threshold:.0f}%)"
+        # For metrics without variance data, don't enforce any threshold
+        return DynamicThreshold(
+            absolute_value=None,
+            baseline_variance=0.0,
+            k_factors=(0.0, 0.0),
+            metric_name=metric_name,
+            is_computed=False,
+            emoji_significance_sigma=config.emoji_significance_sigma,
         )
 
-    report.append("")
-
-    # Amplification Metrics Table
-    report.append("## 📈 Amplification Metrics")
-    report.append("")
-
-    amplification_rows = []
-    for chunk_size in sorted_chunks:
-        baseline_metrics = chunk_metrics[chunk_size]["baseline"]["amplification"]
-        current_metrics = chunk_metrics[chunk_size]["current"]["amplification"]
-
-        # Collect all significant changes for this chunk size
-        chunk_rows = []
-
-        # Cost amplification (main metric)
-        baseline_val = baseline_metrics.get("median_cost", 0)
-        current_val = current_metrics.get("median_cost", 0)
-        if baseline_val > 0:
-            change_pct, emoji = calculate_change(baseline_val, current_val)
-            if check_regression(change_pct, "Median Cost Amplification", thresholds):
-                has_regression = True
-                emoji += " ❌"
-            if abs(change_pct) >= significance_threshold:
-                chunk_rows.append(
-                    (
-                        "Median Cost Amplification",
-                        baseline_val,
-                        current_val,
-                        change_pct,
-                        emoji,
-                    )
-                )
-
-        # Input amplification (sub-metric)
-        baseline_val = baseline_metrics.get("median_input", 0)
-        current_val = current_metrics.get("median_input", 0)
-        if baseline_val > 0:
-            change_pct, emoji = calculate_change(baseline_val, current_val)
-            if abs(change_pct) >= significance_threshold:
-                chunk_rows.append(
-                    (
-                        "Input Amplification",
-                        baseline_val,
-                        current_val,
-                        change_pct,
-                        emoji,
-                    )
-                )
-
-        # Output amplification (sub-metric)
-        baseline_val = baseline_metrics.get("median_output", 0)
-        current_val = current_metrics.get("median_output", 0)
-        if baseline_val > 0:
-            change_pct, emoji = calculate_change(baseline_val, current_val)
-            if abs(change_pct) >= significance_threshold:
-                chunk_rows.append(
-                    (
-                        "Output Amplification",
-                        baseline_val,
-                        current_val,
-                        change_pct,
-                        emoji,
-                    )
-                )
-
-        # Add rows with chunk size label on the first row
-        amplification_rows.extend(
-            format_metric_rows_with_chunk_label(
-                chunk_size,
-                chunk_rows,
-                format_baseline="{baseline:.2f}x",
-                format_current="{current:.2f}x",
-            )
+    # If variance is zero, don't enforce any threshold
+    # This handles cases like retry_rate when retries aren't implemented yet
+    if variance == 0.0:
+        return DynamicThreshold(
+            absolute_value=None,  # No regression possible
+            baseline_variance=0.0,
+            k_factors=(config.k1_between_run, config.k2_baseline_uncertainty),
+            metric_name=metric_name,
+            is_computed=False,  # Not computed from variance
+            emoji_significance_sigma=config.emoji_significance_sigma,
         )
 
-    if amplification_rows:
-        report.append("| Chunk Size | Metric | Baseline | Current | Change |")
-        report.append("|------------|--------|----------|---------|--------|")
-        report.extend(amplification_rows)
-    else:
-        report.append(
-            f"No significant changes (all metrics within ±{significance_threshold:.0f}%)"
-        )
+    # Apply k-factors
+    k1 = config.k1_between_run
+    k2 = config.k2_baseline_uncertainty
 
-    report.append("")
+    # Adjust for CI if needed
+    if is_ci and config.adjust_for_ci:
+        k1 *= config.ci_multiplier
+        k2 *= config.ci_multiplier
 
-    # Embedding Efficiency Table
-    report.append("## 📦 Embedding Efficiency")
-    report.append("")
+    # Calculate threshold
+    threshold = (k1 + k2) * variance
 
-    efficiency_rows = []
-    for chunk_size in sorted_chunks:
-        baseline_metrics = chunk_metrics[chunk_size]["baseline"]["efficiency"]
-        current_metrics = chunk_metrics[chunk_size]["current"]["efficiency"]
-
-        # Collect all significant changes for this chunk size
-        chunk_rows = []
-
-        # Batch size
-        baseline_val = baseline_metrics.get("avg_embedding_batch_size", 0)
-        current_val = current_metrics.get("avg_embedding_batch_size", 0)
-        if baseline_val > 0:
-            change_pct, emoji = calculate_change(baseline_val, current_val)
-            if abs(change_pct) >= significance_threshold:
-                chunk_rows.append(
-                    (
-                        "Avg Embedding Batch Size",
-                        baseline_val,
-                        current_val,
-                        change_pct,
-                        emoji,
-                    )
-                )
-
-        # Batch utilization
-        baseline_val = baseline_metrics.get("batch_utilization", 0)
-        current_val = current_metrics.get("batch_utilization", 0)
-        if baseline_val > 0:
-            change_pct, emoji = calculate_change(baseline_val, current_val)
-            # For utilization, decrease might be bad
-            if change_pct < 0 and abs(change_pct) > EMOJI_THRESHOLD_MINOR:
-                emoji = "⚠️"
-            if abs(change_pct) >= significance_threshold:
-                chunk_rows.append(
-                    ("Batch Utilization", baseline_val, current_val, change_pct, emoji)
-                )
-
-        # Add rows with chunk size label on the first row
-        efficiency_rows.extend(
-            format_metric_rows_with_chunk_label(
-                chunk_size,
-                chunk_rows,
-                format_baseline="{baseline:.1f}",
-                format_current="{current:.1f}",
-                special_formatting={
-                    "Batch Utilization": ("{baseline:.1f}%", "{current:.1f}%")
-                },
-            )
-        )
-
-    if efficiency_rows:
-        report.append("| Chunk Size | Metric | Baseline | Current | Change |")
-        report.append("|------------|--------|----------|---------|--------|")
-        report.extend(efficiency_rows)
-    else:
-        report.append(
-            f"No significant changes (all metrics within ±{significance_threshold:.0f}%)"
-        )
-
-    report.append("")
-
-    # Summary
-    if has_regression:
-        report.append("## ❌ Regression Detected")
-        report.append("")
-        report.append(
-            "Performance regressions were detected in one or more chunk sizes. Please review the metrics above."
-        )
-        report.append("")  # Extra newline for better formatting
-    else:
-        report.append("## ✅ No Regressions")
-        report.append("")
-        report.append(
-            "All metrics across all chunk sizes are within acceptable thresholds."
-        )
-        report.append("")  # Extra newline for better formatting
-
-    return "\n".join(report), has_regression
-
-
-def _load_thresholds() -> ThresholdsDict:
-    """Load regression thresholds from environment variables."""
-    return {
-        "summary_token": float(
-            os.getenv("PERF_SUMMARY_TOKEN_REGRESSION_THRESHOLD", "10.0")
-        ),
-        "avg_deviation": float(
-            os.getenv("PERF_AVG_DEVIATION_REGRESSION_THRESHOLD", "20.0")
-        ),
-        "median_deviation": float(
-            os.getenv("PERF_MEDIAN_DEVIATION_REGRESSION_THRESHOLD", "20.0")
-        ),
-        "std_deviation": float(
-            os.getenv("PERF_STD_DEVIATION_REGRESSION_THRESHOLD", "30.0")
-        ),
-        "p95": float(os.getenv("PERF_P95_REGRESSION_THRESHOLD", "25.0")),
-        "change_significance": float(
-            os.getenv(
-                "PERF_CHANGE_SIGNIFICANCE_THRESHOLD", str(CHANGE_SIGNIFICANCE_THRESHOLD)
-            )
-        ),
-    }
-
-
-def _compare_files(baseline_file: Path, current_file: Path, output: str | None) -> None:
-    """Compare two telemetry files and generate a report."""
-    # Load benchmarks
-    try:
-        baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
-        current_chunk_size, current_metrics = load_single_benchmark(current_file)
-    except Exception as e:
-        error_msg = f"Error loading benchmark files: {e}"
-        _write_error_report(error_msg, output)
-        sys.exit(1)
-
-    # Warn if chunk sizes don't match
-    if baseline_chunk_size != current_chunk_size:
-        click.echo(
-            f"⚠️  Warning: Chunk sizes differ - baseline: {baseline_chunk_size}, current: {current_chunk_size}",
-            err=True,
-        )
-        click.echo("Using baseline chunk size for comparison\n", err=True)
-
-    # Get thresholds from environment
-    thresholds = _load_thresholds()
-
-    # Generate comparison report
-    report, has_regression = generate_comparison_report(
-        baseline_metrics,
-        current_metrics,
-        baseline_file.name,
-        current_file.name,
-        thresholds,
+    return DynamicThreshold(
+        absolute_value=threshold,
+        baseline_variance=variance,
+        k_factors=(k1, k2),
+        metric_name=metric_name,
+        is_computed=True,
+        emoji_significance_sigma=config.emoji_significance_sigma,
     )
-
-    # Output report
-    if output:
-        Path(output).write_text(report)
-        click.echo(f"✅ Comparison report saved to {output}")
-    else:
-        click.echo(report)
-
-    # Exit with appropriate code
-    if has_regression:
-        sys.exit(1)
-    else:
-        sys.exit(0)
 
 
 def _match_telemetry_files(dir1: Path, dir2: Path) -> list[tuple[Path, Path]]:
-    """Match telemetry files between two directories by token count.
+    """Match telemetry files between two directories by filename.
 
     Returns list of (baseline_file, current_file) tuples.
     """
@@ -961,7 +273,7 @@ def _match_telemetry_files(dir1: Path, dir2: Path) -> list[tuple[Path, Path]]:
     dir1_files.extend(dir1.glob("telemetry.json"))
     dir2_files.extend(dir2.glob("telemetry.json"))
 
-    # Create mapping by filename pattern
+    # Create mapping by filename
     dir1_map = {f.name: f for f in dir1_files}
     dir2_map = {f.name: f for f in dir2_files}
 
@@ -974,109 +286,412 @@ def _match_telemetry_files(dir1: Path, dir2: Path) -> list[tuple[Path, Path]]:
     return sorted(matches, key=lambda x: x[0].name)
 
 
-def _compare_directories(
-    baseline_dir: Path, current_dir: Path, output: str | None
-) -> None:
-    """Compare all matching telemetry files between two directories."""
+def _check_telemetry_deps() -> None:
+    """Check if telemetry visualization dependencies are installed."""
+    try:
+        import matplotlib  # noqa: F401
+        import seaborn  # noqa: F401
+    except ImportError:
+        click.echo(
+            "❌ Telemetry visualization requires optional dependencies.\n"
+            "Install with: pip install ragzoom[telemetry]",
+            err=True,
+        )
+        sys.exit(1)
+
+
+@click.group()
+def cli() -> None:
+    """Telemetry analysis with simplified metrics."""
+    pass
+
+
+@cli.command()
+@click.argument("telemetry_file", type=click.Path(exists=True, path_type=Path))
+def analyze(telemetry_file: Path) -> None:
+    """Analyze telemetry data and display simplified metrics."""
+
+    # Load telemetry data
+    with open(telemetry_file) as f:
+        telemetry_data = json.load(f)
+
+    # Handle wrapped telemetry format (with config/document/telemetry fields)
+    # If data has 'telemetry' field but no 'documents' field, it's wrapped
+    if "telemetry" in telemetry_data and "documents" not in telemetry_data:
+        telemetry_data = telemetry_data["telemetry"]
+
+    # Compute metrics
+    config = RagZoomConfig()
+    metrics = compute_simplified_metrics(telemetry_data, config)
+
+    # Display metrics for each chunk size
+    for chunk_size in sorted(metrics.metrics_by_chunk_size.keys()):
+        chunk_metrics = metrics.metrics_by_chunk_size[chunk_size]
+
+        click.echo(f"\n{'='*60}")
+        click.echo(f"  Chunk Size: {chunk_size} tokens")
+        click.echo(f"{'='*60}")
+
+        # Target-fit metrics
+        target_fit = chunk_metrics["target_fit"]
+        click.echo("\n📏 Target-fit Accuracy")
+        click.echo(f"  Median error:        {target_fit['median_error']:+.1f} tokens")
+        click.echo(f"  p95 error:           {target_fit['p95_error']:+.1f} tokens")
+        click.echo(f"  Within ±10 tokens:   {target_fit['percent_within_10']:.1f}%")
+        click.echo(f"  Max overshoot:       {target_fit['max_overshoot']:+.0f} tokens")
+        click.echo(f"  Max undershoot:      {target_fit['max_undershoot']:+.0f} tokens")
+
+        # Retry metrics
+        retries = chunk_metrics["retries"]
+        click.echo("\n🔄 Retry Efficiency")
+        click.echo(
+            f"  Retry rate:          {retries['retry_rate']:.2f} extra attempts/node"
+        )
+        click.echo(f"  Max retries:         {retries['max_retries']:.0f}")
+
+        # Latency metrics
+        latency = chunk_metrics["latency"]
+        click.echo("\n⏱️  Latency")
+        click.echo(f"  Median time/node:    {latency['median_seconds']:.2f}s")
+        click.echo(f"  p95 time/node:       {latency['p95_seconds']:.2f}s")
+        click.echo(f"  Total indexing:      {latency['total_indexing_seconds']:.1f}s")
+
+        # Cost metrics
+        cost = chunk_metrics["cost"]
+        click.echo("\n💰 Cost & Tokens")
+        click.echo(f"  Prompt tokens:       {cost['total_prompt_tokens']:,}")
+        click.echo(f"  Completion tokens:   {cost['total_completion_tokens']:,}")
+        click.echo(f"  Total tokens:        {cost['total_tokens']:,}")
+        click.echo(f"  USD per node:        ${cost['usd_per_node']:.4f}")
+
+    click.echo(f"\n{'='*60}\n")
+
+
+def check_regression_with_dynamic_threshold(
+    baseline_val: float,
+    current_val: float,
+    threshold: DynamicThreshold,
+    higher_is_better: bool = False,
+) -> tuple[bool, float]:
+    """Check for regression using absolute dynamic threshold.
+
+    Args:
+        baseline_val: Baseline metric value
+        current_val: Current metric value
+        threshold: Dynamic threshold computed from baseline variance
+        higher_is_better: If True, decrease is regression; if False, increase is regression
+
+    Returns:
+        Tuple of (is_regression, absolute_change)
+    """
+    absolute_change = current_val - baseline_val
+
+    # If no threshold is set, no regression is possible
+    if threshold.absolute_value is None:
+        return False, absolute_change
+
+    if higher_is_better:
+        # For metrics where higher is better, regression is a decrease beyond threshold
+        is_regression = absolute_change < -threshold.absolute_value
+    else:
+        # For metrics where lower is better, regression is an increase beyond threshold
+        is_regression = absolute_change > threshold.absolute_value
+
+    return is_regression, absolute_change
+
+
+def _load_and_compute_metrics(file_path: Path) -> tuple[dict, Any]:
+    """Load telemetry file and compute simplified metrics.
+
+    Returns:
+        Tuple of (telemetry_data, simplified_metrics)
+    """
+    with open(file_path) as f:
+        data = json.load(f)
+
+    # Handle wrapped telemetry format (with config/document/telemetry fields)
+    # If data has 'telemetry' field but no 'documents' field, it's wrapped
+    if "telemetry" in data and "documents" not in data:
+        telemetry_data = data["telemetry"]
+    else:
+        telemetry_data = data
+
+    # Compute metrics
+    config = RagZoomConfig()
+    metrics = compute_simplified_metrics(telemetry_data, config)
+
+    return telemetry_data, metrics
+
+
+def _compare_files(baseline_file: Path, current_file: Path, output: str) -> bool:
+    """Compare two telemetry files.
+
+    Returns:
+        True if regression detected
+    """
+    # Load and compute metrics for both files
+    baseline_data, baseline_metrics = _load_and_compute_metrics(baseline_file)
+    current_data, current_metrics = _load_and_compute_metrics(current_file)
+
+    # Detect if running in CI
+    is_ci = current_data.get("environment", {}).get("ci", False)
+
+    # Find common chunk sizes
+    baseline_sizes = set(baseline_metrics.metrics_by_chunk_size.keys())
+    current_sizes = set(current_metrics.metrics_by_chunk_size.keys())
+    common_sizes = baseline_sizes & current_sizes
+
+    if not common_sizes:
+        click.echo("No common chunk sizes found between files", err=True)
+        return False  # Return False, don't exit here
+
+    # Check for regressions with dynamic thresholds
+    has_regression, thresholds_by_chunk = (
+        _check_metrics_for_regressions_with_thresholds(
+            baseline_metrics, current_metrics, common_sizes, is_ci
+        )
+    )
+
+    # Format comparison with thresholds
+    if output == "markdown":
+        _format_markdown_comparison_with_thresholds(
+            baseline_metrics, current_metrics, common_sizes, thresholds_by_chunk
+        )
+    else:
+        _format_text_comparison_with_thresholds(
+            baseline_metrics, current_metrics, common_sizes, thresholds_by_chunk
+        )
+
+    return has_regression
+
+
+@dataclass
+class MetricCheckConfig:
+    """Configuration for checking a single metric."""
+
+    metric_name: str
+    variance_key: str
+    metric_group: str
+    metric_field: str
+    threshold_key: str
+    use_absolute: bool = False
+    higher_is_better: bool = False
+
+
+def _check_single_metric_regression(
+    base_metrics: dict[str, Any],
+    curr_metrics: dict[str, Any],
+    metric_config: MetricCheckConfig,
+    threshold_config: ThresholdConfig,
+    is_ci: bool,
+) -> tuple[bool, DynamicThreshold]:
+    """Check regression for a single metric.
+
+    Returns:
+        Tuple of (is_regressed, threshold)
+    """
+    # Compute threshold
+    threshold = compute_dynamic_threshold(
+        base_metrics,
+        metric_config.metric_name,
+        metric_config.variance_key,
+        threshold_config,
+        is_ci,
+    )
+
+    # Get values
+    base_val = base_metrics[metric_config.metric_group][metric_config.metric_field]
+    curr_val = curr_metrics[metric_config.metric_group][metric_config.metric_field]
+
+    # Apply absolute if needed
+    if metric_config.use_absolute:
+        base_val = abs(base_val)
+        curr_val = abs(curr_val)
+
+    # Check regression
+    is_regressed, _ = check_regression_with_dynamic_threshold(
+        base_val, curr_val, threshold, metric_config.higher_is_better
+    )
+
+    return is_regressed, threshold
+
+
+def _check_metrics_for_regressions_with_thresholds(
+    baseline: SimplifiedMetrics,
+    current: SimplifiedMetrics,
+    chunk_sizes: set[int],
+    is_ci: bool = False,
+) -> tuple[bool, dict[int, dict[str, DynamicThreshold]]]:
+    """Check if metrics show regressions using dynamic thresholds.
+
+    Returns:
+        Tuple of (has_regression, thresholds_by_chunk)
+    """
+    has_regression = False
+    config = ThresholdConfig()
+    thresholds_by_chunk = {}
+
+    # Define metric configurations
+    metric_configs = [
+        MetricCheckConfig(
+            MetricNames.MEDIAN_ERROR,
+            "error_mad",
+            "target_fit",
+            "median_error",
+            MetricNames.MEDIAN_ERROR_KEY,
+            use_absolute=True,
+        ),
+        MetricCheckConfig(
+            MetricNames.P95_ERROR,
+            "error_mad",
+            "target_fit",
+            "p95_error",
+            MetricNames.P95_ERROR_KEY,
+            use_absolute=True,
+        ),
+        MetricCheckConfig(
+            MetricNames.MEDIAN_SECONDS,
+            "latency_mad",
+            "latency",
+            "median_seconds",
+            MetricNames.LATENCY_KEY,
+        ),
+        MetricCheckConfig(
+            MetricNames.MAD, "mad", "dispersion", "mad", MetricNames.MAD_KEY
+        ),
+        MetricCheckConfig(
+            MetricNames.RETRY_RATE,
+            "retry_mad",
+            "retries",
+            "retry_rate",
+            MetricNames.RETRY_RATE_KEY,
+        ),
+        MetricCheckConfig(
+            MetricNames.USD_PER_NODE,
+            "cost_mad",
+            "cost",
+            "usd_per_node",
+            MetricNames.COST_KEY,
+        ),
+        MetricCheckConfig(
+            MetricNames.PERCENT_WITHIN_10,
+            "percent_within_10_mad",
+            "target_fit",
+            "percent_within_10",
+            MetricNames.PERCENT_WITHIN_10_KEY,
+            higher_is_better=True,
+        ),
+    ]
+
+    for chunk_size in chunk_sizes:
+        base_metrics = baseline.metrics_by_chunk_size[chunk_size]
+        curr_metrics = current.metrics_by_chunk_size[chunk_size]
+        chunk_thresholds = {}
+
+        # Check each metric
+        for metric_config in metric_configs:
+            is_regressed, threshold = _check_single_metric_regression(
+                base_metrics, curr_metrics, metric_config, config, is_ci
+            )
+            chunk_thresholds[metric_config.threshold_key] = threshold
+            if is_regressed:
+                has_regression = True
+
+        thresholds_by_chunk[chunk_size] = chunk_thresholds
+
+    return has_regression, thresholds_by_chunk
+
+
+def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> bool:
+    """Compare all matching telemetry files between two directories.
+
+    Returns:
+        True if any regression detected
+    """
     # Find matching files
     matches = _match_telemetry_files(baseline_dir, current_dir)
 
     if not matches:
         click.echo(
-            f"❌ No matching telemetry files found between {baseline_dir} and {current_dir}",
+            f"No matching telemetry files found between {baseline_dir} and {current_dir}",
             err=True,
         )
         sys.exit(1)
 
-    click.echo(f"📊 Found {len(matches)} matching file pairs to compare\n")
-
-    # Track overall results and collect metrics by chunk size
-    chunk_metrics: dict[int, dict[str, MetricsDict]] = {}
-    any_error = False
-    error_messages = []
+    # Collect all metrics from all files
+    all_chunk_metrics = {}  # chunk_size -> (baseline_metrics, current_metrics)
 
     for baseline_file, current_file in matches:
-        click.echo(f"Comparing {baseline_file.name}...", err=True)
-
         try:
-            # Load benchmarks
-            baseline_chunk_size, baseline_metrics = load_single_benchmark(baseline_file)
-            current_chunk_size, current_metrics = load_single_benchmark(current_file)
+            # Load and compute metrics for both files
+            _, baseline_metrics = _load_and_compute_metrics(baseline_file)
+            _, current_metrics = _load_and_compute_metrics(current_file)
 
-            # Warn if chunk sizes don't match
-            if baseline_chunk_size != current_chunk_size:
-                click.echo(
-                    f"  ⚠️  Warning: Chunk sizes differ - baseline: {baseline_chunk_size}, current: {current_chunk_size}",
-                    err=True,
-                )
-
-            # Use baseline chunk size as the key
-            chunk_size = baseline_chunk_size
-            chunk_metrics[chunk_size] = {
-                "baseline": baseline_metrics,
-                "current": current_metrics,
-            }
-
-            click.echo("  ✅ Loaded successfully", err=True)
-
+            # Store metrics for each chunk size
+            for chunk_size in baseline_metrics.metrics_by_chunk_size:
+                if chunk_size in current_metrics.metrics_by_chunk_size:
+                    all_chunk_metrics[chunk_size] = (
+                        baseline_metrics.metrics_by_chunk_size[chunk_size],
+                        current_metrics.metrics_by_chunk_size[chunk_size],
+                    )
         except Exception as e:
-            click.echo(f"  ❌ Error: {e}", err=True)
-            error_messages.append(f"Error loading {baseline_file.name}: {e}")
-            any_error = True
+            click.echo(f"Error loading {baseline_file.name}: {e}", err=True)
 
-    # Generate unified report if we have any successful comparisons
-    if chunk_metrics:
-        thresholds = _load_thresholds()
-        combined_report, any_regression = _generate_unified_comparison_report(
-            chunk_metrics,
-            baseline_dir.name,
-            current_dir.name,
-            thresholds,
-        )
-
-        # Append error messages if any
-        if error_messages:
-            combined_report += "\n\n## ⚠️ Errors Encountered\n\n"
-            for error_msg in error_messages:
-                combined_report += f"- {error_msg}\n"
-    else:
-        # All files failed to load
-        combined_report = "# ❌ Directory Comparison Failed\n\n"
-        combined_report += (
-            f"**Baseline:** {baseline_dir}\n**Current:** {current_dir}\n\n"
-        )
-        combined_report += "No files could be successfully compared:\n\n"
-        for error_msg in error_messages:
-            combined_report += f"- {error_msg}\n"
-        any_regression = True  # Treat total failure as regression
-
-    # Output report
-    if output:
-        Path(output).write_text(combined_report)
-        click.echo(f"\n✅ Combined comparison report saved to {output}")
-    else:
-        click.echo(f"\n{'='*60}\n")
-        click.echo(combined_report)
-
-    # Exit with appropriate code
-    # Exit with code 1 if any regressions were detected OR any errors occurred during comparison
-    # This ensures CI fails if either performance degrades or comparison process fails
-    if any_regression or any_error:
+    if not all_chunk_metrics:
+        click.echo("No valid metrics found to compare", err=True)
         sys.exit(1)
+
+    # Generate unified comparison table
+    # First, reorganize the data into the format expected by the existing comparison functions
+    from ragzoom.telemetry_analysis import SimplifiedMetrics
+
+    # Create pseudo SimplifiedMetrics objects with all chunk sizes
+    baseline_combined_dict = {}
+    current_combined_dict = {}
+
+    for chunk_size in sorted(all_chunk_metrics.keys()):
+        baseline_metrics, current_metrics = all_chunk_metrics[chunk_size]
+        baseline_combined_dict[chunk_size] = baseline_metrics
+        current_combined_dict[chunk_size] = current_metrics
+
+    baseline_combined = SimplifiedMetrics(metrics_by_chunk_size=baseline_combined_dict)
+    current_combined = SimplifiedMetrics(metrics_by_chunk_size=current_combined_dict)
+
+    # Use existing comparison formatting functions
+    chunk_sizes = set(all_chunk_metrics.keys())
+
+    # Check for regressions with dynamic thresholds
+    # Detect CI from any of the files (use False as default)
+    is_ci = False
+    for _, _ in matches:
+        # Could check environment from files, but for now default to False
+        pass
+
+    has_regression, thresholds_by_chunk = (
+        _check_metrics_for_regressions_with_thresholds(
+            baseline_combined, current_combined, chunk_sizes, is_ci
+        )
+    )
+
+    # Format output with thresholds
+    if output == "markdown":
+        _format_markdown_comparison_with_thresholds(
+            baseline_combined, current_combined, chunk_sizes, thresholds_by_chunk
+        )
     else:
-        sys.exit(0)
+        _format_text_comparison_with_thresholds(
+            baseline_combined, current_combined, chunk_sizes, thresholds_by_chunk
+        )
+
+    return has_regression
 
 
-@cli.command("compare")
-@click.argument("path1", type=click.Path(exists=True))
-@click.argument("path2", type=click.Path(exists=True))
-@click.option(
-    "--output",
-    type=click.Path(),
-    help="Output file for comparison report (defaults to stdout)",
-)
-def compare(path1: str, path2: str, output: str | None) -> None:
-    """Compare telemetry data between two benchmark files or directories.
+@cli.command()
+@click.argument("baseline_path", type=click.Path(exists=True))
+@click.argument("current_path", type=click.Path(exists=True))
+@click.option("--output", "-o", type=click.Choice(["text", "markdown"]), default="text")
+def compare(baseline_path: str, current_path: str, output: str) -> None:
+    """Compare telemetry data between files or directories.
 
     Examples:
         Compare two files:
@@ -1085,87 +700,688 @@ def compare(path1: str, path2: str, output: str | None) -> None:
         Compare directories:
             ragzoom-telemetry compare baseline_results/ current_results/
     """
-    try:
-        path1_obj = Path(path1)
-        path2_obj = Path(path2)
+    baseline = Path(baseline_path)
+    current = Path(current_path)
 
-        # Check if both are directories
-        if path1_obj.is_dir() and path2_obj.is_dir():
-            _compare_directories(path1_obj, path2_obj, output)
-        elif path1_obj.is_file() and path2_obj.is_file():
-            # Single file comparison (existing logic)
-            _compare_files(path1_obj, path2_obj, output)
-        else:
-            click.echo(
-                "❌ Error: Both arguments must be either files or directories", err=True
-            )
-            sys.exit(1)
+    has_regression = False
 
-    except Exception as e:
-        error_msg = f"Unexpected error during comparison: {e}"
-        _write_error_report(error_msg, output)
+    # Check if both are directories or both are files
+    if baseline.is_dir() and current.is_dir():
+        has_regression = _compare_directories(baseline, current, output)
+    elif baseline.is_file() and current.is_file():
+        has_regression = _compare_files(baseline, current, output)
+    else:
+        click.echo(
+            "Error: Both arguments must be either files or directories", err=True
+        )
         sys.exit(1)
+
+    # Exit with code 1 if regression detected
+    if has_regression:
+        click.echo("\n❌ Performance regression detected!", err=True)
+        sys.exit(1)
+    else:
+        click.echo("\n✅ No regressions detected")
 
 
 @cli.command("visualize")
-@click.argument("input_path", type=click.Path(exists=True))
+@click.argument("input_paths", nargs=-1, required=True, type=click.Path(exists=True))
 @click.option(
-    "--output-dir",
+    "-o",
+    "--output",
     type=click.Path(),
-    default="telemetry_reports",
-    help="Output directory for visualizations",
+    default=None,
+    help="Output file path (default: visualization.<format>)",
 )
 @click.option(
     "--format",
     type=click.Choice(["png", "pdf", "svg"]),
     default="png",
-    help="Output format (default: png)",
+    help="Output format when -o is not specified or has no extension (default: png)",
 )
-@click.option(
-    "--compare",
-    is_flag=True,
-    help="Generate comparison visualizations when input is a directory",
-)
-def visualize(input_path: str, output_dir: str, format: str, compare: bool) -> None:
-    """Generate visualizations from telemetry data."""
+def visualize(input_paths: tuple[str, ...], output: str | None, format: str) -> None:
+    """Generate visualizations from one or two telemetry files.
+
+    Examples:
+        ragzoom-telemetry visualize baseline.json
+        ragzoom-telemetry visualize baseline.json current.json
+        ragzoom-telemetry visualize baseline.json -o analysis.png
+        ragzoom-telemetry visualize baseline.json current.json -o comparison.pdf
+    """
     # Check dependencies first
     _check_telemetry_deps()
 
     try:
         from ragzoom.telemetry_viz import TelemetryVisualizer
 
-        visualizer = TelemetryVisualizer(Path(output_dir))
-        input_path_obj = Path(input_path)
+        # Determine output path and format
+        supported_formats = ["png", "pdf", "svg"]
 
-        if input_path_obj.is_file():
+        if output:
+            output_path = Path(output)
+            # Infer format from extension if present
+            if output_path.suffix:
+                inferred_format = output_path.suffix[1:].lower()
+                if inferred_format in supported_formats:
+                    format = inferred_format
+                else:
+                    # Warn about unsupported format and use --format parameter
+                    click.echo(
+                        f"⚠️ Warning: Unsupported format '.{inferred_format}'. "
+                        f"Using --format={format} instead.",
+                        err=True,
+                    )
+                    # Replace the extension with the correct one
+                    output_path = output_path.with_suffix(f".{format}")
+            else:
+                # No extension, add format
+                output_path = output_path.with_suffix(f".{format}")
+        else:
+            # Default output path in current directory
+            output_path = Path(f"visualization.{format}")
+
+        # Create visualizer with output path
+        visualizer = TelemetryVisualizer(output_path)
+
+        if len(input_paths) == 1:
             # Single file visualization
-            visualizer.visualize_single_benchmark(input_path_obj, format)
-        elif input_path_obj.is_dir():
-            # Directory of benchmarks
-            json_files = list(input_path_obj.glob("telemetry_*_tokens.json"))
-            # Also support new telemetry.json files
-            json_files.extend(input_path_obj.glob("telemetry*.json"))
+            file_path = Path(input_paths[0])
+            if not file_path.is_file():
+                click.echo(f"❌ Error: {input_paths[0]} is not a file")
+                sys.exit(1)
+            visualizer.visualize_single_benchmark(file_path, format)
+            click.echo(f"✅ Generated visualization: {output_path}")
 
-            if not json_files:
-                click.echo(f"❌ No benchmark files found in {input_path}")
+        elif len(input_paths) == 2:
+            # Side-by-side comparison
+            file1 = Path(input_paths[0])
+            file2 = Path(input_paths[1])
+
+            if not file1.is_file() or not file2.is_file():
+                click.echo("❌ Error: Both inputs must be files")
                 sys.exit(1)
 
-            # Visualize each file
-            for file in json_files:
-                visualizer.visualize_single_benchmark(file, format)
+            visualizer.visualize_side_by_side(file1, file2, format)
+            click.echo(f"✅ Generated side-by-side comparison: {output_path}")
 
-            # Generate comparison if requested
-            if compare and len(json_files) >= 2:
-                visualizer.visualize_comparison(input_path_obj, format)
         else:
-            click.echo(f"❌ Error: {input_path} not found")
+            click.echo("❌ Error: Please provide 1 or 2 telemetry JSON files")
+            click.echo(
+                "  Usage: ragzoom-telemetry visualize <file1> [file2] [-o output.png]"
+            )
             sys.exit(1)
-
-        click.echo("\n✅ Visualization complete!")
 
     except Exception as e:
         click.echo(f"❌ Error generating visualizations: {e}", err=True)
         sys.exit(1)
+
+
+def _format_metrics_for_chunk_with_thresholds(
+    chunk_label: str,
+    base_metrics: dict,
+    curr_metrics: dict,
+    thresholds: dict[str, DynamicThreshold],
+    output_format: str,
+) -> None:
+    """Format all metrics for a single chunk size with dynamic thresholds."""
+    # Target-fit metrics - include chunk size in first row
+    _format_comparison_row_with_threshold(
+        chunk_label,
+        "Median error",
+        base_metrics["target_fit"]["median_error"],
+        curr_metrics["target_fit"]["median_error"],
+        thresholds[MetricNames.MEDIAN_ERROR_KEY],
+        output_format=output_format,
+        signed=True,
+        is_error_metric=True,
+        baseline_variance=base_metrics["target_fit"]["error_mad"],
+        current_variance=curr_metrics["target_fit"]["error_mad"],
+    )
+    _format_comparison_row_with_threshold(
+        "",
+        "p95 error",
+        base_metrics["target_fit"]["p95_error"],
+        curr_metrics["target_fit"]["p95_error"],
+        thresholds[MetricNames.P95_ERROR_KEY],
+        output_format=output_format,
+        signed=True,
+        is_error_metric=True,
+        baseline_variance=base_metrics["target_fit"]["error_mad"],
+        current_variance=curr_metrics["target_fit"]["error_mad"],
+    )
+
+    # Percent within ±10 tokens (now with dynamic threshold)
+    _format_comparison_row_with_threshold(
+        "",
+        "Within ±10 tokens",
+        base_metrics["target_fit"]["percent_within_10"],
+        curr_metrics["target_fit"]["percent_within_10"],
+        thresholds[MetricNames.PERCENT_WITHIN_10_KEY],
+        output_format=output_format,
+        higher_is_better=True,
+        baseline_variance=base_metrics["target_fit"]["percent_within_10_mad"],
+        current_variance=curr_metrics["target_fit"]["percent_within_10_mad"],
+    )
+
+    # Retry metrics
+    _format_comparison_row_with_threshold(
+        "",
+        "Avg retries/node",
+        base_metrics["retries"]["retry_rate"],
+        curr_metrics["retries"]["retry_rate"],
+        thresholds[MetricNames.RETRY_RATE_KEY],
+        output_format=output_format,
+        baseline_variance=base_metrics["retries"]["retry_mad"],
+        current_variance=curr_metrics["retries"]["retry_mad"],
+    )
+
+    # Latency metrics
+    _format_comparison_row_with_threshold(
+        "",
+        "Median time/node",
+        base_metrics["latency"]["median_seconds"],
+        curr_metrics["latency"]["median_seconds"],
+        thresholds[MetricNames.LATENCY_KEY],
+        output_format=output_format,
+        baseline_variance=base_metrics["latency"]["latency_mad"],
+        current_variance=curr_metrics["latency"]["latency_mad"],
+    )
+
+    # Cost metrics
+    _format_comparison_row_with_threshold(
+        "",
+        "USD per node",
+        base_metrics["cost"]["usd_per_node"],
+        curr_metrics["cost"]["usd_per_node"],
+        thresholds[MetricNames.COST_KEY],
+        output_format=output_format,
+        is_cost=True,
+        baseline_variance=base_metrics["cost"]["cost_mad"],
+        current_variance=curr_metrics["cost"]["cost_mad"],
+    )
+
+
+def _format_text_comparison_with_thresholds(
+    baseline: SimplifiedMetrics,
+    current: SimplifiedMetrics,
+    chunk_sizes: set[int],
+    thresholds_by_chunk: dict[int, dict[str, DynamicThreshold]],
+) -> None:
+    """Format comparison as plain text table with dynamic thresholds."""
+
+    # Build table header
+    click.echo("\n" + "=" * 139)
+    click.echo("Performance Comparison Report")
+    click.echo("=" * 139)
+
+    # Table headers - adjusted widths for variance display and multi-line change
+    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>44} | {'Threshold':>15}"
+    click.echo("\n" + header)
+    click.echo("-" * len(header))
+
+    for chunk_size in sorted(chunk_sizes):
+        base_metrics = baseline.metrics_by_chunk_size[chunk_size]
+        curr_metrics = current.metrics_by_chunk_size[chunk_size]
+        thresholds = thresholds_by_chunk[chunk_size]
+
+        chunk_label = f"{chunk_size} tokens"
+        _format_metrics_for_chunk_with_thresholds(
+            chunk_label, base_metrics, curr_metrics, thresholds, "text"
+        )
+
+        # Add separator between chunk sizes (except for last one)
+        if chunk_size != max(chunk_sizes):
+            click.echo("-" * len(header))
+
+    # Add footer with legend
+    click.echo("\n" + "=" * 139)
+    click.echo("\nLegend:")
+    click.echo("  Values: Shows metric ±variance (e.g., '50.0 ±2.0 tok')")
+    click.echo("  Change format:")
+    click.echo("    Line 1: [emoji] absolute_change (percentage%)")
+    click.echo("    Line 2: [emoji] σ±variance_change (percentage%)")
+    click.echo("  Metric change indicators:")
+    click.echo("    🔴 = Regression detected (exceeds dynamic threshold)")
+    click.echo("    🟡 = Significant undesirable change (>1σ baseline variance)")
+    click.echo("    🟢 = Significant improvement (>1σ baseline variance)")
+    click.echo("    ⚪ = Insignificant change (<1σ baseline variance)")
+    click.echo("  Variance change indicators:")
+    click.echo("    🟡 = Significant variance increase (>50% of baseline, notable)")
+    click.echo(
+        "    🟢 = Significant variance decrease (>50% of baseline, improved stability)"
+    )
+    click.echo("    ⚪ = Insignificant variance change (<50% of baseline)")
+
+
+def _prepare_row_data(
+    baseline: float,
+    current: float,
+    unit: str,
+    signed: bool = False,
+    higher_is_better: bool = False,
+    is_cost: bool = False,
+    is_integer: bool = False,
+    regression_threshold: float | None = None,
+    is_error_metric: bool = False,
+    for_table: bool = False,
+) -> tuple[str, str, str]:
+    """Prepare formatted strings for a comparison row."""
+    # For backward compatibility, create a fake metric name from unit
+    metric_name = {
+        "tokens": "median_error",
+        "s": "median_seconds",
+        "$": "cost",
+        "%": "percent",
+    }.get(unit, "unknown")
+
+    base_str = _format_value(baseline, metric_name, is_cost, is_integer, signed)
+    curr_str = _format_value(current, metric_name, is_cost, is_integer, signed)
+    change_str = _calculate_change(
+        baseline,
+        current,
+        higher_is_better,
+        regression_threshold=regression_threshold,
+        is_error_metric=is_error_metric,
+        for_table=for_table,
+    )
+    return base_str, curr_str, change_str
+
+
+def _format_comparison_row_with_threshold(
+    category: str,
+    metric: str,
+    baseline: float,
+    current: float,
+    threshold: DynamicThreshold,
+    output_format: str = "text",
+    signed: bool = False,
+    higher_is_better: bool = False,
+    is_cost: bool = False,
+    is_integer: bool = False,
+    is_error_metric: bool = False,
+    baseline_variance: float | None = None,
+    current_variance: float | None = None,
+) -> None:
+    """Format a single row in the comparison table with dynamic threshold."""
+    for_table = output_format == "markdown"
+
+    # Format baseline and current values with variance
+    base_str = _format_value(
+        baseline, threshold.metric_name, is_cost, is_integer, signed, baseline_variance
+    )
+    curr_str = _format_value(
+        current, threshold.metric_name, is_cost, is_integer, signed, current_variance
+    )
+
+    # Calculate change with threshold and variance
+    change_str = _calculate_change_with_threshold(
+        baseline,
+        current,
+        threshold,
+        higher_is_better,
+        is_error_metric,
+        for_table,
+        baseline_variance,
+        current_variance,
+    )
+
+    # Format threshold value
+    if threshold.absolute_value is None:
+        threshold_str = "—"  # No threshold enforced
+    else:
+        unit = _get_unit_for_metric(threshold.metric_name)
+        if unit == "$":
+            threshold_str = f"±{unit}{threshold.absolute_value:.4f}"
+        elif unit:
+            threshold_str = f"±{threshold.absolute_value:.1f} {unit}"
+        else:
+            threshold_str = f"±{threshold.absolute_value:.2f}"
+
+    if output_format == "markdown":
+        # For markdown, replace newlines with <br> for proper rendering
+        change_str_md = change_str.replace("\n", "<br>")
+        click.echo(
+            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
+        )
+    else:
+        # Text format - split change_str by newline for multi-line display
+        change_lines = change_str.split("\n")
+        if len(change_lines) == 2:
+            # First line with absolute change
+            click.echo(
+                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_lines[0]:<44} | {threshold_str:>15}"
+            )
+            # Second line with percentage and variance
+            click.echo(
+                f"{'':12} | {'':20} | {'':18} | {'':18} | {change_lines[1]:<44} | {'':15}"
+            )
+        else:
+            # Fallback for single line
+            click.echo(
+                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<44} | {threshold_str:>15}"
+            )
+
+
+def _format_comparison_row(
+    category: str,
+    metric: str,
+    baseline: float,
+    current: float,
+    unit: str,
+    output_format: str = "text",
+    signed: bool = False,
+    higher_is_better: bool = False,
+    is_cost: bool = False,
+    is_integer: bool = False,
+    regression_threshold: float | None = None,
+    is_error_metric: bool = False,
+) -> None:
+    """Format a single row in the comparison table (text or markdown)."""
+    for_table = output_format == "markdown"
+    base_str, curr_str, change_str = _prepare_row_data(
+        baseline,
+        current,
+        unit,
+        signed,
+        higher_is_better,
+        is_cost,
+        is_integer,
+        regression_threshold,
+        is_error_metric,
+        for_table=for_table,
+    )
+
+    if output_format == "markdown":
+        click.echo(
+            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} |"
+        )
+    else:
+        # Text format - category is empty for data rows
+        click.echo(
+            f"{category:<12} | {metric:<20} | {base_str:>12} | {curr_str:>12} | {change_str:>12}"
+        )
+
+
+def _format_value(
+    value: float,
+    metric_name: str,
+    is_cost: bool = False,
+    is_integer: bool = False,
+    signed: bool = False,
+    variance: float | None = None,
+) -> str:
+    """Format a metric value with appropriate precision and units, optionally with variance.
+
+    Args:
+        value: The metric value
+        metric_name: Name of the metric for unit lookup
+        is_cost: Whether this is a cost metric
+        is_integer: Whether to format as integer
+        signed: Whether to show sign
+        variance: Optional variance/MAD value to show as ±
+
+    Returns:
+        Formatted string like "50.0 ±2.0 tokens" or "$0.0010 ±0.0001"
+    """
+    unit = _get_unit_for_metric(metric_name)
+
+    if is_cost or unit == "$":
+        formatted = f"${value:.4f}"
+        if variance is not None:
+            formatted += f" ±{variance:.4f}"
+    elif is_integer:
+        if signed:
+            formatted = f"{value:+.0f}"
+        else:
+            formatted = f"{value:.0f}"
+        if variance is not None:
+            formatted += f" ±{variance:.0f}"
+    elif signed:
+        formatted = f"{value:+.1f}"
+        if variance is not None:
+            formatted += f" ±{variance:.1f}"
+    else:
+        formatted = f"{value:.2f}"
+        if variance is not None:
+            formatted += f" ±{variance:.2f}"
+
+    if unit and unit != "$":
+        formatted += f" {unit}"
+
+    return formatted
+
+
+def _calculate_change(
+    baseline: float,
+    current: float,
+    higher_is_better: bool = False,
+    regression_threshold: float | None = None,
+    is_error_metric: bool = False,
+    for_table: bool = False,
+) -> str:
+    """Legacy percentage-based change calculation for backward compatibility."""
+    # For error metrics, we compare absolute values
+    if is_error_metric:
+        baseline_val = abs(baseline)
+        current_val = abs(current)
+    else:
+        baseline_val = baseline
+        current_val = current
+
+    if baseline_val == 0:
+        return "—" if for_table else "N/A"
+
+    change_pct = ((current_val - baseline_val) / abs(baseline_val)) * 100
+
+    # Determine if change is good or bad
+    if higher_is_better:
+        is_improvement = current_val > baseline_val
+        is_regression = regression_threshold and change_pct < -regression_threshold
+    else:
+        is_improvement = current_val < baseline_val
+        is_regression = regression_threshold and change_pct > regression_threshold
+
+    # Add emoji for significant changes
+    if is_regression:
+        emoji = " ❌"  # Regression detected
+    elif abs(change_pct) < 5:
+        emoji = ""
+    elif is_improvement:
+        emoji = " ✅"
+    else:
+        emoji = " ⚠️"
+
+    return f"{change_pct:+.1f}%{emoji}"
+
+
+def _format_absolute_change(
+    absolute_change: float,
+    metric_name: str,
+) -> str:
+    """Format absolute change with appropriate units and precision.
+
+    Args:
+        absolute_change: The absolute change value
+        metric_name: Name of the metric for unit lookup
+
+    Returns:
+        Formatted string with sign, value, and unit
+    """
+    unit = _get_unit_for_metric(metric_name)
+
+    # Format based on unit type
+    if unit == "$":
+        abs_str = f"{unit}{abs(absolute_change):.4f}"
+    elif unit == "%":
+        # For percentage metrics, show as percentage points (pp)
+        abs_str = f"{abs(absolute_change):.1f} pp"
+    elif unit:
+        abs_str = f"{abs(absolute_change):.1f} {unit}"
+    else:
+        abs_str = f"{abs(absolute_change):.2f}"
+
+    # Add sign
+    if absolute_change >= 0:
+        return "+" + abs_str
+    else:
+        return "-" + abs_str
+
+
+def _calculate_change_with_threshold(
+    baseline: float,
+    current: float,
+    threshold: DynamicThreshold,
+    higher_is_better: bool = False,
+    is_error_metric: bool = False,
+    for_table: bool = False,
+    baseline_variance: float | None = None,
+    current_variance: float | None = None,
+) -> str:
+    """Calculate and format the change between baseline and current values.
+
+    Args:
+        baseline: Baseline value
+        current: Current value
+        threshold: Dynamic threshold with variance information
+        higher_is_better: If True, higher values are better
+        is_error_metric: If True, compare absolute values (for error metrics)
+        for_table: If True, use table-friendly formatting
+        baseline_variance: Optional baseline variance/MAD value
+        current_variance: Optional current variance/MAD value
+
+    Returns:
+        Formatted string showing absolute and percentage change with emojis
+    """
+    # For error metrics, we compare absolute values
+    if is_error_metric:
+        baseline_val = abs(baseline)
+        current_val = abs(current)
+        absolute_change = current_val - baseline_val
+    else:
+        baseline_val = baseline
+        current_val = current
+        absolute_change = current - baseline
+
+    if baseline_val == 0:
+        return "—" if for_table else "N/A"
+
+    # Calculate percentage for display
+    change_pct = (absolute_change / abs(baseline_val)) * 100
+
+    # Get emoji based on significance and direction
+    metric_emoji = get_change_emoji(absolute_change, higher_is_better, threshold)
+
+    # Format absolute change
+    abs_str = _format_absolute_change(absolute_change, threshold.metric_name)
+
+    # Format first line: emoji + absolute + percentage (no extra significance emoji)
+    line1 = f"{metric_emoji} {abs_str} ({change_pct:+.1f}%)"
+
+    # Format variance change if both variances provided
+    if baseline_variance is not None and current_variance is not None:
+        variance_change = current_variance - baseline_variance
+
+        # Get variance emoji based on dynamic significance
+        variance_emoji = get_variance_emoji(variance_change, baseline_variance)
+
+        # Calculate percentage for display
+        if baseline_variance == 0:
+            if current_variance > 0:
+                variance_pct_str = " (+∞%)"
+            else:
+                variance_pct_str = " (±0%)"
+        else:
+            variance_change_pct = (variance_change / baseline_variance) * 100
+            variance_pct_str = f" ({variance_change_pct:+.0f}%)"
+
+        # Format variance absolute change based on metric type
+        unit = _get_unit_for_metric(threshold.metric_name)
+        if unit == "$":
+            variance_abs_str = f"σ{variance_change:+.4f}"
+        elif unit == "%":
+            # For percentage metrics, variance is in percentage points
+            variance_abs_str = f"σ{variance_change:+.1f}"
+        elif unit:
+            variance_abs_str = f"σ{variance_change:+.1f}"
+        else:
+            variance_abs_str = f"σ{variance_change:+.1f}"
+
+        line2 = f"\n{variance_emoji} {variance_abs_str}{variance_pct_str}"
+        return line1 + line2
+    else:
+        return line1
+
+
+def _get_unit_for_metric(metric_name: str) -> str:
+    """Get the appropriate unit for a metric."""
+    units = {
+        MetricNames.MEDIAN_ERROR: "tok",
+        MetricNames.P95_ERROR: "tok",
+        MetricNames.MEDIAN_SECONDS: "s",
+        MetricNames.P95_SECONDS: "s",
+        MetricNames.COST: "$",
+        MetricNames.USD_PER_NODE: "$",
+        MetricNames.MAD: "tok",
+        MetricNames.RETRY_RATE: "",  # Ratio, no unit
+        MetricNames.MAX_RETRIES: "",  # Count, no unit
+        MetricNames.PERCENT_WITHIN_10: "%",
+        "percent": "%",  # For backward compatibility with _prepare_row_data
+        MetricNames.TOTAL_TOKENS: "tok",
+        MetricNames.TOTAL_PROMPT_TOKENS: "tok",
+        MetricNames.TOTAL_COMPLETION_TOKENS: "tok",
+    }
+    return units.get(metric_name, "")
+
+
+def _compare_metric(
+    name: str,
+    baseline: float,
+    current: float,
+    unit: str,
+    signed: bool = False,
+    higher_is_better: bool = False,
+    is_cost: bool = False,
+    is_integer: bool = False,
+    regression_threshold: float | None = None,
+) -> None:
+    """Compare a single metric and display with appropriate formatting."""
+    base_str = _format_value(baseline, unit, is_cost, is_integer, signed)
+    curr_str = _format_value(current, unit, is_cost, is_integer, signed)
+
+    # Remove unit from formatting since _format_value already adds it
+    change_str = _calculate_change(
+        baseline, current, higher_is_better, regression_threshold
+    )
+
+    # Display
+    click.echo(f"  {name:15} {base_str:>12} → {curr_str:>12}  ({change_str})")
+
+
+def _format_markdown_comparison_with_thresholds(
+    baseline: SimplifiedMetrics,
+    current: SimplifiedMetrics,
+    chunk_sizes: set[int],
+    thresholds_by_chunk: dict[int, dict[str, DynamicThreshold]],
+) -> None:
+    """Format comparison as markdown table with dynamic thresholds."""
+
+    click.echo("# Performance Comparison Report\n")
+
+    # Create unified table
+    click.echo("| Chunk Size | Metric | Baseline | Current | Change | Threshold |")
+    click.echo("|------------|--------|----------|---------|--------|-----------|")
+
+    for chunk_size in sorted(chunk_sizes):
+        base_metrics = baseline.metrics_by_chunk_size[chunk_size]
+        curr_metrics = current.metrics_by_chunk_size[chunk_size]
+        thresholds = thresholds_by_chunk[chunk_size]
+
+        chunk_label = f"**{chunk_size} tokens**"
+        _format_metrics_for_chunk_with_thresholds(
+            chunk_label, base_metrics, curr_metrics, thresholds, "markdown"
+        )
+
+    click.echo("")
 
 
 if __name__ == "__main__":

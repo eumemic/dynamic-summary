@@ -1,6 +1,12 @@
-"""Telemetry visualization classes and functions."""
+"""Telemetry visualization classes and functions.
+
+NOTE: This module provides visualization for telemetry data, focusing on token usage,
+costs, batch efficiency, and retry patterns. For programmatic analysis, use the
+simplified metrics in telemetry_cli.py.
+"""
 
 import json
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -13,10 +19,8 @@ from matplotlib.gridspec import GridSpec
 from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import (
     analyze_retry_patterns,
-    compute_amplification_metrics,
     compute_batch_efficiency,
     compute_metrics_from_telemetry,
-    get_amplification_summary,
     get_telemetry_thresholds,
 )
 from ragzoom.telemetry_config import (
@@ -52,11 +56,34 @@ class TelemetryVisualizer:
     MEDIUM_BIN_WIDTH = 10
     LARGE_BIN_COUNT = 20
 
-    def __init__(self, output_dir: Path) -> None:
-        """Initialize visualizer with output directory."""
-        self.output_dir = output_dir
-        self.output_dir.mkdir(exist_ok=True, parents=True)
+    def __init__(self, output_path: Path) -> None:
+        """Initialize visualizer with output file path."""
+        self.output_path = output_path
         self.thresholds = get_telemetry_thresholds()
+
+    def _ensure_output_dir(self) -> None:
+        """Ensure the output directory exists, creating it if necessary."""
+        self.output_path.parent.mkdir(exist_ok=True, parents=True)
+
+    def _suppress_matplotlib_warnings(self) -> AbstractContextManager[None]:
+        """Context manager to suppress common matplotlib warnings."""
+        import warnings
+        from collections.abc import Iterator
+        from contextlib import contextmanager
+
+        @contextmanager
+        def suppress() -> Iterator[None]:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="This figure includes Axes that are not compatible with tight_layout",
+                )
+                warnings.filterwarnings(
+                    "ignore", category=UserWarning, module="matplotlib"
+                )
+                yield
+
+        return suppress()
 
     def load_benchmark_data(self, file_path: Path) -> dict[str, Any]:
         """Load benchmark data from JSON file."""
@@ -73,20 +100,26 @@ class TelemetryVisualizer:
         # Load data
         data = self.load_benchmark_data(benchmark_path)
 
-        if "telemetry" not in data:
+        # Handle both wrapped and direct v3.0 formats
+        if "telemetry" in data:
+            # Legacy wrapped format: {"telemetry": {...}, "config": {...}}
+            telemetry = data["telemetry"]
+            config = self._create_config_from_metrics(data.get("metrics", {}))
+        elif "format_version" in data:
+            # Direct v3.0 format: {"format_version": "3.0", ...}
+            telemetry = data
+            config = self._create_config_from_metrics({})
+        else:
             print(f"Warning: No telemetry data found in {benchmark_path}")
             return
 
-        telemetry = data["telemetry"]
-        config = self._create_config_from_metrics(data.get("metrics", {}))
-
         # Create figure with subplots
         fig = plt.figure(figsize=(FIGURE_WIDTH, FIGURE_HEIGHT))
-        gs = GridSpec(6, 2, figure=fig, hspace=0.3, wspace=0.3)
+        gs = GridSpec(6, 2, figure=fig, hspace=0.3, wspace=0.15, top=0.96)
 
-        # 1. Amplification by Level
+        # 1. Token usage by Tree Level
         ax1 = fig.add_subplot(gs[0, :])
-        self._plot_amplification_by_level(telemetry, config, ax1)
+        self._plot_token_usage_by_tree_level(telemetry, config, ax1)
 
         # 2. Cost Breakdown
         ax2 = fig.add_subplot(gs[1, 0])
@@ -113,27 +146,24 @@ class TelemetryVisualizer:
         self._plot_token_distributions(telemetry, ax7)
 
         # Add title and metadata
-        chunk_size = data["config"]["leaf_tokens"]
+        if "config" in data:
+            # Legacy wrapped format
+            chunk_size = data["config"]["leaf_tokens"]
+        else:
+            # v3.0 format has chunk_size directly
+            chunk_size = telemetry.get("chunk_size", "Unknown")
         fig.suptitle(
-            f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=0.995
+            f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=0.98
         )
 
         # Save figure
-        output_path = self.output_dir / f"telemetry_{chunk_size}_tokens.{output_format}"
-        # Suppress layout and font warnings for cleaner output
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="This figure includes Axes that are not compatible with tight_layout",
-            )
-            warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+        self._ensure_output_dir()
+        with self._suppress_matplotlib_warnings():
             plt.tight_layout()
-            plt.savefig(output_path, bbox_inches="tight")
+            plt.savefig(self.output_path, bbox_inches="tight")
         plt.close()
 
-        print(f"Saved visualization to {output_path}")
+        print(f"Saved visualization to {self.output_path}")
 
     def _create_config_from_metrics(self, metrics: dict[str, Any]) -> RagZoomConfig:
         """Create a config object from metrics data for cost calculations."""
@@ -178,57 +208,236 @@ class TelemetryVisualizer:
 
         return bins, align
 
-    def _plot_amplification_by_level(
+    def visualize_side_by_side(
+        self,
+        file1: Path,
+        file2: Path,
+        output_format: str = "png",
+        figsize: tuple[int, int] | None = None,
+    ) -> None:
+        """Create side-by-side visualizations of two telemetry files.
+
+        Args:
+            file1: Path to first telemetry file
+            file2: Path to second telemetry file
+            output_format: Output format (png, pdf, svg)
+            figsize: Optional figure size (width, height) in inches. Defaults to (20, 28).
+        """
+        print(f"Creating side-by-side comparison: {file1.name} vs {file2.name}")
+
+        # Load both datasets
+        data1 = self.load_benchmark_data(file1)
+        data2 = self.load_benchmark_data(file2)
+
+        # Handle both wrapped and direct v3.0 formats for file1
+        if "telemetry" in data1:
+            telemetry1 = data1["telemetry"]
+            config1 = self._create_config_from_metrics(data1.get("metrics", {}))
+        elif "format_version" in data1:
+            telemetry1 = data1
+            config1 = self._create_config_from_metrics({})
+        else:
+            print(f"Warning: No telemetry data found in {file1}")
+            return
+
+        # Handle both wrapped and direct v3.0 formats for file2
+        if "telemetry" in data2:
+            telemetry2 = data2["telemetry"]
+            config2 = self._create_config_from_metrics(data2.get("metrics", {}))
+        elif "format_version" in data2:
+            telemetry2 = data2
+            config2 = self._create_config_from_metrics({})
+        else:
+            print(f"Warning: No telemetry data found in {file2}")
+            return
+
+        # Create figure with side-by-side subplots (7 rows × 2 columns)
+        if figsize is None:
+            figsize = (20, 28)  # Default size for 7x2 grid
+        fig = plt.figure(figsize=figsize)
+        gs = GridSpec(7, 2, figure=fig, hspace=0.3, wspace=0.15, top=0.96)
+
+        # Add super title
+        fig.suptitle(
+            "Side-by-Side Comparison: Baseline vs Current",
+            fontsize=16,
+            y=0.98,
+        )
+
+        # 1. Token usage by Tree Level
+        ax1_left = fig.add_subplot(gs[0, 0])
+        self._plot_token_usage_by_tree_level(telemetry1, config1, ax1_left)
+        ax1_left.set_title("Token Usage by Tree Level", fontsize=12)
+
+        ax1_right = fig.add_subplot(gs[0, 1])
+        self._plot_token_usage_by_tree_level(telemetry2, config2, ax1_right)
+        ax1_right.set_title("Token Usage by Tree Level", fontsize=12)
+
+        # Share y-axis scale for better comparison
+        max_y = max(ax1_left.get_ylim()[1], ax1_right.get_ylim()[1])
+        ax1_left.set_ylim(0, max_y)
+        ax1_right.set_ylim(0, max_y)
+
+        # 2. Cost Breakdown
+        ax2_left = fig.add_subplot(gs[1, 0])
+        self._plot_cost_breakdown(telemetry1, config1, ax2_left)
+        ax2_left.set_title("Cost Breakdown", fontsize=12)
+
+        ax2_right = fig.add_subplot(gs[1, 1])
+        self._plot_cost_breakdown(telemetry2, config2, ax2_right)
+        ax2_right.set_title("Cost Breakdown", fontsize=12)
+
+        # 3. Batch Efficiency
+        ax3_left = fig.add_subplot(gs[2, 0])
+        self._plot_batch_efficiency(telemetry1, ax3_left)
+        ax3_left.set_title("Batch Efficiency", fontsize=12)
+
+        ax3_right = fig.add_subplot(gs[2, 1])
+        self._plot_batch_efficiency(telemetry2, ax3_right)
+        ax3_right.set_title("Batch Efficiency", fontsize=12)
+
+        # 4. Retry Patterns
+        ax4_left = fig.add_subplot(gs[3, 0])
+        self._plot_retry_patterns(telemetry1, ax4_left)
+        ax4_left.set_title("Retry Patterns", fontsize=12)
+
+        ax4_right = fig.add_subplot(gs[3, 1])
+        self._plot_retry_patterns(telemetry2, ax4_right)
+        ax4_right.set_title("Retry Patterns", fontsize=12)
+
+        # 5. Summary Accuracy
+        ax5_left = fig.add_subplot(gs[4, 0])
+        self._plot_summary_accuracy(telemetry1, ax5_left)
+        ax5_left.set_title("Summary Accuracy", fontsize=12)
+
+        ax5_right = fig.add_subplot(gs[4, 1])
+        self._plot_summary_accuracy(telemetry2, ax5_right)
+        ax5_right.set_title("Summary Accuracy", fontsize=12)
+
+        # Share x-axis scale for accuracy plots
+        min_x = min(ax5_left.get_xlim()[0], ax5_right.get_xlim()[0])
+        max_x = max(ax5_left.get_xlim()[1], ax5_right.get_xlim()[1])
+        ax5_left.set_xlim(min_x, max_x)
+        ax5_right.set_xlim(min_x, max_x)
+
+        # 6. Node Timeline
+        ax6_left = fig.add_subplot(gs[5, 0])
+        self._plot_node_timeline(telemetry1, ax6_left)
+        ax6_left.set_title("Node Creation Timeline", fontsize=12)
+
+        ax6_right = fig.add_subplot(gs[5, 1])
+        self._plot_node_timeline(telemetry2, ax6_right)
+        ax6_right.set_title("Node Creation Timeline", fontsize=12)
+
+        # 7. Token Distributions
+        ax7_left = fig.add_subplot(gs[6, 0])
+        self._plot_token_distributions(telemetry1, ax7_left)
+        ax7_left.set_title("Token Distributions", fontsize=12)
+
+        ax7_right = fig.add_subplot(gs[6, 1])
+        self._plot_token_distributions(telemetry2, ax7_right)
+        ax7_right.set_title("Token Distributions", fontsize=12)
+
+        # Save figure
+        self._ensure_output_dir()
+        with self._suppress_matplotlib_warnings():
+            plt.tight_layout()
+            plt.savefig(self.output_path, bbox_inches="tight", dpi=SAVE_DPI)
+        plt.close()
+
+        print(f"Saved side-by-side comparison to {self.output_path}")
+
+    def _plot_token_usage_by_tree_level(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
     ) -> None:
-        """Plot amplification metrics by tree level."""
-        amplification = compute_amplification_metrics(telemetry, config)
+        """Plot token usage by tree level with stacked bars."""
+        # Group tokens by height
+        tokens_by_height: dict[int, dict[str, list[float]]] = {}
 
-        if not amplification["by_height"]:
+        # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
+        nodes = []
+        if "documents" in telemetry:
+            # v1.0/v2.0 format with documents dictionary
+            for doc_type, doc_data in telemetry.get("documents", {}).items():
+                nodes.extend(doc_data.get("nodes", []))
+        else:
+            # v3.0 flat format
+            nodes = telemetry.get("nodes", [])
+
+        # Process nodes
+        for node in nodes:
+            height = node.get("height", node.get("level", 0))
+            if height == 0:
+                continue  # Skip leaf nodes
+
+            # Get token counts for this node
+            for attempt in node.get("summary_attempts", []):
+                if attempt.get("status") == "accepted":
+                    prompt_tokens = attempt.get("prompt_tokens", 0)
+                    completion_tokens = attempt.get("completion_tokens", 0)
+
+                    if height not in tokens_by_height:
+                        tokens_by_height[height] = {
+                            "prompt_tokens": [],
+                            "completion_tokens": [],
+                        }
+
+                    tokens_by_height[height]["prompt_tokens"].append(prompt_tokens)
+                    tokens_by_height[height]["completion_tokens"].append(
+                        completion_tokens
+                    )
+                    break
+
+        if not tokens_by_height:
             ax.text(
                 0.5,
                 0.5,
-                "No amplification data available",
+                "No token data available",
                 ha="center",
                 va="center",
                 transform=ax.transAxes,
             )
-            ax.set_title("Amplification by Tree Level")
+            ax.set_title("Token Usage by Tree Level")
             return
 
-        levels = sorted(amplification["by_height"].keys())
-        cost_medians = []
-        input_medians = []
-        output_medians = []
+        levels = sorted(tokens_by_height.keys())
+        avg_prompt_tokens = []
+        avg_completion_tokens = []
 
         for level in levels:
-            level_data = amplification["by_height"][level]
-            cost_medians.append(
-                np.median(level_data["cost"]) if level_data["cost"] else 0
-            )
-            input_medians.append(
-                np.median(level_data["input"]) if level_data["input"] else 0
-            )
-            output_medians.append(
-                np.median(level_data["output"]) if level_data["output"] else 0
-            )
+            level_data = tokens_by_height[level]
+            avg_prompt_tokens.append(np.mean(level_data["prompt_tokens"]))
+            avg_completion_tokens.append(np.mean(level_data["completion_tokens"]))
 
         x = np.arange(len(levels))
-        width = 0.25
+        width = 0.6
 
-        ax.bar(x - width, cost_medians, width, label="Cost", alpha=0.8)
-        ax.bar(x, input_medians, width, label="Input", alpha=0.8)
-        ax.bar(x + width, output_medians, width, label="Output", alpha=0.8)
+        # Create stacked bars
+        ax.bar(
+            x,
+            avg_prompt_tokens,
+            width,
+            label="Input Tokens",
+            alpha=0.8,
+            color="#66b3ff",
+        )
+        ax.bar(
+            x,
+            avg_completion_tokens,
+            width,
+            bottom=avg_prompt_tokens,
+            label="Output Tokens",
+            alpha=0.8,
+            color="#99ff99",
+        )
 
         ax.set_xlabel("Tree Level")
-        ax.set_ylabel("Amplification Factor")
-        ax.set_title(
-            "Token & Cost Amplification by Tree Level\n(Lower is better - shows summarization efficiency)"
-        )
+        ax.set_ylabel("Average Tokens per Node")
+        ax.set_title("Token Usage by Tree Level")
         ax.set_xticks(x)
-        ax.set_xticklabels(levels)
+        ax.set_xticklabels([str(level) for level in levels])
         ax.legend()
-        ax.grid(True, alpha=0.3)
+        ax.grid(True, alpha=0.3, axis="y")
 
     def _plot_cost_breakdown(
         self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
@@ -288,7 +497,9 @@ class TelemetryVisualizer:
         avg_batch_size = batch_eff["avg_batch_size"]
 
         # Calculate appropriate histogram bins
-        hist_bins, align = self._calculate_histogram_bins(batch_sizes)
+        hist_bins, align = self._calculate_histogram_bins(
+            [float(size) for size in batch_sizes]
+        )
 
         # Create histogram with intelligent binning
         _, _, patches = ax.hist(
@@ -444,34 +655,43 @@ class TelemetryVisualizer:
         Returns:
             List of deviation percentages from chunk_size target
         """
-        deviations = []
-        parsed_data = telemetry if isinstance(telemetry, dict) else {}
+        deviations: list[float] = []
 
-        # Process all documents
-        for doc_name, doc_data in parsed_data.get("documents", {}).items():
-            # Get the chunk size for this document
-            chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
-            if chunk_size <= 0:
-                continue
+        # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
+        chunk_size = 0
+        nodes = []
 
-            # Process all nodes
-            nodes = doc_data.get("nodes", [])
-            for node in nodes:
-                # Only process summary nodes (height > 0)
-                height = node.get("height", node.get("level", 0))
-                if height > 0:
-                    # Look for accepted summary attempts
-                    summary_attempts = node.get("summary_attempts", [])
-                    for attempt in summary_attempts:
-                        if attempt.get("status") == "accepted":
-                            actual_tokens = attempt.get("actual_tokens", 0)
-                            if actual_tokens > 0:
-                                # Calculate deviation percentage
-                                deviation = (
-                                    (actual_tokens - chunk_size) / chunk_size * 100
-                                )
-                                deviations.append(deviation)
-                                break  # Only use the accepted attempt
+        if "documents" in telemetry:
+            # v1.0/v2.0 format with documents dictionary
+            for doc_name, doc_data in telemetry.get("documents", {}).items():
+                chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
+                if chunk_size > 0:
+                    nodes = doc_data.get("nodes", [])
+                    break  # Use first document with valid chunk_size
+        else:
+            # v3.0 flat format
+            chunk_size = telemetry.get("chunk_size", 0)
+            nodes = telemetry.get("nodes", [])
+
+        # If no valid chunk_size found, return empty deviations
+        if chunk_size <= 0:
+            return deviations
+
+        # Process nodes
+        for node in nodes:
+            # Only process summary nodes (height > 0)
+            height = node.get("height", node.get("level", 0))
+            if height > 0:
+                # Look for accepted summary attempts
+                summary_attempts = node.get("summary_attempts", [])
+                for attempt in summary_attempts:
+                    if attempt.get("status") == "accepted":
+                        actual_tokens = attempt.get("actual_tokens", 0)
+                        if actual_tokens > 0:
+                            # Calculate deviation percentage
+                            deviation = (actual_tokens - chunk_size) / chunk_size * 100
+                            deviations.append(deviation)
+                            break  # Only use the accepted attempt
 
         return deviations
 
@@ -518,8 +738,17 @@ class TelemetryVisualizer:
         """Plot node creation timeline."""
         # Extract node creation times
         creation_times = []
-        for doc_data in telemetry.get("documents", {}).values():
-            for node in doc_data.get("nodes", []):
+
+        # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
+        if "documents" in telemetry:
+            # v1.0/v2.0 format with documents dictionary
+            for doc_data in telemetry.get("documents", {}).values():
+                for node in doc_data.get("nodes", []):
+                    if "created_at" in node:
+                        creation_times.append(node["created_at"])
+        else:
+            # v3.0 flat format
+            for node in telemetry.get("nodes", []):
                 if "created_at" in node:
                     creation_times.append(node["created_at"])
 
@@ -574,50 +803,55 @@ class TelemetryVisualizer:
 
     def _plot_token_distributions(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot token count distributions by tree level using violin plots."""
-        # TODO: Consider refactoring this method to extract data preparation logic
-        # into a separate method for better readability and testability
         import pandas as pd
 
         # Extract token data by level from telemetry
         token_data = []
-        parsed_data = telemetry if isinstance(telemetry, dict) else {}
 
-        for doc_type, doc_data in parsed_data.get("documents", {}).items():
-            nodes = doc_data.get("nodes", [])
+        # Extract nodes based on telemetry format (avoid duplication with refactor)
+        nodes = []
+        if "documents" in telemetry:
+            # v1.0/v2.0 format with documents dictionary
+            for doc_type, doc_data in telemetry.get("documents", {}).items():
+                nodes.extend(doc_data.get("nodes", []))
+        else:
+            # v3.0 flat format has nodes at root level
+            nodes = telemetry.get("nodes", [])
 
-            for node in nodes:
-                # Get height (compatible with both v1.0 and v2.0)
-                height = node.get("height", node.get("level", 0))
+        # Process nodes
+        for node in nodes:
+            # Get height (compatible with both v1.0 and v2.0)
+            height = node.get("height", node.get("level", 0))
 
-                # Extract token counts from summary attempts for summary nodes
-                if height > 0:  # Summary nodes
-                    summary_attempts = node.get("summary_attempts", [])
-                    for attempt in summary_attempts:
-                        if attempt.get("status") == "accepted":
-                            actual_tokens = attempt.get("actual_tokens", 0)
-                            target_tokens = attempt.get("target_tokens", 0)
-                            if actual_tokens > 0:
-                                token_data.append(
-                                    {
-                                        "level": f"Level {height}",
-                                        "actual_tokens": actual_tokens,
-                                        "target_tokens": target_tokens,
-                                        "node_type": "Summary",
-                                    }
-                                )
-                else:  # Leaf nodes
-                    # For leaf nodes, we can estimate from embedding data or use default
-                    embedding = node.get("embedding", {})
-                    text_tokens = embedding.get("text_tokens", 0)
-                    if text_tokens > 0:
-                        token_data.append(
-                            {
-                                "level": "Level 0 (Leaves)",
-                                "actual_tokens": text_tokens,
-                                "target_tokens": text_tokens,
-                                "node_type": "Leaf",
-                            }
-                        )
+            # Extract token counts from summary attempts for summary nodes
+            if height > 0:  # Summary nodes
+                summary_attempts = node.get("summary_attempts", [])
+                for attempt in summary_attempts:
+                    if attempt.get("status") == "accepted":
+                        actual_tokens = attempt.get("actual_tokens", 0)
+                        target_tokens = attempt.get("target_tokens", 0)
+                        if actual_tokens > 0:
+                            token_data.append(
+                                {
+                                    "level": f"Level {height}",
+                                    "actual_tokens": actual_tokens,
+                                    "target_tokens": target_tokens,
+                                    "node_type": "Summary",
+                                }
+                            )
+            else:  # Leaf nodes
+                # For leaf nodes, we can estimate from embedding data or use default
+                embedding = node.get("embedding", {})
+                text_tokens = embedding.get("text_tokens", 0)
+                if text_tokens > 0:
+                    token_data.append(
+                        {
+                            "level": "Level 0 (Leaves)",
+                            "actual_tokens": text_tokens,
+                            "target_tokens": text_tokens,
+                            "node_type": "Leaf",
+                        }
+                    )
 
         if not token_data:
             ax.text(
@@ -649,11 +883,15 @@ class TelemetryVisualizer:
         # Add single target line at chunk_size from telemetry
         # Get chunk_size from telemetry metadata
         chunk_size = None
-        parsed_data = telemetry if isinstance(telemetry, dict) else {}
-        for doc_name, doc_data in parsed_data.get("documents", {}).items():
-            chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
-            if chunk_size > 0:
-                break  # Use the first valid chunk_size found
+        if "documents" in telemetry:
+            # v1.0/v2.0 format
+            for doc_name, doc_data in telemetry.get("documents", {}).items():
+                chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
+                if chunk_size > 0:
+                    break  # Use the first valid chunk_size found
+        else:
+            # v3.0 flat format
+            chunk_size = telemetry.get("chunk_size", 0)
 
         if chunk_size and chunk_size > 0:
             ax.axhline(
@@ -676,112 +914,3 @@ class TelemetryVisualizer:
         # Add legend if target lines were added
         if ax.lines:
             ax.legend(loc="upper right")
-
-    def visualize_comparison(
-        self, results_dir: Path, output_format: str = "png"
-    ) -> None:
-        """Create comparison visualizations between multiple benchmarks."""
-        json_files = list(results_dir.glob("telemetry_*_tokens.json"))
-
-        if len(json_files) < 2:
-            print("Need at least 2 benchmark files for comparison")
-            return
-
-        # Load all benchmarks
-        benchmarks = {}
-        for file in json_files:
-            data = self.load_benchmark_data(file)
-            if "telemetry" in data and "config" in data:
-                chunk_size = data["config"]["leaf_tokens"]
-                benchmarks[chunk_size] = data
-
-        if len(benchmarks) < 2:
-            print("Need at least 2 benchmarks with telemetry data for comparison")
-            return
-
-        # Create comparison plots
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        fig.suptitle("Benchmark Comparison", fontsize=16)
-
-        # Plot comparisons
-        self._plot_comparison_metrics(benchmarks, axes)
-
-        plt.tight_layout()
-        output_path = self.output_dir / f"comparison.{output_format}"
-        plt.savefig(output_path, bbox_inches="tight")
-        plt.close()
-
-        print(f"Saved comparison visualization to {output_path}")
-
-    def _plot_comparison_metrics(
-        self, benchmarks: dict[int, dict], axes: np.ndarray
-    ) -> None:
-        """Plot comparison metrics across benchmarks."""
-        chunk_sizes = sorted(benchmarks.keys())
-
-        # Collect metrics for each benchmark
-        cost_amps = []
-        batch_utils = []
-        retry_rates = []
-        total_costs = []
-
-        for chunk_size in chunk_sizes:
-            data = benchmarks[chunk_size]
-            telemetry = data["telemetry"]
-            config = self._create_config_from_metrics(data.get("metrics", {}))
-
-            # Compute all metrics once (single source of truth)
-            metrics = compute_metrics_from_telemetry(telemetry, config)
-
-            # Extract amplification summary from metrics
-            amp = get_amplification_summary(metrics)
-
-            # Compute other analysis independently
-            batch = compute_batch_efficiency(telemetry)
-            retry = analyze_retry_patterns(telemetry)
-
-            cost_amps.append(amp["median_cost"])
-            batch_utils.append(batch["batch_utilization"])
-            retry_rates.append(retry["retry_rate"])
-            # Calculate total cost from metrics
-            embedding_cost = (
-                metrics.total_embedding_tokens / 1000
-            ) * metrics.embedding_cost_per_1k
-            summary_cost = (
-                metrics.total_summary_prompt_tokens / 1000
-            ) * metrics.summary_input_cost_per_1k + (
-                metrics.total_summary_completion_tokens / 1000
-            ) * metrics.summary_output_cost_per_1k
-            total_costs.append(embedding_cost + summary_cost)
-
-        # Plot 1: Cost Amplification
-        ax = axes[0, 0]
-        ax.plot(chunk_sizes, cost_amps, "o-", markersize=8)
-        ax.set_xlabel("Chunk Size (tokens)")
-        ax.set_ylabel("Median Cost Amplification")
-        ax.set_title("Cost Amplification vs Chunk Size")
-        ax.grid(True, alpha=0.3)
-
-        # Plot 2: Batch Utilization
-        ax = axes[0, 1]
-        ax.plot(chunk_sizes, batch_utils, "o-", markersize=8, color="green")
-        ax.set_xlabel("Chunk Size (tokens)")
-        ax.set_ylabel("Batch Utilization (%)")
-        ax.set_title("Batch Utilization vs Chunk Size")
-        ax.grid(True, alpha=0.3)
-
-        # Plot 3: Retry Rate
-        ax = axes[1, 0]
-        ax.plot(chunk_sizes, retry_rates, "o-", markersize=8, color="red")
-        ax.set_xlabel("Chunk Size (tokens)")
-        ax.set_ylabel("Retry Rate (%)")
-        ax.set_title("Retry Rate vs Chunk Size")
-        ax.grid(True, alpha=0.3)
-
-        # Plot 4: Total Cost
-        ax = axes[1, 1]
-        ax.plot(chunk_sizes, total_costs, "o-", markersize=8, color="purple")
-        ax.set_xlabel("Chunk Size (tokens)")
-        ax.set_ylabel("Total Cost ($)")
-        ax.set_title("Total Cost vs Chunk Size")
-        ax.grid(True, alpha=0.3)

@@ -6,9 +6,9 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import (
     TelemetryAnalysisError,
     analyze_retry_patterns,
-    compute_amplification_metrics,
     compute_batch_efficiency,
     compute_metrics_from_telemetry,
+    compute_simplified_metrics,
     parse_telemetry_format,
 )
 
@@ -17,11 +17,16 @@ class TestTelemetryFormatParsing:
     """Test telemetry format parsing."""
 
     def test_parse_valid_telemetry_format(self) -> None:
-        """Test parsing valid telemetry format."""
+        """Test parsing v1.0 telemetry format migrates to v3.0."""
         telemetry_data = {
             "format_version": "1.0",
             "documents": {
                 "test_doc": {
+                    "metadata": {
+                        "source_document_tokens": 5000,
+                        "chunk_size": 200,
+                        "indexed_at": 1234567890.0,
+                    },
                     "nodes": [
                         {
                             "node_id": "node-1",
@@ -30,21 +35,31 @@ class TestTelemetryFormatParsing:
                             "span": [0, 100],
                             "created_at": 1234567890.0,
                         }
-                    ]
+                    ],
                 }
             },
         }
 
         result = parse_telemetry_format(telemetry_data)
-        assert result["format_version"] == "1.0"
-        assert "test_doc" in result["documents"]
+        # Should be migrated to v3.0
+        assert result["format_version"] == "3.0"
+        assert result["document_id"] == "test_doc"
+        assert result["source_document_tokens"] == 5000
+        assert result["chunk_size"] == 200
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["node_id"] == "node-1"
 
     def test_parse_v2_telemetry_format(self) -> None:
-        """Test parsing v2.0 telemetry format."""
+        """Test parsing v2.0 telemetry format migrates to v3.0."""
         telemetry_data = {
             "format_version": "2.0",
             "documents": {
                 "test_doc": {
+                    "metadata": {
+                        "source_document_tokens": 5000,
+                        "chunk_size": 200,
+                        "indexed_at": 1234567890.0,
+                    },
                     "nodes": [
                         {
                             "node_id": "node-1",
@@ -52,14 +67,140 @@ class TestTelemetryFormatParsing:
                             "created_at": 1234567890.0,
                             # v2.0 doesn't have node_type or span fields
                         }
-                    ]
+                    ],
                 }
             },
         }
 
         result = parse_telemetry_format(telemetry_data)
-        assert result["format_version"] == "2.0"
-        assert "test_doc" in result["documents"]
+        # Should be migrated to v3.0
+        assert result["format_version"] == "3.0"
+        assert result["document_id"] == "test_doc"
+        assert result["source_document_tokens"] == 5000
+        assert result["chunk_size"] == 200
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["node_id"] == "node-1"
+
+    def test_parse_v3_telemetry_format(self) -> None:
+        """Test parsing v3.0 telemetry format (already flat)."""
+        telemetry_data = {
+            "format_version": "3.0",
+            "document_id": "test_doc",
+            "source_document_tokens": 5000,
+            "chunk_size": 200,
+            "indexed_at": 1234567890.0,
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
+            "nodes": [
+                {
+                    "node_id": "node-1",
+                    "height": 0,
+                    "created_at": 1234567890.0,
+                }
+            ],
+        }
+
+        result = parse_telemetry_format(telemetry_data)
+        # Should remain as v3.0
+        assert result["format_version"] == "3.0"
+        assert result["document_id"] == "test_doc"
+        assert result["source_document_tokens"] == 5000
+        assert result["chunk_size"] == 200
+        assert result["models"]["summary"] == "gpt-4o-mini"
+        assert result["models"]["embedding"] == "text-embedding-3-small"
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["node_id"] == "node-1"
+
+    def test_parse_cli_wrapper_format_migration(self) -> None:
+        """Test parsing old CLI wrapper format migrates to v3.0."""
+        # This is the format the CLI used to output before v3.0
+        cli_wrapper_data = {
+            "config": {
+                "leaf_tokens": 200,
+                "budget_tokens": 8000,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
+            },
+            "document": {
+                "document_id": "example.pdf",
+                "file_path": "/path/to/example.pdf",
+            },
+            "telemetry": {
+                "format_version": "2.0",
+                "documents": {
+                    "example.pdf": {
+                        "metadata": {
+                            "source_document_tokens": 7500,
+                            "chunk_size": 200,
+                            "indexed_at": 1234567890.0,
+                        },
+                        "nodes": [
+                            {
+                                "node_id": "node-1",
+                                "height": 0,
+                                "created_at": 1234567890.0,
+                                "embedding": {
+                                    "text_tokens": 150,
+                                    "batch_size": 10,
+                                    "batch_position": 3,
+                                    "model": "text-embedding-3-small",
+                                    "start_time": 1234567890.0,
+                                    "end_time": 1234567890.5,
+                                },
+                            },
+                            {
+                                "node_id": "node-2",
+                                "height": 1,
+                                "created_at": 1234567890.2,
+                                "summary_attempts": [
+                                    {
+                                        "target_tokens": 100,
+                                        "input_text_tokens": 300,
+                                        "prompt_tokens": 320,
+                                        "completion_tokens": 95,
+                                        "actual_tokens": 95,
+                                        "status": "accepted",
+                                        "model": "gpt-4o-mini",
+                                        "start_time": 1234567890.1,
+                                        "end_time": 1234567890.3,
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                },
+            },
+        }
+
+        result = parse_telemetry_format(cli_wrapper_data)
+
+        # Should be migrated to v3.0
+        assert result["format_version"] == "3.0"
+        assert result["document_id"] == "example.pdf"
+        assert result["source_document_tokens"] == 7500
+        assert result["chunk_size"] == 200
+        assert result["indexed_at"] == 1234567890.0
+
+        # Models should be extracted from config
+        assert result["models"]["summary"] == "gpt-4o-mini"
+        assert result["models"]["embedding"] == "text-embedding-3-small"
+
+        # Nodes should be flattened
+        assert len(result["nodes"]) == 2
+        assert result["nodes"][0]["node_id"] == "node-1"
+        assert result["nodes"][1]["node_id"] == "node-2"
+
+        # Node data should be preserved
+        assert result["nodes"][0]["embedding"]["model"] == "text-embedding-3-small"
+        assert result["nodes"][1]["summary_attempts"][0]["model"] == "gpt-4o-mini"
+
+        # Should NOT have nested documents or config/document wrappers
+        assert "documents" not in result
+        assert "config" not in result
+        assert "document" not in result
+        assert "telemetry" not in result
 
     def test_parse_missing_format_version(self) -> None:
         """Test parsing telemetry without format version."""
@@ -70,7 +211,7 @@ class TestTelemetryFormatParsing:
 
     def test_parse_unsupported_format_version(self) -> None:
         """Test parsing telemetry with unsupported format version."""
-        telemetry_data = {"format_version": "3.0", "documents": {}}
+        telemetry_data = {"format_version": "4.0", "documents": {}}
 
         with pytest.raises(
             TelemetryAnalysisError, match="Unsupported telemetry format version"
@@ -90,8 +231,8 @@ class TestTelemetryFormatParsing:
             parse_telemetry_format(telemetry_data)
 
 
-class TestAmplificationMetrics:
-    """Test amplification metrics computation."""
+class TestSimplifiedMetrics:
+    """Test simplified metrics computation."""
 
     @pytest.fixture
     def config(self) -> RagZoomConfig:
@@ -121,7 +262,7 @@ class TestAmplificationMetrics:
                                     "is_retry": False,
                                     "target_tokens": 100,
                                     "input_text_tokens": 200,
-                                    "prompt_tokens": 250,  # 1.25x input amplification
+                                    "prompt_tokens": 250,
                                     "completion_tokens": 90,
                                     "actual_tokens": 90,
                                     "status": "accepted",
@@ -141,7 +282,7 @@ class TestAmplificationMetrics:
                                     "is_retry": False,
                                     "target_tokens": 100,
                                     "input_text_tokens": 200,
-                                    "prompt_tokens": 300,  # 1.5x input amplification
+                                    "prompt_tokens": 300,
                                     "completion_tokens": 110,
                                     "actual_tokens": 100,
                                     "status": "accepted",
@@ -155,43 +296,45 @@ class TestAmplificationMetrics:
             },
         }
 
-    def test_compute_amplification_metrics(
+    def test_compute_simplified_metrics(
         self, config: RagZoomConfig, sample_telemetry: dict
     ) -> None:
-        """Test computing amplification metrics from telemetry."""
-        result = compute_amplification_metrics(sample_telemetry, config)
+        """Test computing simplified metrics from telemetry."""
+        result = compute_simplified_metrics(sample_telemetry, config)
 
-        # Should have computed metrics
-        assert result["median_cost"] > 0
-        assert result["median_input"] > 0
-        assert result["median_output"] > 0
+        # Should have metrics organized by chunk size
+        assert hasattr(result, "metrics_by_chunk_size")
+        assert isinstance(result.metrics_by_chunk_size, dict)
 
-        # Check input amplification: median of [1.25, 1.5] = 1.375
-        assert result["median_input"] == pytest.approx(1.375, rel=0.01)
+        # For each chunk size with data
+        for chunk_size, metrics in result.metrics_by_chunk_size.items():
+            # Should have all metric categories
+            assert "target_fit" in metrics
+            assert "retries" in metrics
+            assert "latency" in metrics
+            assert "cost" in metrics
+            assert "dispersion" in metrics
 
-        # Check output amplification: median of [1.0, 1.1] = 1.05
-        assert result["median_output"] == pytest.approx(1.05, rel=0.01)
+            # Target-fit metrics
+            assert "median_error" in metrics["target_fit"]
+            assert "p95_error" in metrics["target_fit"]
+            assert "percent_within_10" in metrics["target_fit"]
 
-        # Check by-height breakdown (should work even with v1.0 data)
-        assert 1 in result["by_height"]
-        assert len(result["by_height"][1]["input"]) == 2
-        assert len(result["by_height"][1]["output"]) == 2
-        assert len(result["by_height"][1]["cost"]) == 2
+            # Retry metrics
+            assert "retry_rate" in metrics["retries"]
+            assert "max_retries" in metrics["retries"]
 
-    def test_amplification_metrics_empty_data(self, config: RagZoomConfig) -> None:
-        """Test amplification metrics with empty telemetry."""
+    def test_simplified_metrics_empty_data(self, config: RagZoomConfig) -> None:
+        """Test simplified metrics with empty telemetry."""
         empty_telemetry = {"format_version": "1.0", "documents": {}}
 
-        result = compute_amplification_metrics(empty_telemetry, config)
+        result = compute_simplified_metrics(empty_telemetry, config)
 
-        # Should return zero values
-        assert result["median_cost"] == 0.0
-        assert result["median_input"] == 0.0
-        assert result["median_output"] == 0.0
-        assert result["by_height"] == {}
+        # Should return empty metrics
+        assert result.metrics_by_chunk_size == {}
 
-    def test_amplification_metrics_only_leaf_nodes(self, config: RagZoomConfig) -> None:
-        """Test amplification metrics with only leaf nodes (no summaries)."""
+    def test_simplified_metrics_only_leaf_nodes(self, config: RagZoomConfig) -> None:
+        """Test simplified metrics with only leaf nodes (no summaries)."""
         leaf_only_telemetry = {
             "format_version": "1.0",
             "documents": {
@@ -209,12 +352,41 @@ class TestAmplificationMetrics:
             },
         }
 
-        result = compute_amplification_metrics(leaf_only_telemetry, config)
+        result = compute_simplified_metrics(leaf_only_telemetry, config)
 
-        # Should return zero values (no summary attempts)
-        assert result["median_cost"] == 0.0
-        assert result["median_input"] == 0.0
-        assert result["median_output"] == 0.0
+        # Should return empty metrics (no summary attempts)
+        assert result.metrics_by_chunk_size == {}
+
+    def test_simplified_metrics_cost_calculations(
+        self, config: RagZoomConfig, sample_telemetry: dict
+    ) -> None:
+        """Test that cost calculations in simplified metrics are correct."""
+        result = compute_simplified_metrics(sample_telemetry, config)
+
+        # Verify cost calculations for the chunk size
+        for chunk_size, metrics in result.metrics_by_chunk_size.items():
+            cost_metrics = metrics["cost"]
+
+            # Check that cost metrics exist and are reasonable
+            assert "usd_per_node" in cost_metrics
+            assert "total_prompt_tokens" in cost_metrics
+            assert "total_completion_tokens" in cost_metrics
+            assert cost_metrics["usd_per_node"] > 0
+            assert cost_metrics["total_prompt_tokens"] > 0
+
+            # Verify cost calculation is correct
+            # Based on sample data: 2 nodes with 250 + 300 = 550 prompt tokens, 90 + 110 = 200 completion tokens
+            # Cost = (550 / 1000 * 0.0025) + (200 / 1000 * 0.01) = 0.001375 + 0.002 = 0.003375
+            expected_total_cost = 0.003375
+            # USD per node (2 nodes)
+            expected_usd_per_node = expected_total_cost / 2
+            assert cost_metrics["usd_per_node"] == pytest.approx(
+                expected_usd_per_node, rel=0.01
+            )
+
+            # Verify token counts
+            assert cost_metrics["total_prompt_tokens"] == 550
+            assert cost_metrics["total_completion_tokens"] == 200
 
 
 class TestBatchEfficiency:
@@ -370,6 +542,15 @@ class TestRetryAnalysis:
         assert result["rejection_reasons"]["20% under target"] == 1
         assert result["rejection_reasons"]["API timeout"] == 1
 
+        # New metrics should be present
+        assert "retry_distribution" in result
+        assert result["retry_distribution"]["0"] == 1  # summary-2 has 0 retries
+        assert (
+            result["retry_distribution"]["1"] == 2
+        )  # summary-1 and summary-3 have 1 retry each
+        assert result["avg_retries_per_node"] == pytest.approx(0.67, rel=0.01)  # 2/3
+        assert result["max_retries"] == 1
+
     def test_retry_analysis_no_retries(self) -> None:
         """Test retry analysis with no retries."""
         telemetry_data = {
@@ -398,6 +579,78 @@ class TestRetryAnalysis:
         assert result["retry_rate"] == 0.0
         assert result["retry_attempts"] == 0
         assert result["nodes_with_retries"] == 0
+
+    def test_analyze_retry_patterns_v2_format(self) -> None:
+        """Test retry analysis with v2.0 format (no is_retry field)."""
+        telemetry_data = {
+            "format_version": "2.0",
+            "documents": {
+                "test_doc": {
+                    "metadata": {},
+                    "nodes": [
+                        {
+                            "node_id": "node-1",
+                            "height": 1,  # Non-leaf node
+                            "summary_attempts": [
+                                {
+                                    "status": "rejected_over",
+                                    "rejection_reason": "25% over target",
+                                    "start_time": 1000.0,
+                                    "end_time": 1002.0,
+                                },
+                                {
+                                    "status": "rejected_under",
+                                    "rejection_reason": "15% under target",
+                                    "start_time": 1002.0,
+                                    "end_time": 1004.0,
+                                },
+                                {
+                                    "status": "accepted",
+                                    "start_time": 1004.0,
+                                    "end_time": 1006.0,
+                                },
+                            ],
+                        },
+                        {
+                            "node_id": "node-2",
+                            "height": 1,
+                            "summary_attempts": [
+                                {
+                                    "status": "accepted",
+                                    "start_time": 1000.0,
+                                    "end_time": 1003.0,
+                                }
+                            ],
+                        },
+                    ],
+                }
+            },
+        }
+
+        result = analyze_retry_patterns(telemetry_data)
+
+        # 2 nodes, 1 needed retries
+        assert result["total_nodes_with_summaries"] == 2
+        assert result["nodes_with_retries"] == 1
+        assert result["retry_rate"] == 50.0
+
+        # 4 total attempts (3 + 1), 2 retries, 1 successful retry
+        assert result["total_attempts"] == 4
+        assert result["successful_attempts"] == 2
+        assert result["retry_attempts"] == 2
+        assert result["retry_success_rate"] == 50.0
+
+        # Retry distribution
+        assert result["retry_distribution"]["0"] == 1  # node-2
+        assert result["retry_distribution"]["1"] == 0
+        assert result["retry_distribution"]["2"] == 1  # node-1
+        assert result["avg_retries_per_node"] == 1.0  # 2 retries / 2 nodes
+        assert result["max_retries"] == 2
+
+        # Timing metrics
+        assert result["retry_time_seconds"] == 4.0  # 2s + 2s for the two retries
+        assert result["avg_time_per_retry"] == 2.0  # 4s / 2 retries
+        assert result["time_wasted_on_rejections"] == 4.0  # Both retries were rejected
 
 
 class TestFullMetricsComputation:
@@ -501,10 +754,9 @@ class TestFullMetricsComputation:
         assert metrics.start_time == 1234567890.0
         assert metrics.end_time == 1234567892.0
 
-        # Check amplification metrics
-        assert len(metrics.cost_amplifications) == 1
-        assert len(metrics.input_amplifications) == 1
-        assert len(metrics.output_amplifications) == 1
+        # Check basic metrics
+        assert metrics.chunks_created == 2  # 2 leaf nodes
+        assert metrics.summary_api_calls == 1
 
         # Check summary stats (bucketed by actual target_tokens from telemetry)
         assert 100 in metrics.summary_stats  # The test data has target_tokens=100
@@ -515,12 +767,8 @@ class TestFullMetricsComputation:
         assert 2 in metrics.embedding_batch_sizes
         assert 1 in metrics.embedding_batch_sizes
 
-    def test_amplification_includes_retry_attempts(self, config: RagZoomConfig) -> None:
-        """Test that amplification metrics include ALL attempts, not just accepted ones.
-
-        This test demonstrates the bug where retries make amplification appear lower
-        because only the final accepted attempt is counted.
-        """
+    def test_metrics_include_retry_attempts(self, config: RagZoomConfig) -> None:
+        """Test that metrics include ALL attempts, not just accepted ones."""
         telemetry = {
             "format_version": "1.0",
             "documents": {
@@ -581,22 +829,8 @@ class TestFullMetricsComputation:
         assert metrics.total_summary_completion_tokens == 120 + 100 + 80  # 300
         assert metrics.summary_api_calls == 3
 
-        # EXPECTED behavior: Amplification should include all attempts
-        # Input amplification = total_prompt_tokens / text_being_summarized
-        #                    = 480 / 100 = 4.8x
-        # Output amplification = total_completion_tokens / final_summary_tokens
-        #                     = 300 / 80 = 3.75x
-
-        # ACTUAL behavior (BUG): Only counts the accepted attempt
-        # Input amplification = 170 / 100 = 1.7x
-        # Output amplification = 80 / 80 = 1.0x
-
-        assert len(metrics.input_amplifications) == 1
-        assert len(metrics.output_amplifications) == 1
-
-        # These assertions will FAIL, demonstrating the bug
-        assert metrics.input_amplifications[0] == pytest.approx(4.8, rel=0.01)
-        assert metrics.output_amplifications[0] == pytest.approx(3.75, rel=0.01)
+        # Verify that ALL attempts are counted in the totals
+        # We should have 3 summary attempts total
 
 
 class TestBackwardCompatibility:
@@ -660,9 +894,9 @@ class TestBackwardCompatibility:
         }
 
         # All analysis functions should work with v1.0 data
-        amplification = compute_amplification_metrics(v1_telemetry, config)
-        assert amplification["median_input"] > 0
-        assert 1 in amplification["by_height"]  # Should map level to height
+        simplified = compute_simplified_metrics(v1_telemetry, config)
+        assert isinstance(simplified.metrics_by_chunk_size, dict)
+        # Should have metrics for chunk size 100 (the target_tokens value)
 
         batch_efficiency = compute_batch_efficiency(v1_telemetry)
         assert batch_efficiency["total_embeddings"] == 1

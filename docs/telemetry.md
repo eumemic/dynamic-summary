@@ -17,12 +17,13 @@ RagZoom's telemetry system provides detailed insights into the indexing process 
 
 ### Format Version
 
-The current telemetry format version is **2.0**. The version is stored in all telemetry data to ensure backward compatibility:
+The current telemetry format version is **3.0**. The version is stored in all telemetry data to ensure backward compatibility:
 
 ```json
 {
-  "format_version": "2.0",
-  "documents": { ... }
+  "format_version": "3.0",
+  "document_id": "example.pdf",
+  ...
 }
 ```
 
@@ -34,33 +35,36 @@ The current telemetry format version is **2.0**. The version is stored in all te
   - Renamed `level` to `height` throughout for clarity
   - Added `start_time`/`end_time` to EmbeddingTelemetry and SummaryAttempt
   - Replaced single `timestamp` field with start/end times for precise timing
+- **v3.0**: Flattened structure to eliminate redundancy:
+  - Removed nested "documents" dict (always single document)
+  - Moved metadata fields to top level
+  - Added models field at top level
+  - Eliminated duplicate document_id and chunk_size fields
 
 ### Structure
 
-Telemetry data follows this hierarchical structure:
+Telemetry data follows this flat structure in v3.0:
 
 ```json
 {
-  "format_version": "2.0",
-  "documents": {
-    "<document_type>": {
-      "nodes": [
-        {
-          "node_id": "node-123",
-          "height": 0,
-          "created_at": 1234567890.0,
-          "embedding": { ... },
-          "summary_attempts": [ ... ]
-        }
-      ],
-      "metadata": {
-        "total_nodes": 100,
-        "leaf_nodes": 64,
-        "summary_nodes": 36,
-        "source_document_tokens": 7500
-      }
+  "format_version": "3.0",
+  "document_id": "example.pdf",
+  "source_document_tokens": 7500,
+  "chunk_size": 200,
+  "indexed_at": 1234567890.0,
+  "models": {
+    "summary": "gpt-4o-mini",
+    "embedding": "text-embedding-3-small"
+  },
+  "nodes": [
+    {
+      "node_id": "node-123",
+      "height": 0,
+      "created_at": 1234567890.0,
+      "embedding": { ... },
+      "summary_attempts": [ ... ]
     }
-  }
+  ]
 }
 ```
 
@@ -127,7 +131,7 @@ Status values:
 ```python
 import json
 from ragzoom.telemetry_analysis import (
-    compute_amplification_metrics,
+    compute_simplified_metrics,
     analyze_retry_patterns,
     compute_batch_efficiency,
     compute_metrics_from_telemetry
@@ -147,24 +151,32 @@ config = RagZoomConfig(
 )
 ```
 
-### Computing Amplification Metrics
+### Computing Simplified Metrics
 
-Amplification metrics show how much overhead is introduced by the API calls:
+The simplified metrics system provides actionable insights at the chunk-size level:
 
 ```python
-amplification = compute_amplification_metrics(telemetry, config)
+result = compute_simplified_metrics(telemetry, config)
 
-print(f"Median cost amplification: {amplification['median_cost']:.2f}x")
-print(f"90th percentile cost: {amplification['cost_p90']:.2f}x")
-print(f"Median input amplification: {amplification['median_input']:.2f}x")
-print(f"Median output amplification: {amplification['median_output']:.2f}x")
-
-# Analyze by height
-for height, data in amplification['by_height'].items():
-    print(f"\nHeight {height}:")
-    print(f"  Input: {np.median(data['input']):.2f}x")
-    print(f"  Output: {np.median(data['output']):.2f}x")
-    print(f"  Cost: {np.median(data['cost']):.2f}x")
+for chunk_size, metrics in result.metrics_by_chunk_size.items():
+    print(f"\nChunk size: {chunk_size} tokens")
+    
+    # Target-fit metrics (how close summaries are to target)
+    print(f"  Target-fit median error: {metrics['target_fit']['median_error']:.1f}%")
+    print(f"  Target-fit p95 error: {metrics['target_fit']['p95_error']:.1f}%")
+    print(f"  Within 10% of target: {metrics['target_fit']['percent_within_10']:.1f}%")
+    
+    # Retry metrics
+    print(f"  Retry rate: {metrics['retries']['retry_rate']:.1f}%")
+    print(f"  Max retries: {metrics['retries']['max_retries']}")
+    
+    # Cost metrics (actual USD costs)
+    print(f"  Avg cost per node: ${metrics['cost']['avg_cost_per_node']:.6f}")
+    print(f"  Total cost: ${metrics['cost']['total_cost']:.4f}")
+    
+    # Latency metrics
+    print(f"  Avg latency: {metrics['latency']['avg_ms']:.0f}ms")
+    print(f"  P95 latency: {metrics['latency']['p95_ms']:.0f}ms")
 ```
 
 ### Analyzing Batch Efficiency
@@ -205,56 +217,72 @@ print(f"Peak memory: {metrics.peak_memory_mb:.1f} MB")
 
 ### Basic Visualization
 
-Visualize a single benchmark:
+The `visualize` command supports two modes:
+
+#### Single File Visualization
 
 ```bash
-ragzoom-telemetry visualize benchmark_results/telemetry_200_tokens.json
+ragzoom-telemetry visualize telemetry.json
 ```
 
-This generates:
-- Amplification patterns by tree height
+This generates a comprehensive report with:
+- Token usage and cost by tree level
 - Cost breakdown pie chart
 - Batch efficiency histogram
 - Retry pattern analysis
 - Summary accuracy distribution
 - Node creation timeline
-- Token usage heatmap
+- Token count distributions by level
 
-### Comparison Visualization
+#### Side-by-Side Comparison
 
-Compare multiple benchmarks:
+Compare two telemetry files directly:
 
 ```bash
-ragzoom-telemetry visualize benchmark_results/ --compare
+ragzoom-telemetry visualize baseline.json current.json
 ```
 
-### Output Formats
+This creates a side-by-side visualization showing both telemetry results in parallel, making it easy to spot differences in:
+- Performance characteristics
+- Cost efficiency
+- Retry patterns
+- Token distributions
+
+The plots share scales where appropriate for direct visual comparison.
+
+### Output Options
 
 ```bash
-# Generate PDF reports
-ragzoom-telemetry visualize benchmark_results/ --format pdf
+# Default output: visualization.png in current directory
+ragzoom-telemetry visualize telemetry.json
 
-# Specify output directory
-ragzoom-telemetry visualize benchmark_results/ --output-dir reports/
+# Specify custom output path
+ragzoom-telemetry visualize baseline.json -o analysis.png
+ragzoom-telemetry visualize baseline.json current.json -o comparison.pdf
+
+# Format is inferred from extension, or use --format
+ragzoom-telemetry visualize telemetry.json --format pdf
+ragzoom-telemetry visualize telemetry.json -o report --format svg
 ```
 
 ### Generated Reports
 
 The visualization script also generates markdown reports with:
 - Executive summary of key metrics
-- Detailed amplification analysis
+- Target-fit accuracy analysis
 - Batch efficiency statistics
 - Retry pattern breakdown
+- Cost analysis per chunk size
 - Actionable recommendations
 
 ## Performance Optimization
 
 ### Identifying Bottlenecks
 
-1. **High Cost Amplification** (>2.0x)
-   - Indicates inefficient prompt templates
-   - Check for unnecessary context in prompts
-   - Consider prompt optimization
+1. **Poor Target-Fit** (>20% median error)
+   - Summaries consistently missing target size
+   - Review prompt instructions for clarity
+   - Consider adjusting chunk size targets
 
 2. **Low Batch Utilization** (<50%)
    - Increase `embedding_batch_size` in config
@@ -265,26 +293,35 @@ The visualization script also generates markdown reports with:
    - Adjust prompt instructions
    - Consider more flexible target ranges
 
+4. **High Cost per Node** (track over time)
+   - Compare costs across chunk sizes
+   - Identify optimal chunk size for your use case
+   - Monitor for cost regressions
+
 ### Optimization Strategies
 
 ```python
-# Example: Find nodes with highest amplification
+# Example: Find nodes with poor target-fit
 from ragzoom.telemetry_analysis import parse_telemetry_format
 
 parsed = parse_telemetry_format(telemetry)
-high_amp_nodes = []
+poor_fit_nodes = []
 
 for doc_data in parsed["documents"].values():
+    chunk_size = doc_data.get("metadata", {}).get("chunk_size", 100)
     for node in doc_data["nodes"]:
         if node["height"] > 0:  # Summary nodes have height > 0
             for attempt in node.get("summary_attempts", []):
                 if attempt["status"] == "accepted":
-                    amp = attempt["prompt_tokens"] / attempt["input_text_tokens"]
-                    if amp > 3.0:
-                        high_amp_nodes.append({
+                    actual = attempt["actual_tokens"]
+                    error_pct = abs((actual - chunk_size) / chunk_size * 100)
+                    if error_pct > 20:
+                        poor_fit_nodes.append({
                             "node_id": node["node_id"],
                             "height": node["height"],
-                            "amplification": amp
+                            "error_pct": error_pct,
+                            "actual": actual,
+                            "target": chunk_size
                         })
 ```
 
@@ -337,9 +374,83 @@ ragzoom-telemetry analyze benchmark_results/telemetry_200_tokens.json
 # Compare two benchmarks
 ragzoom-telemetry compare baseline.json current.json
 
-# Generate visualizations
-ragzoom-telemetry visualize benchmark_results/telemetry_200_tokens.json
-ragzoom-telemetry visualize benchmark_results/ --compare --format pdf
+# Generate visualizations for a single file
+ragzoom-telemetry visualize baseline.json
+
+# Generate side-by-side comparison of two files
+ragzoom-telemetry visualize baseline.json current.json
+
+# Specify output format and path
+ragzoom-telemetry visualize before.json after.json -o reports/comparison.pdf
+```
+
+### Comparison Output Format
+
+The `compare` command provides a detailed performance comparison between baseline and current telemetry with:
+
+#### Inline Variance Display
+Metrics now show variance inline using the ±format:
+- `50.0 ±2.0 tok` - Median error of 50 tokens with MAD (Median Absolute Deviation) of 2
+- `$0.0010 ±0.0001` - Cost with variance
+
+#### Two-Line Change Format
+Changes are displayed on two lines for clarity:
+```
+Line 1: [emoji] absolute_change (percentage%)
+Line 2: [emoji] σ±variance_change (percentage%)
+```
+
+Example:
+```
+🟢 -247.0 tok (-58.7%)
+🟡 σ+18 (+30%)
+```
+
+#### Color-Coded Significance Indicators
+
+**Metric Changes:**
+- 🔴 = **Regression detected** - Exceeds dynamic threshold (>5σ baseline variance)
+- 🟡 = **Significant undesirable change** - Notable but not a regression (>1σ)
+- 🟢 = **Significant improvement** - Desirable change (>1σ)
+- ⚪ = **Insignificant change** - Within normal variance (<1σ)
+
+**Variance Changes:**
+- 🟡 = **Variance increase** - Notable but doesn't trigger regression
+- 🟢 = **Variance decrease** - Improved stability
+- ⚪ = **Insignificant variance change** - Within normal fluctuation (<50% of baseline)
+
+#### Dynamic Thresholds
+
+RagZoom uses **variance-based dynamic thresholds** instead of fixed percentages:
+
+```
+threshold = (k1 + k2) × baseline_variance
+
+Where:
+- k1 = 3.0 (covers 99.7% of normal distribution for between-run variance)
+- k2 = 2.0 (additional margin for baseline measurement uncertainty)
+- Total = 5σ threshold (>99.99% confidence for regression detection)
+```
+
+This approach:
+- **Eliminates false positives** from natural LLM non-determinism
+- **Adapts to each metric's inherent variability**
+- **CI environments** get 1.5x multiplier for higher variance
+
+#### Example Output
+
+```
+Performance Comparison Report
+================================================================================
+
+Chunk Size | Metric              |         Baseline |          Current | Change                                     | Threshold
+-----------|---------------------|------------------|------------------|--------------------------------------------|-----------
+100 tok    | Median Error        |   -23.0 ±2.0 tok |   -24.2 ±2.4 tok | ⚪ +0.0 tok (+0.0%)                        | 10.0 tok
+           |                     |                  |                  | 🟡 σ+0.4 (+20%)                            |
+100 tok    | p95 Error           |   +36.0 ±5.0 tok |   +59.0 ±7.0 tok | 🟡 +23.0 tok (+63.9%)                      | 25.0 tok
+           |                     |                  |                  | 🟡 σ+2.0 (+40%)                            |
+100 tok    | Cost                | $0.0002 ±0.0000  | $0.0002 ±0.0000  | ⚪ +$0.0000 (+0.5%)                        | $0.0001
+           |                     |                  |                  | ⚪ σ-0.0000 (-2%)                           |
 ```
 
 ### Configuration Options
@@ -350,27 +461,27 @@ The telemetry analysis tools use configurable thresholds for identifying perform
 
 ```bash
 # Analysis thresholds (defaults shown)
-export RAGZOOM_HIGH_INPUT_AMPLIFICATION_THRESHOLD=3.0       # High input amplification warning
-export RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD=2.0        # High cost amplification warning  
-export RAGZOOM_GOOD_COST_AMPLIFICATION_THRESHOLD=1.5        # Good cost amplification target
+export RAGZOOM_HIGH_TARGET_FIT_ERROR_THRESHOLD=20           # High target-fit error warning (%)
+export RAGZOOM_GOOD_TARGET_FIT_THRESHOLD=10                 # Good target-fit threshold (%)
 export RAGZOOM_HIGH_RETRY_RATE_THRESHOLD=20                 # High retry rate warning (%)
 export RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD=70          # Good batch utilization target (%)
 export RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD=50           # Low batch utilization warning (%)
 export RAGZOOM_MULTIPLE_RETRY_THRESHOLD=1                   # Multiple retry detection
+export RAGZOOM_HIGH_COST_PER_NODE_THRESHOLD=0.001           # High cost per node warning ($)
 ```
 
 **Examples:**
 
 ```bash
 # Use stricter thresholds for production monitoring
-export RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD=1.8
+export RAGZOOM_HIGH_TARGET_FIT_ERROR_THRESHOLD=15
 export RAGZOOM_HIGH_RETRY_RATE_THRESHOLD=15
-ragzoom telemetry analyze production_metrics.json
+ragzoom-telemetry analyze production_metrics.json
 
 # Relaxed thresholds for development
-export RAGZOOM_HIGH_COST_AMPLIFICATION_THRESHOLD=3.0
+export RAGZOOM_HIGH_TARGET_FIT_ERROR_THRESHOLD=30
 export RAGZOOM_HIGH_RETRY_RATE_THRESHOLD=30
-ragzoom telemetry visualize dev_metrics.json
+ragzoom-telemetry visualize dev_metrics.json
 ```
 
 These thresholds affect:
@@ -410,28 +521,42 @@ When telemetry format changes occur:
    - Use migration tools to update old data (if available)
    - v2.0 changes: removed redundant fields, added timing, renamed level→height
 
-### Migration from v1.0 to v2.0
+### Automatic Migration to v3.0
 
-The analysis tools support both v1.0 and v2.0 formats automatically. When processing v1.0 data:
-- `node_type` field is used if present
-- `level` is treated as `height`
-- Single `timestamp` fields are used for timing analysis
+All RagZoom telemetry analysis tools automatically migrate v1.0 and v2.0 formats to v3.0 during parsing:
+
+- **v1.0/v2.0 → v3.0**: Automatic migration extracts metadata to top level, flattens structure
+- **CLI wrapper format**: Handles old CLI output that wrapped telemetry in config/document/telemetry structure
+- **Models inference**: Attempts to extract model names from nodes if not provided
+- **Backward compatibility**: All v1.0 and v2.0 fields are preserved
 
 No manual migration is required - the tools handle version differences transparently.
 
 ### Writing Compatible Analysis Code
 
 ```python
-def analyze_telemetry_safely(telemetry_data):
-    """Example of version-aware analysis."""
-    version = telemetry_data.get("format_version", "1.0")
+from ragzoom.telemetry_analysis import parse_telemetry_format
+
+def analyze_telemetry(telemetry_data):
+    """Example of version-agnostic analysis."""
+    # Always returns v3.0 format
+    parsed = parse_telemetry_format(telemetry_data)
     
-    if version == "1.0":
-        return analyze_v1_telemetry(telemetry_data)
-    elif version.startswith("2."):
-        return analyze_v2_telemetry(telemetry_data)
-    else:
-        raise ValueError(f"Unsupported telemetry version: {version}")
+    # Access data consistently regardless of input version
+    doc_id = parsed["document_id"]
+    nodes = parsed["nodes"]
+    models = parsed["models"]
+    source_tokens = parsed["source_document_tokens"]
+    
+    # Process nodes uniformly
+    for node in nodes:
+        height = node["height"]  # Works for all versions
+        if node.get("embedding"):
+            # Process embedding data
+            pass
+        if node.get("summary_attempts"):
+            # Process summary data
+            pass
 ```
 
 ## Best Practices
@@ -442,9 +567,9 @@ def analyze_telemetry_safely(telemetry_data):
    - Use CI integration for automated checks
 
 2. **Cost Monitoring**
-   - Set up alerts for cost amplification > 3.0x
-   - Track cost trends over time
-   - Optimize high-cost operations first
+   - Track cost per node across chunk sizes
+   - Monitor total costs for budget management
+   - Compare costs between different models
 
 3. **Performance Tracking**
    - Monitor throughput (tokens/second)
