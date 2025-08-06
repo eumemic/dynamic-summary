@@ -41,8 +41,32 @@ echo "📎 Setting up Git hooks..."
 # Create .git/hooks directory if it doesn't exist
 mkdir -p "$PROJECT_ROOT/.git/hooks"
 
-# Symlink pre-commit hook
-create_symlink "$PROJECT_ROOT/scripts/git-hooks/pre-commit" "$PROJECT_ROOT/.git/hooks/pre-commit"
+# Create pre-commit dispatcher hook (not a symlink)
+# This allows each worktree to use its own version of the hook
+cat > "$PROJECT_ROOT/.git/hooks/pre-commit" << 'EOF'
+#!/bin/bash
+# Git pre-commit hook dispatcher
+# This script calls the worktree's own version of the pre-commit hook
+# so each worktree can have its own hook logic
+
+# Find the repository root (this will be the worktree root if in a worktree)
+GIT_ROOT="$(git rev-parse --show-toplevel)"
+
+# Check if the worktree has its own pre-commit hook
+WORKTREE_HOOK="$GIT_ROOT/scripts/git-hooks/pre-commit"
+
+if [ -f "$WORKTREE_HOOK" ]; then
+    # Execute the worktree's own pre-commit hook
+    exec "$WORKTREE_HOOK"
+else
+    # Fallback: no pre-commit hook in this worktree
+    echo "No pre-commit hook found at $WORKTREE_HOOK"
+    exit 0
+fi
+EOF
+
+chmod +x "$PROJECT_ROOT/.git/hooks/pre-commit"
+echo -e "${GREEN}✓ Created pre-commit hook dispatcher${NC}"
 
 # 2. Check Python environment
 echo ""
@@ -122,7 +146,8 @@ echo "   • Lint code: ruff check ragzoom/ tests/"
 echo "   • Type check: mypy ragzoom/"
 echo ""
 echo "🪝 Git hooks installed:"
-echo "   • pre-commit: Runs fast tests + linting + type checking"
+echo "   • pre-commit: Dispatches to worktree's own scripts/git-hooks/pre-commit"
+echo "   • Each worktree can have its own hook logic"
 echo "   • Skip hooks with --no-verify flag"
 echo ""
 echo "📖 Documentation:"
