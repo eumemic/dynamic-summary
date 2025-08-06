@@ -4,7 +4,7 @@ This module provides TypedDict definitions for all telemetry-related data struct
 enabling type-safe access to telemetry data and preventing bugs from accessing
 non-existent fields.
 
-Supports both v1.0 and v2.0 telemetry formats with appropriate NotRequired fields.
+Supports v1.0, v2.0, and v3.0 telemetry formats with appropriate NotRequired fields.
 """
 
 from typing import Literal, TypedDict
@@ -87,12 +87,38 @@ class DocumentDict(TypedDict):
     nodes: list[NodeTelemetryDict]
 
 
-# Top-level telemetry structure
-class TelemetryDataDict(TypedDict):
-    """Type definition for the complete telemetry data structure."""
+# Models configuration (v3.0)
+class ModelsDict(TypedDict):
+    """Type definition for models configuration in v3.0."""
+
+    summary: str
+    embedding: str
+
+
+# Top-level telemetry structure for v1.0/v2.0
+class TelemetryDataDictV2(TypedDict):
+    """Type definition for v1.0/v2.0 telemetry data structure."""
 
     format_version: str
     documents: dict[str, DocumentDict]
+
+
+# Top-level telemetry structure for v3.0
+class TelemetryDataDictV3(TypedDict):
+    """Type definition for v3.0 telemetry data structure (flat)."""
+
+    format_version: str
+    document_id: str
+    source_document_tokens: int
+    chunk_size: int
+    indexed_at: float
+    models: ModelsDict
+    nodes: list[NodeTelemetryDict]
+
+
+# Union type for all telemetry formats
+# For parse_telemetry_format, we always return v3.0 format
+TelemetryDataDict = TelemetryDataDictV3
 
 
 # Analysis result types

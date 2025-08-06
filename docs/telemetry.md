@@ -17,12 +17,13 @@ RagZoom's telemetry system provides detailed insights into the indexing process 
 
 ### Format Version
 
-The current telemetry format version is **2.0**. The version is stored in all telemetry data to ensure backward compatibility:
+The current telemetry format version is **3.0**. The version is stored in all telemetry data to ensure backward compatibility:
 
 ```json
 {
-  "format_version": "2.0",
-  "documents": { ... }
+  "format_version": "3.0",
+  "document_id": "example.pdf",
+  ...
 }
 ```
 
@@ -34,33 +35,36 @@ The current telemetry format version is **2.0**. The version is stored in all te
   - Renamed `level` to `height` throughout for clarity
   - Added `start_time`/`end_time` to EmbeddingTelemetry and SummaryAttempt
   - Replaced single `timestamp` field with start/end times for precise timing
+- **v3.0**: Flattened structure to eliminate redundancy:
+  - Removed nested "documents" dict (always single document)
+  - Moved metadata fields to top level
+  - Added models field at top level
+  - Eliminated duplicate document_id and chunk_size fields
 
 ### Structure
 
-Telemetry data follows this hierarchical structure:
+Telemetry data follows this flat structure in v3.0:
 
 ```json
 {
-  "format_version": "2.0",
-  "documents": {
-    "<document_type>": {
-      "nodes": [
-        {
-          "node_id": "node-123",
-          "height": 0,
-          "created_at": 1234567890.0,
-          "embedding": { ... },
-          "summary_attempts": [ ... ]
-        }
-      ],
-      "metadata": {
-        "total_nodes": 100,
-        "leaf_nodes": 64,
-        "summary_nodes": 36,
-        "source_document_tokens": 7500
-      }
+  "format_version": "3.0",
+  "document_id": "example.pdf",
+  "source_document_tokens": 7500,
+  "chunk_size": 200,
+  "indexed_at": 1234567890.0,
+  "models": {
+    "summary": "gpt-4o-mini",
+    "embedding": "text-embedding-3-small"
+  },
+  "nodes": [
+    {
+      "node_id": "node-123",
+      "height": 0,
+      "created_at": 1234567890.0,
+      "embedding": { ... },
+      "summary_attempts": [ ... ]
     }
-  }
+  ]
 }
 ```
 
@@ -517,28 +521,42 @@ When telemetry format changes occur:
    - Use migration tools to update old data (if available)
    - v2.0 changes: removed redundant fields, added timing, renamed level→height
 
-### Migration from v1.0 to v2.0
+### Automatic Migration to v3.0
 
-The analysis tools support both v1.0 and v2.0 formats automatically. When processing v1.0 data:
-- `node_type` field is used if present
-- `level` is treated as `height`
-- Single `timestamp` fields are used for timing analysis
+All RagZoom telemetry analysis tools automatically migrate v1.0 and v2.0 formats to v3.0 during parsing:
+
+- **v1.0/v2.0 → v3.0**: Automatic migration extracts metadata to top level, flattens structure
+- **CLI wrapper format**: Handles old CLI output that wrapped telemetry in config/document/telemetry structure
+- **Models inference**: Attempts to extract model names from nodes if not provided
+- **Backward compatibility**: All v1.0 and v2.0 fields are preserved
 
 No manual migration is required - the tools handle version differences transparently.
 
 ### Writing Compatible Analysis Code
 
 ```python
-def analyze_telemetry_safely(telemetry_data):
-    """Example of version-aware analysis."""
-    version = telemetry_data.get("format_version", "1.0")
+from ragzoom.telemetry_analysis import parse_telemetry_format
+
+def analyze_telemetry(telemetry_data):
+    """Example of version-agnostic analysis."""
+    # Always returns v3.0 format
+    parsed = parse_telemetry_format(telemetry_data)
     
-    if version == "1.0":
-        return analyze_v1_telemetry(telemetry_data)
-    elif version.startswith("2."):
-        return analyze_v2_telemetry(telemetry_data)
-    else:
-        raise ValueError(f"Unsupported telemetry version: {version}")
+    # Access data consistently regardless of input version
+    doc_id = parsed["document_id"]
+    nodes = parsed["nodes"]
+    models = parsed["models"]
+    source_tokens = parsed["source_document_tokens"]
+    
+    # Process nodes uniformly
+    for node in nodes:
+        height = node["height"]  # Works for all versions
+        if node.get("embedding"):
+            # Process embedding data
+            pass
+        if node.get("summary_attempts"):
+            # Process summary data
+            pass
 ```
 
 ## Best Practices
