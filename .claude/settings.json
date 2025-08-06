@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  // Local hooks for this worktree only - runs black, ruff, and dmypy on Python file changes
+  "hooks": {
+    "tools": {
+      "afterWrite": "scripts/claude-python-hook.sh \"$FILE_PATH\"",
+      "afterEdit": "scripts/claude-python-hook.sh \"$FILE_PATH\"",
+      "afterMultiEdit": "scripts/claude-python-hook.sh \"$FILE_PATH\""
+    }
+  }
+}
