@@ -756,6 +756,16 @@ class TelemetryVisualizer:
             linewidth=2,
         )
 
+        # Add average line
+        avg_dev = float(np.mean(deviations))
+        ax.axvline(
+            avg_dev,
+            color="blue",
+            linestyle="--",
+            label=f"Average: {avg_dev:.1f}%",
+            linewidth=2,
+        )
+
         ax.set_xlabel("Deviation from Target Token Count (%)")
         ax.set_ylabel("Frequency")
         ax.set_title(
