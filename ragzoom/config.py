@@ -55,20 +55,10 @@ class RagZoomConfig(BaseSettings):
         description="Max deviation from target before retry (0.2 = 20%)",
     )
     summary_max_retries: int = Field(
-        default=3,
+        default=0,
         ge=0,
         le=10,
         description="Maximum retries for summary correction",
-    )
-    summary_reduction_factors: list[float] = Field(
-        default=[0.95, 0.90, 0.85],
-        description="Progressive reduction factors for over-target summaries",
-    )
-    summary_fallback_reduction: float = Field(
-        default=0.8,
-        gt=0.0,
-        lt=1.0,
-        description="Fallback reduction factor when retry factors are exhausted",
     )
 
     # Validation

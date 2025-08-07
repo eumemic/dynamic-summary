@@ -78,10 +78,7 @@ async def test_retry_maintains_conversation_history(mock_store):
             assert messages[2]["role"] == "assistant"
             assert messages[2]["content"] == "A" * 150  # Previous response
             assert messages[3]["role"] == "user"
-            assert (
-                "shorter" in messages[3]["content"].lower()
-                or "reduce" in messages[3]["content"].lower()
-            )
+            assert messages[3]["content"] == "Try again."
 
             return MockOpenAIResponse(
                 content="B" * 95,  # Close to target
@@ -134,6 +131,7 @@ async def test_retry_preserves_original_context(mock_store):
     """Test that retry requests can still see the original text being summarized."""
     config = RagZoomConfig(
         summary_deviation_threshold=0.1,  # 10% deviation
+        summary_max_retries=1,  # Enable retries for this test
         leaf_tokens=100,
     )
 

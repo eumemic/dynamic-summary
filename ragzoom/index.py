@@ -229,7 +229,6 @@ class TreeBuilder:
         messages: list[
             ChatCompletionMessageParam
         ],  # Conversation history for continuations
-        local_char_ratio: float,  # Character/token ratio for this text
         parent_id: str | None = None,
         debug: bool = False,
         reporter: TelemetryCollector | None = None,
@@ -248,9 +247,6 @@ class TreeBuilder:
         best_distance_from_target = abs(best_token_count - target_tokens)
         best_attempt_index = 0  # Track which attempt was best (0 = initial)
 
-        # Convert target to characters for retry prompts
-        target_chars = int(target_tokens * local_char_ratio)
-
         node_info = f"[{parent_id}] " if parent_id else ""
         actual_retries = 0
 
@@ -262,101 +258,15 @@ class TreeBuilder:
             if deviation_pct <= self.config.summary_deviation_threshold:
                 return best_summary, actual_retries, best_attempt_index
 
-            is_over_target = current_tokens > target_tokens
-
-            # Calculate current character count for prompt
-            current_chars = len(summary)
-
-            if is_over_target:
-                # Progressive reduction for over-target
-                if retry_count <= len(self.config.summary_reduction_factors):
-                    adjusted_target_tokens = int(
-                        target_tokens
-                        * self.config.summary_reduction_factors[retry_count - 1]
-                    )
-                else:
-                    adjusted_target_tokens = int(
-                        target_tokens * self.config.summary_fallback_reduction
-                    )  # Fallback
-
-                # Convert to characters for the prompt
-                adjusted_target_chars = int(adjusted_target_tokens * local_char_ratio)
-
-                deviation_chars = current_chars - adjusted_target_chars
-                deviation_pct_display = (
-                    (deviation_chars / adjusted_target_chars) * 100
-                    if adjusted_target_chars > 0
-                    else 100
-                )
-                change_pct = (
-                    (deviation_chars / current_chars) * 100 if current_chars > 0 else 0
+            if debug:
+                logger.info(
+                    f"{node_info}Summary deviation: {current_tokens} tokens "
+                    f"(target: {target_tokens}, {deviation_pct:.1%} off). "
+                    f"Retry {retry_count}/{self.config.summary_max_retries}"
                 )
 
-                actual_deviation_pct = (
-                    (current_tokens - target_tokens) / target_tokens
-                ) * 100
-                if debug:
-                    logger.info(
-                        f"{node_info}Summary over target: {current_tokens} tokens "
-                        f"(actual target: {target_tokens}, {actual_deviation_pct:.0f}% over). "
-                        f"Retry {retry_count}/{self.config.summary_max_retries} - "
-                        f"Asking LLM to target {adjusted_target_chars} characters."
-                    )
-
-                # Build reduction prompt
-                if deviation_pct_display <= 50:
-                    guidance = "Trim less essential details, descriptive passages, and minor events."
-                elif deviation_pct_display <= 100:
-                    guidance = "Focus only on major plot points and key character actions. Remove all minor details."
-                else:
-                    guidance = "Provide only the most critical events. Use extremely concise language."
-
-                prompt = f"""Please revise your summary to be shorter.
-
-Your summary was {current_chars} characters, but the target is {adjusted_target_chars} characters.
-You are {deviation_pct_display:.0f}% over target.
-Please remove approximately {change_pct:.0f}% of the content.
-
-{guidance}
-
-Provide ONLY the shortened summary, with no preamble or explanation."""
-            else:
-                # Under target - request expansion
-                deficit_chars = target_chars - current_chars
-                deficit_pct = (
-                    (deficit_chars / target_chars) * 100 if target_chars > 0 else 0
-                )
-                expansion_pct = (
-                    (deficit_chars / current_chars) * 100 if current_chars > 0 else 0
-                )
-
-                if debug:
-                    logger.info(
-                        f"{node_info}Summary under target: {current_tokens} tokens "
-                        f"(target: {target_tokens}, {deficit_pct:.0f}% under). "
-                        f"Retry {retry_count}/{self.config.summary_max_retries} - "
-                        f"Can add {deficit_chars} more characters."
-                    )
-
-                # Build expansion prompt
-                if deficit_pct <= 30:
-                    guidance = (
-                        "Add more specific details, exact names, numbers, and dates."
-                    )
-                elif deficit_pct <= 50:
-                    guidance = "Include additional context, supporting details, and important descriptive elements."
-                else:
-                    guidance = "Significantly expand by including much more detail. Add complete sequences of events, full character actions, and comprehensive descriptions."
-
-                prompt = f"""Please expand your summary with more detail.
-
-Your summary was {current_chars} characters, but the target is {target_chars} characters.
-You can add {deficit_chars} more characters.
-Please expand by approximately {expansion_pct:.0f}%.
-
-{guidance}
-
-Provide ONLY the expanded summary, with no preamble or explanation."""
+            # Simple retry prompt
+            prompt = "Try again."
 
             # Make retry request using conversation continuation
             try:
@@ -444,18 +354,13 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
         combined_tokens = self.splitter.tokenizer.encode(combined_text)
         current_token_count = len(combined_tokens)
 
-        # Calculate local character/token ratio for this specific text
-        local_chars = len(combined_text)
-        local_char_ratio = (
-            local_chars / current_token_count if current_token_count > 0 else 4.5
-        )
-
         if current_token_count <= target_tokens:
             node_info = f"[{parent_id}] " if parent_id else ""
-            logger.info(
-                f"{node_info}Combined text already under target: {current_token_count} tokens "
-                f"(target: {target_tokens}). Skipping summarization."
-            )
+            if debug:
+                logger.info(
+                    f"{node_info}Combined text already under target: {current_token_count} tokens "
+                    f"(target: {target_tokens}). Skipping summarization."
+                )
 
             # Record this as a summary attempt for telemetry (no LLM call made)
             if reporter and parent_id:
@@ -488,31 +393,14 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
             else:
                 trimmed_prev = prev_context
 
-        # Calculate compression stats for the prompt
-        # Convert target tokens to characters using local ratio
-        target_chars = int(target_tokens * local_char_ratio)
-        chars_to_remove = local_chars - target_chars
-        compression_ratio = (
-            (chars_to_remove / local_chars) * 100 if local_chars > 0 else 0
-        )
-
-        # Build the summarization prompt using character targets
-        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context).
-
-CHARACTER REQUIREMENTS:
-- The content to summarize is {local_chars} characters
-- Your target is {target_chars} characters
-- This means you need to compress {local_chars} characters into {target_chars} characters
-- That's a {compression_ratio:.0f}% compression (remove {chars_to_remove} characters)
+        # Build the summarization prompt
+        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
 
 CRITICAL REQUIREMENTS:
 - Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
-- Your summary should be approximately {target_chars} characters (aim for 90-100% of this target)
-- The summary MUST NOT exceed {target_chars} characters. This is a HARD LIMIT.
-- IMPORTANT: Use as close to {target_chars} characters as possible. Do not be overly brief.
-- Include as much detail and information as will fit within the character budget
-- Make the summary as information-dense as possible, preserving names, numbers, and specific details
-- The summary should attempt to cover the full scope of the content from start to end, but abstract over details as necessary to stay under the character limit
+- The summary should be ≤{target_tokens} tokens in total
+- Make the summary as information-dense as possible while filling out (but not exceeding) the token limit
+- The summary should cover the full scope of the content from start to end, but abstract over minor details and omit verbal flourishes to stay within the token limit
 - Focus on key events, facts, and themes ONLY from the provided text
 - Do NOT include any concrete information from BEFORE the <SUMMARIZE_TEXT> tag or AFTER the </SUMMARIZE_TEXT> tag in the summary
 - Do NOT complete a sentence that is cut off with information from outside the <SUMMARIZE_TEXT> block
@@ -550,7 +438,7 @@ Here's the content to summarize:"""
                 messages: list[ChatCompletionMessageParam] = [
                     {
                         "role": "system",
-                        "content": f"You are a precise summarizer who creates detailed summaries of approximately {target_chars} characters. You ONLY use information explicitly provided in the input text. You NEVER add context or details from outside the given text. Aim to use 90-100% of the available character budget.",
+                        "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
                     },
                     {"role": "user", "content": full_prompt},
                 ]
@@ -558,7 +446,7 @@ Here's the content to summarize:"""
                 start_time = time.time()
                 try:
                     summary, current_tokens, response = await self._make_summary_call(
-                        messages, target_tokens=None, node_info=node_info
+                        messages, target_tokens, node_info=node_info
                     )
                 except ValueError as e:
                     logger.warning(f"{node_info}{e}, using original text")
@@ -595,7 +483,6 @@ Here's the content to summarize:"""
                             summary,
                             target_tokens,
                             messages,
-                            local_char_ratio,
                             parent_id,
                             debug,
                             reporter,
@@ -656,6 +543,7 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
+        debug: bool = False,
         reporter: None = None,
     ) -> str: ...
 
@@ -666,6 +554,7 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
+        debug: bool = False,
         reporter: TelemetryCollector = ...,
     ) -> tuple[str, dict]: ...
 
@@ -675,6 +564,7 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
+        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> str | tuple[str, dict]:
         """Add a document to the tree, creating leaf nodes.
@@ -903,6 +793,7 @@ Here's the content to summarize:"""
                 document_id,
                 async_progress,
                 overall_start_time,
+                debug,
                 reporter,
             )
 
@@ -936,7 +827,7 @@ Here's the content to summarize:"""
     ) -> str:
         """Sync wrapper for add_document."""
         return asyncio.run(
-            self.add_document_async(text, document_id, file_path, show_progress)
+            self.add_document_async(text, document_id, file_path, show_progress, debug)
         )
 
     def add_document_with_telemetry(
@@ -970,7 +861,7 @@ Here's the content to summarize:"""
         # Run indexing with collector - will return (doc_id, telemetry)
         result = asyncio.run(
             self._add_document_impl(
-                text, document_id, file_path, show_progress, collector
+                text, document_id, file_path, show_progress, debug, collector
             )
         )
 
@@ -985,10 +876,11 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
+        debug: bool = False,
     ) -> str:
         """Async version of add_document - called by sync wrapper."""
         result = await self._add_document_impl(
-            text, document_id, file_path, show_progress
+            text, document_id, file_path, show_progress, debug
         )
         # Type checker knows result is a string when no reporter is provided
         return result
@@ -1001,6 +893,7 @@ Here's the content to summarize:"""
         right_text: str,
         prev_context: str | None,
         document_id: str | None,
+        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, str, list[float]]:
         """Process a single node pair - generate summary and embedding."""
@@ -1034,7 +927,7 @@ Here's the content to summarize:"""
             target_tokens,
             prev_context,
             parent_id,
-            debug=False,
+            debug=debug,
             reporter=reporter,
         )
 
@@ -1092,6 +985,7 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         progress: AsyncProgressWrapper | None = None,
         overall_start_time: float | None = None,
+        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> str:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
@@ -1144,6 +1038,7 @@ Here's the content to summarize:"""
                     right_text,
                     prev_context,
                     document_id,
+                    debug,
                     reporter,
                 )
                 tasks.append(task)
@@ -1249,7 +1144,7 @@ Here's the content to summarize:"""
                         self.config.leaf_tokens,
                         prev_context=None,
                         parent_id=parent_id,
-                        debug=False,
+                        debug=debug,
                         reporter=reporter,
                     )
 
