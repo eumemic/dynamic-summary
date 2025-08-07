@@ -231,9 +231,10 @@ class TestTelemetryVisualizer:
 
         visualizer._plot_retry_patterns(telemetry, ax)
 
-        # Should show success message
-        texts = [t.get_text() for t in ax.texts]
-        assert any("No Retries Needed" in text for text in texts)
+        # With the new cumulative visualization, it should create a bar chart
+        # even when there are no retries (just shows all nodes had ≥1 attempts)
+        assert len(ax.patches) > 0  # Should have bar patches
+        assert "Retry Pattern Distribution" in ax.get_title()
 
         plt.close(fig)
 
@@ -275,7 +276,7 @@ class TestTelemetryVisualizer:
 
         # Check that violin plot was created
         assert len(ax.collections) > 0  # Violin plot creates collections
-        assert ax.get_xlabel() == "Tree Level"
+        assert ax.get_xlabel() == "Attempt Number"  # Changed from Tree Level
         assert ax.get_ylabel() == "Token Count"
 
         plt.close(fig)
