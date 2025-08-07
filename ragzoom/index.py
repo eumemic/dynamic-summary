@@ -166,12 +166,18 @@ class TreeBuilder:
             Number of cached tokens, or 0 if not available
         """
         if not (hasattr(response, "usage") and response.usage):
+            logger.debug(
+                "Response missing 'usage' attribute - no cached token info available"
+            )
             return 0
 
         if not (
             hasattr(response.usage, "prompt_tokens_details")
             and response.usage.prompt_tokens_details
         ):
+            logger.debug(
+                "Response usage missing 'prompt_tokens_details' - cached tokens may not be supported by this model"
+            )
             return 0
 
         details = response.usage.prompt_tokens_details
@@ -180,6 +186,10 @@ class TreeBuilder:
             return int(details.get("cached_tokens", 0))
         elif hasattr(details, "cached_tokens"):
             return int(details.cached_tokens or 0)
+
+        logger.debug(
+            "Unexpected format for prompt_tokens_details - unable to extract cached tokens"
+        )
         return 0
 
     async def _record_summary_telemetry(
@@ -362,7 +372,8 @@ class TreeBuilder:
                     f"(target: {target_tokens}). Skipping summarization."
                 )
 
-            # Record this as a summary attempt for telemetry (no LLM call made)
+            # Record this as a summary attempt for telemetry
+            # "passthrough" indicates the text was already short enough and no summarization was needed
             if reporter and parent_id:
                 reporter.record_summary_attempt_v2(
                     node_id=parent_id,
@@ -371,7 +382,7 @@ class TreeBuilder:
                     prompt_tokens=0,  # No LLM call made
                     completion_tokens=0,  # No LLM call made
                     actual_tokens=current_token_count,
-                    model="passthrough",  # Special model name for no-op
+                    model="passthrough",  # Indicates no summarization needed - text used as-is
                     start_time=time.time(),
                     is_final=True,  # This is the only and final attempt
                 )

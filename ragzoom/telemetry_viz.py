@@ -713,13 +713,12 @@ class TelemetryVisualizer:
 
     def _plot_summary_accuracy(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot summary accuracy distribution for all attempts, color-coded by attempt number."""
+        # Constants for attempt grouping
+        max_attempt_groups = 5  # Maximum number of attempt groups to track
+
         # Extract deviations from all attempts
         deviations_by_attempt: dict[int, list[float]] = {
-            1: [],
-            2: [],
-            3: [],
-            4: [],
-            5: [],
+            i: [] for i in range(1, max_attempt_groups + 1)
         }
 
         # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
@@ -760,12 +759,11 @@ class TelemetryVisualizer:
                     actual_tokens = attempt.get("actual_tokens", 0)
                     if actual_tokens > 0:
                         deviation = (actual_tokens - chunk_size) / chunk_size * 100
-                        if attempt_num <= 5:
+                        if attempt_num <= max_attempt_groups:
                             deviations_by_attempt[attempt_num].append(deviation)
                         else:
-                            deviations_by_attempt[5].append(
-                                deviation
-                            )  # Group 5+ together
+                            # Group attempts beyond max_attempt_groups together
+                            deviations_by_attempt[max_attempt_groups].append(deviation)
 
         # Combine all deviations to determine bin edges
         all_deviations = []
