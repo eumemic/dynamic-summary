@@ -63,6 +63,11 @@ def cli(ctx: click.Context) -> None:
 )
 @click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.option(
+    "--debug",
+    is_flag=True,
+    help="Show debug information including token usage statistics",
+)
+@click.option(
     "--telemetry",
     "telemetry_file",
     type=click.Path(),
@@ -80,6 +85,7 @@ def index(
     no_progress: bool,
     max_concurrent: int,
     validate: bool,
+    debug: bool,
     telemetry_file: str | None,
 ) -> None:
     """Index a document from file."""
@@ -122,13 +128,14 @@ def index(
         store = ctx.obj["store"]
         tree_builder = TreeBuilder(config, store, max_concurrent=max_concurrent)
 
-        # Index with or without metrics based on telemetry flag
+        # Index with telemetry if requested
         if telemetry_file:
-            doc_id, metrics = tree_builder.add_document_with_telemetry(
+            doc_id, telemetry = tree_builder.add_document_with_telemetry(
                 text,
                 document_id=document_id,
                 file_path=str(path.absolute()),
                 show_progress=not no_progress,
+                debug=debug,
             )
         else:
             doc_id = tree_builder.add_document(
@@ -136,6 +143,7 @@ def index(
                 document_id=document_id,
                 file_path=str(path.absolute()),
                 show_progress=not no_progress,
+                debug=debug,
             )
 
         # Get stats
@@ -194,6 +202,12 @@ def index(
             lambda: validate_equal_leaf_depth(store, doc_id), "equal leaf depth"
         )
 
+        # Show debug hint if enabled
+        if debug:
+            click.echo(
+                "\n💡 Debug information (including token usage statistics) logged to stderr"
+            )
+
         # Save telemetry if requested
         if telemetry_file:
             # telemetry_file will be either the flag_value or the user-provided path
@@ -203,7 +217,7 @@ def index(
 
             # In v3.0, telemetry data is already flat - just save it directly
             # The telemetry data from finalize() already contains all necessary information
-            telemetry_data = metrics
+            telemetry_data = telemetry
 
             with open(output_file, "w") as f:
                 json.dump(telemetry_data, f, indent=2)

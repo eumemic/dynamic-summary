@@ -36,14 +36,19 @@ class SummaryAttemptDict(TypedDict):
     prompt_tokens: int
     completion_tokens: int
     actual_tokens: int
-    status: Literal["accepted", "rejected_over", "rejected_under", "error"]
     model: str
     start_time: float
     end_time: float
 
-    # Optional fields
+    # Optional fields (including backwards compatibility)
+    cached_tokens: NotRequired[
+        int
+    ]  # Number of cached prompt tokens (for prompt caching)
+    prompt_tokens_details: NotRequired[dict]  # Full OpenAI prompt token details
+    is_final: NotRequired[bool]  # Whether this attempt was the one actually used
+    # Backwards compatibility for old telemetry files
+    status: NotRequired[Literal["accepted", "rejected_over", "rejected_under", "error"]]
     rejection_reason: NotRequired[str | None]
-    prompt_hash: NotRequired[str | None]
 
     # v1 compatibility - removed in v2
     is_retry: NotRequired[bool]
@@ -62,6 +67,7 @@ class NodeTelemetryDict(TypedDict):
     # Optional fields
     embedding: NotRequired[EmbeddingTelemetryDict]
     summary_attempts: NotRequired[list[SummaryAttemptDict]]
+    accepted_attempt: NotRequired[int]  # Index of the accepted attempt
 
     # v1 compatibility fields
     node_type: NotRequired[Literal["leaf", "summary"]]
