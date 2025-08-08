@@ -47,6 +47,20 @@ class RagZoomConfig(BaseSettings):
         default=False, description="Enable smoothing pass for tiling joins"
     )
 
+    # Summary correction parameters
+    summary_deviation_threshold: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Max deviation from target before retry (0.2 = 20%)",
+    )
+    summary_max_retries: int = Field(
+        default=0,
+        ge=0,
+        le=10,
+        description="Maximum retries for summary correction",
+    )
+
     # Validation
     validate_pipeline: bool = Field(
         default=False, description="Enable validation checks for tiling invariants"
@@ -140,17 +154,23 @@ class RagZoomConfig(BaseSettings):
 
         # Get embedding price
         if self.embedding_model not in pricing_data["embeddings"]:
+            available_models = list(pricing_data["embeddings"].keys())
+            pricing_file_path = self.pricing_file or "ragzoom/pricing.json"
             raise ValueError(
                 f"Embedding model '{self.embedding_model}' not found in pricing file. "
-                f"Available models: {list(pricing_data['embeddings'].keys())}"
+                f"Available models: {available_models}\n"
+                f"To add support for '{self.embedding_model}', update the pricing file at: {pricing_file_path}"
             )
         self.embedding_cost_per_1k = pricing_data["embeddings"][self.embedding_model]
 
         # Get LLM prices
         if self.summary_model not in pricing_data["llms"]:
+            available_models = list(pricing_data["llms"].keys())
+            pricing_file_path = self.pricing_file or "ragzoom/pricing.json"
             raise ValueError(
                 f"Summary model '{self.summary_model}' not found in pricing file. "
-                f"Available models: {list(pricing_data['llms'].keys())}"
+                f"Available models: {available_models}\n"
+                f"To add support for '{self.summary_model}', update the pricing file at: {pricing_file_path}"
             )
         llm_pricing = pricing_data["llms"][self.summary_model]
         self.summary_input_cost_per_1k = llm_pricing["input"]
@@ -171,7 +191,8 @@ class RagZoomConfig(BaseSettings):
         if not pricing_path.exists():
             raise FileNotFoundError(
                 f"Pricing file not found at {pricing_path}. "
-                "Please ensure ragzoom/pricing.json exists or specify a custom path."
+                "Please ensure ragzoom/pricing.json exists or specify a custom path "
+                "using the RAGZOOM_PRICING_FILE environment variable or pricing_file parameter."
             )
 
         try:

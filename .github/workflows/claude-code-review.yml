@@ -115,8 +115,8 @@ jobs:
           #   'Welcome! Please review this PR from a first-time contributor. Be encouraging and provide detailed explanations for any suggestions.' ||
           #   'Please provide a thorough code review focusing on our coding standards and best practices.' }}
 
-          # Optional: Add specific tools for running tests or linting
-          # allowed_tools: "Bash(npm run test),Bash(npm run lint),Bash(npm run typecheck)"
+          # Allow safe Bash commands for file inspection during review
+          allowed_tools: "Bash(ls*),Bash(head*),Bash(tail*),Bash(cat*),Bash(grep*),Bash(find*),Bash(wc*),Bash(file*)"
 
           # Optional: Skip review for certain conditions
           # if: |
