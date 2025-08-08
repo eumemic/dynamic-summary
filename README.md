@@ -42,6 +42,28 @@ The setup script will:
 - Configure your development environment
 - Verify everything is working
 
+### Optional: Telemetry Tools
+
+The telemetry analysis commands (`analyze`, `compare`, `visualize`) use optional dependencies:
+
+```bash
+# Core package only
+pip install ragzoom
+
+# With telemetry tools
+pip install ragzoom[telemetry]
+```
+
+Usage: `ragzoom-telemetry analyze|compare|visualize` (separate CLI entry point)
+
+This approach provides:
+- **Avoid heavy deps in main package**: Matplotlib, seaborn, pandas only installed when needed
+- **Clean separation**: Developer tools vs end-user features 
+- **Single package maintenance**: No circular dependencies, simpler versioning
+- **Idiomatic Python**: Follows PEP 517/518 standards
+
+For comprehensive telemetry documentation, see [docs/telemetry.md](docs/telemetry.md)
+
 ## Quick Start
 
 ### CLI Usage
@@ -76,6 +98,10 @@ ragzoom pin <node-id>
 
 # Start API server
 ragzoom serve
+
+# Index with custom prompts
+ragzoom index document.txt --summary-system-prompt custom/academic.txt
+ragzoom index document.txt --summary-retry-prompt custom/retry.txt
 ```
 
 ### Python API
@@ -153,6 +179,16 @@ RagZoom maintains complete isolation between indexed documents:
 - **Namespace Isolation**: Queries only search within the specified document
 - **Re-indexing**: Use `--clear` flag to replace existing documents
 - **Bulk Operations**: Clear individual documents or all data
+
+## Prompt Customization
+
+RagZoom supports custom prompts for controlling summarization behavior:
+
+- **System Prompt**: Define overall summarization instructions
+- **Retry Prompt**: Control how summaries are corrected when they deviate from target token counts
+- **Security**: Custom prompts must be in allowed directories (current directory or `prompts/` subdirectory)
+
+See [Prompt Customization Guide](docs/prompt-customization.md) for detailed documentation.
 
 Example workflow:
 ```bash

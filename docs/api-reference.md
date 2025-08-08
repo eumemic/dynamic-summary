@@ -31,6 +31,10 @@ ragzoom index <input> [OPTIONS]
 - `--no-progress` - Disable progress bar
 - `--max-concurrent` - Maximum concurrent API calls (default: 10)
 - `--validate` - Enable validation checks during indexing
+- `--debug` - Enable debug logging (shows prompt loading, token counts, etc.)
+- `--summary-system-prompt` - Path to custom system prompt file for summarization
+- `--summary-retry-prompt` - Path to custom retry prompt file for summary corrections
+- `--telemetry` - Save telemetry data to JSON file (default: telemetry.json when flag is set)
 
 **Examples:**
 ```bash
@@ -45,6 +49,15 @@ ragzoom index document.txt --clear
 
 # Index with validation
 ragzoom index document.txt --validate
+
+# Index with custom prompts
+ragzoom index document.txt --summary-system-prompt prompts/academic.txt
+
+# Index with debug logging to see prompt loading
+ragzoom index document.txt --debug
+
+# Index with telemetry collection
+ragzoom index document.txt --telemetry
 ```
 
 ### `ragzoom query`
