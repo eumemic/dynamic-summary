@@ -84,6 +84,15 @@ if [[ -d venv ]]; then
     ln -s "../../venv" "$WORKTREE_PATH/venv"
 fi
 
+# Initialize submodules if they exist
+if [[ -f .gitmodules ]]; then
+    echo "Initializing submodules..."
+    cd "$WORKTREE_PATH"
+    git submodule init
+    git submodule update
+    cd - > /dev/null
+fi
+
 echo ""
 echo "✅ Worktree created at: $WORKTREE_PATH"
 echo ""
