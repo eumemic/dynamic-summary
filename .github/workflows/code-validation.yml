@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -92,6 +94,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -135,6 +139,8 @@ jobs:
     if: github.event.pull_request.draft != true
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -175,6 +181,8 @@ jobs:
     if: github.event.pull_request.draft != true
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -215,6 +223,8 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -265,6 +275,8 @@ jobs:
         python-version: ['3.10', '3.12']
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
