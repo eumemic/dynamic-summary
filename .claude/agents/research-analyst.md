@@ -1,0 +1,1 @@
+../../vendor/awesome-claude-code-subagents/categories/10-research-analysis/research-analyst.md
