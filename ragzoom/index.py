@@ -19,15 +19,6 @@ from ragzoom.telemetry_collection import TelemetryCollector
 
 logger = logging.getLogger(__name__)
 
-# Optional tqdm import for progress bar text output
-try:
-    from tqdm import tqdm
-
-    HAS_TQDM = True
-except ImportError:
-    HAS_TQDM = False
-    tqdm = None
-
 
 class TreeBuilder:
     """Tree builder with concurrent processing."""
@@ -232,6 +223,74 @@ class TreeBuilder:
             cached_tokens=cached_tokens,
         )
 
+    def _should_retry_summary(self, deviation_pct: float) -> bool:
+        """Check if summary should be retried based on deviation from target.
+
+        Args:
+            deviation_pct: Percentage deviation from target tokens
+
+        Returns:
+            True if retry is needed, False otherwise
+        """
+        return deviation_pct > self.config.summary_deviation_threshold
+
+    def _is_better_summary(
+        self,
+        new_tokens: int,
+        new_distance: int,
+        current_best_tokens: int,
+        current_best_distance: int,
+        target_tokens: int,
+    ) -> bool:
+        """Check if a new summary attempt is better than the current best.
+
+        Args:
+            new_tokens: Token count of new attempt
+            new_distance: Distance from target for new attempt
+            current_best_tokens: Token count of current best
+            current_best_distance: Distance from target for current best
+            target_tokens: Target token count
+
+        Returns:
+            True if new attempt is better, False otherwise
+        """
+        # If new is under target and closer, it's better
+        if new_tokens <= target_tokens and new_distance < current_best_distance:
+            return True
+        # If current best is over target and new is smaller, it's better
+        if current_best_tokens > target_tokens and new_tokens < current_best_tokens:
+            return True
+        return False
+
+    async def _execute_retry_attempt(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        target_tokens: int,
+        node_info: str,
+        summary: str,
+    ) -> tuple[str, int, Any] | None:
+        """Execute a single retry attempt.
+
+        Args:
+            messages: Conversation history
+            target_tokens: Target token count
+            node_info: Node identifier for logging
+            summary: Current summary to append to conversation
+
+        Returns:
+            Tuple of (new_summary, token_count, response) or None if failed
+        """
+        try:
+            # Append current summary as assistant response
+            messages.append({"role": "assistant", "content": summary})
+            # Append retry instruction as user message
+            messages.append({"role": "user", "content": "Try again."})
+
+            return await self._make_summary_call(messages, target_tokens, node_info)
+        except ValueError:
+            logger.warning(f"{node_info}Failed to get valid retry response")
+            return None
+
     async def _retry_summary_correction(
         self,
         initial_summary: str,
@@ -250,22 +309,20 @@ class TreeBuilder:
         Returns:
             tuple: (best_summary, actual_retry_count, best_attempt_index)
         """
-        summary = initial_summary
-        summary_tokens = self.splitter.tokenizer.encode(summary)
-        best_summary = summary
-        best_token_count = len(summary_tokens)
+        best_summary = initial_summary
+        best_token_count = len(self.splitter.tokenizer.encode(initial_summary))
         best_distance_from_target = abs(best_token_count - target_tokens)
-        best_attempt_index = 0  # Track which attempt was best (0 = initial)
+        best_attempt_index = 0
 
         node_info = f"[{parent_id}] " if parent_id else ""
         actual_retries = 0
 
         for retry_count in range(1, self.config.summary_max_retries + 1):
-            current_tokens = len(summary_tokens)
+            # Check if we should retry
+            current_tokens = len(self.splitter.tokenizer.encode(best_summary))
             deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
 
-            # Stop if within threshold
-            if deviation_pct <= self.config.summary_deviation_threshold:
+            if not self._should_retry_summary(deviation_pct):
                 return best_summary, actual_retries, best_attempt_index
 
             if debug:
@@ -275,72 +332,54 @@ class TreeBuilder:
                     f"Retry {retry_count}/{self.config.summary_max_retries}"
                 )
 
-            # Simple retry prompt
-            prompt = "Try again."
+            # Execute retry attempt
+            retry_start = time.time()
+            result = await self._execute_retry_attempt(
+                messages, target_tokens, node_info, best_summary
+            )
 
-            # Make retry request using conversation continuation
-            try:
-                # Append current summary as assistant response
-                messages.append({"role": "assistant", "content": summary})
-                # Append retry instruction as user message
-                messages.append({"role": "user", "content": prompt})
+            if not result:
+                continue  # Failed to get valid response
 
-                retry_start = time.time()
-                try:
-                    summary, new_token_count, retry_response = (
-                        await self._make_summary_call(
-                            messages, target_tokens, node_info
-                        )
-                    )
-                    actual_retries = retry_count  # Track that we performed this retry
-                    new_distance = abs(new_token_count - target_tokens)
-                except ValueError:
-                    logger.warning(f"{node_info}Failed to get valid retry response")
-                    continue
+            new_summary, new_token_count, retry_response = result
+            actual_retries = retry_count
+            new_distance = abs(new_token_count - target_tokens)
 
-                # Track retry attempt with telemetry
+            # Track retry attempt with telemetry
+            if reporter:
                 await self._record_summary_telemetry(
                     reporter=reporter,
                     parent_id=parent_id,
                     response=retry_response,
                     target_tokens=target_tokens,
-                    input_text_tokens=best_token_count,  # Previous attempt's tokens
+                    input_text_tokens=best_token_count,
                     actual_tokens=new_token_count,
                     start_time=retry_start,
                 )
 
-                # Update best if improved
-                if (
-                    new_token_count <= target_tokens
-                    and new_distance < best_distance_from_target
-                ) or (
-                    best_token_count > target_tokens
-                    and new_token_count < best_token_count
-                ):
-                    best_summary = summary
-                    best_token_count = new_token_count
-                    best_distance_from_target = new_distance
-                    best_attempt_index = actual_retries  # This retry is now the best
+            # Check if this attempt is better
+            if self._is_better_summary(
+                new_token_count,
+                new_distance,
+                best_token_count,
+                best_distance_from_target,
+                target_tokens,
+            ):
+                best_summary = new_summary
+                best_token_count = new_token_count
+                best_distance_from_target = new_distance
+                best_attempt_index = actual_retries
 
-                    if debug:
-                        logger.info(
-                            f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
-                            f"(target: {target_tokens}, distance: {new_distance})"
-                        )
-                else:
-                    if debug:
-                        logger.info(
-                            f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
-                            f"(best so far: {best_token_count} tokens)"
-                        )
-
-                # Use best for next iteration
-                summary = best_summary
-                summary_tokens = self.splitter.tokenizer.encode(best_summary)
-
-            except Exception as e:
-                logger.error(f"{node_info}Error during retry {retry_count}: {e}")
-                break
+                if debug:
+                    logger.info(
+                        f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
+                        f"(target: {target_tokens}, distance: {new_distance})"
+                    )
+            elif debug:
+                logger.info(
+                    f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
+                    f"(best so far: {best_token_count} tokens)"
+                )
 
         return best_summary, actual_retries, best_attempt_index
 

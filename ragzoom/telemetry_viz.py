@@ -8,7 +8,7 @@ simplified metrics in telemetry_cli.py.
 import json
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -32,6 +32,7 @@ from ragzoom.telemetry_config import (
     SUMMARY_INPUT_COST_PER_1K,
     SUMMARY_OUTPUT_COST_PER_1K,
 )
+from ragzoom.telemetry_types import NodeTelemetryDict
 
 # Set style for professional-looking plots
 try:
@@ -59,6 +60,47 @@ class TelemetryVisualizer:
         """Initialize visualizer with output file path."""
         self.output_path = output_path
         self.thresholds = get_telemetry_thresholds()
+
+    def _extract_nodes_from_telemetry(self, telemetry: dict) -> list[dict[str, Any]]:
+        """Extract nodes from telemetry data, handling both v1.0/v2.0 and v3.0 formats.
+
+        Args:
+            telemetry: Telemetry data dictionary
+
+        Returns:
+            List of node dictionaries
+        """
+        if "documents" in telemetry:
+            # v1.0/v2.0 format with documents dictionary
+            nodes: list[dict[str, Any]] = []
+            for doc_data in telemetry.get("documents", {}).values():
+                nodes.extend(doc_data.get("nodes", []))
+            return nodes
+        else:
+            # v3.0 flat format
+            nodes_data = telemetry.get("nodes", [])
+            return nodes_data if isinstance(nodes_data, list) else []
+
+    def _extract_chunk_size_from_telemetry(self, telemetry: dict) -> int:
+        """Extract chunk size from telemetry data, handling both formats.
+
+        Args:
+            telemetry: Telemetry data dictionary
+
+        Returns:
+            Chunk size in tokens, or 0 if not found
+        """
+        if "documents" in telemetry:
+            # v1.0/v2.0 format - use first document with valid chunk_size
+            for doc_data in telemetry.get("documents", {}).values():
+                chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
+                if chunk_size > 0:
+                    return int(chunk_size)
+            return 0
+        else:
+            # v3.0 flat format
+            chunk_size = telemetry.get("chunk_size", 0)
+            return int(chunk_size) if chunk_size else 0
 
     def _ensure_output_dir(self) -> None:
         """Ensure the output directory exists, creating it if necessary."""
@@ -324,15 +366,8 @@ class TelemetryVisualizer:
         # Group tokens by height
         tokens_by_height: dict[int, dict[str, list[float]]] = {}
 
-        # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
-        nodes = []
-        if "documents" in telemetry:
-            # v1.0/v2.0 format with documents dictionary
-            for doc_type, doc_data in telemetry.get("documents", {}).items():
-                nodes.extend(doc_data.get("nodes", []))
-        else:
-            # v3.0 flat format
-            nodes = telemetry.get("nodes", [])
+        # Extract nodes from telemetry data
+        nodes = self._extract_nodes_from_telemetry(telemetry)
 
         # Process nodes
         for node in nodes:
@@ -341,7 +376,9 @@ class TelemetryVisualizer:
                 continue  # Skip leaf nodes
 
             # Get token counts for this node
-            accepted_attempt, _ = get_accepted_attempt(node)
+            # Cast to NodeTelemetryDict for type safety
+            node_typed = cast(NodeTelemetryDict, node)
+            accepted_attempt, _ = get_accepted_attempt(node_typed)
             if accepted_attempt:
                 prompt_tokens = accepted_attempt.get("prompt_tokens", 0)
                 completion_tokens = accepted_attempt.get("completion_tokens", 0)
@@ -413,13 +450,8 @@ class TelemetryVisualizer:
         # Calculate costs by attempt number
         costs_by_attempt = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}  # 5 = 5+
 
-        # Extract nodes based on telemetry format
-        nodes = []
-        if "documents" in telemetry:
-            for doc_data in telemetry.get("documents", {}).values():
-                nodes.extend(doc_data.get("nodes", []))
-        else:
-            nodes = telemetry.get("nodes", [])
+        # Extract nodes from telemetry data
+        nodes = self._extract_nodes_from_telemetry(telemetry)
 
         # Process all attempts from summary nodes
         for node in nodes:
@@ -579,13 +611,8 @@ class TelemetryVisualizer:
         # Count nodes by number of attempts
         attempt_counts: dict[int, int] = {}
 
-        # Extract nodes based on telemetry format
-        nodes = []
-        if "documents" in telemetry:
-            for doc_data in telemetry.get("documents", {}).values():
-                nodes.extend(doc_data.get("nodes", []))
-        else:
-            nodes = telemetry.get("nodes", [])
+        # Extract nodes from telemetry data
+        nodes = self._extract_nodes_from_telemetry(telemetry)
 
         # Count attempts for each summary node
         total_summary_nodes = 0
@@ -675,21 +702,9 @@ class TelemetryVisualizer:
         """
         deviations: list[float] = []
 
-        # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
-        chunk_size = 0
-        nodes = []
-
-        if "documents" in telemetry:
-            # v1.0/v2.0 format with documents dictionary
-            for doc_name, doc_data in telemetry.get("documents", {}).items():
-                chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
-                if chunk_size > 0:
-                    nodes = doc_data.get("nodes", [])
-                    break  # Use first document with valid chunk_size
-        else:
-            # v3.0 flat format
-            chunk_size = telemetry.get("chunk_size", 0)
-            nodes = telemetry.get("nodes", [])
+        # Extract chunk size and nodes from telemetry data
+        chunk_size = self._extract_chunk_size_from_telemetry(telemetry)
+        nodes = self._extract_nodes_from_telemetry(telemetry)
 
         # If no valid chunk_size found, return empty deviations
         if chunk_size <= 0:
@@ -701,7 +716,9 @@ class TelemetryVisualizer:
             height = node.get("height", node.get("level", 0))
             if height > 0:
                 # Look for accepted summary attempts
-                accepted_attempt, _ = get_accepted_attempt(node)
+                # Cast to NodeTelemetryDict for type safety
+                node_typed = cast(NodeTelemetryDict, node)
+                accepted_attempt, _ = get_accepted_attempt(node_typed)
                 if accepted_attempt:
                     actual_tokens = accepted_attempt.get("actual_tokens", 0)
                     if actual_tokens > 0:
@@ -721,21 +738,9 @@ class TelemetryVisualizer:
             i: [] for i in range(1, max_attempt_groups + 1)
         }
 
-        # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
-        chunk_size = 0
-        nodes = []
-
-        if "documents" in telemetry:
-            # v1.0/v2.0 format with documents dictionary
-            for doc_name, doc_data in telemetry.get("documents", {}).items():
-                chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
-                if chunk_size > 0:
-                    nodes = doc_data.get("nodes", [])
-                    break  # Use first document with valid chunk_size
-        else:
-            # v3.0 flat format
-            chunk_size = telemetry.get("chunk_size", 0)
-            nodes = telemetry.get("nodes", [])
+        # Extract chunk size and nodes from telemetry data
+        chunk_size = self._extract_chunk_size_from_telemetry(telemetry)
+        nodes = self._extract_nodes_from_telemetry(telemetry)
 
         # If no valid chunk_size found, return empty deviations
         if chunk_size <= 0:
@@ -848,18 +853,11 @@ class TelemetryVisualizer:
         # Extract node creation times
         creation_times = []
 
-        # Handle both v1.0/v2.0 (nested) and v3.0 (flat) formats
-        if "documents" in telemetry:
-            # v1.0/v2.0 format with documents dictionary
-            for doc_data in telemetry.get("documents", {}).values():
-                for node in doc_data.get("nodes", []):
-                    if "created_at" in node:
-                        creation_times.append(node["created_at"])
-        else:
-            # v3.0 flat format
-            for node in telemetry.get("nodes", []):
-                if "created_at" in node:
-                    creation_times.append(node["created_at"])
+        # Extract nodes and get creation times
+        nodes = self._extract_nodes_from_telemetry(telemetry)
+        for node in nodes:
+            if "created_at" in node:
+                creation_times.append(node["created_at"])
 
         if not creation_times:
             ax.text(
@@ -917,15 +915,8 @@ class TelemetryVisualizer:
         # Extract token data by attempt number from telemetry
         token_data = []
 
-        # Extract nodes based on telemetry format
-        nodes = []
-        if "documents" in telemetry:
-            # v1.0/v2.0 format with documents dictionary
-            for doc_type, doc_data in telemetry.get("documents", {}).items():
-                nodes.extend(doc_data.get("nodes", []))
-        else:
-            # v3.0 flat format has nodes at root level
-            nodes = telemetry.get("nodes", [])
+        # Extract nodes from telemetry data
+        nodes = self._extract_nodes_from_telemetry(telemetry)
 
         # Process all attempts from summary nodes
         for node in nodes:
@@ -989,16 +980,7 @@ class TelemetryVisualizer:
         )
 
         # Get chunk_size for target line
-        chunk_size = None
-        if "documents" in telemetry:
-            # v1.0/v2.0 format
-            for doc_name, doc_data in telemetry.get("documents", {}).items():
-                chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
-                if chunk_size > 0:
-                    break
-        else:
-            # v3.0 flat format
-            chunk_size = telemetry.get("chunk_size", 0)
+        chunk_size = self._extract_chunk_size_from_telemetry(telemetry)
 
         if chunk_size and chunk_size > 0:
             ax.axhline(
