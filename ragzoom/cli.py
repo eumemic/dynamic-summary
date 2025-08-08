@@ -29,6 +29,16 @@ logger = logging.getLogger(__name__)
 # Suppress noisy HTTP logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
+
+
+def configure_logging_level(debug: bool) -> None:
+    """Configure logging level based on debug flag."""
+    if debug:
+        logging.getLogger("ragzoom").setLevel(logging.DEBUG)
+    else:
+        logging.getLogger("ragzoom").setLevel(logging.INFO)
+
+
 # Keep ragzoom.index at INFO to show batch progress
 
 
@@ -76,6 +86,16 @@ def cli(ctx: click.Context) -> None:
     default=None,
     help="Save telemetry data to JSON file (default: telemetry.json)",
 )
+@click.option(
+    "--summary-system-prompt",
+    type=click.Path(exists=True),
+    help="Path to custom system prompt file for summarization",
+)
+@click.option(
+    "--summary-retry-prompt",
+    type=click.Path(exists=True),
+    help="Path to custom retry prompt file for summary corrections",
+)
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -87,8 +107,13 @@ def index(
     validate: bool,
     debug: bool,
     telemetry_file: str | None,
+    summary_system_prompt: str | None,
+    summary_retry_prompt: str | None,
 ) -> None:
     """Index a document from file."""
+
+    # Configure logging level based on debug flag
+    configure_logging_level(debug)
 
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
@@ -123,10 +148,16 @@ def index(
 
         click.echo(f"Indexing {path.name}...")
 
-        # Create tree builder with specified concurrency
+        # Create tree builder with specified concurrency and optional custom prompts
         config = ctx.obj["config"]
         store = ctx.obj["store"]
-        tree_builder = TreeBuilder(config, store, max_concurrent=max_concurrent)
+        tree_builder = TreeBuilder(
+            config,
+            store,
+            max_concurrent=max_concurrent,
+            summary_system_prompt_path=summary_system_prompt,
+            retry_prompt_path=summary_retry_prompt,
+        )
 
         # Index with telemetry if requested
         if telemetry_file:
@@ -135,7 +166,6 @@ def index(
                 document_id=document_id,
                 file_path=str(path.absolute()),
                 show_progress=not no_progress,
-                debug=debug,
             )
         else:
             doc_id = tree_builder.add_document(
@@ -143,7 +173,6 @@ def index(
                 document_id=document_id,
                 file_path=str(path.absolute()),
                 show_progress=not no_progress,
-                debug=debug,
             )
 
         # Get stats
@@ -315,6 +344,10 @@ def query(
     viz_coords: str,
 ) -> None:
     """Query the system and get a summary."""
+
+    # Configure logging level based on debug flag
+    configure_logging_level(debug)
+
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
 

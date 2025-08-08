@@ -13,6 +13,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
+from ragzoom.prompt import PromptManager
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
 from ragzoom.telemetry_collection import TelemetryCollector
@@ -23,19 +24,33 @@ logger = logging.getLogger(__name__)
 class TreeBuilder:
     """Tree builder with concurrent processing."""
 
-    def __init__(self, config: RagZoomConfig, store: Store, max_concurrent: int = 10):
+    def __init__(
+        self,
+        config: RagZoomConfig,
+        store: Store,
+        max_concurrent: int = 10,
+        summary_system_prompt_path: str | None = None,
+        retry_prompt_path: str | None = None,
+    ):
         """Initialize tree builder.
 
         Args:
             config: RagZoom configuration
             store: Store instance for persistence
             max_concurrent: Maximum concurrent API requests
+            summary_system_prompt_path: Optional path to custom system prompt file
+            retry_prompt_path: Optional path to custom retry prompt file
         """
         self.config = config
         self.store = store
         self.client = AsyncOpenAI(api_key=config.openai_api_key)
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.splitter = TextSplitter(config)
+
+        # Initialize prompt manager
+        self.prompt_manager = PromptManager()
+        self.summary_system_prompt_path = summary_system_prompt_path
+        self.retry_prompt_path = retry_prompt_path
 
     def _generate_node_id(self) -> str:
         """Generate unique node ID."""
@@ -281,10 +296,25 @@ class TreeBuilder:
             Tuple of (new_summary, token_count, response) or None if failed
         """
         try:
+            # Calculate deviation for retry prompt
+            current_tokens = len(self.splitter.tokenizer.encode(summary))
+            deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
+
+            # Load and hydrate retry prompt with variables
+            retry_prompt = self.prompt_manager.load_and_hydrate(
+                "summarization/retry",
+                {
+                    "target_tokens": target_tokens,
+                    "current_tokens": current_tokens,
+                    "deviation_pct": deviation_pct,
+                },
+                custom_path=self.retry_prompt_path,
+            )
+
             # Append current summary as assistant response
             messages.append({"role": "assistant", "content": summary})
             # Append retry instruction as user message
-            messages.append({"role": "user", "content": "Try again."})
+            messages.append({"role": "user", "content": retry_prompt})
 
             return await self._make_summary_call(messages, target_tokens, node_info)
         except ValueError:
@@ -299,7 +329,6 @@ class TreeBuilder:
             ChatCompletionMessageParam
         ],  # Conversation history for continuations
         parent_id: str | None = None,
-        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, int, int]:
         """Retry summary correction to get closer to target token count.
@@ -325,12 +354,11 @@ class TreeBuilder:
             if not self._should_retry_summary(deviation_pct):
                 return best_summary, actual_retries, best_attempt_index
 
-            if debug:
-                logger.info(
-                    f"{node_info}Summary deviation: {current_tokens} tokens "
-                    f"(target: {target_tokens}, {deviation_pct:.1%} off). "
-                    f"Retry {retry_count}/{self.config.summary_max_retries}"
-                )
+            logger.debug(
+                f"{node_info}Summary deviation: {current_tokens} tokens "
+                f"(target: {target_tokens}, {deviation_pct:.1%} off). "
+                f"Retry {retry_count}/{self.config.summary_max_retries}"
+            )
 
             # Execute retry attempt
             retry_start = time.time()
@@ -370,13 +398,12 @@ class TreeBuilder:
                 best_distance_from_target = new_distance
                 best_attempt_index = actual_retries
 
-                if debug:
-                    logger.info(
-                        f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
-                        f"(target: {target_tokens}, distance: {new_distance})"
-                    )
-            elif debug:
-                logger.info(
+                logger.debug(
+                    f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
+                    f"(target: {target_tokens}, distance: {new_distance})"
+                )
+            else:
+                logger.debug(
                     f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
                     f"(best so far: {best_token_count} tokens)"
                 )
@@ -390,7 +417,6 @@ class TreeBuilder:
         target_tokens: int,
         prev_context: str | None = None,
         parent_id: str | None = None,
-        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, int]:
         """Summarize text using LLM.
@@ -405,11 +431,10 @@ class TreeBuilder:
 
         if current_token_count <= target_tokens:
             node_info = f"[{parent_id}] " if parent_id else ""
-            if debug:
-                logger.info(
-                    f"{node_info}Combined text already under target: {current_token_count} tokens "
-                    f"(target: {target_tokens}). Skipping summarization."
-                )
+            logger.debug(
+                f"{node_info}Combined text already under target: {current_token_count} tokens "
+                f"(target: {target_tokens}). Skipping summarization."
+            )
 
             # Record this as a summary attempt for telemetry
             # "passthrough" indicates the text was already short enough and no summarization was needed
@@ -429,7 +454,7 @@ class TreeBuilder:
             return combined_text, 0  # No retries needed
 
         # Build prompt with adjacent context (trim to avoid token explosion)
-        prompt_parts = []
+        prompt_parts: list[str] = []
 
         # Process adjacent context if needed
         trimmed_prev = None
@@ -443,26 +468,8 @@ class TreeBuilder:
             else:
                 trimmed_prev = prev_context
 
-        # Build the summarization prompt
-        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
-
-CRITICAL REQUIREMENTS:
-- Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
-- The summary should be ≤{target_tokens} tokens in total
-- Make the summary as information-dense as possible while filling out (but not exceeding) the token limit
-- The summary should cover the full scope of the content from start to end, but abstract over minor details and omit verbal flourishes to stay within the token limit
-- Focus on key events, facts, and themes ONLY from the provided text
-- Do NOT include any concrete information from BEFORE the <SUMMARIZE_TEXT> tag or AFTER the </SUMMARIZE_TEXT> tag in the summary
-- Do NOT complete a sentence that is cut off with information from outside the <SUMMARIZE_TEXT> block
-- Do NOT infer or imagine details not present in the text
-- If the text references something without explaining it, do NOT try to explain it
-- IMPORTANT: Match voice and tense of the text you are summarizing! If you are summarizing a text written in the past tense, the summary MUST be in past tense
-- Try to match the tone and style of the text, as if the summary were written by the same author
-- Respond ONLY with your best attempt at a summary, do not break the fourth wall, say you can't summarize it, etc.
-
-Here's the content to summarize:"""
-
-        prompt_parts.append(instruction)
+        # Build the user prompt (no instruction needed - it's now in the system message)
+        prompt_parts = []
 
         # Add preceding context if available
         if prev_context and self.config.adjacent_context_tokens > 0 and trimmed_prev:
@@ -485,10 +492,17 @@ Here's the content to summarize:"""
                 node_info = f"[{parent_id}] " if parent_id else ""
 
                 # Build initial messages for conversation
+                # Load and hydrate system prompt with target_tokens
+                system_prompt = self.prompt_manager.load_and_hydrate(
+                    "summarization/system",
+                    {"target_tokens": target_tokens},
+                    custom_path=self.summary_system_prompt_path,
+                )
+
                 messages: list[ChatCompletionMessageParam] = [
                     {
                         "role": "system",
-                        "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
+                        "content": system_prompt,
                     },
                     {"role": "user", "content": full_prompt},
                 ]
@@ -534,7 +548,6 @@ Here's the content to summarize:"""
                             target_tokens,
                             messages,
                             parent_id,
-                            debug,
                             reporter,
                         )
                     )
@@ -544,19 +557,17 @@ Here's the content to summarize:"""
                     # Re-calculate final tokens for logging
                     final_tokens = len(self.splitter.tokenizer.encode(summary))
                     utilization_pct = (final_tokens / target_tokens) * 100
-                    if debug:
-                        logger.info(
-                            f"{node_info}Summary corrected: {final_tokens} tokens "
-                            f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
-                        )
+                    logger.debug(
+                        f"{node_info}Summary corrected: {final_tokens} tokens "
+                        f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
+                    )
                 else:
                     # Log initial result
                     utilization_pct = (current_tokens / target_tokens) * 100
-                    if debug:
-                        logger.info(
-                            f"{node_info}Summary complete: {current_tokens} tokens "
-                            f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
-                        )
+                    logger.debug(
+                        f"{node_info}Summary complete: {current_tokens} tokens "
+                        f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
+                    )
 
                 # Mark which attempt was accepted
                 if reporter and parent_id:
@@ -593,7 +604,6 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        debug: bool = False,
         reporter: None = None,
     ) -> str: ...
 
@@ -604,7 +614,6 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        debug: bool = False,
         reporter: TelemetryCollector = ...,
     ) -> tuple[str, dict]: ...
 
@@ -614,7 +623,6 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> str | tuple[str, dict]:
         """Add a document to the tree, creating leaf nodes.
@@ -843,7 +851,6 @@ Here's the content to summarize:"""
                 document_id,
                 async_progress,
                 overall_start_time,
-                debug,
                 reporter,
             )
 
@@ -873,11 +880,10 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        debug: bool = False,
     ) -> str:
         """Sync wrapper for add_document."""
         return asyncio.run(
-            self.add_document_async(text, document_id, file_path, show_progress, debug)
+            self.add_document_async(text, document_id, file_path, show_progress)
         )
 
     def add_document_with_telemetry(
@@ -886,7 +892,6 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = False,
-        debug: bool = False,
     ) -> tuple[str, dict]:
         """Add document and return telemetry data. Used for benchmarking.
 
@@ -911,7 +916,7 @@ Here's the content to summarize:"""
         # Run indexing with collector - will return (doc_id, telemetry)
         result = asyncio.run(
             self._add_document_impl(
-                text, document_id, file_path, show_progress, debug, collector
+                text, document_id, file_path, show_progress, collector
             )
         )
 
@@ -926,11 +931,10 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        debug: bool = False,
     ) -> str:
         """Async version of add_document - called by sync wrapper."""
         result = await self._add_document_impl(
-            text, document_id, file_path, show_progress, debug
+            text, document_id, file_path, show_progress
         )
         # Type checker knows result is a string when no reporter is provided
         return result
@@ -943,7 +947,6 @@ Here's the content to summarize:"""
         right_text: str,
         prev_context: str | None,
         document_id: str | None,
-        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, str, list[float]]:
         """Process a single node pair - generate summary and embedding."""
@@ -977,7 +980,6 @@ Here's the content to summarize:"""
             target_tokens,
             prev_context,
             parent_id,
-            debug=debug,
             reporter=reporter,
         )
 
@@ -1035,7 +1037,6 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         progress: AsyncProgressWrapper | None = None,
         overall_start_time: float | None = None,
-        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> str:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
@@ -1088,7 +1089,6 @@ Here's the content to summarize:"""
                     right_text,
                     prev_context,
                     document_id,
-                    debug,
                     reporter,
                 )
                 tasks.append(task)
@@ -1194,7 +1194,6 @@ Here's the content to summarize:"""
                         self.config.leaf_tokens,
                         prev_context=None,
                         parent_id=parent_id,
-                        debug=debug,
                         reporter=reporter,
                     )
 
