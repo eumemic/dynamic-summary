@@ -1,0 +1,1 @@
+../../vendor/awesome-claude-code-subagents/categories/06-developer-experience/git-workflow-manager.md

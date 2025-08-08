@@ -233,20 +233,19 @@ class TreeBuilder:
         parent_id: str | None = None,
         debug: bool = False,
         reporter: TelemetryCollector | None = None,
-    ) -> tuple[str, int, int]:
+    ) -> tuple[str, int]:
         """Retry summary correction to get closer to target token count.
 
         Uses conversation continuations to maintain context across retries.
 
         Returns:
-            tuple: (best_summary, actual_retry_count, best_attempt_index)
+            tuple: (best_summary, actual_retry_count)
         """
         summary = initial_summary
         summary_tokens = self.splitter.tokenizer.encode(summary)
         best_summary = summary
         best_token_count = len(summary_tokens)
         best_distance_from_target = abs(best_token_count - target_tokens)
-        best_attempt_index = 0  # Track which attempt was best (0 = initial)
 
         # Convert target to characters for retry prompts
         target_chars = int(target_tokens * local_char_ratio)
@@ -260,7 +259,7 @@ class TreeBuilder:
 
             # Stop if within threshold
             if deviation_pct <= self.config.summary_deviation_threshold:
-                return best_summary, actual_retries, best_attempt_index
+                return best_summary, actual_retries
 
             is_over_target = current_tokens > target_tokens
 
@@ -400,7 +399,6 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                     best_summary = summary
                     best_token_count = new_token_count
                     best_distance_from_target = new_distance
-                    best_attempt_index = actual_retries  # This retry is now the best
 
                     if debug:
                         logger.info(
@@ -422,7 +420,7 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                 logger.error(f"{node_info}Error during retry {retry_count}: {e}")
                 break
 
-        return best_summary, actual_retries, best_attempt_index
+        return best_summary, actual_retries
 
     async def _summarize_text(
         self,
@@ -457,7 +455,7 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                 f"(target: {target_tokens}). Skipping summarization."
             )
 
-            # Record this as a summary attempt for telemetry (no LLM call made)
+            # Record this as an accepted summary attempt for telemetry
             if reporter and parent_id:
                 reporter.record_summary_attempt_v2(
                     node_id=parent_id,
@@ -466,9 +464,8 @@ Provide ONLY the expanded summary, with no preamble or explanation."""
                     prompt_tokens=0,  # No LLM call made
                     completion_tokens=0,  # No LLM call made
                     actual_tokens=current_token_count,
-                    model="passthrough",  # Special model name for no-op
+                    model="passthrough",  # Indicates no summarization needed - text used as-is
                     start_time=time.time(),
-                    is_final=True,  # This is the only and final attempt
                 )
 
             return combined_text, 0  # No retries needed
@@ -587,23 +584,16 @@ Here's the content to summarize:"""
 
                 # Use retry correction if deviation exceeds threshold
                 retry_count = 0
-                accepted_attempt = 0  # Default to first attempt
-
                 if deviation_pct > self.config.summary_deviation_threshold:
-                    summary, retry_count, best_attempt_index = (
-                        await self._retry_summary_correction(
-                            summary,
-                            target_tokens,
-                            messages,
-                            local_char_ratio,
-                            parent_id,
-                            debug,
-                            reporter,
-                        )
+                    summary, retry_count = await self._retry_summary_correction(
+                        summary,
+                        target_tokens,
+                        messages,
+                        local_char_ratio,
+                        parent_id,
+                        debug,
+                        reporter,
                     )
-                    # The accepted attempt is the initial (0) plus the best retry index
-                    accepted_attempt = best_attempt_index
-
                     # Re-calculate final tokens for logging
                     final_tokens = len(self.splitter.tokenizer.encode(summary))
                     utilization_pct = (final_tokens / target_tokens) * 100
@@ -620,10 +610,6 @@ Here's the content to summarize:"""
                             f"{node_info}Summary complete: {current_tokens} tokens "
                             f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
                         )
-
-                # Mark which attempt was accepted
-                if reporter and parent_id:
-                    reporter.mark_accepted_attempt(parent_id, accepted_attempt)
 
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")

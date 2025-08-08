@@ -57,6 +57,7 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store):
     """Test that cached tokens from OpenAI response are properly recorded."""
     config = RagZoomConfig(
         summary_deviation_threshold=0.1,
+        summary_max_retries=1,  # Enable retries for this test
         leaf_tokens=100,
     )
 
@@ -280,6 +281,7 @@ async def test_cached_tokens_with_high_cache_rate(mock_store):
     """Test scenario with very high cache hit rate (95%+)."""
     config = RagZoomConfig(
         summary_deviation_threshold=0.1,
+        summary_max_retries=1,  # Enable retries for this test
         leaf_tokens=100,
     )
 
