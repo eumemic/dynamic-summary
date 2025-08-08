@@ -231,6 +231,129 @@ class TestTelemetryFormatParsing:
             parse_telemetry_format(telemetry_data)
 
 
+class TestTargetFitMetrics:
+    """Test target fit metrics computation."""
+
+    def test_compute_median_error_new_format(self) -> None:
+        """Test median error computation with new format (no status field)."""
+        nodes = [
+            {
+                "node_id": "node-1",
+                "height": 1,
+                "created_at": 1234567890.0,
+                "summary_attempts": [
+                    {
+                        "target_tokens": 100,
+                        "actual_tokens": 95,
+                        "input_text_tokens": 200,
+                        "prompt_tokens": 300,
+                        "completion_tokens": 95,
+                        "model": "gpt-4o-mini",
+                        "start_time": 1234567890.0,
+                        "end_time": 1234567891.0,
+                    }
+                ],
+                "accepted_attempt": 0,
+            },
+            {
+                "node_id": "node-2",
+                "height": 1,
+                "created_at": 1234567891.0,
+                "summary_attempts": [
+                    {
+                        "target_tokens": 100,
+                        "actual_tokens": 110,
+                        "input_text_tokens": 200,
+                        "prompt_tokens": 300,
+                        "completion_tokens": 110,
+                        "model": "gpt-4o-mini",
+                        "start_time": 1234567891.0,
+                        "end_time": 1234567892.0,
+                    },
+                    {
+                        "target_tokens": 100,
+                        "actual_tokens": 105,
+                        "input_text_tokens": 200,
+                        "prompt_tokens": 350,
+                        "completion_tokens": 105,
+                        "model": "gpt-4o-mini",
+                        "start_time": 1234567892.0,
+                        "end_time": 1234567893.0,
+                    },
+                ],
+                "accepted_attempt": 1,  # Use second attempt
+            },
+            {
+                "node_id": "node-3",
+                "height": 1,
+                "created_at": 1234567893.0,
+                "summary_attempts": [
+                    {
+                        "target_tokens": 100,
+                        "actual_tokens": 98,
+                        "input_text_tokens": 200,
+                        "prompt_tokens": 300,
+                        "completion_tokens": 98,
+                        "model": "gpt-4o-mini",
+                        "start_time": 1234567893.0,
+                        "end_time": 1234567894.0,
+                    }
+                ],
+                # No accepted_attempt field - should use last attempt
+            },
+        ]
+
+        from ragzoom.telemetry_analysis import compute_target_fit_metrics
+
+        result = compute_target_fit_metrics(nodes, target_size=100)
+
+        # Errors should be: -5 (95-100), +5 (105-100), -2 (98-100)
+        # Median of [-5, -2, 5] = -2
+        assert result["median_error"] == -2.0
+        assert result["percent_within_10"] == 100.0  # All within ±10
+
+    def test_compute_median_error_backward_compat(self) -> None:
+        """Test median error with format without accepted_attempt field."""
+        nodes = [
+            {
+                "node_id": "node-1",
+                "height": 1,
+                "created_at": 1234567890.0,
+                "summary_attempts": [
+                    {
+                        "target_tokens": 100,
+                        "actual_tokens": 120,
+                        "input_text_tokens": 200,
+                        "prompt_tokens": 300,
+                        "completion_tokens": 120,
+                        "model": "gpt-4o-mini",
+                        "start_time": 1234567890.0,
+                        "end_time": 1234567891.0,
+                    },
+                    {
+                        "target_tokens": 100,
+                        "actual_tokens": 90,
+                        "input_text_tokens": 200,
+                        "prompt_tokens": 350,
+                        "completion_tokens": 90,
+                        "model": "gpt-4o-mini",
+                        "start_time": 1234567891.0,
+                        "end_time": 1234567892.0,
+                    },
+                ],
+            },
+        ]
+
+        from ragzoom.telemetry_analysis import compute_target_fit_metrics
+
+        result = compute_target_fit_metrics(nodes, target_size=100)
+
+        # Should use the last attempt (90 tokens)
+        # Error should be: -10 (90-100)
+        assert result["median_error"] == -10.0
+        assert result["percent_within_10"] == 100.0
+
+
 class TestSimplifiedMetrics:
     """Test simplified metrics computation."""
 
@@ -468,6 +591,176 @@ class TestBatchEfficiency:
 class TestRetryAnalysis:
     """Test retry pattern analysis."""
 
+    def test_successful_attempts_equals_node_count_new_format(self) -> None:
+        """Test that successful attempts equals number of summary nodes (new format)."""
+        # Create telemetry with 3 summary nodes, some with multiple attempts
+        telemetry_data = {
+            "format_version": "3.0",
+            "document_id": "test",
+            "source_document_tokens": 1000,
+            "chunk_size": 100,
+            "indexed_at": 1234567890.0,
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
+            "nodes": [
+                # Leaf node - should be skipped
+                {
+                    "node_id": "leaf-1",
+                    "height": 0,
+                    "created_at": 1234567890.0,
+                },
+                # Summary node 1 - single attempt
+                {
+                    "node_id": "summary-1",
+                    "height": 1,
+                    "created_at": 1234567891.0,
+                    "summary_attempts": [
+                        {
+                            "target_tokens": 100,
+                            "input_text_tokens": 200,
+                            "prompt_tokens": 300,
+                            "completion_tokens": 105,
+                            "actual_tokens": 105,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567891.0,
+                            "end_time": 1234567892.0,
+                        }
+                    ],
+                    "accepted_attempt": 0,
+                },
+                # Summary node 2 - multiple attempts
+                {
+                    "node_id": "summary-2",
+                    "height": 1,
+                    "created_at": 1234567892.0,
+                    "summary_attempts": [
+                        {
+                            "target_tokens": 100,
+                            "input_text_tokens": 200,
+                            "prompt_tokens": 300,
+                            "completion_tokens": 130,
+                            "actual_tokens": 130,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567892.0,
+                            "end_time": 1234567893.0,
+                        },
+                        {
+                            "target_tokens": 100,
+                            "input_text_tokens": 200,
+                            "prompt_tokens": 350,
+                            "completion_tokens": 95,
+                            "actual_tokens": 95,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567893.0,
+                            "end_time": 1234567894.0,
+                        },
+                    ],
+                    "accepted_attempt": 1,
+                },
+                # Summary node 3 - three attempts
+                {
+                    "node_id": "summary-3",
+                    "height": 1,
+                    "created_at": 1234567894.0,
+                    "summary_attempts": [
+                        {
+                            "target_tokens": 100,
+                            "input_text_tokens": 200,
+                            "prompt_tokens": 300,
+                            "completion_tokens": 140,
+                            "actual_tokens": 140,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567894.0,
+                            "end_time": 1234567895.0,
+                        },
+                        {
+                            "target_tokens": 100,
+                            "input_text_tokens": 200,
+                            "prompt_tokens": 350,
+                            "completion_tokens": 85,
+                            "actual_tokens": 85,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567895.0,
+                            "end_time": 1234567896.0,
+                        },
+                        {
+                            "target_tokens": 100,
+                            "input_text_tokens": 200,
+                            "prompt_tokens": 400,
+                            "completion_tokens": 102,
+                            "actual_tokens": 102,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567896.0,
+                            "end_time": 1234567897.0,
+                        },
+                    ],
+                    "accepted_attempt": 2,
+                },
+            ],
+        }
+
+        result = analyze_retry_patterns(telemetry_data)
+
+        # Should have exactly 3 successful attempts (one per summary node)
+        assert result["successful_attempts"] == 3
+        assert result["total_nodes_with_summaries"] == 3
+        # Total attempts should be 6 (1 + 2 + 3)
+        assert result["total_attempts"] == 6
+
+    def test_successful_attempts_backward_compat_no_accepted_field(self) -> None:
+        """Test backward compatibility without accepted_attempt field."""
+        # Format without accepted_attempt field (should use last attempt)
+        telemetry_data = {
+            "format_version": "3.0",
+            "document_id": "test",
+            "source_document_tokens": 1000,
+            "chunk_size": 100,
+            "indexed_at": 1234567890.0,
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
+            "nodes": [
+                # Summary node with multiple attempts, no accepted_attempt field
+                {
+                    "node_id": "summary-1",
+                    "height": 1,
+                    "created_at": 1234567891.0,
+                    "summary_attempts": [
+                        {
+                            "target_tokens": 100,
+                            "input_text_tokens": 200,
+                            "prompt_tokens": 300,
+                            "completion_tokens": 130,
+                            "actual_tokens": 130,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567891.0,
+                            "end_time": 1234567892.0,
+                        },
+                        {
+                            "target_tokens": 100,
+                            "input_text_tokens": 200,
+                            "prompt_tokens": 350,
+                            "completion_tokens": 95,
+                            "actual_tokens": 95,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567892.0,
+                            "end_time": 1234567893.0,
+                        },
+                    ],
+                    # No accepted_attempt field (should use last attempt)
+                },
+            ],
+        }
+
+        result = analyze_retry_patterns(telemetry_data)
+
+        # Should count exactly 1 successful attempt (last one)
+        assert result["successful_attempts"] == 1
+        assert result["total_nodes_with_summaries"] == 1
+
     def test_analyze_retry_patterns(self) -> None:
         """Test analyzing retry patterns from telemetry."""
         telemetry_data = {
@@ -531,16 +824,16 @@ class TestRetryAnalysis:
         assert result["nodes_with_retries"] == 2
         assert result["retry_rate"] == pytest.approx(66.67, rel=0.01)
 
-        # 5 total attempts, 2 successful, 2 retries, 1 successful retry
+        # 5 total attempts, 3 successful (one per node), 2 retries, 2 successful retries
         assert result["total_attempts"] == 5
-        assert result["successful_attempts"] == 2
+        assert result["successful_attempts"] == 3  # One per node, regardless of status
         assert result["retry_attempts"] == 2
-        assert result["retry_success_rate"] == 50.0
+        # Both retries are the final attempts for their nodes, so both are "successful"
+        assert result["retry_success_rate"] == 100.0
 
-        # Rejection reasons
-        assert result["rejection_reasons"]["30% over target"] == 1
-        assert result["rejection_reasons"]["20% under target"] == 1
-        assert result["rejection_reasons"]["API timeout"] == 1
+        # Rejection reasons - we no longer track these since we removed status field
+        # Old telemetry with status fields is just for backward compat, not analysis
+        assert result["rejection_reasons"] == {}
 
         # New metrics should be present
         assert "retry_distribution" in result
@@ -638,7 +931,9 @@ class TestRetryAnalysis:
         assert result["total_attempts"] == 4
         assert result["successful_attempts"] == 2
         assert result["retry_attempts"] == 2
-        assert result["retry_success_rate"] == 50.0
+        assert (
+            result["retry_success_rate"] == 50.0
+        )  # Only the last retry (index 2) is accepted
 
         # Retry distribution
         assert result["retry_distribution"]["0"] == 1  # node-2
@@ -650,7 +945,9 @@ class TestRetryAnalysis:
         # Timing metrics
         assert result["retry_time_seconds"] == 4.0  # 2s + 2s for the two retries
         assert result["avg_time_per_retry"] == 2.0  # 4s / 2 retries
-        assert result["time_wasted_on_rejections"] == 4.0  # Both retries were rejected
+        assert (
+            result["time_wasted_on_rejections"] == 2.0
+        )  # Only first retry was rejected
 
 
 class TestFullMetricsComputation:

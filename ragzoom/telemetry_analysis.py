@@ -26,6 +26,7 @@ from ragzoom.telemetry_types import (
     ModelsDict,
     NodeTelemetryDict,
     RetryAnalysisDict,
+    SummaryAttemptDict,
     TelemetryDataDict,
 )
 
@@ -87,14 +88,37 @@ def compute_simplified_metrics(
 
         # Get the accepted summary attempt to find target size
         summary_attempts = node.get("summary_attempts", [])
-        for attempt in summary_attempts:
-            if attempt.get("status") == "accepted":
-                target_tokens = attempt.get("target_tokens", 0)
-                if target_tokens > 0:
-                    if target_tokens not in nodes_by_target:
-                        nodes_by_target[target_tokens] = []
-                    nodes_by_target[target_tokens].append(node)
-                break
+        if not summary_attempts:
+            continue
+
+        # Determine which attempt was accepted
+        accepted_idx = node.get("accepted_attempt")
+        final_attempt = None
+
+        if accepted_idx is not None:
+            # New format: use the explicitly marked accepted attempt
+            if 0 <= accepted_idx < len(summary_attempts):
+                final_attempt = summary_attempts[accepted_idx]
+        else:
+            # Backward compatibility
+            has_status = any("status" in a for a in summary_attempts)
+            if has_status:
+                # Old format with status: find accepted attempt
+                for attempt in summary_attempts:
+                    if attempt.get("status") == "accepted":
+                        final_attempt = attempt
+                        break
+
+            # If no accepted found or no status field, use last attempt
+            if final_attempt is None:
+                final_attempt = summary_attempts[-1]
+
+        if final_attempt:
+            target_tokens = final_attempt.get("target_tokens", 0)
+            if target_tokens > 0:
+                if target_tokens not in nodes_by_target:
+                    nodes_by_target[target_tokens] = []
+                nodes_by_target[target_tokens].append(node)
 
     # Compute metrics for each chunk size
     metrics_by_chunk_size = {}
@@ -135,25 +159,24 @@ def compute_target_fit_metrics(
     node_within_10_list = []
 
     for node in nodes:
-        # Find accepted attempt
-        for attempt in node.get("summary_attempts", []):
-            if attempt.get("status") == "accepted":
-                actual_tokens = attempt.get("actual_tokens", 0)
-                if actual_tokens > 0:
-                    error = actual_tokens - target_size
-                    errors.append(error)
+        # Find the accepted attempt using the helper function
+        accepted_attempt, _ = get_accepted_attempt(node)
+        if accepted_attempt:
+            actual_tokens = accepted_attempt.get("actual_tokens", 0)
+            if actual_tokens > 0:
+                error = actual_tokens - target_size
+                errors.append(error)
 
-                    is_within_10 = abs(error) <= 10
-                    if is_within_10:
-                        within_10_count += 1
-                    # Store 1 if within ±10, 0 if not (for variance calculation)
-                    node_within_10_list.append(1.0 if is_within_10 else 0.0)
+                is_within_10 = abs(error) <= 10
+                if is_within_10:
+                    within_10_count += 1
+                # Store 1 if within ±10, 0 if not (for variance calculation)
+                node_within_10_list.append(1.0 if is_within_10 else 0.0)
 
-                    if error > max_overshoot:
-                        max_overshoot = error
-                    if error < max_undershoot:
-                        max_undershoot = error
-                break
+                if error > max_overshoot:
+                    max_overshoot = error
+                if error < max_undershoot:
+                    max_undershoot = error
 
     if not errors:
         return {
@@ -465,13 +488,12 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]
     actual_tokens = []
 
     for node in nodes:
-        # Find accepted attempt
-        for attempt in node.get("summary_attempts", []):
-            if attempt.get("status") == "accepted":
-                tokens = attempt.get("actual_tokens", 0)
-                if tokens > 0:
-                    actual_tokens.append(tokens)
-                break
+        # Find the accepted attempt using the helper function
+        accepted_attempt, _ = get_accepted_attempt(node)
+        if accepted_attempt:
+            tokens = accepted_attempt.get("actual_tokens", 0)
+            if tokens > 0:
+                actual_tokens.append(tokens)
 
     if not actual_tokens:
         return {
@@ -824,10 +846,13 @@ def compute_amplification_metrics(telemetry_data: dict, config: RagZoomConfig) -
             if node_input_text_tokens == 0:
                 node_input_text_tokens = attempt.get("input_text_tokens", 0)
 
-            # Track the final accepted attempt
-            if attempt.get("status") == "accepted":
-                final_attempt = attempt
-                node_final_summary_tokens = attempt.get("actual_tokens", 0)
+            # Track if this is the final accepted attempt
+            # (We'll determine which one after the loop using _get_accepted_attempt)
+
+        # Get the final accepted attempt
+        final_attempt, _ = get_accepted_attempt(node)
+        if final_attempt:
+            node_final_summary_tokens = final_attempt.get("actual_tokens", 0)
 
         # Calculate amplification using ALL attempts' tokens
         if summary_attempts and node_input_text_tokens > 0 and final_attempt:
@@ -1012,6 +1037,30 @@ def compute_batch_efficiency(telemetry_data: dict) -> BatchEfficiencyDict:
     return result
 
 
+def get_accepted_attempt(
+    node: NodeTelemetryDict,
+) -> tuple[SummaryAttemptDict | None, int]:
+    """Get the accepted attempt from a node's summary attempts.
+
+    Returns:
+        tuple: (accepted_attempt, index) or (None, -1) if no attempts
+    """
+    summary_attempts = node.get("summary_attempts", [])
+    if not summary_attempts:
+        return None, -1
+
+    # Check for explicit accepted_attempt index
+    accepted_idx = node.get("accepted_attempt")
+    if accepted_idx is not None:
+        if 0 <= accepted_idx < len(summary_attempts):
+            return summary_attempts[accepted_idx], accepted_idx
+        # Fallback to last if index is invalid
+        return summary_attempts[-1], len(summary_attempts) - 1
+
+    # Default: use last attempt when accepted_attempt field is missing
+    return summary_attempts[-1], len(summary_attempts) - 1
+
+
 def analyze_retry_patterns(telemetry_data: dict) -> RetryAnalysisDict:
     """Analyze summary retry patterns from telemetry data.
 
@@ -1060,9 +1109,18 @@ def analyze_retry_patterns(telemetry_data: dict) -> RetryAnalysisDict:
         node_retry_time = 0.0
         node_rejected_time = 0.0
 
+        # Get the accepted attempt
+        accepted_attempt, accepted_idx = get_accepted_attempt(node)
+
         for attempt_idx, attempt in enumerate(summary_attempts):
             total_attempts += 1
-            status = attempt.get("status", "unknown")
+
+            # Determine if this is the accepted attempt
+            # We should have exactly one accepted attempt per node
+            is_accepted = attempt_idx == accepted_idx
+
+            # Get status for rejection tracking (but don't use it to determine acceptance)
+            attempt.get("status", "unknown")
 
             # Calculate time for this attempt if available
             start_time = attempt.get("start_time", 0)
@@ -1078,19 +1136,13 @@ def analyze_retry_patterns(telemetry_data: dict) -> RetryAnalysisDict:
                 node_has_retry = True
                 node_retry_count += 1
                 node_retry_time += attempt_time
-                if status == "accepted":
+                if is_accepted:
                     successful_retries += 1
                 else:
                     node_rejected_time += attempt_time
 
-            if status == "accepted":
+            if is_accepted:
                 successful_attempts += 1
-            elif status in ["rejected_over", "rejected_under", "error"]:
-                reason = attempt.get("rejection_reason", status)
-                if reason:  # Type guard to ensure reason is not None
-                    rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
-                if not is_retry:  # Also count rejected time for initial attempts
-                    node_rejected_time += attempt_time
 
         if node_has_retry:
             nodes_with_retries += 1
@@ -1161,21 +1213,18 @@ def compute_summary_stats_from_telemetry(
         if is_leaf:
             continue
 
-        summary_attempts = node.get("summary_attempts", [])
+        node.get("summary_attempts", [])
 
-        # Find the accepted attempt
-        for attempt in summary_attempts:
-            if attempt.get("status") == "accepted":
-                target_tokens = attempt.get("target_tokens", 0)
-                actual_tokens = attempt.get("actual_tokens", 0)
+        # Find the accepted attempt using the helper function
+        accepted_attempt, _ = get_accepted_attempt(node)
+        if accepted_attempt:
+            target_tokens = accepted_attempt.get("target_tokens", 0)
+            actual_tokens = accepted_attempt.get("actual_tokens", 0)
 
-                if target_tokens not in summary_stats_by_target:
-                    summary_stats_by_target[target_tokens] = SummaryStats()
+            if target_tokens not in summary_stats_by_target:
+                summary_stats_by_target[target_tokens] = SummaryStats()
 
-                summary_stats_by_target[target_tokens].record(
-                    target_tokens, actual_tokens
-                )
-                break
+            summary_stats_by_target[target_tokens].record(target_tokens, actual_tokens)
 
     return summary_stats_by_target
 
@@ -1320,11 +1369,6 @@ def compute_metrics_from_telemetry(
             # Accumulate tokens for cost calculation
             node_total_prompt_tokens += prompt_tokens
             node_total_completion_tokens += completion_tokens
-
-            # Track the final accepted attempt
-            if attempt.get("status") == "accepted":
-                # Just track that we found an accepted attempt
-                pass
 
         # Count chunks (leaf nodes)
         # v1.0: check node_type, v2.0: check height == 0
