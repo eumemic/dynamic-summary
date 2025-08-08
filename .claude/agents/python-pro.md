@@ -1,0 +1,1 @@
+../../vendor/awesome-claude-code-subagents/categories/02-language-specialists/python-pro.md

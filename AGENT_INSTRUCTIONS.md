@@ -75,7 +75,11 @@ Custom slash commands are stored in `.claude/commands/` as markdown files:
 - `/review` - Code review
 To modify: edit `.claude/commands/<command-name>.md`
 
-## 8. Agent Slots for Parallel Development
+## 9. Subagent Management
+
+Claude Code subagents can be either local custom agents or symlinks to external agents via git submodule. See `docs/subagent-management.md` for details.
+
+## 10. Agent Slots for Parallel Development
 
 This repository uses persistent worktree "agent slots" for isolated Claude sessions. Each slot provides:
 - Separate conversation history (stored in ~/.claude/projects/)
@@ -95,7 +99,7 @@ cd worktrees/worktree-N && claude
 - Use `/merge` to merge PR and sync with master
 - The same branch is reused for multiple sequential PRs
 
-## 9. Quick Reference
+## 11. Quick Reference
 
 ### Key Commands
 ```bash

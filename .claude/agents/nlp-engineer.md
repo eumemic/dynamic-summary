@@ -1,0 +1,1 @@
+../../vendor/awesome-claude-code-subagents/categories/05-data-ai/nlp-engineer.md

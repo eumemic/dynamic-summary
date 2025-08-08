@@ -29,6 +29,8 @@ jobs:
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Create or update PR comment with initial status
         uses: actions/github-script@v7
