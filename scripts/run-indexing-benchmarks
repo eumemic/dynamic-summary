@@ -11,7 +11,8 @@
 #   --output-dir <dir>   Directory for output files (telemetry, logs, visualizations)
 #   All other options are passed through to the indexing command
 
-set -e
+set -e  # Exit on error
+set -o pipefail  # Also exit on pipe failures
 
 # Function to display help
 show_help() {
@@ -198,27 +199,37 @@ echo "📊 Generating comparison report and visualization..."
 
 # Generate markdown comparison report
 echo "  Generating comparison report..."
+# Note: compare command returns exit code 1 when regression detected, but still generates report
+# Temporarily disable exit on error for this command
+set +e
 python -m ragzoom.telemetry_cli compare \
     "$BASELINE" \
     "$TELEMETRY_FILE" \
     --output-format markdown \
     > "$OUTPUT_DIR/comparison.md" 2>&1
+COMPARE_EXIT_CODE=$?
+set -e
 
-if [ $? -eq 0 ]; then
+if [ $COMPARE_EXIT_CODE -eq 0 ]; then
     echo "  ✅ Comparison report saved to $OUTPUT_DIR/comparison.md"
+elif [ $COMPARE_EXIT_CODE -eq 1 ]; then
+    echo "  ⚠️ Comparison report saved to $OUTPUT_DIR/comparison.md (regression detected)"
 else
     echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
 fi
 
 # Generate visualization
 echo "  Generating visualization..."
+set +e
 python -m ragzoom.telemetry_cli visualize \
     "$BASELINE" \
     "$TELEMETRY_FILE" \
     --output "$VISUALIZATION_FILE" \
     > "$OUTPUT_DIR/visualization.log" 2>&1
+VIZ_EXIT_CODE=$?
+set -e
 
-if [ $? -eq 0 ]; then
+if [ $VIZ_EXIT_CODE -eq 0 ]; then
     echo "  ✅ Visualization saved to $VISUALIZATION_FILE"
 else
     echo "  ❌ Visualization failed. Check $OUTPUT_DIR/visualization.log for details."
