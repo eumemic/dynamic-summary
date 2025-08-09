@@ -1,7 +1,5 @@
 """Test that retry mechanism maintains conversation context."""
 
-import shutil
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,15 +7,6 @@ import pytest
 from ragzoom.config import RagZoomConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import TelemetryCollector
-
-
-@pytest.fixture(autouse=True)
-def cleanup_test_prompts():
-    """Clean up test prompt directory after each test."""
-    yield
-    test_prompts_dir = Path.cwd() / "test_prompts_temp"
-    if test_prompts_dir.exists():
-        shutil.rmtree(test_prompts_dir)
 
 
 def create_test_reporter(config):
@@ -50,7 +39,7 @@ class MockOpenAIResponse:
 
 
 @pytest.mark.asyncio
-async def test_retry_maintains_conversation_history(mock_store, tmp_path):
+async def test_retry_maintains_conversation_history(mock_store):
     """Test that retries append to existing conversation instead of creating new ones."""
     config = RagZoomConfig(
         summary_deviation_threshold=0.2,  # 20% deviation
@@ -58,30 +47,7 @@ async def test_retry_maintains_conversation_history(mock_store, tmp_path):
         leaf_tokens=100,  # Target tokens
     )
 
-    # Create test-specific prompts in current directory (allowed by PromptManager)
-    from pathlib import Path
-
-    test_prompts_dir = Path.cwd() / "test_prompts_temp"
-    test_prompts_dir.mkdir(exist_ok=True)
-
-    system_prompt_path = test_prompts_dir / "test_system.txt"
-    system_prompt_path.write_text(
-        "Test system prompt. Target: {target_tokens} tokens, {target_chars} chars."
-    )
-
-    retry_prompt_path = test_prompts_dir / "test_retry.txt"
-    retry_prompt_path.write_text(
-        "Test retry prompt. Target: {target_tokens} tokens ({target_chars} chars). "
-        "Current: {current_tokens} tokens ({current_chars} chars). "
-        "Deviation: {deviation_pct:.1%}."
-    )
-
-    indexer = TreeBuilder(
-        config,
-        mock_store,
-        summary_system_prompt_path=str(system_prompt_path),
-        retry_prompt_path=str(retry_prompt_path),
-    )
+    indexer = TreeBuilder(config, mock_store)
 
     # Track all API calls
     api_calls = []
@@ -112,12 +78,10 @@ async def test_retry_maintains_conversation_history(mock_store, tmp_path):
             assert messages[2]["role"] == "assistant"
             assert messages[2]["content"] == "A" * 150  # Previous response
             assert messages[3]["role"] == "user"
-            # Check that retry prompt contains expected content from our test prompt
-            assert "Test retry prompt" in messages[3]["content"]
-            # With our mock tokenizer, 100 tokens = 100 chars (1:1 ratio)
-            assert "Target: 100 tokens" in messages[3]["content"]
-            assert "Current: 150 tokens" in messages[3]["content"]
-            assert "Deviation: 50.0%" in messages[3]["content"]
+            # Check that retry prompt contains expected content
+            assert "Please try again" in messages[3]["content"]
+            assert "100 tokens" in messages[3]["content"]  # Target tokens
+            assert "150 tokens" in messages[3]["content"]  # Current tokens
 
             return MockOpenAIResponse(
                 content="B" * 95,  # Close to target
@@ -165,7 +129,7 @@ async def test_retry_maintains_conversation_history(mock_store, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_retry_preserves_original_context(mock_store, tmp_path):
+async def test_retry_preserves_original_context(mock_store):
     """Test that retry requests can still see the original text being summarized."""
     config = RagZoomConfig(
         summary_deviation_threshold=0.1,  # 10% deviation
@@ -173,24 +137,7 @@ async def test_retry_preserves_original_context(mock_store, tmp_path):
         leaf_tokens=100,
     )
 
-    # Create test-specific prompts in current directory (allowed by PromptManager)
-    test_prompts_dir = Path.cwd() / "test_prompts_temp"
-    test_prompts_dir.mkdir(exist_ok=True)
-
-    system_prompt_path = test_prompts_dir / "test_system.txt"
-    system_prompt_path.write_text(
-        "Test system prompt. Target: {target_tokens} tokens, {target_chars} chars."
-    )
-
-    retry_prompt_path = test_prompts_dir / "test_retry.txt"
-    retry_prompt_path.write_text("Test retry. Target: {target_tokens} tokens.")
-
-    indexer = TreeBuilder(
-        config,
-        mock_store,
-        summary_system_prompt_path=str(system_prompt_path),
-        retry_prompt_path=str(retry_prompt_path),
-    )
+    indexer = TreeBuilder(config, mock_store)
     api_calls = []
 
     original_text = (
@@ -247,7 +194,7 @@ async def test_retry_preserves_original_context(mock_store, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_multiple_retries_build_conversation(mock_store, tmp_path):
+async def test_multiple_retries_build_conversation(mock_store):
     """Test that multiple retries continue building on the same conversation."""
     config = RagZoomConfig(
         summary_deviation_threshold=0.1,
@@ -255,24 +202,7 @@ async def test_multiple_retries_build_conversation(mock_store, tmp_path):
         leaf_tokens=100,
     )
 
-    # Create test-specific prompts in current directory (allowed by PromptManager)
-    test_prompts_dir = Path.cwd() / "test_prompts_temp"
-    test_prompts_dir.mkdir(exist_ok=True)
-
-    system_prompt_path = test_prompts_dir / "test_system.txt"
-    system_prompt_path.write_text(
-        "Test system prompt. Target: {target_tokens} tokens, {target_chars} chars."
-    )
-
-    retry_prompt_path = test_prompts_dir / "test_retry.txt"
-    retry_prompt_path.write_text("Test retry. Target: {target_tokens} tokens.")
-
-    indexer = TreeBuilder(
-        config,
-        mock_store,
-        summary_system_prompt_path=str(system_prompt_path),
-        retry_prompt_path=str(retry_prompt_path),
-    )
+    indexer = TreeBuilder(config, mock_store)
     api_calls = []
 
     async def mock_create(**kwargs):
@@ -323,31 +253,14 @@ async def test_multiple_retries_build_conversation(mock_store, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_no_retry_when_within_threshold(mock_store, tmp_path):
+async def test_no_retry_when_within_threshold(mock_store):
     """Test that no retry occurs when initial summary is within threshold."""
     config = RagZoomConfig(
         summary_deviation_threshold=0.2,
         leaf_tokens=100,
     )
 
-    # Create test-specific prompts in current directory (allowed by PromptManager)
-    test_prompts_dir = Path.cwd() / "test_prompts_temp"
-    test_prompts_dir.mkdir(exist_ok=True)
-
-    system_prompt_path = test_prompts_dir / "test_system.txt"
-    system_prompt_path.write_text(
-        "Test system prompt. Target: {target_tokens} tokens, {target_chars} chars."
-    )
-
-    retry_prompt_path = test_prompts_dir / "test_retry.txt"
-    retry_prompt_path.write_text("Test retry. Target: {target_tokens} tokens.")
-
-    indexer = TreeBuilder(
-        config,
-        mock_store,
-        summary_system_prompt_path=str(system_prompt_path),
-        retry_prompt_path=str(retry_prompt_path),
-    )
+    indexer = TreeBuilder(config, mock_store)
     api_calls = []
 
     async def mock_create(**kwargs):
@@ -375,28 +288,10 @@ async def test_no_retry_when_within_threshold(mock_store, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_passthrough_for_text_under_target(mock_store, tmp_path):
+async def test_passthrough_for_text_under_target(mock_store):
     """Test that text under target tokens is passed through without LLM call."""
     config = RagZoomConfig(leaf_tokens=100)
-
-    # Create test-specific prompts in current directory (allowed by PromptManager)
-    test_prompts_dir = Path.cwd() / "test_prompts_temp"
-    test_prompts_dir.mkdir(exist_ok=True)
-
-    system_prompt_path = test_prompts_dir / "test_system.txt"
-    system_prompt_path.write_text(
-        "Test system prompt. Target: {target_tokens} tokens, {target_chars} chars."
-    )
-
-    retry_prompt_path = test_prompts_dir / "test_retry.txt"
-    retry_prompt_path.write_text("Test retry. Target: {target_tokens} tokens.")
-
-    indexer = TreeBuilder(
-        config,
-        mock_store,
-        summary_system_prompt_path=str(system_prompt_path),
-        retry_prompt_path=str(retry_prompt_path),
-    )
+    indexer = TreeBuilder(config, mock_store)
 
     api_calls = []
 
