@@ -35,7 +35,6 @@ class TestTelemetryDataStructures:
         """Test SummaryAttempt has start_time and end_time fields."""
         attempt = SummaryAttempt(
             target_tokens=100,
-            input_text_tokens=400,
             prompt_tokens=500,
             completion_tokens=105,
             actual_tokens=105,
@@ -277,8 +276,8 @@ class TestTelemetryIntegration:
         # Get final telemetry data
         telemetry_data = reporter.finalize()
 
-        # Verify telemetry was collected (v3.0 format)
-        assert telemetry_data["format_version"] == "3.0"
+        # Verify telemetry was collected (v3.1 format)
+        assert telemetry_data["format_version"] == "3.1"
         assert telemetry_data["document_id"] == "telemetry-test"
         assert "nodes" in telemetry_data
 

@@ -31,9 +31,13 @@ logger = logging.getLogger(__name__)
 #   - Moved metadata fields to top level
 #   - Added models field at top level
 #   - Eliminated duplicate document_id and chunk_size fields
+# - 3.1: Optimized data structure:
+#   - Moved input_text_tokens from SummaryAttempt to NodeTelemetry (node level)
+#   - Added document_path field for telemetry file tracking
+#   - Removed dead amplification code from analysis
 #
 # Current format version (increment for breaking changes)
-TELEMETRY_FORMAT_VERSION = "3.0"
+TELEMETRY_FORMAT_VERSION = "3.1"
 
 
 @dataclass
@@ -58,7 +62,6 @@ class SummaryAttempt:
 
     Attributes:
         target_tokens: Target size for the summary
-        input_text_tokens: Combined tokens from children being summarized
         prompt_tokens: Tokens used in the API prompt
         completion_tokens: Tokens reported by the OpenAI API
         actual_tokens: Tokens measured by our tokenizer from the generated text
@@ -71,7 +74,6 @@ class SummaryAttempt:
 
     # Inputs
     target_tokens: int
-    input_text_tokens: int  # Combined left+right child tokens
 
     # API usage
     prompt_tokens: int
@@ -111,6 +113,7 @@ class NodeTelemetry:
         embedding: Embedding API call details (optional)
         summary_attempts: List of summary generation attempts
         accepted_attempt: Index of the attempt that was actually used
+        input_text_tokens: Combined tokens from children being summarized (for non-leaf nodes)
         created_at: Timestamp when node was created
     """
 
@@ -126,6 +129,9 @@ class NodeTelemetry:
     # Which attempt was actually used (None means use last attempt for backward compat)
     accepted_attempt: int | None = None
 
+    # Combined tokens from children being summarized (for non-leaf nodes)
+    input_text_tokens: int | None = None
+
     # Timing
     created_at: float = field(default_factory=time.time)
 
@@ -139,6 +145,10 @@ class NodeTelemetry:
             "height": self.height,
             "created_at": self.created_at,
         }
+
+        # Add input_text_tokens at node level if present
+        if self.input_text_tokens is not None:
+            result["input_text_tokens"] = self.input_text_tokens
 
         # Add embedding info if present
         if self.embedding:
@@ -159,7 +169,6 @@ class NodeTelemetry:
             for attempt in self.summary_attempts:
                 attempt_dict: SummaryAttemptDict = {
                     "target_tokens": attempt.target_tokens,
-                    "input_text_tokens": attempt.input_text_tokens,
                     "prompt_tokens": attempt.prompt_tokens,
                     "completion_tokens": attempt.completion_tokens,
                     "actual_tokens": attempt.actual_tokens,
@@ -430,9 +439,13 @@ class TelemetryCollector:
                 f"Nodes must be tracked with track_node_created() before recording summary attempts."
             )
 
+        # Store input_text_tokens at node level on first attempt
+        node = self.node_telemetry[node_id]
+        if node.input_text_tokens is None:
+            node.input_text_tokens = input_text_tokens
+
         attempt = SummaryAttempt(
             target_tokens=target_tokens,
-            input_text_tokens=input_text_tokens,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             actual_tokens=actual_tokens,
