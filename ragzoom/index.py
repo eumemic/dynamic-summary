@@ -910,7 +910,10 @@ class TreeBuilder:
         # Create collector internally with config for pricing
         source_tokens = len(self.splitter.tokenizer.encode(text))
         collector = TelemetryCollector(
-            document_id or "benchmark", source_tokens, self.config
+            document_id or "benchmark",
+            source_tokens,
+            self.config,
+            document_path=file_path,
         )
 
         # Run indexing with collector - will return (doc_id, telemetry)

@@ -115,6 +115,7 @@ fi
 # Extract metadata from baseline
 echo "Extracting configuration from baseline..."
 DOCUMENT_ID=$(grep '"document_id"' "$BASELINE" | head -1 | sed 's/.*": *"\([^"]*\)".*/\1/')
+DOCUMENT_PATH=$(grep '"document_path"' "$BASELINE" | head -1 | sed 's/.*": *"\([^"]*\)".*/\1/')
 CHUNK_SIZE=$(grep '"chunk_size"' "$BASELINE" | head -1 | sed 's/.*: *\([0-9]*\).*/\1/')
 
 if [ -z "$CHUNK_SIZE" ]; then
@@ -134,7 +135,12 @@ fi
 
 # Auto-detect document if not provided
 if [ -z "$DOCUMENT" ]; then
-    if [ -n "$DOCUMENT_ID" ]; then
+    # First try to use document_path from telemetry (absolute path)
+    if [ -n "$DOCUMENT_PATH" ] && [ -f "$DOCUMENT_PATH" ]; then
+        DOCUMENT="$DOCUMENT_PATH"
+        echo "  Using document path from baseline: $DOCUMENT"
+    # Fall back to document_id in test_data for backward compatibility
+    elif [ -n "$DOCUMENT_ID" ]; then
         echo "  Document ID from baseline: $DOCUMENT_ID"
         if [ -f "./test_data/$DOCUMENT_ID" ]; then
             DOCUMENT="./test_data/$DOCUMENT_ID"
@@ -147,7 +153,7 @@ if [ -z "$DOCUMENT" ]; then
         fi
     else
         echo ""
-        echo "Error: No document specified and could not extract document_id from baseline"
+        echo "Error: No document specified and could not extract document_id or document_path from baseline"
         echo "Please provide document path as argument"
         exit 1
     fi

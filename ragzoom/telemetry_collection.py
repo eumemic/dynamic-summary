@@ -208,6 +208,7 @@ class TelemetryCollector:
         document_id: str,
         source_tokens: int,
         config: RagZoomConfig,
+        document_path: str | None = None,
     ):
         """Initialize telemetry collector for a document.
 
@@ -215,10 +216,12 @@ class TelemetryCollector:
             document_id: Document being indexed
             source_tokens: Total tokens in source document
             config: Config containing pricing information for telemetry metadata
+            document_path: Optional absolute path to the source document
         """
         self.document_id = document_id
         self.source_tokens = source_tokens
         self.config = config
+        self.document_path = document_path
 
         # Initialize telemetry data storage
         self.start_time = time.time()
@@ -516,7 +519,7 @@ class TelemetryCollector:
         # Sort nodes by creation time for consistent output
         nodes_data.sort(key=lambda x: x["created_at"])
 
-        return {
+        telemetry_data = {
             "format_version": TELEMETRY_FORMAT_VERSION,
             "document_id": document_id,
             "source_document_tokens": self.source_tokens,
@@ -528,3 +531,9 @@ class TelemetryCollector:
             },
             "nodes": nodes_data,
         }
+
+        # Add document path if available
+        if self.document_path:
+            telemetry_data["document_path"] = self.document_path
+
+        return telemetry_data
