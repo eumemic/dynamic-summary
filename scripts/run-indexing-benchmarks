@@ -71,12 +71,22 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_DIR="$2"
             shift 2
             ;;
+        --summary-system-prompt|--summary-retry-prompt|--document-id)
+            # Pass-through options that take an argument
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
+        --*)
+            # Other options (flags without arguments)
+            EXTRA_ARGS+=("$1")
+            shift
+            ;;
         *)
             # First non-option argument is the document
             if [ -z "$DOCUMENT" ]; then
                 DOCUMENT="$1"
             else
-                # Additional arguments passed to indexing
+                # Additional positional arguments
                 EXTRA_ARGS+=("$1")
             fi
             shift
