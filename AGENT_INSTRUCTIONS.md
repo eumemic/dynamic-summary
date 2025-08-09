@@ -4,6 +4,9 @@ This file contains comprehensive instructions for any AI agent working on this r
 
 ## Project Documentation
 
+Note: Documentation that applies to both human developers and AI agents belongs in README.md,
+which is included below. This file (CLAUDE.md) contains only agent-specific instructions.
+
 @include README.md
 
 ## Agent-Specific Instructions

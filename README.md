@@ -249,6 +249,14 @@ ruff check ragzoom/ tests/
 # Type checking
 mypy ragzoom/
 
+# Performance benchmarking
+./scripts/run-indexing-benchmarks --baseline baseline.json document.txt
+
+# Telemetry analysis
+ragzoom-telemetry analyze telemetry.json
+ragzoom-telemetry compare baseline.json current.json --output-format markdown
+ragzoom-telemetry visualize baseline.json current.json -o comparison.png
+
 # Git hooks (automatically installed by setup script)
 # - pre-commit: Runs relevant tests for changed files
 # - pre-push: Runs full test suite

@@ -1,0 +1,160 @@
+#!/bin/bash
+# Run indexing benchmarks with telemetry comparison and visualization
+# Usage: ./run-indexing-benchmarks --baseline <baseline.json> --output-dir <dir> [other_options] <document>
+#
+# This script:
+# 1. Runs indexing with telemetry, logging output to a file
+# 2. Concurrently generates comparison report and visualization
+#
+# Options:
+#   --baseline <file>    Baseline telemetry JSON file for comparison
+#   --output-dir <dir>   Directory for output files (telemetry, logs, visualizations)
+#   All other options are passed through to the indexing command
+
+set -e
+
+# Function to display help
+show_help() {
+    cat << EOF
+Usage: $0 --baseline <baseline.json> [--output-dir <dir>] [options] <document>
+
+Run indexing benchmarks with telemetry comparison and visualization.
+
+Required Options:
+    --baseline <file>      Baseline telemetry JSON file for comparison
+    
+Optional Options:
+    --output-dir <dir>     Directory for output files (default: benchmarks)
+    
+Optional:
+    --help                 Show this help message and exit
+    
+Additional Options:
+    All other options are passed through to the ragzoom index command.
+    The script automatically adds: --clear --telemetry --validate --debug --no-progress
+
+Output Files:
+    <output-dir>/telemetry.json      - Telemetry data from current run
+    <output-dir>/log.txt              - Full indexing logs with debug output
+    <output-dir>/comparison.md        - Markdown comparison report
+    <output-dir>/visualization.png    - Visual side-by-side comparison chart
+
+Example:
+    $0 --baseline baseline.json --output-dir results/ document.txt
+    $0 --baseline old.json --output-dir bench/ --document-id mydoc file.txt
+
+EOF
+    exit 0
+}
+
+# Initialize variables
+BASELINE=""
+OUTPUT_DIR="benchmarks"  # Default output directory
+EXTRA_ARGS=()
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h)
+            show_help
+            ;;
+        --baseline)
+            BASELINE="$2"
+            shift 2
+            ;;
+        --output-dir)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        *)
+            EXTRA_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [ -z "$BASELINE" ]; then
+    echo "Error: --baseline is required"
+    echo "Usage: $0 --baseline <baseline.json> [--output-dir <dir>] [options] <document>"
+    exit 1
+fi
+
+if [ ! -f "$BASELINE" ]; then
+    echo "Error: Baseline file '$BASELINE' does not exist"
+    exit 1
+fi
+
+# Create output directory if it doesn't exist
+mkdir -p "$OUTPUT_DIR"
+
+# Set up file paths
+TELEMETRY_FILE="$OUTPUT_DIR/telemetry.json"
+LOG_FILE="$OUTPUT_DIR/log.txt"
+VISUALIZATION_FILE="$OUTPUT_DIR/visualization.png"
+
+echo "🚀 Starting indexing benchmark..."
+echo "  Baseline: $BASELINE"
+echo "  Output directory: $OUTPUT_DIR"
+echo "  Document/options: ${EXTRA_ARGS[@]}"
+echo ""
+
+# Run indexing with telemetry
+# Implicitly adds: --clear --telemetry <file> --validate --debug --no-progress
+echo "📝 Running indexing with telemetry..."
+python -m ragzoom.cli index \
+    --clear \
+    --telemetry "$TELEMETRY_FILE" \
+    --validate \
+    --debug \
+    --no-progress \
+    "${EXTRA_ARGS[@]}" \
+    2>&1 | tee "$LOG_FILE"
+
+# Check if indexing succeeded
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+    echo "❌ Indexing failed. Check $LOG_FILE for details."
+    exit 1
+fi
+
+echo ""
+echo "✅ Indexing completed. Telemetry saved to $TELEMETRY_FILE"
+echo ""
+
+# Generate comparison report and visualization
+echo "📊 Generating comparison report and visualization..."
+
+# Generate markdown comparison report
+echo "  Generating comparison report..."
+python -m ragzoom.telemetry_cli compare \
+    "$BASELINE" \
+    "$TELEMETRY_FILE" \
+    --output-format markdown \
+    > "$OUTPUT_DIR/comparison.md" 2>&1
+
+if [ $? -eq 0 ]; then
+    echo "  ✅ Comparison report saved to $OUTPUT_DIR/comparison.md"
+else
+    echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
+fi
+
+# Generate visualization
+echo "  Generating visualization..."
+python -m ragzoom.telemetry_cli visualize \
+    "$BASELINE" \
+    "$TELEMETRY_FILE" \
+    --output "$VISUALIZATION_FILE" \
+    > "$OUTPUT_DIR/visualization.log" 2>&1
+
+if [ $? -eq 0 ]; then
+    echo "  ✅ Visualization saved to $VISUALIZATION_FILE"
+else
+    echo "  ❌ Visualization failed. Check $OUTPUT_DIR/visualization.log for details."
+fi
+
+echo ""
+echo "🎉 Benchmark complete! Results:"
+echo "  - Telemetry: $OUTPUT_DIR/telemetry.json"
+echo "  - Log: $OUTPUT_DIR/log.txt"
+echo "  - Comparison report: $OUTPUT_DIR/comparison.md"
+echo "  - Visualization: $OUTPUT_DIR/visualization.png"
