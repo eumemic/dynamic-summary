@@ -114,9 +114,9 @@ fi
 
 # Extract metadata from baseline
 echo "Extracting configuration from baseline..."
-DOCUMENT_ID=$(grep '"document_id"' "$BASELINE" | head -1 | sed 's/.*": *"\([^"]*\)".*/\1/')
-DOCUMENT_PATH=$(grep '"document_path"' "$BASELINE" | head -1 | sed 's/.*": *"\([^"]*\)".*/\1/')
-CHUNK_SIZE=$(grep '"chunk_size"' "$BASELINE" | head -1 | sed 's/.*: *\([0-9]*\).*/\1/')
+DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
+DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
+CHUNK_SIZE=$(jq -r '.chunk_size // empty' "$BASELINE")
 
 if [ -z "$CHUNK_SIZE" ]; then
     echo "Warning: Could not extract chunk_size from baseline"
