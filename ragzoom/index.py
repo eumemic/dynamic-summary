@@ -281,6 +281,7 @@ class TreeBuilder:
         self,
         messages: list[ChatCompletionMessageParam],
         target_tokens: int,
+        target_chars: int,
         node_info: str,
         summary: str,
     ) -> tuple[str, int, Any] | None:
@@ -289,6 +290,7 @@ class TreeBuilder:
         Args:
             messages: Conversation history
             target_tokens: Target token count
+            target_chars: Target character count
             node_info: Node identifier for logging
             summary: Current summary to append to conversation
 
@@ -296,16 +298,21 @@ class TreeBuilder:
             Tuple of (new_summary, token_count, response) or None if failed
         """
         try:
-            # Calculate deviation for retry prompt
+            # Calculate current metrics for retry prompt
             current_tokens = len(self.splitter.tokenizer.encode(summary))
+            current_chars = len(summary)
+            # Deviation is still measured in tokens (our actual constraint)
+            # but we pass character info to help the LLM understand the target
             deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
 
-            # Load and hydrate retry prompt with variables
+            # Load and hydrate retry prompt with both token and character metrics
             retry_prompt = self.prompt_manager.load_and_hydrate(
                 "summarization/retry",
                 {
                     "target_tokens": target_tokens,
                     "current_tokens": current_tokens,
+                    "target_chars": target_chars,
+                    "current_chars": current_chars,
                     "deviation_pct": deviation_pct,
                 },
                 custom_path=self.retry_prompt_path,
@@ -325,6 +332,7 @@ class TreeBuilder:
         self,
         initial_summary: str,
         target_tokens: int,
+        target_chars: int,
         messages: list[
             ChatCompletionMessageParam
         ],  # Conversation history for continuations
@@ -363,7 +371,7 @@ class TreeBuilder:
             # Execute retry attempt
             retry_start = time.time()
             result = await self._execute_retry_attempt(
-                messages, target_tokens, node_info, best_summary
+                messages, target_tokens, target_chars, node_info, best_summary
             )
 
             if not result:
@@ -453,6 +461,14 @@ class TreeBuilder:
 
             return combined_text, 0  # No retries needed
 
+        # Calculate character-to-token ratio from the input text
+        # This gives us a context-specific ratio that adapts to the text style
+        combined_chars = len(combined_text)
+        chars_per_token = (
+            combined_chars / current_token_count if current_token_count > 0 else 4.5
+        )  # Default ~4.5 chars per token
+        target_chars = int(target_tokens * chars_per_token)
+
         # Build prompt with adjacent context (trim to avoid token explosion)
         prompt_parts: list[str] = []
 
@@ -492,10 +508,13 @@ class TreeBuilder:
                 node_info = f"[{parent_id}] " if parent_id else ""
 
                 # Build initial messages for conversation
-                # Load and hydrate system prompt with target_tokens
+                # Load and hydrate system prompt with target_tokens and target_chars
                 system_prompt = self.prompt_manager.load_and_hydrate(
                     "summarization/system",
-                    {"target_tokens": target_tokens},
+                    {
+                        "target_tokens": target_tokens,
+                        "target_chars": target_chars,
+                    },
                     custom_path=self.summary_system_prompt_path,
                 )
 
@@ -546,6 +565,7 @@ class TreeBuilder:
                         await self._retry_summary_correction(
                             summary,
                             target_tokens,
+                            target_chars,
                             messages,
                             parent_id,
                             reporter,
