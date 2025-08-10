@@ -142,7 +142,21 @@ async def test_backward_compatibility_without_cached_tokens(mock_store):
         return response
 
     with patch.object(indexer.client.chat.completions, "create", new=mock_create):
-        with patch.object(indexer.splitter.tokenizer, "encode", return_value=[0] * 100):
+        # Mock encode to return appropriate lengths - combined text should exceed target
+        def mock_encode(text):
+            if "Test content" in text and "More content" in text:
+                # Combined text
+                return [0] * 200  # Greater than target of 100
+            elif "Test content" in text:
+                return [0] * 120  # Left text
+            elif "More content" in text:
+                return [0] * 120  # Right text
+            else:
+                return [0] * 100  # Default
+
+        with patch.object(
+            indexer.splitter.tokenizer, "encode", side_effect=mock_encode
+        ):
             await indexer._summarize_text(
                 left_text="Test content that needs to be long enough to trigger summarization"
                 * 2,
@@ -268,12 +282,9 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store):
     data = reporter.get_telemetry_data("test_doc", config.leaf_tokens)
     nodes = data["nodes"]
     test_node = next(n for n in nodes if n["node_id"] == "test_node")
-    attempts = test_node["summary_attempts"]
 
-    assert len(attempts) == 1
-    assert attempts[0]["model"] == "passthrough"
-    assert attempts[0]["prompt_tokens"] == 0
-    assert attempts[0].get("cached_tokens", 0) == 0
+    # Passthrough nodes no longer record summary_attempts
+    assert "summary_attempts" not in test_node or test_node["summary_attempts"] == []
 
 
 @pytest.mark.asyncio

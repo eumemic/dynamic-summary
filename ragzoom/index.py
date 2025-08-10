@@ -465,20 +465,7 @@ class TreeBuilder:
                 f"(target: {target_tokens}). Skipping summarization."
             )
 
-            # Record this as a summary attempt for telemetry
-            # "passthrough" indicates the text was already short enough and no summarization was needed
-            if reporter and parent_id:
-                reporter.record_summary_attempt_v2(
-                    node_id=parent_id,
-                    target_tokens=target_tokens,
-                    input_text_tokens=current_token_count,
-                    prompt_tokens=0,  # No LLM call made
-                    completion_tokens=0,  # No LLM call made
-                    actual_tokens=current_token_count,
-                    model="passthrough",  # Indicates no summarization needed - text used as-is
-                    start_time=time.time(),
-                    is_final=True,  # This is the only and final attempt
-                )
+            # Don't record passthrough as a summary attempt - it pollutes metrics
 
             return combined_text, 0  # No retries needed
 

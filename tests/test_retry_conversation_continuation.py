@@ -320,11 +320,10 @@ async def test_passthrough_for_text_under_target(mock_store):
     assert retry_count == 0
     assert summary == "Short Text"
 
-    # Verify telemetry recorded the passthrough
+    # Verify telemetry - passthrough nodes no longer record attempts
     data = reporter.get_telemetry_data("test_doc", config.leaf_tokens)
-    attempts = data["nodes"][0]["summary_attempts"]
-    assert len(attempts) == 1
-    assert attempts[0]["model"] == "passthrough"
-    # Actual tokens should be under target (passthrough case)
-    assert attempts[0]["actual_tokens"] < attempts[0]["target_tokens"]
-    assert attempts[0]["target_tokens"] == 100
+    # Passthrough nodes should not have summary_attempts
+    assert (
+        "summary_attempts" not in data["nodes"][0]
+        or data["nodes"][0]["summary_attempts"] == []
+    )
