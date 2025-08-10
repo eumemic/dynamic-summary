@@ -155,7 +155,7 @@ def index(
             config,
             store,
             max_concurrent=max_concurrent,
-            summary_system_prompt_path=summary_system_prompt,
+            initial_prompt_path=summary_system_prompt,
             retry_prompt_path=summary_retry_prompt,
         )
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from datetime import datetime
@@ -29,7 +30,7 @@ class TreeBuilder:
         config: RagZoomConfig,
         store: Store,
         max_concurrent: int = 10,
-        summary_system_prompt_path: str | None = None,
+        initial_prompt_path: str | None = None,
         retry_prompt_path: str | None = None,
     ):
         """Initialize tree builder.
@@ -38,7 +39,7 @@ class TreeBuilder:
             config: RagZoom configuration
             store: Store instance for persistence
             max_concurrent: Maximum concurrent API requests
-            summary_system_prompt_path: Optional path to custom system prompt file
+            initial_prompt_path: Optional path to custom initial prompt file
             retry_prompt_path: Optional path to custom retry prompt file
         """
         self.config = config
@@ -47,10 +48,42 @@ class TreeBuilder:
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.splitter = TextSplitter(config)
 
-        # Initialize prompt manager
+        # Initialize prompt manager and load templates once
         self.prompt_manager = PromptManager()
-        self.summary_system_prompt_path = summary_system_prompt_path
+        self.initial_prompt_path = initial_prompt_path
         self.retry_prompt_path = retry_prompt_path
+
+        # Load and cache initial prompt template at initialization
+        # This contains the main instruction that goes in the user message
+        self.initial_prompt_template = self.prompt_manager.load_prompt(
+            "summarization/initial", custom_path=self.initial_prompt_path
+        )
+
+        # Validate the initial prompt has the expected variables
+        template_vars = set(re.findall(r"\{(\w+)\}", self.initial_prompt_template))
+        expected_vars = {"target_tokens"}
+        if template_vars != expected_vars:
+            raise ValueError(
+                f"Initial prompt template has unexpected variables. "
+                f"Expected: {expected_vars}, Found: {template_vars}"
+            )
+
+        # Load and cache retry prompt template
+        self.retry_prompt_template = self.prompt_manager.load_prompt(
+            "summarization/retry", custom_path=self.retry_prompt_path
+        )
+
+        # Validate the retry prompt has the expected variables
+        # Extract variable names, ignoring format specifiers after :
+        retry_vars = set(
+            re.findall(r"\{(\w+)(?::[^}]*)?\}", self.retry_prompt_template)
+        )
+        expected_retry_vars = {"target_tokens", "current_tokens", "deviation_pct"}
+        if not expected_retry_vars.issubset(retry_vars):
+            raise ValueError(
+                f"Retry prompt template missing required variables. "
+                f"Required: {expected_retry_vars}, Found: {retry_vars}"
+            )
 
     def _generate_node_id(self) -> str:
         """Generate unique node ID."""
@@ -300,15 +333,11 @@ class TreeBuilder:
             current_tokens = len(self.splitter.tokenizer.encode(summary))
             deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
 
-            # Load and hydrate retry prompt with variables
-            retry_prompt = self.prompt_manager.load_and_hydrate(
-                "summarization/retry",
-                {
-                    "target_tokens": target_tokens,
-                    "current_tokens": current_tokens,
-                    "deviation_pct": deviation_pct,
-                },
-                custom_path=self.retry_prompt_path,
+            # Format retry prompt with variables
+            retry_prompt = self.retry_prompt_template.format(
+                target_tokens=target_tokens,
+                current_tokens=current_tokens,
+                deviation_pct=deviation_pct,
             )
 
             # Append current summary as assistant response
@@ -468,8 +497,10 @@ class TreeBuilder:
             else:
                 trimmed_prev = prev_context
 
-        # Build the user prompt (no instruction needed - it's now in the system message)
-        prompt_parts = []
+        # Build the user prompt with instruction from template
+        # Format the initial prompt template with target_tokens
+        instruction = self.initial_prompt_template.format(target_tokens=target_tokens)
+        prompt_parts = [instruction]
 
         # Add preceding context if available
         if prev_context and self.config.adjacent_context_tokens > 0 and trimmed_prev:
@@ -492,17 +523,11 @@ class TreeBuilder:
                 node_info = f"[{parent_id}] " if parent_id else ""
 
                 # Build initial messages for conversation
-                # Load and hydrate system prompt with target_tokens
-                system_prompt = self.prompt_manager.load_and_hydrate(
-                    "summarization/system",
-                    {"target_tokens": target_tokens},
-                    custom_path=self.summary_system_prompt_path,
-                )
-
+                # Use the original hardcoded system message for consistency with master
                 messages: list[ChatCompletionMessageParam] = [
                     {
                         "role": "system",
-                        "content": system_prompt,
+                        "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
                     },
                     {"role": "user", "content": full_prompt},
                 ]
