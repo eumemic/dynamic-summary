@@ -87,9 +87,9 @@ def cli(ctx: click.Context) -> None:
     help="Save telemetry data to JSON file (default: telemetry.json)",
 )
 @click.option(
-    "--summary-system-prompt",
+    "--summary-initial-prompt",
     type=click.Path(exists=True),
-    help="Path to custom system prompt file for summarization",
+    help="Path to custom initial prompt file for summarization",
 )
 @click.option(
     "--summary-retry-prompt",
@@ -107,7 +107,7 @@ def index(
     validate: bool,
     debug: bool,
     telemetry_file: str | None,
-    summary_system_prompt: str | None,
+    summary_initial_prompt: str | None,
     summary_retry_prompt: str | None,
 ) -> None:
     """Index a document from file."""
@@ -155,7 +155,7 @@ def index(
             config,
             store,
             max_concurrent=max_concurrent,
-            initial_prompt_path=summary_system_prompt,
+            initial_prompt_path=summary_initial_prompt,
             retry_prompt_path=summary_retry_prompt,
         )
 
