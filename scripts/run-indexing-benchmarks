@@ -58,6 +58,24 @@ OUTPUT_DIR="benchmarks"  # Default output directory
 DOCUMENT=""  # Will be auto-detected or provided
 EXTRA_ARGS=()
 
+# Function to validate paths against injection
+validate_path() {
+    local path="$1"
+    local name="$2"
+    
+    # Check for dangerous characters that could be used for injection
+    if [[ "$path" =~ [\;\|\&\$\`\(\)\{\}\<\>] ]]; then
+        echo "Error: Invalid characters in $name path: $path"
+        exit 1
+    fi
+    
+    # Ensure path doesn't start with - (could be interpreted as option)
+    if [[ "$path" == -* ]]; then
+        echo "Error: $name path cannot start with '-': $path"
+        exit 1
+    fi
+}
+
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -106,6 +124,9 @@ if [ -z "$BASELINE" ]; then
         exit 1
     fi
 fi
+
+# Validate baseline path
+validate_path "$BASELINE" "baseline"
 
 if [ ! -f "$BASELINE" ]; then
     echo "Error: Baseline file '$BASELINE' does not exist"
@@ -158,6 +179,9 @@ if [ -z "$DOCUMENT" ]; then
         exit 1
     fi
 fi
+
+# Validate document path
+validate_path "$DOCUMENT" "document"
 
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
@@ -226,14 +250,15 @@ fi
 
 # Generate visualization
 echo "  Generating visualization..."
-set +e
+# Capture exit code without affecting error handling
 python -m ragzoom.telemetry_cli visualize \
     "$BASELINE" \
     "$TELEMETRY_FILE" \
     --output "$VISUALIZATION_FILE" \
-    > "$OUTPUT_DIR/visualization.log" 2>&1
-VIZ_EXIT_CODE=$?
-set -e
+    > "$OUTPUT_DIR/visualization.log" 2>&1 || VIZ_EXIT_CODE=$?
+
+# Default to 0 if not set (success case)
+VIZ_EXIT_CODE=${VIZ_EXIT_CODE:-0}
 
 if [ $VIZ_EXIT_CODE -eq 0 ]; then
     echo "  ✅ Visualization saved to $VISUALIZATION_FILE"

@@ -254,8 +254,8 @@ class TelemetryCollector:
         self.nodes_per_height: list[int] = []
 
         # Memory tracking
-        self.process = psutil.Process()
-        memory_info = self.process.memory_info()
+        # Don't store process object - create fresh each time to avoid thread safety issues
+        memory_info = psutil.Process().memory_info()
         self.memory_start_mb = memory_info.rss / 1024 / 1024
         self.peak_memory_mb = self.memory_start_mb
         self.memory_end_mb = 0.0
@@ -300,7 +300,8 @@ class TelemetryCollector:
         try:
             # Use lock to ensure thread-safe memory reading and peak update
             with self._memory_lock:
-                memory_info = self.process.memory_info()
+                # Create fresh process object each time for thread safety
+                memory_info = psutil.Process().memory_info()
                 current_memory_mb = memory_info.rss / 1024 / 1024
                 if current_memory_mb > self.peak_memory_mb:
                     self.peak_memory_mb = current_memory_mb
@@ -506,7 +507,8 @@ class TelemetryCollector:
 
         # Record final memory usage
         try:
-            memory_info = self.process.memory_info()
+            # Create fresh process object each time for thread safety
+            memory_info = psutil.Process().memory_info()
             self.memory_end_mb = memory_info.rss / 1024 / 1024
         except Exception:
             self.memory_end_mb = self.peak_memory_mb

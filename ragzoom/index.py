@@ -273,6 +273,7 @@ class TreeBuilder:
         target_tokens: int,
         node_info: str,
         summary: str,
+        current_tokens: int | None = None,
     ) -> tuple[str, int, Any] | None:
         """Execute a single retry attempt.
 
@@ -281,14 +282,20 @@ class TreeBuilder:
             target_tokens: Target token count
             node_info: Node identifier for logging
             summary: Current summary to append to conversation
+            current_tokens: Already-calculated token count (avoids re-tokenization)
 
         Returns:
             Tuple of (new_summary, token_count, response) or None if failed
         """
         try:
-            # Calculate deviation for retry prompt
-            current_tokens = len(self.splitter.tokenizer.encode(summary))
-            deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
+            # Use provided token count or calculate if not provided
+            if current_tokens is None:
+                current_tokens = len(self.splitter.tokenizer.encode(summary))
+            # Avoid division by zero
+            if target_tokens > 0:
+                deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
+            else:
+                deviation_pct = 0.0
 
             # Generate inline retry prompt with runtime conditions
             retry_prompt = f"""The summary you provided deviates significantly from the target token count of {target_tokens} tokens. Your summary was {current_tokens} tokens ({deviation_pct:.1%} off target).
@@ -350,10 +357,10 @@ Remember: Your goal is to maximize information preservation while hitting the ta
                 f"Retry {retry_count}/{self.config.summary_max_retries}"
             )
 
-            # Execute retry attempt
+            # Execute retry attempt (pass current_tokens to avoid re-tokenization)
             retry_start = time.time()
             result = await self._execute_retry_attempt(
-                messages, target_tokens, node_info, best_summary
+                messages, target_tokens, node_info, best_summary, current_tokens
             )
 
             if not result:
