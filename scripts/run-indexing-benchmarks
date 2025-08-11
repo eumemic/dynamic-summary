@@ -72,7 +72,7 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_DIR="$2"
             shift 2
             ;;
-        --summary-system-prompt|--summary-retry-prompt|--document-id)
+        --document-id)
             # Pass-through options that take an argument
             EXTRA_ARGS+=("$1" "$2")
             shift 2

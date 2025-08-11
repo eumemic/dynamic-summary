@@ -1,9 +1,0 @@
-The summary you provided deviates significantly from the target token count of {target_tokens} tokens. Your summary was {current_tokens} tokens ({deviation_pct:.1%} off target).
-
-Please try again with a summary that:
-- Is closer to exactly {target_tokens} tokens
-- Maintains information density by including as much detail as possible within the token limit
-- Covers the full scope of the content from start to end
-- Abstracts over minor details where necessary to stay within the limit
-
-Remember: Your goal is to maximize information preservation while hitting the target token count as closely as possible.

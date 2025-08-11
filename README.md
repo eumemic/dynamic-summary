@@ -98,10 +98,6 @@ ragzoom pin <node-id>
 
 # Start API server
 ragzoom serve
-
-# Index with custom prompts
-ragzoom index document.txt --summary-initial-prompt custom/academic.txt
-ragzoom index document.txt --summary-retry-prompt custom/retry.txt
 ```
 
 ### Python API
@@ -180,17 +176,9 @@ RagZoom maintains complete isolation between indexed documents:
 - **Re-indexing**: Use `--clear` flag to replace existing documents
 - **Bulk Operations**: Clear individual documents or all data
 
-## Prompt Customization
+## Advanced Configuration
 
-RagZoom supports custom prompts for controlling summarization behavior:
-
-- **System Prompt**: Define overall summarization instructions
-- **Retry Prompt**: Control how summaries are corrected when they deviate from target token counts
-- **Security**: Custom prompts must be in allowed directories (current directory or `prompts/` subdirectory)
-
-See [Prompt Customization Guide](docs/prompt-customization.md) for detailed documentation.
-
-Example workflow:
+Use environment variables to configure RagZoom behavior:
 ```bash
 # Index multiple documents
 ragzoom index report-2023.pdf

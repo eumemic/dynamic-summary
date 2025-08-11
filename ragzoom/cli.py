@@ -86,16 +86,6 @@ def cli(ctx: click.Context) -> None:
     default=None,
     help="Save telemetry data to JSON file (default: telemetry.json)",
 )
-@click.option(
-    "--summary-initial-prompt",
-    type=click.Path(exists=True),
-    help="Path to custom initial prompt file for summarization",
-)
-@click.option(
-    "--summary-retry-prompt",
-    type=click.Path(exists=True),
-    help="Path to custom retry prompt file for summary corrections",
-)
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -107,8 +97,6 @@ def index(
     validate: bool,
     debug: bool,
     telemetry_file: str | None,
-    summary_initial_prompt: str | None,
-    summary_retry_prompt: str | None,
 ) -> None:
     """Index a document from file."""
 
@@ -148,15 +136,13 @@ def index(
 
         click.echo(f"Indexing {path.name}...")
 
-        # Create tree builder with specified concurrency and optional custom prompts
+        # Create tree builder with specified concurrency
         config = ctx.obj["config"]
         store = ctx.obj["store"]
         tree_builder = TreeBuilder(
             config,
             store,
             max_concurrent=max_concurrent,
-            initial_prompt_path=summary_initial_prompt,
-            retry_prompt_path=summary_retry_prompt,
         )
 
         # Index with telemetry if requested

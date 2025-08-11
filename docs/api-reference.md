@@ -31,9 +31,7 @@ ragzoom index <input> [OPTIONS]
 - `--no-progress` - Disable progress bar
 - `--max-concurrent` - Maximum concurrent API calls (default: 10)
 - `--validate` - Enable validation checks during indexing
-- `--debug` - Enable debug logging (shows prompt loading, token counts, etc.)
-- `--summary-initial-prompt` - Path to custom initial prompt file for summarization
-- `--summary-retry-prompt` - Path to custom retry prompt file for summary corrections
+- `--debug` - Enable debug logging (shows token counts, etc.)
 - `--telemetry` - Save telemetry data to JSON file (default: telemetry.json when flag is set)
 
 **Examples:**
@@ -50,10 +48,7 @@ ragzoom index document.txt --clear
 # Index with validation
 ragzoom index document.txt --validate
 
-# Index with custom prompts
-ragzoom index document.txt --summary-initial-prompt prompts/academic.txt
-
-# Index with debug logging to see prompt loading
+# Index with debug logging
 ragzoom index document.txt --debug
 
 # Index with telemetry collection

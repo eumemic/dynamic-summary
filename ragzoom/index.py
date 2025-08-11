@@ -5,7 +5,6 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any, cast, overload
 
 from openai import AsyncOpenAI
@@ -14,7 +13,6 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from ragzoom.config import RagZoomConfig
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
-from ragzoom.prompt import PromptManager
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
 from ragzoom.telemetry_collection import TelemetryCollector
@@ -30,8 +28,6 @@ class TreeBuilder:
         config: RagZoomConfig,
         store: Store,
         max_concurrent: int = 10,
-        initial_prompt_path: str | Path | None = None,
-        retry_prompt_path: str | Path | None = None,
     ):
         """Initialize tree builder.
 
@@ -39,30 +35,12 @@ class TreeBuilder:
             config: RagZoom configuration
             store: Store instance for persistence
             max_concurrent: Maximum concurrent API requests
-            initial_prompt_path: Optional path to initial prompt template file
-            retry_prompt_path: Optional path to retry prompt template file
         """
         self.config = config
         self.store = store
         self.client = AsyncOpenAI(api_key=config.openai_api_key)
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.splitter = TextSplitter(config)
-
-        # Initialize prompt instances with defaults if not provided
-        if initial_prompt_path is None:
-            initial_prompt_path = (
-                Path(__file__).parent.parent
-                / "prompts"
-                / "summarization"
-                / "initial.txt"
-            )
-        if retry_prompt_path is None:
-            retry_prompt_path = (
-                Path(__file__).parent.parent / "prompts" / "summarization" / "retry.txt"
-            )
-
-        self.initial_prompt = PromptManager(initial_prompt_path)
-        self.retry_prompt = PromptManager(retry_prompt_path)
 
     def _generate_node_id(self) -> str:
         """Generate unique node ID."""
@@ -312,14 +290,16 @@ class TreeBuilder:
             current_tokens = len(self.splitter.tokenizer.encode(summary))
             deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
 
-            # Hydrate retry prompt with variables
-            retry_prompt = self.retry_prompt.hydrate(
-                {
-                    "target_tokens": target_tokens,
-                    "current_tokens": current_tokens,
-                    "deviation_pct": deviation_pct,
-                }
-            )
+            # Generate inline retry prompt with runtime conditions
+            retry_prompt = f"""The summary you provided deviates significantly from the target token count of {target_tokens} tokens. Your summary was {current_tokens} tokens ({deviation_pct:.1%} off target).
+
+Please try again with a summary that:
+- Is closer to exactly {target_tokens} tokens
+- Maintains information density by including as much detail as possible within the token limit
+- Covers the full scope of the content from start to end
+- Abstracts over minor details where necessary to stay within the limit
+
+Remember: Your goal is to maximize information preservation while hitting the target token count as closely as possible."""
 
             # Append current summary as assistant response
             messages.append({"role": "assistant", "content": summary})
@@ -465,9 +445,25 @@ class TreeBuilder:
             else:
                 trimmed_prev = prev_context
 
-        # Build the user prompt with instruction from template
-        # Hydrate the initial prompt with target_tokens
-        instruction = self.initial_prompt.hydrate({"target_tokens": target_tokens})
+        # Build the summarization prompt inline
+        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
+
+CRITICAL REQUIREMENTS:
+- Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
+- The summary should be ≤{target_tokens} tokens in total
+- Make the summary as information-dense as possible while filling out (but not exceeding) the token limit
+- The summary should cover the full scope of the content from start to end, but abstract over minor details and omit verbal flourishes to stay within the token limit
+- Focus on key events, facts, and themes ONLY from the provided text
+- Do NOT include any concrete information from BEFORE the <SUMMARIZE_TEXT> tag or AFTER the </SUMMARIZE_TEXT> tag in the summary
+- Do NOT complete a sentence that is cut off with information from outside the <SUMMARIZE_TEXT> block
+- Do NOT infer or imagine details not present in the text
+- If the text references something without explaining it, do NOT try to explain it
+- IMPORTANT: Match voice and tense of the text you are summarizing! If you are summarizing a text written in the past tense, the summary MUST be in past tense
+- Try to match the tone and style of the text, as if the summary were written by the same author
+- Respond ONLY with your best attempt at a summary, do not break the fourth wall, say you can't summarize it, etc.
+
+Here's the content to summarize:"""
+
         prompt_parts = [instruction]
 
         # Add preceding context if available
@@ -547,20 +543,16 @@ class TreeBuilder:
                     # The accepted attempt is the initial (0) plus the best retry index
                     accepted_attempt = best_attempt_index
 
-                    # Re-calculate final tokens for logging
-                    final_tokens = len(self.splitter.tokenizer.encode(summary))
-                    utilization_pct = (final_tokens / target_tokens) * 100
-                    logger.debug(
-                        f"{node_info}Summary corrected: {final_tokens} tokens "
-                        f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
-                    )
-                else:
-                    # Log initial result
-                    utilization_pct = (current_tokens / target_tokens) * 100
-                    logger.debug(
-                        f"{node_info}Summary complete: {current_tokens} tokens "
-                        f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
-                    )
+                # Log final summary statistics consistently
+                final_tokens = len(self.splitter.tokenizer.encode(summary))
+                utilization_pct = (final_tokens / target_tokens) * 100
+                deviation = final_tokens - target_tokens
+                deviation_str = f"+{deviation}" if deviation >= 0 else str(deviation)
+
+                logger.debug(
+                    f"{node_info}Summary: {final_tokens} tokens "
+                    f"(target: {target_tokens}, {deviation_str} tokens, {utilization_pct:.0f}% utilization)"
+                )
 
                 # Mark which attempt was accepted
                 if reporter and parent_id:
