@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from ragzoom.config import RagZoomConfig
-from ragzoom.index import TreeBuilder
 from ragzoom.store import Store
 from tests.mock_store import SimpleMockStore
 
@@ -166,11 +165,6 @@ def mock_openai_client():
     mock_client.chat.completions.create = MagicMock(return_value=mock_summary_response)
 
     return mock_client
-
-
-def create_tree_builder(config, store, **kwargs):
-    """Helper function to create TreeBuilder."""
-    return TreeBuilder(config, store, **kwargs)
 
 
 @pytest.fixture
