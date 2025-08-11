@@ -20,17 +20,15 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import (
     compute_batch_efficiency,
     get_accepted_attempt,
+    get_model_pricing,
     get_telemetry_thresholds,
 )
 from ragzoom.telemetry_config import (
     DEFAULT_FONT_SIZE,
     DISPLAY_DPI,
-    EMBEDDING_COST_PER_1K,
     FIGURE_HEIGHT,
     FIGURE_WIDTH,
     SAVE_DPI,
-    SUMMARY_INPUT_COST_PER_1K,
-    SUMMARY_OUTPUT_COST_PER_1K,
 )
 from ragzoom.telemetry_types import NodeTelemetryDict
 
@@ -145,14 +143,15 @@ class TelemetryVisualizer:
         if "telemetry" in data:
             # Legacy wrapped format: {"telemetry": {...}, "config": {...}}
             telemetry = data["telemetry"]
-            config = self._create_config_from_metrics(data.get("metrics", {}))
         elif "format_version" in data:
             # Direct v3.0 format: {"format_version": "3.0", ...}
             telemetry = data
-            config = self._create_config_from_metrics({})
         else:
             print(f"Warning: No telemetry data found in {benchmark_path}")
             return
+
+        # Create config from telemetry for accurate cost calculations
+        config = self._create_config_from_telemetry(telemetry)
 
         # Create figure with subplots (3 rows only)
         fig = plt.figure(
@@ -192,13 +191,26 @@ class TelemetryVisualizer:
 
         print(f"Saved visualization to {self.output_path}")
 
-    def _create_config_from_metrics(self, metrics: dict[str, Any]) -> RagZoomConfig:
-        """Create a config object from metrics data for cost calculations."""
+    def _create_config_from_telemetry(self, telemetry: dict) -> RagZoomConfig:
+        """Create a config object from telemetry data for cost calculations."""
+        # Get models from telemetry
+        models = telemetry.get("models")
+        if not models:
+            raise ValueError(
+                "Telemetry data missing 'models' field. "
+                "Cannot compute costs without knowing which models were used."
+            )
+
+        # Get model-specific pricing
+        pricing = get_model_pricing(models["summary"], models["embedding"])
+
         return RagZoomConfig(
             openai_api_key="dummy",  # Not needed for analysis
-            embedding_cost_per_1k=EMBEDDING_COST_PER_1K,
-            summary_input_cost_per_1k=SUMMARY_INPUT_COST_PER_1K,
-            summary_output_cost_per_1k=SUMMARY_OUTPUT_COST_PER_1K,
+            summary_model=models["summary"],
+            embedding_model=models["embedding"],
+            embedding_cost_per_1k=pricing["embedding_cost_per_1k"],
+            summary_input_cost_per_1k=pricing["summary_input_cost_per_1k"],
+            summary_output_cost_per_1k=pricing["summary_output_cost_per_1k"],
         )
 
     def _calculate_histogram_bins(
@@ -259,10 +271,8 @@ class TelemetryVisualizer:
         # Handle both wrapped and direct v3.0 formats for file1
         if "telemetry" in data1:
             telemetry1 = data1["telemetry"]
-            config1 = self._create_config_from_metrics(data1.get("metrics", {}))
         elif "format_version" in data1:
             telemetry1 = data1
-            config1 = self._create_config_from_metrics({})
         else:
             print(f"Warning: No telemetry data found in {file1}")
             return
@@ -270,13 +280,15 @@ class TelemetryVisualizer:
         # Handle both wrapped and direct v3.0 formats for file2
         if "telemetry" in data2:
             telemetry2 = data2["telemetry"]
-            config2 = self._create_config_from_metrics(data2.get("metrics", {}))
         elif "format_version" in data2:
             telemetry2 = data2
-            config2 = self._create_config_from_metrics({})
         else:
             print(f"Warning: No telemetry data found in {file2}")
             return
+
+        # Create configs from telemetry for accurate cost calculations
+        config1 = self._create_config_from_telemetry(telemetry1)
+        config2 = self._create_config_from_telemetry(telemetry2)
 
         # Create figure with side-by-side subplots (only 3 rows)
         if figsize is None:

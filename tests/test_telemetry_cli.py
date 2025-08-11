@@ -18,6 +18,10 @@ class TestTelemetryCompare:
         # Return just the telemetry structure, not wrapped in another object
         return {
             "format_version": "2.0",
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
             "documents": {
                 "test.txt": {
                     "metadata": {
