@@ -29,6 +29,16 @@ logger = logging.getLogger(__name__)
 # Suppress noisy HTTP logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
+
+
+def configure_logging_level(debug: bool) -> None:
+    """Configure logging level based on debug flag."""
+    if debug:
+        logging.getLogger("ragzoom").setLevel(logging.DEBUG)
+    else:
+        logging.getLogger("ragzoom").setLevel(logging.INFO)
+
+
 # Keep ragzoom.index at INFO to show batch progress
 
 
@@ -90,6 +100,9 @@ def index(
 ) -> None:
     """Index a document from file."""
 
+    # Configure logging level based on debug flag
+    configure_logging_level(debug)
+
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
 
@@ -126,7 +139,11 @@ def index(
         # Create tree builder with specified concurrency
         config = ctx.obj["config"]
         store = ctx.obj["store"]
-        tree_builder = TreeBuilder(config, store, max_concurrent=max_concurrent)
+        tree_builder = TreeBuilder(
+            config,
+            store,
+            max_concurrent=max_concurrent,
+        )
 
         # Index with telemetry if requested
         if telemetry_file:
@@ -135,7 +152,6 @@ def index(
                 document_id=document_id,
                 file_path=str(path.absolute()),
                 show_progress=not no_progress,
-                debug=debug,
             )
         else:
             doc_id = tree_builder.add_document(
@@ -143,7 +159,6 @@ def index(
                 document_id=document_id,
                 file_path=str(path.absolute()),
                 show_progress=not no_progress,
-                debug=debug,
             )
 
         # Get stats
@@ -315,6 +330,10 @@ def query(
     viz_coords: str,
 ) -> None:
     """Query the system and get a summary."""
+
+    # Configure logging level based on debug flag
+    configure_logging_level(debug)
+
     # Set global validation flag
     from ragzoom.validate import set_validation_enabled
 

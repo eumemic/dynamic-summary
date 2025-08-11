@@ -23,7 +23,12 @@ logger = logging.getLogger(__name__)
 class TreeBuilder:
     """Tree builder with concurrent processing."""
 
-    def __init__(self, config: RagZoomConfig, store: Store, max_concurrent: int = 10):
+    def __init__(
+        self,
+        config: RagZoomConfig,
+        store: Store,
+        max_concurrent: int = 10,
+    ):
         """Initialize tree builder.
 
         Args:
@@ -211,17 +216,20 @@ class TreeBuilder:
 
         cached_tokens = self._extract_cached_tokens(response)
 
-        reporter.record_summary_attempt_v2(
-            node_id=parent_id,
-            target_tokens=target_tokens,
-            input_text_tokens=input_text_tokens,
-            prompt_tokens=response.usage.prompt_tokens,
-            completion_tokens=response.usage.completion_tokens,
-            actual_tokens=actual_tokens,
-            model=self.config.summary_model,
-            start_time=start_time,
-            cached_tokens=cached_tokens,
-        )
+        try:
+            reporter.record_summary_attempt_v2(
+                node_id=parent_id,
+                target_tokens=target_tokens,
+                input_text_tokens=input_text_tokens,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                actual_tokens=actual_tokens,
+                model=self.config.summary_model,
+                start_time=start_time,
+                cached_tokens=cached_tokens,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record telemetry for summary attempt: {e}")
 
     def _should_retry_summary(self, deviation_pct: float) -> bool:
         """Check if summary should be retried based on deviation from target.
@@ -268,6 +276,7 @@ class TreeBuilder:
         target_tokens: int,
         node_info: str,
         summary: str,
+        current_tokens: int | None = None,
     ) -> tuple[str, int, Any] | None:
         """Execute a single retry attempt.
 
@@ -276,15 +285,36 @@ class TreeBuilder:
             target_tokens: Target token count
             node_info: Node identifier for logging
             summary: Current summary to append to conversation
+            current_tokens: Already-calculated token count (avoids re-tokenization)
 
         Returns:
             Tuple of (new_summary, token_count, response) or None if failed
         """
         try:
+            # Use provided token count or calculate if not provided
+            if current_tokens is None:
+                current_tokens = len(self.splitter.tokenizer.encode(summary))
+            # Avoid division by zero
+            if target_tokens > 0:
+                deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
+            else:
+                deviation_pct = 0.0
+
+            # Generate inline retry prompt with runtime conditions
+            retry_prompt = f"""The summary you provided deviates significantly from the target token count of {target_tokens} tokens. Your summary was {current_tokens} tokens ({deviation_pct:.1%} off target).
+
+Please try again with a summary that:
+- Is closer to exactly {target_tokens} tokens
+- Maintains information density by including as much detail as possible within the token limit
+- Covers the full scope of the content from start to end
+- Abstracts over minor details where necessary to stay within the limit
+
+Remember: Your goal is to maximize information preservation while hitting the target token count as closely as possible."""
+
             # Append current summary as assistant response
             messages.append({"role": "assistant", "content": summary})
             # Append retry instruction as user message
-            messages.append({"role": "user", "content": "Try again."})
+            messages.append({"role": "user", "content": retry_prompt})
 
             return await self._make_summary_call(messages, target_tokens, node_info)
         except ValueError:
@@ -299,7 +329,6 @@ class TreeBuilder:
             ChatCompletionMessageParam
         ],  # Conversation history for continuations
         parent_id: str | None = None,
-        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, int, int]:
         """Retry summary correction to get closer to target token count.
@@ -325,17 +354,16 @@ class TreeBuilder:
             if not self._should_retry_summary(deviation_pct):
                 return best_summary, actual_retries, best_attempt_index
 
-            if debug:
-                logger.info(
-                    f"{node_info}Summary deviation: {current_tokens} tokens "
-                    f"(target: {target_tokens}, {deviation_pct:.1%} off). "
-                    f"Retry {retry_count}/{self.config.summary_max_retries}"
-                )
+            logger.debug(
+                f"{node_info}Summary deviation: {current_tokens} tokens "
+                f"(target: {target_tokens}, {deviation_pct:.1%} off). "
+                f"Retry {retry_count}/{self.config.summary_max_retries}"
+            )
 
-            # Execute retry attempt
+            # Execute retry attempt (pass current_tokens to avoid re-tokenization)
             retry_start = time.time()
             result = await self._execute_retry_attempt(
-                messages, target_tokens, node_info, best_summary
+                messages, target_tokens, node_info, best_summary, current_tokens
             )
 
             if not result:
@@ -370,13 +398,12 @@ class TreeBuilder:
                 best_distance_from_target = new_distance
                 best_attempt_index = actual_retries
 
-                if debug:
-                    logger.info(
-                        f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
-                        f"(target: {target_tokens}, distance: {new_distance})"
-                    )
-            elif debug:
-                logger.info(
+                logger.debug(
+                    f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
+                    f"(target: {target_tokens}, distance: {new_distance})"
+                )
+            else:
+                logger.debug(
                     f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
                     f"(best so far: {best_token_count} tokens)"
                 )
@@ -390,7 +417,6 @@ class TreeBuilder:
         target_tokens: int,
         prev_context: str | None = None,
         parent_id: str | None = None,
-        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, int]:
         """Summarize text using LLM.
@@ -405,31 +431,17 @@ class TreeBuilder:
 
         if current_token_count <= target_tokens:
             node_info = f"[{parent_id}] " if parent_id else ""
-            if debug:
-                logger.info(
-                    f"{node_info}Combined text already under target: {current_token_count} tokens "
-                    f"(target: {target_tokens}). Skipping summarization."
-                )
+            logger.debug(
+                f"{node_info}Combined text already under target: {current_token_count} tokens "
+                f"(target: {target_tokens}). Skipping summarization."
+            )
 
-            # Record this as a summary attempt for telemetry
-            # "passthrough" indicates the text was already short enough and no summarization was needed
-            if reporter and parent_id:
-                reporter.record_summary_attempt_v2(
-                    node_id=parent_id,
-                    target_tokens=target_tokens,
-                    input_text_tokens=current_token_count,
-                    prompt_tokens=0,  # No LLM call made
-                    completion_tokens=0,  # No LLM call made
-                    actual_tokens=current_token_count,
-                    model="passthrough",  # Indicates no summarization needed - text used as-is
-                    start_time=time.time(),
-                    is_final=True,  # This is the only and final attempt
-                )
+            # Don't record passthrough as a summary attempt - it pollutes metrics
 
             return combined_text, 0  # No retries needed
 
         # Build prompt with adjacent context (trim to avoid token explosion)
-        prompt_parts = []
+        prompt_parts: list[str] = []
 
         # Process adjacent context if needed
         trimmed_prev = None
@@ -443,7 +455,7 @@ class TreeBuilder:
             else:
                 trimmed_prev = prev_context
 
-        # Build the summarization prompt
+        # Build the summarization prompt inline
         instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
 
 CRITICAL REQUIREMENTS:
@@ -462,7 +474,7 @@ CRITICAL REQUIREMENTS:
 
 Here's the content to summarize:"""
 
-        prompt_parts.append(instruction)
+        prompt_parts = [instruction]
 
         # Add preceding context if available
         if prev_context and self.config.adjacent_context_tokens > 0 and trimmed_prev:
@@ -485,6 +497,7 @@ Here's the content to summarize:"""
                 node_info = f"[{parent_id}] " if parent_id else ""
 
                 # Build initial messages for conversation
+                # Use the original hardcoded system message for consistency with master
                 messages: list[ChatCompletionMessageParam] = [
                     {
                         "role": "system",
@@ -534,33 +547,31 @@ Here's the content to summarize:"""
                             target_tokens,
                             messages,
                             parent_id,
-                            debug,
                             reporter,
                         )
                     )
                     # The accepted attempt is the initial (0) plus the best retry index
                     accepted_attempt = best_attempt_index
 
-                    # Re-calculate final tokens for logging
-                    final_tokens = len(self.splitter.tokenizer.encode(summary))
-                    utilization_pct = (final_tokens / target_tokens) * 100
-                    if debug:
-                        logger.info(
-                            f"{node_info}Summary corrected: {final_tokens} tokens "
-                            f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
-                        )
-                else:
-                    # Log initial result
-                    utilization_pct = (current_tokens / target_tokens) * 100
-                    if debug:
-                        logger.info(
-                            f"{node_info}Summary complete: {current_tokens} tokens "
-                            f"(target: {target_tokens}, {utilization_pct:.0f}% utilization)"
-                        )
+                # Log final summary statistics consistently
+                final_tokens = len(self.splitter.tokenizer.encode(summary))
+                utilization_pct = (final_tokens / target_tokens) * 100
+                deviation = final_tokens - target_tokens
+                deviation_str = f"+{deviation}" if deviation >= 0 else str(deviation)
+
+                logger.debug(
+                    f"{node_info}Summary: {final_tokens} tokens "
+                    f"(target: {target_tokens}, {deviation_str} tokens, {utilization_pct:.0f}% utilization)"
+                )
 
                 # Mark which attempt was accepted
                 if reporter and parent_id:
-                    reporter.mark_accepted_attempt(parent_id, accepted_attempt)
+                    try:
+                        reporter.mark_accepted_attempt(parent_id, accepted_attempt)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to mark accepted telemetry attempt: {e}"
+                        )
 
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
@@ -593,7 +604,6 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        debug: bool = False,
         reporter: None = None,
     ) -> str: ...
 
@@ -604,7 +614,6 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        debug: bool = False,
         reporter: TelemetryCollector = ...,
     ) -> tuple[str, dict]: ...
 
@@ -614,7 +623,6 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> str | tuple[str, dict]:
         """Add a document to the tree, creating leaf nodes.
@@ -736,8 +744,13 @@ Here's the content to summarize:"""
 
                 # Track chunk creation
                 if reporter:
-                    chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
-                    reporter.record_chunk_created(node_id, chunk_tokens)
+                    try:
+                        chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
+                        reporter.record_chunk_created(node_id, chunk_tokens)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to record telemetry for chunk creation: {e}"
+                        )
 
                 current_pos = chunk_end
 
@@ -843,7 +856,6 @@ Here's the content to summarize:"""
                 document_id,
                 async_progress,
                 overall_start_time,
-                debug,
                 reporter,
             )
 
@@ -873,11 +885,10 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        debug: bool = False,
     ) -> str:
         """Sync wrapper for add_document."""
         return asyncio.run(
-            self.add_document_async(text, document_id, file_path, show_progress, debug)
+            self.add_document_async(text, document_id, file_path, show_progress)
         )
 
     def add_document_with_telemetry(
@@ -886,7 +897,6 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = False,
-        debug: bool = False,
     ) -> tuple[str, dict]:
         """Add document and return telemetry data. Used for benchmarking.
 
@@ -905,13 +915,16 @@ Here's the content to summarize:"""
         # Create collector internally with config for pricing
         source_tokens = len(self.splitter.tokenizer.encode(text))
         collector = TelemetryCollector(
-            document_id or "benchmark", source_tokens, self.config
+            document_id or "benchmark",
+            source_tokens,
+            self.config,
+            document_path=file_path,
         )
 
         # Run indexing with collector - will return (doc_id, telemetry)
         result = asyncio.run(
             self._add_document_impl(
-                text, document_id, file_path, show_progress, debug, collector
+                text, document_id, file_path, show_progress, collector
             )
         )
 
@@ -926,11 +939,10 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        debug: bool = False,
     ) -> str:
         """Async version of add_document - called by sync wrapper."""
         result = await self._add_document_impl(
-            text, document_id, file_path, show_progress, debug
+            text, document_id, file_path, show_progress
         )
         # Type checker knows result is a string when no reporter is provided
         return result
@@ -943,7 +955,6 @@ Here's the content to summarize:"""
         right_text: str,
         prev_context: str | None,
         document_id: str | None,
-        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, str, list[float]]:
         """Process a single node pair - generate summary and embedding."""
@@ -977,7 +988,6 @@ Here's the content to summarize:"""
             target_tokens,
             prev_context,
             parent_id,
-            debug=debug,
             reporter=reporter,
         )
 
@@ -1035,7 +1045,6 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         progress: AsyncProgressWrapper | None = None,
         overall_start_time: float | None = None,
-        debug: bool = False,
         reporter: TelemetryCollector | None = None,
     ) -> str:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
@@ -1047,7 +1056,10 @@ Here's the content to summarize:"""
 
         # Track leaf level
         if reporter:
-            reporter.record_tree_height_complete(0, len(leaf_ids))
+            try:
+                reporter.record_tree_height_complete(0, len(leaf_ids))
+            except Exception as e:
+                logger.warning(f"Failed to record telemetry for tree height: {e}")
 
         current_height = 1  # Track height for logging (leaves are at height 0)
         while len(current_level_ids) > 1:
@@ -1088,7 +1100,6 @@ Here's the content to summarize:"""
                     right_text,
                     prev_context,
                     document_id,
-                    debug,
                     reporter,
                 )
                 tasks.append(task)
@@ -1194,7 +1205,6 @@ Here's the content to summarize:"""
                         self.config.leaf_tokens,
                         prev_context=None,
                         parent_id=parent_id,
-                        debug=debug,
                         reporter=reporter,
                     )
 
@@ -1240,9 +1250,14 @@ Here's the content to summarize:"""
 
             # Track tree level completion
             if reporter and current_level_ids:
-                reporter.record_tree_height_complete(
-                    current_height, len(current_level_ids)
-                )
+                try:
+                    reporter.record_tree_height_complete(
+                        current_height, len(current_level_ids)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to record telemetry for tree level completion: {e}"
+                    )
 
             current_height += 1
 

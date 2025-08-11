@@ -191,7 +191,7 @@ class TestTelemetryCompare:
                 "compare",
                 str(baseline_dir),
                 str(current_dir),
-                "--output",
+                "--output-format",
                 "markdown",
             ],
         )
