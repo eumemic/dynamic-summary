@@ -55,24 +55,29 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
 def test_indexing_performance(leaf_tokens, document_type):
     """Benchmark indexing performance at different chunk sizes with real documents."""
     # Create config for this specific test
-    benchmark_config = RagZoomConfig(
-        openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+    api_key = os.getenv("OPENAI_API_KEY", "test-key")
+    
+    # Skip if no API key
+    if api_key == "test-key":
+        pytest.skip("OPENAI_API_KEY not set")
+    
+    index_config = IndexConfig(
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
         embedding_batch_size=100,
         target_chunk_tokens=leaf_tokens,
     )
     
-    # Skip if no API key
-    if benchmark_config.openai_api_key == "test-key":
-        pytest.skip("OPENAI_API_KEY not set")
+    operational_config = OperationalConfig(
+        openai_api_key=api_key,
+    )
 
     # Get test document
     test_doc, doc_name = get_test_document(document_type)
 
     # Run indexing with metrics
     with Store.temporary() as store:
-        builder = TreeBuilder(index_config, store, operational_config.openai_api_key)
+        builder = TreeBuilder(index_config, store, api_key)
 
         # Warm up tokenizer
         _ = builder.splitter.tokenizer.encode("warmup")
