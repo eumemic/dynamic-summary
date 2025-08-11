@@ -5,6 +5,21 @@
     "text-embedding-ada-002": 0.00010
   },
   "llms": {
+    "gpt-5-nano": {
+      "input": 0.00005,
+      "output": 0.0004,
+      "cache_discount": 0.1
+    },
+    "gpt-5-mini": {
+      "input": 0.00025,
+      "output": 0.002,
+      "cache_discount": 0.1
+    },
+    "gpt-5": {
+      "input": 0.00125,
+      "output": 0.01,
+      "cache_discount": 0.1
+    },
     "gpt-4o-mini": {
       "input": 0.00015,
       "output": 0.0006,
@@ -26,6 +41,6 @@
       "cache_discount": 0.5
     }
   },
-  "last_updated": "2024-01-28",
+  "last_updated": "2025-08-11",
   "note": "Prices are per 1K tokens in USD. cache_discount is the multiplier for cached prompt tokens (0.5 = 50% discount). Update this file to reflect current pricing for your LLM provider."
 }

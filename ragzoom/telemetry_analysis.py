@@ -12,11 +12,13 @@ All metrics are aggregated at the chunk-size level only (no tree-level breakdown
 Legacy functions are preserved for backward compatibility with telemetry_viz.py.
 """
 
+import json
 import logging
 import os
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from statistics import median
 from typing import Any, overload
 
@@ -46,6 +48,62 @@ DEFAULT_LEAF_TOKEN_ESTIMATE = int(
 
 
 # ============================================================================
+# PRICING UTILITIES
+# ============================================================================
+
+
+def get_model_pricing(summary_model: str, embedding_model: str) -> dict[str, float]:
+    """Get pricing for specific models from pricing.json.
+
+    Args:
+        summary_model: Name of the LLM model
+        embedding_model: Name of the embedding model
+
+    Returns:
+        Dictionary with pricing information:
+        - summary_input_cost_per_1k: Cost per 1K input tokens
+        - summary_output_cost_per_1k: Cost per 1K output tokens
+        - embedding_cost_per_1k: Cost per 1K embedding tokens
+    """
+    # Load pricing data
+    module_dir = Path(__file__).parent
+    pricing_path = module_dir / "pricing.json"
+
+    if not pricing_path.exists():
+        raise FileNotFoundError(
+            f"Pricing file not found at {pricing_path}. "
+            "Cannot compute cost metrics without pricing information."
+        )
+
+    with open(pricing_path) as f:
+        pricing_data = json.load(f)
+
+    # Get embedding price
+    if embedding_model not in pricing_data.get("embeddings", {}):
+        available = list(pricing_data.get("embeddings", {}).keys())
+        raise ValueError(
+            f"Embedding model '{embedding_model}' not found in pricing.json. "
+            f"Available models: {available}"
+        )
+
+    # Get LLM prices
+    if summary_model not in pricing_data.get("llms", {}):
+        available = list(pricing_data.get("llms", {}).keys())
+        raise ValueError(
+            f"Summary model '{summary_model}' not found in pricing.json. "
+            f"Available models: {available}"
+        )
+
+    llm_pricing = pricing_data["llms"][summary_model]
+
+    return {
+        "summary_input_cost_per_1k": llm_pricing["input"],
+        "summary_output_cost_per_1k": llm_pricing["output"],
+        "embedding_cost_per_1k": pricing_data["embeddings"][embedding_model],
+    }
+
+
+# ============================================================================
 # NEW SIMPLIFIED METRICS
 # ============================================================================
 # The functions below are the new simplified telemetry metrics system.
@@ -61,18 +119,27 @@ class SimplifiedMetrics:
 
 
 def compute_simplified_metrics(
-    telemetry_data: dict, config: RagZoomConfig
+    telemetry_data: dict, config: RagZoomConfig | None = None
 ) -> SimplifiedMetrics:
     """Compute simplified metrics from telemetry data.
 
     Args:
         telemetry_data: Raw telemetry data
-        config: Configuration with pricing information
+        config: Configuration (deprecated, kept for backward compatibility)
 
     Returns:
         SimplifiedMetrics object with metrics organized by chunk size
     """
     parsed_data = parse_telemetry_format(telemetry_data)
+
+    # Extract models from telemetry data for accurate pricing
+    models = telemetry_data.get("models")
+    if not models:
+        raise ValueError(
+            "Telemetry data missing 'models' field. "
+            "This telemetry file may be from an older version that doesn't track model information. "
+            "Cannot compute cost metrics without knowing which models were used."
+        )
 
     # Group nodes by target chunk size
     nodes_by_target: dict[int, list[NodeTelemetryDict]] = {}
@@ -129,7 +196,7 @@ def compute_simplified_metrics(
                 "target_fit": compute_target_fit_metrics(chunk_nodes, target_size),
                 "retries": compute_retry_metrics(chunk_nodes),
                 "latency": compute_latency_metrics(chunk_nodes),
-                "cost": compute_cost_metrics(chunk_nodes, config),
+                "cost": compute_cost_metrics(chunk_nodes, models),
                 "dispersion": compute_dispersion_metrics(chunk_nodes),
             }
 
@@ -382,9 +449,13 @@ def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
 
 
 def compute_cost_metrics(
-    nodes: list[NodeTelemetryDict], config: RagZoomConfig
+    nodes: list[NodeTelemetryDict], models: dict[str, str]
 ) -> dict[str, float]:
     """Compute cost and token metrics.
+
+    Args:
+        nodes: List of node telemetry data
+        models: Dictionary with 'summary' and 'embedding' model names
 
     Returns:
         - total_prompt_tokens: Total prompt tokens across all nodes
@@ -395,6 +466,8 @@ def compute_cost_metrics(
         - cost_iqr: IQR of per-node costs
         - cost_std: Standard deviation of per-node costs
     """
+    # Get model-specific pricing
+    pricing = get_model_pricing(models["summary"], models["embedding"])
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_embedding_tokens = 0
@@ -420,11 +493,13 @@ def compute_cost_metrics(
         total_completion_tokens += node_completion_tokens
 
         # Calculate per-node cost in USD
-        embedding_cost = (node_embedding_tokens / 1000) * config.embedding_cost_per_1k
-        prompt_cost = (node_prompt_tokens / 1000) * config.summary_input_cost_per_1k
-        completion_cost = (
-            node_completion_tokens / 1000
-        ) * config.summary_output_cost_per_1k
+        embedding_cost = (node_embedding_tokens / 1000) * pricing[
+            "embedding_cost_per_1k"
+        ]
+        prompt_cost = (node_prompt_tokens / 1000) * pricing["summary_input_cost_per_1k"]
+        completion_cost = (node_completion_tokens / 1000) * pricing[
+            "summary_output_cost_per_1k"
+        ]
         node_cost = embedding_cost + prompt_cost + completion_cost
         node_costs.append(node_cost)
 
@@ -433,11 +508,11 @@ def compute_cost_metrics(
     )
 
     # Calculate costs
-    embedding_cost = (total_embedding_tokens / 1000) * config.embedding_cost_per_1k
-    prompt_cost = (total_prompt_tokens / 1000) * config.summary_input_cost_per_1k
-    completion_cost = (
-        total_completion_tokens / 1000
-    ) * config.summary_output_cost_per_1k
+    embedding_cost = (total_embedding_tokens / 1000) * pricing["embedding_cost_per_1k"]
+    prompt_cost = (total_prompt_tokens / 1000) * pricing["summary_input_cost_per_1k"]
+    completion_cost = (total_completion_tokens / 1000) * pricing[
+        "summary_output_cost_per_1k"
+    ]
     total_cost = embedding_cost + prompt_cost + completion_cost
 
     num_nodes = len(nodes)
