@@ -86,7 +86,7 @@ def pytest_configure(config):
 @pytest.fixture(scope="session", autouse=True)
 def ensure_api_key():
     """Ensure API keys are set for all tests."""
-    # RagZoomConfig expects RAGZOOM_OPENAI_API_KEY due to env_prefix="RAGZOOM_"
+    # Set test API keys for tests
     if "RAGZOOM_OPENAI_API_KEY" not in os.environ:
         os.environ["RAGZOOM_OPENAI_API_KEY"] = "test-key-for-tests"
     # Also set OPENAI_API_KEY for any code that uses it directly

@@ -376,19 +376,22 @@ asyncio.run(main())
 ### Advanced Usage
 
 ```python
-from ragzoom import Store, TreeBuilder, Retriever, RagZoomConfig
+from ragzoom import Store, TreeBuilder, Retriever, IndexConfig, QueryConfig, OperationalConfig
 
 # Custom configuration
-config = RagZoomConfig(
+index_config = IndexConfig(
+    target_chunk_tokens=300
+)
+query_config = QueryConfig(
     budget_tokens=10000,
-    leaf_tokens=300,
     mmr_lambda=0.8
 )
+operational_config = OperationalConfig()
 
 # Initialize components
-store = Store(config)
-builder = TreeBuilder(store, config)
-retriever = Retriever(store, config)
+store = Store(operational_config)
+builder = TreeBuilder(index_config, store, operational_config.openai_api_key)
+retriever = Retriever(query_config, index_config, store, operational_config.openai_api_key)
 
 # Direct component usage
 nodes = store.get_leaf_nodes(document_id="my-doc")
@@ -492,13 +495,17 @@ ragzoom index document.txt --config myconfig.json
 #### Python Configuration
 
 ```python
-from ragzoom import RagZoomConfig
+from ragzoom import IndexConfig, QueryConfig, OperationalConfig
 
-config = RagZoomConfig(
+index_config = IndexConfig(
+    target_chunk_tokens=300,
+    summary_model="gpt-4o-mini"
+)
+query_config = QueryConfig(
     budget_tokens=10000,
-    leaf_tokens=300,
-    mmr_lambda=0.8,
-    summary_model="gpt-4o-mini",
+    mmr_lambda=0.8
+)
+operational_config = OperationalConfig(
     log_level="DEBUG"
 )
 ```

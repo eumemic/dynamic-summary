@@ -1,6 +1,6 @@
 """Test demonstrating the DP algorithm uses scores outside coverage tree."""
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.retrieve import RetrievalResult
 from tests.mock_store import SimpleMockStore
@@ -77,10 +77,8 @@ class TestDPScoresBug:
             )
 
         # Create config and DP generator
-        config = RagZoomConfig(
-            openai_api_key="test-key", budget_tokens=10000  # Large budget
-        )
-        dp_generator = DynamicTilingGenerator(config)
+        query_config = QueryConfig(budget_tokens=10000)  # Large budget
+        dp_generator = DynamicTilingGenerator(query_config)
 
         # Pass in a full coverage tree (all nodes)
         coverage_tree = {"a1", "a2", "b1", "b2", "node_a", "node_b", "root"}
@@ -157,8 +155,8 @@ class TestDPScoresBug:
         store.nodes["root"].left_child_id = "leaf1"
         store.nodes["root"].right_child_id = "leaf2"
 
-        config = RagZoomConfig(openai_api_key="test-key", budget_tokens=10000)
-        dp_generator = DynamicTilingGenerator(config)
+        query_config = QueryConfig(budget_tokens=10000)
+        dp_generator = DynamicTilingGenerator(query_config)
 
         # Pass in a full coverage tree (root and both leaves)
         result = RetrievalResult(

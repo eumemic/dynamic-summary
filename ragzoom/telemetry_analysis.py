@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from statistics import median
 from typing import Any, overload
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_types import (
     BatchEfficiencyDict,
     ModelsDict,
@@ -63,8 +63,6 @@ def get_model_pricing(summary_model: str, embedding_model: str) -> dict[str, flo
         - summary_output_cost_per_1k: Cost per 1K output tokens
         - embedding_cost_per_1k: Cost per 1K embedding tokens
     """
-    from ragzoom.config import get_embedding_cost, get_llm_costs
-
     embedding_cost = get_embedding_cost(embedding_model)
     summary_input_cost, summary_output_cost = get_llm_costs(summary_model)
 
@@ -90,14 +88,11 @@ class SimplifiedMetrics:
     metrics_by_chunk_size: dict[int, dict[str, dict[str, float]]]
 
 
-def compute_simplified_metrics(
-    telemetry_data: dict, config: RagZoomConfig | None = None
-) -> SimplifiedMetrics:
+def compute_simplified_metrics(telemetry_data: dict) -> SimplifiedMetrics:
     """Compute simplified metrics from telemetry data.
 
     Args:
         telemetry_data: Raw telemetry data
-        config: Configuration (deprecated, kept for backward compatibility)
 
     Returns:
         SimplifiedMetrics object with metrics organized by chunk size
@@ -1150,9 +1145,7 @@ class ComputedMetrics:
     nodes_per_height: list[int]
 
 
-def compute_metrics_from_telemetry(
-    telemetry_data: dict, config: RagZoomConfig
-) -> ComputedMetrics:
+def compute_metrics_from_telemetry(telemetry_data: dict) -> ComputedMetrics:
     """Compute metrics from raw telemetry data.
 
     This function computes all metrics from raw telemetry data that were
@@ -1160,12 +1153,20 @@ def compute_metrics_from_telemetry(
 
     Args:
         telemetry_data: Raw telemetry data
-        config: Configuration with pricing information
 
     Returns:
         ComputedMetrics object with all computed values
     """
     parsed_data = parse_telemetry_format(telemetry_data)
+
+    # Get models from telemetry for cost calculations
+    models = telemetry_data.get("models", {})
+    embedding_model = models.get("embedding", "text-embedding-3-small")
+    summary_model = models.get("summary", "gpt-4o")
+
+    # Get costs using helper functions
+    embedding_cost_per_1k = get_embedding_cost(embedding_model)
+    summary_input_cost_per_1k, summary_output_cost_per_1k = get_llm_costs(summary_model)
 
     # Initialize metrics data with proper types
     metrics_data: dict[str, Any] = {
@@ -1175,9 +1176,9 @@ def compute_metrics_from_telemetry(
         # Document info
         "source_document_tokens": parsed_data.get("source_document_tokens", 0),
         # Cost config
-        "embedding_cost_per_1k": config.embedding_cost_per_1k,
-        "summary_input_cost_per_1k": config.summary_input_cost_per_1k,
-        "summary_output_cost_per_1k": config.summary_output_cost_per_1k,
+        "embedding_cost_per_1k": embedding_cost_per_1k,
+        "summary_input_cost_per_1k": summary_input_cost_per_1k,
+        "summary_output_cost_per_1k": summary_output_cost_per_1k,
         "total_embedding_tokens": 0,
         "embedding_api_calls": 0,
         "embedding_batch_sizes": [],
@@ -1267,12 +1268,12 @@ def compute_metrics_from_telemetry(
     # Calculate costs
     embedding_cost = (
         metrics_data["total_embedding_tokens"] / 1000
-    ) * config.embedding_cost_per_1k
+    ) * embedding_cost_per_1k
     summary_cost = (
         metrics_data["total_summary_prompt_tokens"] / 1000
-    ) * config.summary_input_cost_per_1k + (
+    ) * summary_input_cost_per_1k + (
         metrics_data["total_summary_completion_tokens"] / 1000
-    ) * config.summary_output_cost_per_1k
+    ) * summary_output_cost_per_1k
     total_cost = embedding_cost + summary_cost
 
     # Calculate tree height and nodes per height
@@ -1310,9 +1311,9 @@ def compute_metrics_from_telemetry(
         summary_api_calls=metrics_data["summary_api_calls"],
         chunks_created=chunks_created,
         # Cost metrics
-        embedding_cost_per_1k=config.embedding_cost_per_1k,
-        summary_input_cost_per_1k=config.summary_input_cost_per_1k,
-        summary_output_cost_per_1k=config.summary_output_cost_per_1k,
+        embedding_cost_per_1k=embedding_cost_per_1k,
+        summary_input_cost_per_1k=summary_input_cost_per_1k,
+        summary_output_cost_per_1k=summary_output_cost_per_1k,
         total_cost=total_cost,
         embedding_cost=embedding_cost,
         summary_cost=summary_cost,

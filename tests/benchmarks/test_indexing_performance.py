@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.store import Store
 
@@ -72,7 +72,7 @@ def test_indexing_performance(leaf_tokens, document_type):
 
     # Run indexing with metrics
     with Store.temporary() as store:
-        builder = TreeBuilder(benchmark_config, store)
+        builder = TreeBuilder(index_config, store, operational_config.openai_api_key)
 
         # Warm up tokenizer
         _ = builder.splitter.tokenizer.encode("warmup")
@@ -141,7 +141,7 @@ def test_performance_comparison():
         pytest.skip("No benchmark results to compare")
 
     # Import needed for computing metrics from telemetry
-    from ragzoom.config import RagZoomConfig
+    from ragzoom.config import IndexConfig, OperationalConfig
     from ragzoom.telemetry_analysis import (
         compute_metrics_from_telemetry,
         compute_simplified_metrics,
@@ -160,14 +160,8 @@ def test_performance_comparison():
                 continue
 
             # Compute metrics from telemetry data
-            config = RagZoomConfig(
-                openai_api_key="dummy",
-                embedding_cost_per_1k=0.0001,
-                summary_input_cost_per_1k=0.0025,
-                summary_output_cost_per_1k=0.01,
-            )
-            basic_metrics = compute_metrics_from_telemetry(telemetry, config)
-            simplified = compute_simplified_metrics(telemetry, config)
+            basic_metrics = compute_metrics_from_telemetry(telemetry)
+            simplified = compute_simplified_metrics(telemetry)
 
             # Get chunk-specific metrics
             chunk_metrics = simplified.metrics_by_chunk_size.get(chunk_size, {})
@@ -213,10 +207,7 @@ if __name__ == "__main__":
 
     if len(sys.argv) > 1:
         leaf_tokens = int(sys.argv[1])
-        config = RagZoomConfig(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            target_chunk_tokens=leaf_tokens,
-        )
+        # Config is created inside test_indexing_performance function
         test_indexing_performance(leaf_tokens, "narrative")
     else:
         print("Usage: python test_indexing_performance.py <leaf_tokens>")

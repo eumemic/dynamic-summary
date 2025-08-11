@@ -103,14 +103,16 @@ ragzoom serve
 ### Python API
 
 ```python
-from ragzoom import RagZoomConfig, TreeBuilder, Retriever, Assembler, Store
+from ragzoom import IndexConfig, QueryConfig, OperationalConfig, TreeBuilder, Retriever, Assembler, Store
 
 # Initialize
-config = RagZoomConfig()
-store = Store(config)
-tree_builder = TreeBuilder(config, store)
-retriever = Retriever(config, store, tree_builder)
-assembler = Assembler(config, store)
+index_config = IndexConfig()
+query_config = QueryConfig()
+operational_config = OperationalConfig()
+store = Store(operational_config)
+tree_builder = TreeBuilder(index_config, store, operational_config.openai_api_key)
+retriever = Retriever(query_config, index_config, store, operational_config.openai_api_key)
+assembler = Assembler(store)
 
 # Index a document with explicit ID
 doc_id = tree_builder.add_document(

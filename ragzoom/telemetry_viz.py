@@ -16,7 +16,7 @@ import numpy as np
 import seaborn as sns
 from matplotlib.gridspec import GridSpec
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_analysis import (
     compute_batch_efficiency,
     get_accepted_attempt,
@@ -149,9 +149,6 @@ class TelemetryVisualizer:
             print(f"Warning: No telemetry data found in {benchmark_path}")
             return
 
-        # Create config from telemetry for accurate cost calculations
-        config = self._create_config_from_telemetry(telemetry)
-
         # Create figure with subplots (3 rows only)
         fig = plt.figure(
             figsize=(FIGURE_WIDTH * 0.33, FIGURE_HEIGHT * 0.6)
@@ -160,7 +157,7 @@ class TelemetryVisualizer:
 
         # 1. Cost Breakdown
         ax1 = fig.add_subplot(gs[0, :])
-        self._plot_cost_breakdown(telemetry, config, ax1)
+        self._plot_cost_breakdown(telemetry, ax1)
 
         # 2. Summary Accuracy Distribution
         ax2 = fig.add_subplot(gs[1, :])
@@ -190,8 +187,8 @@ class TelemetryVisualizer:
 
         print(f"Saved visualization to {self.output_path}")
 
-    def _create_config_from_telemetry(self, telemetry: dict) -> RagZoomConfig:
-        """Create a config object from telemetry data for cost calculations."""
+    def _get_cost_functions(self, telemetry: dict) -> tuple:
+        """Get cost calculation functions for models in telemetry."""
         # Get models from telemetry
         models = telemetry.get("models")
         if not models:
@@ -200,13 +197,19 @@ class TelemetryVisualizer:
                 "Cannot compute costs without knowing which models were used."
             )
 
-        # Get model-specific pricing (not used but left for potential future use)
-        # pricing = get_model_pricing(models["summary"], models["embedding"])
+        embedding_model = models["embedding"]
+        summary_model = models["summary"]
 
-        return RagZoomConfig(
-            openai_api_key="dummy",  # Not needed for analysis
-            summary_model=models["summary"],
-            embedding_model=models["embedding"],
+        # Get costs
+        embedding_cost_per_1k = get_embedding_cost(embedding_model)
+        summary_input_cost_per_1k, summary_output_cost_per_1k = get_llm_costs(
+            summary_model
+        )
+
+        return (
+            embedding_cost_per_1k,
+            summary_input_cost_per_1k,
+            summary_output_cost_per_1k,
         )
 
     def _calculate_histogram_bins(
@@ -282,9 +285,7 @@ class TelemetryVisualizer:
             print(f"Warning: No telemetry data found in {file2}")
             return
 
-        # Create configs from telemetry for accurate cost calculations
-        config1 = self._create_config_from_telemetry(telemetry1)
-        config2 = self._create_config_from_telemetry(telemetry2)
+        # Telemetry data already contains model information for cost calculations
 
         # Create figure with side-by-side subplots (only 3 rows)
         if figsize is None:
@@ -306,11 +307,11 @@ class TelemetryVisualizer:
 
         # 1. Cost Breakdown
         ax1_left = fig.add_subplot(gs[0, 0])
-        self._plot_cost_breakdown(telemetry1, config1, ax1_left)
+        self._plot_cost_breakdown(telemetry1, ax1_left)
         ax1_left.set_title("Cost Breakdown", fontsize=12)
 
         ax1_right = fig.add_subplot(gs[0, 1])
-        self._plot_cost_breakdown(telemetry2, config2, ax1_right)
+        self._plot_cost_breakdown(telemetry2, ax1_right)
         ax1_right.set_title("Cost Breakdown", fontsize=12)
         ax1_right.set_ylabel("")  # Remove y-axis label
 
@@ -367,9 +368,7 @@ class TelemetryVisualizer:
 
         print(f"Saved side-by-side comparison to {self.output_path}")
 
-    def _plot_token_usage_by_tree_level(
-        self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
-    ) -> None:
+    def _plot_token_usage_by_tree_level(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot token usage by tree level with stacked bars."""
         # Group tokens by height
         tokens_by_height: dict[int, dict[str, list[float]]] = {}
@@ -451,10 +450,13 @@ class TelemetryVisualizer:
         ax.legend()
         ax.grid(True, alpha=0.3, axis="y")
 
-    def _plot_cost_breakdown(
-        self, telemetry: dict, config: RagZoomConfig, ax: plt.Axes
-    ) -> None:
+    def _plot_cost_breakdown(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot cost breakdown by attempt number as vertical stacked bar."""
+        # Get cost functions for models in telemetry
+        embedding_cost_per_1k, summary_input_cost_per_1k, summary_output_cost_per_1k = (
+            self._get_cost_functions(telemetry)
+        )
+
         # Calculate costs by attempt number
         costs_by_attempt = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}  # 5 = 5+
 
@@ -471,12 +473,10 @@ class TelemetryVisualizer:
                     completion_tokens = attempt.get("completion_tokens", 0)
 
                     # Calculate cost for this attempt
-                    input_cost = (
-                        prompt_tokens / 1000
-                    ) * config.summary_input_cost_per_1k
+                    input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
                     output_cost = (
                         completion_tokens / 1000
-                    ) * config.summary_output_cost_per_1k
+                    ) * summary_output_cost_per_1k
                     attempt_cost = input_cost + output_cost
 
                     # Group attempts 5+ together

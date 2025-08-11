@@ -412,7 +412,7 @@ jobs:
                 if grep -q '"error"' "$file"; then
                   echo "- ❌ Benchmark failed to run" >> report.md
                 else
-                  python3 -c "import json; from ragzoom.config import RagZoomConfig; from ragzoom.telemetry_analysis import compute_metrics_from_telemetry; data = json.load(open('$file')); config = RagZoomConfig(openai_api_key='dummy', embedding_cost_per_1k=0.0001, summary_input_cost_per_1k=0.0025, summary_output_cost_per_1k=0.01); metrics = compute_metrics_from_telemetry(data['telemetry'], config); print(f'- Duration: {metrics.total_duration_seconds:.2f}s'); print(f'- Total cost: \${metrics.total_cost:.4f}'); print(f'- Document size: {metrics.source_document_tokens:,} tokens')" >> report.md
+                  python3 -c "import json; from ragzoom.telemetry_analysis import compute_metrics_from_telemetry; data = json.load(open('$file')); metrics = compute_metrics_from_telemetry(data['telemetry']); print(f'- Duration: {metrics.total_duration_seconds:.2f}s'); print(f'- Total cost: \${metrics.total_cost:.4f}'); print(f'- Document size: {metrics.source_document_tokens:,} tokens')" >> report.md
                 fi
                 echo "" >> report.md
               fi

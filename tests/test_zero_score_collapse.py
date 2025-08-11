@@ -4,7 +4,7 @@ This test reproduces the issue where the algorithm returns empty or minimal
 tiling when ancestors have zero quality scores.
 """
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from tests.mock_store import SimpleMockStore
 
@@ -13,8 +13,10 @@ def test_zero_score_collapse_empty_result():
     """Test that algorithm correctly uses root node when deeper nodes don't fit budget."""
 
     # Create configuration and store
-    config = RagZoomConfig(target_chunk_tokens=100)
-    store = SimpleMockStore(config=config)
+    index_config = IndexConfig(target_chunk_tokens=100)
+    query_config = QueryConfig()
+    operational_config = OperationalConfig()
+    store = SimpleMockStore(config=(index_config, query_config, operational_config))
 
     # Create a tree where only the leaf has a score
     # But the leaf is too expensive for the budget
@@ -67,7 +69,7 @@ def test_zero_score_collapse_empty_result():
     }
     coverage_map = {"root": True, "parent": True, "leaf": True}
 
-    generator = DynamicTilingGenerator(config)
+    generator = DynamicTilingGenerator(query_config)
 
     # Load nodes from coverage map
     nodes = {}
@@ -129,8 +131,10 @@ def test_zero_score_collapse_empty_result():
 def test_zero_score_collapse_to_root():
     """Test algorithm correctly chooses root node due to budget splitting constraints."""
 
-    config = RagZoomConfig(target_chunk_tokens=100)
-    store = SimpleMockStore(config=config)
+    index_config = IndexConfig(target_chunk_tokens=100)
+    query_config = QueryConfig()
+    operational_config = OperationalConfig()
+    store = SimpleMockStore(config=(index_config, query_config, operational_config))
 
     # Create a deeper tree to show collapse behavior
 
@@ -218,7 +222,7 @@ def test_zero_score_collapse_to_root():
         "leaf": True,
     }
 
-    generator = DynamicTilingGenerator(config)
+    generator = DynamicTilingGenerator(query_config)
 
     # Load nodes from coverage map
     nodes = {}

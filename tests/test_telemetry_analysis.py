@@ -2,7 +2,6 @@
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import (
     TelemetryAnalysisError,
     analyze_retry_patterns,
@@ -350,14 +349,7 @@ class TestTargetFitMetrics:
 class TestSimplifiedMetrics:
     """Test simplified metrics computation."""
 
-    @pytest.fixture
-    def config(self) -> RagZoomConfig:
-        """Create test config."""
-        return RagZoomConfig(
-            openai_api_key="test-key",
-            summary_model="gpt-4o-mini",  # This will load costs from models.json
-            embedding_model="text-embedding-3-small",
-        )
+    # Config fixture removed - telemetry functions no longer need config
 
     @pytest.fixture
     def sample_telemetry(self) -> dict:
@@ -414,11 +406,9 @@ class TestSimplifiedMetrics:
             },
         }
 
-    def test_compute_simplified_metrics(
-        self, config: RagZoomConfig, sample_telemetry: dict
-    ) -> None:
+    def test_compute_simplified_metrics(self, sample_telemetry: dict) -> None:
         """Test computing simplified metrics from telemetry."""
-        result = compute_simplified_metrics(sample_telemetry, config)
+        result = compute_simplified_metrics(sample_telemetry)
 
         # Should have metrics organized by chunk size
         assert hasattr(result, "metrics_by_chunk_size")
@@ -442,7 +432,7 @@ class TestSimplifiedMetrics:
             assert "retry_rate" in metrics["retries"]
             assert "max_retries" in metrics["retries"]
 
-    def test_simplified_metrics_empty_data(self, config: RagZoomConfig) -> None:
+    def test_simplified_metrics_empty_data(self) -> None:
         """Test simplified metrics with empty telemetry."""
         empty_telemetry = {
             "format_version": "1.0",
@@ -453,12 +443,12 @@ class TestSimplifiedMetrics:
             "documents": {},
         }
 
-        result = compute_simplified_metrics(empty_telemetry, config)
+        result = compute_simplified_metrics(empty_telemetry)
 
         # Should return empty metrics
         assert result.metrics_by_chunk_size == {}
 
-    def test_simplified_metrics_only_leaf_nodes(self, config: RagZoomConfig) -> None:
+    def test_simplified_metrics_only_leaf_nodes(self) -> None:
         """Test simplified metrics with only leaf nodes (no summaries)."""
         leaf_only_telemetry = {
             "format_version": "1.0",
@@ -481,16 +471,14 @@ class TestSimplifiedMetrics:
             },
         }
 
-        result = compute_simplified_metrics(leaf_only_telemetry, config)
+        result = compute_simplified_metrics(leaf_only_telemetry)
 
         # Should return empty metrics (no summary attempts)
         assert result.metrics_by_chunk_size == {}
 
-    def test_simplified_metrics_cost_calculations(
-        self, config: RagZoomConfig, sample_telemetry: dict
-    ) -> None:
+    def test_simplified_metrics_cost_calculations(self, sample_telemetry: dict) -> None:
         """Test that cost calculations in simplified metrics are correct."""
-        result = compute_simplified_metrics(sample_telemetry, config)
+        result = compute_simplified_metrics(sample_telemetry)
 
         # Verify cost calculations for the chunk size
         for chunk_size, metrics in result.metrics_by_chunk_size.items():
@@ -952,14 +940,7 @@ class TestRetryAnalysis:
 class TestFullMetricsComputation:
     """Test computing full IndexingMetrics from telemetry."""
 
-    @pytest.fixture
-    def config(self) -> RagZoomConfig:
-        """Create test config."""
-        return RagZoomConfig(
-            openai_api_key="test-key",
-            summary_model="gpt-4o-mini",
-            embedding_model="text-embedding-3-small",
-        )
+    # Config fixture removed - telemetry functions no longer need config
 
     @pytest.fixture
     def full_telemetry(self) -> dict:
@@ -1028,11 +1009,9 @@ class TestFullMetricsComputation:
             },
         }
 
-    def test_compute_full_metrics_from_telemetry(
-        self, config: RagZoomConfig, full_telemetry: dict
-    ) -> None:
+    def test_compute_full_metrics_from_telemetry(self, full_telemetry: dict) -> None:
         """Test computing full metrics from telemetry."""
-        metrics = compute_metrics_from_telemetry(full_telemetry, config)
+        metrics = compute_metrics_from_telemetry(full_telemetry)
 
         # Check basic counts
         assert metrics.chunks_created == 2  # 2 leaf nodes
@@ -1061,7 +1040,7 @@ class TestFullMetricsComputation:
         assert 2 in metrics.embedding_batch_sizes
         assert 1 in metrics.embedding_batch_sizes
 
-    def test_metrics_include_retry_attempts(self, config: RagZoomConfig) -> None:
+    def test_metrics_include_retry_attempts(self) -> None:
         """Test that metrics include ALL attempts, not just accepted ones."""
         telemetry = {
             "format_version": "1.0",
@@ -1113,7 +1092,7 @@ class TestFullMetricsComputation:
             },
         }
 
-        metrics = compute_metrics_from_telemetry(telemetry, config)
+        metrics = compute_metrics_from_telemetry(telemetry)
 
         # Verify token counts include ALL attempts
         assert metrics.total_summary_prompt_tokens == 150 + 160 + 170  # 480
@@ -1127,16 +1106,9 @@ class TestFullMetricsComputation:
 class TestBackwardCompatibility:
     """Test backward compatibility with v1.0 telemetry format."""
 
-    @pytest.fixture
-    def config(self) -> RagZoomConfig:
-        """Create test config."""
-        return RagZoomConfig(
-            openai_api_key="test-key",
-            summary_model="gpt-4o-mini",
-            embedding_model="text-embedding-3-small",
-        )
+    # Config fixture removed - telemetry functions no longer need config
 
-    def test_v1_telemetry_with_v2_analysis(self, config: RagZoomConfig) -> None:
+    def test_v1_telemetry_with_v2_analysis(self) -> None:
         """Test that v1.0 telemetry can be analyzed with v2.0 code."""
         # v1.0 telemetry with all legacy fields
         v1_telemetry = {
@@ -1187,7 +1159,7 @@ class TestBackwardCompatibility:
         }
 
         # All analysis functions should work with v1.0 data
-        simplified = compute_simplified_metrics(v1_telemetry, config)
+        simplified = compute_simplified_metrics(v1_telemetry)
         assert isinstance(simplified.metrics_by_chunk_size, dict)
         # Should have metrics for chunk size 100 (the target_tokens value)
 
@@ -1197,5 +1169,5 @@ class TestBackwardCompatibility:
         retry_patterns = analyze_retry_patterns(v1_telemetry)
         assert retry_patterns["total_nodes_with_summaries"] == 1
 
-        metrics = compute_metrics_from_telemetry(v1_telemetry, config)
+        metrics = compute_metrics_from_telemetry(v1_telemetry)
         assert metrics.chunks_created == 1  # Should identify leaf nodes by node_type

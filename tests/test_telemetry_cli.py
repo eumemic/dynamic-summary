@@ -303,7 +303,6 @@ class TestTelemetryCompare:
 
     def test_dynamic_thresholds_computation(self, tmp_path, sample_telemetry_data):
         """Test that dynamic thresholds are computed from baseline variance."""
-        from ragzoom.config import RagZoomConfig
         from ragzoom.telemetry_analysis import compute_simplified_metrics
         from ragzoom.telemetry_cli import (
             MetricNames,
@@ -324,8 +323,7 @@ class TestTelemetryCompare:
         baseline_file.write_text(json.dumps(baseline_data))
 
         # Analyze to get metrics
-        config = RagZoomConfig()
-        baseline_analysis = compute_simplified_metrics(baseline_data, config)
+        baseline_analysis = compute_simplified_metrics(baseline_data)
         metrics = baseline_analysis.metrics_by_chunk_size[100]
 
         # Test dynamic threshold computation

@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import IndexConfig, RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
@@ -88,42 +88,56 @@ class TestBudgetGuarantee:
             instance_sync.embeddings = mock_embeddings_sync
             mock_retrieve_client.return_value = instance_sync
 
-            # Create test config with specific budget and temporary directory for ChromaDB
+            # Create test configs with specific budget and temporary directory for ChromaDB
             with tempfile.TemporaryDirectory() as temp_dir:
-                config = RagZoomConfig(
+                index_config = IndexConfig(
+                    target_chunk_tokens=200,  # Standard leaf size
+                    prev_context_tokens=50,
+                )
+                query_config = QueryConfig(
+                    budget_tokens=1000,  # Strict budget for testing
+                )
+                operational_config = OperationalConfig(
                     openai_api_key="test-key",
                     sqlite_database_url="sqlite:///:memory:",
                     chroma_persist_directory=temp_dir,
-                    target_chunk_tokens=200,  # Standard leaf size
-                    budget_tokens=1000,  # Strict budget for testing
-                    prev_context_tokens=50,
                 )
 
                 store = Store(
-                    config.operational_config,
-                    embedding_model=config.index_config.embedding_model,
+                    operational_config,
+                    embedding_model=index_config.embedding_model,
                 )
                 tree_builder = TreeBuilder(
-                    config.index_config,
+                    index_config,
                     store,
-                    api_key=config.operational_config.openai_api_key,
+                    api_key=operational_config.openai_api_key,
                 )
                 retriever = Retriever(
-                    config.query_config,
-                    config.index_config,
+                    query_config,
+                    index_config,
                     store,
-                    api_key=config.operational_config.openai_api_key,
+                    api_key=operational_config.openai_api_key,
                 )
                 assembler = Assembler(store)
 
-                yield config, store, tree_builder, retriever, assembler
+                yield (
+                    index_config,
+                    query_config,
+                    operational_config,
+                ), store, tree_builder, retriever, assembler
 
                 # Close store to prevent file handle leaks
                 store.close()
 
     def test_budget_never_exceeded_worst_case(self, setup_system):
         """Test that assembly never exceeds budget even in worst case."""
-        config, store, tree_builder, retriever, assembler = setup_system
+        (
+            (index_config, query_config, operational_config),
+            store,
+            tree_builder,
+            retriever,
+            assembler,
+        ) = setup_system
 
         # Create a document that will build a multi-level tree
         # Each chunk is ~200 tokens, create enough for a 3-level tree
@@ -142,7 +156,7 @@ class TestBudgetGuarantee:
 
         for query in test_queries:
             # Retrieve with budget constraint
-            result = retriever.retrieve(query, budget_tokens=config.budget_tokens)
+            result = retriever.retrieve(query, budget_tokens=query_config.budget_tokens)
 
             # Assemble the result
             assembled_text = assembler.assemble(result)
@@ -150,18 +164,24 @@ class TestBudgetGuarantee:
 
             # CRITICAL: Token count must NEVER exceed budget
             assert (
-                token_count <= config.budget_tokens
-            ), f"Budget exceeded for query '{query}': {token_count} > {config.budget_tokens}"
+                token_count <= query_config.budget_tokens
+            ), f"Budget exceeded for query '{query}': {token_count} > {query_config.budget_tokens}"
 
             # Also verify by encoding directly
             actual_tokens = assembler.tokenizer.encode(assembled_text)
             assert (
-                len(actual_tokens) <= config.budget_tokens
-            ), f"Actual token count exceeds budget: {len(actual_tokens)} > {config.budget_tokens}"
+                len(actual_tokens) <= query_config.budget_tokens
+            ), f"Actual token count exceeds budget: {len(actual_tokens)} > {query_config.budget_tokens}"
 
     def test_worst_case_parent_child_extraction(self, setup_system):
         """Test worst case where parent-child extraction could double content."""
-        config, store, tree_builder, retriever, assembler = setup_system
+        (
+            (index_config, query_config, operational_config),
+            store,
+            tree_builder,
+            retriever,
+            assembler,
+        ) = setup_system
 
         # Create a simple tree with known structure
         leaf1_text = "First leaf content. " * 40  # ~200 tokens
@@ -232,18 +252,13 @@ class TestBudgetGuarantee:
 
     def test_conservative_n_max_calculation(self, setup_system):
         """Test that the conservative n_max calculation is reasonable and respects budget."""
-        config, store, tree_builder, retriever, assembler = setup_system
-        # Create new config with desired target_chunk_tokens
-
-        config.index_config = IndexConfig(
-            target_chunk_tokens=100,  # Use a predictable size for testing
-            prev_context_tokens=config.index_config.prev_context_tokens,
-            summary_model=config.index_config.summary_model,
-            embedding_model=config.index_config.embedding_model,
-            retry_threshold=config.index_config.retry_threshold,
-            max_retries=config.index_config.max_retries,
-            embedding_batch_size=config.index_config.embedding_batch_size,
-        )
+        (
+            (index_config, query_config, operational_config),
+            store,
+            tree_builder,
+            retriever,
+            assembler,
+        ) = setup_system
 
         document = "This is test content for budget calculation. " * 500
         tree_builder.add_document(document, "doc-budget-test")
@@ -281,7 +296,13 @@ class TestBudgetGuarantee:
 
     def test_mixed_mode_budget_plus_n_max(self, setup_system):
         """Test mixed mode where both budget and n_max are specified."""
-        config, store, tree_builder, retriever, assembler = setup_system
+        (
+            (index_config, query_config, operational_config),
+            store,
+            tree_builder,
+            retriever,
+            assembler,
+        ) = setup_system
 
         # Create a document
         document = "Test content. " * 200
@@ -325,15 +346,17 @@ class TestBudgetGuarantee:
 
             # No OpenAI setup needed for assembler
 
-            config = RagZoomConfig(
-                budget_tokens=1000, target_chunk_tokens=200, openai_api_key="test-key"
+            index_config = IndexConfig(target_chunk_tokens=200)
+            query_config = QueryConfig(budget_tokens=1000)
+            operational_config = OperationalConfig(openai_api_key="test-key")
+            store = SimpleMockStore(
+                config=(index_config, query_config, operational_config)
             )
-            store = SimpleMockStore(config=config)
             retriever = Retriever(
-                config.query_config,
-                config.index_config,
+                query_config,
+                index_config,
                 store,
-                api_key=config.operational_config.openai_api_key,
+                api_key=operational_config.openai_api_key,
             )
             assembler = Assembler(store)
 
@@ -404,8 +427,10 @@ class TestBudgetValidation:
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
 
-        config = RagZoomConfig(target_chunk_tokens=100)
-        store = SimpleMockStore(config=config)
+        index_config = IndexConfig(target_chunk_tokens=100)
+        query_config = QueryConfig()
+        operational_config = OperationalConfig()
+        store = SimpleMockStore(config=(index_config, query_config, operational_config))
 
         # Create some nodes with known token costs
         # "test " * 20 = ~20 tokens
@@ -442,8 +467,10 @@ class TestBudgetValidation:
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
 
-        config = RagZoomConfig(target_chunk_tokens=100)
-        store = SimpleMockStore(config=config)
+        index_config = IndexConfig(target_chunk_tokens=100)
+        query_config = QueryConfig()
+        operational_config = OperationalConfig()
+        store = SimpleMockStore(config=(index_config, query_config, operational_config))
 
         # Create a node
         store.add_node(
@@ -468,8 +495,10 @@ class TestBudgetValidation:
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
 
-        config = RagZoomConfig(target_chunk_tokens=100)
-        store = SimpleMockStore(config=config)
+        index_config = IndexConfig(target_chunk_tokens=100)
+        query_config = QueryConfig()
+        operational_config = OperationalConfig()
+        store = SimpleMockStore(config=(index_config, query_config, operational_config))
 
         # Create child nodes
         store.add_node(
