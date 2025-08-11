@@ -14,6 +14,42 @@
 set -e  # Exit on error
 set -o pipefail  # Also exit on pipe failures
 
+# Check required dependencies
+check_dependencies() {
+    local missing_deps=()
+    
+    # Check for jq
+    if ! command -v jq &> /dev/null; then
+        missing_deps+=("jq")
+    fi
+    
+    # Check for Python
+    if ! command -v python &> /dev/null && ! command -v python3 &> /dev/null; then
+        missing_deps+=("python")
+    fi
+    
+    # Check for ragzoom module
+    if ! python -c "import ragzoom" 2>/dev/null; then
+        missing_deps+=("ragzoom (Python module)")
+    fi
+    
+    # Check for telemetry dependencies if visualization is requested
+    # We'll check this later when we know if visualization is needed
+    
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        echo "Error: Missing required dependencies:"
+        printf ' - %s\n' "${missing_deps[@]}"
+        echo ""
+        echo "Please install missing dependencies:"
+        echo "  - jq: brew install jq (macOS) or apt-get install jq (Linux)"
+        echo "  - ragzoom: pip install ragzoom"
+        exit 1
+    fi
+}
+
+# Check dependencies early
+check_dependencies
+
 # Function to display help
 show_help() {
     cat << EOF
@@ -248,22 +284,28 @@ else
     echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
 fi
 
-# Generate visualization
-echo "  Generating visualization..."
-# Capture exit code without affecting error handling
-python -m ragzoom.telemetry_cli visualize \
-    "$BASELINE" \
-    "$TELEMETRY_FILE" \
-    --output "$VISUALIZATION_FILE" \
-    > "$OUTPUT_DIR/visualization.log" 2>&1 || VIZ_EXIT_CODE=$?
-
-# Default to 0 if not set (success case)
-VIZ_EXIT_CODE=${VIZ_EXIT_CODE:-0}
-
-if [ $VIZ_EXIT_CODE -eq 0 ]; then
-    echo "  ✅ Visualization saved to $VISUALIZATION_FILE"
+# Generate visualization (optional - check for dependencies)
+echo "  Checking for visualization dependencies..."
+if python -c "import matplotlib, seaborn, pandas" 2>/dev/null; then
+    echo "  Generating visualization..."
+    # Capture exit code without affecting error handling
+    python -m ragzoom.telemetry_cli visualize \
+        "$BASELINE" \
+        "$TELEMETRY_FILE" \
+        --output "$VISUALIZATION_FILE" \
+        > "$OUTPUT_DIR/visualization.log" 2>&1 || VIZ_EXIT_CODE=$?
+    
+    # Default to 0 if not set (success case)
+    VIZ_EXIT_CODE=${VIZ_EXIT_CODE:-0}
+    
+    if [ $VIZ_EXIT_CODE -eq 0 ]; then
+        echo "  ✅ Visualization saved to $VISUALIZATION_FILE"
+    else
+        echo "  ❌ Visualization failed. Check $OUTPUT_DIR/visualization.log for details."
+    fi
 else
-    echo "  ❌ Visualization failed. Check $OUTPUT_DIR/visualization.log for details."
+    echo "  ⚠️ Skipping visualization (missing dependencies: matplotlib/seaborn/pandas)"
+    echo "     Install with: pip install ragzoom[telemetry]"
 fi
 
 echo ""

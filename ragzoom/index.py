@@ -216,17 +216,20 @@ class TreeBuilder:
 
         cached_tokens = self._extract_cached_tokens(response)
 
-        reporter.record_summary_attempt_v2(
-            node_id=parent_id,
-            target_tokens=target_tokens,
-            input_text_tokens=input_text_tokens,
-            prompt_tokens=response.usage.prompt_tokens,
-            completion_tokens=response.usage.completion_tokens,
-            actual_tokens=actual_tokens,
-            model=self.config.summary_model,
-            start_time=start_time,
-            cached_tokens=cached_tokens,
-        )
+        try:
+            reporter.record_summary_attempt_v2(
+                node_id=parent_id,
+                target_tokens=target_tokens,
+                input_text_tokens=input_text_tokens,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                actual_tokens=actual_tokens,
+                model=self.config.summary_model,
+                start_time=start_time,
+                cached_tokens=cached_tokens,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record telemetry for summary attempt: {e}")
 
     def _should_retry_summary(self, deviation_pct: float) -> bool:
         """Check if summary should be retried based on deviation from target.
@@ -563,7 +566,12 @@ Here's the content to summarize:"""
 
                 # Mark which attempt was accepted
                 if reporter and parent_id:
-                    reporter.mark_accepted_attempt(parent_id, accepted_attempt)
+                    try:
+                        reporter.mark_accepted_attempt(parent_id, accepted_attempt)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to mark accepted telemetry attempt: {e}"
+                        )
 
             except Exception as e:
                 logger.error(f"Error summarizing text: {e}")
@@ -736,8 +744,13 @@ Here's the content to summarize:"""
 
                 # Track chunk creation
                 if reporter:
-                    chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
-                    reporter.record_chunk_created(node_id, chunk_tokens)
+                    try:
+                        chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
+                        reporter.record_chunk_created(node_id, chunk_tokens)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to record telemetry for chunk creation: {e}"
+                        )
 
                 current_pos = chunk_end
 
@@ -1043,7 +1056,10 @@ Here's the content to summarize:"""
 
         # Track leaf level
         if reporter:
-            reporter.record_tree_height_complete(0, len(leaf_ids))
+            try:
+                reporter.record_tree_height_complete(0, len(leaf_ids))
+            except Exception as e:
+                logger.warning(f"Failed to record telemetry for tree height: {e}")
 
         current_height = 1  # Track height for logging (leaves are at height 0)
         while len(current_level_ids) > 1:
@@ -1234,9 +1250,14 @@ Here's the content to summarize:"""
 
             # Track tree level completion
             if reporter and current_level_ids:
-                reporter.record_tree_height_complete(
-                    current_height, len(current_level_ids)
-                )
+                try:
+                    reporter.record_tree_height_complete(
+                        current_height, len(current_level_ids)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to record telemetry for tree level completion: {e}"
+                    )
 
             current_height += 1
 
