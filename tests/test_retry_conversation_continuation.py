@@ -78,7 +78,10 @@ async def test_retry_maintains_conversation_history(mock_store):
             assert messages[2]["role"] == "assistant"
             assert messages[2]["content"] == "A" * 150  # Previous response
             assert messages[3]["role"] == "user"
-            assert messages[3]["content"] == "Try again."
+            # Check that retry prompt contains expected content
+            assert "Please try again" in messages[3]["content"]
+            assert "100 tokens" in messages[3]["content"]  # Target tokens
+            assert "150 tokens" in messages[3]["content"]  # Current tokens
 
             return MockOpenAIResponse(
                 content="B" * 95,  # Close to target
@@ -103,7 +106,6 @@ async def test_retry_maintains_conversation_history(mock_store):
                 * 2,
                 target_tokens=100,
                 parent_id="test_node",
-                debug=True,
                 reporter=reporter,
             )
 
@@ -318,11 +320,10 @@ async def test_passthrough_for_text_under_target(mock_store):
     assert retry_count == 0
     assert summary == "Short Text"
 
-    # Verify telemetry recorded the passthrough
+    # Verify telemetry - passthrough nodes no longer record attempts
     data = reporter.get_telemetry_data("test_doc", config.leaf_tokens)
-    attempts = data["nodes"][0]["summary_attempts"]
-    assert len(attempts) == 1
-    assert attempts[0]["model"] == "passthrough"
-    # Actual tokens should be under target (passthrough case)
-    assert attempts[0]["actual_tokens"] < attempts[0]["target_tokens"]
-    assert attempts[0]["target_tokens"] == 100
+    # Passthrough nodes should not have summary_attempts
+    assert (
+        "summary_attempts" not in data["nodes"][0]
+        or data["nodes"][0]["summary_attempts"] == []
+    )

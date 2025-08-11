@@ -236,9 +236,57 @@ pytest tests/ --durations=10
 time pytest tests/ -n 8
 ```
 
-## 7. Git Workflow
+## 7. Benchmarking and Performance Analysis
 
-### 7.1. Pre-commit Hook Details
+### 7.1. Running Benchmarks
+
+RagZoom includes a comprehensive benchmarking script for performance regression testing:
+
+```bash
+# Basic benchmark with baseline comparison
+./scripts/run-indexing-benchmarks --baseline baseline.json document.txt
+
+# Specify custom output directory
+./scripts/run-indexing-benchmarks --baseline old.json --output-dir benchmarks/ document.txt
+
+# Include document ID and other indexing options
+./scripts/run-indexing-benchmarks --baseline baseline.json --document-id test-doc file.txt
+
+# View available options
+./scripts/run-indexing-benchmarks --help
+```
+
+### 7.2. Benchmark Outputs
+
+The script generates comprehensive analysis in the specified output directory (default: `benchmarks/`):
+
+- **telemetry.json**: Raw telemetry data from current run
+- **log.txt**: Complete indexing logs with debug information
+- **comparison.md**: Markdown report comparing performance metrics
+- **visualization.png**: Visual charts showing performance differences
+
+File paths are displayed as clickable links in supported terminals.
+
+### 7.3. CI Integration
+
+The benchmarking script is designed for CI environments:
+- Uses `--clear --telemetry --validate --debug --no-progress` flags automatically
+- Generates machine-readable outputs for automated analysis
+- Creates visual reports for human review in pull requests
+
+### 7.4. Performance Regression Detection
+
+The comparison system uses dynamic thresholds based on baseline variance:
+- 🔴 **Regression**: >5σ performance degradation from baseline
+- 🟡 **Significant change**: >1σ notable difference
+- 🟢 **Improvement**: Positive performance changes
+- ⚪ **Normal variance**: Within expected fluctuation
+
+For detailed telemetry analysis, see [Telemetry Guide](telemetry.md).
+
+## 8. Git Workflow
+
+### 8.1. Pre-commit Hook Details
 
 The hook runs in this order:
 1. Fast tests (excluding @slow and @integration)
@@ -248,7 +296,7 @@ The hook runs in this order:
 
 **Timing**: ~8 seconds total
 
-### 7.2. Bypassing Hooks (Emergency Only)
+### 8.2. Bypassing Hooks (Emergency Only)
 
 ```bash
 # Skip pre-commit hook

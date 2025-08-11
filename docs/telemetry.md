@@ -371,8 +371,17 @@ RagZoom provides a comprehensive set of telemetry commands through the CLI:
 # Analyze telemetry data
 ragzoom-telemetry analyze benchmark_results/telemetry_200_tokens.json
 
-# Compare two benchmarks
+# Compare two benchmarks (text format)
 ragzoom-telemetry compare baseline.json current.json
+
+# Compare with markdown format
+ragzoom-telemetry compare baseline.json current.json --output-format markdown
+
+# Compare with visualization generation
+ragzoom-telemetry compare baseline.json current.json --output comparison.png
+
+# Compare with both markdown format and visualization
+ragzoom-telemetry compare baseline.json current.json --output-format markdown --output comparison.png
 
 # Generate visualizations for a single file
 ragzoom-telemetry visualize baseline.json
@@ -452,6 +461,38 @@ Chunk Size | Metric              |         Baseline |          Current | Change 
 100 tok    | Cost                | $0.0002 ±0.0000  | $0.0002 ±0.0000  | ⚪ +$0.0000 (+0.5%)                        | $0.0001
            |                     |                  |                  | ⚪ σ-0.0000 (-2%)                           |
 ```
+
+### Benchmarking Workflow
+
+For comprehensive benchmarking with automated comparison and visualization, use the benchmarking script:
+
+```bash
+# Run benchmark with baseline comparison
+./scripts/run-indexing-benchmarks --baseline baseline.json document.txt
+
+# Custom output directory  
+./scripts/run-indexing-benchmarks --baseline old.json --output-dir results/ document.txt
+
+# With additional indexing options
+./scripts/run-indexing-benchmarks --baseline baseline.json --document-id mydoc document.txt
+
+# View help
+./scripts/run-indexing-benchmarks --help
+```
+
+This script automatically:
+- Runs indexing with telemetry collection (`--clear --telemetry --validate --debug --no-progress`)
+- Generates comparison reports in markdown format
+- Creates visualization charts in PNG format
+- Captures full debug logs for troubleshooting
+
+Output files (in the output directory, default `benchmarks/`):
+- `telemetry.json` - Current run telemetry data
+- `log.txt` - Full indexing logs with debug output  
+- `comparison.md` - Detailed performance comparison report
+- `visualization.png` - Visual side-by-side comparison chart
+
+The output paths are displayed as clickable links in terminals that support this feature.
 
 ### Configuration Options
 
