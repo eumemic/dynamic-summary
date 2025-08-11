@@ -32,7 +32,6 @@ class SummaryAttemptDict(TypedDict):
 
     # Required fields
     target_tokens: int
-    input_text_tokens: int
     prompt_tokens: int
     completion_tokens: int
     actual_tokens: int
@@ -68,6 +67,9 @@ class NodeTelemetryDict(TypedDict):
     embedding: NotRequired[EmbeddingTelemetryDict]
     summary_attempts: NotRequired[list[SummaryAttemptDict]]
     accepted_attempt: NotRequired[int]  # Index of the accepted attempt
+    input_text_tokens: NotRequired[
+        int
+    ]  # Combined tokens from children (for non-leaf nodes)
 
     # v1 compatibility fields
     node_type: NotRequired[Literal["leaf", "summary"]]

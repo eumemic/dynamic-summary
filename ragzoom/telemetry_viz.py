@@ -331,14 +331,14 @@ class TelemetryVisualizer:
         ax2_left.set_ylim(min_y, max_y)
         ax2_right.set_ylim(min_y, max_y)
 
-        # 3. Node Creation Timeline
+        # 3. Summary Creation Timeline
         ax3_left = fig.add_subplot(gs[2, 0])
         self._plot_node_timeline(telemetry1, ax3_left)
-        ax3_left.set_title("Node Creation Timeline", fontsize=12)
+        ax3_left.set_title("Summary Creation Timeline", fontsize=12)
 
         ax3_right = fig.add_subplot(gs[2, 1])
         self._plot_node_timeline(telemetry2, ax3_right)
-        ax3_right.set_title("Node Creation Timeline", fontsize=12)
+        ax3_right.set_title("Summary Creation Timeline", fontsize=12)
         ax3_right.set_ylabel("")  # Remove y-axis label
 
         # Share both axes for timeline comparison
@@ -849,15 +849,24 @@ class TelemetryVisualizer:
         ax.grid(True, alpha=0.3)
 
     def _plot_node_timeline(self, telemetry: dict, ax: plt.Axes) -> None:
-        """Plot node creation timeline."""
-        # Extract node creation times
+        """Plot summary node creation timeline."""
+        # Extract summary completion times (when summaries actually finished)
         creation_times = []
 
-        # Extract nodes and get creation times
+        # Extract nodes and get summary completion times
         nodes = self._extract_nodes_from_telemetry(telemetry)
         for node in nodes:
-            if "created_at" in node:
-                creation_times.append(node["created_at"])
+            # Only include nodes that have summary attempts (i.e., actually performed summaries)
+            if node.get("summary_attempts"):
+                # Get the accepted attempt (usually the last one)
+                accepted_idx = node.get(
+                    "accepted_attempt", len(node["summary_attempts"]) - 1
+                )
+                if 0 <= accepted_idx < len(node["summary_attempts"]):
+                    attempt = node["summary_attempts"][accepted_idx]
+                    # Use the end_time of the summary attempt
+                    if "end_time" in attempt:
+                        creation_times.append(attempt["end_time"])
 
         if not creation_times:
             ax.text(
@@ -883,9 +892,9 @@ class TelemetryVisualizer:
             color="purple",
         )
         ax.set_xlabel("Time Since Start (seconds)")
-        ax.set_ylabel("Cumulative Nodes Created")
+        ax.set_ylabel("Cumulative Summaries Created")
         ax.set_title(
-            "Document Processing Timeline\n(Shows indexing progress over time)"
+            "Summary Creation Timeline\n(Shows summarization progress over time)"
         )
         ax.grid(True, alpha=0.3)
 
@@ -896,8 +905,8 @@ class TelemetryVisualizer:
             0.98,
             0.02,
             (
-                f"Total: {total_nodes} nodes in {total_time:.1f}s\n"
-                f"Rate: {total_nodes/total_time:.1f} nodes/sec"
+                f"Total: {total_nodes} summaries in {total_time:.1f}s\n"
+                f"Rate: {total_nodes/total_time:.1f} summaries/sec"
                 if total_time > 0
                 else f"Total: {total_nodes} nodes"
             ),

@@ -42,6 +42,28 @@ The setup script will:
 - Configure your development environment
 - Verify everything is working
 
+### Optional: Telemetry Tools
+
+The telemetry analysis commands (`analyze`, `compare`, `visualize`) use optional dependencies:
+
+```bash
+# Core package only
+pip install ragzoom
+
+# With telemetry tools
+pip install ragzoom[telemetry]
+```
+
+Usage: `ragzoom-telemetry analyze|compare|visualize` (separate CLI entry point)
+
+This approach provides:
+- **Avoid heavy deps in main package**: Matplotlib, seaborn, pandas only installed when needed
+- **Clean separation**: Developer tools vs end-user features 
+- **Single package maintenance**: No circular dependencies, simpler versioning
+- **Idiomatic Python**: Follows PEP 517/518 standards
+
+For comprehensive telemetry documentation, see [docs/telemetry.md](docs/telemetry.md)
+
 ## Quick Start
 
 ### CLI Usage
@@ -154,7 +176,9 @@ RagZoom maintains complete isolation between indexed documents:
 - **Re-indexing**: Use `--clear` flag to replace existing documents
 - **Bulk Operations**: Clear individual documents or all data
 
-Example workflow:
+## Advanced Configuration
+
+Use environment variables to configure RagZoom behavior:
 ```bash
 # Index multiple documents
 ragzoom index report-2023.pdf
@@ -212,6 +236,14 @@ ruff check ragzoom/ tests/
 
 # Type checking
 mypy ragzoom/
+
+# Performance benchmarking
+./scripts/run-indexing-benchmarks --baseline baseline.json document.txt
+
+# Telemetry analysis
+ragzoom-telemetry analyze telemetry.json
+ragzoom-telemetry compare baseline.json current.json --output-format markdown
+ragzoom-telemetry visualize baseline.json current.json -o comparison.png
 
 # Git hooks (automatically installed by setup script)
 # - pre-commit: Runs relevant tests for changed files

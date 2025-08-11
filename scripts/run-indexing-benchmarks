@@ -1,0 +1,316 @@
+#!/bin/bash
+# Run indexing benchmarks with telemetry comparison and visualization
+# Usage: ./run-indexing-benchmarks --baseline <baseline.json> --output-dir <dir> [other_options] <document>
+#
+# This script:
+# 1. Runs indexing with telemetry, logging output to a file
+# 2. Concurrently generates comparison report and visualization
+#
+# Options:
+#   --baseline <file>    Baseline telemetry JSON file for comparison
+#   --output-dir <dir>   Directory for output files (telemetry, logs, visualizations)
+#   All other options are passed through to the indexing command
+
+set -e  # Exit on error
+set -o pipefail  # Also exit on pipe failures
+
+# Check required dependencies
+check_dependencies() {
+    local missing_deps=()
+    
+    # Check for jq
+    if ! command -v jq &> /dev/null; then
+        missing_deps+=("jq")
+    fi
+    
+    # Check for Python
+    if ! command -v python &> /dev/null && ! command -v python3 &> /dev/null; then
+        missing_deps+=("python")
+    fi
+    
+    # Check for ragzoom module
+    if ! python -c "import ragzoom" 2>/dev/null; then
+        missing_deps+=("ragzoom (Python module)")
+    fi
+    
+    # Check for telemetry dependencies if visualization is requested
+    # We'll check this later when we know if visualization is needed
+    
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        echo "Error: Missing required dependencies:"
+        printf ' - %s\n' "${missing_deps[@]}"
+        echo ""
+        echo "Please install missing dependencies:"
+        echo "  - jq: brew install jq (macOS) or apt-get install jq (Linux)"
+        echo "  - ragzoom: pip install ragzoom"
+        exit 1
+    fi
+}
+
+# Check dependencies early
+check_dependencies
+
+# Function to display help
+show_help() {
+    cat << EOF
+Usage: $0 [--baseline <baseline.json>] [--output-dir <dir>] [document] [options]
+
+Run indexing benchmarks with telemetry comparison and visualization.
+
+Options:
+    --baseline <file>      Baseline telemetry JSON file (default: ./telemetry-baseline.json)
+    --output-dir <dir>     Directory for output files (default: benchmarks/)
+    --help                 Show this help message and exit
+    
+Document:
+    If not specified, will auto-detect from baseline's document_id in test_data/
+    
+Additional Options:
+    All other options are passed through to the ragzoom index command.
+    The script automatically:
+    - Adds: --clear --telemetry --validate --debug --no-progress
+    - Sets RAGZOOM_LEAF_TOKENS from baseline's chunk_size (if not already set)
+    - Sets RAGZOOM_ADJACENT_CONTEXT_TOKENS from baseline's chunk_size (if not already set)
+
+Output Files:
+    <output-dir>/telemetry.json      - Telemetry data from current run
+    <output-dir>/log.txt              - Full indexing logs with debug output
+    <output-dir>/comparison.md        - Markdown comparison report
+    <output-dir>/visualization.png    - Visual side-by-side comparison chart
+
+Examples:
+    $0                                              # Use all defaults
+    $0 document.txt                                 # Override document only
+    $0 --baseline other.json                        # Override baseline
+    $0 --output-dir results/ document.txt           # Custom output and document
+
+EOF
+    exit 0
+}
+
+# Initialize variables
+BASELINE=""
+OUTPUT_DIR="benchmarks"  # Default output directory
+DOCUMENT=""  # Will be auto-detected or provided
+EXTRA_ARGS=()
+
+# Function to validate paths against injection
+validate_path() {
+    local path="$1"
+    local name="$2"
+    
+    # Check for dangerous characters that could be used for injection
+    if [[ "$path" =~ [\;\|\&\$\`\(\)\{\}\<\>] ]]; then
+        echo "Error: Invalid characters in $name path: $path"
+        exit 1
+    fi
+    
+    # Ensure path doesn't start with - (could be interpreted as option)
+    if [[ "$path" == -* ]]; then
+        echo "Error: $name path cannot start with '-': $path"
+        exit 1
+    fi
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h)
+            show_help
+            ;;
+        --baseline)
+            BASELINE="$2"
+            shift 2
+            ;;
+        --output-dir)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --document-id)
+            # Pass-through options that take an argument
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
+        --*)
+            # Other options (flags without arguments)
+            EXTRA_ARGS+=("$1")
+            shift
+            ;;
+        *)
+            # First non-option argument is the document
+            if [ -z "$DOCUMENT" ]; then
+                DOCUMENT="$1"
+            else
+                # Additional positional arguments
+                EXTRA_ARGS+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check for default baseline if not provided
+if [ -z "$BASELINE" ]; then
+    if [ -f "./telemetry-baseline.json" ]; then
+        BASELINE="./telemetry-baseline.json"
+        echo "Using default baseline: $BASELINE"
+    else
+        echo "Error: No baseline specified and ./telemetry-baseline.json not found"
+        echo "Usage: $0 [--baseline <baseline.json>] [--output-dir <dir>] [document] [options]"
+        exit 1
+    fi
+fi
+
+# Validate baseline path
+validate_path "$BASELINE" "baseline"
+
+if [ ! -f "$BASELINE" ]; then
+    echo "Error: Baseline file '$BASELINE' does not exist"
+    exit 1
+fi
+
+# Extract metadata from baseline
+echo "Extracting configuration from baseline..."
+DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
+DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
+CHUNK_SIZE=$(jq -r '.chunk_size // empty' "$BASELINE")
+
+if [ -z "$CHUNK_SIZE" ]; then
+    echo "Warning: Could not extract chunk_size from baseline"
+else
+    echo "  Chunk size: $CHUNK_SIZE tokens"
+    # Set environment variables if not already defined
+    if [ -z "$RAGZOOM_LEAF_TOKENS" ]; then
+        export RAGZOOM_LEAF_TOKENS=$CHUNK_SIZE
+        echo "  Set RAGZOOM_LEAF_TOKENS=$CHUNK_SIZE"
+    fi
+    if [ -z "$RAGZOOM_ADJACENT_CONTEXT_TOKENS" ]; then
+        export RAGZOOM_ADJACENT_CONTEXT_TOKENS=$CHUNK_SIZE
+        echo "  Set RAGZOOM_ADJACENT_CONTEXT_TOKENS=$CHUNK_SIZE"
+    fi
+fi
+
+# Auto-detect document if not provided
+if [ -z "$DOCUMENT" ]; then
+    # First try to use document_path from telemetry (absolute path)
+    if [ -n "$DOCUMENT_PATH" ] && [ -f "$DOCUMENT_PATH" ]; then
+        DOCUMENT="$DOCUMENT_PATH"
+        echo "  Using document path from baseline: $DOCUMENT"
+    # Fall back to document_id in test_data for backward compatibility
+    elif [ -n "$DOCUMENT_ID" ]; then
+        echo "  Document ID from baseline: $DOCUMENT_ID"
+        if [ -f "./test_data/$DOCUMENT_ID" ]; then
+            DOCUMENT="./test_data/$DOCUMENT_ID"
+            echo "  Auto-detected document: $DOCUMENT"
+        else
+            echo ""
+            echo "Error: Cannot find document './test_data/$DOCUMENT_ID'"
+            echo "Please provide document path as argument"
+            exit 1
+        fi
+    else
+        echo ""
+        echo "Error: No document specified and could not extract document_id or document_path from baseline"
+        echo "Please provide document path as argument"
+        exit 1
+    fi
+fi
+
+# Validate document path
+validate_path "$DOCUMENT" "document"
+
+# Create output directory if it doesn't exist
+mkdir -p "$OUTPUT_DIR"
+
+# Set up file paths
+TELEMETRY_FILE="$OUTPUT_DIR/telemetry.json"
+LOG_FILE="$OUTPUT_DIR/log.txt"
+VISUALIZATION_FILE="$OUTPUT_DIR/visualization.png"
+
+echo ""
+echo "🚀 Starting indexing benchmark..."
+echo "  Baseline: $BASELINE"
+echo "  Document: $DOCUMENT"
+echo "  Output directory: $OUTPUT_DIR"
+if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
+    echo "  Additional options: ${EXTRA_ARGS[@]}"
+fi
+echo ""
+
+# Run indexing with telemetry
+# Implicitly adds: --clear --telemetry <file> --validate --debug --no-progress
+echo "📝 Running indexing with telemetry..."
+python -m ragzoom.cli index \
+    "$DOCUMENT" \
+    --clear \
+    --telemetry "$TELEMETRY_FILE" \
+    --validate \
+    --debug \
+    --no-progress \
+    "${EXTRA_ARGS[@]}" \
+    2>&1 | tee "$LOG_FILE"
+
+# Check if indexing succeeded
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+    echo "❌ Indexing failed. Check $LOG_FILE for details."
+    exit 1
+fi
+
+echo ""
+echo "✅ Indexing completed. Telemetry saved to $TELEMETRY_FILE"
+echo ""
+
+# Generate comparison report and visualization
+echo "📊 Generating comparison report and visualization..."
+
+# Generate markdown comparison report
+echo "  Generating comparison report..."
+# Note: compare command returns exit code 1 when regression detected, but still generates report
+# Temporarily disable exit on error for this command
+set +e
+python -m ragzoom.telemetry_cli compare \
+    "$BASELINE" \
+    "$TELEMETRY_FILE" \
+    --output-format markdown \
+    > "$OUTPUT_DIR/comparison.md" 2>&1
+COMPARE_EXIT_CODE=$?
+set -e
+
+if [ $COMPARE_EXIT_CODE -eq 0 ]; then
+    echo "  ✅ Comparison report saved to $OUTPUT_DIR/comparison.md"
+elif [ $COMPARE_EXIT_CODE -eq 1 ]; then
+    echo "  ⚠️ Comparison report saved to $OUTPUT_DIR/comparison.md (regression detected)"
+else
+    echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
+fi
+
+# Generate visualization (optional - check for dependencies)
+echo "  Checking for visualization dependencies..."
+if python -c "import matplotlib, seaborn, pandas" 2>/dev/null; then
+    echo "  Generating visualization..."
+    # Capture exit code without affecting error handling
+    python -m ragzoom.telemetry_cli visualize \
+        "$BASELINE" \
+        "$TELEMETRY_FILE" \
+        --output "$VISUALIZATION_FILE" \
+        > "$OUTPUT_DIR/visualization.log" 2>&1 || VIZ_EXIT_CODE=$?
+    
+    # Default to 0 if not set (success case)
+    VIZ_EXIT_CODE=${VIZ_EXIT_CODE:-0}
+    
+    if [ $VIZ_EXIT_CODE -eq 0 ]; then
+        echo "  ✅ Visualization saved to $VISUALIZATION_FILE"
+    else
+        echo "  ❌ Visualization failed. Check $OUTPUT_DIR/visualization.log for details."
+    fi
+else
+    echo "  ⚠️ Skipping visualization (missing dependencies: matplotlib/seaborn/pandas)"
+    echo "     Install with: pip install ragzoom[telemetry]"
+fi
+
+echo ""
+echo "🎉 Benchmark complete! Results:"
+echo "  - Telemetry: $OUTPUT_DIR/telemetry.json"
+echo "  - Log: $OUTPUT_DIR/log.txt"
+echo "  - Comparison report: $OUTPUT_DIR/comparison.md"
+echo "  - Visualization: $OUTPUT_DIR/visualization.png"

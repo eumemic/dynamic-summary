@@ -31,9 +31,13 @@ logger = logging.getLogger(__name__)
 #   - Moved metadata fields to top level
 #   - Added models field at top level
 #   - Eliminated duplicate document_id and chunk_size fields
+# - 3.1: Optimized data structure:
+#   - Moved input_text_tokens from SummaryAttempt to NodeTelemetry (node level)
+#   - Added document_path field for telemetry file tracking
+#   - Removed dead amplification code from analysis
 #
 # Current format version (increment for breaking changes)
-TELEMETRY_FORMAT_VERSION = "3.0"
+TELEMETRY_FORMAT_VERSION = "3.1"
 
 
 @dataclass
@@ -58,7 +62,6 @@ class SummaryAttempt:
 
     Attributes:
         target_tokens: Target size for the summary
-        input_text_tokens: Combined tokens from children being summarized
         prompt_tokens: Tokens used in the API prompt
         completion_tokens: Tokens reported by the OpenAI API
         actual_tokens: Tokens measured by our tokenizer from the generated text
@@ -71,7 +74,6 @@ class SummaryAttempt:
 
     # Inputs
     target_tokens: int
-    input_text_tokens: int  # Combined left+right child tokens
 
     # API usage
     prompt_tokens: int
@@ -111,6 +113,7 @@ class NodeTelemetry:
         embedding: Embedding API call details (optional)
         summary_attempts: List of summary generation attempts
         accepted_attempt: Index of the attempt that was actually used
+        input_text_tokens: Combined tokens from children being summarized (for non-leaf nodes)
         created_at: Timestamp when node was created
     """
 
@@ -126,6 +129,9 @@ class NodeTelemetry:
     # Which attempt was actually used (None means use last attempt for backward compat)
     accepted_attempt: int | None = None
 
+    # Combined tokens from children being summarized (for non-leaf nodes)
+    input_text_tokens: int | None = None
+
     # Timing
     created_at: float = field(default_factory=time.time)
 
@@ -139,6 +145,10 @@ class NodeTelemetry:
             "height": self.height,
             "created_at": self.created_at,
         }
+
+        # Add input_text_tokens at node level if present
+        if self.input_text_tokens is not None:
+            result["input_text_tokens"] = self.input_text_tokens
 
         # Add embedding info if present
         if self.embedding:
@@ -159,7 +169,6 @@ class NodeTelemetry:
             for attempt in self.summary_attempts:
                 attempt_dict: SummaryAttemptDict = {
                     "target_tokens": attempt.target_tokens,
-                    "input_text_tokens": attempt.input_text_tokens,
                     "prompt_tokens": attempt.prompt_tokens,
                     "completion_tokens": attempt.completion_tokens,
                     "actual_tokens": attempt.actual_tokens,
@@ -208,6 +217,7 @@ class TelemetryCollector:
         document_id: str,
         source_tokens: int,
         config: RagZoomConfig,
+        document_path: str | None = None,
     ):
         """Initialize telemetry collector for a document.
 
@@ -215,10 +225,12 @@ class TelemetryCollector:
             document_id: Document being indexed
             source_tokens: Total tokens in source document
             config: Config containing pricing information for telemetry metadata
+            document_path: Optional absolute path to the source document
         """
         self.document_id = document_id
         self.source_tokens = source_tokens
         self.config = config
+        self.document_path = document_path
 
         # Initialize telemetry data storage
         self.start_time = time.time()
@@ -242,8 +254,8 @@ class TelemetryCollector:
         self.nodes_per_height: list[int] = []
 
         # Memory tracking
-        self.process = psutil.Process()
-        memory_info = self.process.memory_info()
+        # Don't store process object - create fresh each time to avoid thread safety issues
+        memory_info = psutil.Process().memory_info()
         self.memory_start_mb = memory_info.rss / 1024 / 1024
         self.peak_memory_mb = self.memory_start_mb
         self.memory_end_mb = 0.0
@@ -288,7 +300,8 @@ class TelemetryCollector:
         try:
             # Use lock to ensure thread-safe memory reading and peak update
             with self._memory_lock:
-                memory_info = self.process.memory_info()
+                # Create fresh process object each time for thread safety
+                memory_info = psutil.Process().memory_info()
                 current_memory_mb = memory_info.rss / 1024 / 1024
                 if current_memory_mb > self.peak_memory_mb:
                     self.peak_memory_mb = current_memory_mb
@@ -427,9 +440,13 @@ class TelemetryCollector:
                 f"Nodes must be tracked with track_node_created() before recording summary attempts."
             )
 
+        # Store input_text_tokens at node level on first attempt
+        node = self.node_telemetry[node_id]
+        if node.input_text_tokens is None:
+            node.input_text_tokens = input_text_tokens
+
         attempt = SummaryAttempt(
             target_tokens=target_tokens,
-            input_text_tokens=input_text_tokens,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             actual_tokens=actual_tokens,
@@ -490,7 +507,8 @@ class TelemetryCollector:
 
         # Record final memory usage
         try:
-            memory_info = self.process.memory_info()
+            # Create fresh process object each time for thread safety
+            memory_info = psutil.Process().memory_info()
             self.memory_end_mb = memory_info.rss / 1024 / 1024
         except Exception:
             self.memory_end_mb = self.peak_memory_mb
@@ -516,7 +534,7 @@ class TelemetryCollector:
         # Sort nodes by creation time for consistent output
         nodes_data.sort(key=lambda x: x["created_at"])
 
-        return {
+        telemetry_data = {
             "format_version": TELEMETRY_FORMAT_VERSION,
             "document_id": document_id,
             "source_document_tokens": self.source_tokens,
@@ -528,3 +546,9 @@ class TelemetryCollector:
             },
             "nodes": nodes_data,
         }
+
+        # Add document path if available
+        if self.document_path:
+            telemetry_data["document_path"] = self.document_path
+
+        return telemetry_data
