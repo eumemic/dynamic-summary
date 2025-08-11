@@ -115,7 +115,7 @@ jobs:
       
       - name: Setup benchmark environment
         env:
-          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           echo "Current directory: $(pwd)"
           echo "Python version: $(python --version)"
@@ -123,18 +123,18 @@ jobs:
           ls -la tests/benchmarks/ || echo "⚠️ No benchmarks directory"
           
           # Verify API key is set
-          if [ -z "$RAGZOOM_OPENAI_API_KEY" ]; then
-            echo "❌ RAGZOOM_OPENAI_API_KEY is not set!"
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "❌ OPENAI_API_KEY is not set!"
             exit 1
           else
-            echo "✅ RAGZOOM_OPENAI_API_KEY is configured"
+            echo "✅ OPENAI_API_KEY is configured"
           fi
           mkdir -p benchmark_results
       
       - name: Run benchmark - 100 tokens
         id: benchmark_100
         env:
-          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           echo "Running PR benchmark with chunk_size=100"
           if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-100" -v; then
@@ -183,7 +183,7 @@ jobs:
       - name: Run benchmark - 200 tokens
         id: benchmark_200
         env:
-          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           echo "Running PR benchmark with chunk_size=200"
           if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-200" -v; then
@@ -233,7 +233,7 @@ jobs:
       - name: Run benchmark - 400 tokens
         id: benchmark_400
         env:
-          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           echo "Running PR benchmark with chunk_size=400"
           if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-400" -v; then

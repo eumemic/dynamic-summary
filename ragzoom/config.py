@@ -7,6 +7,44 @@ from pathlib import Path
 from typing import Any
 
 
+def get_embedding_cost(model: str) -> float:
+    """Get embedding cost per 1K tokens using ModelInfo."""
+    from ragzoom.model_info import ModelInfo
+
+    model_info = ModelInfo()
+    try:
+        return model_info.get_embedding_cost(model)
+    except (KeyError, ValueError):
+        return 0.0
+
+
+def get_llm_costs(model: str) -> tuple[float, float]:
+    """Get LLM input and output costs per 1K tokens using ModelInfo."""
+    from ragzoom.model_info import ModelInfo
+
+    model_info = ModelInfo()
+    try:
+        return model_info.get_llm_costs(model)
+    except (KeyError, ValueError):
+        return 0.0, 0.0
+
+
+def get_cache_discount(model: str) -> float:
+    """Get cache discount multiplier for LLM using ModelInfo."""
+    from ragzoom.model_info import ModelInfo
+
+    model_info = ModelInfo()
+    try:
+        return model_info.get_cache_discount(model)
+    except (KeyError, ValueError):
+        return 1.0
+
+
+def is_gpt5_model(model: str) -> bool:
+    """Check if model is a GPT-5 variant."""
+    return model.startswith("gpt-5")
+
+
 @dataclass
 class IndexConfig:
     """Configuration for document indexing.
@@ -108,8 +146,6 @@ class RagZoomConfig:
         budget_tokens: int = 4000,
         mmr_lambda: float = 0.7,
         mmr_k_multiplier: float = 2.0,
-        slope_cap: float = float("inf"),
-        smoothing_pass_enabled: bool = True,
         # Operational parameters
         openai_api_key: str = "",
         sqlite_database_url: str = "sqlite:///./ragzoom.db",
@@ -206,39 +242,20 @@ class RagZoomConfig:
     # Cost properties for telemetry compatibility
     @property
     def embedding_cost_per_1k(self) -> float:
-        """Get embedding cost from model info."""
-        from ragzoom.model_info import ModelInfo
-
-        model_info = ModelInfo()
-        try:
-            input_cost = model_info.get_embedding_cost(self.embedding_model)
-            return float(input_cost)
-        except ValueError:
-            return 0.0
+        """Get embedding cost from model pricing constants."""
+        return get_embedding_cost(self.embedding_model)
 
     @property
     def summary_input_cost_per_1k(self) -> float:
-        """Get summary input cost from model info."""
-        from ragzoom.model_info import ModelInfo
-
-        model_info = ModelInfo()
-        try:
-            input_cost, _ = model_info.get_llm_costs(self.summary_model)
-            return float(input_cost)
-        except ValueError:
-            return 0.0
+        """Get summary input cost from model pricing constants."""
+        input_cost, _ = get_llm_costs(self.summary_model)
+        return input_cost
 
     @property
     def summary_output_cost_per_1k(self) -> float:
-        """Get summary output cost from model info."""
-        from ragzoom.model_info import ModelInfo
-
-        model_info = ModelInfo()
-        try:
-            _, output_cost = model_info.get_llm_costs(self.summary_model)
-            return float(output_cost)
-        except ValueError:
-            return 0.0
+        """Get summary output cost from model pricing constants."""
+        _, output_cost = get_llm_costs(self.summary_model)
+        return output_cost
 
 
 def load_indexing_config(

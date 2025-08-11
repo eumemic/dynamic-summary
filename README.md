@@ -176,9 +176,8 @@ RagZoom maintains complete isolation between indexed documents:
 - **Re-indexing**: Use `--clear` flag to replace existing documents
 - **Bulk Operations**: Clear individual documents or all data
 
-## Advanced Configuration
+## Advanced Usage Examples
 
-Use environment variables to configure RagZoom behavior:
 ```bash
 # Index multiple documents
 ragzoom index report-2023.pdf
@@ -197,13 +196,117 @@ ragzoom clear -d report-2023.pdf --confirm
 
 ## Configuration
 
-Key configuration options (via environment variables or `.env`):
+RagZoom provides flexible configuration through three methods (in order of precedence):
 
-- `RAGZOOM_BUDGET_TOKENS`: Maximum tokens for summary (default: 8000)
-- `RAGZOOM_LEAF_TOKENS`: Target size for leaf chunks (default: 200)
-- `RAGZOOM_MMR_LAMBDA`: MMR relevance vs diversity (default: 0.7)
-- `RAGZOOM_SLOPE_CAP`: Enable slope capping (default: true)
-- `RAGZOOM_SMOOTHING_PASS_ENABLED`: Enable smoothing (default: false)
+1. **CLI Options** (highest priority)
+2. **Config Files**
+3. **Default Values** (lowest priority)
+
+### CLI Options
+
+All configuration parameters can be passed as command-line options:
+
+```bash
+# Indexing with custom settings
+ragzoom index document.txt \
+  --target-chunk-tokens 300 \
+  --summary-model gpt-4o \
+  --embedding-model text-embedding-3-large \
+  --max-retries 2
+
+# Query with custom parameters
+ragzoom query "your question" -d document.txt \
+  --token-budget 4000 \
+  --mmr-lambda 0.8
+```
+
+### Config Files
+
+Create JSON config files for reusable settings:
+
+```json
+{
+  "target_chunk_tokens": 300,
+  "prev_context_tokens": 100,
+  "summary_model": "gpt-4o",
+  "embedding_model": "text-embedding-3-large",
+  "retry_threshold": 0.15,
+  "max_retries": 2,
+  "embedding_batch_size": 50
+}
+```
+
+Use with the `--config` option:
+
+```bash
+# Save config to file
+echo '{
+  "target_chunk_tokens": 300,
+  "summary_model": "gpt-4o",
+  "embedding_model": "text-embedding-3-large"
+}' > my-config.json
+
+# Use config file
+ragzoom index document.txt --config my-config.json
+
+# Override specific settings from config
+ragzoom index document.txt --config my-config.json --max-retries 3
+```
+
+### Configuration Parameters
+
+#### Indexing Parameters
+- `target_chunk_tokens`: Target size for leaf chunks (default: 200)
+- `prev_context_tokens`: Context from adjacent chunks (default: 75)
+- `summary_model`: Model for summarization (default: "gpt-4o")
+- `embedding_model`: Model for embeddings (default: "text-embedding-3-small")
+- `retry_threshold`: Max deviation before retry, 0.2 = 20% (default: 0.2)
+- `max_retries`: Maximum summary retries (default: 0)
+- `embedding_batch_size`: Batch size for embeddings (default: 100)
+
+#### Query Parameters
+- `token_budget`: Maximum tokens for summary (default: 8000)
+- `mmr_lambda`: MMR relevance vs diversity, 0-1 (default: 0.7)
+- `mmr_k_multiplier`: Retrieve k_multiplier * N_max candidates (default: 2.0)
+
+#### Operational Parameters
+- `chroma_dir`: Chroma persistence directory (default: "./chroma_db")
+- `database_url`: SQLite database URL (default: "sqlite:///./ragzoom.db")
+- `cache_size`: LRU cache size (default: 1000)
+- `log_level`: Logging level: DEBUG, INFO, WARNING, ERROR (default: "INFO")
+
+### Environment Variables
+
+The OpenAI API key is still configured via environment variable:
+
+```bash
+# Required: Set your OpenAI API key
+export OPENAI_API_KEY="your-api-key-here"
+# Or add to .env file
+echo "OPENAI_API_KEY=your-api-key-here" >> .env
+```
+
+### Common Configuration Patterns
+
+```bash
+# Development: Fast indexing with smaller chunks
+ragzoom index doc.txt --target-chunk-tokens 150 --max-retries 0
+
+# Production: High quality with retries
+ragzoom index doc.txt \
+  --target-chunk-tokens 300 \
+  --summary-model gpt-4o \
+  --max-retries 2 \
+  --embedding-model text-embedding-3-large
+
+# Memory-constrained: Smaller batches and cache
+ragzoom index doc.txt \
+  --embedding-batch-size 50 \
+  --cache-size 500
+
+# Debugging: Verbose output with validation
+ragzoom index doc.txt --debug --validate --log-level DEBUG
+```
 
 ## Architecture
 

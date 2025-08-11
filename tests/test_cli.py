@@ -41,8 +41,20 @@ class TestCLI:
             query_config_instance = Mock()
             query_config_instance.budget_tokens = 8000
             query_config_instance.mmr_lambda = 0.7
-            query_config_instance.slope_cap = True
-            query_config_instance.smoothing_pass_enabled = False
+
+            # Mock the replace method to return a proper config with updated values
+            def mock_replace(**kwargs):
+                new_config = Mock()
+                new_config.budget_tokens = kwargs.get(
+                    "budget_tokens", query_config_instance.budget_tokens
+                )
+                new_config.mmr_lambda = kwargs.get(
+                    "mmr_lambda", query_config_instance.mmr_lambda
+                )
+                new_config.mmr_k_multiplier = kwargs.get("mmr_k_multiplier", 2.0)
+                return new_config
+
+            query_config_instance.replace = mock_replace
             mock_query_config.return_value = query_config_instance
 
             # Mock operational config
@@ -241,9 +253,9 @@ class TestCLI:
             # Verify retrieve was called with correct query, n_max, budget_tokens, and document_id
             mock_ragzoom["retriever_instance"].retrieve.assert_called_once_with(
                 "Tell me about cats",
-                n_max=5,
                 budget_tokens=1000,
                 document_id="test-doc",
+                n_max=5,
             )
 
     def test_pin_command(self, runner, mock_ragzoom):
@@ -396,21 +408,20 @@ class TestCLI:
         finally:
             os.unlink(temp_file)
 
-    def test_index_no_progress(self, runner, mock_ragzoom):
-        """Test indexing without progress bar."""
+    def test_index_basic(self, runner, mock_ragzoom):
+        """Test basic indexing command."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Test content.")
             temp_file = f.name
 
         try:
             with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(cli, ["index", temp_file, "--no-progress"])
+                result = runner.invoke(cli, ["index", temp_file])
 
                 assert result.exit_code == 0
 
-                # Verify add_document was called with show_progress=False
-                call_args = mock_ragzoom["builder_instance"].add_document.call_args
-                assert call_args[1]["show_progress"] is False
+                # Verify add_document was called
+                mock_ragzoom["builder_instance"].add_document.assert_called_once()
         finally:
             os.unlink(temp_file)
 

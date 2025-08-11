@@ -279,8 +279,8 @@ class TestTelemetryIntegration:
         # Get final telemetry data
         telemetry_data = reporter.finalize()
 
-        # Verify telemetry was collected (v4.0 format)
-        assert telemetry_data["format_version"] == "4.0"
+        # Verify telemetry was collected (v4.1 format)
+        assert telemetry_data["format_version"] == "4.1"
         assert telemetry_data["document_id"] == "telemetry-test"
         assert "nodes" in telemetry_data
 
@@ -291,6 +291,26 @@ class TestTelemetryIntegration:
         assert "prev_context_tokens" in config
         assert "summary_model" in config
         assert "embedding_model" in config
+
+        # Verify new reproducibility fields (new in v4.1)
+        assert "model_metadata" in telemetry_data
+        assert "system_prompts" in telemetry_data
+        assert "runtime_info" in telemetry_data
+
+        # Verify model metadata includes necessary details
+        model_metadata = telemetry_data["model_metadata"]
+        assert "embedding" in model_metadata
+        assert "summary" in model_metadata
+
+        # Verify system prompts are captured
+        system_prompts = telemetry_data["system_prompts"]
+        assert "summary_system_prompt" in system_prompts
+
+        # Verify runtime info is captured
+        runtime_info = telemetry_data["runtime_info"]
+        assert "python_version" in runtime_info
+        assert "platform" in runtime_info
+        assert "ragzoom_version" in runtime_info
 
         nodes = telemetry_data["nodes"]
         assert len(nodes) > 0

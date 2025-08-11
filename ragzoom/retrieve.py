@@ -6,11 +6,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from openai import OpenAI
-from openai._types import NOT_GIVEN
 
 from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
-from ragzoom.model_info import ModelInfo
 from ragzoom.store import Store, TreeNode
 
 if TYPE_CHECKING:
@@ -55,7 +53,6 @@ class Retriever:
         self.query_config = query_config
         self.index_config = index_config
         self.store = store
-        self._model_info = ModelInfo()
 
         # Get API key from parameter or environment
         import os
@@ -73,14 +70,7 @@ class Retriever:
             response = self.client.embeddings.create(
                 model=self.index_config.embedding_model,
                 input=query,
-                dimensions=(
-                    self._model_info.get_embedding_dimensions(
-                        self.index_config.embedding_model
-                    )
-                    if self.index_config.embedding_model
-                    in self._model_info.get_all_embedding_models()
-                    else NOT_GIVEN
-                ),
+                # Let OpenAI API determine dimensions - no need for hardcoded values
             )
             return response.data[0].embedding
         except Exception as e:

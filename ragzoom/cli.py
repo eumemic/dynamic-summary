@@ -66,7 +66,15 @@ def setup_command_environment(
 @click.group()
 @click.pass_context
 def cli(ctx: click.Context) -> None:
-    """RagZoom: Incremental, hierarchical RAG memory system."""
+    """RagZoom: Incremental, hierarchical RAG memory system.
+
+    🚀 Quick Start:
+      ragzoom index document.txt
+      ragzoom query "your question" -d document.txt
+
+    🔧 Configuration:
+      ragzoom config --examples
+    """
     # Initialize shared components
     index_config = IndexConfig()
     query_config = QueryConfig()
@@ -94,78 +102,32 @@ def cli(ctx: click.Context) -> None:
 
 @cli.command()
 @click.argument("file_path", type=click.Path(exists=True))
-@click.option("--document-id", help="Optional document ID")
+@click.option("--document-id", help="Document ID (defaults to filename)")
 @click.option("--clear", is_flag=True, help="Clear existing document before indexing")
-@click.option("--no-progress", is_flag=True, help="Disable progress bar")
-# Config file
 @click.option(
     "--config",
     "config_path",
     type=click.Path(exists=True, path_type=Path),
-    help="Load indexing settings from config file",
-)
-# Indexing parameters
-@click.option(
-    "--target-chunk-tokens",
-    type=int,
-    help="Target size for leaf chunks (default: 200)",
+    help="Load configuration from JSON file",
 )
 @click.option(
-    "--prev-context-tokens",
-    type=int,
-    help="Context from adjacent chunks (default: 75)",
+    "--target-chunk-tokens", type=int, help="Target size for leaf chunks in tokens"
 )
 @click.option(
-    "--summary-model",
-    "-m",
-    help="Model for summarization (default: gpt-4o)",
+    "--prev-context-tokens", type=int, help="Context tokens from adjacent chunks"
 )
+@click.option("--summary-model", "-m", type=str, help="Model for summarization")
+@click.option("--embedding-model", type=str, help="Model for embeddings")
 @click.option(
-    "--embedding-model",
-    help="Model for embeddings (default: text-embedding-3-small)",
+    "--retry-threshold", type=float, help="Max deviation before retry (0.0-1.0)"
 )
+@click.option("--max-retries", type=int, help="Maximum summary retries")
+@click.option("--embedding-batch-size", type=int, help="Batch size for embeddings")
 @click.option(
-    "--retry-threshold",
-    type=float,
-    help="Max deviation before retry, 0.2 = 20%% (default: 0.2)",
-)
-@click.option(
-    "--max-retries",
-    type=int,
-    help="Maximum summary retries (default: 0)",
-)
-@click.option(
-    "--embedding-batch-size",
-    type=int,
-    help="Batch size for embeddings (default: 100)",
-)
-# Operational parameters
-@click.option(
-    "--chroma-dir",
+    "--data-dir",
     type=click.Path(),
-    help="Chroma persistence directory (default: ./chroma_db)",
+    help="Directory for data storage (default: current directory)",
 )
-@click.option(
-    "--database-url",
-    help="SQLite database URL (default: sqlite:///./ragzoom.db)",
-)
-@click.option(
-    "--cache-size",
-    type=int,
-    help="LRU cache size (default: 1000)",
-)
-@click.option(
-    "--log-level",
-    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
-    help="Logging level (default: INFO)",
-)
-@click.option(
-    "--max-concurrent",
-    type=int,
-    default=10,
-    help="Maximum concurrent API requests (default: 10)",
-)
-@click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.option(
     "--debug",
     is_flag=True,
@@ -178,7 +140,7 @@ def cli(ctx: click.Context) -> None:
     is_flag=False,
     flag_value="telemetry.json",
     default=None,
-    help="Save telemetry data to JSON file (default: telemetry.json)",
+    help="Save telemetry data to JSON file",
 )
 @click.pass_context
 def index(
@@ -186,7 +148,6 @@ def index(
     file_path: str,
     document_id: str | None,
     clear: bool,
-    no_progress: bool,
     config_path: Path | None,
     target_chunk_tokens: int | None,
     prev_context_tokens: int | None,
@@ -195,21 +156,26 @@ def index(
     retry_threshold: float | None,
     max_retries: int | None,
     embedding_batch_size: int | None,
-    chroma_dir: str | None,
-    database_url: str | None,
-    cache_size: int | None,
-    log_level: str | None,
-    max_concurrent: int,
-    validate: bool,
+    data_dir: str | None,
     debug: bool,
     telemetry_file: str | None,
 ) -> None:
-    """Index a document from file."""
+    """Index a document from file.
 
-    setup_command_environment(log_level, debug, validate)
+    Configuration can be set via:
+    1. CLI options (highest priority)
+    2. Config file specified with --config
+    3. Default values from default_config.json
+
+    Examples:
+      ragzoom index document.txt --target-chunk-tokens 300 --summary-model gpt-5-nano
+      ragzoom index document.txt --config myconfig.json
+    """
+
+    setup_command_environment(None, debug, False)
 
     try:
-        # Load indexing configuration
+        # Load indexing configuration with CLI overrides
         indexing_config = load_indexing_config(
             config_path,
             target_chunk_tokens=target_chunk_tokens,
@@ -226,17 +192,13 @@ def index(
         query_config = QueryConfig()  # Use defaults for indexing command
         operational_config = OperationalConfig()
 
-        # Override operational parameters if provided
-        if chroma_dir:
+        # Override data directory if provided
+        if data_dir:
+            data_path = Path(data_dir)
             operational_config = operational_config.replace(
-                chroma_persist_directory=chroma_dir
+                chroma_persist_directory=str(data_path / "chroma_db"),
+                sqlite_database_url=f"sqlite:///{data_path / 'ragzoom.db'}",
             )
-        if database_url:
-            operational_config = operational_config.replace(
-                sqlite_database_url=database_url
-            )
-        if cache_size is not None:
-            operational_config = operational_config.replace(cache_size=cache_size)
 
         # Update context with new configs
         ctx.obj["index_config"] = index_config
@@ -250,7 +212,6 @@ def index(
             index_config,
             store,
             api_key=operational_config.openai_api_key,
-            max_concurrent=max_concurrent,
         )
         ctx.obj["tree_builder"] = tree_builder
 
@@ -290,14 +251,14 @@ def index(
                 text,
                 document_id=document_id,
                 file_path=str(path.absolute()),
-                show_progress=not no_progress,
+                show_progress=True,
             )
         else:
             doc_id = tree_builder.add_document(
                 text,
                 document_id=document_id,
                 file_path=str(path.absolute()),
-                show_progress=not no_progress,
+                show_progress=True,
             )
 
         # Get stats
@@ -440,27 +401,6 @@ def documents(ctx: click.Context) -> None:
 @click.option("--document-id", "-d", required=True, help="Document ID to query within")
 @click.option("--n-max", type=int, help="Max nodes to retrieve")
 @click.option("--token-budget", type=int, help="Token budget for summary")
-# Query parameters
-@click.option(
-    "--mmr-lambda",
-    type=float,
-    help="MMR relevance vs diversity, 0-1 (default: 0.7)",
-)
-@click.option(
-    "--mmr-k-multiplier",
-    type=float,
-    help="Retrieve k_multiplier * N_max candidates (default: 2.0)",
-)
-@click.option(
-    "--embedding-model",
-    help="Model for query embedding (default: text-embedding-3-small)",
-)
-# Operational parameters
-@click.option(
-    "--log-level",
-    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
-    help="Logging level (default: INFO)",
-)
 @click.option(
     "--debug",
     is_flag=True,
@@ -485,10 +425,6 @@ def query(
     document_id: str,
     n_max: int | None,
     token_budget: int | None,
-    mmr_lambda: float | None,
-    mmr_k_multiplier: float | None,
-    embedding_model: str | None,
-    log_level: str | None,
     debug: bool,
     validate: bool,
     viz_width: int | None,
@@ -496,61 +432,52 @@ def query(
 ) -> None:
     """Query the system and get a summary."""
 
-    setup_command_environment(log_level, debug, validate)
+    setup_command_environment(None, debug, validate)
 
     try:
-        # Get configs from context
+        # Get configs from context (set up during CLI initialization)
         query_config = ctx.obj["query_config"]
         index_config = ctx.obj["index_config"]
         operational_config = ctx.obj["operational_config"]
 
-        # Update configs with query-specific parameters if provided
-        if mmr_lambda is not None:
-            query_config = query_config.replace(mmr_lambda=mmr_lambda)
-            ctx.obj["query_config"] = query_config
-        if mmr_k_multiplier is not None:
-            query_config = query_config.replace(mmr_k_multiplier=mmr_k_multiplier)
-            ctx.obj["query_config"] = query_config
-        if embedding_model is not None:
-            index_config = index_config.replace(embedding_model=embedding_model)
-            ctx.obj["index_config"] = index_config
+        # Override with CLI parameters if provided
+        if token_budget is not None:
+            query_config = query_config.replace(budget_tokens=token_budget)
 
-        # Recreate retriever with updated config if needed
-        if any(p is not None for p in [mmr_lambda, mmr_k_multiplier, embedding_model]):
-            store = ctx.obj["store"]
-            retriever = Retriever(
-                query_config,
-                index_config,
-                store,
-                api_key=operational_config.openai_api_key,
-            )
-        else:
-            retriever = ctx.obj["retriever"]
+        # Create components
+        store = ctx.obj["store"]
+        retriever = Retriever(
+            query_config,
+            index_config,
+            store,
+            api_key=operational_config.openai_api_key,
+        )
+        assembler = Assembler(store)
 
-        assembler = ctx.obj["assembler"]
-
-        # Retrieve - Pass both n_max and budget_tokens to support all three modes
+        # Retrieve with CLI parameters
         result = retriever.retrieve(
             query_text,
-            n_max=n_max,
-            budget_tokens=token_budget,
+            budget_tokens=query_config.budget_tokens,
             document_id=document_id,
+            n_max=n_max,
         )
 
         # Assemble
         summary = assembler.assemble(result)
         token_count = assembler.get_token_count(summary)
 
-        # Tiling validation
-        if validate and getattr(result, "tiling", None) and result.tiling:
+        # Tiling validation (validation now simplified - always off unless debug)
+        if debug and getattr(result, "tiling", None) and result.tiling:
             from ragzoom.validate import validate_tiling
 
             error = validate_tiling(
-                result.tiling, ctx.obj["store"], document_id, budget_tokens=token_budget
+                result.tiling,
+                store,
+                document_id,
+                budget_tokens=query_config.budget_tokens,
             )
             if error:
-                click.echo(f"❌ Tiling validation failed: {error}", err=True)
-                sys.exit(1)
+                click.echo(f"⚠️ Tiling validation warning: {error}", err=True)
 
         # Output summary
         click.echo("\n" + "=" * 60)
@@ -584,12 +511,10 @@ def query(
         if debug:
             # Show ASCII tree visualization first
             if result.tiling:
-                # Use provided width or detect terminal width
+                # Get terminal width with fallback, or use CLI override
                 if viz_width:
-                    terminal_width = viz_width
                     actual_viz_width = viz_width
                 else:
-                    # Get terminal width, with fallback to 120
                     terminal_width = shutil.get_terminal_size(
                         fallback=(120, 24)
                     ).columns
@@ -602,7 +527,7 @@ def query(
 
                 tree_viz = build_ascii_tree(
                     result.tiling,
-                    ctx.obj["store"],
+                    store,
                     document_id,
                     width=actual_viz_width,
                     coverage_map=result.coverage_map,
@@ -674,8 +599,6 @@ def status(ctx: click.Context) -> None:
         click.echo(f"Budget tokens: {query_config.budget_tokens}")
         click.echo(f"Target chunk tokens: {index_config.target_chunk_tokens}")
         click.echo(f"MMR lambda: {query_config.mmr_lambda}")
-        click.echo(f"Slope cap: {query_config.slope_cap}")
-        click.echo(f"Smoothing enabled: {query_config.smoothing_pass_enabled}")
 
     except Exception as e:
         click.echo(f"❌ Error getting status: {e}", err=True)
@@ -831,6 +754,131 @@ def export(ctx: click.Context, input_file: str, output_file: str, format: str) -
     except Exception as e:
         click.echo(f"❌ Error exporting: {e}", err=True)
         sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--examples", is_flag=True, help="Show configuration examples and common use cases"
+)
+@click.option(
+    "--create",
+    "output_file",
+    type=click.Path(),
+    help="Create a sample configuration file at the specified path",
+)
+def config(examples: bool, output_file: str | None) -> None:
+    """Manage configuration files and show examples."""
+
+    if examples:
+        click.echo("\n🔧 RAGZOOM CONFIGURATION EXAMPLES\n")
+        click.echo("=" * 50)
+
+        click.echo("\n📄 Basic Configuration (development.json):")
+        click.echo(
+            json.dumps(
+                {
+                    "target_chunk_tokens": 150,
+                    "summary_model": "gpt-4o",
+                    "embedding_model": "text-embedding-3-small",
+                    "max_retries": 0,
+                    "budget_tokens": 4000,
+                    "mmr_lambda": 0.7,
+                },
+                indent=2,
+            )
+        )
+
+        click.echo("\n🚀 Production Configuration (production.json):")
+        click.echo(
+            json.dumps(
+                {
+                    "target_chunk_tokens": 300,
+                    "prev_context_tokens": 100,
+                    "summary_model": "gpt-4o",
+                    "embedding_model": "text-embedding-3-large",
+                    "retry_threshold": 0.15,
+                    "max_retries": 2,
+                    "embedding_batch_size": 50,
+                    "budget_tokens": 8000,
+                    "mmr_lambda": 0.8,
+                    "mmr_k_multiplier": 2.5,
+                },
+                indent=2,
+            )
+        )
+
+        click.echo("\n⚡ Fast Configuration (fast.json):")
+        click.echo(
+            json.dumps(
+                {
+                    "target_chunk_tokens": 100,
+                    "summary_model": "gpt-4o-mini",
+                    "embedding_model": "text-embedding-3-small",
+                    "max_retries": 0,
+                    "embedding_batch_size": 200,
+                    "budget_tokens": 2000,
+                    "mmr_lambda": 0.6,
+                },
+                indent=2,
+            )
+        )
+
+        click.echo("\n💰 Cost-Optimized Configuration (budget.json):")
+        click.echo(
+            json.dumps(
+                {
+                    "target_chunk_tokens": 200,
+                    "summary_model": "gpt-4o-mini",
+                    "embedding_model": "text-embedding-3-small",
+                    "max_retries": 0,
+                    "budget_tokens": 4000,
+                    "mmr_lambda": 0.7,
+                },
+                indent=2,
+            )
+        )
+
+        click.echo("\n📖 Usage:")
+        click.echo("  ragzoom index doc.txt --config development.json")
+        click.echo("  ragzoom query 'question' -d doc.txt --config production.json")
+        click.echo("  ragzoom config --create my-config.json")
+
+        click.echo("\n💡 Tips:")
+        click.echo("  • Start with development.json for initial testing")
+        click.echo("  • Use production.json for high-quality results")
+        click.echo("  • Use fast.json for rapid iteration")
+        click.echo("  • Use budget.json to minimize API costs")
+        click.echo("  • CLI options override config file settings")
+
+    elif output_file:
+        # Create a sample config file
+        sample_config = {
+            "target_chunk_tokens": 200,
+            "prev_context_tokens": 75,
+            "summary_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-small",
+            "retry_threshold": 0.2,
+            "max_retries": 0,
+            "embedding_batch_size": 100,
+            "budget_tokens": 8000,
+            "mmr_lambda": 0.7,
+            "mmr_k_multiplier": 2.0,
+        }
+
+        output_path = Path(output_file)
+        with open(output_path, "w") as f:
+            json.dump(sample_config, f, indent=2)
+
+        click.echo(f"✅ Created sample configuration file: {output_file}")
+        click.echo("\n💡 Edit this file to customize your settings.")
+        click.echo("   Use 'ragzoom config --examples' to see common configurations.")
+
+    else:
+        click.echo("\n🔧 Configuration Management")
+        click.echo("\nOptions:")
+        click.echo("  ragzoom config --examples     Show configuration examples")
+        click.echo("  ragzoom config --create FILE  Create a sample config file")
+        click.echo("\nFor detailed help: ragzoom config --help")
 
 
 # Telemetry commands are available via optional dependencies

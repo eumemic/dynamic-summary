@@ -8,11 +8,9 @@ from datetime import datetime
 from typing import Any, cast, overload
 
 from openai import AsyncOpenAI
-from openai._types import NOT_GIVEN
 from openai.types.chat import ChatCompletionMessageParam
 
-from ragzoom.config import IndexConfig
-from ragzoom.model_info import ModelInfo
+from ragzoom.config import IndexConfig, is_gpt5_model
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
@@ -41,7 +39,6 @@ class TreeBuilder:
         """
         self.config = config
         self.store = store
-        self._model_info = ModelInfo()
 
         # Get API key from parameter or environment
         import os
@@ -81,14 +78,7 @@ class TreeBuilder:
                 response = await self.client.embeddings.create(
                     model=self.config.embedding_model,
                     input=text,
-                    dimensions=(
-                        self._model_info.get_embedding_dimensions(
-                            self.config.embedding_model
-                        )
-                        if self.config.embedding_model
-                        in self._model_info.get_all_embedding_models()
-                        else NOT_GIVEN
-                    ),
+                    # Let OpenAI API determine dimensions - no need for hardcoded values
                 )
                 return response.data[0].embedding
             except Exception as e:
@@ -105,14 +95,7 @@ class TreeBuilder:
                 response = await self.client.embeddings.create(
                     model=self.config.embedding_model,
                     input=texts,
-                    dimensions=(
-                        self._model_info.get_embedding_dimensions(
-                            self.config.embedding_model
-                        )
-                        if self.config.embedding_model
-                        in self._model_info.get_all_embedding_models()
-                        else NOT_GIVEN
-                    ),
+                    # Let OpenAI API determine dimensions - no need for hardcoded values
                 )
                 return [item.embedding for item in response.data]
             except Exception as e:
@@ -148,7 +131,7 @@ class TreeBuilder:
         }
 
         # GPT-5 models have different parameter requirements
-        is_gpt5 = self._model_info.is_gpt5_model(self.config.summary_model)
+        is_gpt5 = is_gpt5_model(self.config.summary_model)
 
         if is_gpt5:
             # GPT-5 models need reasoning_effort="minimal" to output text instead of just reasoning

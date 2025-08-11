@@ -399,7 +399,7 @@ result = retriever.retrieve("query", document_id="my-doc")
 
 ### Configuration Parameters
 
-All parameters can be set via environment variables with the `RAGZOOM_` prefix. For an overview of how these parameters affect system behavior, see [Architecture - Configuration](architecture.md#configuration).
+All parameters can be set via CLI options or config files. For an overview of how these parameters affect system behavior, see [Architecture - Configuration](architecture.md#configuration).
 
 #### Core Parameters
 
@@ -454,16 +454,39 @@ All parameters can be set via environment variables with the `RAGZOOM_` prefix. 
 
 ### Configuration Files
 
-#### Environment Variables
+#### CLI Options
 
-Create a `.env` file:
+Use CLI options for configuration:
 
 ```bash
-RAGZOOM_BUDGET_TOKENS=10000
-RAGZOOM_LEAF_TOKENS=300
-RAGZOOM_MMR_LAMBDA=0.8
-RAGZOOM_SUMMARY_MODEL=gpt-4o-mini
-RAGZOOM_LOG_LEVEL=DEBUG
+# Indexing with configuration
+ragzoom index document.txt \
+  --target-chunk-tokens 300 \
+  --summary-model gpt-4o-mini \
+  --debug
+
+# Querying with configuration
+ragzoom query "your question" -d document.txt \
+  --token-budget 10000 \
+  --mmr-lambda 0.8
+```
+
+#### Config Files
+
+Create a JSON config file:
+
+```json
+{
+  "target_chunk_tokens": 300,
+  "summary_model": "gpt-4o-mini",
+  "embedding_model": "text-embedding-3-large"
+}
+```
+
+Then use it:
+
+```bash
+ragzoom index document.txt --config myconfig.json
 ```
 
 #### Python Configuration

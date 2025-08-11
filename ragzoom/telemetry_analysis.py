@@ -12,13 +12,11 @@ All metrics are aggregated at the chunk-size level only (no tree-level breakdown
 Legacy functions are preserved for backward compatibility with telemetry_viz.py.
 """
 
-import json
 import logging
 import os
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from statistics import median
 from typing import Any, overload
 
@@ -53,7 +51,7 @@ DEFAULT_LEAF_TOKEN_ESTIMATE = int(
 
 
 def get_model_pricing(summary_model: str, embedding_model: str) -> dict[str, float]:
-    """Get pricing for specific models from models.json.
+    """Get pricing for specific models from pricing constants.
 
     Args:
         summary_model: Name of the LLM model
@@ -65,42 +63,15 @@ def get_model_pricing(summary_model: str, embedding_model: str) -> dict[str, flo
         - summary_output_cost_per_1k: Cost per 1K output tokens
         - embedding_cost_per_1k: Cost per 1K embedding tokens
     """
-    # Load models data
-    module_dir = Path(__file__).parent
-    models_path = module_dir / "models.json"
+    from ragzoom.config import get_embedding_cost, get_llm_costs
 
-    if not models_path.exists():
-        raise FileNotFoundError(
-            f"Models file not found at {models_path}. "
-            "Cannot compute cost metrics without model information."
-        )
-
-    with open(models_path) as f:
-        models_data = json.load(f)
-
-    # Get embedding price
-    if embedding_model not in models_data.get("embeddings", {}):
-        available = list(models_data.get("embeddings", {}).keys())
-        raise ValueError(
-            f"Embedding model '{embedding_model}' not found in models.json. "
-            f"Available models: {available}"
-        )
-
-    # Get LLM prices
-    if summary_model not in models_data.get("llms", {}):
-        available = list(models_data.get("llms", {}).keys())
-        raise ValueError(
-            f"Summary model '{summary_model}' not found in models.json. "
-            f"Available models: {available}"
-        )
-
-    embedding_info = models_data["embeddings"][embedding_model]
-    llm_pricing = models_data["llms"][summary_model]
+    embedding_cost = get_embedding_cost(embedding_model)
+    summary_input_cost, summary_output_cost = get_llm_costs(summary_model)
 
     return {
-        "summary_input_cost_per_1k": llm_pricing["input"],
-        "summary_output_cost_per_1k": llm_pricing["output"],
-        "embedding_cost_per_1k": embedding_info["cost_per_1k"],
+        "summary_input_cost_per_1k": summary_input_cost,
+        "summary_output_cost_per_1k": summary_output_cost,
+        "embedding_cost_per_1k": embedding_cost,
     }
 
 

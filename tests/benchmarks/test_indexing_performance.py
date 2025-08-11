@@ -214,10 +214,10 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         leaf_tokens = int(sys.argv[1])
         config = RagZoomConfig(
-            openai_api_key=os.getenv("RAGZOOM_OPENAI_API_KEY"),
-            leaf_tokens=leaf_tokens,
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            target_chunk_tokens=leaf_tokens,
         )
-        test_indexing_performance(config, leaf_tokens)
+        test_indexing_performance(leaf_tokens, "narrative")
     else:
         print("Usage: python test_indexing_performance.py <leaf_tokens>")
         print("Example: python test_indexing_performance.py 200")

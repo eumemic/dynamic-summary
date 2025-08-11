@@ -23,7 +23,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from ragzoom.config import OperationalConfig
-from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +90,6 @@ class Store:
         """
         self.config = config
         self.embedding_model = embedding_model
-        self._model_info = ModelInfo()
 
         # Initialize SQLite
         self.engine = create_engine(
@@ -148,13 +146,11 @@ class Store:
         self.cache_order.append(node.id)
 
     def _get_expected_embedding_dimension(self) -> int | None:
-        """Get expected embedding dimension from model info or existing data."""
-        # Try to get from model info first
-        try:
-            return self._model_info.get_embedding_dimensions(self.embedding_model)
-        except ValueError:
-            pass
+        """Get expected embedding dimension from existing data.
 
+        We no longer maintain hardcoded dimension info since OpenAI API
+        is the source of truth. This method tries to infer from existing data.
+        """
         # Try to infer from existing data
         try:
             # Get any existing embedding from collection
@@ -169,7 +165,7 @@ class Store:
         except Exception as e:
             logger.debug(f"Could not infer embedding dimension: {e}")
 
-        # If no explicit config and no existing data, don't enforce validation
+        # If no existing data, don't enforce validation
         # This allows tests and first-time setups to work with any dimension
         return None
 

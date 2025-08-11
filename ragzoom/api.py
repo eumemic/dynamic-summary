@@ -113,8 +113,6 @@ class UpdateConfigRequest(BaseModel):
     budget_tokens: int | None = None
     leaf_tokens: int | None = None
     mmr_lambda: float | None = None
-    slope_cap: bool | None = None
-    smoothing_pass_enabled: bool | None = None
     # Deprecated fields removed - ttl_turns and freshness_decay no longer exist
 
 
