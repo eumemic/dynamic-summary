@@ -9,184 +9,74 @@ logger = logging.getLogger(__name__)
 
 
 class PromptManager:
-    """Manages loading and hydration of prompt templates with validation."""
+    """Single prompt template manager with fast hydration.
 
-    def __init__(self, base_path: Path | None = None):
-        """Initialize prompt manager.
+    This class manages a single prompt template, loading it once at construction
+    and providing fast hydration with validation.
+    """
 
-        Args:
-            base_path: Base directory for prompt files. Defaults to prompts/ in package root.
-        """
-        if base_path is None:
-            base_path = Path(__file__).parent.parent / "prompts"
-        self.base_path = base_path
-        self._cache: dict[str, str] = {}
-
-        # Define allowed directories for custom prompts (security)
-        self.allowed_custom_dirs = [
-            self.base_path.resolve(),
-            Path.cwd().resolve(),  # Current working directory
-            (Path.cwd() / "prompts").resolve(),  # ./prompts subdirectory
-        ]
-
-    def _validate_custom_path(self, custom_path: str | Path) -> Path:
-        """Validate custom path to prevent directory traversal attacks.
+    def __init__(self, template_path: str | Path):
+        """Initialize with a single prompt template.
 
         Args:
-            custom_path: Path to validate
-
-        Returns:
-            Validated Path object
+            template_path: Path to the prompt template file
 
         Raises:
-            ValueError: If path is outside allowed directories
+            FileNotFoundError: If template file doesn't exist
+            ValueError: If template file can't be read
         """
-        try:
-            resolved_path = Path(custom_path).resolve()
+        self.template_path = Path(template_path)
 
-            # Check if path is within allowed directories
-            is_allowed = any(
-                resolved_path.is_relative_to(allowed_dir)
-                for allowed_dir in self.allowed_custom_dirs
-                if allowed_dir.exists()
+        # Load template once at construction
+        if not self.template_path.exists():
+            raise FileNotFoundError(f"Prompt template not found: {self.template_path}")
+
+        try:
+            self.template = self.template_path.read_text(encoding="utf-8")
+        except Exception as e:
+            raise ValueError(
+                f"Failed to read prompt template from {self.template_path}: {e}"
             )
 
-            if not is_allowed:
-                raise ValueError(
-                    f"Custom prompt path '{resolved_path}' is outside allowed directories. "
-                    f"Allowed: {', '.join(str(d) for d in self.allowed_custom_dirs)}"
-                )
+        # Extract variables once at construction
+        # Handles both {var} and {var:format} patterns
+        self.required_variables = set(
+            re.findall(r"\{(\w+)(?::[^}]*)?\}", self.template)
+        )
 
-            return resolved_path
-        except (OSError, RuntimeError) as e:
-            raise ValueError(f"Invalid custom path '{custom_path}': {e}")
+        logger.debug(
+            f"Loaded prompt from {self.template_path} with variables: {self.required_variables}"
+        )
 
-    def load_prompt(
-        self,
-        prompt_name: str,
-        custom_path: str | Path | None = None,
-        fallback_text: str | None = None,
-    ) -> str:
-        """Load a prompt template from file.
+    def hydrate(self, variables: dict[str, Any]) -> str:
+        """Hydrate the template with provided variables.
+
+        This is optimized to be fast - no file I/O or regex parsing,
+        just validation and string formatting.
 
         Args:
-            prompt_name: Name of the prompt (e.g., "summarization/system")
-            custom_path: Optional custom path to override default location
-            fallback_text: Fallback text if file not found
-
-        Returns:
-            The prompt template text
-
-        Raises:
-            FileNotFoundError: If prompt file not found and no fallback provided
-        """
-        # Use custom path if provided, otherwise construct from base path
-        if custom_path:
-            prompt_path = self._validate_custom_path(custom_path)
-        else:
-            # Check cache first
-            cache_key = str(prompt_name)
-            if cache_key in self._cache:
-                return self._cache[cache_key]
-
-            prompt_path = self.base_path / f"{prompt_name}.txt"
-
-        try:
-            if prompt_path.exists():
-                template = prompt_path.read_text(encoding="utf-8")
-                logger.debug(f"Loaded prompt '{prompt_name}' from: {prompt_path}")
-
-                # Cache the result if using default path
-                if not custom_path:
-                    self._cache[str(prompt_name)] = template
-
-                return template
-            else:
-                if fallback_text is not None:
-                    logger.debug(
-                        f"Prompt file not found at {prompt_path}, using fallback"
-                    )
-                    return fallback_text
-                else:
-                    raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
-
-        except Exception as e:
-            if fallback_text is not None:
-                logger.debug(
-                    f"Error loading prompt from {prompt_path}: {e}, using fallback"
-                )
-                return fallback_text
-            else:
-                raise
-
-    def hydrate_prompt(
-        self, template: str, variables: dict[str, Any], strict: bool = True
-    ) -> str:
-        """Hydrate a prompt template with variables.
-
-        Uses Python string format syntax: {variable_name}
-
-        Args:
-            template: The prompt template containing {variable} placeholders
             variables: Dictionary of variable names to values
-            strict: If True, validate that all variables are used and no extras exist
 
         Returns:
             The hydrated prompt text
 
         Raises:
-            ValueError: If strict=True and validation fails
+            ValueError: If required variables are missing
         """
-        # Extract all variable names from the template
-        template_vars = set(re.findall(r"\{(\w+)\}", template))
-        provided_vars = set(variables.keys())
+        # Fast validation using set operations
+        provided = set(variables.keys())
+        missing = self.required_variables - provided
 
-        if strict:
-            # Check for missing variables
-            missing = template_vars - provided_vars
-            if missing:
-                raise ValueError(f"Missing required variables for prompt: {missing}")
+        if missing:
+            raise ValueError(
+                f"Missing required variables for prompt {self.template_path.name}: {missing}"
+            )
 
-            # Note: We don't check for extra variables - templates should be able
-            # to ignore variables they don't need, allowing callers to provide
-            # a standard set of variables
-
-        # Hydrate the template
+        # Fast string formatting
         try:
-            return template.format(**variables)
+            return self.template.format(**variables)
         except KeyError as e:
+            # This shouldn't happen if validation passed, but handle gracefully
             raise ValueError(f"Failed to hydrate prompt: missing variable {e}")
-
-    def load_and_hydrate(
-        self,
-        prompt_name: str,
-        variables: dict[str, Any] | None = None,
-        custom_path: str | Path | None = None,
-        fallback_text: str | None = None,
-        strict: bool = True,
-    ) -> str:
-        """Load and hydrate a prompt in one operation.
-
-        Args:
-            prompt_name: Name of the prompt (e.g., "summarization/system")
-            variables: Variables to hydrate the template with
-            custom_path: Optional custom path to override default location
-            fallback_text: Fallback text if file not found
-            strict: If True, validate variable usage
-
-        Returns:
-            The loaded and hydrated prompt text
-        """
-        template = self.load_prompt(prompt_name, custom_path, fallback_text)
-
-        if variables:
-            return self.hydrate_prompt(template, variables, strict)
-        else:
-            # If no variables provided, check that template has no placeholders
-            if strict:
-                template_vars = set(re.findall(r"\{(\w+)\}", template))
-                if template_vars:
-                    raise ValueError(
-                        f"Template requires variables but none provided: {template_vars}"
-                    )
-            return template
+        except Exception as e:
+            raise ValueError(f"Failed to hydrate prompt: {e}")

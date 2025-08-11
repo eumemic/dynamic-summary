@@ -2,10 +2,10 @@
 
 import asyncio
 import logging
-import re
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, cast, overload
 
 from openai import AsyncOpenAI
@@ -30,8 +30,8 @@ class TreeBuilder:
         config: RagZoomConfig,
         store: Store,
         max_concurrent: int = 10,
-        initial_prompt_path: str | None = None,
-        retry_prompt_path: str | None = None,
+        initial_prompt_path: str | Path | None = None,
+        retry_prompt_path: str | Path | None = None,
     ):
         """Initialize tree builder.
 
@@ -39,8 +39,8 @@ class TreeBuilder:
             config: RagZoom configuration
             store: Store instance for persistence
             max_concurrent: Maximum concurrent API requests
-            initial_prompt_path: Optional path to custom initial prompt file
-            retry_prompt_path: Optional path to custom retry prompt file
+            initial_prompt_path: Optional path to initial prompt template file
+            retry_prompt_path: Optional path to retry prompt template file
         """
         self.config = config
         self.store = store
@@ -48,42 +48,21 @@ class TreeBuilder:
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.splitter = TextSplitter(config)
 
-        # Initialize prompt manager and load templates once
-        self.prompt_manager = PromptManager()
-        self.initial_prompt_path = initial_prompt_path
-        self.retry_prompt_path = retry_prompt_path
-
-        # Load and cache initial prompt template at initialization
-        # This contains the main instruction that goes in the user message
-        self.initial_prompt_template = self.prompt_manager.load_prompt(
-            "summarization/initial", custom_path=self.initial_prompt_path
-        )
-
-        # Validate the initial prompt has the expected variables
-        template_vars = set(re.findall(r"\{(\w+)\}", self.initial_prompt_template))
-        expected_vars = {"target_tokens"}
-        if template_vars != expected_vars:
-            raise ValueError(
-                f"Initial prompt template has unexpected variables. "
-                f"Expected: {expected_vars}, Found: {template_vars}"
+        # Initialize prompt instances with defaults if not provided
+        if initial_prompt_path is None:
+            initial_prompt_path = (
+                Path(__file__).parent.parent
+                / "prompts"
+                / "summarization"
+                / "initial.txt"
+            )
+        if retry_prompt_path is None:
+            retry_prompt_path = (
+                Path(__file__).parent.parent / "prompts" / "summarization" / "retry.txt"
             )
 
-        # Load and cache retry prompt template
-        self.retry_prompt_template = self.prompt_manager.load_prompt(
-            "summarization/retry", custom_path=self.retry_prompt_path
-        )
-
-        # Validate the retry prompt has the expected variables
-        # Extract variable names, ignoring format specifiers after :
-        retry_vars = set(
-            re.findall(r"\{(\w+)(?::[^}]*)?\}", self.retry_prompt_template)
-        )
-        expected_retry_vars = {"target_tokens", "current_tokens", "deviation_pct"}
-        if not expected_retry_vars.issubset(retry_vars):
-            raise ValueError(
-                f"Retry prompt template missing required variables. "
-                f"Required: {expected_retry_vars}, Found: {retry_vars}"
-            )
+        self.initial_prompt = PromptManager(initial_prompt_path)
+        self.retry_prompt = PromptManager(retry_prompt_path)
 
     def _generate_node_id(self) -> str:
         """Generate unique node ID."""
@@ -333,11 +312,13 @@ class TreeBuilder:
             current_tokens = len(self.splitter.tokenizer.encode(summary))
             deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
 
-            # Format retry prompt with variables
-            retry_prompt = self.retry_prompt_template.format(
-                target_tokens=target_tokens,
-                current_tokens=current_tokens,
-                deviation_pct=deviation_pct,
+            # Hydrate retry prompt with variables
+            retry_prompt = self.retry_prompt.hydrate(
+                {
+                    "target_tokens": target_tokens,
+                    "current_tokens": current_tokens,
+                    "deviation_pct": deviation_pct,
+                }
             )
 
             # Append current summary as assistant response
@@ -485,8 +466,8 @@ class TreeBuilder:
                 trimmed_prev = prev_context
 
         # Build the user prompt with instruction from template
-        # Format the initial prompt template with target_tokens
-        instruction = self.initial_prompt_template.format(target_tokens=target_tokens)
+        # Hydrate the initial prompt with target_tokens
+        instruction = self.initial_prompt.hydrate({"target_tokens": target_tokens})
         prompt_parts = [instruction]
 
         # Add preceding context if available

@@ -100,7 +100,7 @@ ragzoom pin <node-id>
 ragzoom serve
 
 # Index with custom prompts
-ragzoom index document.txt --summary-system-prompt custom/academic.txt
+ragzoom index document.txt --summary-initial-prompt custom/academic.txt
 ragzoom index document.txt --summary-retry-prompt custom/retry.txt
 ```
 

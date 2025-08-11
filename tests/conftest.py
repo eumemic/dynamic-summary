@@ -3,11 +3,13 @@
 import os
 import tempfile
 from collections.abc import Generator
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from ragzoom.config import RagZoomConfig
+from ragzoom.index import TreeBuilder
 from ragzoom.store import Store
 from tests.mock_store import SimpleMockStore
 
@@ -165,6 +167,28 @@ def mock_openai_client():
     mock_client.chat.completions.create = MagicMock(return_value=mock_summary_response)
 
     return mock_client
+
+
+@pytest.fixture
+def prompt_paths():
+    """Provide default prompt paths for tests."""
+    base_path = Path(__file__).parent.parent / "prompts" / "summarization"
+    return {
+        "initial": base_path / "initial.txt",
+        "retry": base_path / "retry.txt",
+    }
+
+
+def create_tree_builder(config, store, **kwargs):
+    """Helper function to create TreeBuilder with default prompt paths."""
+    base_path = Path(__file__).parent.parent / "prompts" / "summarization"
+    defaults = {
+        "initial_prompt_path": base_path / "initial.txt",
+        "retry_prompt_path": base_path / "retry.txt",
+    }
+    # Allow overriding defaults with kwargs
+    defaults.update(kwargs)
+    return TreeBuilder(config, store, **defaults)
 
 
 @pytest.fixture

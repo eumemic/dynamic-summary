@@ -10,8 +10,8 @@ RagZoom uses a template-based prompt system that allows you to customize how the
 
 RagZoom includes two default prompts in the `prompts/summarization/` directory:
 
-### System Prompt (`system.txt`)
-Defines the overall behavior and instructions for the summarization model. Used at the beginning of each summarization request.
+### Initial Prompt (`initial.txt`)
+Defines the initial user prompt for summarization, including instructions and context formatting.
 
 **Available variables:**
 - `{target_tokens}` - The target number of tokens for the summary
@@ -31,15 +31,15 @@ Used when a summary deviates significantly from the target token count and needs
 You can specify custom prompt files when indexing documents:
 
 ```bash
-# Use a custom system prompt
-ragzoom index document.txt --summary-system-prompt /path/to/custom/system.txt
+# Use a custom initial prompt
+ragzoom index document.txt --summary-initial-prompt /path/to/custom/initial.txt
 
 # Use a custom retry prompt
 ragzoom index document.txt --summary-retry-prompt /path/to/custom/retry.txt
 
 # Use both custom prompts
 ragzoom index document.txt \
-  --summary-system-prompt /path/to/custom/system.txt \
+  --summary-initial-prompt /path/to/custom/initial.txt \
   --summary-retry-prompt /path/to/custom/retry.txt
 ```
 
@@ -83,7 +83,7 @@ Note: Extra variables provided but not used in the template are allowed, giving 
 
 ## Example Custom Prompts
 
-### Academic Summarization System Prompt
+### Academic Summarization Initial Prompt
 
 ```text
 You are an academic summarizer specializing in scholarly texts. Create a summary 
@@ -133,8 +133,8 @@ Target: EXACTLY {target_tokens} tokens.
 To see which prompts are being loaded and from where, use the `--debug` flag:
 
 ```bash
-ragzoom index document.txt --debug --summary-system-prompt custom.txt
-# Output: Loaded prompt 'summarization/system' from: /path/to/custom.txt
+ragzoom index document.txt --debug --summary-initial-prompt custom.txt
+# Output: Loaded prompt from: /path/to/custom.txt with variables: {'target_tokens'}
 ```
 
 ## Advanced Usage
@@ -144,39 +144,27 @@ ragzoom index document.txt --debug --summary-system-prompt custom.txt
 For developers integrating RagZoom as a library:
 
 ```python
-from ragzoom.prompt import PromptManager
 from ragzoom.index import TreeBuilder
 
-# Create prompt manager
-prompt_mgr = PromptManager()
-
-# Load and hydrate a prompt
-prompt = prompt_mgr.load_and_hydrate(
-    "summarization/system",
-    {"target_tokens": 100},
-    custom_path="/path/to/custom.txt"
-)
-
-# Use with TreeBuilder
+# TreeBuilder with custom prompts
 tree_builder = TreeBuilder(
     config, 
     store,
-    summary_system_prompt_path="/path/to/system.txt",
+    initial_prompt_path="/path/to/initial.txt",
     retry_prompt_path="/path/to/retry.txt"
 )
+
+# Or use defaults (loads from prompts/summarization/)
+tree_builder = TreeBuilder(config, store)
 ```
 
-### Creating New Prompt Categories
+### Prompt Architecture
 
-To add new prompt types beyond summarization:
-
-1. Create a new directory under `prompts/` (e.g., `prompts/extraction/`)
-2. Add your prompt files
-3. Load them using the path relative to `prompts/`:
-
-```python
-prompt = prompt_mgr.load_prompt("extraction/entities")
-```
+The new `PromptManager` class:
+- Loads a single prompt template at construction time
+- Extracts required variables once for fast validation
+- Provides a `hydrate()` method for efficient variable substitution
+- No file I/O or regex parsing during hydration for optimal performance
 
 ## Related Documentation
 
