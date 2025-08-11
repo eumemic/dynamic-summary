@@ -399,7 +399,7 @@ def documents(ctx: click.Context) -> None:
 @cli.command()
 @click.argument("query_text")
 @click.option("--document-id", "-d", required=True, help="Document ID to query within")
-@click.option("--n-max", type=int, help="Max nodes to retrieve")
+@click.option("--num-seeds", type=int, help="Number of seed nodes to retrieve")
 @click.option("--token-budget", type=int, help="Token budget for summary")
 @click.option(
     "--debug",
@@ -423,7 +423,7 @@ def query(
     ctx: click.Context,
     query_text: str,
     document_id: str,
-    n_max: int | None,
+    num_seeds: int | None,
     token_budget: int | None,
     debug: bool,
     validate: bool,
@@ -459,7 +459,7 @@ def query(
             query_text,
             budget_tokens=query_config.budget_tokens,
             document_id=document_id,
-            n_max=n_max,
+            num_seeds=num_seeds,
         )
 
         # Assemble

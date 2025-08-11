@@ -241,7 +241,7 @@ class TestCLI:
                     "Tell me about cats",
                     "-d",
                     "test-doc",
-                    "--n-max",
+                    "--num-seeds",
                     "5",
                     "--token-budget",
                     "1000",
@@ -250,12 +250,12 @@ class TestCLI:
 
             assert result.exit_code == 0
 
-            # Verify retrieve was called with correct query, n_max, budget_tokens, and document_id
+            # Verify retrieve was called with correct query, num_seeds, budget_tokens, and document_id
             mock_ragzoom["retriever_instance"].retrieve.assert_called_once_with(
                 "Tell me about cats",
                 budget_tokens=1000,
                 document_id="test-doc",
-                n_max=5,
+                num_seeds=5,
             )
 
     def test_pin_command(self, runner, mock_ragzoom):

@@ -216,7 +216,7 @@ class TestIntegration:
             tree_builder.add_document(text, f"doc-{i}")
 
         # Query about cats (should get diverse cat-related content)
-        result = retriever.retrieve("Tell me about cats", n_max=3)
+        result = retriever.retrieve("Tell me about cats", num_seeds=3)
 
         assert len(result.node_ids) <= 3
         # Should get results from different documents, not just repeated similar ones

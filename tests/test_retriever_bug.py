@@ -120,12 +120,12 @@ class TestRetrieverBug:
         )
         return config, store, retriever
 
-    def test_retriever_bug_with_n_max_1(self, setup_tree_for_bug_demo):
+    def test_retriever_bug_with_num_seeds_1(self, setup_tree_for_bug_demo):
         """Test that the retriever should build complete coverage trees but currently doesn't."""
         config, store, retriever = setup_tree_for_bug_demo
 
         # Mock the vector search to return only L3
-        # This simulates what happens with --n-max 1 when L3 is most relevant
+        # This simulates what happens with --num-seeds 1 when L3 is most relevant
         def mock_query_chroma(embedding, n_results, document_id=None):
             # Return L3 as the only result
             return {"ids": [["L3"]], "distances": [[0.1]]}
@@ -140,7 +140,7 @@ class TestRetrieverBug:
         result = asyncio.run(
             retriever.retrieve_async(
                 query="test query",  # Query text doesn't matter with our mock
-                n_max=1,  # Only select 1 node
+                num_seeds=1,  # Only select 1 node
                 budget_tokens=1000,
                 document_id="test-doc",
             )
@@ -177,7 +177,7 @@ class TestRetrieverBug:
         result = asyncio.run(
             retriever.retrieve_async(
                 query="test",
-                n_max=1,
+                num_seeds=1,
                 budget_tokens=1000,
                 document_id="test-doc",
             )

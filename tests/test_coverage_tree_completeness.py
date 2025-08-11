@@ -129,7 +129,7 @@ class TestCoverageTreeCompleteness:
         """Test that left-balanced trees with single children are handled correctly."""
         config, store, retriever, dp_generator = setup_incomplete_tree
 
-        # Simulate what happens with --n-max 1: only L3 is selected
+        # Simulate what happens with --num-seeds 1: only L3 is selected
         # This creates a left-balanced coverage tree where P2 has only its left child
         coverage_map = {"L3": True}
 

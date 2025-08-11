@@ -234,7 +234,7 @@ class TestBudgetGuarantee:
         # Note: Store doesn't have update_node_parent, nodes already have parent_id set
 
         # Test that retriever respects budget even with parent + child nodes
-        result = retriever.retrieve("first leaf", n_max=2, budget_tokens=500)
+        result = retriever.retrieve("first leaf", num_seeds=2, budget_tokens=500)
 
         # Note: Cannot force a specific tiling anymore since tiling field is computed by DP
         # This test may need to be redesigned to work with the new tiling-based approach
@@ -250,8 +250,8 @@ class TestBudgetGuarantee:
             assembled_text.count("First leaf content.") <= 40
         ), "Content was duplicated"
 
-    def test_conservative_n_max_calculation(self, setup_system):
-        """Test that the conservative n_max calculation is reasonable and respects budget."""
+    def test_conservative_num_seeds_calculation(self, setup_system):
+        """Test that the conservative num_seeds calculation is reasonable and respects budget."""
         (
             (index_config, query_config, operational_config),
             store,
@@ -267,20 +267,20 @@ class TestBudgetGuarantee:
         test_budgets = [500, 1000, 2000, 5000]
 
         for budget in test_budgets:
-            # Calculate conservative n_max using the retriever's method
-            conservative_n_max = retriever._calculate_conservative_n_max(
+            # Calculate conservative num_seeds using the retriever's method
+            conservative_num_seeds = retriever._calculate_conservative_num_seeds(
                 budget, "doc-budget-test"
             )
 
             # Verify the calculation is at least 1
             assert (
-                conservative_n_max >= 1
-            ), f"n_max calculation should be at least 1 for budget {budget}"
+                conservative_num_seeds >= 1
+            ), f"num_seeds calculation should be at least 1 for budget {budget}"
 
-            # Now, verify the outcome: does using this n_max actually respect the budget?
+            # Now, verify the outcome: does using this num_seeds actually respect the budget?
             result = retriever.retrieve(
                 "test",
-                n_max=conservative_n_max,
+                num_seeds=conservative_num_seeds,
                 budget_tokens=budget,
                 document_id="doc-budget-test",
             )
@@ -292,10 +292,10 @@ class TestBudgetGuarantee:
 
             assert (
                 final_token_count <= budget
-            ), f"Budget {budget} exceeded with conservative_n_max={conservative_n_max}, final tokens={final_token_count}"
+            ), f"Budget {budget} exceeded with conservative_num_seeds={conservative_num_seeds}, final tokens={final_token_count}"
 
-    def test_mixed_mode_budget_plus_n_max(self, setup_system):
-        """Test mixed mode where both budget and n_max are specified."""
+    def test_mixed_mode_budget_plus_num_seeds(self, setup_system):
+        """Test mixed mode where both budget and num_seeds are specified."""
         (
             (index_config, query_config, operational_config),
             store,
@@ -308,12 +308,12 @@ class TestBudgetGuarantee:
         document = "Test content. " * 200
         tree_builder.add_document(document, "test-doc")
 
-        # Specify both budget and n_max
+        # Specify both budget and num_seeds
         budget = 800
-        n_max = 10  # Potentially too many nodes for budget
+        num_seeds = 10  # Potentially too many nodes for budget
 
         # Retrieve with both constraints
-        result = retriever.retrieve("test", n_max=n_max, budget_tokens=budget)
+        result = retriever.retrieve("test", num_seeds=num_seeds, budget_tokens=budget)
 
         # Should respect budget with DP algorithm
         assert result.tiling is not None
@@ -325,8 +325,8 @@ class TestBudgetGuarantee:
             token_count <= budget
         ), f"Budget exceeded with mixed mode: {token_count} > {budget}"
 
-    def test_n_max_only_mode(self):
-        """Test n_max only mode (no budget enforcement)."""
+    def test_num_seeds_only_mode(self):
+        """Test num_seeds only mode (no budget enforcement)."""
         from unittest.mock import Mock, patch
 
         from tests.mock_store import SimpleMockStore
@@ -404,10 +404,10 @@ class TestBudgetGuarantee:
                 }
             )
 
-            # Retrieve with only n_max (no budget)
-            n_max = 5
+            # Retrieve with only num_seeds (no budget)
+            num_seeds = 5
             result = retriever.retrieve(
-                "test", n_max=n_max, budget_tokens=None, document_id="test-doc"
+                "test", num_seeds=num_seeds, budget_tokens=None, document_id="test-doc"
             )
 
             # Should have nodes from DP algorithm

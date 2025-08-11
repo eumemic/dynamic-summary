@@ -70,14 +70,12 @@ ragzoom query <query_text> [OPTIONS]
 - `--document-id, -d` - Document to query (REQUIRED)
 
 **Optional Parameters:**
-- `--n-nodes, -n` - Number of seed nodes (default: 20)
-- `--n-max` - Maximum leaf nodes in result
-- `--budget-tokens, -b` - Token budget for summary
-- `--no-cache` - Disable caching
+- `--num-seeds` - Number of seed nodes to retrieve
+- `--token-budget` - Token budget for summary
 - `--debug` - Show debug information and tree visualization
-- `--viz-width` - Tree visualization width (default: 120)
-- `--viz-coords` - Coordinate system: `source-chars` or `output-tokens` (default: output-tokens)
 - `--validate` - Enable validation checks
+- `--viz-width` - Tree visualization width (defaults to terminal width)
+- `--viz-coords` - Coordinate system: `source-chars` or `output-tokens` (default: output-tokens)
 
 **Examples:**
 ```bash

@@ -1,4 +1,4 @@
-"""Test that verifies the n_max constraint fix works correctly."""
+"""Test that verifies the num_seeds constraint fix works correctly."""
 
 from unittest.mock import Mock, patch
 
@@ -7,8 +7,8 @@ from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
 
-class TestNMaxFix:
-    """Test that the fix for n_max constraint works correctly."""
+class TestNumSeedsFix:
+    """Test that the fix for num_seeds constraint works correctly."""
 
     def test_retrieve_respects_coverage_tree(self):
         """Test that retrieve() only passes coverage tree nodes to DP."""
@@ -118,8 +118,8 @@ class TestNMaxFix:
                 tree_builder=None,
             )
 
-            # Retrieve with n_max=1
-            result = retriever.retrieve("dragon", n_max=1, document_id="doc1")
+            # Retrieve with num_seeds=1
+            result = retriever.retrieve("dragon", num_seeds=1, document_id="doc1")
 
         # Verify selected nodes
         assert result.node_ids == ["leaf1"]
