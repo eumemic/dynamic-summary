@@ -53,7 +53,7 @@ DEFAULT_LEAF_TOKEN_ESTIMATE = int(
 
 
 def get_model_pricing(summary_model: str, embedding_model: str) -> dict[str, float]:
-    """Get pricing for specific models from pricing.json.
+    """Get pricing for specific models from models.json.
 
     Args:
         summary_model: Name of the LLM model
@@ -65,41 +65,42 @@ def get_model_pricing(summary_model: str, embedding_model: str) -> dict[str, flo
         - summary_output_cost_per_1k: Cost per 1K output tokens
         - embedding_cost_per_1k: Cost per 1K embedding tokens
     """
-    # Load pricing data
+    # Load models data
     module_dir = Path(__file__).parent
-    pricing_path = module_dir / "pricing.json"
+    models_path = module_dir / "models.json"
 
-    if not pricing_path.exists():
+    if not models_path.exists():
         raise FileNotFoundError(
-            f"Pricing file not found at {pricing_path}. "
-            "Cannot compute cost metrics without pricing information."
+            f"Models file not found at {models_path}. "
+            "Cannot compute cost metrics without model information."
         )
 
-    with open(pricing_path) as f:
-        pricing_data = json.load(f)
+    with open(models_path) as f:
+        models_data = json.load(f)
 
     # Get embedding price
-    if embedding_model not in pricing_data.get("embeddings", {}):
-        available = list(pricing_data.get("embeddings", {}).keys())
+    if embedding_model not in models_data.get("embeddings", {}):
+        available = list(models_data.get("embeddings", {}).keys())
         raise ValueError(
-            f"Embedding model '{embedding_model}' not found in pricing.json. "
+            f"Embedding model '{embedding_model}' not found in models.json. "
             f"Available models: {available}"
         )
 
     # Get LLM prices
-    if summary_model not in pricing_data.get("llms", {}):
-        available = list(pricing_data.get("llms", {}).keys())
+    if summary_model not in models_data.get("llms", {}):
+        available = list(models_data.get("llms", {}).keys())
         raise ValueError(
-            f"Summary model '{summary_model}' not found in pricing.json. "
+            f"Summary model '{summary_model}' not found in models.json. "
             f"Available models: {available}"
         )
 
-    llm_pricing = pricing_data["llms"][summary_model]
+    embedding_info = models_data["embeddings"][embedding_model]
+    llm_pricing = models_data["llms"][summary_model]
 
     return {
         "summary_input_cost_per_1k": llm_pricing["input"],
         "summary_output_cost_per_1k": llm_pricing["output"],
-        "embedding_cost_per_1k": pricing_data["embeddings"][embedding_model],
+        "embedding_cost_per_1k": embedding_info["cost_per_1k"],
     }
 
 

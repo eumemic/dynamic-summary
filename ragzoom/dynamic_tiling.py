@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Optional
 
 import tiktoken
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import QueryConfig
 from ragzoom.tiling import Tiling
 
 if TYPE_CHECKING:
@@ -36,7 +36,7 @@ class DPResult:
 class DynamicTilingGenerator:
     """Generates a tiling using a dynamic programming approach."""
 
-    def __init__(self, config: RagZoomConfig):
+    def __init__(self, config: QueryConfig):
         self.config = config
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
         self._memo_cache: dict[tuple[str | None, int], Tiling] = {}

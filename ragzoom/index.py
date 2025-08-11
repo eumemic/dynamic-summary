@@ -11,7 +11,8 @@ from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN
 from openai.types.chat import ChatCompletionMessageParam
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig
+from ragzoom.model_info import ModelInfo
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
@@ -25,20 +26,31 @@ class TreeBuilder:
 
     def __init__(
         self,
-        config: RagZoomConfig,
+        config: IndexConfig,
         store: Store,
+        api_key: str = "",
         max_concurrent: int = 10,
     ):
         """Initialize tree builder.
 
         Args:
-            config: RagZoom configuration
+            config: Index configuration
             store: Store instance for persistence
+            api_key: OpenAI API key (if not provided, reads from OPENAI_API_KEY env)
             max_concurrent: Maximum concurrent API requests
         """
         self.config = config
         self.store = store
-        self.client = AsyncOpenAI(api_key=config.openai_api_key)
+        self._model_info = ModelInfo()
+
+        # Get API key from parameter or environment
+        import os
+
+        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError("OpenAI API key required for TreeBuilder")
+
+        self.client = AsyncOpenAI(api_key=api_key)
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.splitter = TextSplitter(config)
 
@@ -70,8 +82,11 @@ class TreeBuilder:
                     model=self.config.embedding_model,
                     input=text,
                     dimensions=(
-                        self.config.embedding_dimensions
-                        if self.config.embedding_dimensions is not None
+                        self._model_info.get_embedding_dimensions(
+                            self.config.embedding_model
+                        )
+                        if self.config.embedding_model
+                        in self._model_info.get_all_embedding_models()
                         else NOT_GIVEN
                     ),
                 )
@@ -91,8 +106,11 @@ class TreeBuilder:
                     model=self.config.embedding_model,
                     input=texts,
                     dimensions=(
-                        self.config.embedding_dimensions
-                        if self.config.embedding_dimensions is not None
+                        self._model_info.get_embedding_dimensions(
+                            self.config.embedding_model
+                        )
+                        if self.config.embedding_model
+                        in self._model_info.get_all_embedding_models()
                         else NOT_GIVEN
                     ),
                 )
@@ -105,7 +123,7 @@ class TreeBuilder:
         """Calculate target tokens as min of leaf_tokens or half the text size."""
         tokens = self.splitter.tokenizer.encode(text)
         half_size = len(tokens) // 2
-        return min(self.config.leaf_tokens, half_size)
+        return min(self.config.target_chunk_tokens, half_size)
 
     async def _make_summary_call(
         self,
@@ -130,14 +148,15 @@ class TreeBuilder:
         }
 
         # GPT-5 models have different parameter requirements
-        is_gpt5 = self.config.summary_model.startswith("gpt-5")
+        is_gpt5 = self._model_info.is_gpt5_model(self.config.summary_model)
 
         if is_gpt5:
             # GPT-5 models need reasoning_effort="minimal" to output text instead of just reasoning
             api_kwargs["reasoning_effort"] = "minimal"
         else:
             # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
-            api_kwargs["temperature"] = self.config.summary_temperature
+            # Use a hardcoded reasonable temperature for summaries
+            api_kwargs["temperature"] = 0.3
 
         response = await self.client.chat.completions.create(**api_kwargs)  # type: ignore
 
@@ -245,7 +264,7 @@ class TreeBuilder:
         Returns:
             True if retry is needed, False otherwise
         """
-        return deviation_pct > self.config.summary_deviation_threshold
+        return deviation_pct > self.config.retry_threshold
 
     def _is_better_summary(
         self,
@@ -351,7 +370,7 @@ Remember: Your goal is to maximize information preservation while hitting the ta
         node_info = f"[{parent_id}] " if parent_id else ""
         actual_retries = 0
 
-        for retry_count in range(1, self.config.summary_max_retries + 1):
+        for retry_count in range(1, self.config.max_retries + 1):
             # Check if we should retry
             current_tokens = len(self.splitter.tokenizer.encode(best_summary))
             deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
@@ -362,7 +381,7 @@ Remember: Your goal is to maximize information preservation while hitting the ta
             logger.debug(
                 f"{node_info}Summary deviation: {current_tokens} tokens "
                 f"(target: {target_tokens}, {deviation_pct:.1%} off). "
-                f"Retry {retry_count}/{self.config.summary_max_retries}"
+                f"Retry {retry_count}/{self.config.max_retries}"
             )
 
             # Execute retry attempt (pass current_tokens to avoid re-tokenization)
@@ -451,11 +470,11 @@ Remember: Your goal is to maximize information preservation while hitting the ta
         # Process adjacent context if needed
         trimmed_prev = None
 
-        if prev_context and self.config.adjacent_context_tokens > 0:
+        if prev_context and self.config.prev_context_tokens > 0:
             # Trim prev_context to adjacent_context_tokens
             prev_tokens = self.splitter.tokenizer.encode(prev_context)
-            if len(prev_tokens) > self.config.adjacent_context_tokens:
-                context_tokens = prev_tokens[-self.config.adjacent_context_tokens :]
+            if len(prev_tokens) > self.config.prev_context_tokens:
+                context_tokens = prev_tokens[-self.config.prev_context_tokens :]
                 trimmed_prev = self.splitter.tokenizer.decode(context_tokens)
             else:
                 trimmed_prev = prev_context
@@ -482,7 +501,7 @@ Here's the content to summarize:"""
         prompt_parts = [instruction]
 
         # Add preceding context if available
-        if prev_context and self.config.adjacent_context_tokens > 0 and trimmed_prev:
+        if prev_context and self.config.prev_context_tokens > 0 and trimmed_prev:
             prompt_parts.append(
                 f"\n<PRECEDING_TEXT>\n...{trimmed_prev.strip()}\n</PRECEDING_TEXT>"
             )
@@ -547,7 +566,7 @@ Here's the content to summarize:"""
                 retry_count = 0
                 accepted_attempt = 0  # Default to first attempt
 
-                if deviation_pct > self.config.summary_deviation_threshold:
+                if deviation_pct > self.config.retry_threshold:
                     summary, retry_count, best_attempt_index = (
                         await self._retry_summary_correction(
                             summary,
@@ -692,7 +711,9 @@ Here's the content to summarize:"""
             chunk_objects.append(chunk_obj)
 
         validate(
-            lambda: validate_chunk_sizes(chunk_objects, self.config.leaf_tokens),
+            lambda: validate_chunk_sizes(
+                chunk_objects, self.config.target_chunk_tokens
+            ),
             "early chunk size validation",
         )
 
@@ -986,7 +1007,7 @@ Here's the content to summarize:"""
 
         # Use consistent token budget for all heights
         # Target tokens for the summary (guidance for LLM, not hard limit)
-        target_tokens = self.config.leaf_tokens
+        target_tokens = self.config.target_chunk_tokens
 
         # Generate summary (async) with retry mechanism support
         summary, retry_count = await self._summarize_text(
@@ -1209,7 +1230,7 @@ Here's the content to summarize:"""
                     summary, retry_count = await self._summarize_text(
                         odd_node_text,
                         "",  # No right child
-                        self.config.leaf_tokens,
+                        self.config.target_chunk_tokens,
                         prev_context=None,
                         parent_id=parent_id,
                         reporter=reporter,

@@ -9,11 +9,11 @@ and analysis.
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 import psutil
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig
 from ragzoom.telemetry_types import NodeTelemetryDict
 
 logger = logging.getLogger(__name__)
@@ -35,9 +35,12 @@ logger = logging.getLogger(__name__)
 #   - Moved input_text_tokens from SummaryAttempt to NodeTelemetry (node level)
 #   - Added document_path field for telemetry file tracking
 #   - Removed dead amplification code from analysis
+# - 4.0: Configuration improvements:
+#   - Renamed indexing_config to config
+#   - Config now includes all indexing parameters from new config system
 #
 # Current format version (increment for breaking changes)
-TELEMETRY_FORMAT_VERSION = "3.1"
+TELEMETRY_FORMAT_VERSION = "4.0"
 
 
 @dataclass
@@ -216,7 +219,7 @@ class TelemetryCollector:
         self,
         document_id: str,
         source_tokens: int,
-        config: RagZoomConfig,
+        config: IndexConfig,
         document_path: str | None = None,
     ):
         """Initialize telemetry collector for a document.
@@ -224,7 +227,7 @@ class TelemetryCollector:
         Args:
             document_id: Document being indexed
             source_tokens: Total tokens in source document
-            config: Config containing pricing information for telemetry metadata
+            config: Index config for telemetry metadata
             document_path: Optional absolute path to the source document
         """
         self.document_id = document_id
@@ -514,7 +517,9 @@ class TelemetryCollector:
             self.memory_end_mb = self.peak_memory_mb
 
         # Return telemetry data in standard format
-        return self.get_telemetry_data(self.document_id, self.config.leaf_tokens)
+        return self.get_telemetry_data(
+            self.document_id, self.config.target_chunk_tokens
+        )
 
     def get_telemetry_data(self, document_id: str, chunk_size: int) -> dict:
         """Export raw telemetry data in standard format for analysis.
@@ -534,12 +539,16 @@ class TelemetryCollector:
         # Sort nodes by creation time for consistent output
         nodes_data.sort(key=lambda x: x["created_at"])
 
+        # Save only the index config (the parameters that affect indexing)
+        config_dict = asdict(self.config)
+
         telemetry_data = {
             "format_version": TELEMETRY_FORMAT_VERSION,
             "document_id": document_id,
             "source_document_tokens": self.source_tokens,
             "chunk_size": chunk_size,
             "indexed_at": self.start_time,
+            "config": config_dict,
             "models": {
                 "summary": self.config.summary_model,
                 "embedding": self.config.embedding_model,

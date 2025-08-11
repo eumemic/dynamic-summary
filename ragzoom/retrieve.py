@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Optional
 from openai import OpenAI
 from openai._types import NOT_GIVEN
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
+from ragzoom.model_info import ModelInfo
 from ragzoom.store import Store, TreeNode
 
 if TYPE_CHECKING:
@@ -36,25 +37,48 @@ class Retriever:
 
     def __init__(
         self,
-        config: RagZoomConfig,
+        query_config: QueryConfig,
+        index_config: IndexConfig,
         store: Store,
+        api_key: str = "",
         tree_builder: Optional["TreeBuilder"] = None,
     ):
-        """Initialize retriever."""
-        self.config = config
+        """Initialize retriever.
+
+        Args:
+            query_config: Query configuration
+            index_config: Index configuration (for target_chunk_tokens)
+            store: Store instance
+            api_key: OpenAI API key (if not provided, reads from OPENAI_API_KEY env)
+            tree_builder: Optional TreeBuilder instance
+        """
+        self.query_config = query_config
+        self.index_config = index_config
         self.store = store
-        self.client = OpenAI(api_key=config.openai_api_key)
-        self.dp_generator = DynamicTilingGenerator(config)
+        self._model_info = ModelInfo()
+
+        # Get API key from parameter or environment
+        import os
+
+        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError("OpenAI API key required for Retriever")
+
+        self.client = OpenAI(api_key=api_key)
+        self.dp_generator = DynamicTilingGenerator(query_config)
 
     def _get_query_embedding(self, query: str) -> list[float]:
         """Get embedding for query text."""
         try:
             response = self.client.embeddings.create(
-                model=self.config.embedding_model,
+                model=self.index_config.embedding_model,
                 input=query,
                 dimensions=(
-                    self.config.embedding_dimensions
-                    if self.config.embedding_dimensions is not None
+                    self._model_info.get_embedding_dimensions(
+                        self.index_config.embedding_model
+                    )
+                    if self.index_config.embedding_model
+                    in self._model_info.get_all_embedding_models()
                     else NOT_GIVEN
                 ),
             )
@@ -89,14 +113,16 @@ class Retriever:
             logger.info(f"Mixed mode: n_max={n_max}, budget={budget_tokens}")
         elif n_max is None:
             # Mode 3: n_max only (using default)
-            n_max = self.config.n_max
+            n_max = (
+                self.query_config.budget_tokens // self.index_config.target_chunk_tokens
+            )
             logger.info(f"n_max-only mode: using n_max={n_max}")
 
         # Get query embedding
         query_embedding = self._get_query_embedding(query)
 
         # Step 1: Initial retrieval (2 * n_max candidates)
-        k_candidates = int(n_max * self.config.mmr_k_multiplier)
+        k_candidates = int(n_max * self.query_config.mmr_k_multiplier)
 
         # Filter by document_id if provided
         where_filter = {"document_id": document_id} if document_id else None
@@ -106,14 +132,14 @@ class Retriever:
 
         # Step 2: Apply MMR to get diverse n_max results
         selected_ids = self.store.compute_mmr_diverse_results(
-            query_embedding, candidates, self.config.mmr_lambda, n_max
+            query_embedding, candidates, self.query_config.mmr_lambda, n_max
         )
 
         # Step 3: Build coverage map (selected + ancestors)
         coverage_map = self._build_coverage_map(selected_ids)
 
         # Step 4: Apply pinned nodes
-        pinned_nodes = self.store.get_pinned_nodes(self.config.pin_depth_max)
+        pinned_nodes = self.store.get_pinned_nodes(self.store.PIN_DEPTH_MAX)
         for node in pinned_nodes:
             coverage_map[node.id] = True
 
@@ -193,7 +219,9 @@ class Retriever:
 
         # Step 5: Extract tiling using DP algorithm
         final_budget = (
-            budget_tokens if budget_tokens is not None else self.config.budget_tokens
+            budget_tokens
+            if budget_tokens is not None
+            else self.query_config.budget_tokens
         )
         dp_result = self.dp_generator.find_optimal_tiling(
             final_budget, scores, nodes, root_id
@@ -278,7 +306,9 @@ class Retriever:
         if not all_nodes:
             # Fallback to old logic if no nodes are found
             leaf_tokens = (
-                self.config.leaf_tokens if self.config.leaf_tokens > 0 else 256
+                self.index_config.target_chunk_tokens
+                if self.index_config.target_chunk_tokens > 0
+                else 256
             )
             return max(1, budget_tokens // leaf_tokens)
 
@@ -290,7 +320,7 @@ class Retriever:
         average_tokens_per_node = total_tokens / len(all_nodes)
 
         if average_tokens_per_node == 0:
-            average_tokens_per_node = self.config.leaf_tokens
+            average_tokens_per_node = self.index_config.target_chunk_tokens
 
         # Add a small safety buffer (e.g., 25%) to the average to be safe
         safe_average_cost = average_tokens_per_node * 1.25

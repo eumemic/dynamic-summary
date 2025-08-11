@@ -10,7 +10,12 @@ import click
 from dotenv import load_dotenv
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import (
+    IndexConfig,
+    OperationalConfig,
+    QueryConfig,
+    load_indexing_config,
+)
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store, TreeNode
@@ -39,6 +44,22 @@ def configure_logging_level(debug: bool) -> None:
         logging.getLogger("ragzoom").setLevel(logging.INFO)
 
 
+def setup_command_environment(
+    log_level: str | None, debug: bool, validate: bool
+) -> None:
+    """Set up logging and validation for CLI commands."""
+    # Configure logging level
+    if log_level:
+        logging.getLogger("ragzoom").setLevel(getattr(logging, log_level))
+    elif debug:
+        configure_logging_level(debug)
+
+    # Set global validation flag
+    from ragzoom.validate import set_validation_enabled
+
+    set_validation_enabled(validate)
+
+
 # Keep ragzoom.index at INFO to show batch progress
 
 
@@ -47,17 +68,28 @@ def configure_logging_level(debug: bool) -> None:
 def cli(ctx: click.Context) -> None:
     """RagZoom: Incremental, hierarchical RAG memory system."""
     # Initialize shared components
-    # RagZoomConfig will read from environment automatically due to pydantic_settings
-    config = RagZoomConfig()  # Will use RAGZOOM_OPENAI_API_KEY from env
-    store = Store(config)
+    index_config = IndexConfig()
+    query_config = QueryConfig()
+    operational_config = OperationalConfig()  # Will read OPENAI_API_KEY from env
+
+    store = Store(operational_config, embedding_model=index_config.embedding_model)
 
     ctx.ensure_object(dict)
-    ctx.obj["config"] = config
+    ctx.obj["index_config"] = index_config
+    ctx.obj["query_config"] = query_config
+    ctx.obj["operational_config"] = operational_config
     ctx.obj["store"] = store
-    tree_builder = TreeBuilder(config, store)
+
+    tree_builder = TreeBuilder(
+        index_config, store, api_key=operational_config.openai_api_key
+    )
     ctx.obj["tree_builder"] = tree_builder
-    ctx.obj["retriever"] = Retriever(config, store, tree_builder)
-    ctx.obj["assembler"] = Assembler(config, store)
+
+    retriever = Retriever(
+        query_config, index_config, store, api_key=operational_config.openai_api_key
+    )
+    ctx.obj["retriever"] = retriever
+    ctx.obj["assembler"] = Assembler(store)
 
 
 @cli.command()
@@ -65,6 +97,68 @@ def cli(ctx: click.Context) -> None:
 @click.option("--document-id", help="Optional document ID")
 @click.option("--clear", is_flag=True, help="Clear existing document before indexing")
 @click.option("--no-progress", is_flag=True, help="Disable progress bar")
+# Config file
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, path_type=Path),
+    help="Load indexing settings from config file",
+)
+# Indexing parameters
+@click.option(
+    "--target-chunk-tokens",
+    type=int,
+    help="Target size for leaf chunks (default: 200)",
+)
+@click.option(
+    "--prev-context-tokens",
+    type=int,
+    help="Context from adjacent chunks (default: 75)",
+)
+@click.option(
+    "--summary-model",
+    "-m",
+    help="Model for summarization (default: gpt-4o)",
+)
+@click.option(
+    "--embedding-model",
+    help="Model for embeddings (default: text-embedding-3-small)",
+)
+@click.option(
+    "--retry-threshold",
+    type=float,
+    help="Max deviation before retry, 0.2 = 20%% (default: 0.2)",
+)
+@click.option(
+    "--max-retries",
+    type=int,
+    help="Maximum summary retries (default: 0)",
+)
+@click.option(
+    "--embedding-batch-size",
+    type=int,
+    help="Batch size for embeddings (default: 100)",
+)
+# Operational parameters
+@click.option(
+    "--chroma-dir",
+    type=click.Path(),
+    help="Chroma persistence directory (default: ./chroma_db)",
+)
+@click.option(
+    "--database-url",
+    help="SQLite database URL (default: sqlite:///./ragzoom.db)",
+)
+@click.option(
+    "--cache-size",
+    type=int,
+    help="LRU cache size (default: 1000)",
+)
+@click.option(
+    "--log-level",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
+    help="Logging level (default: INFO)",
+)
 @click.option(
     "--max-concurrent",
     type=int,
@@ -93,6 +187,18 @@ def index(
     document_id: str | None,
     clear: bool,
     no_progress: bool,
+    config_path: Path | None,
+    target_chunk_tokens: int | None,
+    prev_context_tokens: int | None,
+    summary_model: str | None,
+    embedding_model: str | None,
+    retry_threshold: float | None,
+    max_retries: int | None,
+    embedding_batch_size: int | None,
+    chroma_dir: str | None,
+    database_url: str | None,
+    cache_size: int | None,
+    log_level: str | None,
     max_concurrent: int,
     validate: bool,
     debug: bool,
@@ -100,15 +206,54 @@ def index(
 ) -> None:
     """Index a document from file."""
 
-    # Configure logging level based on debug flag
-    configure_logging_level(debug)
-
-    # Set global validation flag
-    from ragzoom.validate import set_validation_enabled
-
-    set_validation_enabled(validate)
+    setup_command_environment(log_level, debug, validate)
 
     try:
+        # Load indexing configuration
+        indexing_config = load_indexing_config(
+            config_path,
+            target_chunk_tokens=target_chunk_tokens,
+            prev_context_tokens=prev_context_tokens,
+            summary_model=summary_model,
+            embedding_model=embedding_model,
+            retry_threshold=retry_threshold,
+            max_retries=max_retries,
+            embedding_batch_size=embedding_batch_size,
+        )
+
+        # Create config objects with merged values
+        index_config = IndexConfig(**indexing_config)
+        query_config = QueryConfig()  # Use defaults for indexing command
+        operational_config = OperationalConfig()
+
+        # Override operational parameters if provided
+        if chroma_dir:
+            operational_config = operational_config.replace(
+                chroma_persist_directory=chroma_dir
+            )
+        if database_url:
+            operational_config = operational_config.replace(
+                sqlite_database_url=database_url
+            )
+        if cache_size is not None:
+            operational_config = operational_config.replace(cache_size=cache_size)
+
+        # Update context with new configs
+        ctx.obj["index_config"] = index_config
+        ctx.obj["query_config"] = query_config
+        ctx.obj["operational_config"] = operational_config
+
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        ctx.obj["store"] = store
+
+        tree_builder = TreeBuilder(
+            index_config,
+            store,
+            api_key=operational_config.openai_api_key,
+            max_concurrent=max_concurrent,
+        )
+        ctx.obj["tree_builder"] = tree_builder
+
         # Read file
         path = Path(file_path)
         text = path.read_text(encoding="utf-8")
@@ -136,14 +281,8 @@ def index(
 
         click.echo(f"Indexing {path.name}...")
 
-        # Create tree builder with specified concurrency
-        config = ctx.obj["config"]
-        store = ctx.obj["store"]
-        tree_builder = TreeBuilder(
-            config,
-            store,
-            max_concurrent=max_concurrent,
-        )
+        # Use tree builder from context (already configured)
+        tree_builder = ctx.obj["tree_builder"]
 
         # Index with telemetry if requested
         if telemetry_file:
@@ -206,7 +345,8 @@ def index(
         )
 
         run_validate(
-            lambda: validate_chunk_sizes(doc_leaves, config.leaf_tokens), "chunk sizes"
+            lambda: validate_chunk_sizes(doc_leaves, index_config.target_chunk_tokens),
+            "chunk sizes",
         )
 
         run_validate(
@@ -300,6 +440,27 @@ def documents(ctx: click.Context) -> None:
 @click.option("--document-id", "-d", required=True, help="Document ID to query within")
 @click.option("--n-max", type=int, help="Max nodes to retrieve")
 @click.option("--token-budget", type=int, help="Token budget for summary")
+# Query parameters
+@click.option(
+    "--mmr-lambda",
+    type=float,
+    help="MMR relevance vs diversity, 0-1 (default: 0.7)",
+)
+@click.option(
+    "--mmr-k-multiplier",
+    type=float,
+    help="Retrieve k_multiplier * N_max candidates (default: 2.0)",
+)
+@click.option(
+    "--embedding-model",
+    help="Model for query embedding (default: text-embedding-3-small)",
+)
+# Operational parameters
+@click.option(
+    "--log-level",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
+    help="Logging level (default: INFO)",
+)
 @click.option(
     "--debug",
     is_flag=True,
@@ -324,6 +485,10 @@ def query(
     document_id: str,
     n_max: int | None,
     token_budget: int | None,
+    mmr_lambda: float | None,
+    mmr_k_multiplier: float | None,
+    embedding_model: str | None,
+    log_level: str | None,
     debug: bool,
     validate: bool,
     viz_width: int | None,
@@ -331,16 +496,37 @@ def query(
 ) -> None:
     """Query the system and get a summary."""
 
-    # Configure logging level based on debug flag
-    configure_logging_level(debug)
-
-    # Set global validation flag
-    from ragzoom.validate import set_validation_enabled
-
-    set_validation_enabled(validate)
+    setup_command_environment(log_level, debug, validate)
 
     try:
-        retriever = ctx.obj["retriever"]
+        # Get configs from context
+        query_config = ctx.obj["query_config"]
+        index_config = ctx.obj["index_config"]
+        operational_config = ctx.obj["operational_config"]
+
+        # Update configs with query-specific parameters if provided
+        if mmr_lambda is not None:
+            query_config = query_config.replace(mmr_lambda=mmr_lambda)
+            ctx.obj["query_config"] = query_config
+        if mmr_k_multiplier is not None:
+            query_config = query_config.replace(mmr_k_multiplier=mmr_k_multiplier)
+            ctx.obj["query_config"] = query_config
+        if embedding_model is not None:
+            index_config = index_config.replace(embedding_model=embedding_model)
+            ctx.obj["index_config"] = index_config
+
+        # Recreate retriever with updated config if needed
+        if any(p is not None for p in [mmr_lambda, mmr_k_multiplier, embedding_model]):
+            store = ctx.obj["store"]
+            retriever = Retriever(
+                query_config,
+                index_config,
+                store,
+                api_key=operational_config.openai_api_key,
+            )
+        else:
+            retriever = ctx.obj["retriever"]
+
         assembler = ctx.obj["assembler"]
 
         # Retrieve - Pass both n_max and budget_tokens to support all three modes
@@ -356,7 +542,7 @@ def query(
         token_count = assembler.get_token_count(summary)
 
         # Tiling validation
-        if validate and getattr(result, "tiling", None):
+        if validate and getattr(result, "tiling", None) and result.tiling:
             from ragzoom.validate import validate_tiling
 
             error = validate_tiling(
@@ -370,7 +556,7 @@ def query(
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY")
         click.echo("=" * 60)
-        if debug and getattr(result, "tiling", None):
+        if debug and getattr(result, "tiling", None) and result.tiling:
             store = ctx.obj["store"]
             for idx, node_id in enumerate(result.tiling):
                 node = store.get_node(node_id)
@@ -468,8 +654,8 @@ def status(ctx: click.Context) -> None:
     """Show system status."""
     try:
         store = ctx.obj["store"]
-        config = ctx.obj["config"]
-
+        index_config = ctx.obj["index_config"]
+        query_config = ctx.obj["query_config"]
         # Gather stats
         all_nodes = store.collection.count()
         leaf_nodes = store.get_leaf_nodes()
@@ -485,11 +671,11 @@ def status(ctx: click.Context) -> None:
         click.echo(f"Pinned nodes: {len(pinned)}")
         click.echo("\nCONFIGURATION:")
         click.echo("=" * 40)
-        click.echo(f"Budget tokens: {config.budget_tokens}")
-        click.echo(f"Leaf tokens: {config.leaf_tokens}")
-        click.echo(f"MMR lambda: {config.mmr_lambda}")
-        click.echo(f"Slope cap: {config.slope_cap}")
-        click.echo(f"Smoothing enabled: {config.smoothing_pass_enabled}")
+        click.echo(f"Budget tokens: {query_config.budget_tokens}")
+        click.echo(f"Target chunk tokens: {index_config.target_chunk_tokens}")
+        click.echo(f"MMR lambda: {query_config.mmr_lambda}")
+        click.echo(f"Slope cap: {query_config.slope_cap}")
+        click.echo(f"Smoothing enabled: {query_config.smoothing_pass_enabled}")
 
     except Exception as e:
         click.echo(f"❌ Error getting status: {e}", err=True)

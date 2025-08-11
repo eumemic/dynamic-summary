@@ -20,7 +20,6 @@ from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import (
     compute_batch_efficiency,
     get_accepted_attempt,
-    get_model_pricing,
     get_telemetry_thresholds,
 )
 from ragzoom.telemetry_config import (
@@ -201,16 +200,13 @@ class TelemetryVisualizer:
                 "Cannot compute costs without knowing which models were used."
             )
 
-        # Get model-specific pricing
-        pricing = get_model_pricing(models["summary"], models["embedding"])
+        # Get model-specific pricing (not used but left for potential future use)
+        # pricing = get_model_pricing(models["summary"], models["embedding"])
 
         return RagZoomConfig(
             openai_api_key="dummy",  # Not needed for analysis
             summary_model=models["summary"],
             embedding_model=models["embedding"],
-            embedding_cost_per_1k=pricing["embedding_cost_per_1k"],
-            summary_input_cost_per_1k=pricing["summary_input_cost_per_1k"],
-            summary_output_cost_per_1k=pricing["summary_output_cost_per_1k"],
         )
 
     def _calculate_histogram_bins(
