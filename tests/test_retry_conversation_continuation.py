@@ -4,15 +4,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import TelemetryCollector
 
 
 def create_test_reporter(config):
     """Create a test reporter with common test nodes pre-tracked."""
+    # TelemetryCollector expects IndexConfig, so extract it if needed
+    index_config = config.index_config if hasattr(config, "index_config") else config
     reporter = TelemetryCollector(
-        document_id="test_doc", source_tokens=1000, config=config
+        document_id="test_doc", source_tokens=1000, config=index_config
     )
     # Pre-track common test nodes
     for node_id in ["test", "test_node"]:
@@ -41,10 +43,10 @@ class MockOpenAIResponse:
 @pytest.mark.asyncio
 async def test_retry_maintains_conversation_history(mock_store):
     """Test that retries append to existing conversation instead of creating new ones."""
-    config = RagZoomConfig(
-        summary_deviation_threshold=0.2,  # 20% deviation
-        summary_max_retries=3,
-        leaf_tokens=100,  # Target tokens
+    config = IndexConfig(
+        retry_threshold=0.2,  # 20% deviation
+        max_retries=3,
+        target_chunk_tokens=100,  # Target tokens
     )
 
     indexer = TreeBuilder(config, mock_store)
@@ -131,10 +133,10 @@ async def test_retry_maintains_conversation_history(mock_store):
 @pytest.mark.asyncio
 async def test_retry_preserves_original_context(mock_store):
     """Test that retry requests can still see the original text being summarized."""
-    config = RagZoomConfig(
-        summary_deviation_threshold=0.1,  # 10% deviation
-        summary_max_retries=1,  # Enable retries for this test
-        leaf_tokens=100,
+    config = IndexConfig(
+        retry_threshold=0.1,  # 10% deviation
+        max_retries=1,  # Enable retries for this test
+        target_chunk_tokens=100,
     )
 
     indexer = TreeBuilder(config, mock_store)
@@ -196,10 +198,10 @@ async def test_retry_preserves_original_context(mock_store):
 @pytest.mark.asyncio
 async def test_multiple_retries_build_conversation(mock_store):
     """Test that multiple retries continue building on the same conversation."""
-    config = RagZoomConfig(
-        summary_deviation_threshold=0.1,
-        summary_max_retries=3,
-        leaf_tokens=100,
+    config = IndexConfig(
+        retry_threshold=0.1,
+        max_retries=3,
+        target_chunk_tokens=100,
     )
 
     indexer = TreeBuilder(config, mock_store)
@@ -255,9 +257,9 @@ async def test_multiple_retries_build_conversation(mock_store):
 @pytest.mark.asyncio
 async def test_no_retry_when_within_threshold(mock_store):
     """Test that no retry occurs when initial summary is within threshold."""
-    config = RagZoomConfig(
-        summary_deviation_threshold=0.2,
-        leaf_tokens=100,
+    config = IndexConfig(
+        retry_threshold=0.2,
+        target_chunk_tokens=100,
     )
 
     indexer = TreeBuilder(config, mock_store)
@@ -290,7 +292,7 @@ async def test_no_retry_when_within_threshold(mock_store):
 @pytest.mark.asyncio
 async def test_passthrough_for_text_under_target(mock_store):
     """Test that text under target tokens is passed through without LLM call."""
-    config = RagZoomConfig(leaf_tokens=100)
+    config = IndexConfig(target_chunk_tokens=100)
     indexer = TreeBuilder(config, mock_store)
 
     api_calls = []
@@ -321,7 +323,7 @@ async def test_passthrough_for_text_under_target(mock_store):
     assert summary == "Short Text"
 
     # Verify telemetry - passthrough nodes no longer record attempts
-    data = reporter.get_telemetry_data("test_doc", config.leaf_tokens)
+    data = reporter.get_telemetry_data("test_doc", config.target_chunk_tokens)
     # Passthrough nodes should not have summary_attempts
     assert (
         "summary_attempts" not in data["nodes"][0]

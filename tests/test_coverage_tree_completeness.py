@@ -2,7 +2,7 @@
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
@@ -13,7 +13,21 @@ class TestCoverageTreeCompleteness:
     @pytest.fixture
     def setup_incomplete_tree(self):
         """Set up a system with a tree that will produce incomplete coverage."""
-        config = RagZoomConfig(leaf_tokens=100, adjacent_context_tokens=50)
+        index_config = IndexConfig(target_chunk_tokens=100, prev_context_tokens=50)
+        query_config = QueryConfig(budget_tokens=1000)
+        operational_config = OperationalConfig(openai_api_key="test-key")
+
+        # Create config wrapper for SimpleMockStore compatibility
+        class LocalTestConfig:
+            def __init__(self, index_config, query_config, operational_config):
+                self.index_config = index_config
+                self.query_config = query_config
+                self.operational_config = operational_config
+                self.target_chunk_tokens = index_config.target_chunk_tokens
+                self.prev_context_tokens = index_config.prev_context_tokens
+                self.budget_tokens = query_config.budget_tokens
+
+        config = LocalTestConfig(index_config, query_config, operational_config)
         store = SimpleMockStore(config=config)
 
         # Create a simple tree structure:
@@ -100,7 +114,13 @@ class TestCoverageTreeCompleteness:
             summary="Full document summary",
         )
 
-        retriever = Retriever(config, store, tree_builder=None)
+        retriever = Retriever(
+            query_config,
+            index_config,
+            store,
+            api_key=operational_config.openai_api_key,
+            tree_builder=None,
+        )
         dp_generator = retriever.dp_generator
 
         return config, store, retriever, dp_generator

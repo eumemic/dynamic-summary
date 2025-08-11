@@ -14,6 +14,8 @@ class SimpleMockStore:
     basic state management without the overhead of real database I/O.
     """
 
+    PIN_DEPTH_MAX = 2  # Match Store class constant
+
     def __init__(self, config=None):
         self.config = config
         self.nodes: dict[str, SimpleNamespace] = {}

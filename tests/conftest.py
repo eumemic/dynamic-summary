@@ -7,12 +7,51 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.store import Store
 from tests.mock_store import SimpleMockStore
 
+
+class BackwardCompatibilityConfig:
+    """Test configuration that combines the three config types for compatibility."""
+
+    def __init__(
+        self,
+        index_config: IndexConfig,
+        query_config: QueryConfig,
+        operational_config: OperationalConfig,
+    ):
+        self.index_config = index_config
+        self.query_config = query_config
+        self.operational_config = operational_config
+
+    # Backward compatibility properties
+    @property
+    def openai_api_key(self) -> str:
+        return self.operational_config.openai_api_key
+
+    @property
+    def sqlite_database_url(self) -> str:
+        return self.operational_config.sqlite_database_url
+
+    @property
+    def chroma_persist_directory(self) -> str:
+        return self.operational_config.chroma_persist_directory
+
+    @property
+    def target_chunk_tokens(self) -> int:
+        return self.index_config.target_chunk_tokens
+
+    @property
+    def prev_context_tokens(self) -> int:
+        return self.index_config.prev_context_tokens
+
+    @property
+    def budget_tokens(self) -> int:
+        return self.query_config.budget_tokens
+
+
 # Set default API keys for tests if not already set
-# RagZoomConfig expects RAGZOOM_OPENAI_API_KEY due to env_prefix="RAGZOOM_"
 if "RAGZOOM_OPENAI_API_KEY" not in os.environ:
     os.environ["RAGZOOM_OPENAI_API_KEY"] = "test-key-for-tests"
 # Also set OPENAI_API_KEY for any code that uses it directly
@@ -77,17 +116,21 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture
-def base_config() -> RagZoomConfig:
+def base_config() -> BackwardCompatibilityConfig:
     """Create base configuration for tests."""
-    return RagZoomConfig(
+    index_config = IndexConfig(
+        target_chunk_tokens=50,
+        prev_context_tokens=25,
+    )
+    query_config = QueryConfig(
+        budget_tokens=1000,
+    )
+    operational_config = OperationalConfig(
         openai_api_key="test-key",
         sqlite_database_url="sqlite:///:memory:",
         chroma_persist_directory=":memory:",  # Will be overridden for real store
-        leaf_tokens=50,
-        adjacent_context_tokens=25,
-        budget_tokens=1000,
-        embedding_dimensions=1536,
     )
+    return BackwardCompatibilityConfig(index_config, query_config, operational_config)
 
 
 @pytest.fixture
@@ -102,17 +145,15 @@ def mock_store(base_config) -> Generator[SimpleMockStore, None, None]:
 def real_store(base_config) -> Generator[Store, None, None]:
     """Create a real store for integration testing."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Update config with real directory for ChromaDB
-        config = RagZoomConfig(
+        # Create operational config with real directory for ChromaDB
+        operational_config = OperationalConfig(
             openai_api_key=base_config.openai_api_key,
             sqlite_database_url=base_config.sqlite_database_url,
             chroma_persist_directory=temp_dir,
-            leaf_tokens=base_config.leaf_tokens,
-            adjacent_context_tokens=base_config.adjacent_context_tokens,
-            budget_tokens=base_config.budget_tokens,
-            embedding_dimensions=base_config.embedding_dimensions,
         )
-        store = Store(config)
+        store = Store(
+            operational_config, embedding_model=base_config.index_config.embedding_model
+        )
         yield store
         store.close()
 

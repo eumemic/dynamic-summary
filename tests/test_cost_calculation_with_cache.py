@@ -43,7 +43,7 @@ def calculate_summary_attempt_cost(attempt: dict[str, Any], pricing: dict) -> fl
 
 def analyze_summary_costs(telemetry_data: dict) -> dict:
     """Analyze summary costs from telemetry data."""
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
+    pricing_path = Path(__file__).parent.parent / "ragzoom" / "models.json"
     with open(pricing_path) as f:
         pricing = json.load(f)
 
@@ -118,7 +118,7 @@ def analyze_summary_costs(telemetry_data: dict) -> dict:
 def test_calculate_cost_with_cached_tokens():
     """Test that cached tokens receive appropriate discount."""
     # Load pricing (will be updated to include cache_discount)
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
+    pricing_path = Path(__file__).parent.parent / "ragzoom" / "models.json"
     with open(pricing_path) as f:
         pricing = json.load(f)
 
@@ -150,7 +150,7 @@ def test_calculate_cost_with_cached_tokens():
 
 def test_calculate_cost_without_cached_tokens():
     """Test backward compatibility when cached_tokens is not present."""
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
+    pricing_path = Path(__file__).parent.parent / "ragzoom" / "models.json"
     with open(pricing_path) as f:
         pricing = json.load(f)
 
@@ -174,7 +174,7 @@ def test_calculate_cost_without_cached_tokens():
 
 def test_calculate_cost_with_zero_cached_tokens():
     """Test that zero cached tokens works correctly."""
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
+    pricing_path = Path(__file__).parent.parent / "ragzoom" / "models.json"
     with open(pricing_path) as f:
         pricing = json.load(f)
 
@@ -198,7 +198,7 @@ def test_calculate_cost_with_zero_cached_tokens():
 
 def test_calculate_cost_with_high_cache_rate():
     """Test cost savings with very high cache hit rate."""
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
+    pricing_path = Path(__file__).parent.parent / "ragzoom" / "models.json"
     with open(pricing_path) as f:
         pricing = json.load(f)
 
@@ -321,7 +321,7 @@ def test_cost_calculation_with_missing_model():
 
 def test_cost_calculation_with_passthrough_model():
     """Test that passthrough summaries have zero cost."""
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
+    pricing_path = Path(__file__).parent.parent / "ragzoom" / "models.json"
     with open(pricing_path) as f:
         pricing = json.load(f)
 

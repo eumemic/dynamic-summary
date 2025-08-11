@@ -12,14 +12,12 @@ class TestDPAssembly:
     @pytest.fixture
     def config(self):
         """Create test configuration."""
-        return RagZoomConfig(
-            openai_api_key="test-key", slope_cap=True, budget_tokens=1000
-        )
+        return RagZoomConfig(openai_api_key="test-key", budget_tokens=1000)
 
     @pytest.fixture
     def assembler(self, config, store):
         """Create assembler with mock store."""
-        return Assembler(config, store)
+        return Assembler(store)
 
     @pytest.fixture
     def mock_nodes(self, store):

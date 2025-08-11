@@ -355,8 +355,8 @@ class TestSimplifiedMetrics:
         """Create test config."""
         return RagZoomConfig(
             openai_api_key="test-key",
-            summary_input_cost_per_1k=0.0025,  # gpt-4o-mini
-            summary_output_cost_per_1k=0.01,
+            summary_model="gpt-4o-mini",  # This will load costs from models.json
+            embedding_model="text-embedding-3-small",
         )
 
     @pytest.fixture
@@ -957,9 +957,8 @@ class TestFullMetricsComputation:
         """Create test config."""
         return RagZoomConfig(
             openai_api_key="test-key",
-            embedding_cost_per_1k=0.0001,
-            summary_input_cost_per_1k=0.0025,
-            summary_output_cost_per_1k=0.01,
+            summary_model="gpt-4o-mini",
+            embedding_model="text-embedding-3-small",
         )
 
     @pytest.fixture
@@ -1133,9 +1132,8 @@ class TestBackwardCompatibility:
         """Create test config."""
         return RagZoomConfig(
             openai_api_key="test-key",
-            embedding_cost_per_1k=0.0001,
-            summary_input_cost_per_1k=0.0025,
-            summary_output_cost_per_1k=0.01,
+            summary_model="gpt-4o-mini",
+            embedding_model="text-embedding-3-small",
         )
 
     def test_v1_telemetry_with_v2_analysis(self, config: RagZoomConfig) -> None:

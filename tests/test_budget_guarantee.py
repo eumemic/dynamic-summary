@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, RagZoomConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
@@ -22,7 +22,6 @@ class TestBudgetGuarantee:
         with (
             patch("ragzoom.index.AsyncOpenAI") as mock_index_client,
             patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
-            patch("ragzoom.assemble.OpenAI") as mock_assemble_client,
             patch("chromadb.PersistentClient"),
         ):
 
@@ -30,9 +29,9 @@ class TestBudgetGuarantee:
             async def mock_embeddings_create(*args, **kwargs):
                 input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
-                    return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
                 else:
-                    return Mock(data=[Mock(embedding=[0.1] * 384)])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
             async def mock_chat_create(*args, **kwargs):
                 # Generate predictable summaries
@@ -63,9 +62,9 @@ class TestBudgetGuarantee:
             def mock_embeddings_create_sync(*args, **kwargs):
                 input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
-                    return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
                 else:
-                    return Mock(data=[Mock(embedding=[0.1] * 384)])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
             # Configure mocks
             mock_embeddings_async = Mock()
@@ -84,10 +83,10 @@ class TestBudgetGuarantee:
             instance_async.chat = mock_chat_async
             mock_index_client.return_value = instance_async
 
-            for mock_client in [mock_retrieve_client, mock_assemble_client]:
-                instance_sync = Mock()
-                instance_sync.embeddings = mock_embeddings_sync
-                mock_client.return_value = instance_sync
+            # Set up sync client for retrieve
+            instance_sync = Mock()
+            instance_sync.embeddings = mock_embeddings_sync
+            mock_retrieve_client.return_value = instance_sync
 
             # Create test config with specific budget and temporary directory for ChromaDB
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -95,15 +94,27 @@ class TestBudgetGuarantee:
                     openai_api_key="test-key",
                     sqlite_database_url="sqlite:///:memory:",
                     chroma_persist_directory=temp_dir,
-                    leaf_tokens=200,  # Standard leaf size
+                    target_chunk_tokens=200,  # Standard leaf size
                     budget_tokens=1000,  # Strict budget for testing
-                    adjacent_context_tokens=50,
+                    prev_context_tokens=50,
                 )
 
-                store = Store(config)
-                tree_builder = TreeBuilder(config, store)
-                retriever = Retriever(config, store, tree_builder)
-                assembler = Assembler(config, store)
+                store = Store(
+                    config.operational_config,
+                    embedding_model=config.index_config.embedding_model,
+                )
+                tree_builder = TreeBuilder(
+                    config.index_config,
+                    store,
+                    api_key=config.operational_config.openai_api_key,
+                )
+                retriever = Retriever(
+                    config.query_config,
+                    config.index_config,
+                    store,
+                    api_key=config.operational_config.openai_api_key,
+                )
+                assembler = Assembler(store)
 
                 yield config, store, tree_builder, retriever, assembler
 
@@ -165,7 +176,7 @@ class TestBudgetGuarantee:
             span_end=400,
             parent_id=None,
             document_id="test-doc",
-            embedding=[0.15] * 384,
+            embedding=[0.15] * 1536,
         )
 
         # Then create children pointing to parent
@@ -176,7 +187,7 @@ class TestBudgetGuarantee:
             span_end=200,
             parent_id="1_0_400_parent",
             document_id="test-doc",
-            embedding=[0.1] * 384,
+            embedding=[0.1] * 1536,
         )
 
         store.add_node(
@@ -186,7 +197,7 @@ class TestBudgetGuarantee:
             span_end=400,
             parent_id="1_0_400_parent",
             document_id="test-doc",
-            embedding=[0.2] * 384,
+            embedding=[0.2] * 1536,
         )
 
         # Update parent to reference children
@@ -222,7 +233,17 @@ class TestBudgetGuarantee:
     def test_conservative_n_max_calculation(self, setup_system):
         """Test that the conservative n_max calculation is reasonable and respects budget."""
         config, store, tree_builder, retriever, assembler = setup_system
-        config.leaf_tokens = 100  # Use a predictable size for testing
+        # Create new config with desired target_chunk_tokens
+
+        config.index_config = IndexConfig(
+            target_chunk_tokens=100,  # Use a predictable size for testing
+            prev_context_tokens=config.index_config.prev_context_tokens,
+            summary_model=config.index_config.summary_model,
+            embedding_model=config.index_config.embedding_model,
+            retry_threshold=config.index_config.retry_threshold,
+            max_retries=config.index_config.max_retries,
+            embedding_batch_size=config.index_config.embedding_batch_size,
+        )
 
         document = "This is test content for budget calculation. " * 500
         tree_builder.add_document(document, "doc-budget-test")
@@ -290,32 +311,31 @@ class TestBudgetGuarantee:
         from tests.mock_store import SimpleMockStore
 
         # Mock OpenAI clients
-        with (
-            patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
-            patch("ragzoom.assemble.OpenAI") as mock_assemble_client,
-        ):
+        with (patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,):
 
             # Setup sync mock for retrieval
             mock_embeddings = Mock()
             mock_embeddings.create = Mock(
-                return_value=Mock(data=[Mock(embedding=[0.5] * 384)])
+                return_value=Mock(data=[Mock(embedding=[0.5] * 1536)])
             )
 
             instance_retrieve = Mock()
             instance_retrieve.embeddings = mock_embeddings
             mock_retrieve_client.return_value = instance_retrieve
 
-            # Setup for assembler
-            instance_assemble = Mock()
-            instance_assemble.embeddings = mock_embeddings
-            mock_assemble_client.return_value = instance_assemble
+            # No OpenAI setup needed for assembler
 
             config = RagZoomConfig(
-                budget_tokens=1000, leaf_tokens=200, openai_api_key="test-key"
+                budget_tokens=1000, target_chunk_tokens=200, openai_api_key="test-key"
             )
             store = SimpleMockStore(config=config)
-            retriever = Retriever(config, store, tree_builder=None)
-            assembler = Assembler(config, store)
+            retriever = Retriever(
+                config.query_config,
+                config.index_config,
+                store,
+                api_key=config.operational_config.openai_api_key,
+            )
+            assembler = Assembler(store)
 
             # Create a simple tree structure
             # Root
@@ -326,7 +346,7 @@ class TestBudgetGuarantee:
                 span_end=2800,
                 parent_id=None,
                 document_id="test-doc",
-                embedding=[0.1] * 384,
+                embedding=[0.1] * 1536,
                 left_child_id="leaf1",
                 right_child_id="leaf2",
             )
@@ -339,7 +359,7 @@ class TestBudgetGuarantee:
                 span_end=1400,
                 parent_id="root",
                 document_id="test-doc",
-                embedding=[0.9] * 384,  # High similarity to query
+                embedding=[0.9] * 1536,  # High similarity to query
             )
 
             store.add_node(
@@ -349,7 +369,7 @@ class TestBudgetGuarantee:
                 span_end=2800,
                 parent_id="root",
                 document_id="test-doc",
-                embedding=[0.2] * 384,  # Low similarity
+                embedding=[0.2] * 1536,  # Low similarity
             )
 
             # Set up mock scores to simulate search results
@@ -384,7 +404,7 @@ class TestBudgetValidation:
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
 
-        config = RagZoomConfig(leaf_tokens=100)
+        config = RagZoomConfig(target_chunk_tokens=100)
         store = SimpleMockStore(config=config)
 
         # Create some nodes with known token costs
@@ -422,7 +442,7 @@ class TestBudgetValidation:
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
 
-        config = RagZoomConfig(leaf_tokens=100)
+        config = RagZoomConfig(target_chunk_tokens=100)
         store = SimpleMockStore(config=config)
 
         # Create a node
@@ -448,7 +468,7 @@ class TestBudgetValidation:
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
 
-        config = RagZoomConfig(leaf_tokens=100)
+        config = RagZoomConfig(target_chunk_tokens=100)
         store = SimpleMockStore(config=config)
 
         # Create child nodes

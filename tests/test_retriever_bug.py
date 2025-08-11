@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
@@ -15,7 +15,18 @@ class TestRetrieverBug:
     @pytest.fixture
     def setup_tree_for_bug_demo(self):
         """Set up a system with a tree structure to demonstrate the bug."""
-        config = RagZoomConfig(leaf_tokens=100, adjacent_context_tokens=50)
+        index_config = IndexConfig(target_chunk_tokens=100, prev_context_tokens=50)
+        query_config = QueryConfig(budget_tokens=1000)
+        operational_config = OperationalConfig(openai_api_key="test-key")
+
+        # Create a simple config object with properties for backward compatibility
+        class Config:
+            def __init__(self):
+                self.target_chunk_tokens = index_config.target_chunk_tokens
+                self.prev_context_tokens = index_config.prev_context_tokens
+                self.openai_api_key = operational_config.openai_api_key
+
+        config = Config()
         store = SimpleMockStore(config=config)
 
         # Create same tree structure as before
@@ -100,7 +111,13 @@ class TestRetrieverBug:
             summary="Full document summary",
         )
 
-        retriever = Retriever(config, store, tree_builder=None)
+        retriever = Retriever(
+            query_config=query_config,
+            index_config=index_config,
+            store=store,
+            api_key=operational_config.openai_api_key,
+            tree_builder=None,
+        )
         return config, store, retriever
 
     def test_retriever_bug_with_n_max_1(self, setup_tree_for_bug_demo):

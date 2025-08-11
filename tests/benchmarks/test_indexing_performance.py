@@ -50,27 +50,22 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
         pytest.skip(f"Could not load test document {file_path}: {e}")
 
 
-@pytest.fixture
-def benchmark_config():
-    """Config for benchmarks with real API calls."""
-    return RagZoomConfig(
-        openai_api_key=os.getenv("RAGZOOM_OPENAI_API_KEY", "test-key"),
+@pytest.mark.parametrize("leaf_tokens", [100, 200, 400])
+@pytest.mark.parametrize("document_type", ["narrative"])
+def test_indexing_performance(leaf_tokens, document_type):
+    """Benchmark indexing performance at different chunk sizes with real documents."""
+    # Create config for this specific test
+    benchmark_config = RagZoomConfig(
+        openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
         embedding_batch_size=100,
+        target_chunk_tokens=leaf_tokens,
     )
-
-
-@pytest.mark.parametrize("leaf_tokens", [100, 200, 400])
-@pytest.mark.parametrize("document_type", ["narrative"])
-def test_indexing_performance(benchmark_config, leaf_tokens, document_type):
-    """Benchmark indexing performance at different chunk sizes with real documents."""
+    
     # Skip if no API key
     if benchmark_config.openai_api_key == "test-key":
-        pytest.skip("RAGZOOM_OPENAI_API_KEY not set")
-
-    # Update config with chunk size
-    benchmark_config.leaf_tokens = leaf_tokens
+        pytest.skip("OPENAI_API_KEY not set")
 
     # Get test document
     test_doc, doc_name = get_test_document(document_type)

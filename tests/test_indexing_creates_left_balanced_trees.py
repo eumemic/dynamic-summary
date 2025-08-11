@@ -19,8 +19,8 @@ class TestIndexingCreatesLeftBalancedTrees:
     def setup_indexing(self):
         """Set up indexing system with validation enabled."""
         config = RagZoomConfig(
-            leaf_tokens=50,  # Small chunks for testing
-            adjacent_context_tokens=25,
+            target_chunk_tokens=50,  # Small chunks for testing
+            prev_context_tokens=25,
             openai_api_key="test-key-for-tests",
         )
         store = SimpleMockStore(config=config)

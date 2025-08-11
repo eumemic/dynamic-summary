@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import tiktoken
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
@@ -17,8 +17,8 @@ class TestChunkSizeRegression:
     @pytest.fixture
     def config(self):
         """Create test config with specific leaf token size."""
-        return RagZoomConfig(
-            leaf_tokens=200,
+        return IndexConfig(
+            target_chunk_tokens=200,
         )
 
     def test_splitter_creates_correct_chunk_size(self, config):
@@ -68,14 +68,14 @@ class TestChunkSizeRegression:
 
             # Allow more tolerance due to boundary splitting
             # The splitter respects sentence boundaries, so chunks can be smaller
-            min_tokens = int(config.leaf_tokens * 0.4)  # Allow 60% smaller
-            max_tokens = int(config.leaf_tokens * 1.2)  # Allow 20% larger
+            min_tokens = int(config.target_chunk_tokens * 0.4)  # Allow 60% smaller
+            max_tokens = int(config.target_chunk_tokens * 1.2)  # Allow 20% larger
 
             # Last chunk can be even smaller
             if i < len(chunks) - 1:
                 assert (
                     min_tokens <= token_count <= max_tokens
-                ), f"Chunk {i} has {token_count} tokens, expected ~{config.leaf_tokens}"
+                ), f"Chunk {i} has {token_count} tokens, expected ~{config.target_chunk_tokens}"
             else:
                 # Last chunk just needs to be non-empty
                 assert (
@@ -85,8 +85,8 @@ class TestChunkSizeRegression:
         # Check average chunk size - should be reasonable but can be lower due to boundaries
         avg_tokens = sum(len(tokenizer.encode(chunk)) for chunk in chunks) / len(chunks)
         assert (
-            50 <= avg_tokens <= config.leaf_tokens * 1.2
-        ), f"Average chunk size {avg_tokens} tokens is outside reasonable range (expected 50-{int(config.leaf_tokens * 1.2)})"
+            50 <= avg_tokens <= config.target_chunk_tokens * 1.2
+        ), f"Average chunk size {avg_tokens} tokens is outside reasonable range (expected 50-{int(config.target_chunk_tokens * 1.2)})"
 
     @pytest.mark.asyncio
     async def test_indexed_chunks_have_correct_size(self, tmp_path, monkeypatch):
@@ -99,8 +99,15 @@ class TestChunkSizeRegression:
         monkeypatch.setenv("RAGZOOM_OPENAI_API_KEY", "test-key")
         monkeypatch.setenv("RAGZOOM_LEAF_TOKENS", "200")
 
-        config = RagZoomConfig()
-        store = Store(config)
+        # Create separate configs
+        index_config = IndexConfig(target_chunk_tokens=200)
+        operational_config = OperationalConfig(
+            openai_api_key="test-key",
+            sqlite_database_url=f"sqlite:///{tmp_path}/test.db",
+            chroma_persist_directory=str(tmp_path / "chroma"),
+        )
+
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
         tokenizer = tiktoken.get_encoding("cl100k_base")
 
         # Create test document with more varied content
@@ -136,7 +143,9 @@ class TestChunkSizeRegression:
 
         # Index the document
         with patch("ragzoom.index.AsyncOpenAI", return_value=mock_async_client):
-            builder = TreeBuilder(config, store)
+            builder = TreeBuilder(
+                index_config, store, api_key=operational_config.openai_api_key
+            )
             await builder.add_document_async(str(test_file))
 
         # Check leaf node sizes
@@ -163,15 +172,19 @@ class TestChunkSizeRegression:
             if i == len(leaf_nodes) - 1:
                 # Last chunk can be smaller
                 min_tokens = 20  # Minimum viable chunk
-                max_tokens = int(config.leaf_tokens * 1.2)
+                max_tokens = int(index_config.target_chunk_tokens * 1.2)
             else:
                 # Regular chunks should be close to configured size
-                min_tokens = int(config.leaf_tokens * 0.7)  # Allow 30% smaller
-                max_tokens = int(config.leaf_tokens * 1.3)  # Allow 30% larger
+                min_tokens = int(
+                    index_config.target_chunk_tokens * 0.7
+                )  # Allow 30% smaller
+                max_tokens = int(
+                    index_config.target_chunk_tokens * 1.3
+                )  # Allow 30% larger
 
             assert (
                 min_tokens <= token_count <= max_tokens
-            ), f"Leaf node {node.id} (chunk {i+1}/{len(leaf_nodes)}) has {token_count} tokens, expected ~{config.leaf_tokens}"
+            ), f"Leaf node {node.id} (chunk {i+1}/{len(leaf_nodes)}) has {token_count} tokens, expected ~{index_config.target_chunk_tokens}"
 
         # Check that parent nodes (summaries) are also reasonable size
         parent_nodes = []
@@ -190,7 +203,9 @@ class TestChunkSizeRegression:
             token_count = len(tokenizer.encode(node.text))
 
             # Parent summaries should also be roughly the same size
-            max_summary_tokens = config.leaf_tokens * 2  # Allow up to 2x for summaries
+            max_summary_tokens = (
+                index_config.target_chunk_tokens * 2
+            )  # Allow up to 2x for summaries
 
             assert (
                 token_count <= max_summary_tokens

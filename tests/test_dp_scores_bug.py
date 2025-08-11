@@ -29,7 +29,7 @@ class TestDPScoresBug:
             span_end=1000,
             parent_id=None,
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="node_a",
             right_child_id="node_b",
         )
@@ -42,7 +42,7 @@ class TestDPScoresBug:
             span_end=500,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="a1",
             right_child_id="a2",
         )
@@ -54,7 +54,7 @@ class TestDPScoresBug:
             span_end=1000,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="b1",
             right_child_id="b2",
         )
@@ -73,7 +73,7 @@ class TestDPScoresBug:
                 span_end=end,
                 parent_id=parent,
                 document_id="doc1",
-                embedding=[0.5] * 384,
+                embedding=[0.5] * 1536,
             )
 
         # Create config and DP generator
@@ -134,7 +134,7 @@ class TestDPScoresBug:
             span_end=1000,
             parent_id=None,
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
         )
         store.add_node(
             node_id="leaf1",
@@ -143,7 +143,7 @@ class TestDPScoresBug:
             span_end=500,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
         )
         store.add_node(
             node_id="leaf2",
@@ -152,7 +152,7 @@ class TestDPScoresBug:
             span_end=1000,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
         )
         store.nodes["root"].left_child_id = "leaf1"
         store.nodes["root"].right_child_id = "leaf2"

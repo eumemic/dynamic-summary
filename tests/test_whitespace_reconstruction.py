@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store
@@ -22,9 +22,9 @@ class TestWhitespaceReconstruction:
             async def mock_embeddings_create(*args, **kwargs):
                 input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
-                    return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
                 else:
-                    return Mock(data=[Mock(embedding=[0.1] * 384)])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
             async def mock_chat_create(*args, **kwargs):
                 return Mock(
@@ -47,17 +47,31 @@ class TestWhitespaceReconstruction:
     def setup(self, mock_openai):
         """Setup test environment."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = RagZoomConfig(
+            # Create separate configs
+            index_config = IndexConfig(
+                target_chunk_tokens=50,  # Reasonable chunk size
+                prev_context_tokens=10,
+            )
+            query_config = QueryConfig(budget_tokens=1000)
+            operational_config = OperationalConfig(
                 openai_api_key="test-key",
                 chroma_persist_directory=temp_dir,
                 sqlite_database_url="sqlite:///:memory:",
-                leaf_tokens=50,  # Reasonable chunk size
-                adjacent_context_tokens=10,
-                budget_tokens=1000,
             )
 
-            store = Store(config)
-            tree_builder = TreeBuilder(config, store)
+            store = Store(
+                operational_config, embedding_model=index_config.embedding_model
+            )
+            tree_builder = TreeBuilder(
+                index_config, store, api_key=operational_config.openai_api_key
+            )
+
+            # Create a config wrapper for TextSplitter backward compatibility
+            from tests.conftest import BackwardCompatibilityConfig
+
+            config = BackwardCompatibilityConfig(
+                index_config, query_config, operational_config
+            )
             splitter = TextSplitter(config)
 
             yield config, store, tree_builder, splitter

@@ -14,7 +14,7 @@ class TestTextSplitter:
 
     def test_split_basic_text(self):
         """Test basic text splitting."""
-        config = RagZoomConfig(leaf_tokens=50, adjacent_context_tokens=25)
+        config = RagZoomConfig(target_chunk_tokens=50, prev_context_tokens=25)
         splitter = TextSplitter(config)
 
         text = "This is a test. " * 50  # ~200 tokens
@@ -26,7 +26,7 @@ class TestTextSplitter:
 
     def test_split_respects_boundaries(self):
         """Test that splitter respects sentence boundaries."""
-        config = RagZoomConfig(leaf_tokens=50, adjacent_context_tokens=25)
+        config = RagZoomConfig(target_chunk_tokens=50, prev_context_tokens=25)
         splitter = TextSplitter(config)
 
         text = "First sentence. Second sentence. Third sentence. Fourth sentence."
@@ -39,7 +39,7 @@ class TestTextSplitter:
 
     def test_adjacent_context(self):
         """Test getting adjacent context for chunks."""
-        config = RagZoomConfig(leaf_tokens=50, adjacent_context_tokens=10)
+        config = RagZoomConfig(target_chunk_tokens=50, prev_context_tokens=10)
         splitter = TextSplitter(config)
 
         chunks = ["First chunk text.", "Second chunk text.", "Third chunk text."]
@@ -63,7 +63,7 @@ class TestTextSplitter:
 
     def test_token_counting(self):
         """Test token counting accuracy."""
-        config = RagZoomConfig(leaf_tokens=200, adjacent_context_tokens=75)
+        config = RagZoomConfig(target_chunk_tokens=200, prev_context_tokens=75)
         splitter = TextSplitter(config)
 
         text = "Hello world"
@@ -73,7 +73,7 @@ class TestTextSplitter:
 
     def test_empty_text(self):
         """Test handling of empty text."""
-        config = RagZoomConfig(leaf_tokens=200, adjacent_context_tokens=75)
+        config = RagZoomConfig(target_chunk_tokens=200, prev_context_tokens=75)
         splitter = TextSplitter(config)
 
         chunks = splitter.split_text("")
@@ -82,7 +82,7 @@ class TestTextSplitter:
 
     def test_sequential_chunks(self):
         """Test that chunks are sequential without overlap."""
-        config = RagZoomConfig(leaf_tokens=50, adjacent_context_tokens=25)
+        config = RagZoomConfig(target_chunk_tokens=50, prev_context_tokens=25)
         splitter = TextSplitter(config)
 
         text = " ".join([f"Word{i}" for i in range(200)])  # Long text

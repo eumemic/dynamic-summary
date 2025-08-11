@@ -13,7 +13,7 @@ def test_zero_score_collapse_empty_result():
     """Test that algorithm correctly uses root node when deeper nodes don't fit budget."""
 
     # Create configuration and store
-    config = RagZoomConfig(leaf_tokens=100)
+    config = RagZoomConfig(target_chunk_tokens=100)
     store = SimpleMockStore(config=config)
 
     # Create a tree where only the leaf has a score
@@ -129,7 +129,7 @@ def test_zero_score_collapse_empty_result():
 def test_zero_score_collapse_to_root():
     """Test algorithm correctly chooses root node due to budget splitting constraints."""
 
-    config = RagZoomConfig(leaf_tokens=100)
+    config = RagZoomConfig(target_chunk_tokens=100)
     store = SimpleMockStore(config=config)
 
     # Create a deeper tree to show collapse behavior
