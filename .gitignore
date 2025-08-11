@@ -74,6 +74,7 @@ benchmark-*.json
 telemetry-*.json
 telemetry.json
 benchmark_results/
+benchmarks/
 visualization.png
 visualization.pdf
 visualization.svg

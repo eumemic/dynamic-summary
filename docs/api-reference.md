@@ -31,6 +31,8 @@ ragzoom index <input> [OPTIONS]
 - `--no-progress` - Disable progress bar
 - `--max-concurrent` - Maximum concurrent API calls (default: 10)
 - `--validate` - Enable validation checks during indexing
+- `--debug` - Enable debug logging (shows token counts, etc.)
+- `--telemetry` - Save telemetry data to JSON file (default: telemetry.json when flag is set)
 
 **Examples:**
 ```bash
@@ -45,6 +47,12 @@ ragzoom index document.txt --clear
 
 # Index with validation
 ragzoom index document.txt --validate
+
+# Index with debug logging
+ragzoom index document.txt --debug
+
+# Index with telemetry collection
+ragzoom index document.txt --telemetry
 ```
 
 ### `ragzoom query`

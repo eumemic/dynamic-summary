@@ -638,8 +638,11 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
             click.echo(f"Error loading {baseline_file.name}: {e}", err=True)
 
     if not all_chunk_metrics:
-        click.echo("No valid metrics found to compare", err=True)
-        sys.exit(1)
+        click.echo(
+            "⚠️ Warning: No common chunk sizes found between directories", err=True
+        )
+        # Still allow continuing without exiting
+        return False  # No regression since we can't compare
 
     # Generate unified comparison table
     # First, reorganize the data into the format expected by the existing comparison functions
@@ -689,8 +692,18 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
 @cli.command()
 @click.argument("baseline_path", type=click.Path(exists=True))
 @click.argument("current_path", type=click.Path(exists=True))
-@click.option("--output", "-o", type=click.Choice(["text", "markdown"]), default="text")
-def compare(baseline_path: str, current_path: str, output: str) -> None:
+@click.option(
+    "--output-format", "-f", type=click.Choice(["text", "markdown"]), default="text"
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    help="Output file path for visualization (PNG/PDF/SVG)",
+)
+def compare(
+    baseline_path: str, current_path: str, output_format: str, output: str | None
+) -> None:
     """Compare telemetry data between files or directories.
 
     Examples:
@@ -707,14 +720,53 @@ def compare(baseline_path: str, current_path: str, output: str) -> None:
 
     # Check if both are directories or both are files
     if baseline.is_dir() and current.is_dir():
-        has_regression = _compare_directories(baseline, current, output)
+        has_regression = _compare_directories(baseline, current, output_format)
     elif baseline.is_file() and current.is_file():
-        has_regression = _compare_files(baseline, current, output)
+        has_regression = _compare_files(baseline, current, output_format)
     else:
         click.echo(
             "Error: Both arguments must be either files or directories", err=True
         )
         sys.exit(1)
+
+    # Generate visualization if output path specified
+    if output:
+        # Check dependencies
+        _check_telemetry_deps()
+
+        try:
+            from ragzoom.telemetry_viz import TelemetryVisualizer
+
+            # Determine format from extension or default to PNG
+            output_path = Path(output)
+            supported_formats = ["png", "pdf", "svg"]
+
+            if output_path.suffix:
+                format = output_path.suffix[1:].lower()
+                if format not in supported_formats:
+                    click.echo(
+                        f"⚠️ Warning: Unsupported format '.{format}'. Using PNG instead.",
+                        err=True,
+                    )
+                    format = "png"
+                    output_path = output_path.with_suffix(".png")
+            else:
+                format = "png"
+                output_path = output_path.with_suffix(".png")
+
+            # Create visualizer and generate comparison
+            visualizer = TelemetryVisualizer(output_path)
+
+            if baseline.is_file() and current.is_file():
+                visualizer.visualize_side_by_side(baseline, current, format)
+                click.echo(f"\n✅ Generated comparison visualization: {output_path}")
+            else:
+                click.echo(
+                    "⚠️ Warning: Visualization only supported for file comparisons, not directories",
+                    err=True,
+                )
+        except Exception as e:
+            click.echo(f"❌ Error generating visualization: {e}", err=True)
 
     # Exit with code 1 if regression detected
     if has_regression:

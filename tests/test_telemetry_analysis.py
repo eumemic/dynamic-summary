@@ -157,7 +157,6 @@ class TestTelemetryFormatParsing:
                                 "summary_attempts": [
                                     {
                                         "target_tokens": 100,
-                                        "input_text_tokens": 300,
                                         "prompt_tokens": 320,
                                         "completion_tokens": 95,
                                         "actual_tokens": 95,
@@ -245,7 +244,6 @@ class TestTargetFitMetrics:
                     {
                         "target_tokens": 100,
                         "actual_tokens": 95,
-                        "input_text_tokens": 200,
                         "prompt_tokens": 300,
                         "completion_tokens": 95,
                         "model": "gpt-4o-mini",
@@ -263,7 +261,6 @@ class TestTargetFitMetrics:
                     {
                         "target_tokens": 100,
                         "actual_tokens": 110,
-                        "input_text_tokens": 200,
                         "prompt_tokens": 300,
                         "completion_tokens": 110,
                         "model": "gpt-4o-mini",
@@ -273,7 +270,6 @@ class TestTargetFitMetrics:
                     {
                         "target_tokens": 100,
                         "actual_tokens": 105,
-                        "input_text_tokens": 200,
                         "prompt_tokens": 350,
                         "completion_tokens": 105,
                         "model": "gpt-4o-mini",
@@ -291,7 +287,6 @@ class TestTargetFitMetrics:
                     {
                         "target_tokens": 100,
                         "actual_tokens": 98,
-                        "input_text_tokens": 200,
                         "prompt_tokens": 300,
                         "completion_tokens": 98,
                         "model": "gpt-4o-mini",
@@ -323,7 +318,6 @@ class TestTargetFitMetrics:
                     {
                         "target_tokens": 100,
                         "actual_tokens": 120,
-                        "input_text_tokens": 200,
                         "prompt_tokens": 300,
                         "completion_tokens": 120,
                         "model": "gpt-4o-mini",
@@ -333,7 +327,6 @@ class TestTargetFitMetrics:
                     {
                         "target_tokens": 100,
                         "actual_tokens": 90,
-                        "input_text_tokens": 200,
                         "prompt_tokens": 350,
                         "completion_tokens": 90,
                         "model": "gpt-4o-mini",
@@ -384,7 +377,6 @@ class TestSimplifiedMetrics:
                                 {
                                     "is_retry": False,
                                     "target_tokens": 100,
-                                    "input_text_tokens": 200,
                                     "prompt_tokens": 250,
                                     "completion_tokens": 90,
                                     "actual_tokens": 90,
@@ -404,7 +396,6 @@ class TestSimplifiedMetrics:
                                 {
                                     "is_retry": False,
                                     "target_tokens": 100,
-                                    "input_text_tokens": 200,
                                     "prompt_tokens": 300,
                                     "completion_tokens": 110,
                                     "actual_tokens": 100,
@@ -619,7 +610,6 @@ class TestRetryAnalysis:
                     "summary_attempts": [
                         {
                             "target_tokens": 100,
-                            "input_text_tokens": 200,
                             "prompt_tokens": 300,
                             "completion_tokens": 105,
                             "actual_tokens": 105,
@@ -638,7 +628,6 @@ class TestRetryAnalysis:
                     "summary_attempts": [
                         {
                             "target_tokens": 100,
-                            "input_text_tokens": 200,
                             "prompt_tokens": 300,
                             "completion_tokens": 130,
                             "actual_tokens": 130,
@@ -648,7 +637,6 @@ class TestRetryAnalysis:
                         },
                         {
                             "target_tokens": 100,
-                            "input_text_tokens": 200,
                             "prompt_tokens": 350,
                             "completion_tokens": 95,
                             "actual_tokens": 95,
@@ -667,7 +655,6 @@ class TestRetryAnalysis:
                     "summary_attempts": [
                         {
                             "target_tokens": 100,
-                            "input_text_tokens": 200,
                             "prompt_tokens": 300,
                             "completion_tokens": 140,
                             "actual_tokens": 140,
@@ -677,7 +664,6 @@ class TestRetryAnalysis:
                         },
                         {
                             "target_tokens": 100,
-                            "input_text_tokens": 200,
                             "prompt_tokens": 350,
                             "completion_tokens": 85,
                             "actual_tokens": 85,
@@ -687,7 +673,6 @@ class TestRetryAnalysis:
                         },
                         {
                             "target_tokens": 100,
-                            "input_text_tokens": 200,
                             "prompt_tokens": 400,
                             "completion_tokens": 102,
                             "actual_tokens": 102,
@@ -731,7 +716,6 @@ class TestRetryAnalysis:
                     "summary_attempts": [
                         {
                             "target_tokens": 100,
-                            "input_text_tokens": 200,
                             "prompt_tokens": 300,
                             "completion_tokens": 130,
                             "actual_tokens": 130,
@@ -741,7 +725,6 @@ class TestRetryAnalysis:
                         },
                         {
                             "target_tokens": 100,
-                            "input_text_tokens": 200,
                             "prompt_tokens": 350,
                             "completion_tokens": 95,
                             "actual_tokens": 95,
@@ -1016,7 +999,6 @@ class TestFullMetricsComputation:
                                 {
                                     "is_retry": False,
                                     "target_tokens": 100,
-                                    "input_text_tokens": 185,  # Combined from children
                                     "prompt_tokens": 250,
                                     "completion_tokens": 90,
                                     "actual_tokens": 85,
@@ -1082,7 +1064,6 @@ class TestFullMetricsComputation:
                                 {
                                     "is_retry": False,
                                     "target_tokens": 50,
-                                    "input_text_tokens": 100,  # Text being summarized
                                     "prompt_tokens": 150,  # First attempt
                                     "completion_tokens": 120,  # Too long
                                     "actual_tokens": 120,
@@ -1093,7 +1074,6 @@ class TestFullMetricsComputation:
                                 {
                                     "is_retry": True,
                                     "target_tokens": 50,
-                                    "input_text_tokens": 100,
                                     "prompt_tokens": 160,  # Second attempt
                                     "completion_tokens": 100,  # Still too long
                                     "actual_tokens": 100,
@@ -1104,7 +1084,6 @@ class TestFullMetricsComputation:
                                 {
                                     "is_retry": True,
                                     "target_tokens": 50,
-                                    "input_text_tokens": 100,
                                     "prompt_tokens": 170,  # Third attempt
                                     "completion_tokens": 80,  # Finally accepted
                                     "actual_tokens": 80,
@@ -1175,7 +1154,6 @@ class TestBackwardCompatibility:
                                 {
                                     "is_retry": False,  # v1.0 explicit is_retry
                                     "target_tokens": 100,
-                                    "input_text_tokens": 200,
                                     "prompt_tokens": 250,
                                     "completion_tokens": 90,
                                     "actual_tokens": 85,
