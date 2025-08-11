@@ -1,0 +1,62 @@
+{
+  "embeddings": {
+    "text-embedding-3-small": {
+      "cost_per_1k": 0.00002,
+      "dimensions": 1536
+    },
+    "text-embedding-3-large": {
+      "cost_per_1k": 0.00013,
+      "dimensions": 3072
+    },
+    "text-embedding-ada-002": {
+      "cost_per_1k": 0.00010,
+      "dimensions": 1536
+    }
+  },
+  "llms": {
+    "gpt-5-nano": {
+      "input": 0.00005,
+      "output": 0.0004,
+      "cache_discount": 0.1,
+      "supports_temperature": false
+    },
+    "gpt-5-mini": {
+      "input": 0.00025,
+      "output": 0.002,
+      "cache_discount": 0.1,
+      "supports_temperature": false
+    },
+    "gpt-5": {
+      "input": 0.00125,
+      "output": 0.01,
+      "cache_discount": 0.1,
+      "supports_temperature": false
+    },
+    "gpt-4o-mini": {
+      "input": 0.00015,
+      "output": 0.0006,
+      "cache_discount": 0.5,
+      "supports_temperature": true
+    },
+    "gpt-4o": {
+      "input": 0.0025,
+      "output": 0.01,
+      "cache_discount": 0.5,
+      "supports_temperature": true
+    },
+    "gpt-4": {
+      "input": 0.03,
+      "output": 0.06,
+      "cache_discount": 0.5,
+      "supports_temperature": true
+    },
+    "gpt-3.5-turbo": {
+      "input": 0.0005,
+      "output": 0.0015,
+      "cache_discount": 0.5,
+      "supports_temperature": true
+    }
+  },
+  "last_updated": "2025-08-11",
+  "note": "Prices are per 1K tokens in USD. cache_discount is the multiplier for cached prompt tokens (0.5 = 50% discount)."
+}
