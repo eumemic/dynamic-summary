@@ -364,6 +364,10 @@ class TestSimplifiedMetrics:
         """Create sample telemetry data with summary attempts."""
         return {
             "format_version": "1.0",
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
             "documents": {
                 "test_doc": {
                     "nodes": [
@@ -440,7 +444,14 @@ class TestSimplifiedMetrics:
 
     def test_simplified_metrics_empty_data(self, config: RagZoomConfig) -> None:
         """Test simplified metrics with empty telemetry."""
-        empty_telemetry = {"format_version": "1.0", "documents": {}}
+        empty_telemetry = {
+            "format_version": "1.0",
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
+            "documents": {},
+        }
 
         result = compute_simplified_metrics(empty_telemetry, config)
 
@@ -451,6 +462,10 @@ class TestSimplifiedMetrics:
         """Test simplified metrics with only leaf nodes (no summaries)."""
         leaf_only_telemetry = {
             "format_version": "1.0",
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
             "documents": {
                 "test_doc": {
                     "nodes": [
@@ -490,8 +505,9 @@ class TestSimplifiedMetrics:
 
             # Verify cost calculation is correct
             # Based on sample data: 2 nodes with 250 + 300 = 550 prompt tokens, 90 + 110 = 200 completion tokens
-            # Cost = (550 / 1000 * 0.0025) + (200 / 1000 * 0.01) = 0.001375 + 0.002 = 0.003375
-            expected_total_cost = 0.003375
+            # Using gpt-4o-mini pricing from pricing.json: $0.00015/1K input, $0.0006/1K output
+            # Cost = (550 / 1000 * 0.00015) + (200 / 1000 * 0.0006) = 0.0000825 + 0.00012 = 0.0002025
+            expected_total_cost = 0.0002025
             # USD per node (2 nodes)
             expected_usd_per_node = expected_total_cost / 2
             assert cost_metrics["usd_per_node"] == pytest.approx(
@@ -1127,6 +1143,10 @@ class TestBackwardCompatibility:
         # v1.0 telemetry with all legacy fields
         v1_telemetry = {
             "format_version": "1.0",
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
             "documents": {
                 "test_doc": {
                     "nodes": [
