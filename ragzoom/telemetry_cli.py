@@ -8,7 +8,6 @@ from typing import Any
 
 import click
 
-from ragzoom.config import RagZoomConfig
 from ragzoom.telemetry_analysis import SimplifiedMetrics, compute_simplified_metrics
 
 
@@ -320,9 +319,8 @@ def analyze(telemetry_file: Path) -> None:
     if "telemetry" in telemetry_data and "documents" not in telemetry_data:
         telemetry_data = telemetry_data["telemetry"]
 
-    # Compute metrics
-    config = RagZoomConfig()
-    metrics = compute_simplified_metrics(telemetry_data, config)
+    # Compute metrics (config is deprecated, passing None)
+    metrics = compute_simplified_metrics(telemetry_data, None)
 
     # Display metrics for each chunk size
     for chunk_size in sorted(metrics.metrics_by_chunk_size.keys()):
@@ -416,9 +414,8 @@ def _load_and_compute_metrics(file_path: Path) -> tuple[dict, Any]:
     else:
         telemetry_data = data
 
-    # Compute metrics
-    config = RagZoomConfig()
-    metrics = compute_simplified_metrics(telemetry_data, config)
+    # Compute metrics (config is deprecated, passing None)
+    metrics = compute_simplified_metrics(telemetry_data, None)
 
     return telemetry_data, metrics
 

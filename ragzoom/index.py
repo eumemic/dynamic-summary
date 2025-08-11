@@ -124,26 +124,31 @@ class TreeBuilder:
             Tuple of (summary_text, token_count, raw_response)
         """
         # Build kwargs for the API call
-        api_kwargs = {
+        api_kwargs: dict[str, Any] = {
             "model": self.config.summary_model,
-            "messages": messages,  # type: ignore
-            "temperature": self.config.summary_temperature,
+            "messages": messages,
         }
 
-        # Only add max_tokens if specified
-        if target_tokens is not None:
-            api_kwargs["max_tokens"] = int(target_tokens * 1.5)  # Safety margin
+        # GPT-5 models have different parameter requirements
+        is_gpt5 = self.config.summary_model.startswith("gpt-5")
+
+        if is_gpt5:
+            # GPT-5 models need reasoning_effort="minimal" to output text instead of just reasoning
+            api_kwargs["reasoning_effort"] = "minimal"
+        else:
+            # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
+            api_kwargs["temperature"] = self.config.summary_temperature
 
         response = await self.client.chat.completions.create(**api_kwargs)  # type: ignore
 
         content = response.choices[0].message.content
         if not content:
-            logger.warning(f"{node_info}Empty response from LLM")
+            # Don't log here - will be logged by the caller
             raise ValueError("Empty response from LLM")
 
         summary = content.strip()
         if not summary:
-            logger.warning(f"{node_info}Summary is empty after stripping whitespace")
+            # Don't log here - will be logged by the caller
             raise ValueError("Empty summary after stripping")
 
         # Measure actual tokens
@@ -511,8 +516,10 @@ Here's the content to summarize:"""
                     summary, current_tokens, response = await self._make_summary_call(
                         messages, target_tokens, node_info=node_info
                     )
-                except ValueError as e:
-                    logger.warning(f"{node_info}{e}, using original text")
+                except ValueError:
+                    logger.warning(
+                        f"{node_info}LLM returned empty response, using original text as fallback"
+                    )
                     summary = combined_text
                     current_tokens = len(self.splitter.tokenizer.encode(summary))
                     response = None

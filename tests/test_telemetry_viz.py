@@ -35,6 +35,10 @@ class TestTelemetryVisualizer:
         """Create sample telemetry data for testing."""
         return {
             "format_version": "2.0",
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
             "documents": {
                 "test_doc": {
                     "metadata": {
@@ -153,7 +157,14 @@ class TestTelemetryVisualizer:
         # Create minimal telemetry data that won't trigger complex plotting
         minimal_data = {
             "config": {"leaf_tokens": 200},
-            "telemetry": {"format_version": "2.0", "documents": {}},
+            "telemetry": {
+                "format_version": "2.0",
+                "models": {
+                    "summary": "gpt-4o-mini",
+                    "embedding": "text-embedding-3-small",
+                },
+                "documents": {},
+            },
             "metrics": {},
         }
 
@@ -199,7 +210,14 @@ class TestTelemetryVisualizer:
 
         # Test empty batch efficiency
         fig, ax = plt.subplots()
-        empty_telemetry = {"format_version": "2.0", "documents": {}}
+        empty_telemetry = {
+            "format_version": "2.0",
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
+            "documents": {},
+        }
         visualizer._plot_batch_efficiency(empty_telemetry, ax)
 
         # Should display "No embedding batch data available"
@@ -215,6 +233,10 @@ class TestTelemetryVisualizer:
         fig, ax = plt.subplots()
         telemetry = {
             "format_version": "2.0",
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
             "documents": {
                 "test": {
                     "nodes": [
@@ -290,6 +312,10 @@ class TestTelemetryVisualizer:
         fig, ax = plt.subplots()
         telemetry = {
             "format_version": "2.0",
+            "models": {
+                "summary": "gpt-4o-mini",
+                "embedding": "text-embedding-3-small",
+            },
             "documents": {
                 "test": {
                     "nodes": [
