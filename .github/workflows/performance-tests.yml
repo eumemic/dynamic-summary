@@ -281,6 +281,34 @@ jobs:
               });
             }
       
+      - name: Analyze telemetry for verbatim issues
+        id: analyze_telemetry
+        run: |
+          echo "🔍 Analyzing telemetry for potential issues..."
+          
+          # Analyze each benchmark result
+          for file in benchmark_results/telemetry_*_tokens.json; do
+            if [ -f "$file" ]; then
+              chunk_size=$(basename "$file" | sed 's/telemetry_\([0-9]*\)_tokens.json/\1/')
+              echo ""
+              echo "### Analyzing $chunk_size tokens benchmark"
+              
+              # Run analysis and capture output
+              if ragzoom-telemetry analyze "$file" > "analysis_${chunk_size}.txt" 2>&1; then
+                # Check for verbatim issues in the output
+                if grep -q "Verbatim Concatenation Issues" "analysis_${chunk_size}.txt"; then
+                  echo "⚠️ VERBATIM ISSUES DETECTED in $chunk_size tokens benchmark!"
+                  echo "VERBATIM_DETECTED=true" >> $GITHUB_OUTPUT
+                  
+                  # Extract verbatim details for report
+                  grep -A 20 "Verbatim Concatenation Issues" "analysis_${chunk_size}.txt" > "verbatim_${chunk_size}.txt"
+                fi
+              else
+                echo "❌ Analysis failed for $chunk_size tokens"
+              fi
+            fi
+          done
+      
       - name: Check benchmark execution
         id: benchmark_check
         run: |
@@ -481,6 +509,28 @@ jobs:
               # The compare command already wrote the complete report to report.md
               # No need to append debug information
             fi
+          fi
+          
+          # Add verbatim warnings to report if detected
+          if [ "${{ steps.analyze_telemetry.outputs.VERBATIM_DETECTED }}" == "true" ]; then
+            echo "" >> report.md
+            echo "### ⚠️ Verbatim Concatenation Issues Detected" >> report.md
+            echo "" >> report.md
+            echo "The LLM is returning input text verbatim instead of creating proper summaries." >> report.md
+            echo "This indicates a critical issue with summarization quality." >> report.md
+            echo "" >> report.md
+            
+            # Add details from each chunk size with issues
+            for verbatim_file in verbatim_*.txt; do
+              if [ -f "$verbatim_file" ]; then
+                chunk_size=$(basename "$verbatim_file" | sed 's/verbatim_\([0-9]*\).txt/\1/')
+                echo "**Chunk size: $chunk_size tokens**" >> report.md
+                echo '```' >> report.md
+                cat "$verbatim_file" >> report.md
+                echo '```' >> report.md
+                echo "" >> report.md
+              fi
+            done
           fi
           
           # Save report for comment
