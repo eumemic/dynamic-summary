@@ -124,8 +124,19 @@ def test_indexing_performance(leaf_tokens, document_type):
             print("\n--- Simplified Metrics ---")
             for category, values in chunk_metrics.items():
                 print(f"\n{category.title()}:")
-                for metric, value in values.items():
-                    print(f"  {metric}: {value:.2f}")
+                if isinstance(values, dict):
+                    for metric, value in values.items():
+                        # Handle different value types properly
+                        if isinstance(value, (int, float)):
+                            print(f"  {metric}: {value:.2f}")
+                        elif isinstance(value, list):
+                            print(f"  {metric}: {len(value)} items")
+                        elif isinstance(value, dict):
+                            print(f"  {metric}: {value}")
+                        else:
+                            print(f"  {metric}: {value}")
+                else:
+                    print(f"  {values}")
 
         # Summary accuracy (simplified - using only available properties)
         if hasattr(basic_metrics, "summary_stats") and basic_metrics.summary_stats:
