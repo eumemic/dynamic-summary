@@ -893,14 +893,38 @@ class TelemetryVisualizer:
         ax.grid(True, alpha=0.3)
 
         # Add statistics annotation
-        # Calculate deviations from target (chunk_size)
+        # Calculate deviations from target (chunk_size) as percentages
         if chunk_size > 0:
-            deviations = [output - chunk_size for output in output_tokens]
-            avg_deviation = np.mean(deviations)
-            median_deviation = np.median(deviations)
+            deviations_pct = [
+                (output - chunk_size) / chunk_size * 100 for output in output_tokens
+            ]
+            avg_deviation_pct = np.mean(deviations_pct)
+            median_deviation_pct = np.median(deviations_pct)
+
+            # Calculate actual token positions for the lines
+            avg_position = chunk_size * (1 + avg_deviation_pct / 100)
+            median_position = chunk_size * (1 + median_deviation_pct / 100)
+
+            # Draw horizontal lines for average and median deviations
+            ax.axhline(
+                avg_position,
+                color="blue",
+                linestyle=":",
+                alpha=0.5,
+                linewidth=1.5,
+                label=f"Avg: {avg_deviation_pct:+.1f}%",
+            )
+            ax.axhline(
+                median_position,
+                color="red",
+                linestyle="-.",
+                alpha=0.5,
+                linewidth=1.5,
+                label=f"Median: {median_deviation_pct:+.1f}%",
+            )
         else:
-            avg_deviation = 0.0
-            median_deviation = 0.0
+            avg_deviation_pct = 0.0
+            median_deviation_pct = 0.0
 
         avg_attempts = np.mean(attempt_numbers)
 
@@ -908,8 +932,8 @@ class TelemetryVisualizer:
         unique_inputs = len(set(input_tokens))
 
         stats_text = (
-            f"Avg deviation: {avg_deviation:+.1f} tokens\n"
-            f"Median deviation: {median_deviation:+.1f} tokens\n"
+            f"Avg deviation: {avg_deviation_pct:+.1f}%\n"
+            f"Median deviation: {median_deviation_pct:+.1f}%\n"
             f"Avg attempts: {avg_attempts:.2f}\n"
             f"Total attempts: {len(input_tokens)} ({unique_inputs} nodes)"
         )
