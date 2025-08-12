@@ -17,83 +17,81 @@ class TestTelemetryCompare:
         """Create sample telemetry data for testing."""
         # Return just the telemetry structure, not wrapped in another object
         return {
-            "format_version": "2.0",
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "format_version": "4.1",
+            "document_id": "test.txt",
+            "source_document_tokens": 1000,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
-            "documents": {
-                "test.txt": {
-                    "metadata": {
-                        "source_document_tokens": 1000,
-                        "indexing_start": 1234567890.0,
-                        "indexing_end": 1234567900.0,
+            "nodes": [
+                {
+                    "node_id": "node1",
+                    "height": 0,
+                    "created_at": 1234567890.0,
+                    "embedding": {
+                        "text_tokens": 100,
+                        "batch_size": 10,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
+                        "start_time": 1234567890.0,
+                        "end_time": 1234567890.5,
                     },
-                    "nodes": [
+                },
+                {
+                    "node_id": "node2",
+                    "height": 1,
+                    "created_at": 1234567891.0,
+                    "summary_attempts": [
                         {
-                            "node_id": "node1",
-                            "height": 0,
-                            "created_at": 1234567890.0,
-                            "embedding": {
-                                "text_tokens": 100,
-                                "batch_size": 10,
-                                "start_time": 1234567890.0,
-                            },
-                        },
-                        {
-                            "node_id": "node2",
-                            "height": 1,
-                            "created_at": 1234567891.0,
-                            "summary_attempts": [
-                                {
-                                    "status": "accepted",
-                                    "prompt_tokens": 200,
-                                    "completion_tokens": 50,
-                                    "input_text_tokens": 100,
-                                    "actual_tokens": 50,
-                                    "target_tokens": 100,
-                                    "start_time": 1234567891.0,
-                                    "end_time": 1234567892.0,
-                                }
-                            ],
-                        },
-                        {
-                            "node_id": "node3",
-                            "height": 1,
-                            "created_at": 1234567892.0,
-                            "summary_attempts": [
-                                {
-                                    "status": "accepted",
-                                    "prompt_tokens": 210,
-                                    "completion_tokens": 48,
-                                    "input_text_tokens": 100,
-                                    "actual_tokens": 48,
-                                    "target_tokens": 100,
-                                    "start_time": 1234567892.0,
-                                    "end_time": 1234567893.0,
-                                }
-                            ],
-                        },
-                        {
-                            "node_id": "node4",
-                            "height": 1,
-                            "created_at": 1234567893.0,
-                            "summary_attempts": [
-                                {
-                                    "status": "accepted",
-                                    "prompt_tokens": 195,
-                                    "completion_tokens": 52,
-                                    "input_text_tokens": 100,
-                                    "actual_tokens": 52,
-                                    "target_tokens": 100,
-                                    "start_time": 1234567893.0,
-                                    "end_time": 1234567894.0,
-                                }
-                            ],
-                        },
+                            "prompt_tokens": 200,
+                            "completion_tokens": 50,
+                            "actual_tokens": 50,
+                            "target_tokens": 100,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567891.0,
+                            "end_time": 1234567892.0,
+                        }
                     ],
-                }
-            },
+                    "accepted_attempt": 0,
+                },
+                {
+                    "node_id": "node3",
+                    "height": 1,
+                    "created_at": 1234567892.0,
+                    "summary_attempts": [
+                        {
+                            "prompt_tokens": 210,
+                            "completion_tokens": 48,
+                            "actual_tokens": 48,
+                            "target_tokens": 100,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567892.0,
+                            "end_time": 1234567893.0,
+                        }
+                    ],
+                    "accepted_attempt": 0,
+                },
+                {
+                    "node_id": "node4",
+                    "height": 1,
+                    "created_at": 1234567893.0,
+                    "summary_attempts": [
+                        {
+                            "prompt_tokens": 195,
+                            "completion_tokens": 52,
+                            "actual_tokens": 52,
+                            "target_tokens": 100,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567893.0,
+                            "end_time": 1234567894.0,
+                        }
+                    ],
+                    "accepted_attempt": 0,
+                },
+            ],
         }
 
     @pytest.fixture
@@ -111,16 +109,15 @@ class TestTelemetryCompare:
         baseline_200 = baseline_dir / "telemetry_200_tokens.json"
         data_200 = copy.deepcopy(sample_telemetry_data)
         # Change target_tokens to 200 for all summary nodes
+        data_200["config"]["target_chunk_tokens"] = 200
         for i in [1, 2, 3]:
-            data_200["documents"]["test.txt"]["nodes"][i]["summary_attempts"][0][
-                "target_tokens"
-            ] = 200
+            data_200["nodes"][i]["summary_attempts"][0]["target_tokens"] = 200
         baseline_200.write_text(json.dumps(data_200))
 
         # Create current files with slight modifications
         current_data = copy.deepcopy(sample_telemetry_data)
         # Increase token usage slightly
-        current_data["documents"]["test.txt"]["nodes"][1]["summary_attempts"][0][
+        current_data["nodes"][1]["summary_attempts"][0][
             "prompt_tokens"
         ] = 210  # 5% increase, under threshold
 
@@ -128,7 +125,7 @@ class TestTelemetryCompare:
         current_100.write_text(json.dumps(current_data))
 
         current_data_200 = copy.deepcopy(data_200)
-        current_data_200["documents"]["test.txt"]["nodes"][1]["summary_attempts"][0][
+        current_data_200["nodes"][1]["summary_attempts"][0][
             "prompt_tokens"
         ] = 210  # Only 5% increase, under threshold
         current_200 = current_dir / "telemetry_200_tokens.json"
@@ -276,13 +273,8 @@ class TestTelemetryCompare:
         current_data = copy.deepcopy(sample_telemetry_data)
         # Double the prompt tokens to trigger cost regression (>10% threshold)
         for i in [1, 2, 3]:  # All summary nodes
-            current_data["documents"]["test.txt"]["nodes"][i]["summary_attempts"][0][
-                "prompt_tokens"
-            ] = (
-                current_data["documents"]["test.txt"]["nodes"][i]["summary_attempts"][
-                    0
-                ]["prompt_tokens"]
-                * 2
+            current_data["nodes"][i]["summary_attempts"][0]["prompt_tokens"] = (
+                current_data["nodes"][i]["summary_attempts"][0]["prompt_tokens"] * 2
             )  # Double the prompt tokens
 
         current_file = tmp_path / "current.json"
