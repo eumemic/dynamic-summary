@@ -742,8 +742,8 @@ def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
             f"Supported versions: {SUPPORTED_TELEMETRY_VERSIONS}"
         )
 
-    # If already v3.0 or v3.1, return as-is (cast to TypedDict)
-    if format_version in ["3.0", "3.1"]:
+    # If already v3.0, v3.1, or v4.1, return as-is (cast to TypedDict)
+    if format_version in ["3.0", "3.1", "4.1"]:
         result: TelemetryDataDict = actual_telemetry  # type: ignore
         return result
 
