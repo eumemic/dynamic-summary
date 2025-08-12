@@ -15,82 +15,17 @@ from ragzoom.telemetry_analysis import (
 class TestTelemetryFormatParsing:
     """Test telemetry format parsing."""
 
-    def test_parse_valid_telemetry_format(self) -> None:
-        """Test parsing v1.0 telemetry format migrates to v3.0."""
-        telemetry_data = {
-            "format_version": "1.0",
-            "documents": {
-                "test_doc": {
-                    "metadata": {
-                        "source_document_tokens": 5000,
-                        "chunk_size": 200,
-                        "indexed_at": 1234567890.0,
-                    },
-                    "nodes": [
-                        {
-                            "node_id": "node-1",
-                            "node_type": "leaf",
-                            "level": 0,
-                            "span": [0, 100],
-                            "created_at": 1234567890.0,
-                        }
-                    ],
-                }
-            },
-        }
-
-        result = parse_telemetry_format(telemetry_data)
-        # Should be migrated to v3.0
-        assert result["format_version"] == "3.0"
-        assert result["document_id"] == "test_doc"
-        assert result["source_document_tokens"] == 5000
-        assert result["chunk_size"] == 200
-        assert len(result["nodes"]) == 1
-        assert result["nodes"][0]["node_id"] == "node-1"
-
-    def test_parse_v2_telemetry_format(self) -> None:
-        """Test parsing v2.0 telemetry format migrates to v3.0."""
-        telemetry_data = {
-            "format_version": "2.0",
-            "documents": {
-                "test_doc": {
-                    "metadata": {
-                        "source_document_tokens": 5000,
-                        "chunk_size": 200,
-                        "indexed_at": 1234567890.0,
-                    },
-                    "nodes": [
-                        {
-                            "node_id": "node-1",
-                            "height": 0,  # v2.0 uses height instead of level
-                            "created_at": 1234567890.0,
-                            # v2.0 doesn't have node_type or span fields
-                        }
-                    ],
-                }
-            },
-        }
-
-        result = parse_telemetry_format(telemetry_data)
-        # Should be migrated to v3.0
-        assert result["format_version"] == "3.0"
-        assert result["document_id"] == "test_doc"
-        assert result["source_document_tokens"] == 5000
-        assert result["chunk_size"] == 200
-        assert len(result["nodes"]) == 1
-        assert result["nodes"][0]["node_id"] == "node-1"
-
     def test_parse_v3_telemetry_format(self) -> None:
         """Test parsing v3.0 telemetry format (already flat)."""
         telemetry_data = {
             "format_version": "3.0",
             "document_id": "test_doc",
             "source_document_tokens": 5000,
-            "chunk_size": 200,
             "indexed_at": 1234567890.0,
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "config": {
+                "target_chunk_tokens": 200,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
             "nodes": [
                 {
@@ -106,99 +41,69 @@ class TestTelemetryFormatParsing:
         assert result["format_version"] == "3.0"
         assert result["document_id"] == "test_doc"
         assert result["source_document_tokens"] == 5000
-        assert result["chunk_size"] == 200
-        assert result["models"]["summary"] == "gpt-4o-mini"
-        assert result["models"]["embedding"] == "text-embedding-3-small"
+        assert result["config"]["target_chunk_tokens"] == 200
+        assert result["config"]["summary_model"] == "gpt-4o-mini"
+        assert result["config"]["embedding_model"] == "text-embedding-3-small"
         assert len(result["nodes"]) == 1
         assert result["nodes"][0]["node_id"] == "node-1"
 
-    def test_parse_cli_wrapper_format_migration(self) -> None:
-        """Test parsing old CLI wrapper format migrates to v3.0."""
-        # This is the format the CLI used to output before v3.0
-        cli_wrapper_data = {
+    def test_parse_v3_1_telemetry_format(self) -> None:
+        """Test parsing v3.1 telemetry format."""
+        telemetry_data = {
+            "format_version": "3.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 5000,
+            "indexed_at": 1234567890.0,
             "config": {
-                "leaf_tokens": 200,
-                "budget_tokens": 8000,
+                "target_chunk_tokens": 200,
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
-            "document": {
-                "document_id": "example.pdf",
-                "file_path": "/path/to/example.pdf",
-            },
-            "telemetry": {
-                "format_version": "2.0",
-                "documents": {
-                    "example.pdf": {
-                        "metadata": {
-                            "source_document_tokens": 7500,
-                            "chunk_size": 200,
-                            "indexed_at": 1234567890.0,
-                        },
-                        "nodes": [
-                            {
-                                "node_id": "node-1",
-                                "height": 0,
-                                "created_at": 1234567890.0,
-                                "embedding": {
-                                    "text_tokens": 150,
-                                    "batch_size": 10,
-                                    "batch_position": 3,
-                                    "model": "text-embedding-3-small",
-                                    "start_time": 1234567890.0,
-                                    "end_time": 1234567890.5,
-                                },
-                            },
-                            {
-                                "node_id": "node-2",
-                                "height": 1,
-                                "created_at": 1234567890.2,
-                                "summary_attempts": [
-                                    {
-                                        "target_tokens": 100,
-                                        "prompt_tokens": 320,
-                                        "completion_tokens": 95,
-                                        "actual_tokens": 95,
-                                        "status": "accepted",
-                                        "model": "gpt-4o-mini",
-                                        "start_time": 1234567890.1,
-                                        "end_time": 1234567890.3,
-                                    }
-                                ],
-                            },
-                        ],
-                    }
-                },
-            },
+            "nodes": [
+                {
+                    "node_id": "node-1",
+                    "height": 0,
+                    "created_at": 1234567890.0,
+                }
+            ],
         }
 
-        result = parse_telemetry_format(cli_wrapper_data)
-
-        # Should be migrated to v3.0
-        assert result["format_version"] == "3.0"
-        assert result["document_id"] == "example.pdf"
-        assert result["source_document_tokens"] == 7500
-        assert result["chunk_size"] == 200
-        assert result["indexed_at"] == 1234567890.0
-
-        # Models should be extracted from config
-        assert result["models"]["summary"] == "gpt-4o-mini"
-        assert result["models"]["embedding"] == "text-embedding-3-small"
-
-        # Nodes should be flattened
-        assert len(result["nodes"]) == 2
+        result = parse_telemetry_format(telemetry_data)
+        assert result["format_version"] == "3.1"
+        assert result["document_id"] == "test_doc"
+        assert result["source_document_tokens"] == 5000
+        assert result["config"]["target_chunk_tokens"] == 200
+        assert len(result["nodes"]) == 1
         assert result["nodes"][0]["node_id"] == "node-1"
-        assert result["nodes"][1]["node_id"] == "node-2"
 
-        # Node data should be preserved
-        assert result["nodes"][0]["embedding"]["model"] == "text-embedding-3-small"
-        assert result["nodes"][1]["summary_attempts"][0]["model"] == "gpt-4o-mini"
+    def test_parse_v4_1_telemetry_format(self) -> None:
+        """Test parsing v4.1 telemetry format."""
+        telemetry_data = {
+            "format_version": "4.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 5000,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 200,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
+            },
+            "nodes": [
+                {
+                    "node_id": "node-1",
+                    "height": 0,
+                    "created_at": 1234567890.0,
+                }
+            ],
+        }
 
-        # Should NOT have nested documents or config/document wrappers
-        assert "documents" not in result
-        assert "config" not in result
-        assert "document" not in result
-        assert "telemetry" not in result
+        result = parse_telemetry_format(telemetry_data)
+        assert result["format_version"] == "4.1"
+        assert result["document_id"] == "test_doc"
+        assert result["source_document_tokens"] == 5000
+        assert result["config"]["target_chunk_tokens"] == 200
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["node_id"] == "node-1"
 
     def test_parse_missing_format_version(self) -> None:
         """Test parsing telemetry without format version."""
@@ -209,7 +114,7 @@ class TestTelemetryFormatParsing:
 
     def test_parse_unsupported_format_version(self) -> None:
         """Test parsing telemetry with unsupported format version."""
-        telemetry_data = {"format_version": "4.0", "documents": {}}
+        telemetry_data = {"format_version": "2.0", "documents": {}}
 
         with pytest.raises(
             TelemetryAnalysisError, match="Unsupported telemetry format version"
@@ -220,13 +125,6 @@ class TestTelemetryFormatParsing:
         """Test parsing non-dictionary data."""
         with pytest.raises(TelemetryAnalysisError, match="must be a dictionary"):
             parse_telemetry_format("invalid")
-
-    def test_parse_invalid_documents_structure(self) -> None:
-        """Test parsing with invalid documents structure."""
-        telemetry_data = {"format_version": "1.0", "documents": "invalid"}
-
-        with pytest.raises(TelemetryAnalysisError, match="Invalid documents structure"):
-            parse_telemetry_format(telemetry_data)
 
 
 class TestTargetFitMetrics:
@@ -355,55 +253,51 @@ class TestSimplifiedMetrics:
     def sample_telemetry(self) -> dict:
         """Create sample telemetry data with summary attempts."""
         return {
-            "format_version": "1.0",
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "format_version": "4.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 1000,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
-            "documents": {
-                "test_doc": {
-                    "nodes": [
+            "nodes": [
+                {
+                    "node_id": "summary-1",
+                    "height": 1,
+                    "created_at": 1234567890.0,
+                    "summary_attempts": [
                         {
-                            "node_id": "summary-1",
-                            "node_type": "summary",
-                            "level": 1,
-                            "span": [0, 200],
-                            "created_at": 1234567890.0,
-                            "summary_attempts": [
-                                {
-                                    "is_retry": False,
-                                    "target_tokens": 100,
-                                    "prompt_tokens": 250,
-                                    "completion_tokens": 90,
-                                    "actual_tokens": 90,
-                                    "status": "accepted",
-                                    "model": "gpt-4o-mini",
-                                    "timestamp": 1234567891.0,
-                                }
-                            ],
-                        },
+                            "target_tokens": 100,
+                            "prompt_tokens": 250,
+                            "completion_tokens": 90,
+                            "actual_tokens": 90,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567890.5,
+                            "end_time": 1234567891.0,
+                        }
+                    ],
+                    "accepted_attempt": 0,
+                },
+                {
+                    "node_id": "summary-2",
+                    "height": 1,
+                    "created_at": 1234567892.0,
+                    "summary_attempts": [
                         {
-                            "node_id": "summary-2",
-                            "node_type": "summary",
-                            "level": 1,
-                            "span": [200, 400],
-                            "created_at": 1234567892.0,
-                            "summary_attempts": [
-                                {
-                                    "is_retry": False,
-                                    "target_tokens": 100,
-                                    "prompt_tokens": 300,
-                                    "completion_tokens": 110,
-                                    "actual_tokens": 100,
-                                    "status": "accepted",
-                                    "model": "gpt-4o-mini",
-                                    "timestamp": 1234567893.0,
-                                }
-                            ],
-                        },
-                    ]
-                }
-            },
+                            "target_tokens": 100,
+                            "prompt_tokens": 300,
+                            "completion_tokens": 110,
+                            "actual_tokens": 100,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567892.5,
+                            "end_time": 1234567893.0,
+                        }
+                    ],
+                    "accepted_attempt": 0,
+                },
+            ],
         }
 
     def test_compute_simplified_metrics(self, sample_telemetry: dict) -> None:
@@ -435,12 +329,16 @@ class TestSimplifiedMetrics:
     def test_simplified_metrics_empty_data(self) -> None:
         """Test simplified metrics with empty telemetry."""
         empty_telemetry = {
-            "format_version": "1.0",
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "format_version": "4.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 0,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
-            "documents": {},
+            "nodes": [],
         }
 
         result = compute_simplified_metrics(empty_telemetry)
@@ -451,24 +349,22 @@ class TestSimplifiedMetrics:
     def test_simplified_metrics_only_leaf_nodes(self) -> None:
         """Test simplified metrics with only leaf nodes (no summaries)."""
         leaf_only_telemetry = {
-            "format_version": "1.0",
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "format_version": "4.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 1000,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
-            "documents": {
-                "test_doc": {
-                    "nodes": [
-                        {
-                            "node_id": "leaf-1",
-                            "node_type": "leaf",
-                            "level": 0,
-                            "span": [0, 100],
-                            "created_at": 1234567890.0,
-                        }
-                    ]
+            "nodes": [
+                {
+                    "node_id": "leaf-1",
+                    "height": 0,
+                    "created_at": 1234567890.0,
                 }
-            },
+            ],
         }
 
         result = compute_simplified_metrics(leaf_only_telemetry)
@@ -513,49 +409,56 @@ class TestBatchEfficiency:
     def test_compute_batch_efficiency(self) -> None:
         """Test computing batch efficiency from telemetry."""
         telemetry_data = {
-            "format_version": "1.0",
-            "documents": {
-                "test_doc": {
-                    "nodes": [
-                        {
-                            "node_id": "node-1",
-                            "node_type": "leaf",
-                            "level": 0,
-                            "embedding": {
-                                "text_tokens": 50,
-                                "batch_size": 3,
-                                "batch_position": 0,
-                                "model": "text-embedding-3-small",
-                                "timestamp": 1234567890.0,
-                            },
-                        },
-                        {
-                            "node_id": "node-2",
-                            "node_type": "leaf",
-                            "level": 0,
-                            "embedding": {
-                                "text_tokens": 45,
-                                "batch_size": 3,
-                                "batch_position": 1,
-                                "model": "text-embedding-3-small",
-                                "timestamp": 1234567890.0,  # Same batch
-                            },
-                        },
-                        {
-                            "node_id": "node-3",
-                            "node_type": "leaf",
-                            "level": 0,
-                            "embedding": {
-                                "text_tokens": 55,
-                                "batch_size": 2,
-                                "batch_position": 0,
-                                "model": "text-embedding-3-small",
-                                "timestamp": 1234567891.0,  # Different batch
-                            },
-                        },
-                    ]
-                }
+            "format_version": "4.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 1000,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
+            "nodes": [
+                {
+                    "node_id": "node-1",
+                    "height": 0,
+                    "created_at": 1234567890.0,
+                    "embedding": {
+                        "text_tokens": 50,
+                        "batch_size": 3,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
+                        "start_time": 1234567890.0,
+                        "end_time": 1234567890.5,
+                    },
+                },
+                {
+                    "node_id": "node-2",
+                    "height": 0,
+                    "created_at": 1234567890.0,
+                    "embedding": {
+                        "text_tokens": 45,
+                        "batch_size": 3,
+                        "batch_position": 1,
+                        "model": "text-embedding-3-small",
+                        "start_time": 1234567890.0,
+                        "end_time": 1234567890.5,
+                    },
+                },
+                {
+                    "node_id": "node-3",
+                    "height": 0,
+                    "created_at": 1234567891.0,
+                    "embedding": {
+                        "text_tokens": 55,
+                        "batch_size": 2,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
+                        "start_time": 1234567891.0,
+                        "end_time": 1234567891.5,
+                    },
+                },
+            ],
         }
 
         result = compute_batch_efficiency(telemetry_data)
@@ -572,7 +475,18 @@ class TestBatchEfficiency:
 
     def test_batch_efficiency_empty_data(self) -> None:
         """Test batch efficiency with empty telemetry."""
-        empty_telemetry = {"format_version": "1.0", "documents": {}}
+        empty_telemetry = {
+            "format_version": "4.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 0,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
+            },
+            "nodes": [],
+        }
 
         result = compute_batch_efficiency(empty_telemetry)
 
@@ -751,57 +665,86 @@ class TestRetryAnalysis:
     def test_analyze_retry_patterns(self) -> None:
         """Test analyzing retry patterns from telemetry."""
         telemetry_data = {
-            "format_version": "1.0",
-            "documents": {
-                "test_doc": {
-                    "nodes": [
-                        {
-                            "node_id": "summary-1",
-                            "node_type": "summary",
-                            "level": 1,
-                            "summary_attempts": [
-                                {
-                                    "is_retry": False,
-                                    "status": "rejected_over",
-                                    "rejection_reason": "30% over target",
-                                },
-                                {
-                                    "is_retry": True,
-                                    "status": "accepted",
-                                },
-                            ],
-                        },
-                        {
-                            "node_id": "summary-2",
-                            "node_type": "summary",
-                            "level": 1,
-                            "summary_attempts": [
-                                {
-                                    "is_retry": False,
-                                    "status": "accepted",
-                                }
-                            ],
-                        },
-                        {
-                            "node_id": "summary-3",
-                            "node_type": "summary",
-                            "level": 1,
-                            "summary_attempts": [
-                                {
-                                    "is_retry": False,
-                                    "status": "rejected_under",
-                                    "rejection_reason": "20% under target",
-                                },
-                                {
-                                    "is_retry": True,
-                                    "status": "error",
-                                    "rejection_reason": "API timeout",
-                                },
-                            ],
-                        },
-                    ]
-                }
+            "format_version": "4.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 1000,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
+            "nodes": [
+                {
+                    "node_id": "summary-1",
+                    "height": 1,
+                    "created_at": 1234567890.0,
+                    "summary_attempts": [
+                        {
+                            "target_tokens": 100,
+                            "prompt_tokens": 250,
+                            "completion_tokens": 130,
+                            "actual_tokens": 130,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567890.0,
+                            "end_time": 1234567891.0,
+                        },
+                        {
+                            "target_tokens": 100,
+                            "prompt_tokens": 250,
+                            "completion_tokens": 95,
+                            "actual_tokens": 95,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567891.0,
+                            "end_time": 1234567892.0,
+                        },
+                    ],
+                    "accepted_attempt": 1,
+                },
+                {
+                    "node_id": "summary-2",
+                    "height": 1,
+                    "created_at": 1234567892.0,
+                    "summary_attempts": [
+                        {
+                            "target_tokens": 100,
+                            "prompt_tokens": 300,
+                            "completion_tokens": 100,
+                            "actual_tokens": 100,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567892.0,
+                            "end_time": 1234567893.0,
+                        }
+                    ],
+                    "accepted_attempt": 0,
+                },
+                {
+                    "node_id": "summary-3",
+                    "height": 1,
+                    "created_at": 1234567893.0,
+                    "summary_attempts": [
+                        {
+                            "target_tokens": 100,
+                            "prompt_tokens": 250,
+                            "completion_tokens": 80,
+                            "actual_tokens": 80,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567893.0,
+                            "end_time": 1234567894.0,
+                        },
+                        {
+                            "target_tokens": 100,
+                            "prompt_tokens": 250,
+                            "completion_tokens": 95,
+                            "actual_tokens": 95,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567894.0,
+                            "end_time": 1234567894.5,
+                        },
+                    ],
+                    "accepted_attempt": 1,
+                },
+            ],
         }
 
         result = analyze_retry_patterns(telemetry_data)
@@ -834,24 +777,34 @@ class TestRetryAnalysis:
     def test_retry_analysis_no_retries(self) -> None:
         """Test retry analysis with no retries."""
         telemetry_data = {
-            "format_version": "1.0",
-            "documents": {
-                "test_doc": {
-                    "nodes": [
-                        {
-                            "node_id": "summary-1",
-                            "node_type": "summary",
-                            "level": 1,
-                            "summary_attempts": [
-                                {
-                                    "is_retry": False,
-                                    "status": "accepted",
-                                }
-                            ],
-                        }
-                    ]
-                }
+            "format_version": "4.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 1000,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
+            "nodes": [
+                {
+                    "node_id": "summary-1",
+                    "height": 1,
+                    "created_at": 1234567890.0,
+                    "summary_attempts": [
+                        {
+                            "target_tokens": 100,
+                            "prompt_tokens": 250,
+                            "completion_tokens": 95,
+                            "actual_tokens": 95,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567890.0,
+                            "end_time": 1234567891.0,
+                        }
+                    ],
+                    "accepted_attempt": 0,
+                }
+            ],
         }
 
         result = analyze_retry_patterns(telemetry_data)
@@ -859,82 +812,6 @@ class TestRetryAnalysis:
         assert result["retry_rate"] == 0.0
         assert result["retry_attempts"] == 0
         assert result["nodes_with_retries"] == 0
-
-    def test_analyze_retry_patterns_v2_format(self) -> None:
-        """Test retry analysis with v2.0 format (no is_retry field)."""
-        telemetry_data = {
-            "format_version": "2.0",
-            "documents": {
-                "test_doc": {
-                    "metadata": {},
-                    "nodes": [
-                        {
-                            "node_id": "node-1",
-                            "height": 1,  # Non-leaf node
-                            "summary_attempts": [
-                                {
-                                    "status": "rejected_over",
-                                    "rejection_reason": "25% over target",
-                                    "start_time": 1000.0,
-                                    "end_time": 1002.0,
-                                },
-                                {
-                                    "status": "rejected_under",
-                                    "rejection_reason": "15% under target",
-                                    "start_time": 1002.0,
-                                    "end_time": 1004.0,
-                                },
-                                {
-                                    "status": "accepted",
-                                    "start_time": 1004.0,
-                                    "end_time": 1006.0,
-                                },
-                            ],
-                        },
-                        {
-                            "node_id": "node-2",
-                            "height": 1,
-                            "summary_attempts": [
-                                {
-                                    "status": "accepted",
-                                    "start_time": 1000.0,
-                                    "end_time": 1003.0,
-                                }
-                            ],
-                        },
-                    ],
-                }
-            },
-        }
-
-        result = analyze_retry_patterns(telemetry_data)
-
-        # 2 nodes, 1 needed retries
-        assert result["total_nodes_with_summaries"] == 2
-        assert result["nodes_with_retries"] == 1
-        assert result["retry_rate"] == 50.0
-
-        # 4 total attempts (3 + 1), 2 retries, 1 successful retry
-        assert result["total_attempts"] == 4
-        assert result["successful_attempts"] == 2
-        assert result["retry_attempts"] == 2
-        assert (
-            result["retry_success_rate"] == 50.0
-        )  # Only the last retry (index 2) is accepted
-
-        # Retry distribution
-        assert result["retry_distribution"]["0"] == 1  # node-2
-        assert result["retry_distribution"]["1"] == 0
-        assert result["retry_distribution"]["2"] == 1  # node-1
-        assert result["avg_retries_per_node"] == 1.0  # 2 retries / 2 nodes
-        assert result["max_retries"] == 2
-
-        # Timing metrics
-        assert result["retry_time_seconds"] == 4.0  # 2s + 2s for the two retries
-        assert result["avg_time_per_retry"] == 2.0  # 4s / 2 retries
-        assert (
-            result["time_wasted_on_rejections"] == 2.0
-        )  # Only first retry was rejected
 
 
 class TestFullMetricsComputation:
@@ -946,67 +823,68 @@ class TestFullMetricsComputation:
     def full_telemetry(self) -> dict:
         """Create comprehensive telemetry data."""
         return {
-            "format_version": "1.0",
-            "documents": {
-                "test_doc": {
-                    "nodes": [
-                        {
-                            "node_id": "leaf-1",
-                            "node_type": "leaf",
-                            "level": 0,
-                            "span": [0, 100],
-                            "created_at": 1234567890.0,
-                            "embedding": {
-                                "text_tokens": 90,
-                                "batch_size": 2,
-                                "batch_position": 0,
-                                "model": "text-embedding-3-small",
-                                "timestamp": 1234567891.0,
-                            },
-                        },
-                        {
-                            "node_id": "leaf-2",
-                            "node_type": "leaf",
-                            "level": 0,
-                            "span": [100, 200],
-                            "created_at": 1234567890.5,
-                            "embedding": {
-                                "text_tokens": 95,
-                                "batch_size": 2,
-                                "batch_position": 1,
-                                "model": "text-embedding-3-small",
-                                "timestamp": 1234567891.0,  # Same batch
-                            },
-                        },
-                        {
-                            "node_id": "summary-1",
-                            "node_type": "summary",
-                            "level": 1,
-                            "span": [0, 200],
-                            "created_at": 1234567892.0,
-                            "embedding": {
-                                "text_tokens": 85,
-                                "batch_size": 1,
-                                "batch_position": 0,
-                                "model": "text-embedding-3-small",
-                                "timestamp": 1234567893.0,
-                            },
-                            "summary_attempts": [
-                                {
-                                    "is_retry": False,
-                                    "target_tokens": 100,
-                                    "prompt_tokens": 250,
-                                    "completion_tokens": 90,
-                                    "actual_tokens": 85,
-                                    "status": "accepted",
-                                    "model": "gpt-4o-mini",
-                                    "timestamp": 1234567892.5,
-                                }
-                            ],
-                        },
-                    ]
-                }
+            "format_version": "4.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 2000,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
+            "nodes": [
+                {
+                    "node_id": "leaf-1",
+                    "height": 0,
+                    "created_at": 1234567890.0,
+                    "embedding": {
+                        "text_tokens": 90,
+                        "batch_size": 2,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
+                        "start_time": 1234567891.0,
+                        "end_time": 1234567891.5,
+                    },
+                },
+                {
+                    "node_id": "leaf-2",
+                    "height": 0,
+                    "created_at": 1234567890.5,
+                    "embedding": {
+                        "text_tokens": 95,
+                        "batch_size": 2,
+                        "batch_position": 1,
+                        "model": "text-embedding-3-small",
+                        "start_time": 1234567891.0,
+                        "end_time": 1234567891.5,
+                    },
+                },
+                {
+                    "node_id": "summary-1",
+                    "height": 1,
+                    "created_at": 1234567892.0,
+                    "embedding": {
+                        "text_tokens": 85,
+                        "batch_size": 1,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
+                        "start_time": 1234567893.0,
+                        "end_time": 1234567893.5,
+                    },
+                    "summary_attempts": [
+                        {
+                            "target_tokens": 100,
+                            "prompt_tokens": 250,
+                            "completion_tokens": 90,
+                            "actual_tokens": 85,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567892.0,
+                            "end_time": 1234567892.5,
+                        }
+                    ],
+                    "accepted_attempt": 0,
+                },
+            ],
         }
 
     def test_compute_full_metrics_from_telemetry(self, full_telemetry: dict) -> None:
@@ -1043,53 +921,52 @@ class TestFullMetricsComputation:
     def test_metrics_include_retry_attempts(self) -> None:
         """Test that metrics include ALL attempts, not just accepted ones."""
         telemetry = {
-            "format_version": "1.0",
-            "documents": {
-                "test_doc": {
-                    "metadata": {"source_document_tokens": 100},
-                    "nodes": [
+            "format_version": "4.1",
+            "document_id": "test_doc",
+            "source_document_tokens": 100,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 50,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
+            },
+            "nodes": [
+                {
+                    "node_id": "summary-1",
+                    "height": 1,
+                    "created_at": 1234567890.0,
+                    "summary_attempts": [
                         {
-                            "node_id": "summary-1",
-                            "node_type": "summary",
-                            "level": 1,
-                            "span": [0, 100],
-                            "created_at": 1234567890.0,
-                            "summary_attempts": [
-                                {
-                                    "is_retry": False,
-                                    "target_tokens": 50,
-                                    "prompt_tokens": 150,  # First attempt
-                                    "completion_tokens": 120,  # Too long
-                                    "actual_tokens": 120,
-                                    "status": "rejected_over",
-                                    "model": "gpt-4o-mini",
-                                    "timestamp": 1234567891.0,
-                                },
-                                {
-                                    "is_retry": True,
-                                    "target_tokens": 50,
-                                    "prompt_tokens": 160,  # Second attempt
-                                    "completion_tokens": 100,  # Still too long
-                                    "actual_tokens": 100,
-                                    "status": "rejected_over",
-                                    "model": "gpt-4o-mini",
-                                    "timestamp": 1234567892.0,
-                                },
-                                {
-                                    "is_retry": True,
-                                    "target_tokens": 50,
-                                    "prompt_tokens": 170,  # Third attempt
-                                    "completion_tokens": 80,  # Finally accepted
-                                    "actual_tokens": 80,
-                                    "status": "accepted",
-                                    "model": "gpt-4o-mini",
-                                    "timestamp": 1234567893.0,
-                                },
-                            ],
+                            "target_tokens": 50,
+                            "prompt_tokens": 150,
+                            "completion_tokens": 120,
+                            "actual_tokens": 120,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567891.0,
+                            "end_time": 1234567891.5,
+                        },
+                        {
+                            "target_tokens": 50,
+                            "prompt_tokens": 160,
+                            "completion_tokens": 100,
+                            "actual_tokens": 100,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567892.0,
+                            "end_time": 1234567892.5,
+                        },
+                        {
+                            "target_tokens": 50,
+                            "prompt_tokens": 170,
+                            "completion_tokens": 80,
+                            "actual_tokens": 80,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567893.0,
+                            "end_time": 1234567893.5,
                         },
                     ],
-                }
-            },
+                    "accepted_attempt": 2,
+                },
+            ],
         }
 
         metrics = compute_metrics_from_telemetry(telemetry)
@@ -1101,73 +978,3 @@ class TestFullMetricsComputation:
 
         # Verify that ALL attempts are counted in the totals
         # We should have 3 summary attempts total
-
-
-class TestBackwardCompatibility:
-    """Test backward compatibility with v1.0 telemetry format."""
-
-    # Config fixture removed - telemetry functions no longer need config
-
-    def test_v1_telemetry_with_v2_analysis(self) -> None:
-        """Test that v1.0 telemetry can be analyzed with v2.0 code."""
-        # v1.0 telemetry with all legacy fields
-        v1_telemetry = {
-            "format_version": "1.0",
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
-            },
-            "documents": {
-                "test_doc": {
-                    "nodes": [
-                        {
-                            "node_id": "leaf-1",
-                            "node_type": "leaf",
-                            "level": 0,
-                            "span": [0, 100],
-                            "created_at": 1234567890.0,
-                            "embedding": {
-                                "text_tokens": 90,
-                                "batch_size": 2,
-                                "batch_position": 0,
-                                "model": "text-embedding-3-small",
-                                "timestamp": 1234567891.0,  # v1.0 single timestamp
-                            },
-                        },
-                        {
-                            "node_id": "summary-1",
-                            "node_type": "summary",
-                            "level": 1,
-                            "span": [0, 200],
-                            "created_at": 1234567892.0,
-                            "summary_attempts": [
-                                {
-                                    "is_retry": False,  # v1.0 explicit is_retry
-                                    "target_tokens": 100,
-                                    "prompt_tokens": 250,
-                                    "completion_tokens": 90,
-                                    "actual_tokens": 85,
-                                    "status": "accepted",
-                                    "model": "gpt-4o-mini",
-                                    "timestamp": 1234567892.5,  # v1.0 single timestamp
-                                }
-                            ],
-                        },
-                    ]
-                }
-            },
-        }
-
-        # All analysis functions should work with v1.0 data
-        simplified = compute_simplified_metrics(v1_telemetry)
-        assert isinstance(simplified.metrics_by_chunk_size, dict)
-        # Should have metrics for chunk size 100 (the target_tokens value)
-
-        batch_efficiency = compute_batch_efficiency(v1_telemetry)
-        assert batch_efficiency["total_embeddings"] == 1
-
-        retry_patterns = analyze_retry_patterns(v1_telemetry)
-        assert retry_patterns["total_nodes_with_summaries"] == 1
-
-        metrics = compute_metrics_from_telemetry(v1_telemetry)
-        assert metrics.chunks_created == 1  # Should identify leaf nodes by node_type

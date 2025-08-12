@@ -560,13 +560,8 @@ class TelemetryCollector:
             "format_version": TELEMETRY_FORMAT_VERSION,
             "document_id": document_id,
             "source_document_tokens": self.source_tokens,
-            "chunk_size": chunk_size,
             "indexed_at": self.start_time,
             "config": config_dict,
-            "models": {
-                "summary": self.config.summary_model,
-                "embedding": self.config.embedding_model,
-            },
             "model_metadata": model_metadata,
             "system_prompts": system_prompts,
             "runtime_info": runtime_info,
