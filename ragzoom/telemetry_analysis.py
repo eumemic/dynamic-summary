@@ -601,22 +601,28 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]
 
 
 def detect_verbatim_concatenations(
-    nodes: list[NodeTelemetryDict], tolerance: float = 0.02
+    nodes: list[NodeTelemetryDict], tolerance: float | None = None
 ) -> VerbatimDetectionResult:
     """Detect nodes where the LLM returned input text verbatim.
 
     Args:
         nodes: List of node telemetry data
-        tolerance: Ratio tolerance for considering compression as verbatim (default 2%)
+        tolerance: Ratio tolerance for considering compression as verbatim.
+                  If None, uses RAGZOOM_VERBATIM_TOLERANCE env var (default 0.02 = 2%)
 
     Returns:
-        Dictionary containing:
+        VerbatimDetectionResult containing:
         - total_summaries: Total number of summary nodes
         - verbatim_count: Number of verbatim concatenations detected
         - verbatim_percentage: Percentage of summaries that are verbatim
-        - worst_offenders: List of worst cases with details
+        - worst_offenders: List of worst cases with details (VerbatimOffender TypedDict)
         - height_distribution: Count of verbatim issues by tree height
     """
+    if tolerance is None:
+        # Allow configuration via environment variable
+        import os
+
+        tolerance = float(os.environ.get("RAGZOOM_VERBATIM_TOLERANCE", "0.02"))
     verbatim_nodes: list[VerbatimOffender] = []
     height_distribution: dict[int, int] = {}
     total_summaries = 0
