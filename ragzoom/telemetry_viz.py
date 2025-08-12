@@ -6,6 +6,7 @@ simplified metrics in telemetry_cli.py.
 """
 
 import json
+import logging
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -840,9 +841,11 @@ class TelemetryVisualizer:
         ax.set_ylim(y_min, y_max)
 
         # Add acceptable range band based on retry_threshold (full width of plot)
-        # Get current x-axis limits and extend slightly beyond them
+        # Get current x-axis limits and extend well beyond them to ensure full coverage
         xlim = ax.get_xlim()
-        x_extend = [xlim[0] - (xlim[1] - xlim[0]), xlim[1] + (xlim[1] - xlim[0])]
+        x_range = xlim[1] - xlim[0]
+        # Extend by 10x the range on each side to ensure the green zone covers the entire visible area
+        x_extend = [xlim[0] - x_range * 10, xlim[1] + x_range * 10]
 
         if chunk_size > 0:
             if retry_threshold is not None:
@@ -857,8 +860,8 @@ class TelemetryVisualizer:
                 )
             else:
                 # Warn when retry_threshold is missing and use fallback
-                print(
-                    "Warning: retry_threshold not found in telemetry config. "
+                logging.warning(
+                    "retry_threshold not found in telemetry config. "
                     "Using fallback ±10 token range."
                 )
                 ax.fill_between(
