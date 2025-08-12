@@ -3,9 +3,7 @@
 import logging
 
 import tiktoken
-from openai import OpenAI
 
-from ragzoom.config import RagZoomConfig
 from ragzoom.retrieve import RetrievalResult
 from ragzoom.store import Store, TreeNode
 
@@ -15,11 +13,9 @@ logger = logging.getLogger(__name__)
 class Assembler:
     """Assembles tiling nodes into coherent summary with optional smoothing."""
 
-    def __init__(self, config: RagZoomConfig, store: Store):
+    def __init__(self, store: Store):
         """Initialize assembler."""
-        self.config = config
         self.store = store
-        self.client = OpenAI(api_key=config.openai_api_key)
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
 
     def assemble(self, retrieval_result: RetrievalResult) -> str:

@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
@@ -30,7 +30,6 @@ class TestIntegration:
         with (
             patch("ragzoom.index.AsyncOpenAI") as mock_index_client,
             patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
-            patch("ragzoom.assemble.OpenAI") as mock_assemble_client,
         ):
 
             # Create async mock functions
@@ -39,10 +38,10 @@ class TestIntegration:
                 input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
                     # Batch request - return multiple embeddings
-                    return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
                 else:
                     # Single request
-                    return Mock(data=[Mock(embedding=[0.1] * 384)])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
             async def mock_chat_create(*args, **kwargs):
                 return Mock(
@@ -59,10 +58,10 @@ class TestIntegration:
                 input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
                     # Batch request - return multiple embeddings
-                    return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
                 else:
                     # Single request
-                    return Mock(data=[Mock(embedding=[0.1] * 384)])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
             def mock_chat_create_sync(*args, **kwargs):
                 return Mock(
@@ -96,12 +95,11 @@ class TestIntegration:
             instance_async.chat = mock_chat_async
             mock_index_client.return_value = instance_async
 
-            # Set up sync clients for retrieve and assemble
-            for mock_client in [mock_retrieve_client, mock_assemble_client]:
-                instance_sync = Mock()
-                instance_sync.embeddings = mock_embeddings_sync
-                instance_sync.chat = mock_chat_sync
-                mock_client.return_value = instance_sync
+            # Set up sync client for retrieve
+            instance_sync = Mock()
+            instance_sync.embeddings = mock_embeddings_sync
+            instance_sync.chat = mock_chat_sync
+            mock_retrieve_client.return_value = instance_sync
 
             yield
 
@@ -113,20 +111,33 @@ class TestIntegration:
         chroma_dir = f"{temp_dir}/chroma"
         db_path = f"{temp_dir}/test.db"
 
-        # Override config
-        config = RagZoomConfig(
+        # Create separate configs
+        index_config = IndexConfig(
+            target_chunk_tokens=50,
+            preceding_context_tokens=25,  # Must be less than leaf_tokens
+        )
+        query_config = QueryConfig(budget_tokens=500)
+        operational_config = OperationalConfig(
             openai_api_key="test-key",
             chroma_persist_directory=chroma_dir,
             sqlite_database_url=f"sqlite:///{db_path}",
-            leaf_tokens=50,
-            adjacent_context_tokens=25,  # Must be less than leaf_tokens
-            budget_tokens=500,
         )
 
-        store = Store(config)
-        tree_builder = TreeBuilder(config, store)
-        retriever = Retriever(config, store)
-        assembler = Assembler(config, store)
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        tree_builder = TreeBuilder(
+            index_config, store, api_key=operational_config.openai_api_key
+        )
+        retriever = Retriever(
+            query_config, store, api_key=operational_config.openai_api_key
+        )
+        assembler = Assembler(store)
+
+        # Create a config wrapper for backward compatibility
+        from tests.conftest import BackwardCompatibilityConfig
+
+        config = BackwardCompatibilityConfig(
+            index_config, query_config, operational_config
+        )
 
         yield config, store, tree_builder, retriever, assembler
 
@@ -205,7 +216,7 @@ class TestIntegration:
             tree_builder.add_document(text, f"doc-{i}")
 
         # Query about cats (should get diverse cat-related content)
-        result = retriever.retrieve("Tell me about cats", n_max=3)
+        result = retriever.retrieve("Tell me about cats", num_seeds=3)
 
         assert len(result.node_ids) <= 3
         # Should get results from different documents, not just repeated similar ones

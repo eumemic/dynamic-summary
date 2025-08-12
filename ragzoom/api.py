@@ -1,12 +1,13 @@
 """FastAPI routes for RagZoom REST interface."""
 
 import logging
+from dataclasses import asdict
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
@@ -19,13 +20,28 @@ class RagZoomService:
     """Service container for RagZoom components."""
 
     def __init__(self) -> None:
-        # RagZoomConfig will read from environment automatically due to pydantic_settings
-        self.config = RagZoomConfig()  # Will use RAGZOOM_OPENAI_API_KEY from env
-        self.store = Store(self.config)
-        # Each service gets its own OpenAI client to avoid thread issues
-        self.tree_builder = TreeBuilder(self.config, self.store)
-        self.retriever = Retriever(self.config, self.store)
-        self.assembler = Assembler(self.config, self.store)
+        # Create separate configs
+        self.index_config = IndexConfig()
+        self.query_config = QueryConfig()
+        self.operational_config = (
+            OperationalConfig()
+        )  # Will read OPENAI_API_KEY from env
+
+        # Initialize components with specific configs
+        self.store = Store(
+            self.operational_config, embedding_model=self.index_config.embedding_model
+        )
+        self.tree_builder = TreeBuilder(
+            self.index_config,
+            self.store,
+            api_key=self.operational_config.openai_api_key,
+        )
+        self.retriever = Retriever(
+            self.query_config,
+            self.store,
+            api_key=self.operational_config.openai_api_key,
+        )
+        self.assembler = Assembler(self.store)
 
     def close(self) -> None:
         """Close store connections and cleanup resources."""
@@ -71,7 +87,7 @@ class QueryRequest(BaseModel):
 
     query: str = Field(..., description="Query text")
     document_id: str = Field(..., description="Document ID to query within")
-    n_max: int | None = Field(None, description="Override max nodes to retrieve")
+    num_seeds: int | None = Field(None, description="Override max nodes to retrieve")
     token_budget: int | None = Field(None, description="Override token budget")
 
 
@@ -96,8 +112,6 @@ class UpdateConfigRequest(BaseModel):
     budget_tokens: int | None = None
     leaf_tokens: int | None = None
     mmr_lambda: float | None = None
-    slope_cap: bool | None = None
-    smoothing_pass_enabled: bool | None = None
     # Deprecated fields removed - ttl_turns and freshness_decay no longer exist
 
 
@@ -224,7 +238,7 @@ async def query(
         # Use async version since we're in an async endpoint
         retrieval_result = await service.retriever.retrieve_async(
             request.query,
-            request.n_max,
+            request.num_seeds,
             request.token_budget,
             document_id=request.document_id,
         )
@@ -270,18 +284,42 @@ async def update_config(
 ) -> dict[str, str]:
     """Update configuration dynamically."""
     try:
-        # Update only provided fields
+        # Update query config fields
+        query_updates: dict[str, int | float] = {}
         if request.budget_tokens is not None:
-            service.config.budget_tokens = request.budget_tokens
-        if request.leaf_tokens is not None:
-            service.config.leaf_tokens = request.leaf_tokens
+            query_updates["budget_tokens"] = request.budget_tokens
         if request.mmr_lambda is not None:
-            service.config.mmr_lambda = request.mmr_lambda
-        if request.slope_cap is not None:
-            service.config.slope_cap = request.slope_cap
-        if request.smoothing_pass_enabled is not None:
-            service.config.smoothing_pass_enabled = request.smoothing_pass_enabled
-        # Remove deprecated fields - ttl_turns and freshness_decay no longer exist
+            query_updates["mmr_lambda"] = request.mmr_lambda
+
+        if query_updates:
+            service.query_config = service.query_config.replace(**query_updates)
+            # Recreate retriever with new config
+            service.retriever = Retriever(
+                service.query_config,
+                service.store,
+                api_key=service.operational_config.openai_api_key,
+            )
+
+        # Update index config fields
+        index_updates = {}
+        if request.leaf_tokens is not None:
+            index_updates["target_chunk_tokens"] = request.leaf_tokens
+
+        if index_updates:
+            service.index_config = service.index_config.replace(**index_updates)
+            # Recreate components that use index config
+            service.tree_builder = TreeBuilder(
+                service.index_config,
+                service.store,
+                api_key=service.operational_config.openai_api_key,
+            )
+            service.retriever = Retriever(
+                service.query_config,
+                service.store,
+                api_key=service.operational_config.openai_api_key,
+            )
+
+        # Note: slope_cap and smoothing_pass_enabled were removed as they're not in any config
 
         return {"message": "Configuration updated successfully"}
     except Exception as e:
@@ -306,7 +344,15 @@ async def get_status(
             leaf_nodes=len(leaf_nodes),
             tree_depth=service.store.get_node_height(root.id) if root else 0,
             pinned_nodes=len(pinned),
-            config=service.config.model_dump(),
+            config={
+                "index": asdict(service.index_config),
+                "query": asdict(service.query_config),
+                "operational": {
+                    k: v
+                    for k, v in asdict(service.operational_config).items()
+                    if k != "openai_api_key"  # Don't expose API key
+                },
+            },
         )
     except Exception as e:
         logger.error(f"Error getting status: {e}")
@@ -326,7 +372,7 @@ if __name__ == "__main__":
     # Configure logging
     service = RagZoomService()
     logging.basicConfig(
-        level=getattr(logging, service.config.log_level),
+        level=getattr(logging, service.operational_config.log_level),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 

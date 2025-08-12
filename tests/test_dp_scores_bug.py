@@ -1,6 +1,6 @@
 """Test demonstrating the DP algorithm uses scores outside coverage tree."""
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.retrieve import RetrievalResult
 from tests.mock_store import SimpleMockStore
@@ -29,7 +29,7 @@ class TestDPScoresBug:
             span_end=1000,
             parent_id=None,
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="node_a",
             right_child_id="node_b",
         )
@@ -42,7 +42,7 @@ class TestDPScoresBug:
             span_end=500,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="a1",
             right_child_id="a2",
         )
@@ -54,7 +54,7 @@ class TestDPScoresBug:
             span_end=1000,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="b1",
             right_child_id="b2",
         )
@@ -73,14 +73,12 @@ class TestDPScoresBug:
                 span_end=end,
                 parent_id=parent,
                 document_id="doc1",
-                embedding=[0.5] * 384,
+                embedding=[0.5] * 1536,
             )
 
         # Create config and DP generator
-        config = RagZoomConfig(
-            openai_api_key="test-key", budget_tokens=10000  # Large budget
-        )
-        dp_generator = DynamicTilingGenerator(config)
+        query_config = QueryConfig(budget_tokens=10000)  # Large budget
+        dp_generator = DynamicTilingGenerator(query_config)
 
         # Pass in a full coverage tree (all nodes)
         coverage_tree = {"a1", "a2", "b1", "b2", "node_a", "node_b", "root"}
@@ -134,7 +132,7 @@ class TestDPScoresBug:
             span_end=1000,
             parent_id=None,
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
         )
         store.add_node(
             node_id="leaf1",
@@ -143,7 +141,7 @@ class TestDPScoresBug:
             span_end=500,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
         )
         store.add_node(
             node_id="leaf2",
@@ -152,13 +150,13 @@ class TestDPScoresBug:
             span_end=1000,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
         )
         store.nodes["root"].left_child_id = "leaf1"
         store.nodes["root"].right_child_id = "leaf2"
 
-        config = RagZoomConfig(openai_api_key="test-key", budget_tokens=10000)
-        dp_generator = DynamicTilingGenerator(config)
+        query_config = QueryConfig(budget_tokens=10000)
+        dp_generator = DynamicTilingGenerator(query_config)
 
         # Pass in a full coverage tree (root and both leaves)
         result = RetrievalResult(

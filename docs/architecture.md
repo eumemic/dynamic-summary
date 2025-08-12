@@ -93,7 +93,7 @@ graph TD;
     G --> H[Final Summary];
 ```
 
-**Note**: When in budget-only mode, the Retriever calculates a conservative `n_max` based on the average token cost of all nodes in the document (with a 25% safety buffer).
+**Note**: When in budget-only mode, the Retriever calculates a conservative `num_seeds` based on the average token cost of all nodes in the document (with a 25% safety buffer).
 
 ## 4. Key Design Principles
 

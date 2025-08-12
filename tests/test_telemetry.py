@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import (
     NodeTelemetry,
@@ -57,17 +57,16 @@ class TestTelemetryCollection:
     """Test telemetry collection during indexing."""
 
     @pytest.fixture
-    def config(self) -> RagZoomConfig:
+    def config(self) -> IndexConfig:
         """Create test config."""
-        return RagZoomConfig(
-            openai_api_key="test-key",
-            leaf_tokens=100,
-            adjacent_context_tokens=50,
+        return IndexConfig(
+            target_chunk_tokens=100,
+            preceding_context_tokens=50,
             embedding_batch_size=2,
         )
 
     @pytest.fixture
-    def reporter(self, config: RagZoomConfig) -> TelemetryCollector:
+    def reporter(self, config: IndexConfig) -> TelemetryCollector:
         """Create test reporter."""
         return TelemetryCollector(
             document_id="test-doc",
@@ -202,11 +201,13 @@ class TestTelemetryIntegration:
     ) -> None:
         """Test that telemetry captures all nodes during indexing."""
         store = request.getfixturevalue(f"{store_type}_store")
-        config = RagZoomConfig(
-            openai_api_key="test-key",
-            leaf_tokens=100,
-            adjacent_context_tokens=50,
+        index_config = IndexConfig(
+            target_chunk_tokens=100,
+            preceding_context_tokens=50,
             embedding_batch_size=2,
+        )
+        operational_config = OperationalConfig(
+            openai_api_key="test-key",
         )
 
         # Create test text that will generate multiple nodes
@@ -254,14 +255,16 @@ class TestTelemetryIntegration:
 
         # Index with mocked client
         with patch("ragzoom.index.AsyncOpenAI", return_value=mock_async_client):
-            builder = TreeBuilder(config, store)
+            builder = TreeBuilder(
+                index_config, store, operational_config.openai_api_key
+            )
 
             # Create reporter for metrics
             source_tokens = len(builder.splitter.tokenizer.encode(test_text))
             reporter = TelemetryCollector(
                 document_id="telemetry-test",
                 source_tokens=source_tokens,
-                config=config,
+                config=index_config,
             )
 
             # Index document
@@ -276,10 +279,38 @@ class TestTelemetryIntegration:
         # Get final telemetry data
         telemetry_data = reporter.finalize()
 
-        # Verify telemetry was collected (v3.1 format)
-        assert telemetry_data["format_version"] == "3.1"
+        # Verify telemetry was collected (v4.1 format)
+        assert telemetry_data["format_version"] == "4.1"
         assert telemetry_data["document_id"] == "telemetry-test"
         assert "nodes" in telemetry_data
+
+        # Verify config field is present (new in v4.0)
+        assert "config" in telemetry_data
+        config = telemetry_data["config"]
+        assert "target_chunk_tokens" in config
+        assert "preceding_context_tokens" in config
+        assert "summary_model" in config
+        assert "embedding_model" in config
+
+        # Verify new reproducibility fields (new in v4.1)
+        assert "model_metadata" in telemetry_data
+        assert "system_prompts" in telemetry_data
+        assert "runtime_info" in telemetry_data
+
+        # Verify model metadata includes necessary details
+        model_metadata = telemetry_data["model_metadata"]
+        assert "embedding" in model_metadata
+        assert "summary" in model_metadata
+
+        # Verify system prompts are captured
+        system_prompts = telemetry_data["system_prompts"]
+        assert "summary_system_prompt" in system_prompts
+
+        # Verify runtime info is captured
+        runtime_info = telemetry_data["runtime_info"]
+        assert "python_version" in runtime_info
+        assert "platform" in runtime_info
+        assert "ragzoom_version" in runtime_info
 
         nodes = telemetry_data["nodes"]
         assert len(nodes) > 0
@@ -318,11 +349,11 @@ class TestTelemetryIntegration:
                         # the last attempt should be the one used
                         assert len(node_data["summary_attempts"]) > 0
 
-    def test_telemetry_serialization(self, base_config: RagZoomConfig) -> None:
+    def test_telemetry_serialization(self, base_config) -> None:
         """Test that telemetry can be serialized to JSON."""
         import json
 
-        reporter = TelemetryCollector("test", 1000, base_config)
+        reporter = TelemetryCollector("test", 1000, base_config.index_config)
 
         # Create some telemetry
         reporter.track_node_created("node-1", 0)

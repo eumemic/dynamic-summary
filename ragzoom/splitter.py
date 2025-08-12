@@ -5,7 +5,7 @@ import logging
 import tiktoken
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class TextSplitter:
     """Boundary-aware text splitter for creating leaf chunks."""
 
-    def __init__(self, config: RagZoomConfig):
+    def __init__(self, config: IndexConfig):
         """Initialize the splitter with configuration."""
         self.config = config
         self.tokenizer = tiktoken.get_encoding("cl100k_base")  # GPT-4 encoding
@@ -21,7 +21,7 @@ class TextSplitter:
         # Use token counts directly since our length_function returns tokens
         # Set overlap to 0 since RagZoom requires non-overlapping sequential chunks
         self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=config.leaf_tokens,
+            chunk_size=config.target_chunk_tokens,
             chunk_overlap=0,  # No overlap - RagZoom needs sequential chunks
             separators=[
                 "\n\n",  # Paragraph breaks
@@ -149,9 +149,9 @@ class TextSplitter:
         if chunk_index > 0 and chunks[chunk_index - 1]:
             prev_text = chunks[chunk_index - 1]
             prev_tokens = self.tokenizer.encode(prev_text)
-            if len(prev_tokens) > self.config.adjacent_context_tokens:
+            if len(prev_tokens) > self.config.preceding_context_tokens:
                 # Take last N tokens
-                context_tokens = prev_tokens[-self.config.adjacent_context_tokens :]
+                context_tokens = prev_tokens[-self.config.preceding_context_tokens :]
                 prev_context = self.tokenizer.decode(context_tokens)
             else:
                 prev_context = prev_text
@@ -159,9 +159,9 @@ class TextSplitter:
         if chunk_index < len(chunks) - 1 and chunks[chunk_index + 1]:
             next_text = chunks[chunk_index + 1]
             next_tokens = self.tokenizer.encode(next_text)
-            if len(next_tokens) > self.config.adjacent_context_tokens:
+            if len(next_tokens) > self.config.preceding_context_tokens:
                 # Take first N tokens
-                context_tokens = next_tokens[: self.config.adjacent_context_tokens]
+                context_tokens = next_tokens[: self.config.preceding_context_tokens]
                 next_context = self.tokenizer.decode(context_tokens)
             else:
                 next_context = next_text
