@@ -103,10 +103,10 @@ def test_indexing_performance(leaf_tokens, document_type):
         )
 
         # Get basic metrics for memory and timing info
-        basic_metrics = compute_metrics_from_telemetry(telemetry, benchmark_config)
+        basic_metrics = compute_metrics_from_telemetry(telemetry)
 
         # Get simplified metrics for the new metrics system
-        simplified = compute_simplified_metrics(telemetry, benchmark_config)
+        simplified = compute_simplified_metrics(telemetry)
 
         # Get metrics for this chunk size
         chunk_metrics = simplified.metrics_by_chunk_size.get(leaf_tokens, {})
