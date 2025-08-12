@@ -869,9 +869,10 @@ class TelemetryVisualizer:
         )
 
         # Create custom legend for attempt numbers (matching cost breakdown)
+        from matplotlib.lines import Line2D
         from matplotlib.patches import Patch
 
-        legend_elements = [
+        legend_elements: list = [
             Patch(facecolor=colors[0], label="Attempt 1", alpha=0.6),
             Patch(facecolor=colors[1], label="Attempt 2", alpha=0.6),
             Patch(facecolor=colors[2], label="Attempt 3", alpha=0.6),
@@ -882,15 +883,6 @@ class TelemetryVisualizer:
         # Only include legend items for attempt numbers that exist in the data
         max_attempts = max(attempt_numbers) if attempt_numbers else 0
         legend_elements = legend_elements[: min(max_attempts, 5)]
-
-        # Add the legend elements to the main legend
-        ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
-
-        # Labels and title
-        ax.set_xlabel("Input Tokens (text to summarize)")
-        ax.set_ylabel("Output Tokens (summary)")
-        ax.set_title("Summary Compression Patterns")
-        ax.grid(True, alpha=0.3)
 
         # Add statistics annotation
         # Calculate deviations from target (chunk_size) as percentages
@@ -922,9 +914,44 @@ class TelemetryVisualizer:
                 linewidth=1.5,
                 label=f"Median: {median_deviation_pct:+.1f}%",
             )
+
+            # Add the line references to legend elements
+
+            legend_elements.extend(
+                [
+                    Line2D(
+                        [0],
+                        [0],
+                        color="blue",
+                        linestyle=":",
+                        alpha=0.5,
+                        linewidth=1.5,
+                        label=f"Avg: {avg_deviation_pct:+.1f}%",
+                    ),
+                    Line2D(
+                        [0],
+                        [0],
+                        color="red",
+                        linestyle="-.",
+                        alpha=0.5,
+                        linewidth=1.5,
+                        label=f"Median: {median_deviation_pct:+.1f}%",
+                    ),
+                ]
+            )
+
         else:
             avg_deviation_pct = 0.0
             median_deviation_pct = 0.0
+
+        # Add the legend with all elements
+        ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
+
+        # Labels and title
+        ax.set_xlabel("Input Tokens (text to summarize)")
+        ax.set_ylabel("Output Tokens (summary)")
+        ax.set_title("Summary Compression Patterns")
+        ax.grid(True, alpha=0.3)
 
         avg_attempts = np.mean(attempt_numbers)
 
@@ -932,8 +959,6 @@ class TelemetryVisualizer:
         unique_inputs = len(set(input_tokens))
 
         stats_text = (
-            f"Avg deviation: {avg_deviation_pct:+.1f}%\n"
-            f"Median deviation: {median_deviation_pct:+.1f}%\n"
             f"Avg attempts: {avg_attempts:.2f}\n"
             f"Total attempts: {len(input_tokens)} ({unique_inputs} nodes)"
         )
