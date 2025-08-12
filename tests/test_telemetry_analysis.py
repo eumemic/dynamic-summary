@@ -990,20 +990,22 @@ class TestVerbatimDetection:
             {
                 "node_id": "node-1",
                 "height": 1,
+                "input_text_tokens": 400,
                 "summary_attempts": [
                     {
                         "prompt_tokens": 400,
-                        "completion_tokens": 200,  # 0.5 ratio - good compression
+                        "actual_tokens": 200,  # 0.5 ratio - good compression
                     }
                 ],
             },
             {
                 "node_id": "node-2",
                 "height": 2,
+                "input_text_tokens": 600,
                 "summary_attempts": [
                     {
                         "prompt_tokens": 600,
-                        "completion_tokens": 250,  # 0.42 ratio - good compression
+                        "actual_tokens": 250,  # 0.42 ratio - good compression
                     }
                 ],
             },
@@ -1021,30 +1023,33 @@ class TestVerbatimDetection:
             {
                 "node_id": "node-1",
                 "height": 1,
+                "input_text_tokens": 400,
                 "summary_attempts": [
                     {
                         "prompt_tokens": 400,
-                        "completion_tokens": 398,  # 0.995 ratio - verbatim!
+                        "actual_tokens": 398,  # 0.995 ratio - verbatim!
                     }
                 ],
             },
             {
                 "node_id": "node-2",
                 "height": 2,
+                "input_text_tokens": 600,
                 "summary_attempts": [
                     {
                         "prompt_tokens": 600,
-                        "completion_tokens": 600,  # 1.0 ratio - exact verbatim!
+                        "actual_tokens": 600,  # 1.0 ratio - exact verbatim!
                     }
                 ],
             },
             {
                 "node_id": "node-3",
                 "height": 1,
+                "input_text_tokens": 300,
                 "summary_attempts": [
                     {
                         "prompt_tokens": 300,
-                        "completion_tokens": 150,  # 0.5 ratio - good
+                        "actual_tokens": 150,  # 0.5 ratio - good
                     }
                 ],
             },
@@ -1068,20 +1073,22 @@ class TestVerbatimDetection:
             {
                 "node_id": "node-1",
                 "height": 1,
+                "input_text_tokens": 400,
                 "summary_attempts": [
                     {
                         "prompt_tokens": 400,
-                        "completion_tokens": 394,  # 0.985 ratio - within 2% default tolerance
+                        "actual_tokens": 394,  # 0.985 ratio - within 2% default tolerance
                     }
                 ],
             },
             {
                 "node_id": "node-2",
                 "height": 1,
+                "input_text_tokens": 400,
                 "summary_attempts": [
                     {
                         "prompt_tokens": 400,
-                        "completion_tokens": 382,  # 0.955 ratio - outside 2% tolerance, within 5%
+                        "actual_tokens": 382,  # 0.955 ratio - outside 2% tolerance, within 5%
                     }
                 ],
             },
@@ -1101,10 +1108,11 @@ class TestVerbatimDetection:
             {
                 "node_id": f"node-{i}",
                 "height": i % 3 + 1,  # Heights 1, 2, 3, 1, 2, 3...
+                "input_text_tokens": 400,
                 "summary_attempts": [
                     {
                         "prompt_tokens": 400,
-                        "completion_tokens": (
+                        "actual_tokens": (
                             399 if i < 4 else 200
                         ),  # First 4 are verbatim
                     }

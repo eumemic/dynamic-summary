@@ -628,9 +628,19 @@ def detect_verbatim_concatenations(
     total_summaries = 0
 
     for node in nodes:
-        # Skip leaf nodes (no summaries)
+        # Skip leaf nodes and nodes without summaries
         summary_attempts = node.get("summary_attempts", [])
         if not summary_attempts:
+            continue
+
+        # Get input tokens from the node itself (this is what was actually summarized)
+        input_tokens = node.get("input_text_tokens", 0)
+        if input_tokens == 0:
+            # Fallback to prompt_tokens from attempts if input_text_tokens not available
+            if summary_attempts:
+                input_tokens = summary_attempts[0].get("prompt_tokens", 0)
+
+        if input_tokens == 0:
             continue
 
         # Get the accepted attempt
@@ -641,10 +651,9 @@ def detect_verbatim_concatenations(
             # Fallback to last attempt
             summary = summary_attempts[-1]
 
-        input_tokens = summary.get("prompt_tokens", 0)
-        output_tokens = summary.get("completion_tokens", 0)
+        output_tokens = summary.get("actual_tokens", 0)
 
-        if input_tokens == 0 or output_tokens == 0:
+        if output_tokens == 0:
             continue
 
         total_summaries += 1
