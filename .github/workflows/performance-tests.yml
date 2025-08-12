@@ -555,11 +555,14 @@ jobs:
       - name: Update PR comment with final results
         uses: actions/github-script@v7
         if: always()
+        env:
+          REPORT_CONTENT: ${{ steps.compare.outputs.report }}
         with:
           script: |
             const identifier = '<!-- github-actions-perf-report-comment -->';
             const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            const report = `${{ steps.compare.outputs.report }}`;
+            // Get report from environment variable to avoid template literal issues
+            const report = process.env.REPORT_CONTENT || '';
             const visualizationUrl = `${{ steps.visualize.outputs.VISUALIZATION_URL }}`;
             
             // Build final comment body
