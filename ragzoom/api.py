@@ -372,7 +372,7 @@ if __name__ == "__main__":
     # Configure logging
     service = RagZoomService()
     logging.basicConfig(
-        level=getattr(logging, service.operational_config.log_level),
+        level=getattr(logging, service.operational_config.log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 

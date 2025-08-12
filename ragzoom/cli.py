@@ -124,6 +124,7 @@ def cli(ctx: click.Context) -> None:
     default=None,
     help="Save telemetry data to JSON file",
 )
+@click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -141,6 +142,7 @@ def index(
     data_dir: str | None,
     debug: bool,
     telemetry_file: str | None,
+    validate: bool,
 ) -> None:
     """Index a document from file.
 
@@ -154,7 +156,7 @@ def index(
       ragzoom index document.txt --config myconfig.json
     """
 
-    setup_command_environment(None, debug, False)
+    setup_command_environment(None, debug, validate)
 
     try:
         # Load indexing configuration with CLI overrides
