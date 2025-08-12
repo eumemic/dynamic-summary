@@ -15,6 +15,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 from ragzoom.config import get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_analysis import (
@@ -757,6 +759,7 @@ class TelemetryVisualizer:
         input_tokens = []
         output_tokens = []
         attempt_numbers = []
+        node_count = 0  # Track actual number of nodes processed
 
         # Process nodes to extract ALL attempts (not just accepted ones)
         for node in nodes:
@@ -770,12 +773,14 @@ class TelemetryVisualizer:
 
                 # Process ALL summary attempts for this node
                 attempts = node.get("summary_attempts", [])
-                for attempt_num, attempt in enumerate(attempts, 1):
-                    actual_tokens = attempt.get("actual_tokens", 0)
-                    if actual_tokens > 0:
-                        input_tokens.append(input_text_tokens)
-                        output_tokens.append(actual_tokens)
-                        attempt_numbers.append(attempt_num)
+                if attempts:  # Only count nodes that have attempts
+                    node_count += 1
+                    for attempt_num, attempt in enumerate(attempts, 1):
+                        actual_tokens = attempt.get("actual_tokens", 0)
+                        if actual_tokens > 0:
+                            input_tokens.append(input_text_tokens)
+                            output_tokens.append(actual_tokens)
+                            attempt_numbers.append(attempt_num)
 
         if not input_tokens:
             ax.text(
@@ -835,12 +840,15 @@ class TelemetryVisualizer:
         ax.set_ylim(y_min, y_max)
 
         # Add acceptable range band based on retry_threshold (full width of plot)
-        # Use very large x-coordinates to ensure it extends beyond any possible axis limits
+        # Get current x-axis limits and extend slightly beyond them
+        xlim = ax.get_xlim()
+        x_extend = [xlim[0] - (xlim[1] - xlim[0]), xlim[1] + (xlim[1] - xlim[0])]
+
         if chunk_size > 0:
             if retry_threshold is not None:
                 threshold_tokens = chunk_size * retry_threshold
                 ax.fill_between(
-                    [-10000, 10000],  # Extend far beyond any possible data range
+                    x_extend,
                     chunk_size - threshold_tokens,
                     chunk_size + threshold_tokens,
                     alpha=0.1,
@@ -848,14 +856,18 @@ class TelemetryVisualizer:
                     label=f"±{retry_threshold*100:.0f}% retry threshold",
                 )
             else:
-                # Fallback to ±10 tokens if no retry_threshold found
+                # Warn when retry_threshold is missing and use fallback
+                print(
+                    "Warning: retry_threshold not found in telemetry config. "
+                    "Using fallback ±10 token range."
+                )
                 ax.fill_between(
-                    [-10000, 10000],  # Extend far beyond any possible data range
+                    x_extend,
                     chunk_size - 10,
                     chunk_size + 10,
                     alpha=0.1,
                     color="green",
-                    label="±10 token range",
+                    label="±10 token range (fallback)",
                 )
 
         # Add diagonal reference line showing 1:1 ratio (full plot extent)
@@ -869,9 +881,6 @@ class TelemetryVisualizer:
         )
 
         # Create custom legend for attempt numbers (matching cost breakdown)
-        from matplotlib.lines import Line2D
-        from matplotlib.patches import Patch
-
         legend_elements: list = [
             Patch(facecolor=colors[0], label="Attempt 1", alpha=0.6),
             Patch(facecolor=colors[1], label="Attempt 2", alpha=0.6),
@@ -955,12 +964,9 @@ class TelemetryVisualizer:
 
         avg_attempts = np.mean(attempt_numbers)
 
-        # Count unique nodes for summary count
-        unique_inputs = len(set(input_tokens))
-
         stats_text = (
             f"Avg attempts: {avg_attempts:.2f}\n"
-            f"Total attempts: {len(input_tokens)} ({unique_inputs} nodes)"
+            f"Total attempts: {len(input_tokens)} ({node_count} nodes)"
         )
         ax.text(
             0.98,
@@ -972,126 +978,6 @@ class TelemetryVisualizer:
             bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8),
             fontsize=8,
         )
-
-    def _plot_summary_accuracy(self, telemetry: dict, ax: plt.Axes) -> None:
-        """Plot summary accuracy distribution for all attempts, color-coded by attempt number."""
-        # Constants for attempt grouping
-        max_attempt_groups = 5  # Maximum number of attempt groups to track
-
-        # Extract deviations from all attempts
-        deviations_by_attempt: dict[int, list[float]] = {
-            i: [] for i in range(1, max_attempt_groups + 1)
-        }
-
-        # Extract chunk size and nodes from telemetry data
-        chunk_size = self._extract_chunk_size_from_telemetry(telemetry)
-        nodes = self._extract_nodes_from_telemetry(telemetry)
-
-        # If no valid chunk_size found, return empty deviations
-        if chunk_size <= 0:
-            ax.text(
-                0.5,
-                0.5,
-                "No deviation data available",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-            )
-            ax.set_title("Summary Accuracy")
-            return
-
-        # Process all attempts from all summary nodes
-        for node in nodes:
-            height = node.get("height", node.get("level", 0))
-            if height > 0:  # Summary nodes only
-                attempts = node.get("summary_attempts", [])
-                for attempt_num, attempt in enumerate(attempts, 1):
-                    actual_tokens = attempt.get("actual_tokens", 0)
-                    if actual_tokens > 0:
-                        deviation = (actual_tokens - chunk_size) / chunk_size * 100
-                        if attempt_num <= max_attempt_groups:
-                            deviations_by_attempt[attempt_num].append(deviation)
-                        else:
-                            # Group attempts beyond max_attempt_groups together
-                            deviations_by_attempt[max_attempt_groups].append(deviation)
-
-        # Combine all deviations to determine bin edges
-        all_deviations = []
-        for devs in deviations_by_attempt.values():
-            all_deviations.extend(devs)
-
-        if not all_deviations:
-            ax.text(
-                0.5,
-                0.5,
-                "No deviation data available",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-            )
-            ax.set_title("Summary Accuracy")
-            return
-
-        # Create consistent bins for all attempts
-        bins = np.linspace(min(all_deviations), max(all_deviations), 31)
-
-        # Create stacked histogram data with horizontal bars
-        colors = [
-            "#2563eb",
-            "#10b981",
-            "#f59e0b",
-            "#ef4444",
-            "#991b1b",
-        ]  # Blue to red gradient
-        labels = ["Attempt 1", "Attempt 2", "Attempt 3", "Attempt 4", "Attempt 5+"]
-
-        # Calculate histogram data for each attempt
-        left = np.zeros(len(bins) - 1)
-
-        for attempt_num in range(1, 6):
-            if deviations_by_attempt[attempt_num]:
-                counts, _ = np.histogram(deviations_by_attempt[attempt_num], bins=bins)
-                ax.barh(
-                    bins[:-1],
-                    counts,
-                    height=np.diff(bins),
-                    left=left,
-                    color=colors[attempt_num - 1],
-                    label=labels[attempt_num - 1],
-                    alpha=0.8,
-                    edgecolor="none",
-                )
-                left += counts
-
-        # Add target line (now horizontal)
-        ax.axhline(0, color="green", linestyle="--", label="Target", linewidth=2)
-
-        # Add statistics for all deviations (not just final)
-        if all_deviations:
-            median_dev = float(np.median(all_deviations))
-            avg_dev = float(np.mean(all_deviations))
-            ax.axhline(
-                median_dev,
-                color="red",
-                linestyle="-.",
-                label=f"Median: {median_dev:.1f}%",
-                linewidth=1.5,
-                alpha=0.7,
-            )
-            ax.axhline(
-                avg_dev,
-                color="blue",
-                linestyle=":",
-                label=f"Average: {avg_dev:.1f}%",
-                linewidth=1.5,
-                alpha=0.7,
-            )
-
-        ax.set_ylabel("Deviation from Target Token Count (%)")
-        ax.set_xlabel("Frequency")
-        ax.set_title("Summary Accuracy\n(All attempts, stacked by attempt number)")
-        ax.legend(loc="upper right", fontsize=8)
-        ax.grid(True, alpha=0.3)
 
     def _plot_node_timeline(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot summary node creation timeline."""
