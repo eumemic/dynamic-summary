@@ -619,7 +619,19 @@ class Store:
         embedding_model: str,
         summary_model: str,
     ) -> Document:
-        """Add a document record."""
+        """Add a document record.
+
+        Args:
+            document_id: Unique identifier for the document
+            file_path: Optional path to the source file
+            content_hash: SHA256 hash of the document content
+            chunk_count: Number of chunks in the document
+            embedding_model: Name of the embedding model used for indexing
+            summary_model: Name of the summarization model used
+
+        Note: Model name validation is performed by the indexing layer
+        to ensure they're valid OpenAI models before storage.
+        """
         with self.SessionLocal() as session:
             doc = Document(
                 id=document_id,

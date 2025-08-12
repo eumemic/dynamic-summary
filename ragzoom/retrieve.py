@@ -83,8 +83,9 @@ class Retriever:
                     f"Auto-detected embedding model '{embedding_model}' for document {document_id}"
                 )
             else:
-                logger.debug(
-                    f"No embedding model found for document {document_id}, using config default: {embedding_model}"
+                logger.warning(
+                    f"No embedding model found for document {document_id}, using config default: {embedding_model}. "
+                    f"This may indicate the document was indexed before model tracking was implemented."
                 )
 
         try:
