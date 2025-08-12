@@ -112,7 +112,7 @@ class TestIntegration:
         db_path = f"{temp_dir}/test.db"
 
         # Create separate configs
-        index_config = IndexConfig(
+        index_config = IndexConfig.load(
             target_chunk_tokens=50,
             preceding_context_tokens=25,  # Must be less than leaf_tokens
         )

@@ -18,7 +18,7 @@ class TestIndexingCreatesLeftBalancedTrees:
     @pytest.fixture
     def setup_indexing(self):
         """Set up indexing system with validation enabled."""
-        index_config = IndexConfig(
+        index_config = IndexConfig.load(
             target_chunk_tokens=50,  # Small chunks for testing
             preceding_context_tokens=25,
         )

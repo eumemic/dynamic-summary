@@ -84,7 +84,7 @@ class TestDocumentIsolation:
     def setup(self, mock_openai):
         """Create test environment."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            index_config = IndexConfig(
+            index_config = IndexConfig.load(
                 target_chunk_tokens=50,
                 preceding_context_tokens=25,
             )

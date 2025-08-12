@@ -13,7 +13,9 @@ class TestCoverageTreeCompleteness:
     @pytest.fixture
     def setup_incomplete_tree(self):
         """Set up a system with a tree that will produce incomplete coverage."""
-        index_config = IndexConfig(target_chunk_tokens=100, preceding_context_tokens=50)
+        index_config = IndexConfig.load(
+            target_chunk_tokens=100, preceding_context_tokens=50
+        )
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key="test-key")
 

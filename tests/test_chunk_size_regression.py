@@ -17,7 +17,7 @@ class TestChunkSizeRegression:
     @pytest.fixture
     def config(self):
         """Create test config with specific leaf token size."""
-        return IndexConfig(
+        return IndexConfig.load(
             target_chunk_tokens=200,
         )
 
@@ -99,7 +99,7 @@ class TestChunkSizeRegression:
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
         # Create separate configs
-        index_config = IndexConfig(target_chunk_tokens=200)
+        index_config = IndexConfig.load(target_chunk_tokens=200)
         operational_config = OperationalConfig(
             openai_api_key="test-key",
             sqlite_database_url=f"sqlite:///{tmp_path}/test.db",

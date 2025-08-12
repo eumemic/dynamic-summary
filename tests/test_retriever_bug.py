@@ -15,7 +15,9 @@ class TestRetrieverBug:
     @pytest.fixture
     def setup_tree_for_bug_demo(self):
         """Set up a system with a tree structure to demonstrate the bug."""
-        index_config = IndexConfig(target_chunk_tokens=100, preceding_context_tokens=50)
+        index_config = IndexConfig.load(
+            target_chunk_tokens=100, preceding_context_tokens=50
+        )
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key="test-key")
 

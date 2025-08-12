@@ -17,7 +17,7 @@ import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from statistics import median
-from typing import Any, overload
+from typing import Any, TypedDict, overload
 
 from ragzoom.config import get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_types import (
@@ -76,11 +76,31 @@ def get_model_pricing(summary_model: str, embedding_model: str) -> dict[str, flo
 # ============================================================================
 
 
+class VerbatimOffender(TypedDict):
+    """A node that was detected as verbatim concatenation."""
+
+    node_id: str
+    height: int
+    input_tokens: int
+    output_tokens: int
+    ratio: float
+
+
+class VerbatimDetectionResult(TypedDict):
+    """Result of verbatim concatenation detection."""
+
+    total_summaries: int
+    verbatim_count: int
+    verbatim_percentage: float
+    worst_offenders: list[VerbatimOffender]
+    height_distribution: dict[int, int]
+
+
 @dataclass
 class SimplifiedMetrics:
     """Simplified metrics structure organized by chunk size."""
 
-    metrics_by_chunk_size: dict[int, dict[str, dict[str, float]]]
+    metrics_by_chunk_size: dict[int, dict[str, Any]]
 
 
 def compute_simplified_metrics(telemetry_data: dict) -> SimplifiedMetrics:
@@ -165,6 +185,7 @@ def compute_simplified_metrics(telemetry_data: dict) -> SimplifiedMetrics:
                     {"summary": summary_model, "embedding": embedding_model},
                 ),
                 "dispersion": compute_dispersion_metrics(chunk_nodes),
+                "verbatim": detect_verbatim_concatenations(chunk_nodes),
             }
 
     return SimplifiedMetrics(metrics_by_chunk_size=metrics_by_chunk_size)
@@ -577,6 +598,103 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]
         "cv": cv,
         "std": std,
     }
+
+
+def detect_verbatim_concatenations(
+    nodes: list[NodeTelemetryDict], tolerance: float | None = None
+) -> VerbatimDetectionResult:
+    """Detect nodes where the LLM returned input text verbatim.
+
+    Args:
+        nodes: List of node telemetry data
+        tolerance: Ratio tolerance for considering compression as verbatim.
+                  If None, uses RAGZOOM_VERBATIM_TOLERANCE env var (default 0.02 = 2%)
+
+    Returns:
+        VerbatimDetectionResult containing:
+        - total_summaries: Total number of summary nodes
+        - verbatim_count: Number of verbatim concatenations detected
+        - verbatim_percentage: Percentage of summaries that are verbatim
+        - worst_offenders: List of worst cases with details (VerbatimOffender TypedDict)
+        - height_distribution: Count of verbatim issues by tree height
+    """
+    if tolerance is None:
+        # Allow configuration via environment variable
+        import os
+
+        tolerance = float(os.environ.get("RAGZOOM_VERBATIM_TOLERANCE", "0.02"))
+    verbatim_nodes: list[VerbatimOffender] = []
+    height_distribution: dict[int, int] = {}
+    total_summaries = 0
+
+    for node in nodes:
+        # Skip leaf nodes and nodes without summaries
+        summary_attempts = node.get("summary_attempts", [])
+        if not summary_attempts:
+            continue
+
+        # Get input tokens from the node itself (this is what was actually summarized)
+        input_tokens = node.get("input_text_tokens", 0)
+        if input_tokens == 0:
+            # Fallback to prompt_tokens from attempts if input_text_tokens not available
+            if summary_attempts:
+                input_tokens = summary_attempts[0].get("prompt_tokens", 0)
+
+        if input_tokens == 0:
+            continue
+
+        # Get the accepted attempt
+        accepted_idx = node.get("accepted_attempt")
+        if accepted_idx is not None and 0 <= accepted_idx < len(summary_attempts):
+            summary = summary_attempts[accepted_idx]
+        else:
+            # Fallback to last attempt
+            summary = summary_attempts[-1]
+
+        output_tokens = summary.get("actual_tokens", 0)
+
+        if output_tokens == 0:
+            continue
+
+        total_summaries += 1
+
+        # Calculate compression ratio
+        ratio = output_tokens / input_tokens
+
+        # Check if it's essentially verbatim (within tolerance)
+        if abs(ratio - 1.0) <= tolerance:
+            height = node.get("height", node.get("level", 0))
+            offender: VerbatimOffender = {
+                "node_id": node["node_id"],
+                "height": height,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "ratio": ratio,
+            }
+            verbatim_nodes.append(offender)
+
+            # Track height distribution
+            height_distribution[height] = height_distribution.get(height, 0) + 1
+
+    # Sort worst offenders by token count (highest first)
+    worst_offenders = sorted(
+        verbatim_nodes, key=lambda x: x["input_tokens"], reverse=True
+    )[
+        :5
+    ]  # Top 5 worst cases
+
+    verbatim_count = len(verbatim_nodes)
+    verbatim_percentage = (
+        (verbatim_count / total_summaries * 100) if total_summaries > 0 else 0
+    )
+
+    return VerbatimDetectionResult(
+        total_summaries=total_summaries,
+        verbatim_count=verbatim_count,
+        verbatim_percentage=verbatim_percentage,
+        worst_offenders=worst_offenders,
+        height_distribution=height_distribution,
+    )
 
 
 # ============================================================================

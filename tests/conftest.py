@@ -112,7 +112,7 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture
 def base_config() -> BackwardCompatibilityConfig:
     """Create base configuration for tests."""
-    index_config = IndexConfig(
+    index_config = IndexConfig.load(
         target_chunk_tokens=50,
         preceding_context_tokens=25,
     )
