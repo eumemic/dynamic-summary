@@ -453,11 +453,11 @@ Remember: Your goal is to maximize information preservation while hitting the ta
         # Process adjacent context if needed
         trimmed_prev = None
 
-        if prev_context and self.config.prev_context_tokens > 0:
+        if prev_context and self.config.preceding_context_tokens > 0:
             # Trim prev_context to adjacent_context_tokens
             prev_tokens = self.splitter.tokenizer.encode(prev_context)
-            if len(prev_tokens) > self.config.prev_context_tokens:
-                context_tokens = prev_tokens[-self.config.prev_context_tokens :]
+            if len(prev_tokens) > self.config.preceding_context_tokens:
+                context_tokens = prev_tokens[-self.config.preceding_context_tokens :]
                 trimmed_prev = self.splitter.tokenizer.decode(context_tokens)
             else:
                 trimmed_prev = prev_context
@@ -484,7 +484,7 @@ Here's the content to summarize:"""
         prompt_parts = [instruction]
 
         # Add preceding context if available
-        if prev_context and self.config.prev_context_tokens > 0 and trimmed_prev:
+        if prev_context and self.config.preceding_context_tokens > 0 and trimmed_prev:
             prompt_parts.append(
                 f"\n<PRECEDING_TEXT>\n...{trimmed_prev.strip()}\n</PRECEDING_TEXT>"
             )

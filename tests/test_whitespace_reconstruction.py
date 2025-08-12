@@ -50,7 +50,7 @@ class TestWhitespaceReconstruction:
             # Create separate configs
             index_config = IndexConfig(
                 target_chunk_tokens=50,  # Reasonable chunk size
-                prev_context_tokens=10,
+                preceding_context_tokens=10,
             )
             query_config = QueryConfig(budget_tokens=1000)
             operational_config = OperationalConfig(

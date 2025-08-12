@@ -75,29 +75,11 @@ def cli(ctx: click.Context) -> None:
     🔧 Configuration:
       ragzoom config --examples
     """
-    # Initialize shared components
-    index_config = IndexConfig()
-    query_config = QueryConfig()
-    operational_config = OperationalConfig()  # Will read OPENAI_API_KEY from env
-
-    store = Store(operational_config, embedding_model=index_config.embedding_model)
-
+    # Only create configs, not components
     ctx.ensure_object(dict)
-    ctx.obj["index_config"] = index_config
-    ctx.obj["query_config"] = query_config
-    ctx.obj["operational_config"] = operational_config
-    ctx.obj["store"] = store
-
-    tree_builder = TreeBuilder(
-        index_config, store, api_key=operational_config.openai_api_key
-    )
-    ctx.obj["tree_builder"] = tree_builder
-
-    retriever = Retriever(
-        query_config, index_config, store, api_key=operational_config.openai_api_key
-    )
-    ctx.obj["retriever"] = retriever
-    ctx.obj["assembler"] = Assembler(store)
+    ctx.obj["index_config"] = IndexConfig()
+    ctx.obj["query_config"] = QueryConfig()
+    ctx.obj["operational_config"] = OperationalConfig()
 
 
 @cli.command()
@@ -114,7 +96,7 @@ def cli(ctx: click.Context) -> None:
     "--target-chunk-tokens", type=int, help="Target size for leaf chunks in tokens"
 )
 @click.option(
-    "--prev-context-tokens", type=int, help="Context tokens from adjacent chunks"
+    "--preceding-context-tokens", type=int, help="Context tokens from adjacent chunks"
 )
 @click.option("--summary-model", "-m", type=str, help="Model for summarization")
 @click.option("--embedding-model", type=str, help="Model for embeddings")
@@ -150,7 +132,7 @@ def index(
     clear: bool,
     config_path: Path | None,
     target_chunk_tokens: int | None,
-    prev_context_tokens: int | None,
+    preceding_context_tokens: int | None,
     summary_model: str | None,
     embedding_model: str | None,
     retry_threshold: float | None,
@@ -179,7 +161,7 @@ def index(
         indexing_config = load_indexing_config(
             config_path,
             target_chunk_tokens=target_chunk_tokens,
-            prev_context_tokens=prev_context_tokens,
+            preceding_context_tokens=preceding_context_tokens,
             summary_model=summary_model,
             embedding_model=embedding_model,
             retry_threshold=retry_threshold,
@@ -205,15 +187,13 @@ def index(
         ctx.obj["query_config"] = query_config
         ctx.obj["operational_config"] = operational_config
 
+        # Create components for this command
         store = Store(operational_config, embedding_model=index_config.embedding_model)
-        ctx.obj["store"] = store
-
         tree_builder = TreeBuilder(
             index_config,
             store,
             api_key=operational_config.openai_api_key,
         )
-        ctx.obj["tree_builder"] = tree_builder
 
         # Read file
         path = Path(file_path)
@@ -225,7 +205,6 @@ def index(
 
         # Clear existing document if requested
         if clear:
-            store = ctx.obj["store"]
             # Check if document exists
             with store.SessionLocal() as session:
                 from ragzoom.store import Document
@@ -241,9 +220,6 @@ def index(
                     click.echo(f"   Cleared {deleted_count} nodes")
 
         click.echo(f"Indexing {path.name}...")
-
-        # Use tree builder from context (already configured)
-        tree_builder = ctx.obj["tree_builder"]
 
         # Index with telemetry if requested
         if telemetry_file:
@@ -262,7 +238,6 @@ def index(
             )
 
         # Get stats
-        store = ctx.obj["store"]
 
         # Get leaf nodes for this specific document
         with store.SessionLocal() as session:
@@ -350,7 +325,10 @@ def index(
 def documents(ctx: click.Context) -> None:
     """List all indexed documents."""
     try:
-        store = ctx.obj["store"]
+        # Create components for this command
+        operational_config = ctx.obj["operational_config"]
+        index_config = ctx.obj["index_config"]
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
 
         # Get all unique documents
         with store.SessionLocal() as session:
@@ -401,6 +379,7 @@ def documents(ctx: click.Context) -> None:
 @click.option("--document-id", "-d", required=True, help="Document ID to query within")
 @click.option("--num-seeds", type=int, help="Number of seed nodes to retrieve")
 @click.option("--token-budget", type=int, help="Token budget for summary")
+@click.option("--embedding-model", type=str, help="Embedding model for query")
 @click.option(
     "--debug",
     is_flag=True,
@@ -425,6 +404,7 @@ def query(
     document_id: str,
     num_seeds: int | None,
     token_budget: int | None,
+    embedding_model: str | None,
     debug: bool,
     validate: bool,
     viz_width: int | None,
@@ -437,18 +417,18 @@ def query(
     try:
         # Get configs from context (set up during CLI initialization)
         query_config = ctx.obj["query_config"]
-        index_config = ctx.obj["index_config"]
         operational_config = ctx.obj["operational_config"]
 
         # Override with CLI parameters if provided
         if token_budget is not None:
             query_config = query_config.replace(budget_tokens=token_budget)
+        if embedding_model is not None:
+            query_config = query_config.replace(embedding_model=embedding_model)
 
-        # Create components
-        store = ctx.obj["store"]
+        # Create components for this command
+        store = Store(operational_config, embedding_model=query_config.embedding_model)
         retriever = Retriever(
             query_config,
-            index_config,
             store,
             api_key=operational_config.openai_api_key,
         )
@@ -484,7 +464,6 @@ def query(
         click.echo("SUMMARY")
         click.echo("=" * 60)
         if debug and getattr(result, "tiling", None) and result.tiling:
-            store = ctx.obj["store"]
             for idx, node_id in enumerate(result.tiling):
                 node = store.get_node(node_id)
                 if node:
@@ -559,7 +538,10 @@ def query(
 def pin(ctx: click.Context, node_id: str) -> None:
     """Pin a node to always include it."""
     try:
-        store = ctx.obj["store"]
+        # Create components for this command
+        operational_config = ctx.obj["operational_config"]
+        index_config = ctx.obj["index_config"]
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
         success = store.pin_node(node_id)
 
         if success:
@@ -578,9 +560,11 @@ def pin(ctx: click.Context, node_id: str) -> None:
 def status(ctx: click.Context) -> None:
     """Show system status."""
     try:
-        store = ctx.obj["store"]
+        # Get configs and create components
         index_config = ctx.obj["index_config"]
         query_config = ctx.obj["query_config"]
+        operational_config = ctx.obj["operational_config"]
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
         # Gather stats
         all_nodes = store.collection.count()
         leaf_nodes = store.get_leaf_nodes()
@@ -639,7 +623,10 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
     With --document-id, clears only the specified document.
     """
     try:
-        store = ctx.obj["store"]
+        # Create components for this command
+        operational_config = ctx.obj["operational_config"]
+        index_config = ctx.obj["index_config"]
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
 
         if document_id:
             # Clear specific document
@@ -705,14 +692,16 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
 
 
 @cli.command()
-@click.argument("input_file", type=click.Path(exists=True))
 @click.argument("output_file", type=click.Path())
 @click.option("--format", type=click.Choice(["json", "text"]), default="text")
 @click.pass_context
-def export(ctx: click.Context, input_file: str, output_file: str, format: str) -> None:
+def export(ctx: click.Context, output_file: str, format: str) -> None:
     """Export tree structure to file."""
     try:
-        store = ctx.obj["store"]
+        # Create components for this command
+        operational_config = ctx.obj["operational_config"]
+        index_config = ctx.obj["index_config"]
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
 
         # Get all nodes
         nodes_data = []
@@ -741,11 +730,24 @@ def export(ctx: click.Context, input_file: str, output_file: str, format: str) -
         else:
             # Text format
             lines = []
-            for node in sorted(nodes_data, key=lambda x: (x["depth"], x["span_start"])):
-                indent = "  " * node["height"]
-                leaf_marker = "🍃" if node["is_leaf"] else "📁"
+            for node_dict in sorted(
+                nodes_data, key=lambda x: (x["height"], x["span_start"])
+            ):
+                height = node_dict.get("height", 0)
+                if isinstance(height, int):
+                    indent = "  " * height
+                else:
+                    indent = ""
+                leaf_marker = "🍃" if node_dict.get("is_leaf") else "📁"
+                node_id = node_dict.get("id", "")
+                if isinstance(node_id, str):
+                    node_id_short = node_id[:8] if len(node_id) > 8 else node_id
+                else:
+                    node_id_short = str(node_id)[:8]
+                span_start = node_dict.get("span_start", 0)
+                span_end = node_dict.get("span_end", 0)
                 lines.append(
-                    f"{indent}{leaf_marker} {node['id'][:8]}... [{node['span_start']}-{node['span_end']}]"
+                    f"{indent}{leaf_marker} {node_id_short}... [{span_start}-{span_end}]"
                 )
             output_path.write_text("\n".join(lines))
 
@@ -793,7 +795,7 @@ def config(examples: bool, output_file: str | None) -> None:
             json.dumps(
                 {
                     "target_chunk_tokens": 300,
-                    "prev_context_tokens": 100,
+                    "preceding_context_tokens": 100,
                     "summary_model": "gpt-4o",
                     "embedding_model": "text-embedding-3-large",
                     "retry_threshold": 0.15,
@@ -854,7 +856,7 @@ def config(examples: bool, output_file: str | None) -> None:
         # Create a sample config file
         sample_config = {
             "target_chunk_tokens": 200,
-            "prev_context_tokens": 75,
+            "preceding_context_tokens": 75,
             "summary_model": "gpt-4o",
             "embedding_model": "text-embedding-3-small",
             "retry_threshold": 0.2,

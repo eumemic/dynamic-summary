@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.config import OperationalConfig, QueryConfig
 from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
@@ -96,7 +96,6 @@ class TestNumSeedsFix:
         store.get_ancestors = Mock(side_effect=mock_get_ancestors)
 
         # Create config and retriever
-        index_config = IndexConfig()
         query_config = QueryConfig(budget_tokens=10000)
         operational_config = OperationalConfig(openai_api_key="test-key")
 
@@ -112,7 +111,6 @@ class TestNumSeedsFix:
 
             retriever = Retriever(
                 query_config=query_config,
-                index_config=index_config,
                 store=store,
                 api_key=operational_config.openai_api_key,
                 tree_builder=None,

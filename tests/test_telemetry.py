@@ -61,7 +61,7 @@ class TestTelemetryCollection:
         """Create test config."""
         return IndexConfig(
             target_chunk_tokens=100,
-            prev_context_tokens=50,
+            preceding_context_tokens=50,
             embedding_batch_size=2,
         )
 
@@ -203,7 +203,7 @@ class TestTelemetryIntegration:
         store = request.getfixturevalue(f"{store_type}_store")
         index_config = IndexConfig(
             target_chunk_tokens=100,
-            prev_context_tokens=50,
+            preceding_context_tokens=50,
             embedding_batch_size=2,
         )
         operational_config = OperationalConfig(
@@ -288,7 +288,7 @@ class TestTelemetryIntegration:
         assert "config" in telemetry_data
         config = telemetry_data["config"]
         assert "target_chunk_tokens" in config
-        assert "prev_context_tokens" in config
+        assert "preceding_context_tokens" in config
         assert "summary_model" in config
         assert "embedding_model" in config
 

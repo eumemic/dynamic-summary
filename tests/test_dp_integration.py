@@ -41,7 +41,7 @@ class ConfigWrapper:
 
     @property
     def prev_context_tokens(self) -> int:
-        return self.index_config.prev_context_tokens
+        return self.index_config.preceding_context_tokens
 
     @property
     def budget_tokens(self) -> int:
@@ -99,7 +99,7 @@ class TestDPIntegration:
         return ConfigWrapper(
             index_config=IndexConfig(
                 target_chunk_tokens=50,
-                prev_context_tokens=0,
+                preceding_context_tokens=0,
             ),
             query_config=QueryConfig(
                 budget_tokens=500,
@@ -185,7 +185,6 @@ class TestDPIntegration:
         # Retrieve with a query
         retriever = Retriever(
             config.query_config,
-            config.index_config,
             store,
             api_key=config.openai_api_key,
             tree_builder=tree_builder,
@@ -242,7 +241,6 @@ class TestDPIntegration:
         # Retrieve
         retriever = Retriever(
             config.query_config,
-            small_config,
             store,
             api_key=config.openai_api_key,
             tree_builder=tree_builder,
@@ -293,7 +291,6 @@ class TestDPIntegration:
         # Retrieve with different queries
         retriever = Retriever(
             config.query_config,
-            small_config,
             store,
             api_key=config.openai_api_key,
             tree_builder=tree_builder,
@@ -345,7 +342,6 @@ class TestDPIntegration:
         # Retrieve with budget
         retriever = Retriever(
             small_query_config,
-            config.index_config,
             store,
             api_key=config.openai_api_key,
             tree_builder=tree_builder,

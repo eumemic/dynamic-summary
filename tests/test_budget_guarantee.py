@@ -92,7 +92,7 @@ class TestBudgetGuarantee:
             with tempfile.TemporaryDirectory() as temp_dir:
                 index_config = IndexConfig(
                     target_chunk_tokens=200,  # Standard leaf size
-                    prev_context_tokens=50,
+                    preceding_context_tokens=50,
                 )
                 query_config = QueryConfig(
                     budget_tokens=1000,  # Strict budget for testing
@@ -114,7 +114,6 @@ class TestBudgetGuarantee:
                 )
                 retriever = Retriever(
                     query_config,
-                    index_config,
                     store,
                     api_key=operational_config.openai_api_key,
                 )
@@ -354,7 +353,6 @@ class TestBudgetGuarantee:
             )
             retriever = Retriever(
                 query_config,
-                index_config,
                 store,
                 api_key=operational_config.openai_api_key,
             )

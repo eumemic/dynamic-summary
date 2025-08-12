@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 from openai import OpenAI
 
-from ragzoom.config import IndexConfig, QueryConfig
+from ragzoom.config import QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.store import Store, TreeNode
 
@@ -36,7 +36,6 @@ class Retriever:
     def __init__(
         self,
         query_config: QueryConfig,
-        index_config: IndexConfig,
         store: Store,
         api_key: str = "",
         tree_builder: Optional["TreeBuilder"] = None,
@@ -45,13 +44,11 @@ class Retriever:
 
         Args:
             query_config: Query configuration
-            index_config: Index configuration (for target_chunk_tokens)
             store: Store instance
             api_key: OpenAI API key (if not provided, reads from OPENAI_API_KEY env)
             tree_builder: Optional TreeBuilder instance
         """
         self.query_config = query_config
-        self.index_config = index_config
         self.store = store
 
         # Get API key from parameter or environment
@@ -68,7 +65,7 @@ class Retriever:
         """Get embedding for query text."""
         try:
             response = self.client.embeddings.create(
-                model=self.index_config.embedding_model,
+                model=self.query_config.embedding_model,
                 input=query,
                 # Let OpenAI API determine dimensions - no need for hardcoded values
             )
@@ -111,9 +108,9 @@ class Retriever:
             logger.info(f"Mixed mode: num_seeds={num_seeds}, budget={budget_tokens}")
         elif num_seeds is None:
             # Mode 3: num_seeds only (using default)
-            num_seeds = (
-                self.query_config.budget_tokens // self.index_config.target_chunk_tokens
-            )
+            # Use a reasonable default chunk size for calculation
+            default_chunk_size = 256
+            num_seeds = self.query_config.budget_tokens // default_chunk_size
             logger.info(f"num_seeds-only mode: using num_seeds={num_seeds}")
 
         # Get query embedding
@@ -305,30 +302,26 @@ class Retriever:
         """Calculate conservative num_seeds that is more grounded in document reality."""
 
         # Get all nodes for the document to calculate an average cost.
-        # This is more realistic than a hardcoded multiplier.
         all_nodes = self.store.get_all_nodes_for_document(document_id)
         if not all_nodes:
-            # Fallback to old logic if no nodes are found
-            leaf_tokens = (
-                self.index_config.target_chunk_tokens
-                if self.index_config.target_chunk_tokens > 0
-                else 256
+            # Use a reasonable constant fallback with warning
+            logger.warning(
+                f"No nodes found for document {document_id}, using default estimate"
             )
-            return max(1, budget_tokens // leaf_tokens)
+            return max(1, budget_tokens // 200)  # 200 tokens per node estimate
 
+        # Calculate actual average from real nodes
         import tiktoken
 
         tokenizer = tiktoken.get_encoding("cl100k_base")
-
         total_tokens = sum(len(tokenizer.encode(node.text)) for node in all_nodes)
         average_tokens_per_node = total_tokens / len(all_nodes)
 
         if average_tokens_per_node == 0:
-            average_tokens_per_node = self.index_config.target_chunk_tokens
+            average_tokens_per_node = 200  # Fallback constant
 
-        # Add a small safety buffer (e.g., 25%) to the average to be safe
+        # Add safety buffer and calculate
         safe_average_cost = average_tokens_per_node * 1.25
-
         conservative_num_seeds = max(1, int(budget_tokens // safe_average_cost))
 
         return conservative_num_seeds

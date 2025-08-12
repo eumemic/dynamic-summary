@@ -36,7 +36,6 @@ class TestDPTiling:
         store = SimpleMockStore(config=config)
         retriever = Retriever(
             query_config=query_config,
-            index_config=index_config,
             store=store,
             api_key=operational_config.openai_api_key,
         )

@@ -114,7 +114,7 @@ class TestIntegration:
         # Create separate configs
         index_config = IndexConfig(
             target_chunk_tokens=50,
-            prev_context_tokens=25,  # Must be less than leaf_tokens
+            preceding_context_tokens=25,  # Must be less than leaf_tokens
         )
         query_config = QueryConfig(budget_tokens=500)
         operational_config = OperationalConfig(
@@ -128,7 +128,7 @@ class TestIntegration:
             index_config, store, api_key=operational_config.openai_api_key
         )
         retriever = Retriever(
-            query_config, index_config, store, api_key=operational_config.openai_api_key
+            query_config, store, api_key=operational_config.openai_api_key
         )
         assembler = Assembler(store)
 

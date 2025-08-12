@@ -38,7 +38,6 @@ class RagZoomService:
         )
         self.retriever = Retriever(
             self.query_config,
-            self.index_config,
             self.store,
             api_key=self.operational_config.openai_api_key,
         )
@@ -297,7 +296,6 @@ async def update_config(
             # Recreate retriever with new config
             service.retriever = Retriever(
                 service.query_config,
-                service.index_config,
                 service.store,
                 api_key=service.operational_config.openai_api_key,
             )
@@ -317,7 +315,6 @@ async def update_config(
             )
             service.retriever = Retriever(
                 service.query_config,
-                service.index_config,
                 service.store,
                 api_key=service.operational_config.openai_api_key,
             )

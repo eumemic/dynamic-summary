@@ -15,7 +15,7 @@ class TestRetrieverBug:
     @pytest.fixture
     def setup_tree_for_bug_demo(self):
         """Set up a system with a tree structure to demonstrate the bug."""
-        index_config = IndexConfig(target_chunk_tokens=100, prev_context_tokens=50)
+        index_config = IndexConfig(target_chunk_tokens=100, preceding_context_tokens=50)
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key="test-key")
 
@@ -23,7 +23,7 @@ class TestRetrieverBug:
         class Config:
             def __init__(self):
                 self.target_chunk_tokens = index_config.target_chunk_tokens
-                self.prev_context_tokens = index_config.prev_context_tokens
+                self.preceding_context_tokens = index_config.preceding_context_tokens
                 self.openai_api_key = operational_config.openai_api_key
 
         config = Config()
@@ -113,7 +113,6 @@ class TestRetrieverBug:
 
         retriever = Retriever(
             query_config=query_config,
-            index_config=index_config,
             store=store,
             api_key=operational_config.openai_api_key,
             tree_builder=None,

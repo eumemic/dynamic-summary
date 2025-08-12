@@ -86,7 +86,7 @@ class TestDocumentIsolation:
         with tempfile.TemporaryDirectory() as temp_dir:
             index_config = IndexConfig(
                 target_chunk_tokens=50,
-                prev_context_tokens=25,
+                preceding_context_tokens=25,
             )
             query_config = QueryConfig(
                 budget_tokens=1000,
@@ -108,7 +108,6 @@ class TestDocumentIsolation:
             )
             retriever = Retriever(
                 query_config,
-                index_config,
                 store,
                 api_key=operational_config.openai_api_key,
             )

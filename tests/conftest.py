@@ -44,7 +44,7 @@ class BackwardCompatibilityConfig:
 
     @property
     def prev_context_tokens(self) -> int:
-        return self.index_config.prev_context_tokens
+        return self.index_config.preceding_context_tokens
 
     @property
     def budget_tokens(self) -> int:
@@ -120,7 +120,7 @@ def base_config() -> BackwardCompatibilityConfig:
     """Create base configuration for tests."""
     index_config = IndexConfig(
         target_chunk_tokens=50,
-        prev_context_tokens=25,
+        preceding_context_tokens=25,
     )
     query_config = QueryConfig(
         budget_tokens=1000,

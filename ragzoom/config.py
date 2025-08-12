@@ -54,7 +54,7 @@ class IndexConfig:
     """
 
     target_chunk_tokens: int = 200
-    prev_context_tokens: int = 75
+    preceding_context_tokens: int = 75
     summary_model: str = "gpt-4o"
     embedding_model: str = "text-embedding-3-small"
     retry_threshold: float = 0.2
@@ -78,6 +78,7 @@ class QueryConfig:
     budget_tokens: int = 8000
     mmr_lambda: float = 0.7
     mmr_k_multiplier: float = 2.0
+    embedding_model: str = "text-embedding-3-small"
 
     def replace(self, **changes: Any) -> "QueryConfig":
         """Create a new QueryConfig with some fields changed."""

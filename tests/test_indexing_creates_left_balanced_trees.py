@@ -20,7 +20,7 @@ class TestIndexingCreatesLeftBalancedTrees:
         """Set up indexing system with validation enabled."""
         index_config = IndexConfig(
             target_chunk_tokens=50,  # Small chunks for testing
-            prev_context_tokens=25,
+            preceding_context_tokens=25,
         )
         query_config = QueryConfig()
         operational_config = OperationalConfig(

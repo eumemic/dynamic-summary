@@ -20,7 +20,7 @@ class TestSpanCorruption:
             # Create separate configs
             index_config = IndexConfig(
                 target_chunk_tokens=100,  # Small chunks to create many nodes
-                prev_context_tokens=10,  # Must be less than leaf_tokens
+                preceding_context_tokens=10,  # Must be less than leaf_tokens
             )
             query_config = QueryConfig(budget_tokens=1000)
             operational_config = OperationalConfig(
