@@ -893,16 +893,23 @@ class TelemetryVisualizer:
         ax.grid(True, alpha=0.3)
 
         # Add statistics annotation
-        compression_ratio = np.mean(
-            [o / i for i, o in zip(input_tokens, output_tokens)]
-        )
+        # Calculate deviations from target (chunk_size)
+        if chunk_size > 0:
+            deviations = [output - chunk_size for output in output_tokens]
+            avg_deviation = np.mean(deviations)
+            median_deviation = np.median(deviations)
+        else:
+            avg_deviation = 0.0
+            median_deviation = 0.0
+
         avg_attempts = np.mean(attempt_numbers)
 
         # Count unique nodes for summary count
         unique_inputs = len(set(input_tokens))
 
         stats_text = (
-            f"Avg compression: {compression_ratio:.2f}\n"
+            f"Avg deviation: {avg_deviation:+.1f} tokens\n"
+            f"Median deviation: {median_deviation:+.1f} tokens\n"
             f"Avg attempts: {avg_attempts:.2f}\n"
             f"Total attempts: {len(input_tokens)} ({unique_inputs} nodes)"
         )
