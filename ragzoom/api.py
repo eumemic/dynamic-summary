@@ -23,7 +23,7 @@ class RagZoomService:
         # Create separate configs
         self.index_config = IndexConfig()
         self.query_config = QueryConfig()
-        self.operational_config = (
+        self.operational_config: OperationalConfig = (
             OperationalConfig()
         )  # Will read OPENAI_API_KEY from env
 
