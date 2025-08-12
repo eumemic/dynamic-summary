@@ -12,9 +12,40 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
+
+
+class ConfigWrapper:
+    """Test configuration that combines the three config types for compatibility."""
+
+    def __init__(
+        self,
+        index_config: IndexConfig,
+        query_config: QueryConfig,
+        operational_config: OperationalConfig,
+    ):
+        self.index_config = index_config
+        self.query_config = query_config
+        self.operational_config = operational_config
+
+    # Backward compatibility properties
+    @property
+    def openai_api_key(self) -> str:
+        return self.operational_config.openai_api_key
+
+    @property
+    def target_chunk_tokens(self) -> int:
+        return self.index_config.target_chunk_tokens
+
+    @property
+    def prev_context_tokens(self) -> int:
+        return self.index_config.preceding_context_tokens
+
+    @property
+    def budget_tokens(self) -> int:
+        return self.query_config.budget_tokens
 
 
 def sync_embedding(*args, **kwargs):
@@ -65,18 +96,23 @@ class TestDPIntegration:
     @pytest.fixture
     def config(self):
         """Create test configuration."""
-        return RagZoomConfig(
-            openai_api_key="test-key",
-            slope_cap=True,
-            budget_tokens=500,
-            leaf_tokens=50,
-            adjacent_context_tokens=0,
+        return ConfigWrapper(
+            index_config=IndexConfig(
+                target_chunk_tokens=50,
+                preceding_context_tokens=0,
+            ),
+            query_config=QueryConfig(
+                budget_tokens=500,
+            ),
+            operational_config=OperationalConfig(
+                openai_api_key="test-key",
+            ),
         )
 
     @pytest.fixture
     def mock_openai(self, monkeypatch):
         """Mock OpenAI for consistent embeddings and summaries."""
-        monkeypatch.setenv("RAGZOOM_OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
         # Mock embeddings
         async def mock_embedding(*args, **kwargs):
@@ -137,7 +173,9 @@ class TestDPIntegration:
         document = "\n".join(base_lines * 8)
 
         # Index the document
-        tree_builder = TreeBuilder(config, store)
+        tree_builder = TreeBuilder(
+            config.index_config, store, api_key=config.openai_api_key
+        )
         tree_builder.client.embeddings.create = async_embedding
         tree_builder.client.chat.completions.create = async_summary
         await tree_builder.add_document_async(
@@ -145,20 +183,20 @@ class TestDPIntegration:
         )
 
         # Retrieve with a query
-        retriever = Retriever(config, store, tree_builder)
+        retriever = Retriever(
+            config.query_config,
+            store,
+            api_key=config.openai_api_key,
+            tree_builder=tree_builder,
+        )
         retriever.client.embeddings.create = sync_embedding
         retriever.client.chat.completions.create = sync_summary
         query = "First chunk Second chunk"  # Query that should match the first half
         result = await retriever.retrieve_async(query, document_id="doc1")
 
-        # Print tiling nodes
-        if hasattr(result, "tiling") and result.tiling is not None:
-            print("TILING NODES:", result.tiling)
-
         # Assemble the result
-        assembler = Assembler(config, store)
+        assembler = Assembler(store)
         assembled = assembler.assemble(result)
-        print("ASSEMBLED OUTPUT:\n", assembled)
         # With the new leaf node behavior, check for no duplicate content
         # Count occurrences of each unique line
         lines = assembled.strip().split("\n")
@@ -186,10 +224,13 @@ class TestDPIntegration:
         document = "This is a test document with some content."
 
         # Index with very small chunks to force tree structure
-        config.leaf_tokens = 10  # Very small chunks
+        small_config = config.index_config.replace(
+            target_chunk_tokens=10
+        )  # Very small chunks
         tree_builder = TreeBuilder(
-            config=config,
+            config=small_config,
             store=store,
+            api_key=config.openai_api_key,
         )
         tree_builder.client.embeddings.create = async_embedding
         tree_builder.client.chat.completions.create = async_summary
@@ -198,7 +239,12 @@ class TestDPIntegration:
         )
 
         # Retrieve
-        retriever = Retriever(config, store, tree_builder)
+        retriever = Retriever(
+            config.query_config,
+            store,
+            api_key=config.openai_api_key,
+            tree_builder=tree_builder,
+        )
         retriever.client.embeddings.create = sync_embedding
         retriever.client.chat.completions.create = sync_summary
         result = await retriever.retrieve_async("test document", document_id="doc1")
@@ -228,10 +274,13 @@ class TestDPIntegration:
         document = "AAAA BBBB CCCC DDDD"
 
         # Index the document
-        config.leaf_tokens = 5  # One word per chunk approximately
+        small_config = config.index_config.replace(
+            target_chunk_tokens=5
+        )  # One word per chunk approximately
         tree_builder = TreeBuilder(
-            config=config,
+            config=small_config,
             store=store,
+            api_key=config.openai_api_key,
         )
         tree_builder.client.embeddings.create = async_embedding
         tree_builder.client.chat.completions.create = async_summary
@@ -240,14 +289,19 @@ class TestDPIntegration:
         )
 
         # Retrieve with different queries
-        retriever = Retriever(config, store, tree_builder)
+        retriever = Retriever(
+            config.query_config,
+            store,
+            api_key=config.openai_api_key,
+            tree_builder=tree_builder,
+        )
 
         # Patch retriever client for sync
         retriever.client.embeddings.create = sync_embedding
         retriever.client.chat.completions.create = sync_summary
         # Query for first half
         result1 = await retriever.retrieve_async("AAAA BBBB", document_id="doc1")
-        assembler = Assembler(config, store)
+        assembler = Assembler(store)
         assembled1 = assembler.assemble(result1)
         # Should contain content from first half
         # Note: This test might be flaky due to how the tree is built with very small chunks
@@ -271,12 +325,13 @@ class TestDPIntegration:
         document = " ".join([f"Sentence {i}." for i in range(100)])
 
         # Set a small budget
-        config.budget_tokens = 100
+        small_query_config = config.query_config.replace(budget_tokens=100)
 
         # Index
         tree_builder = TreeBuilder(
-            config=config,
+            config=config.index_config,
             store=store,
+            api_key=config.openai_api_key,
         )
         tree_builder.client.embeddings.create = async_embedding
         tree_builder.client.chat.completions.create = async_summary
@@ -285,7 +340,12 @@ class TestDPIntegration:
         )
 
         # Retrieve with budget
-        retriever = Retriever(config, store, tree_builder)
+        retriever = Retriever(
+            small_query_config,
+            store,
+            api_key=config.openai_api_key,
+            tree_builder=tree_builder,
+        )
         retriever.client.embeddings.create = sync_embedding
         retriever.client.chat.completions.create = sync_summary
         result = await retriever.retrieve_async(
@@ -293,7 +353,7 @@ class TestDPIntegration:
         )
 
         # Assemble
-        assembler = Assembler(config, store)
+        assembler = Assembler(store)
         assembled = assembler.assemble(result)
 
         # Count tokens
@@ -301,5 +361,5 @@ class TestDPIntegration:
 
         # Allow some slack for token counting differences
         assert (
-            token_count <= config.budget_tokens * 1.1
-        ), f"Token count {token_count} exceeds budget {config.budget_tokens}"
+            token_count <= small_query_config.budget_tokens * 1.1
+        ), f"Token count {token_count} exceeds budget {small_query_config.budget_tokens}"

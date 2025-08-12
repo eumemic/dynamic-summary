@@ -6,10 +6,11 @@ from unittest.mock import Mock, patch
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
+from tests.conftest import BackwardCompatibilityConfig
 
 
 class TestDocumentIsolation:
@@ -21,7 +22,6 @@ class TestDocumentIsolation:
         with (
             patch("ragzoom.index.AsyncOpenAI") as mock_index_client,
             patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
-            patch("ragzoom.assemble.OpenAI") as mock_assemble_client,
         ):
 
             # Mock embeddings - return different embeddings for different content
@@ -70,14 +70,13 @@ class TestDocumentIsolation:
             instance_async.chat.completions.create = Mock(side_effect=mock_chat_create)
             mock_index_client.return_value = instance_async
 
-            # Set up sync clients
-            for mock_client in [mock_retrieve_client, mock_assemble_client]:
-                instance_sync = Mock()
-                instance_sync.embeddings = Mock()
-                instance_sync.embeddings.create = Mock(
-                    side_effect=mock_embeddings_create_sync
-                )
-                mock_client.return_value = instance_sync
+            # Set up sync client for retrieve only
+            instance_sync = Mock()
+            instance_sync.embeddings = Mock()
+            instance_sync.embeddings.create = Mock(
+                side_effect=mock_embeddings_create_sync
+            )
+            mock_retrieve_client.return_value = instance_sync
 
             yield
 
@@ -85,19 +84,34 @@ class TestDocumentIsolation:
     def setup(self, mock_openai):
         """Create test environment."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = RagZoomConfig(
+            index_config = IndexConfig(
+                target_chunk_tokens=50,
+                preceding_context_tokens=25,
+            )
+            query_config = QueryConfig(
+                budget_tokens=1000,
+            )
+            operational_config = OperationalConfig(
                 openai_api_key="test-key",
                 chroma_persist_directory=temp_dir,
                 sqlite_database_url="sqlite:///:memory:",
-                leaf_tokens=50,
-                adjacent_context_tokens=25,
-                budget_tokens=1000,
+            )
+            config = BackwardCompatibilityConfig(
+                index_config, query_config, operational_config
             )
 
-            store = Store(config)
-            tree_builder = TreeBuilder(config, store)
-            retriever = Retriever(config, store, tree_builder)
-            assembler = Assembler(config, store)
+            store = Store(
+                operational_config, embedding_model=index_config.embedding_model
+            )
+            tree_builder = TreeBuilder(
+                index_config, store, api_key=operational_config.openai_api_key
+            )
+            retriever = Retriever(
+                query_config,
+                store,
+                api_key=operational_config.openai_api_key,
+            )
+            assembler = Assembler(store)
 
             yield config, store, tree_builder, retriever, assembler
 

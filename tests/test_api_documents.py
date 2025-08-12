@@ -19,7 +19,6 @@ class TestDocumentAPI:
         with (
             patch("ragzoom.index.AsyncOpenAI") as mock_index,
             patch("ragzoom.retrieve.OpenAI") as mock_retrieve,
-            patch("ragzoom.assemble.OpenAI") as mock_assemble,
         ):
 
             # Create async mocks for index client
@@ -29,19 +28,19 @@ class TestDocumentAPI:
                     embeddings = []
                     for text in input_data:
                         if "dragon" in text.lower():
-                            embeddings.append(Mock(embedding=[0.9] * 384))
+                            embeddings.append(Mock(embedding=[0.9] * 1536))
                         elif "wizard" in text.lower():
-                            embeddings.append(Mock(embedding=[0.8] * 384))
+                            embeddings.append(Mock(embedding=[0.8] * 1536))
                         else:
-                            embeddings.append(Mock(embedding=[0.5] * 384))
+                            embeddings.append(Mock(embedding=[0.5] * 1536))
                     return Mock(data=embeddings)
                 else:
                     if "dragon" in input_data.lower():
-                        return Mock(data=[Mock(embedding=[0.9] * 384)])
+                        return Mock(data=[Mock(embedding=[0.9] * 1536)])
                     elif "wizard" in input_data.lower():
-                        return Mock(data=[Mock(embedding=[0.8] * 384)])
+                        return Mock(data=[Mock(embedding=[0.8] * 1536)])
                     else:
-                        return Mock(data=[Mock(embedding=[0.5] * 384)])
+                        return Mock(data=[Mock(embedding=[0.5] * 1536)])
 
             async def mock_chat_create_async(*args, **kwargs):
                 return Mock(
@@ -54,11 +53,11 @@ class TestDocumentAPI:
             def mock_embeddings_create_sync(*args, **kwargs):
                 input_data = kwargs.get("input", args[0] if args else "")
                 if "dragon" in input_data.lower():
-                    return Mock(data=[Mock(embedding=[0.9] * 384)])
+                    return Mock(data=[Mock(embedding=[0.9] * 1536)])
                 elif "wizard" in input_data.lower():
-                    return Mock(data=[Mock(embedding=[0.8] * 384)])
+                    return Mock(data=[Mock(embedding=[0.8] * 1536)])
                 else:
-                    return Mock(data=[Mock(embedding=[0.5] * 384)])
+                    return Mock(data=[Mock(embedding=[0.5] * 1536)])
 
             # Setup async client
             instance_async = Mock()
@@ -74,13 +73,12 @@ class TestDocumentAPI:
             mock_index.return_value = instance_async
 
             # Setup sync clients
-            for mock_client in [mock_retrieve, mock_assemble]:
-                instance_sync = Mock()
-                instance_sync.embeddings = Mock()
-                instance_sync.embeddings.create = Mock(
-                    side_effect=mock_embeddings_create_sync
-                )
-                mock_client.return_value = instance_sync
+            instance_sync = Mock()
+            instance_sync.embeddings = Mock()
+            instance_sync.embeddings.create = Mock(
+                side_effect=mock_embeddings_create_sync
+            )
+            mock_retrieve.return_value = instance_sync
 
             yield
 

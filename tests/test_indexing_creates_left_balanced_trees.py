@@ -2,7 +2,7 @@
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.validate import (
     set_validation_enabled,
@@ -18,13 +18,18 @@ class TestIndexingCreatesLeftBalancedTrees:
     @pytest.fixture
     def setup_indexing(self):
         """Set up indexing system with validation enabled."""
-        config = RagZoomConfig(
-            leaf_tokens=50,  # Small chunks for testing
-            adjacent_context_tokens=25,
+        index_config = IndexConfig(
+            target_chunk_tokens=50,  # Small chunks for testing
+            preceding_context_tokens=25,
+        )
+        query_config = QueryConfig()
+        operational_config = OperationalConfig(
             openai_api_key="test-key-for-tests",
         )
-        store = SimpleMockStore(config=config)
-        tree_builder = TreeBuilder(config, store)
+        store = SimpleMockStore(config=(index_config, query_config, operational_config))
+        tree_builder = TreeBuilder(
+            index_config, store, api_key=operational_config.openai_api_key
+        )
 
         # Mock the API calls - need to mock the async methods
         async def mock_get_embedding(text):
@@ -54,7 +59,7 @@ class TestIndexingCreatesLeftBalancedTrees:
         # Enable validation
         set_validation_enabled(True)
 
-        return config, store, tree_builder
+        return (index_config, query_config, operational_config), store, tree_builder
 
     def teardown_method(self):
         """Disable validation after each test."""
@@ -62,7 +67,9 @@ class TestIndexingCreatesLeftBalancedTrees:
 
     def test_even_number_of_chunks_creates_valid_tree(self, setup_indexing):
         """Test that indexing with even number of chunks creates a valid left-balanced tree."""
-        config, store, tree_builder = setup_indexing
+        (index_config, query_config, operational_config), store, tree_builder = (
+            setup_indexing
+        )
 
         # Text that will create 4 chunks
         text = "Chapter 1 content here. " * 10  # ~40 tokens
@@ -92,7 +99,9 @@ class TestIndexingCreatesLeftBalancedTrees:
 
     def test_odd_number_of_chunks_creates_valid_tree(self, setup_indexing):
         """Test that indexing with odd number of chunks creates a valid left-balanced tree."""
-        config, store, tree_builder = setup_indexing
+        (index_config, query_config, operational_config), store, tree_builder = (
+            setup_indexing
+        )
 
         # Text that will create 3 chunks
         text = "Chapter 1 content here. " * 10  # ~40 tokens
@@ -122,7 +131,9 @@ class TestIndexingCreatesLeftBalancedTrees:
 
     def test_large_document_creates_valid_tree(self, setup_indexing):
         """Test that a large document with many chunks creates a valid left-balanced tree."""
-        config, store, tree_builder = setup_indexing
+        (index_config, query_config, operational_config), store, tree_builder = (
+            setup_indexing
+        )
 
         # Text that will create multiple chunks
         text = ""
@@ -161,10 +172,12 @@ class TestIndexingCreatesLeftBalancedTrees:
 
     def test_power_of_two_plus_one_chunks_creates_valid_tree(self, setup_indexing):
         """Test that indexing with 2^n + 1 chunks creates a valid tree with equal leaf depth."""
-        config, store, tree_builder = setup_indexing
+        (index_config, query_config, operational_config), store, tree_builder = (
+            setup_indexing
+        )
 
         # Create text that will produce exactly 5 chunks (2^2 + 1)
-        # Each chunk should be around 50 tokens based on config
+        # Each chunk should be around 50 tokens based on index_config
         chunks = []
         for i in range(5):
             # Create distinct content for each chunk to ensure proper splitting

@@ -20,23 +20,22 @@ class TestConcurrency:
         with (
             patch("ragzoom.index.AsyncOpenAI") as mock_index,
             patch("ragzoom.retrieve.OpenAI") as mock_retrieve,
-            patch("ragzoom.assemble.OpenAI") as mock_assemble,
         ):
 
             # Create async mocks for index client
             async def mock_embeddings_create_async(*args, **kwargs):
                 input_data = kwargs.get("input", args[0] if args else "")
                 if isinstance(input_data, list):
-                    return Mock(data=[Mock(embedding=[0.1] * 384) for _ in input_data])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
                 else:
-                    return Mock(data=[Mock(embedding=[0.1] * 384)])
+                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
             async def mock_chat_create_async(*args, **kwargs):
                 return Mock(choices=[Mock(message=Mock(content="Summary"))])
 
             # Create sync mocks for retrieve/assemble clients
             def mock_embeddings_create_sync(*args, **kwargs):
-                return Mock(data=[Mock(embedding=[0.1] * 384)])
+                return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
             def mock_chat_create_sync(*args, **kwargs):
                 return Mock(choices=[Mock(message=Mock(content="Summary"))])
@@ -54,19 +53,18 @@ class TestConcurrency:
             )
             mock_index.return_value = instance_async
 
-            # Setup sync clients (retrieve, assemble)
-            for mock_client in [mock_retrieve, mock_assemble]:
-                instance_sync = Mock()
-                instance_sync.embeddings = Mock()
-                instance_sync.embeddings.create = Mock(
-                    side_effect=mock_embeddings_create_sync
-                )
-                instance_sync.chat = Mock()
-                instance_sync.chat.completions = Mock()
-                instance_sync.chat.completions.create = Mock(
-                    side_effect=mock_chat_create_sync
-                )
-                mock_client.return_value = instance_sync
+            # Setup sync clients (retrieve only)
+            instance_sync = Mock()
+            instance_sync.embeddings = Mock()
+            instance_sync.embeddings.create = Mock(
+                side_effect=mock_embeddings_create_sync
+            )
+            instance_sync.chat = Mock()
+            instance_sync.chat.completions = Mock()
+            instance_sync.chat.completions.create = Mock(
+                side_effect=mock_chat_create_sync
+            )
+            mock_retrieve.return_value = instance_sync
 
             yield
 
@@ -128,7 +126,9 @@ class TestConcurrency:
 
         # Should be different instances (not singleton)
         assert service1 is not service2
-        assert service1.config is not service2.config
+        assert service1.index_config is not service2.index_config
+        assert service1.query_config is not service2.query_config
+        assert service1.operational_config is not service2.operational_config
         assert service1.store is not service2.store
 
     @pytest.mark.asyncio

@@ -69,8 +69,8 @@ Additional Options:
     All other options are passed through to the ragzoom index command.
     The script automatically:
     - Adds: --clear --telemetry --validate --debug --no-progress
-    - Sets RAGZOOM_LEAF_TOKENS from baseline's chunk_size (if not already set)
-    - Sets RAGZOOM_ADJACENT_CONTEXT_TOKENS from baseline's chunk_size (if not already set)
+    - Uses --target-chunk-tokens from baseline's chunk_size
+    - Uses --prev-context-tokens from baseline's chunk_size
 
 Output Files:
     <output-dir>/telemetry.json      - Telemetry data from current run
@@ -179,15 +179,11 @@ if [ -z "$CHUNK_SIZE" ]; then
     echo "Warning: Could not extract chunk_size from baseline"
 else
     echo "  Chunk size: $CHUNK_SIZE tokens"
-    # Set environment variables if not already defined
-    if [ -z "$RAGZOOM_LEAF_TOKENS" ]; then
-        export RAGZOOM_LEAF_TOKENS=$CHUNK_SIZE
-        echo "  Set RAGZOOM_LEAF_TOKENS=$CHUNK_SIZE"
-    fi
-    if [ -z "$RAGZOOM_ADJACENT_CONTEXT_TOKENS" ]; then
-        export RAGZOOM_ADJACENT_CONTEXT_TOKENS=$CHUNK_SIZE
-        echo "  Set RAGZOOM_ADJACENT_CONTEXT_TOKENS=$CHUNK_SIZE"
-    fi
+    # Store chunk size for CLI options
+    TARGET_CHUNK_TOKENS=$CHUNK_SIZE
+    PREV_CONTEXT_TOKENS=$CHUNK_SIZE
+    echo "  Using --target-chunk-tokens=$TARGET_CHUNK_TOKENS"
+    echo "  Using --prev-context-tokens=$PREV_CONTEXT_TOKENS"
 fi
 
 # Auto-detect document if not provided
@@ -247,6 +243,8 @@ python -m ragzoom.cli index \
     --validate \
     --debug \
     --no-progress \
+    --target-chunk-tokens "$TARGET_CHUNK_TOKENS" \
+    --prev-context-tokens "$PREV_CONTEXT_TOKENS" \
     "${EXTRA_ARGS[@]}" \
     2>&1 | tee "$LOG_FILE"
 

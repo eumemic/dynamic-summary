@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import OperationalConfig
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +79,20 @@ class Document(Base):
 class Store:
     """Combined storage for tree structure (SQLite) and embeddings (Chroma)."""
 
-    def __init__(self, config: RagZoomConfig):
-        """Initialize storage backends."""
+    # Class constant for pin depth limit (dormant feature)
+    PIN_DEPTH_MAX = 2
+
+    def __init__(
+        self, config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
+    ):
+        """Initialize storage backends.
+
+        Args:
+            config: Operational configuration with storage paths
+            embedding_model: Name of embedding model (for dimension validation)
+        """
         self.config = config
+        self.embedding_model = embedding_model
 
         # Initialize SQLite
         self.engine = create_engine(
@@ -138,10 +149,11 @@ class Store:
         self.cache_order.append(node.id)
 
     def _get_expected_embedding_dimension(self) -> int | None:
-        """Get expected embedding dimension from config or existing data."""
-        if self.config.embedding_dimensions:
-            return self.config.embedding_dimensions
+        """Get expected embedding dimension from existing data.
 
+        We no longer maintain hardcoded dimension info since OpenAI API
+        is the source of truth. This method tries to infer from existing data.
+        """
         # Try to infer from existing data
         try:
             # Get any existing embedding from collection
@@ -156,7 +168,7 @@ class Store:
         except Exception as e:
             logger.debug(f"Could not infer embedding dimension: {e}")
 
-        # If no explicit config and no existing data, don't enforce validation
+        # If no existing data, don't enforce validation
         # This allows tests and first-time setups to work with any dimension
         return None
 
@@ -388,7 +400,7 @@ class Store:
             return False
 
         node_depth = self.get_node_depth(node_id)
-        if node_depth > self.config.pin_depth_max:
+        if node_depth > self.PIN_DEPTH_MAX:
             return False
 
         # Check if already pinned
@@ -864,7 +876,7 @@ class Store:
 
         temp_dir = tempfile.mkdtemp()
         try:
-            config = RagZoomConfig(
+            config = OperationalConfig(
                 sqlite_database_url=f"sqlite:///{temp_dir}/test.db",
                 chroma_persist_directory=f"{temp_dir}/chroma",
             )
