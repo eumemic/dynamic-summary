@@ -87,7 +87,7 @@ class QueryRequest(BaseModel):
 
     query: str = Field(..., description="Query text")
     document_id: str = Field(..., description="Document ID to query within")
-    n_max: int | None = Field(None, description="Override max nodes to retrieve")
+    num_seeds: int | None = Field(None, description="Override max nodes to retrieve")
     token_budget: int | None = Field(None, description="Override token budget")
 
 
@@ -238,7 +238,7 @@ async def query(
         # Use async version since we're in an async endpoint
         retrieval_result = await service.retriever.retrieve_async(
             request.query,
-            request.n_max,
+            request.num_seeds,
             request.token_budget,
             document_id=request.document_id,
         )
