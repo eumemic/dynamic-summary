@@ -26,6 +26,10 @@ jobs:
     # Skip on draft PRs to save expensive benchmark runs
     if: github.event.pull_request.draft != true
     
+    env:
+      # Single source of truth for which chunk size to visualize and check for verbatim issues
+      VISUALIZATION_CHUNK_SIZE: 200
+    
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
@@ -286,28 +290,32 @@ jobs:
         run: |
           echo "🔍 Analyzing telemetry for potential issues..."
           
-          # Analyze each benchmark result
-          for file in benchmark_results/telemetry_*_tokens.json; do
-            if [ -f "$file" ]; then
-              chunk_size=$(basename "$file" | sed 's/telemetry_\([0-9]*\)_tokens.json/\1/')
-              echo ""
-              echo "### Analyzing $chunk_size tokens benchmark"
-              
-              # Run analysis and capture output
-              if ragzoom-telemetry analyze "$file" > "analysis_${chunk_size}.txt" 2>&1; then
-                # Check for verbatim issues in the output
-                if grep -q "Verbatim Concatenation Issues" "analysis_${chunk_size}.txt"; then
-                  echo "⚠️ VERBATIM ISSUES DETECTED in $chunk_size tokens benchmark!"
-                  echo "VERBATIM_DETECTED=true" >> $GITHUB_OUTPUT
-                  
-                  # Extract verbatim details for report
-                  grep -A 20 "Verbatim Concatenation Issues" "analysis_${chunk_size}.txt" > "verbatim_${chunk_size}.txt"
-                fi
+          # Only analyze the visualization chunk size for verbatim issues
+          CHUNK_SIZE="${{ env.VISUALIZATION_CHUNK_SIZE }}"
+          file="benchmark_results/telemetry_${CHUNK_SIZE}_tokens.json"
+          
+          if [ -f "$file" ]; then
+            echo ""
+            echo "### Analyzing ${CHUNK_SIZE} tokens benchmark (matches visualization)"
+            
+            # Run analysis and capture output
+            if ragzoom-telemetry analyze "$file" > "analysis_${CHUNK_SIZE}.txt" 2>&1; then
+              # Check for verbatim issues in the output
+              if grep -q "Verbatim Concatenation Issues" "analysis_${CHUNK_SIZE}.txt"; then
+                echo "❌ VERBATIM ISSUES DETECTED in ${CHUNK_SIZE} tokens benchmark!"
+                echo "VERBATIM_DETECTED=true" >> $GITHUB_OUTPUT
+                
+                # Extract verbatim details for report
+                grep -A 20 "Verbatim Concatenation Issues" "analysis_${CHUNK_SIZE}.txt" > "verbatim_${CHUNK_SIZE}.txt"
               else
-                echo "❌ Analysis failed for $chunk_size tokens"
+                echo "✅ No verbatim issues detected"
               fi
+            else
+              echo "❌ Analysis failed for ${CHUNK_SIZE} tokens"
             fi
-          done
+          else
+            echo "⚠️ Telemetry file not found: $file"
+          fi
       
       - name: Check benchmark execution
         id: benchmark_check
@@ -317,22 +325,23 @@ jobs:
             echo "REGRESSION=true" >> $GITHUB_OUTPUT
           fi
       
-      - name: Generate visualization for 200 tokens
+      - name: Generate visualization for ${{ env.VISUALIZATION_CHUNK_SIZE }} tokens
         id: visualize
         run: |
-          # Generate side-by-side visualization for 200 tokens if both files exist
-          if [ -f "baseline_results/telemetry_200_tokens.json" ] && [ -f "benchmark_results/telemetry_200_tokens.json" ]; then
-            echo "📊 Generating side-by-side visualization for 200 tokens..."
-            ragzoom-telemetry visualize baseline_results/telemetry_200_tokens.json benchmark_results/telemetry_200_tokens.json -o comparison_200_tokens.png || {
+          # Generate side-by-side visualization for the configured chunk size if both files exist
+          CHUNK_SIZE="${{ env.VISUALIZATION_CHUNK_SIZE }}"
+          if [ -f "baseline_results/telemetry_${CHUNK_SIZE}_tokens.json" ] && [ -f "benchmark_results/telemetry_${CHUNK_SIZE}_tokens.json" ]; then
+            echo "📊 Generating side-by-side visualization for ${CHUNK_SIZE} tokens..."
+            ragzoom-telemetry visualize baseline_results/telemetry_${CHUNK_SIZE}_tokens.json benchmark_results/telemetry_${CHUNK_SIZE}_tokens.json -o comparison_${CHUNK_SIZE}_tokens.png || {
               echo "⚠️ Failed to generate visualization"
             }
-            if [ -f "comparison_200_tokens.png" ]; then
+            if [ -f "comparison_${CHUNK_SIZE}_tokens.png" ]; then
               echo "✅ Visualization generated successfully"
               echo "VISUALIZATION_GENERATED=true" >> $GITHUB_OUTPUT
               
               # Publish visualization to GitHub Pages for inline display
               # Use a subdirectory to organize images by run ID
-              IMAGE_PATH="ci-visualizations/${{ github.run_id }}/comparison_200_tokens.png"
+              IMAGE_PATH="ci-visualizations/${{ github.run_id }}/comparison_${CHUNK_SIZE}_tokens.png"
               
               # Clone gh-pages branch (or create if it doesn't exist)
               cd /tmp
@@ -354,7 +363,7 @@ jobs:
               
               # Create directory structure and copy image
               mkdir -p $(dirname "$IMAGE_PATH")
-              cp ${{ github.workspace }}/comparison_200_tokens.png "$IMAGE_PATH"
+              cp ${{ github.workspace }}/comparison_${CHUNK_SIZE}_tokens.png "$IMAGE_PATH"
               
               # Add and commit
               git add "$IMAGE_PATH"
@@ -372,7 +381,7 @@ jobs:
               echo "📸 Image published to GitHub Pages: $VISUALIZATION_URL"
             fi
           else
-            echo "⚠️ Skipping visualization - missing telemetry_200_tokens.json files"
+            echo "⚠️ Skipping visualization - missing telemetry_${CHUNK_SIZE}_tokens.json files"
           fi
       
       - name: Update comment - visualization complete
@@ -514,23 +523,22 @@ jobs:
           # Add verbatim warnings to report if detected
           if [ "${{ steps.analyze_telemetry.outputs.VERBATIM_DETECTED }}" == "true" ]; then
             echo "" >> report.md
-            echo "### ⚠️ Verbatim Concatenation Issues Detected" >> report.md
+            echo "### ❌ Verbatim Concatenation Issues Detected" >> report.md
             echo "" >> report.md
             echo "The LLM is returning input text verbatim instead of creating proper summaries." >> report.md
             echo "This indicates a critical issue with summarization quality." >> report.md
             echo "" >> report.md
             
-            # Add details from each chunk size with issues
-            for verbatim_file in verbatim_*.txt; do
-              if [ -f "$verbatim_file" ]; then
-                chunk_size=$(basename "$verbatim_file" | sed 's/verbatim_\([0-9]*\).txt/\1/')
-                echo "**Chunk size: $chunk_size tokens**" >> report.md
-                echo '```' >> report.md
-                cat "$verbatim_file" >> report.md
-                echo '```' >> report.md
-                echo "" >> report.md
-              fi
-            done
+            # Add details for the visualization chunk size
+            CHUNK_SIZE="${{ env.VISUALIZATION_CHUNK_SIZE }}"
+            verbatim_file="verbatim_${CHUNK_SIZE}.txt"
+            if [ -f "$verbatim_file" ]; then
+              echo "**Chunk size: ${CHUNK_SIZE} tokens (shown in visualization)**" >> report.md
+              echo '```' >> report.md
+              cat "$verbatim_file" >> report.md
+              echo '```' >> report.md
+              echo "" >> report.md
+            fi
           fi
           
           # Save report for comment
@@ -571,7 +579,7 @@ jobs:
             
             // Add visualization if it was generated
             if (visualizationUrl) {
-              body += `### Performance Visualization (200 tokens)\n\n`;
+              body += `### Performance Visualization (${{ env.VISUALIZATION_CHUNK_SIZE }} tokens)\n\n`;
               body += `![Telemetry Comparison](${visualizationUrl})\n\n`;
             }
             
@@ -639,6 +647,14 @@ jobs:
           echo "Check the workflow logs for details."
           exit 1
       
+      - name: Fail if verbatim issues detected
+        if: steps.analyze_telemetry.outputs.VERBATIM_DETECTED == 'true'
+        run: |
+          echo "❌ Verbatim concatenation issues detected!"
+          echo "The LLM is returning input text unchanged instead of creating summaries."
+          echo "Check the performance report for details."
+          exit 1
+      
       - name: Fail if regression detected
         if: steps.compare.outputs.REGRESSION == 'true'
         run: |
@@ -654,4 +670,4 @@ jobs:
             baseline_results/
             benchmark_results/
             report.md
-            comparison_200_tokens.png
+            comparison_${{ env.VISUALIZATION_CHUNK_SIZE }}_tokens.png
