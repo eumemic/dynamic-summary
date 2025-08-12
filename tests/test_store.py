@@ -81,7 +81,6 @@ class TestStore:
             span_end=20,
             left_child_id="child1",
             right_child_id="child2",
-            summary="Parent summary",
         )
 
         temp_store.add_node(

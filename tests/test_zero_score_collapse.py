@@ -42,7 +42,6 @@ def test_zero_score_collapse_empty_result():
         parent_id="root",  # Set parent
         left_child_id="leaf",
         right_child_id="leaf",
-        summary="y" * 40,
         document_id="test-doc",
     )
 
@@ -55,7 +54,6 @@ def test_zero_score_collapse_empty_result():
         span_end=100,
         left_child_id="parent",
         right_child_id="parent",
-        summary="z" * 20,
         parent_id=None,  # This is the root
         document_id="test-doc",
     )
@@ -159,7 +157,6 @@ def test_zero_score_collapse_to_root():
         parent_id="level2",  # Set parent
         left_child_id="leaf",
         right_child_id="leaf",
-        summary="This is a detailed summary of the important content that user wants",
         document_id="test-doc",
     )
 
@@ -173,7 +170,6 @@ def test_zero_score_collapse_to_root():
         parent_id="level1",  # Set parent
         left_child_id="level3",
         right_child_id="level3",
-        summary="A medium level summary of the content below including key points",
         document_id="test-doc",
     )
 
@@ -187,7 +183,6 @@ def test_zero_score_collapse_to_root():
         parent_id="root",  # Set parent
         left_child_id="level2",
         right_child_id="level2",
-        summary="High level summary of this document section with main themes",
         document_id="test-doc",
     )
 
@@ -200,7 +195,6 @@ def test_zero_score_collapse_to_root():
         span_end=100,
         left_child_id="level1",
         right_child_id="level1",
-        summary="Brief document overview",
         parent_id=None,  # This is the root
         document_id="test-doc",
     )

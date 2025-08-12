@@ -80,7 +80,6 @@ class TestDPAssembly:
             span_end=41,
             left_child_id="leaf1",
             right_child_id="leaf2",
-            summary="Summary of first and second chunks.",
             document_id="doc1",
         )
 
@@ -92,7 +91,6 @@ class TestDPAssembly:
             span_end=82,
             left_child_id="leaf3",
             right_child_id="leaf4",
-            summary="Summary of third and fourth chunks.",
             document_id="doc1",
         )
 
@@ -104,7 +102,6 @@ class TestDPAssembly:
             span_end=82,
             left_child_id="left",
             right_child_id="right",
-            summary="Overall document summary.",
             document_id="doc1",
         )
 
