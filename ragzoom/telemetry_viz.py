@@ -157,7 +157,9 @@ class TelemetryVisualizer:
         fig = plt.figure(
             figsize=(FIGURE_WIDTH * 0.33, FIGURE_HEIGHT * 0.6)
         )  # Reduce width by 2/3 and height
-        gs = GridSpec(3, 1, figure=fig, hspace=0.3, top=0.94)
+        gs = GridSpec(
+            3, 1, figure=fig, hspace=0.3, top=0.94, height_ratios=[0.5, 1.5, 2]
+        )
 
         # 1. Cost Breakdown
         ax1 = fig.add_subplot(gs[0, :])
@@ -167,9 +169,9 @@ class TelemetryVisualizer:
         ax2 = fig.add_subplot(gs[1, :])
         self._plot_summary_scatter(telemetry, ax2)
 
-        # 3. Node Creation Timeline
+        # 3. Tree Construction Timeline
         ax3 = fig.add_subplot(gs[2, :])
-        self._plot_node_timeline(telemetry, ax3)
+        self._plot_tree_construction_timeline(telemetry, ax3)
 
         # Add title and metadata
         if "config" in data:
@@ -308,7 +310,13 @@ class TelemetryVisualizer:
             )  # Half the width, slightly taller for double Summary Accuracy
         fig = plt.figure(figsize=figsize)
         gs = GridSpec(
-            3, 2, figure=fig, hspace=0.2, wspace=0.15, top=0.92, height_ratios=[1, 2, 1]
+            3,
+            2,
+            figure=fig,
+            hspace=0.2,
+            wspace=0.15,
+            top=0.92,
+            height_ratios=[0.5, 1.5, 2],
         )
 
         # Add super title
@@ -354,14 +362,14 @@ class TelemetryVisualizer:
         ax2_left.set_ylim(min_y, max_y)
         ax2_right.set_ylim(min_y, max_y)
 
-        # 3. Summary Creation Timeline
+        # 3. Tree Construction Timeline
         ax3_left = fig.add_subplot(gs[2, 0])
-        self._plot_node_timeline(telemetry1, ax3_left)
-        ax3_left.set_title("Summary Creation Timeline", fontsize=12)
+        self._plot_tree_construction_timeline(telemetry1, ax3_left)
+        ax3_left.set_title("Tree Construction Timeline", fontsize=12)
 
         ax3_right = fig.add_subplot(gs[2, 1])
-        self._plot_node_timeline(telemetry2, ax3_right)
-        ax3_right.set_title("Summary Creation Timeline", fontsize=12)
+        self._plot_tree_construction_timeline(telemetry2, ax3_right)
+        ax3_right.set_title("Tree Construction Timeline", fontsize=12)
         ax3_right.set_ylabel("")  # Remove y-axis label
 
         # Share both axes for timeline comparison
@@ -1052,6 +1060,255 @@ class TelemetryVisualizer:
             bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8),
             fontsize=8,
         )
+
+    def _plot_tree_construction_timeline(self, telemetry: dict, ax: plt.Axes) -> None:
+        """Plot tree construction as rectangles showing span coverage over time.
+
+        X-axis: Document span position
+        Y-axis: Time (seconds)
+        Rectangles: Each node with width=span coverage, height=processing duration
+        Colors: Retry attempts (blue→green→yellow→orange→red)
+        """
+        from matplotlib.patches import Rectangle
+
+        # Extract nodes from telemetry
+        nodes = self._extract_nodes_from_telemetry(telemetry)
+
+        # Define retry attempt colors (1=blue, 2=green, 3=yellow, 4=orange, 5+=red)
+        attempt_colors = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#991b1b"]
+
+        # Calculate spans from token counts - don't modify nodes!
+        # Group nodes by height first
+        nodes_by_height: dict[int, list] = {}
+        for node in nodes:
+            height = node.get("height", 0)
+            if height not in nodes_by_height:
+                nodes_by_height[height] = []
+            nodes_by_height[height].append(node)
+
+        # Calculate spans externally based on token counts
+        node_spans = {}  # node_id -> (start, end)
+        chars_per_token = 4  # Rough estimate
+
+        # Process leaves first - derive spans from embedding.text_tokens
+        leaves = nodes_by_height.get(0, [])
+        position = 0
+        for leaf in leaves:
+            embedding = leaf.get("embedding")
+            if not embedding or "text_tokens" not in embedding:
+                raise ValueError(
+                    f"Node {leaf.get('node_id', 'unknown')} missing embedding.text_tokens - cannot calculate spans"
+                )
+
+            tokens = embedding["text_tokens"]
+            chars = tokens * chars_per_token
+            node_spans[leaf["node_id"]] = (position, position + chars)
+            position += chars
+
+        # Process parents using left-balanced tree structure
+        for height in (
+            range(1, max(nodes_by_height.keys()) + 1) if nodes_by_height else range(0)
+        ):
+            parents = nodes_by_height.get(height, [])
+            children = nodes_by_height.get(height - 1, [])
+
+            if not children:
+                continue
+
+            # Sort children by their span start position
+            children_sorted = sorted(
+                children, key=lambda c: node_spans.get(c["node_id"], (0, 0))[0]
+            )
+
+            # Sort parents by creation time to maintain pairing order
+            parents_sorted = sorted(parents, key=lambda p: p.get("created_at", 0))
+
+            num_children = len(children_sorted)
+            has_single = num_children % 2 == 1
+
+            for i, parent in enumerate(parents_sorted):
+                # Calculate which children this parent covers (left-balanced)
+                if has_single and i == 0:
+                    # First parent gets single child
+                    child_ids = [children_sorted[0]["node_id"]]
+                else:
+                    # Regular pairing
+                    offset = 1 if has_single else 0
+                    adj_i = i - offset if has_single and i > 0 else i
+                    start_idx = offset + adj_i * 2
+                    end_idx = min(offset + (adj_i + 1) * 2, num_children)
+                    child_ids = [
+                        children_sorted[j]["node_id"] for j in range(start_idx, end_idx)
+                    ]
+
+                # Parent span = union of child spans
+                if not child_ids:
+                    raise ValueError(
+                        f"Parent {parent.get('node_id', 'unknown')} has no children assigned"
+                    )
+
+                child_spans = []
+                for cid in child_ids:
+                    if cid not in node_spans:
+                        raise ValueError(
+                            f"Child {cid} of parent {parent.get('node_id', 'unknown')} has no calculated span"
+                        )
+                    child_spans.append(node_spans[cid])
+
+                node_spans[parent["node_id"]] = (
+                    min(s[0] for s in child_spans),
+                    max(s[1] for s in child_spans),
+                )
+
+        # Track min/max for axis limits
+        min_time = None
+        max_time = 0
+        min_span = float("inf")
+        max_span = 0
+
+        # First pass: calculate span range for gap sizing
+        for node in nodes:
+            node_id = node.get("node_id")
+            if node_id in node_spans:
+                span_start, span_end = node_spans[node_id]
+                min_span = min(min_span, span_start)
+                max_span = max(max_span, span_end)
+
+        # Calculate gap size as 0.5% of total document span
+        gap = 0.005 * (max_span - min_span) if max_span > min_span else 5
+
+        # Process each node
+        for node in nodes:
+            # Get span from our calculated dictionary
+            node_id = node.get("node_id")
+            if node_id not in node_spans:
+                raise ValueError(
+                    f"Node {node_id} has no calculated span - this should not happen"
+                )
+
+            span_start, span_end = node_spans[node_id]
+
+            # Skip only leaf nodes (height 0) - they're raw text chunks
+            if node.get("height", 0) == 0:
+                continue
+
+            # Handle passthrough nodes (no summary attempts) - draw as single pixel line
+            if not node.get("summary_attempts"):
+                # Draw a single pixel horizontal line for passthrough nodes
+                created_at = node.get("created_at", 0)
+                if min_time is None:
+                    min_time = created_at
+                else:
+                    min_time = min(min_time, created_at)
+                max_time = max(max_time, created_at)
+
+                # Add gap between adjacent nodes for visual clarity
+                rect = Rectangle(
+                    (span_start, created_at - min_time),  # Position at creation time
+                    max(
+                        1, span_end - span_start - gap
+                    ),  # Width = span coverage minus gap
+                    1e-3,  # Minimal height (1 millisecond or 1 pixel)
+                    facecolor=attempt_colors[0],  # Blue
+                    edgecolor="black",
+                    linewidth=0.5,
+                    alpha=0.9,
+                )
+                ax.add_patch(rect)
+                continue
+
+            # Process summary nodes with attempts
+            attempts = node["summary_attempts"]
+            accepted_idx = node.get("accepted_attempt", len(attempts) - 1)
+
+            cumulative_start = None
+            for attempt_idx, attempt in enumerate(attempts):
+                start_time = attempt.get("start_time")
+                end_time = attempt.get("end_time")
+
+                if start_time is None or end_time is None:
+                    continue
+
+                if min_time is None:
+                    min_time = start_time
+                else:
+                    min_time = min(min_time, start_time)
+
+                if cumulative_start is None:
+                    cumulative_start = start_time
+
+                max_time = max(max_time, end_time)
+
+                # Determine color based on attempt number
+                color = attempt_colors[min(attempt_idx, 4)]  # Cap at 5+ (red)
+                is_accepted = attempt_idx == accepted_idx
+
+                # Draw rectangle for this attempt with gap
+                rect = Rectangle(
+                    (
+                        span_start,
+                        cumulative_start - min_time,
+                    ),  # (x, y) = (document position, relative time)
+                    max(
+                        1, span_end - span_start - gap
+                    ),  # width = span coverage minus gap
+                    end_time - cumulative_start,  # height = duration
+                    facecolor=color,
+                    edgecolor="black" if is_accepted else "none",
+                    linewidth=0.5 if is_accepted else 0,
+                    alpha=0.9,
+                )
+                ax.add_patch(rect)
+                cumulative_start = end_time
+
+        # Set axis limits and labels
+        if min_time is not None and max_span > min_span:
+            ax.set_xlim(min_span, max_span)
+            ax.set_ylim(0, max_time - min_time if max_time > min_time else 1)
+            ax.set_xlabel("Document Position (characters)")
+            ax.set_ylabel("Time Since Start (seconds)")
+            ax.set_title(
+                "Tree Construction Timeline\n(Shows how nodes are built over time)"
+            )
+            ax.grid(True, alpha=0.3)
+
+            # Add legend for attempt colors
+            legend_elements = [
+                Patch(facecolor=attempt_colors[0], label="Attempt 1", alpha=0.9),
+                Patch(facecolor=attempt_colors[1], label="Attempt 2", alpha=0.9),
+                Patch(facecolor=attempt_colors[2], label="Attempt 3", alpha=0.9),
+                Patch(facecolor=attempt_colors[3], label="Attempt 4", alpha=0.9),
+                Patch(facecolor=attempt_colors[4], label="Attempt 5+", alpha=0.9),
+            ]
+
+            # Only include legend items for attempts that exist
+            max_attempts = 0
+            for node in nodes:
+                if node.get("summary_attempts"):
+                    max_attempts = max(max_attempts, len(node["summary_attempts"]))
+
+            if max_attempts > 0:
+                legend_elements = legend_elements[:max_attempts]
+                # Place legend inside the plot area at top, below the title
+                ax.legend(
+                    handles=legend_elements,
+                    loc="upper center",
+                    bbox_to_anchor=(0.5, 0.98),
+                    ncol=min(len(legend_elements), 6),
+                    fontsize=8,
+                    frameon=True,
+                )
+        else:
+            # No valid data to plot
+            ax.text(
+                0.5,
+                0.5,
+                "No timeline data available\n(no nodes found in telemetry)",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_title("Tree Construction Timeline")
 
     def _plot_token_distributions(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot token count distributions by attempt number using violin plots."""
