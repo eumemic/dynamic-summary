@@ -873,10 +873,12 @@ class TelemetryVisualizer:
                     label="±10 token range (fallback)",
                 )
 
-        # Add diagonal reference line showing 1:1 ratio (full plot extent)
+        # Add diagonal reference line showing 1:1 ratio (extend well beyond visible area)
+        # Use a very large range to ensure the diagonal covers any zoom level
+        diagonal_extent = max(abs(x_min), abs(x_max), abs(y_min), abs(y_max)) * 100
         ax.plot(
-            [x_min, x_max],
-            [x_min, x_max],
+            [-diagonal_extent, diagonal_extent],
+            [-diagonal_extent, diagonal_extent],
             "k:",
             alpha=0.3,
             linewidth=1,
