@@ -126,7 +126,7 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_DIR="$2"
             shift 2
             ;;
-        --document-id)
+        --document-id|--max-retries|--retry-threshold|--target-chunk-tokens|--preceding-context-tokens|--summary-model|--embedding-model|--embedding-batch-size)
             # Pass-through options that take an argument
             EXTRA_ARGS+=("$1" "$2")
             shift 2
