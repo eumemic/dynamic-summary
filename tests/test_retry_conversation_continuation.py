@@ -99,7 +99,7 @@ async def test_retry_maintains_conversation_history(mock_store):
         with patch.object(
             indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
         ):
-            summary, retry_count = await indexer._summarize_text(
+            summary, retry_count, token_count = await indexer._summarize_text(
                 left_text="Left text content that is much longer to ensure we exceed the target"
                 * 2,
                 right_text="Right text content that is also much longer to trigger summarization"
@@ -182,7 +182,7 @@ async def test_retry_preserves_original_context(mock_store):
         with patch.object(
             indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
         ):
-            summary, _ = await indexer._summarize_text(
+            summary, _, _ = await indexer._summarize_text(
                 left_text=original_text[: len(original_text) // 2],
                 right_text=original_text[len(original_text) // 2 :],
                 target_tokens=100,
@@ -235,7 +235,7 @@ async def test_multiple_retries_build_conversation(mock_store):
         with patch.object(
             indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
         ):
-            summary, retry_count = await indexer._summarize_text(
+            summary, retry_count, token_count = await indexer._summarize_text(
                 left_text="Test content that is much longer to trigger summarization"
                 * 2,
                 right_text="More content that also needs to be long enough" * 2,
@@ -274,7 +274,7 @@ async def test_no_retry_when_within_threshold(mock_store):
         with patch.object(
             indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
         ):
-            summary, retry_count = await indexer._summarize_text(
+            summary, retry_count, token_count = await indexer._summarize_text(
                 left_text="Test content that is much longer to trigger summarization"
                 * 2,
                 right_text="More content that also needs to be long enough" * 2,
@@ -308,7 +308,7 @@ async def test_passthrough_for_text_under_target(mock_store):
             side_effect=lambda x: [0] * min(len(x), 50),  # Always under 100
         ):
             reporter = create_test_reporter(config)
-            summary, retry_count = await indexer._summarize_text(
+            summary, retry_count, token_count = await indexer._summarize_text(
                 left_text="Short",
                 right_text="Text",
                 target_tokens=100,

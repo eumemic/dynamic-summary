@@ -423,11 +423,11 @@ Remember: Your goal is to maximize information preservation while hitting the ta
         prev_context: str | None = None,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
-    ) -> tuple[str, int]:
+    ) -> tuple[str, int, int]:
         """Summarize text using LLM.
 
         Returns:
-            tuple: (summary, retry_count)
+            tuple: (summary, retry_count, final_token_count)
         """
         # Check if combined text is already under target
         combined_text = f"{left_text} {right_text}".strip()
@@ -443,7 +443,7 @@ Remember: Your goal is to maximize information preservation while hitting the ta
 
             # Don't record passthrough as a summary attempt - it pollutes metrics
 
-            return combined_text, 0  # No retries needed
+            return combined_text, 0, current_token_count  # No retries needed
 
         # Build prompt with adjacent context (trim to avoid token explosion)
         prompt_parts: list[str] = []
@@ -584,7 +584,7 @@ Here's the content to summarize:"""
                 logger.error(f"Error summarizing text: {e}")
                 raise
 
-        return summary, retry_count
+        return summary, retry_count, final_tokens
 
     # Methods to append to index.py
 
@@ -830,13 +830,18 @@ Here's the content to summarize:"""
 
             # Store all leaf nodes
             for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
+                text = cast(str, data["text"])
+                # Count tokens for leaf nodes using tiktoken
+                token_count = len(self.splitter.tokenizer.encode(text))
+
                 self.store.add_node(
                     node_id=cast(str, data["id"]),
-                    text=cast(str, data["text"]),
+                    text=text,
                     embedding=embedding,
                     span_start=cast(int, data["span_start"]),
                     span_end=cast(int, data["span_end"]),
                     document_id=document_id,
+                    token_count=token_count,
                 )
 
             # Add document record
@@ -989,7 +994,7 @@ Here's the content to summarize:"""
         target_tokens = self.config.leaf_tokens
 
         # Generate summary (async) with retry mechanism support
-        summary, retry_count = await self._summarize_text(
+        summary, retry_count, token_count = await self._summarize_text(
             left_text,
             right_text,
             target_tokens,
@@ -1004,15 +1009,15 @@ Here's the content to summarize:"""
 
         # Track embedding for parent node
         if reporter and parent_id:
-            summary_tokens = len(self.splitter.tokenizer.encode(summary))
+            # Use the actual token count from the API for telemetry
             reporter.record_embedding_call_v2(
-                node_embeddings=[(parent_id, summary_tokens)],
+                node_embeddings=[(parent_id, token_count)],
                 batch_size=1,
                 model=self.config.embedding_model,
                 start_time=start_time,
             )
 
-        # Store the node data
+        # Store the node data with the actual token count
         self.store.add_node(
             node_id=parent_id,
             text=summary,
@@ -1022,6 +1027,7 @@ Here's the content to summarize:"""
             left_child_id=left_id,
             right_child_id=right_id,
             document_id=document_id,
+            token_count=token_count,
         )
 
         # Update children's parent references
@@ -1206,7 +1212,7 @@ Here's the content to summarize:"""
                     # but may be slightly condensed to fit token budget
                     # odd_node_text is guaranteed to be non-None here due to the if condition
                     assert odd_node_text is not None
-                    summary, retry_count = await self._summarize_text(
+                    summary, retry_count, token_count = await self._summarize_text(
                         odd_node_text,
                         "",  # No right child
                         self.config.leaf_tokens,
@@ -1221,15 +1227,15 @@ Here's the content to summarize:"""
 
                     # Track embedding for parent node
                     if reporter:
-                        summary_tokens = len(self.splitter.tokenizer.encode(summary))
+                        # Use the actual token count from the API for telemetry
                         reporter.record_embedding_call_v2(
-                            node_embeddings=[(parent_id, summary_tokens)],
+                            node_embeddings=[(parent_id, token_count)],
                             batch_size=1,
                             model=self.config.embedding_model,
                             start_time=start_time,
                         )
 
-                    # Store the single-child parent node
+                    # Store the single-child parent node with the actual token count
                     self.store.add_node(
                         node_id=parent_id,
                         text=summary,
@@ -1239,6 +1245,7 @@ Here's the content to summarize:"""
                         left_child_id=odd_node,
                         right_child_id=None,  # No right child
                         document_id=document_id,
+                        token_count=token_count,
                     )
 
                     # Update the odd node's parent reference
