@@ -45,12 +45,9 @@ class TreeNode(Base):
     span_start: Mapped[int] = mapped_column(Integer, nullable=False)
     span_end: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    summary: Mapped[str | None] = mapped_column(
-        Text, nullable=True
-    )  # NULL for leaf nodes
     token_count: Mapped[int | None] = mapped_column(
         Integer, nullable=True
-    )  # Token count of text/summary
+    )  # Token count of text content (raw text for leaves, summary for internal nodes)
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     access_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -203,7 +200,6 @@ class Store:
         parent_id: str | None = None,
         left_child_id: str | None = None,
         right_child_id: str | None = None,
-        summary: str | None = None,
         document_id: str | None = None,
         token_count: int | None = None,
     ) -> TreeNode:
@@ -220,7 +216,6 @@ class Store:
                 span_start=span_start,
                 span_end=span_end,
                 text=text,
-                summary=summary,
                 document_id=document_id,
                 token_count=token_count,
             )
@@ -731,6 +726,10 @@ class Store:
                             "depth",
                             cleanup_callback=self._clean_chromadb_metadata,
                         )
+
+                    # Migration: Drop summary column if present
+                    elif "summary" in columns:
+                        self._drop_column_migration(conn, "summary")
                 else:
                     logger.debug(
                         "tree_nodes table does not exist yet, will be created by SQLAlchemy"
@@ -779,45 +778,80 @@ class Store:
             # We need to recreate the table without the column
             conn.execute(text("BEGIN TRANSACTION"))
 
-            # Create new table without the specified column
-            conn.execute(
-                text(
-                    """
-                CREATE TABLE tree_nodes_new (
-                    id VARCHAR NOT NULL PRIMARY KEY,
-                    parent_id VARCHAR,
-                    left_child_id VARCHAR,
-                    right_child_id VARCHAR,
-                    span_start INTEGER NOT NULL,
-                    span_end INTEGER NOT NULL,
-                    text TEXT NOT NULL,
-                    summary TEXT,
-                    token_count INTEGER,
-                    is_pinned INTEGER DEFAULT 0,
-                    last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    access_count INTEGER DEFAULT 0,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    document_id VARCHAR,
-                    FOREIGN KEY(parent_id) REFERENCES tree_nodes (id),
-                    FOREIGN KEY(document_id) REFERENCES documents (id)
-                )
-            """
-                )
-            )
+            # Get current columns to determine what to include in new table
+            result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
+            current_columns = [row[1] for row in result.fetchall()]
 
-            # Copy data from old table (excluding the dropped column)
-            conn.execute(
-                text(
-                    """
-                INSERT INTO tree_nodes_new
-                SELECT id, parent_id, left_child_id, right_child_id,
-                       span_start, span_end, text, summary,
-                       is_pinned, last_accessed, access_count,
-                       created_at, document_id
-                FROM tree_nodes
-            """
+            # Build column list for new table (excluding the one being dropped)
+            select_columns = []
+
+            # Define the expected schema
+            schema_columns = [
+                ("id", "VARCHAR NOT NULL PRIMARY KEY"),
+                ("parent_id", "VARCHAR"),
+                ("left_child_id", "VARCHAR"),
+                ("right_child_id", "VARCHAR"),
+                ("span_start", "INTEGER NOT NULL"),
+                ("span_end", "INTEGER NOT NULL"),
+                ("text", "TEXT NOT NULL"),
+                ("token_count", "INTEGER"),
+                ("is_pinned", "INTEGER DEFAULT 0"),
+                ("last_accessed", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
+                ("access_count", "INTEGER DEFAULT 0"),
+                ("created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
+                ("document_id", "VARCHAR"),
+            ]
+
+            # Add summary column only if it exists and we're not dropping it
+            if "summary" in current_columns and column_name != "summary":
+                schema_columns.insert(7, ("summary", "TEXT"))
+
+            # Build CREATE TABLE statement
+            column_defs = []
+            for col_name, col_def in schema_columns:
+                if col_name != column_name:  # Skip the column being dropped
+                    column_defs.append(f"{col_name} {col_def}")
+                    if col_name in current_columns:
+                        select_columns.append(col_name)
+
+            # Add foreign keys
+            column_defs.append("FOREIGN KEY(parent_id) REFERENCES tree_nodes (id)")
+            column_defs.append("FOREIGN KEY(document_id) REFERENCES documents (id)")
+
+            create_table_sql = f"""
+                CREATE TABLE tree_nodes_new (
+                    {', '.join(column_defs)}
                 )
-            )
+            """
+
+            # Create new table
+            conn.execute(text(create_table_sql))
+
+            # Build INSERT statement based on existing columns
+            # When dropping summary, we need to handle the migration specially
+            if column_name == "summary" and "summary" in current_columns:
+                # Migrate data, using text field for both text and what was summary
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO tree_nodes_new
+                        SELECT id, parent_id, left_child_id, right_child_id,
+                               span_start, span_end, text, token_count,
+                               is_pinned, last_accessed, access_count,
+                               created_at, document_id
+                        FROM tree_nodes
+                        """
+                    )
+                )
+            else:
+                # Normal migration for other columns
+                # select_columns is built from database metadata, not user input
+                insert_sql = f"""
+                    INSERT INTO tree_nodes_new
+                    SELECT {', '.join(select_columns)}
+                    FROM tree_nodes
+                """  # nosec B608 - columns from PRAGMA table_info, not user input
+                conn.execute(text(insert_sql))
 
             # Drop old table and rename new one
             conn.execute(text("DROP TABLE tree_nodes"))
