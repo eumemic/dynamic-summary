@@ -3,23 +3,26 @@
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import OperationalConfig, QueryConfig
 
 
 class TestDPAssembly:
     """Test the DP assembly path that uses node IDs."""
 
     @pytest.fixture
-    def config(self):
-        """Create test configuration."""
-        return RagZoomConfig(
-            openai_api_key="test-key", slope_cap=True, budget_tokens=1000
-        )
+    def query_config(self):
+        """Create test query configuration."""
+        return QueryConfig(budget_tokens=1000)
 
     @pytest.fixture
-    def assembler(self, config, store):
+    def operational_config(self):
+        """Create test operational configuration."""
+        return OperationalConfig(openai_api_key="test-key")
+
+    @pytest.fixture
+    def assembler(self, store):
         """Create assembler with mock store."""
-        return Assembler(config, store)
+        return Assembler(store)
 
     @pytest.fixture
     def mock_nodes(self, store):

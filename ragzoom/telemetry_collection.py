@@ -9,11 +9,12 @@ and analysis.
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
 import psutil
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig
 from ragzoom.telemetry_types import NodeTelemetryDict
 
 logger = logging.getLogger(__name__)
@@ -35,9 +36,16 @@ logger = logging.getLogger(__name__)
 #   - Moved input_text_tokens from SummaryAttempt to NodeTelemetry (node level)
 #   - Added document_path field for telemetry file tracking
 #   - Removed dead amplification code from analysis
+# - 4.0: Configuration improvements:
+#   - Renamed indexing_config to config
+#   - Config now includes all indexing parameters from new config system
+# - 4.1: Enhanced reproducibility:
+#   - Added model_metadata for complete model information
+#   - Added system_prompts used during indexing
+#   - Added runtime_info for environment details
 #
 # Current format version (increment for breaking changes)
-TELEMETRY_FORMAT_VERSION = "3.1"
+TELEMETRY_FORMAT_VERSION = "4.1"
 
 
 @dataclass
@@ -216,7 +224,7 @@ class TelemetryCollector:
         self,
         document_id: str,
         source_tokens: int,
-        config: RagZoomConfig,
+        config: IndexConfig,
         document_path: str | None = None,
     ):
         """Initialize telemetry collector for a document.
@@ -224,7 +232,7 @@ class TelemetryCollector:
         Args:
             document_id: Document being indexed
             source_tokens: Total tokens in source document
-            config: Config containing pricing information for telemetry metadata
+            config: Index config for telemetry metadata
             document_path: Optional absolute path to the source document
         """
         self.document_id = document_id
@@ -514,7 +522,9 @@ class TelemetryCollector:
             self.memory_end_mb = self.peak_memory_mb
 
         # Return telemetry data in standard format
-        return self.get_telemetry_data(self.document_id, self.config.leaf_tokens)
+        return self.get_telemetry_data(
+            self.document_id, self.config.target_chunk_tokens
+        )
 
     def get_telemetry_data(self, document_id: str, chunk_size: int) -> dict:
         """Export raw telemetry data in standard format for analysis.
@@ -534,16 +544,32 @@ class TelemetryCollector:
         # Sort nodes by creation time for consistent output
         nodes_data.sort(key=lambda x: x["created_at"])
 
+        # Save only the index config (the parameters that affect indexing)
+        config_dict = asdict(self.config)
+
+        # Capture model metadata for reproducibility
+        model_metadata = self._get_model_metadata()
+
+        # Capture system prompts used during indexing
+        system_prompts = self._get_system_prompts()
+
+        # Capture runtime environment info
+        runtime_info = self._get_runtime_info()
+
         telemetry_data = {
             "format_version": TELEMETRY_FORMAT_VERSION,
             "document_id": document_id,
             "source_document_tokens": self.source_tokens,
             "chunk_size": chunk_size,
             "indexed_at": self.start_time,
+            "config": config_dict,
             "models": {
                 "summary": self.config.summary_model,
                 "embedding": self.config.embedding_model,
             },
+            "model_metadata": model_metadata,
+            "system_prompts": system_prompts,
+            "runtime_info": runtime_info,
             "nodes": nodes_data,
         }
 
@@ -552,3 +578,155 @@ class TelemetryCollector:
             telemetry_data["document_path"] = self.document_path
 
         return telemetry_data
+
+    def _get_model_metadata(self) -> dict[str, Any]:
+        """Get complete model metadata for reproducibility.
+
+        Returns:
+            Dictionary containing model capabilities, costs, and configuration
+        """
+        try:
+            from ragzoom.model_info import ModelInfo
+
+            model_info = ModelInfo()
+
+            metadata = {}
+
+            # Get embedding model metadata
+            try:
+                metadata["embedding"] = {
+                    "model": self.config.embedding_model,
+                    "dimensions": model_info.get_embedding_dimensions(
+                        self.config.embedding_model
+                    ),
+                    "cost_per_1k": model_info.get_embedding_cost(
+                        self.config.embedding_model
+                    ),
+                }
+            except ValueError as e:
+                logger.warning(f"Could not get embedding model metadata: {e}")
+                metadata["embedding"] = {
+                    "model": self.config.embedding_model,
+                    "error": str(e),
+                }
+
+            # Get LLM model metadata
+            try:
+                input_cost, output_cost = model_info.get_llm_costs(
+                    self.config.summary_model
+                )
+                supports_temperature = model_info.supports_temperature(
+                    self.config.summary_model
+                )
+                is_gpt5 = model_info.is_gpt5_model(self.config.summary_model)
+
+                metadata["summary"] = {
+                    "model": self.config.summary_model,
+                    "input_cost_per_1k": input_cost,
+                    "output_cost_per_1k": output_cost,
+                    "supports_temperature": supports_temperature,
+                    "is_gpt5": is_gpt5,
+                }
+
+                # Get cache discount if available
+                try:
+                    cache_discount = model_info.get_cache_discount(
+                        self.config.summary_model
+                    )
+                    metadata["summary"]["cache_discount"] = cache_discount
+                except ValueError:
+                    pass  # Cache discount not available for this model
+
+            except ValueError as e:
+                logger.warning(f"Could not get summary model metadata: {e}")
+                metadata["summary"] = {
+                    "model": self.config.summary_model,
+                    "error": str(e),
+                }
+
+            # Add models.json metadata timestamp if available
+            try:
+                models_data = model_info._data
+                if "last_updated" in models_data:
+                    metadata["models_last_updated"] = models_data["last_updated"]
+            except Exception:
+                pass  # Optional metadata, ignore errors
+
+            return metadata
+
+        except Exception as e:
+            logger.warning(f"Failed to collect model metadata: {e}")
+            return {"error": str(e)}
+
+    def _get_system_prompts(self) -> dict[str, str]:
+        """Get system prompts used during indexing for reproducibility.
+
+        Returns:
+            Dictionary containing the system prompts used
+        """
+        # The hardcoded system prompt from index.py _summarize_text method
+        # This ensures exact reproducibility of summary generation
+        return {
+            "summary_system_prompt": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text."
+        }
+
+    def _get_runtime_info(self) -> dict[str, Any]:
+        """Get runtime environment information for reproducibility.
+
+        Returns:
+            Dictionary containing runtime environment details
+        """
+        import platform
+        import sys
+
+        runtime_info = {
+            "python_version": sys.version,
+            "platform": platform.platform(),
+            "ragzoom_version": self._get_ragzoom_version(),
+        }
+
+        # Add key library versions that could affect results
+        try:
+            import tiktoken
+
+            runtime_info["tiktoken_version"] = tiktoken.__version__
+        except (ImportError, AttributeError):
+            pass
+
+        try:
+            import openai
+
+            runtime_info["openai_version"] = openai.__version__
+        except (ImportError, AttributeError):
+            pass
+
+        return runtime_info
+
+    def _get_ragzoom_version(self) -> str:
+        """Get RagZoom version for telemetry.
+
+        Returns:
+            Version string or 'unknown' if not available
+        """
+        try:
+            # Try to get version from package metadata
+            import importlib.metadata
+
+            return importlib.metadata.version("ragzoom")
+        except Exception:
+            try:
+                # Fallback: try to read from pyproject.toml in development
+                from pathlib import Path
+
+                import tomllib
+
+                pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
+                if pyproject_path.exists():
+                    with open(pyproject_path, "rb") as f:
+                        data = tomllib.load(f)
+                        version = data.get("project", {}).get("version", "unknown")
+                        return str(version) if version else "unknown"
+            except Exception:
+                pass
+
+        return "unknown"

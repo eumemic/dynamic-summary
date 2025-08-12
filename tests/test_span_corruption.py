@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.store import Store
 
@@ -17,20 +17,35 @@ class TestSpanCorruption:
     def setup_system(self):
         """Set up test system."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = RagZoomConfig(
+            # Create separate configs
+            index_config = IndexConfig(
+                target_chunk_tokens=100,  # Small chunks to create many nodes
+                preceding_context_tokens=10,  # Must be less than leaf_tokens
+            )
+            query_config = QueryConfig(budget_tokens=1000)
+            operational_config = OperationalConfig(
                 openai_api_key="test-key",
                 sqlite_database_url="sqlite:///:memory:",
                 chroma_persist_directory=temp_dir,
-                leaf_tokens=100,  # Small chunks to create many nodes
-                adjacent_context_tokens=10,  # Must be less than leaf_tokens
-                budget_tokens=1000,
             )
-            store = Store(config)
-            tree_builder = TreeBuilder(config, store)
+
+            store = Store(
+                operational_config, embedding_model=index_config.embedding_model
+            )
+            tree_builder = TreeBuilder(
+                index_config, store, api_key=operational_config.openai_api_key
+            )
 
             # Mock API calls
             mock_client = AsyncMock()
             tree_builder.client = mock_client
+
+            # Create a config wrapper for backward compatibility
+            from tests.conftest import BackwardCompatibilityConfig
+
+            config = BackwardCompatibilityConfig(
+                index_config, query_config, operational_config
+            )
 
             yield config, store, tree_builder, mock_client
 

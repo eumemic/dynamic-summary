@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
@@ -15,7 +15,18 @@ class TestRetrieverBug:
     @pytest.fixture
     def setup_tree_for_bug_demo(self):
         """Set up a system with a tree structure to demonstrate the bug."""
-        config = RagZoomConfig(leaf_tokens=100, adjacent_context_tokens=50)
+        index_config = IndexConfig(target_chunk_tokens=100, preceding_context_tokens=50)
+        query_config = QueryConfig(budget_tokens=1000)
+        operational_config = OperationalConfig(openai_api_key="test-key")
+
+        # Create a simple config object with properties for backward compatibility
+        class Config:
+            def __init__(self):
+                self.target_chunk_tokens = index_config.target_chunk_tokens
+                self.preceding_context_tokens = index_config.preceding_context_tokens
+                self.openai_api_key = operational_config.openai_api_key
+
+        config = Config()
         store = SimpleMockStore(config=config)
 
         # Create same tree structure as before
@@ -100,15 +111,20 @@ class TestRetrieverBug:
             summary="Full document summary",
         )
 
-        retriever = Retriever(config, store, tree_builder=None)
+        retriever = Retriever(
+            query_config=query_config,
+            store=store,
+            api_key=operational_config.openai_api_key,
+            tree_builder=None,
+        )
         return config, store, retriever
 
-    def test_retriever_bug_with_n_max_1(self, setup_tree_for_bug_demo):
+    def test_retriever_bug_with_num_seeds_1(self, setup_tree_for_bug_demo):
         """Test that the retriever should build complete coverage trees but currently doesn't."""
         config, store, retriever = setup_tree_for_bug_demo
 
         # Mock the vector search to return only L3
-        # This simulates what happens with --n-max 1 when L3 is most relevant
+        # This simulates what happens with --num-seeds 1 when L3 is most relevant
         def mock_query_chroma(embedding, n_results, document_id=None):
             # Return L3 as the only result
             return {"ids": [["L3"]], "distances": [[0.1]]}
@@ -123,7 +139,7 @@ class TestRetrieverBug:
         result = asyncio.run(
             retriever.retrieve_async(
                 query="test query",  # Query text doesn't matter with our mock
-                n_max=1,  # Only select 1 node
+                num_seeds=1,  # Only select 1 node
                 budget_tokens=1000,
                 document_id="test-doc",
             )
@@ -160,7 +176,7 @@ class TestRetrieverBug:
         result = asyncio.run(
             retriever.retrieve_async(
                 query="test",
-                n_max=1,
+                num_seeds=1,
                 budget_tokens=1000,
                 document_id="test-doc",
             )

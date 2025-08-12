@@ -13,10 +13,7 @@ FIGURE_HEIGHT = 24
 
 # API pricing constants (as of January 2025, used for visualization consistency)
 # Note: These are older pricing values maintained for consistency with existing benchmarks
-# To use current pricing, set these environment variables:
-# - RAGZOOM_EMBEDDING_COST_PER_1K (default: 0.0001)
-# - RAGZOOM_SUMMARY_INPUT_COST_PER_1K (default: 0.0025)
-# - RAGZOOM_SUMMARY_OUTPUT_COST_PER_1K (default: 0.01)
+# Current pricing is managed through models.json
 EMBEDDING_COST_PER_1K = 0.0001  # text-embedding-3-small (older pricing)
 SUMMARY_INPUT_COST_PER_1K = 0.0025  # gpt-4o-mini input (older pricing)
 SUMMARY_OUTPUT_COST_PER_1K = 0.01  # gpt-4o-mini output (older pricing)

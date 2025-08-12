@@ -117,7 +117,7 @@ def validate_chunk_sizes(
 
     Args:
         leaf_nodes: List of leaf nodes
-        target_tokens: Target size in tokens (RAGZOOM_LEAF_TOKENS)
+        target_tokens: Target size in tokens (target_chunk_tokens from IndexConfig)
         tolerance: Acceptable deviation (default 20%)
 
     Returns:

@@ -95,7 +95,6 @@ def mock_openai_fixture():
     with (
         patch("ragzoom.index.AsyncOpenAI") as mock_index,
         patch("ragzoom.retrieve.OpenAI") as mock_retrieve,
-        patch("ragzoom.assemble.OpenAI") as mock_assemble,
     ):
         mock_index_client, mock_retrieve_client, mock_assemble_client = (
             create_mock_openai_clients()
@@ -103,7 +102,7 @@ def mock_openai_fixture():
 
         mock_index.return_value = mock_index_client
         mock_retrieve.return_value = mock_retrieve_client
-        mock_assemble.return_value = mock_assemble_client
+        # Assemble doesn't use OpenAI so we don't need to mock it
 
         yield mock_index_client, mock_retrieve_client, mock_assemble_client
 

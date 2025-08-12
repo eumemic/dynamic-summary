@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import OperationalConfig
 from ragzoom.store import Store
 
 
@@ -21,13 +21,13 @@ class TestStore:
         db_path = f"{temp_dir}/test.db"
 
         # Override config
-        config = RagZoomConfig(
+        config = OperationalConfig(
             openai_api_key="test-key",
             chroma_persist_directory=chroma_dir,
             sqlite_database_url=f"sqlite:///{db_path}",
         )
 
-        store = Store(config)
+        store = Store(config, embedding_model="text-embedding-3-small")
         yield store
 
         # Cleanup - close store first to release file handles
@@ -39,7 +39,7 @@ class TestStore:
         node = temp_store.add_node(
             node_id="test-1",
             text="Test text",
-            embedding=[0.1] * 384,
+            embedding=[0.1] * 1536,
             span_start=0,
             span_end=10,
         )
@@ -55,7 +55,7 @@ class TestStore:
         temp_store.add_node(
             node_id="test-2",
             text="Test text 2",
-            embedding=[0.2] * 384,
+            embedding=[0.2] * 1536,
             span_start=10,
             span_end=20,
         )
@@ -76,7 +76,7 @@ class TestStore:
         temp_store.add_node(
             node_id="parent",
             text="Parent node",
-            embedding=[0.3] * 384,
+            embedding=[0.3] * 1536,
             span_start=0,
             span_end=20,
             left_child_id="child1",
@@ -87,7 +87,7 @@ class TestStore:
         temp_store.add_node(
             node_id="child1",
             text="Child 1",
-            embedding=[0.4] * 384,
+            embedding=[0.4] * 1536,
             span_start=0,
             span_end=10,
             parent_id="parent",
@@ -96,7 +96,7 @@ class TestStore:
         temp_store.add_node(
             node_id="child2",
             text="Child 2",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             span_start=10,
             span_end=20,
             parent_id="parent",
@@ -115,7 +115,7 @@ class TestStore:
         """Test vector similarity search."""
         # Add some nodes
         for i in range(5):
-            embedding = [i * 0.1] * 384
+            embedding = [i * 0.1] * 1536
             temp_store.add_node(
                 node_id=f"node-{i}",
                 text=f"Text {i}",
@@ -125,7 +125,7 @@ class TestStore:
             )
 
         # Search with a query embedding
-        query_embedding = [0.25] * 384
+        query_embedding = [0.25] * 1536
         results = temp_store.search_similar(query_embedding, n_results=3)
 
         assert len(results) == 3
@@ -154,7 +154,7 @@ class TestStore:
 
         for i, (node_id, _, _) in enumerate(candidates):
             # Pad embedding to expected size
-            full_embedding = embeddings[i] + [0.0] * (384 - 3)
+            full_embedding = embeddings[i] + [0.0] * (1536 - 3)
             temp_store.add_node(
                 node_id=node_id,
                 text=f"Text for {node_id}",
@@ -164,7 +164,7 @@ class TestStore:
             )
 
         # Test MMR selection
-        query_embedding = [1.0, 0.0, 0.0] + [0.0] * 381  # Similar to node-1
+        query_embedding = [1.0, 0.0, 0.0] + [0.0] * 1533  # Similar to node-1
         selected = temp_store.compute_mmr_diverse_results(
             query_embedding, candidates, lambda_param=0.7, k=3
         )
@@ -182,7 +182,7 @@ class TestStore:
         temp_store.add_node(
             node_id="root",
             text="Root node",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             span_start=0,
             span_end=30,
             parent_id=None,
@@ -192,7 +192,7 @@ class TestStore:
         temp_store.add_node(
             node_id="level1",
             text="Level 1 node",
-            embedding=[0.6] * 384,
+            embedding=[0.6] * 1536,
             span_start=0,
             span_end=20,
             parent_id="root",
@@ -202,7 +202,7 @@ class TestStore:
         temp_store.add_node(
             node_id="level2",
             text="Level 2 node",
-            embedding=[0.7] * 384,
+            embedding=[0.7] * 1536,
             span_start=0,
             span_end=10,
             parent_id="level1",
@@ -212,14 +212,13 @@ class TestStore:
         temp_store.add_node(
             node_id="level3",
             text="Level 3 node",
-            embedding=[0.8] * 384,
+            embedding=[0.8] * 1536,
             span_start=0,
             span_end=5,
             parent_id="level2",
         )
 
-        # Set pin depth max to 2
-        temp_store.config.pin_depth_max = 2
+        # pin_depth_max is hardcoded to 2 in the config
 
         # Pin nodes at different depths
         success = temp_store.pin_node("root")  # depth 0 - should succeed
@@ -252,7 +251,7 @@ class TestStore:
         temp_store.add_node(
             node_id="cached",
             text="Cached node",
-            embedding=[0.8] * 384,
+            embedding=[0.8] * 1536,
             span_start=0,
             span_end=10,
         )
@@ -282,7 +281,7 @@ class TestStore:
         temp_store.add_node(
             node_id="root",
             text="Root",
-            embedding=[0.1] * 384,
+            embedding=[0.1] * 1536,
             span_start=0,
             span_end=100,
             left_child_id="left",
@@ -293,7 +292,7 @@ class TestStore:
         temp_store.add_node(
             node_id="left",
             text="Left",
-            embedding=[0.2] * 384,
+            embedding=[0.2] * 1536,
             span_start=0,
             span_end=50,
             parent_id="root",
@@ -304,7 +303,7 @@ class TestStore:
         temp_store.add_node(
             node_id="right",
             text="Right",
-            embedding=[0.3] * 384,
+            embedding=[0.3] * 1536,
             span_start=50,
             span_end=100,
             parent_id="root",
@@ -315,7 +314,7 @@ class TestStore:
         temp_store.add_node(
             node_id="ll",
             text="Left-Left",
-            embedding=[0.4] * 384,
+            embedding=[0.4] * 1536,
             span_start=0,
             span_end=25,
             parent_id="left",
@@ -324,7 +323,7 @@ class TestStore:
         temp_store.add_node(
             node_id="lr",
             text="Left-Right",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             span_start=25,
             span_end=50,
             parent_id="left",
@@ -333,7 +332,7 @@ class TestStore:
         temp_store.add_node(
             node_id="rc",
             text="Right-Child",
-            embedding=[0.6] * 384,
+            embedding=[0.6] * 1536,
             span_start=50,
             span_end=75,
             parent_id="right",
@@ -362,7 +361,7 @@ class TestStore:
         temp_store.add_node(
             node_id="root",
             text="Root",
-            embedding=[0.1] * 384,
+            embedding=[0.1] * 1536,
             span_start=0,
             span_end=100,
             left_child_id="left",
@@ -372,7 +371,7 @@ class TestStore:
         temp_store.add_node(
             node_id="left",
             text="Left",
-            embedding=[0.2] * 384,
+            embedding=[0.2] * 1536,
             span_start=0,
             span_end=50,
             parent_id="root",
@@ -383,7 +382,7 @@ class TestStore:
         temp_store.add_node(
             node_id="right",
             text="Right",
-            embedding=[0.3] * 384,
+            embedding=[0.3] * 1536,
             span_start=50,
             span_end=100,
             parent_id="root",
@@ -393,7 +392,7 @@ class TestStore:
         temp_store.add_node(
             node_id="ll",
             text="Left-Left",
-            embedding=[0.4] * 384,
+            embedding=[0.4] * 1536,
             span_start=0,
             span_end=25,
             parent_id="left",
@@ -402,7 +401,7 @@ class TestStore:
         temp_store.add_node(
             node_id="lr",
             text="Left-Right",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             span_start=25,
             span_end=50,
             parent_id="left",
@@ -411,7 +410,7 @@ class TestStore:
         temp_store.add_node(
             node_id="rc",
             text="Right-Child",
-            embedding=[0.6] * 384,
+            embedding=[0.6] * 1536,
             span_start=50,
             span_end=75,
             parent_id="right",
@@ -445,7 +444,7 @@ class TestStore:
         temp_store.add_node(
             node_id="single",
             text="Single node",
-            embedding=[0.1] * 384,
+            embedding=[0.1] * 1536,
             span_start=0,
             span_end=10,
         )
@@ -459,7 +458,7 @@ class TestStore:
         temp_store.add_node(
             node_id="parent_left_only",
             text="Parent with left only",
-            embedding=[0.2] * 384,
+            embedding=[0.2] * 1536,
             span_start=0,
             span_end=20,
             left_child_id="left_only_child",
@@ -468,7 +467,7 @@ class TestStore:
         temp_store.add_node(
             node_id="left_only_child",
             text="Left only child",
-            embedding=[0.3] * 384,
+            embedding=[0.3] * 1536,
             span_start=0,
             span_end=10,
             parent_id="parent_left_only",
@@ -481,7 +480,7 @@ class TestStore:
         temp_store.add_node(
             node_id="parent_right_only",
             text="Parent with right only",
-            embedding=[0.4] * 384,
+            embedding=[0.4] * 1536,
             span_start=0,
             span_end=20,
             right_child_id="right_only_child",
@@ -490,7 +489,7 @@ class TestStore:
         temp_store.add_node(
             node_id="right_only_child",
             text="Right only child",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             span_start=10,
             span_end=20,
             parent_id="parent_right_only",
@@ -511,7 +510,7 @@ class TestStore:
             temp_store.add_node(
                 node_id=node_id,
                 text=f"Chain node {i}",
-                embedding=[0.1 * i] * 384,
+                embedding=[0.1 * i] * 1536,
                 span_start=i * 10,
                 span_end=(i + 1) * 10,
                 parent_id=parent_id,

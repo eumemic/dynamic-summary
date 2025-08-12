@@ -1,211 +1,183 @@
 """Configuration management for RagZoom."""
 
 import json
+import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+def get_embedding_cost(model: str) -> float:
+    """Get embedding cost per 1K tokens using ModelInfo."""
+    from ragzoom.model_info import ModelInfo
+
+    model_info = ModelInfo()
+    try:
+        return model_info.get_embedding_cost(model)
+    except (KeyError, ValueError):
+        return 0.0
 
 
-class RagZoomConfig(BaseSettings):
-    """Main configuration for RagZoom system."""
+def get_llm_costs(model: str) -> tuple[float, float]:
+    """Get LLM input and output costs per 1K tokens using ModelInfo."""
+    from ragzoom.model_info import ModelInfo
 
-    model_config = SettingsConfigDict(
-        env_file=".env", env_prefix="RAGZOOM_", case_sensitive=False
-    )
+    model_info = ModelInfo()
+    try:
+        return model_info.get_llm_costs(model)
+    except (KeyError, ValueError):
+        return 0.0, 0.0
 
-    # Core parameters
-    budget_tokens: int = Field(
-        default=8000, description="Hard budget for stitched summary in tokens"
-    )
-    leaf_tokens: int = Field(
-        default=200, description="Target size for leaf chunks in tokens"
-    )
 
-    # Retrieval parameters
-    mmr_lambda: float = Field(
-        default=0.7,
-        description="MMR relevance vs diversity (0-1, higher=more relevant)",
-    )
-    mmr_k_multiplier: float = Field(
-        default=2.0, description="Retrieve k_multiplier * N_max candidates for MMR"
-    )
+def get_cache_discount(model: str) -> float:
+    """Get cache discount multiplier for LLM using ModelInfo."""
+    from ragzoom.model_info import ModelInfo
 
-    # Slope cap and smoothing
-    slope_cap: bool = Field(
-        default=True, description="Forbid depth jumps > 1 level in tiling"
-    )
-    slope_cap_size: int = Field(
-        default=1,
-        description="Maximum depth difference allowed between adjacent tiling nodes",
-    )
-    adjacent_context_tokens: int = Field(
-        default=75, description="Tokens from prev/next chunks for summarization context"
-    )
-    smoothing_pass_enabled: bool = Field(
-        default=False, description="Enable smoothing pass for tiling joins"
-    )
+    model_info = ModelInfo()
+    try:
+        return model_info.get_cache_discount(model)
+    except (KeyError, ValueError):
+        return 1.0
 
-    # Summary correction parameters
-    summary_deviation_threshold: float = Field(
-        default=0.2,
-        ge=0.0,
-        le=1.0,
-        description="Max deviation from target before retry (0.2 = 20%)",
-    )
-    summary_max_retries: int = Field(
-        default=0,
-        ge=0,
-        le=10,
-        description="Maximum retries for summary correction",
-    )
 
-    # Validation
-    validate_pipeline: bool = Field(
-        default=False, description="Enable validation checks for tiling invariants"
-    )
-    smoothing_model: str = Field(
-        default="gpt-3.5-turbo", description="Model for smoothing pass"
-    )
-    smoothing_max_tokens: int = Field(
-        default=150, description="Max tokens per smoothing operation"
-    )
+def is_gpt5_model(model: str) -> bool:
+    """Check if model is a GPT-5 variant."""
+    return model.startswith("gpt-5")
 
-    # Storage configuration
-    openai_api_key: str = Field(default="", description="OpenAI API key")
-    chroma_persist_directory: str = Field(
-        default="./chroma_db", description="Directory for Chroma persistence"
-    )
-    sqlite_database_url: str = Field(
-        default="sqlite:///./ragzoom.db", description="SQLite database URL"
-    )
 
-    # Embedding configuration
-    embedding_model: str = Field(
-        default="text-embedding-3-small", description="OpenAI embedding model"
-    )
-    embedding_dimensions: int | None = Field(
-        default=None, description="Embedding dimensions (None=use model default)"
-    )
+@dataclass
+class IndexConfig:
+    """Configuration for document indexing.
 
-    # Summarization configuration
-    summary_model: str = Field(
-        default="gpt-4o", description="Model for node summarization"
-    )
-    summary_temperature: float = Field(
-        default=0.3, description="Temperature for summarization"
-    )
+    These parameters control how documents are chunked, summarized, and embedded.
+    This is the configuration that gets saved to and loaded from config files.
+    """
 
-    # Operational settings
-    log_level: str = Field(default="INFO", description="Logging level")
-    cache_size: int = Field(
-        default=1000, description="Maximum number of nodes in LRU cache"
-    )
-    embedding_batch_size: int = Field(
-        default=100, description="Batch size for embedding API calls"
-    )
-    pin_depth_max: int = Field(
-        default=2, description="Deepest level a node may be permanently pinned"
-    )
+    target_chunk_tokens: int = 200
+    preceding_context_tokens: int = 75
+    summary_model: str = "gpt-4o"
+    embedding_model: str = "text-embedding-3-small"
+    retry_threshold: float = 0.2
+    max_retries: int = 0
+    embedding_batch_size: int = 100
 
-    # Pricing configuration
-    pricing_file: str | None = Field(
-        default=None,
-        description="Path to JSON file with LLM pricing (defaults to ragzoom/pricing.json)",
-    )
-
-    # Cost estimation settings (per 1K tokens) - populated from pricing file
-    embedding_cost_per_1k: float = Field(
-        default=0.0,  # Will be set by model_validator
-        description="Cost per 1K tokens for embeddings",
-    )
-    summary_input_cost_per_1k: float = Field(
-        default=0.0,  # Will be set by model_validator
-        description="Cost per 1K input tokens for summary model",
-    )
-    summary_output_cost_per_1k: float = Field(
-        default=0.0,  # Will be set by model_validator
-        description="Cost per 1K output tokens for summary model",
-    )
-
-    @field_validator("mmr_lambda")
-    @classmethod
-    def validate_mmr_lambda(cls, v: float) -> float:
-        """Ensure MMR lambda is between 0 and 1."""
-        if not 0 <= v <= 1:
-            raise ValueError("mmr_lambda must be between 0 and 1")
-        return v
-
-    @field_validator("adjacent_context_tokens")
-    @classmethod
-    def validate_adjacent_context(cls, v: int, info: Any) -> int:
-        """Ensure adjacent context doesn't exceed leaf size."""
-        leaf_tokens = info.data.get("leaf_tokens", 200)
-        if v > leaf_tokens:
-            raise ValueError("adjacent_context_tokens cannot exceed leaf_tokens")
-        return v
-
-    @model_validator(mode="after")
-    def load_pricing_from_file(self) -> "RagZoomConfig":
-        """Load pricing from JSON file."""
-        # Load pricing data
-        pricing_data = self._load_pricing_data()
-
-        # Get embedding price
-        if self.embedding_model not in pricing_data["embeddings"]:
-            available_models = list(pricing_data["embeddings"].keys())
-            pricing_file_path = self.pricing_file or "ragzoom/pricing.json"
+    def __post_init__(self) -> None:
+        """Validate configuration values."""
+        if not 0.0 <= self.retry_threshold <= 1.0:
             raise ValueError(
-                f"Embedding model '{self.embedding_model}' not found in pricing file. "
-                f"Available models: {available_models}\n"
-                f"To add support for '{self.embedding_model}', update the pricing file at: {pricing_file_path}"
+                f"retry_threshold must be between 0.0 and 1.0, got {self.retry_threshold}"
             )
-        self.embedding_cost_per_1k = pricing_data["embeddings"][self.embedding_model]
-
-        # Get LLM prices
-        if self.summary_model not in pricing_data["llms"]:
-            available_models = list(pricing_data["llms"].keys())
-            pricing_file_path = self.pricing_file or "ragzoom/pricing.json"
+        if self.max_retries < 0:
+            raise ValueError(f"max_retries cannot be negative, got {self.max_retries}")
+        if self.embedding_batch_size <= 0:
             raise ValueError(
-                f"Summary model '{self.summary_model}' not found in pricing file. "
-                f"Available models: {available_models}\n"
-                f"To add support for '{self.summary_model}', update the pricing file at: {pricing_file_path}"
-            )
-        llm_pricing = pricing_data["llms"][self.summary_model]
-        self.summary_input_cost_per_1k = llm_pricing["input"]
-        self.summary_output_cost_per_1k = llm_pricing["output"]
-
-        return self
-
-    def _load_pricing_data(self) -> dict[str, Any]:
-        """Load pricing data from JSON file."""
-        if self.pricing_file:
-            # Use explicitly provided file
-            pricing_path = Path(self.pricing_file)
-        else:
-            # Default to ragzoom/pricing.json
-            module_dir = Path(__file__).parent
-            pricing_path = module_dir / "pricing.json"
-
-        if not pricing_path.exists():
-            raise FileNotFoundError(
-                f"Pricing file not found at {pricing_path}. "
-                "Please ensure ragzoom/pricing.json exists or specify a custom path "
-                "using the RAGZOOM_PRICING_FILE environment variable or pricing_file parameter."
+                f"embedding_batch_size must be positive, got {self.embedding_batch_size}"
             )
 
-        try:
-            with open(pricing_path) as f:
-                data: dict[str, Any] = json.load(f)
-                return data
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in pricing file {pricing_path}: {e}")
-        except OSError as e:
-            raise OSError(f"Error reading pricing file {pricing_path}: {e}")
+    def replace(self, **changes: Any) -> "IndexConfig":
+        """Create a new IndexConfig with some fields changed."""
+        from dataclasses import replace
 
-    @property
-    def n_max(self) -> int:
-        """Calculate maximum number of nodes based on budget."""
-        # Increased from budget/2*leaf to budget/leaf for better coverage
-        return self.budget_tokens // self.leaf_tokens
+        return replace(self, **changes)
+
+
+@dataclass
+class QueryConfig:
+    """Configuration for query/retrieval operations.
+
+    These parameters control how queries are processed and results are retrieved.
+    """
+
+    budget_tokens: int = 8000
+    mmr_lambda: float = 0.7
+    mmr_k_multiplier: float = 2.0
+    embedding_model: str = "text-embedding-3-small"
+
+    def __post_init__(self) -> None:
+        """Validate configuration values."""
+        if not 0.0 <= self.mmr_lambda <= 1.0:
+            raise ValueError(
+                f"mmr_lambda must be between 0.0 and 1.0, got {self.mmr_lambda}"
+            )
+        if self.budget_tokens <= 0:
+            raise ValueError(
+                f"budget_tokens must be positive, got {self.budget_tokens}"
+            )
+        if self.mmr_k_multiplier <= 0:
+            raise ValueError(
+                f"mmr_k_multiplier must be positive, got {self.mmr_k_multiplier}"
+            )
+
+    def replace(self, **changes: Any) -> "QueryConfig":
+        """Create a new QueryConfig with some fields changed."""
+        from dataclasses import replace
+
+        return replace(self, **changes)
+
+
+@dataclass
+class OperationalConfig:
+    """Operational configuration for runtime environment.
+
+    These parameters are environment-specific and are never saved to config files.
+    They include storage paths, API keys, and other runtime settings.
+    """
+
+    openai_api_key: str = ""
+    chroma_persist_directory: str = "./chroma_db"
+    sqlite_database_url: str = "sqlite:///./ragzoom.db"
+    cache_size: int = 1000
+    log_level: str = "INFO"
+    validate_pipeline: bool = False
+
+    def __post_init__(self) -> None:
+        """Load API key from environment if not set."""
+        if not self.openai_api_key:
+            self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+
+        # Allow environment overrides for storage paths (for testing)
+        if os.environ.get("RAGZOOM_CHROMA_PERSIST_DIRECTORY"):
+            self.chroma_persist_directory = os.environ[
+                "RAGZOOM_CHROMA_PERSIST_DIRECTORY"
+            ]
+        if os.environ.get("RAGZOOM_SQLITE_DATABASE_URL"):
+            self.sqlite_database_url = os.environ["RAGZOOM_SQLITE_DATABASE_URL"]
+
+    def replace(self, **changes: Any) -> "OperationalConfig":
+        """Create a new OperationalConfig with some fields changed."""
+        from dataclasses import replace
+
+        return replace(self, **changes)
+
+
+def load_indexing_config(
+    config_path: Path | None = None, **cli_options: Any
+) -> dict[str, Any]:
+    """Load indexing configuration with proper precedence.
+
+    Args:
+        config_path: Optional path to user config file
+        **cli_options: CLI options that override config file
+
+    Returns:
+        Dictionary of configuration values
+    """
+    # Start with default config
+    module_dir = Path(__file__).parent
+    default_config_path = module_dir / "default_config.json"
+
+    with open(default_config_path) as f:
+        config = json.load(f)
+
+    # Override with user config file if provided
+    if config_path and config_path.exists():
+        with open(config_path) as f:
+            user_config = json.load(f)
+            config.update(user_config)
+
+    # Override with CLI options (filter out None values)
+    for key, value in cli_options.items():
+        if value is not None and key in config:
+            config[key] = value
+
+    return dict(config)

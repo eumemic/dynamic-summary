@@ -1,6 +1,6 @@
 """Test budget splitting logic in dynamic tiling."""
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.store import TreeNode
 
@@ -10,8 +10,8 @@ class TestBudgetSplitting:
 
     def test_proportional_split_maintains_ratios(self):
         """Test that budget splitting maintains intended proportions."""
-        config = RagZoomConfig()
-        generator = DynamicTilingGenerator(config)
+        query_config = QueryConfig()
+        generator = DynamicTilingGenerator(query_config)
 
         # Create mock nodes
         # Need to create text that actually results in 100 tokens
@@ -71,8 +71,8 @@ class TestBudgetSplitting:
 
     def test_minimum_constraints_respected(self):
         """Test that minimum token requirements are always met."""
-        config = RagZoomConfig()
-        generator = DynamicTilingGenerator(config)
+        query_config = QueryConfig()
+        generator = DynamicTilingGenerator(query_config)
 
         # Create nodes with different costs
         left_text = " ".join(["word"] * 150)  # ~150 tokens
@@ -120,8 +120,8 @@ class TestBudgetSplitting:
 
     def test_tight_budget_handling(self):
         """Test behavior when budget barely covers minimums."""
-        config = RagZoomConfig()
-        generator = DynamicTilingGenerator(config)
+        query_config = QueryConfig()
+        generator = DynamicTilingGenerator(query_config)
 
         left_text = " ".join(["word"] * 100)  # ~100 tokens
         right_text = " ".join(["word"] * 100)  # ~100 tokens

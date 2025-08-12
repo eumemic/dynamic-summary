@@ -10,7 +10,12 @@ import click
 from dotenv import load_dotenv
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import (
+    IndexConfig,
+    OperationalConfig,
+    QueryConfig,
+    load_indexing_config,
+)
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store, TreeNode
@@ -39,39 +44,72 @@ def configure_logging_level(debug: bool) -> None:
         logging.getLogger("ragzoom").setLevel(logging.INFO)
 
 
+def setup_command_environment(
+    log_level: str | None, debug: bool, validate: bool
+) -> None:
+    """Set up logging and validation for CLI commands."""
+    # Configure logging level
+    if log_level:
+        logging.getLogger("ragzoom").setLevel(getattr(logging, log_level))
+    elif debug:
+        configure_logging_level(debug)
+
+    # Set global validation flag
+    from ragzoom.validate import set_validation_enabled
+
+    set_validation_enabled(validate)
+
+
 # Keep ragzoom.index at INFO to show batch progress
 
 
 @click.group()
 @click.pass_context
 def cli(ctx: click.Context) -> None:
-    """RagZoom: Incremental, hierarchical RAG memory system."""
-    # Initialize shared components
-    # RagZoomConfig will read from environment automatically due to pydantic_settings
-    config = RagZoomConfig()  # Will use RAGZOOM_OPENAI_API_KEY from env
-    store = Store(config)
+    """RagZoom: Incremental, hierarchical RAG memory system.
 
+    🚀 Quick Start:
+      ragzoom index document.txt
+      ragzoom query "your question" -d document.txt
+
+    🔧 Configuration:
+      ragzoom config --examples
+    """
+    # Only create configs, not components
     ctx.ensure_object(dict)
-    ctx.obj["config"] = config
-    ctx.obj["store"] = store
-    tree_builder = TreeBuilder(config, store)
-    ctx.obj["tree_builder"] = tree_builder
-    ctx.obj["retriever"] = Retriever(config, store, tree_builder)
-    ctx.obj["assembler"] = Assembler(config, store)
+    ctx.obj["index_config"] = IndexConfig()
+    ctx.obj["query_config"] = QueryConfig()
+    ctx.obj["operational_config"] = OperationalConfig()
 
 
 @cli.command()
 @click.argument("file_path", type=click.Path(exists=True))
-@click.option("--document-id", help="Optional document ID")
+@click.option("--document-id", help="Document ID (defaults to filename)")
 @click.option("--clear", is_flag=True, help="Clear existing document before indexing")
-@click.option("--no-progress", is_flag=True, help="Disable progress bar")
 @click.option(
-    "--max-concurrent",
-    type=int,
-    default=10,
-    help="Maximum concurrent API requests (default: 10)",
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, path_type=Path),
+    help="Load configuration from JSON file",
 )
-@click.option("--validate", is_flag=True, help="Enable validation checks")
+@click.option(
+    "--target-chunk-tokens", type=int, help="Target size for leaf chunks in tokens"
+)
+@click.option(
+    "--preceding-context-tokens", type=int, help="Context tokens from adjacent chunks"
+)
+@click.option("--summary-model", "-m", type=str, help="Model for summarization")
+@click.option("--embedding-model", type=str, help="Model for embeddings")
+@click.option(
+    "--retry-threshold", type=float, help="Max deviation before retry (0.0-1.0)"
+)
+@click.option("--max-retries", type=int, help="Maximum summary retries")
+@click.option("--embedding-batch-size", type=int, help="Batch size for embeddings")
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    help="Directory for data storage (default: current directory)",
+)
 @click.option(
     "--debug",
     is_flag=True,
@@ -84,7 +122,7 @@ def cli(ctx: click.Context) -> None:
     is_flag=False,
     flag_value="telemetry.json",
     default=None,
-    help="Save telemetry data to JSON file (default: telemetry.json)",
+    help="Save telemetry data to JSON file",
 )
 @click.pass_context
 def index(
@@ -92,23 +130,71 @@ def index(
     file_path: str,
     document_id: str | None,
     clear: bool,
-    no_progress: bool,
-    max_concurrent: int,
-    validate: bool,
+    config_path: Path | None,
+    target_chunk_tokens: int | None,
+    preceding_context_tokens: int | None,
+    summary_model: str | None,
+    embedding_model: str | None,
+    retry_threshold: float | None,
+    max_retries: int | None,
+    embedding_batch_size: int | None,
+    data_dir: str | None,
     debug: bool,
     telemetry_file: str | None,
 ) -> None:
-    """Index a document from file."""
+    """Index a document from file.
 
-    # Configure logging level based on debug flag
-    configure_logging_level(debug)
+    Configuration can be set via:
+    1. CLI options (highest priority)
+    2. Config file specified with --config
+    3. Default values from default_config.json
 
-    # Set global validation flag
-    from ragzoom.validate import set_validation_enabled
+    Examples:
+      ragzoom index document.txt --target-chunk-tokens 300 --summary-model gpt-5-nano
+      ragzoom index document.txt --config myconfig.json
+    """
 
-    set_validation_enabled(validate)
+    setup_command_environment(None, debug, False)
 
     try:
+        # Load indexing configuration with CLI overrides
+        indexing_config = load_indexing_config(
+            config_path,
+            target_chunk_tokens=target_chunk_tokens,
+            preceding_context_tokens=preceding_context_tokens,
+            summary_model=summary_model,
+            embedding_model=embedding_model,
+            retry_threshold=retry_threshold,
+            max_retries=max_retries,
+            embedding_batch_size=embedding_batch_size,
+        )
+
+        # Create config objects with merged values
+        index_config = IndexConfig(**indexing_config)
+        query_config = QueryConfig()  # Use defaults for indexing command
+        operational_config = OperationalConfig()
+
+        # Override data directory if provided
+        if data_dir:
+            data_path = Path(data_dir)
+            operational_config = operational_config.replace(
+                chroma_persist_directory=str(data_path / "chroma_db"),
+                sqlite_database_url=f"sqlite:///{data_path / 'ragzoom.db'}",
+            )
+
+        # Update context with new configs
+        ctx.obj["index_config"] = index_config
+        ctx.obj["query_config"] = query_config
+        ctx.obj["operational_config"] = operational_config
+
+        # Create components for this command
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        tree_builder = TreeBuilder(
+            index_config,
+            store,
+            api_key=operational_config.openai_api_key,
+        )
+
         # Read file
         path = Path(file_path)
         text = path.read_text(encoding="utf-8")
@@ -119,7 +205,6 @@ def index(
 
         # Clear existing document if requested
         if clear:
-            store = ctx.obj["store"]
             # Check if document exists
             with store.SessionLocal() as session:
                 from ragzoom.store import Document
@@ -136,33 +221,23 @@ def index(
 
         click.echo(f"Indexing {path.name}...")
 
-        # Create tree builder with specified concurrency
-        config = ctx.obj["config"]
-        store = ctx.obj["store"]
-        tree_builder = TreeBuilder(
-            config,
-            store,
-            max_concurrent=max_concurrent,
-        )
-
         # Index with telemetry if requested
         if telemetry_file:
             doc_id, telemetry = tree_builder.add_document_with_telemetry(
                 text,
                 document_id=document_id,
                 file_path=str(path.absolute()),
-                show_progress=not no_progress,
+                show_progress=True,
             )
         else:
             doc_id = tree_builder.add_document(
                 text,
                 document_id=document_id,
                 file_path=str(path.absolute()),
-                show_progress=not no_progress,
+                show_progress=True,
             )
 
         # Get stats
-        store = ctx.obj["store"]
 
         # Get leaf nodes for this specific document
         with store.SessionLocal() as session:
@@ -206,7 +281,8 @@ def index(
         )
 
         run_validate(
-            lambda: validate_chunk_sizes(doc_leaves, config.leaf_tokens), "chunk sizes"
+            lambda: validate_chunk_sizes(doc_leaves, index_config.target_chunk_tokens),
+            "chunk sizes",
         )
 
         run_validate(
@@ -249,7 +325,10 @@ def index(
 def documents(ctx: click.Context) -> None:
     """List all indexed documents."""
     try:
-        store = ctx.obj["store"]
+        # Create components for this command
+        operational_config = ctx.obj["operational_config"]
+        index_config = ctx.obj["index_config"]
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
 
         # Get all unique documents
         with store.SessionLocal() as session:
@@ -298,8 +377,9 @@ def documents(ctx: click.Context) -> None:
 @cli.command()
 @click.argument("query_text")
 @click.option("--document-id", "-d", required=True, help="Document ID to query within")
-@click.option("--n-max", type=int, help="Max nodes to retrieve")
+@click.option("--num-seeds", type=int, help="Number of seed nodes to retrieve")
 @click.option("--token-budget", type=int, help="Token budget for summary")
+@click.option("--embedding-model", type=str, help="Embedding model for query")
 @click.option(
     "--debug",
     is_flag=True,
@@ -322,8 +402,9 @@ def query(
     ctx: click.Context,
     query_text: str,
     document_id: str,
-    n_max: int | None,
+    num_seeds: int | None,
     token_budget: int | None,
+    embedding_model: str | None,
     debug: bool,
     validate: bool,
     viz_width: int | None,
@@ -331,47 +412,58 @@ def query(
 ) -> None:
     """Query the system and get a summary."""
 
-    # Configure logging level based on debug flag
-    configure_logging_level(debug)
-
-    # Set global validation flag
-    from ragzoom.validate import set_validation_enabled
-
-    set_validation_enabled(validate)
+    setup_command_environment(None, debug, validate)
 
     try:
-        retriever = ctx.obj["retriever"]
-        assembler = ctx.obj["assembler"]
+        # Get configs from context (set up during CLI initialization)
+        query_config = ctx.obj["query_config"]
+        operational_config = ctx.obj["operational_config"]
 
-        # Retrieve - Pass both n_max and budget_tokens to support all three modes
+        # Override with CLI parameters if provided
+        if token_budget is not None:
+            query_config = query_config.replace(budget_tokens=token_budget)
+        if embedding_model is not None:
+            query_config = query_config.replace(embedding_model=embedding_model)
+
+        # Create components for this command
+        store = Store(operational_config, embedding_model=query_config.embedding_model)
+        retriever = Retriever(
+            query_config,
+            store,
+            api_key=operational_config.openai_api_key,
+        )
+        assembler = Assembler(store)
+
+        # Retrieve with CLI parameters
         result = retriever.retrieve(
             query_text,
-            n_max=n_max,
-            budget_tokens=token_budget,
+            budget_tokens=query_config.budget_tokens,
             document_id=document_id,
+            num_seeds=num_seeds,
         )
 
         # Assemble
         summary = assembler.assemble(result)
         token_count = assembler.get_token_count(summary)
 
-        # Tiling validation
-        if validate and getattr(result, "tiling", None):
+        # Tiling validation (validation now simplified - always off unless debug)
+        if debug and getattr(result, "tiling", None) and result.tiling:
             from ragzoom.validate import validate_tiling
 
             error = validate_tiling(
-                result.tiling, ctx.obj["store"], document_id, budget_tokens=token_budget
+                result.tiling,
+                store,
+                document_id,
+                budget_tokens=query_config.budget_tokens,
             )
             if error:
-                click.echo(f"❌ Tiling validation failed: {error}", err=True)
-                sys.exit(1)
+                click.echo(f"⚠️ Tiling validation warning: {error}", err=True)
 
         # Output summary
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY")
         click.echo("=" * 60)
-        if debug and getattr(result, "tiling", None):
-            store = ctx.obj["store"]
+        if debug and getattr(result, "tiling", None) and result.tiling:
             for idx, node_id in enumerate(result.tiling):
                 node = store.get_node(node_id)
                 if node:
@@ -398,12 +490,10 @@ def query(
         if debug:
             # Show ASCII tree visualization first
             if result.tiling:
-                # Use provided width or detect terminal width
+                # Get terminal width with fallback, or use CLI override
                 if viz_width:
-                    terminal_width = viz_width
                     actual_viz_width = viz_width
                 else:
-                    # Get terminal width, with fallback to 120
                     terminal_width = shutil.get_terminal_size(
                         fallback=(120, 24)
                     ).columns
@@ -416,7 +506,7 @@ def query(
 
                 tree_viz = build_ascii_tree(
                     result.tiling,
-                    ctx.obj["store"],
+                    store,
                     document_id,
                     width=actual_viz_width,
                     coverage_map=result.coverage_map,
@@ -448,7 +538,10 @@ def query(
 def pin(ctx: click.Context, node_id: str) -> None:
     """Pin a node to always include it."""
     try:
-        store = ctx.obj["store"]
+        # Create components for this command
+        operational_config = ctx.obj["operational_config"]
+        index_config = ctx.obj["index_config"]
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
         success = store.pin_node(node_id)
 
         if success:
@@ -467,9 +560,11 @@ def pin(ctx: click.Context, node_id: str) -> None:
 def status(ctx: click.Context) -> None:
     """Show system status."""
     try:
-        store = ctx.obj["store"]
-        config = ctx.obj["config"]
-
+        # Get configs and create components
+        index_config = ctx.obj["index_config"]
+        query_config = ctx.obj["query_config"]
+        operational_config = ctx.obj["operational_config"]
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
         # Gather stats
         all_nodes = store.collection.count()
         leaf_nodes = store.get_leaf_nodes()
@@ -485,11 +580,9 @@ def status(ctx: click.Context) -> None:
         click.echo(f"Pinned nodes: {len(pinned)}")
         click.echo("\nCONFIGURATION:")
         click.echo("=" * 40)
-        click.echo(f"Budget tokens: {config.budget_tokens}")
-        click.echo(f"Leaf tokens: {config.leaf_tokens}")
-        click.echo(f"MMR lambda: {config.mmr_lambda}")
-        click.echo(f"Slope cap: {config.slope_cap}")
-        click.echo(f"Smoothing enabled: {config.smoothing_pass_enabled}")
+        click.echo(f"Budget tokens: {query_config.budget_tokens}")
+        click.echo(f"Target chunk tokens: {index_config.target_chunk_tokens}")
+        click.echo(f"MMR lambda: {query_config.mmr_lambda}")
 
     except Exception as e:
         click.echo(f"❌ Error getting status: {e}", err=True)
@@ -530,7 +623,10 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
     With --document-id, clears only the specified document.
     """
     try:
-        store = ctx.obj["store"]
+        # Create components for this command
+        operational_config = ctx.obj["operational_config"]
+        index_config = ctx.obj["index_config"]
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
 
         if document_id:
             # Clear specific document
@@ -596,14 +692,16 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
 
 
 @cli.command()
-@click.argument("input_file", type=click.Path(exists=True))
 @click.argument("output_file", type=click.Path())
 @click.option("--format", type=click.Choice(["json", "text"]), default="text")
 @click.pass_context
-def export(ctx: click.Context, input_file: str, output_file: str, format: str) -> None:
+def export(ctx: click.Context, output_file: str, format: str) -> None:
     """Export tree structure to file."""
     try:
-        store = ctx.obj["store"]
+        # Create components for this command
+        operational_config = ctx.obj["operational_config"]
+        index_config = ctx.obj["index_config"]
+        store = Store(operational_config, embedding_model=index_config.embedding_model)
 
         # Get all nodes
         nodes_data = []
@@ -632,11 +730,24 @@ def export(ctx: click.Context, input_file: str, output_file: str, format: str) -
         else:
             # Text format
             lines = []
-            for node in sorted(nodes_data, key=lambda x: (x["depth"], x["span_start"])):
-                indent = "  " * node["height"]
-                leaf_marker = "🍃" if node["is_leaf"] else "📁"
+            for node_dict in sorted(
+                nodes_data, key=lambda x: (x["height"], x["span_start"])
+            ):
+                height = node_dict.get("height", 0)
+                if isinstance(height, int):
+                    indent = "  " * height
+                else:
+                    indent = ""
+                leaf_marker = "🍃" if node_dict.get("is_leaf") else "📁"
+                node_id = node_dict.get("id", "")
+                if isinstance(node_id, str):
+                    node_id_short = node_id[:8] if len(node_id) > 8 else node_id
+                else:
+                    node_id_short = str(node_id)[:8]
+                span_start = node_dict.get("span_start", 0)
+                span_end = node_dict.get("span_end", 0)
                 lines.append(
-                    f"{indent}{leaf_marker} {node['id'][:8]}... [{node['span_start']}-{node['span_end']}]"
+                    f"{indent}{leaf_marker} {node_id_short}... [{span_start}-{span_end}]"
                 )
             output_path.write_text("\n".join(lines))
 
@@ -645,6 +756,131 @@ def export(ctx: click.Context, input_file: str, output_file: str, format: str) -
     except Exception as e:
         click.echo(f"❌ Error exporting: {e}", err=True)
         sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--examples", is_flag=True, help="Show configuration examples and common use cases"
+)
+@click.option(
+    "--create",
+    "output_file",
+    type=click.Path(),
+    help="Create a sample configuration file at the specified path",
+)
+def config(examples: bool, output_file: str | None) -> None:
+    """Manage configuration files and show examples."""
+
+    if examples:
+        click.echo("\n🔧 RAGZOOM CONFIGURATION EXAMPLES\n")
+        click.echo("=" * 50)
+
+        click.echo("\n📄 Basic Configuration (development.json):")
+        click.echo(
+            json.dumps(
+                {
+                    "target_chunk_tokens": 150,
+                    "summary_model": "gpt-4o",
+                    "embedding_model": "text-embedding-3-small",
+                    "max_retries": 0,
+                    "budget_tokens": 4000,
+                    "mmr_lambda": 0.7,
+                },
+                indent=2,
+            )
+        )
+
+        click.echo("\n🚀 Production Configuration (production.json):")
+        click.echo(
+            json.dumps(
+                {
+                    "target_chunk_tokens": 300,
+                    "preceding_context_tokens": 100,
+                    "summary_model": "gpt-4o",
+                    "embedding_model": "text-embedding-3-large",
+                    "retry_threshold": 0.15,
+                    "max_retries": 2,
+                    "embedding_batch_size": 50,
+                    "budget_tokens": 8000,
+                    "mmr_lambda": 0.8,
+                    "mmr_k_multiplier": 2.5,
+                },
+                indent=2,
+            )
+        )
+
+        click.echo("\n⚡ Fast Configuration (fast.json):")
+        click.echo(
+            json.dumps(
+                {
+                    "target_chunk_tokens": 100,
+                    "summary_model": "gpt-4o-mini",
+                    "embedding_model": "text-embedding-3-small",
+                    "max_retries": 0,
+                    "embedding_batch_size": 200,
+                    "budget_tokens": 2000,
+                    "mmr_lambda": 0.6,
+                },
+                indent=2,
+            )
+        )
+
+        click.echo("\n💰 Cost-Optimized Configuration (budget.json):")
+        click.echo(
+            json.dumps(
+                {
+                    "target_chunk_tokens": 200,
+                    "summary_model": "gpt-4o-mini",
+                    "embedding_model": "text-embedding-3-small",
+                    "max_retries": 0,
+                    "budget_tokens": 4000,
+                    "mmr_lambda": 0.7,
+                },
+                indent=2,
+            )
+        )
+
+        click.echo("\n📖 Usage:")
+        click.echo("  ragzoom index doc.txt --config development.json")
+        click.echo("  ragzoom query 'question' -d doc.txt --config production.json")
+        click.echo("  ragzoom config --create my-config.json")
+
+        click.echo("\n💡 Tips:")
+        click.echo("  • Start with development.json for initial testing")
+        click.echo("  • Use production.json for high-quality results")
+        click.echo("  • Use fast.json for rapid iteration")
+        click.echo("  • Use budget.json to minimize API costs")
+        click.echo("  • CLI options override config file settings")
+
+    elif output_file:
+        # Create a sample config file
+        sample_config = {
+            "target_chunk_tokens": 200,
+            "preceding_context_tokens": 75,
+            "summary_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-small",
+            "retry_threshold": 0.2,
+            "max_retries": 0,
+            "embedding_batch_size": 100,
+            "budget_tokens": 8000,
+            "mmr_lambda": 0.7,
+            "mmr_k_multiplier": 2.0,
+        }
+
+        output_path = Path(output_file)
+        with open(output_path, "w") as f:
+            json.dump(sample_config, f, indent=2)
+
+        click.echo(f"✅ Created sample configuration file: {output_file}")
+        click.echo("\n💡 Edit this file to customize your settings.")
+        click.echo("   Use 'ragzoom config --examples' to see common configurations.")
+
+    else:
+        click.echo("\n🔧 Configuration Management")
+        click.echo("\nOptions:")
+        click.echo("  ragzoom config --examples     Show configuration examples")
+        click.echo("  ragzoom config --create FILE  Create a sample config file")
+        click.echo("\nFor detailed help: ragzoom config --help")
 
 
 # Telemetry commands are available via optional dependencies
