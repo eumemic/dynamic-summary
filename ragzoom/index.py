@@ -851,7 +851,12 @@ Here's the content to summarize:"""
             # Add document record
             if not existing_doc:
                 self.store.add_document(
-                    document_id, file_path, content_hash, len(chunks)
+                    document_id,
+                    file_path,
+                    content_hash,
+                    len(chunks),
+                    self.config.embedding_model,
+                    self.config.summary_model,
                 )
             else:
                 # Update existing document
@@ -863,6 +868,8 @@ Here's the content to summarize:"""
                         doc.content_hash = content_hash
                         doc.chunk_count = len(chunks)
                         doc.indexed_at = datetime.utcnow()
+                        doc.embedding_model = self.config.embedding_model
+                        doc.summary_model = self.config.summary_model
                         session.commit()
 
             # Build tree from leaves
