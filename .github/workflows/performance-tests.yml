@@ -141,7 +141,7 @@ jobs:
             echo "❌ Benchmark failed for chunk_size=100"
             echo "Creating error result file..."
             echo '{"error": "Benchmark failed to run", "chunk_size": "100"}' > "benchmark_results/telemetry_100_tokens.json"
-            echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+            echo "BENCHMARK_ERROR=true" >> $GITHUB_OUTPUT  # Mark as error, not just failed
           fi
       
       - name: Update comment - 100 tokens complete
@@ -190,7 +190,7 @@ jobs:
             echo "❌ Benchmark failed for chunk_size=200"
             echo "Creating error result file..."
             echo '{"error": "Benchmark failed to run", "chunk_size": "200"}' > "benchmark_results/telemetry_200_tokens.json"
-            echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+            echo "BENCHMARK_ERROR=true" >> $GITHUB_OUTPUT  # Mark as error, not just failed
           fi
       
       - name: Update comment - 200 tokens complete
@@ -240,7 +240,7 @@ jobs:
             echo "❌ Benchmark failed for chunk_size=400"
             echo "Creating error result file..."
             echo '{"error": "Benchmark failed to run", "chunk_size": "400"}' > "benchmark_results/telemetry_400_tokens.json"
-            echo "BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+            echo "BENCHMARK_ERROR=true" >> $GITHUB_OUTPUT  # Mark as error, not just failed
           fi
       
       - name: Update comment - benchmarks complete
@@ -572,11 +572,25 @@ jobs:
               body += `![Telemetry Comparison](${visualizationUrl})\n\n`;
             }
             
-            // Add the comparison report or error message
-            if (report) {
+            // Check for benchmark errors first
+            const hasErrors = `${{ steps.benchmark_100.outputs.BENCHMARK_ERROR }}` === 'true' ||
+                             `${{ steps.benchmark_200.outputs.BENCHMARK_ERROR }}` === 'true' ||
+                             `${{ steps.benchmark_400.outputs.BENCHMARK_ERROR }}` === 'true';
+            
+            if (hasErrors) {
+              body += '## ❌ Benchmark Execution Error\n\n';
+              body += 'The benchmarks failed to run due to code errors.\n\n';
+              body += 'This typically means:\n';
+              body += '- Syntax errors in the code\n';
+              body += '- Missing dependencies\n';
+              body += '- Configuration issues\n\n';
+              body += 'Check the [workflow logs](' + workflowUrl + ') for details.\n\n';
+              body += '**This is not a performance regression - the code needs to be fixed.**';
+            } else if (report) {
+              // Add the comparison report if no errors
               body += report;
             } else {
-              body += '❌ **Performance benchmarks failed to run**\n\n';
+              body += '❌ **Unable to generate performance report**\n\n';
               body += 'Check the [workflow logs](' + workflowUrl + ') for details.';
             }
             
@@ -610,6 +624,17 @@ jobs:
                 body
               });
             }
+      
+      - name: Fail if benchmark errors occurred
+        if: |
+          steps.benchmark_100.outputs.BENCHMARK_ERROR == 'true' ||
+          steps.benchmark_200.outputs.BENCHMARK_ERROR == 'true' ||
+          steps.benchmark_400.outputs.BENCHMARK_ERROR == 'true'
+        run: |
+          echo "❌ Benchmark execution errors detected!"
+          echo "The benchmarks failed to run due to code errors."
+          echo "Check the workflow logs for details."
+          exit 1
       
       - name: Fail if regression detected
         if: steps.compare.outputs.REGRESSION == 'true'

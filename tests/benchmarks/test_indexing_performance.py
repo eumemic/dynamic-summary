@@ -61,7 +61,7 @@ def test_indexing_performance(leaf_tokens, document_type):
     if api_key == "test-key":
         pytest.skip("OPENAI_API_KEY not set")
     
-    index_config = IndexConfig(
+    index_config = IndexConfig.load(
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
         embedding_batch_size=100,
