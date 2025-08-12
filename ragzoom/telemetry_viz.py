@@ -95,8 +95,9 @@ class TelemetryVisualizer:
                     return int(chunk_size)
             return 0
         else:
-            # v3.0 flat format
-            chunk_size = telemetry.get("chunk_size", 0)
+            # v3.0+ format - read from config
+            config = telemetry.get("config", {})
+            chunk_size = config.get("target_chunk_tokens", 0)
             return int(chunk_size) if chunk_size else 0
 
     def _ensure_output_dir(self) -> None:
@@ -169,11 +170,15 @@ class TelemetryVisualizer:
 
         # Add title and metadata
         if "config" in data:
-            # Legacy wrapped format
-            chunk_size = data["config"]["leaf_tokens"]
+            # Get chunk size from config
+            if "leaf_tokens" in data["config"]:
+                # Legacy format
+                chunk_size = data["config"]["leaf_tokens"]
+            else:
+                # Current format
+                chunk_size = data["config"].get("target_chunk_tokens", "Unknown")
         else:
-            # v3.0 format has chunk_size directly
-            chunk_size = telemetry.get("chunk_size", "Unknown")
+            chunk_size = "Unknown"
         fig.suptitle(
             f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=0.98
         )
@@ -189,16 +194,16 @@ class TelemetryVisualizer:
 
     def _get_cost_functions(self, telemetry: dict) -> tuple:
         """Get cost calculation functions for models in telemetry."""
-        # Get models from telemetry
-        models = telemetry.get("models")
-        if not models:
-            raise ValueError(
-                "Telemetry data missing 'models' field. "
-                "Cannot compute costs without knowing which models were used."
-            )
+        # Get models from config
+        config = telemetry.get("config", {})
+        embedding_model = config.get("embedding_model")
+        summary_model = config.get("summary_model")
 
-        embedding_model = models["embedding"]
-        summary_model = models["summary"]
+        if not embedding_model or not summary_model:
+            raise ValueError(
+                "Cannot determine models from telemetry. "
+                "Expected config.embedding_model and config.summary_model."
+            )
 
         # Get costs
         embedding_cost_per_1k = get_embedding_cost(embedding_model)
