@@ -25,7 +25,7 @@ class TestDPTiling:
     @pytest.fixture
     def setup_system(self):
         """Set up a complete system with DP mode enabled and a mock store."""
-        index_config = IndexConfig(target_chunk_tokens=100)
+        index_config = IndexConfig.load(target_chunk_tokens=100)
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(
             openai_api_key="test-key",

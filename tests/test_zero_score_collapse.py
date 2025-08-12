@@ -13,7 +13,7 @@ def test_zero_score_collapse_empty_result():
     """Test that algorithm correctly uses root node when deeper nodes don't fit budget."""
 
     # Create configuration and store
-    index_config = IndexConfig(target_chunk_tokens=100)
+    index_config = IndexConfig.load(target_chunk_tokens=100)
     query_config = QueryConfig()
     operational_config = OperationalConfig()
     store = SimpleMockStore(config=(index_config, query_config, operational_config))
@@ -129,7 +129,7 @@ def test_zero_score_collapse_empty_result():
 def test_zero_score_collapse_to_root():
     """Test algorithm correctly chooses root node due to budget splitting constraints."""
 
-    index_config = IndexConfig(target_chunk_tokens=100)
+    index_config = IndexConfig.load(target_chunk_tokens=100)
     query_config = QueryConfig()
     operational_config = OperationalConfig()
     store = SimpleMockStore(config=(index_config, query_config, operational_config))

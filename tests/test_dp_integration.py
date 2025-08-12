@@ -97,7 +97,7 @@ class TestDPIntegration:
     def config(self):
         """Create test configuration."""
         return ConfigWrapper(
-            index_config=IndexConfig(
+            index_config=IndexConfig.load(
                 target_chunk_tokens=50,
                 preceding_context_tokens=0,
             ),
