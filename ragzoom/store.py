@@ -48,6 +48,9 @@ class TreeNode(Base):
     summary: Mapped[str | None] = mapped_column(
         Text, nullable=True
     )  # NULL for leaf nodes
+    token_count: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )  # Token count of text/summary
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     access_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -188,6 +191,7 @@ class Store:
         right_child_id: str | None = None,
         summary: str | None = None,
         document_id: str | None = None,
+        token_count: int | None = None,
     ) -> TreeNode:
         """Add a node to both SQLite and Chroma."""
         # Validate embedding dimension
@@ -204,6 +208,7 @@ class Store:
                 text=text,
                 summary=summary,
                 document_id=document_id,
+                token_count=token_count,
             )
             session.add(node)
             session.commit()
@@ -627,6 +632,38 @@ class Store:
                         pass
 
             return deleted_count
+
+    def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
+        """Get token statistics for a document using efficient SQL aggregation.
+
+        Returns:
+            Dict with keys: avg_tokens, min_tokens, max_tokens, total_tokens, node_count
+        """
+        with self.SessionLocal() as session:
+            from sqlalchemy import func
+
+            result = (
+                session.query(
+                    func.avg(TreeNode.token_count).label("avg_tokens"),
+                    func.min(TreeNode.token_count).label("min_tokens"),
+                    func.max(TreeNode.token_count).label("max_tokens"),
+                    func.sum(TreeNode.token_count).label("total_tokens"),
+                    func.count(TreeNode.id).label("node_count"),
+                )
+                .filter(
+                    TreeNode.document_id == document_id,
+                    TreeNode.token_count.isnot(None),
+                )
+                .one()
+            )
+
+            return {
+                "avg_tokens": float(result.avg_tokens) if result.avg_tokens else 0.0,
+                "min_tokens": result.min_tokens or 0,
+                "max_tokens": result.max_tokens or 0,
+                "total_tokens": result.total_tokens or 0,
+                "node_count": result.node_count or 0,
+            }
 
     def _run_migrations(self):
         """Run any necessary database migrations."""
