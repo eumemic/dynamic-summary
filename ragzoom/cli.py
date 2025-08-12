@@ -125,6 +125,7 @@ def cli(ctx: click.Context) -> None:
     help="Save telemetry data to JSON file",
 )
 @click.option("--validate", is_flag=True, help="Enable validation checks")
+@click.option("--no-progress", is_flag=True, help="Disable progress bar")
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -143,6 +144,7 @@ def index(
     debug: bool,
     telemetry_file: str | None,
     validate: bool,
+    no_progress: bool,
 ) -> None:
     """Index a document from file.
 
@@ -229,14 +231,14 @@ def index(
                 text,
                 document_id=document_id,
                 file_path=str(path.absolute()),
-                show_progress=True,
+                show_progress=not no_progress,
             )
         else:
             doc_id = tree_builder.add_document(
                 text,
                 document_id=document_id,
                 file_path=str(path.absolute()),
-                show_progress=True,
+                show_progress=not no_progress,
             )
 
         # Get stats
