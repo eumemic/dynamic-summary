@@ -156,16 +156,16 @@ class TestTelemetryVisualizer:
         """Test that visualize_single_benchmark creates expected outputs."""
         # Create minimal telemetry data that won't trigger complex plotting
         minimal_data = {
-            "config": {"leaf_tokens": 200},
-            "telemetry": {
-                "format_version": "2.0",
-                "models": {
-                    "summary": "gpt-4o-mini",
-                    "embedding": "text-embedding-3-small",
-                },
-                "documents": {},
+            "format_version": "3.0",
+            "document_id": "test",
+            "source_document_tokens": 0,
+            "indexed_at": 0,
+            "config": {
+                "target_chunk_tokens": 200,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
-            "metrics": {},
+            "nodes": [],
         }
 
         test_file = temp_output_dir / "minimal_test.json"
@@ -211,12 +211,15 @@ class TestTelemetryVisualizer:
         # Test empty batch efficiency
         fig, ax = plt.subplots()
         empty_telemetry = {
-            "format_version": "2.0",
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "format_version": "3.0",
+            "document_id": "empty",
+            "source_document_tokens": 0,
+            "indexed_at": 0,
+            "config": {
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
-            "documents": {},
+            "nodes": [],
         }
         visualizer._plot_batch_efficiency(empty_telemetry, ax)
 
@@ -311,38 +314,37 @@ class TestTelemetryVisualizer:
 
         fig, ax = plt.subplots()
         telemetry = {
-            "format_version": "2.0",
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "format_version": "3.0",
+            "document_id": "test",
+            "source_document_tokens": 300,
+            "indexed_at": 0,
+            "config": {
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
-            "documents": {
-                "test": {
-                    "nodes": [
-                        {
-                            "embedding": {
-                                "text_tokens": 100,
-                                "batch_size": 1,
-                                "start_time": 1.0,
-                            }
-                        },
-                        {
-                            "embedding": {
-                                "text_tokens": 100,
-                                "batch_size": 5,
-                                "start_time": 2.0,
-                            }
-                        },
-                        {
-                            "embedding": {
-                                "text_tokens": 100,
-                                "batch_size": 1,
-                                "start_time": 3.0,
-                            }
-                        },
-                    ]
-                }
-            },
+            "nodes": [
+                {
+                    "embedding": {
+                        "text_tokens": 100,
+                        "batch_size": 1,
+                        "start_time": 1.0,
+                    }
+                },
+                {
+                    "embedding": {
+                        "text_tokens": 100,
+                        "batch_size": 5,
+                        "start_time": 2.0,
+                    }
+                },
+                {
+                    "embedding": {
+                        "text_tokens": 100,
+                        "batch_size": 1,
+                        "start_time": 3.0,
+                    }
+                },
+            ],
         }
 
         visualizer._plot_batch_efficiency(telemetry, ax)
