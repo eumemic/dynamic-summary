@@ -403,12 +403,23 @@ class SimpleMockStore:
             node.text = text
             self.embeddings[node_id] = embedding
 
+    def get_document_by_id(self, document_id: str) -> SimpleNamespace | None:
+        """Get a document by ID."""
+        return self.documents.get(document_id)
+
+    def get_document_embedding_model(self, document_id: str) -> str | None:
+        """Get the embedding model used for a specific document."""
+        doc = self.get_document_by_id(document_id)
+        return doc.embedding_model if doc and hasattr(doc, "embedding_model") else None
+
     def add_document(
         self,
         document_id: str,
         file_path: str | None,
         content_hash: str,
         chunk_count: int,
+        embedding_model: str = "text-embedding-3-small",
+        summary_model: str = "gpt-4o",
     ) -> None:
         """Add a document record."""
         self.documents[document_id] = SimpleNamespace(
@@ -416,6 +427,8 @@ class SimpleMockStore:
             file_path=file_path,
             content_hash=content_hash,
             chunk_count=chunk_count,
+            embedding_model=embedding_model,
+            summary_model=summary_model,
         )
 
     def delete_document_nodes(self, document_id: str) -> None:

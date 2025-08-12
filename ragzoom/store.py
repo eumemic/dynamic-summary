@@ -74,6 +74,8 @@ class Document(Base):
     )  # SHA256 hash of content
     indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    embedding_model: Mapped[str] = mapped_column(String, nullable=False)
+    summary_model: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class Store:
@@ -598,20 +600,46 @@ class Store:
         with self.SessionLocal() as session:
             return session.query(Document).filter_by(file_path=file_path).first()
 
+    def get_document_by_id(self, document_id: str) -> Document | None:
+        """Get a document by ID."""
+        with self.SessionLocal() as session:
+            return session.query(Document).filter_by(id=document_id).first()
+
+    def get_document_embedding_model(self, document_id: str) -> str | None:
+        """Get the embedding model used for a specific document."""
+        doc = self.get_document_by_id(document_id)
+        return doc.embedding_model if doc else None
+
     def add_document(
         self,
         document_id: str,
         file_path: str | None,
         content_hash: str,
         chunk_count: int,
+        embedding_model: str,
+        summary_model: str,
     ) -> Document:
-        """Add a document record."""
+        """Add a document record.
+
+        Args:
+            document_id: Unique identifier for the document
+            file_path: Optional path to the source file
+            content_hash: SHA256 hash of the document content
+            chunk_count: Number of chunks in the document
+            embedding_model: Name of the embedding model used for indexing
+            summary_model: Name of the summarization model used
+
+        Note: Model name validation is performed by the indexing layer
+        to ensure they're valid OpenAI models before storage.
+        """
         with self.SessionLocal() as session:
             doc = Document(
                 id=document_id,
                 file_path=file_path,
                 content_hash=content_hash,
                 chunk_count=chunk_count,
+                embedding_model=embedding_model,
+                summary_model=summary_model,
             )
             session.add(doc)
             session.commit()
@@ -707,6 +735,26 @@ class Store:
                     logger.debug(
                         "tree_nodes table does not exist yet, will be created by SQLAlchemy"
                     )
+
+                # Check if documents table needs model columns migration
+                result = conn.execute(
+                    text(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='documents'"
+                    )
+                )
+                if result.fetchone():
+                    # Table exists, check if it has the new columns
+                    result = conn.execute(text("PRAGMA table_info(documents)"))
+                    columns = [row[1] for row in result.fetchall()]
+
+                    missing_embedding = "embedding_model" not in columns
+                    missing_summary = "summary_model" not in columns
+                    if missing_embedding or missing_summary:
+                        self._add_document_model_columns_migration(conn)
+                else:
+                    logger.debug(
+                        "documents table does not exist yet, will be created by SQLAlchemy"
+                    )
         except Exception as e:
             logger.debug(
                 f"Migration check failed (this is normal for new databases): {e}"
@@ -786,6 +834,49 @@ class Store:
         except Exception as e:
             conn.execute(text("ROLLBACK"))
             logger.error(f"Failed to drop {column_name} column: {e}")
+            raise
+
+    def _add_document_model_columns_migration(self, conn: Any) -> None:
+        """Add embedding_model and summary_model columns to documents table."""
+        logger.info(
+            "Adding embedding_model and summary_model columns to documents table..."
+        )
+        try:
+            conn.execute(text("BEGIN TRANSACTION"))
+
+            # Add the new columns with default values
+            # Use the current default models from config as fallback
+            default_embedding_model = "text-embedding-3-small"
+            default_summary_model = "gpt-4o"
+
+            # Check which columns are missing and add them
+            result = conn.execute(text("PRAGMA table_info(documents)"))
+            existing_columns = [row[1] for row in result.fetchall()]
+
+            if "embedding_model" not in existing_columns:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE documents ADD COLUMN embedding_model VARCHAR "
+                        f"NOT NULL DEFAULT '{default_embedding_model}'"
+                    )
+                )
+                logger.info("Added embedding_model column to documents table")
+
+            if "summary_model" not in existing_columns:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE documents ADD COLUMN summary_model VARCHAR "
+                        f"NOT NULL DEFAULT '{default_summary_model}'"
+                    )
+                )
+                logger.info("Added summary_model column to documents table")
+
+            conn.execute(text("COMMIT"))
+            logger.info("Successfully added model columns to documents table")
+
+        except Exception as e:
+            conn.execute(text("ROLLBACK"))
+            logger.error(f"Failed to add model columns to documents table: {e}")
             raise
 
     def _clean_chromadb_metadata(self):
