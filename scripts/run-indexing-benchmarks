@@ -69,10 +69,11 @@ Additional Options:
     All other options are passed through to the ragzoom index command.
     The script automatically:
     - Adds: --clear --telemetry --validate --debug --no-progress
-    - Uses --target-chunk-tokens from baseline's chunk_size
-    - Uses --preceding-context-tokens from baseline's chunk_size
+    - Extracts config from baseline and uses --config <baseline_config.json>
+    - This ensures the exact same configuration as the baseline run
 
 Output Files:
+    <output-dir>/baseline_config.json - Config extracted from baseline
     <output-dir>/telemetry.json      - Telemetry data from current run
     <output-dir>/log.txt              - Full indexing logs with debug output
     <output-dir>/comparison.md        - Markdown comparison report
@@ -169,21 +170,32 @@ if [ ! -f "$BASELINE" ]; then
     exit 1
 fi
 
+# Create output directory early if it doesn't exist
+mkdir -p "$OUTPUT_DIR"
+
 # Extract metadata from baseline
 echo "Extracting configuration from baseline..."
 DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
 DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
-CHUNK_SIZE=$(jq -r '.chunk_size // empty' "$BASELINE")
 
-if [ -z "$CHUNK_SIZE" ]; then
-    echo "Warning: Could not extract chunk_size from baseline"
+# Extract config object from baseline
+CONFIG=$(jq -r '.config // empty' "$BASELINE")
+if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
+    # Save config to temporary file
+    CONFIG_FILE="$OUTPUT_DIR/baseline_config.json"
+    echo "$CONFIG" | jq '.' > "$CONFIG_FILE"
+    echo "  Extracted config from baseline telemetry"
+    echo "  Config saved to: $CONFIG_FILE"
+    
+    # Show key config values for visibility
+    TARGET_CHUNK_TOKENS=$(echo "$CONFIG" | jq -r '.target_chunk_tokens // empty')
+    if [ -n "$TARGET_CHUNK_TOKENS" ]; then
+        echo "  Target chunk tokens: $TARGET_CHUNK_TOKENS"
+    fi
 else
-    echo "  Chunk size: $CHUNK_SIZE tokens"
-    # Store chunk size for CLI options
-    TARGET_CHUNK_TOKENS=$CHUNK_SIZE
-    PREV_CONTEXT_TOKENS=$CHUNK_SIZE
-    echo "  Using --target-chunk-tokens=$TARGET_CHUNK_TOKENS"
-    echo "  Using --preceding-context-tokens=$PREV_CONTEXT_TOKENS"
+    echo "Warning: Could not extract config from baseline telemetry"
+    echo "  The indexer will use default configuration"
+    CONFIG_FILE=""
 fi
 
 # Auto-detect document if not provided
@@ -215,9 +227,6 @@ fi
 # Validate document path
 validate_path "$DOCUMENT" "document"
 
-# Create output directory if it doesn't exist
-mkdir -p "$OUTPUT_DIR"
-
 # Set up file paths
 TELEMETRY_FILE="$OUTPUT_DIR/telemetry.json"
 LOG_FILE="$OUTPUT_DIR/log.txt"
@@ -236,17 +245,28 @@ echo ""
 # Run indexing with telemetry
 # Implicitly adds: --clear --telemetry <file> --validate --debug --no-progress
 echo "📝 Running indexing with telemetry..."
-python -m ragzoom.cli index \
-    "$DOCUMENT" \
-    --clear \
-    --telemetry "$TELEMETRY_FILE" \
-    --validate \
-    --debug \
-    --no-progress \
-    --target-chunk-tokens "$TARGET_CHUNK_TOKENS" \
-    --preceding-context-tokens "$PREV_CONTEXT_TOKENS" \
-    "${EXTRA_ARGS[@]}" \
-    2>&1 | tee "$LOG_FILE"
+
+# Build command args
+INDEX_ARGS=(
+    "$DOCUMENT"
+    --clear
+    --telemetry "$TELEMETRY_FILE"
+    --validate
+    --debug
+    --no-progress
+)
+
+# Add config file if we extracted one
+if [ -n "$CONFIG_FILE" ]; then
+    INDEX_ARGS+=(--config "$CONFIG_FILE")
+fi
+
+# Add any extra arguments
+if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
+    INDEX_ARGS+=("${EXTRA_ARGS[@]}")
+fi
+
+python -m ragzoom.cli index "${INDEX_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
 
 # Check if indexing succeeded
 if [ ${PIPESTATUS[0]} -ne 0 ]; then
