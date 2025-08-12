@@ -159,20 +159,23 @@ class TelemetryVisualizer:
         ax1 = fig.add_subplot(gs[0, :])
         self._plot_cost_breakdown(telemetry, ax1)
 
-        # 2. Summary Accuracy Distribution
+        # 2. Summary Compression Patterns
         ax2 = fig.add_subplot(gs[1, :])
-        self._plot_summary_accuracy(telemetry, ax2)
+        self._plot_summary_scatter(telemetry, ax2)
 
         # 3. Node Creation Timeline
         ax3 = fig.add_subplot(gs[2, :])
         self._plot_node_timeline(telemetry, ax3)
 
         # Add title and metadata
-        if "config" in data:
-            # Legacy wrapped format
+        if "config" in data and "leaf_tokens" in data["config"]:
+            # Legacy wrapped format with leaf_tokens
             chunk_size = data["config"]["leaf_tokens"]
+        elif "config" in data and "target_chunk_tokens" in data["config"]:
+            # New format with target_chunk_tokens in config
+            chunk_size = data["config"]["target_chunk_tokens"]
         else:
-            # v3.0 format has chunk_size directly
+            # v3.0+ format has chunk_size directly
             chunk_size = telemetry.get("chunk_size", "Unknown")
         fig.suptitle(
             f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=0.98
@@ -320,23 +323,24 @@ class TelemetryVisualizer:
         ax1_left.set_ylim(0, max_y)
         ax1_right.set_ylim(0, max_y)
 
-        # 2. Summary Accuracy
+        # 2. Summary Compression Patterns
         ax2_left = fig.add_subplot(gs[1, 0])
-        self._plot_summary_accuracy(telemetry1, ax2_left)
-        ax2_left.set_title("Summary Accuracy", fontsize=12)
+        self._plot_summary_scatter(telemetry1, ax2_left)
+        ax2_left.set_title("Summary Compression Patterns", fontsize=12)
 
         ax2_right = fig.add_subplot(gs[1, 1])
-        self._plot_summary_accuracy(telemetry2, ax2_right)
-        ax2_right.set_title("Summary Accuracy", fontsize=12)
+        self._plot_summary_scatter(telemetry2, ax2_right)
+        ax2_right.set_title("Summary Compression Patterns", fontsize=12)
         ax2_right.set_ylabel("")  # Remove y-axis label
 
-        # Share both axes for accuracy plots comparison (swapped for horizontal bars)
+        # Share both axes for scatter plots comparison
         max_x = max(ax2_left.get_xlim()[1], ax2_right.get_xlim()[1])
-        ax2_left.set_xlim(0, max_x)
-        ax2_right.set_xlim(0, max_x)
+        min_x = min(ax2_left.get_xlim()[0], ax2_right.get_xlim()[0])
+        ax2_left.set_xlim(min_x, max_x)
+        ax2_right.set_xlim(min_x, max_x)
 
-        min_y = min(ax2_left.get_ylim()[0], ax2_right.get_ylim()[0])
         max_y = max(ax2_left.get_ylim()[1], ax2_right.get_ylim()[1])
+        min_y = min(ax2_left.get_ylim()[0], ax2_right.get_ylim()[0])
         ax2_left.set_ylim(min_y, max_y)
         ax2_right.set_ylim(min_y, max_y)
 
@@ -735,6 +739,177 @@ class TelemetryVisualizer:
                         deviations.append(deviation)
 
         return deviations
+
+    def _plot_summary_scatter(self, telemetry: dict, ax: plt.Axes) -> None:
+        """Plot input vs output token scatter plot, color-coded by retry count."""
+        # Extract chunk size (target) and nodes from telemetry data
+        chunk_size = self._extract_chunk_size_from_telemetry(telemetry)
+        nodes = self._extract_nodes_from_telemetry(telemetry)
+
+        # Prepare data for scatter plot - one dot per attempt
+        input_tokens = []
+        output_tokens = []
+        attempt_numbers = []
+
+        # Process nodes to extract ALL attempts (not just accepted ones)
+        for node in nodes:
+            height = node.get("height", node.get("level", 0))
+            if height > 0:  # Summary nodes only
+                # Get input tokens (tokens being summarized)
+                input_text_tokens = node.get("input_text_tokens")
+                if input_text_tokens is None or input_text_tokens <= 0:
+                    # Skip nodes without input token data
+                    continue
+
+                # Process ALL summary attempts for this node
+                attempts = node.get("summary_attempts", [])
+                for attempt_num, attempt in enumerate(attempts, 1):
+                    actual_tokens = attempt.get("actual_tokens", 0)
+                    if actual_tokens > 0:
+                        input_tokens.append(input_text_tokens)
+                        output_tokens.append(actual_tokens)
+                        attempt_numbers.append(attempt_num)
+
+        if not input_tokens:
+            ax.text(
+                0.5,
+                0.5,
+                "No input/output token data available",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_title("Summary Compression Patterns")
+            return
+
+        # Create color map for attempt numbers (same colors as cost breakdown)
+        colors = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#991b1b"]  # Blue to red
+        attempt_colors = []
+        for attempt_num in attempt_numbers:
+            if attempt_num >= len(colors):
+                attempt_colors.append(colors[-1])  # 5+ attempts = darkest red
+            else:
+                attempt_colors.append(colors[attempt_num - 1])  # Convert to 0-indexed
+
+        # Create scatter plot
+        ax.scatter(
+            input_tokens,
+            output_tokens,
+            c=attempt_colors,
+            alpha=0.6,
+            s=50,
+            edgecolors="none",
+        )
+
+        # Set axis limits with margin around data (calculate early for use in other elements)
+        x_margin = (max(input_tokens) - min(input_tokens)) * 0.05
+        y_margin = (max(output_tokens) - min(output_tokens)) * 0.05
+
+        x_min, x_max = min(input_tokens) - x_margin, max(input_tokens) + x_margin
+        y_min, y_max = min(output_tokens) - y_margin, max(output_tokens) + y_margin
+
+        # Extract retry threshold from telemetry for dynamic acceptable range
+        retry_threshold = None
+        if "config" in telemetry:
+            retry_threshold = telemetry["config"].get("retry_threshold")
+
+        # Add target line (horizontal at chunk_size)
+        if chunk_size > 0:
+            ax.axhline(
+                chunk_size,
+                color="green",
+                linestyle="--",
+                label=f"Target ({chunk_size} tokens)",
+                linewidth=2,
+            )
+
+            # Add acceptable range band based on retry_threshold (cropped to data range)
+            if retry_threshold is not None:
+                threshold_tokens = chunk_size * retry_threshold
+                ax.fill_between(
+                    [x_min, x_max],
+                    chunk_size - threshold_tokens,
+                    chunk_size + threshold_tokens,
+                    alpha=0.1,
+                    color="green",
+                    label=f"±{retry_threshold*100:.0f}% retry threshold",
+                )
+            else:
+                # Fallback to ±10 tokens if no retry_threshold found
+                ax.fill_between(
+                    [x_min, x_max],
+                    chunk_size - 10,
+                    chunk_size + 10,
+                    alpha=0.1,
+                    color="green",
+                    label="±10 token range",
+                )
+
+        # Apply axis limits
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+
+        # Add diagonal reference line showing 1:1 ratio (cropped to visible area)
+        diag_min = max(x_min, y_min)
+        diag_max = min(x_max, y_max)
+        if diag_min < diag_max:  # Only draw if diagonal intersects visible area
+            ax.plot(
+                [diag_min, diag_max],
+                [diag_min, diag_max],
+                "k:",
+                alpha=0.3,
+                linewidth=1,
+                label="1:1 ratio",
+            )
+
+        # Create custom legend for attempt numbers (matching cost breakdown)
+        from matplotlib.patches import Patch
+
+        legend_elements = [
+            Patch(facecolor=colors[0], label="Attempt 1", alpha=0.6),
+            Patch(facecolor=colors[1], label="Attempt 2", alpha=0.6),
+            Patch(facecolor=colors[2], label="Attempt 3", alpha=0.6),
+            Patch(facecolor=colors[3], label="Attempt 4", alpha=0.6),
+            Patch(facecolor=colors[4], label="Attempt 5+", alpha=0.6),
+        ]
+
+        # Only include legend items for attempt numbers that exist in the data
+        max_attempts = max(attempt_numbers) if attempt_numbers else 0
+        legend_elements = legend_elements[: min(max_attempts, 5)]
+
+        # Add the legend elements to the main legend
+        ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
+
+        # Labels and title
+        ax.set_xlabel("Input Tokens (text to summarize)")
+        ax.set_ylabel("Output Tokens (summary)")
+        ax.set_title("Summary Compression Patterns")
+        ax.grid(True, alpha=0.3)
+
+        # Add statistics annotation
+        compression_ratio = np.mean(
+            [o / i for i, o in zip(input_tokens, output_tokens)]
+        )
+        avg_attempts = np.mean(attempt_numbers)
+
+        # Count unique nodes for summary count
+        unique_inputs = len(set(input_tokens))
+
+        stats_text = (
+            f"Avg compression: {compression_ratio:.2f}\n"
+            f"Avg attempts: {avg_attempts:.2f}\n"
+            f"Total attempts: {len(input_tokens)} ({unique_inputs} nodes)"
+        )
+        ax.text(
+            0.98,
+            0.02,
+            stats_text,
+            transform=ax.transAxes,
+            va="bottom",
+            ha="right",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8),
+            fontsize=8,
+        )
 
     def _plot_summary_accuracy(self, telemetry: dict, ax: plt.Axes) -> None:
         """Plot summary accuracy distribution for all attempts, color-coded by attempt number."""
