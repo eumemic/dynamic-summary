@@ -22,7 +22,6 @@ from typing import Any, overload
 from ragzoom.config import get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_types import (
     BatchEfficiencyDict,
-    ModelsDict,
     NodeTelemetryDict,
     RetryAnalysisDict,
     SummaryAttemptDict,
@@ -32,7 +31,7 @@ from ragzoom.telemetry_types import (
 logger = logging.getLogger(__name__)
 
 # Current supported telemetry format versions
-SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0", "3.0", "3.1", "4.1"]
+SUPPORTED_TELEMETRY_VERSIONS = ["3.0", "3.1", "4.1"]
 
 # Default token estimate for leaf nodes when source tokens are not available
 # This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
@@ -95,12 +94,14 @@ def compute_simplified_metrics(telemetry_data: dict) -> SimplifiedMetrics:
     """
     parsed_data = parse_telemetry_format(telemetry_data)
 
-    # Extract models from telemetry data for accurate pricing
-    models = telemetry_data.get("models")
-    if not models:
+    # Extract models from config for accurate pricing
+    config = telemetry_data.get("config", {})
+    embedding_model = config.get("embedding_model")
+    summary_model = config.get("summary_model")
+
+    if not embedding_model or not summary_model:
         raise ValueError(
-            "Telemetry data missing 'models' field. "
-            "This telemetry file may be from an older version that doesn't track model information. "
+            "Telemetry data missing model information in config. "
             "Cannot compute cost metrics without knowing which models were used."
         )
 
@@ -159,7 +160,10 @@ def compute_simplified_metrics(telemetry_data: dict) -> SimplifiedMetrics:
                 "target_fit": compute_target_fit_metrics(chunk_nodes, target_size),
                 "retries": compute_retry_metrics(chunk_nodes),
                 "latency": compute_latency_metrics(chunk_nodes),
-                "cost": compute_cost_metrics(chunk_nodes, models),
+                "cost": compute_cost_metrics(
+                    chunk_nodes,
+                    {"summary": summary_model, "embedding": embedding_model},
+                ),
                 "dispersion": compute_dispersion_metrics(chunk_nodes),
             }
 
@@ -430,7 +434,9 @@ def compute_cost_metrics(
         - cost_std: Standard deviation of per-node costs
     """
     # Get model-specific pricing
-    pricing = get_model_pricing(models["summary"], models["embedding"])
+    summary_model = models["summary"]
+    embedding_model = models["embedding"]
+    pricing = get_model_pricing(summary_model, embedding_model)
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_embedding_tokens = 0
@@ -707,13 +713,13 @@ class TelemetryAnalysisError(Exception):
 
 
 def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
-    """Parse telemetry data, handling version differences and migrating to v3.0.
+    """Parse telemetry data.
 
     Args:
         telemetry_data: Raw telemetry data from benchmark file
 
     Returns:
-        Parsed telemetry data in v3.0 format (flat structure)
+        Parsed telemetry data
 
     Raises:
         TelemetryAnalysisError: If format version is unsupported
@@ -721,17 +727,7 @@ def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
     if not isinstance(telemetry_data, dict):
         raise TelemetryAnalysisError("Telemetry data must be a dictionary")
 
-    # Handle nested v1.0/v2.0 format from CLI output
-    if "telemetry" in telemetry_data and "config" in telemetry_data:
-        # This is the old CLI wrapper format
-        config = telemetry_data["config"]
-        actual_telemetry = telemetry_data["telemetry"]
-        format_version = actual_telemetry.get("format_version")
-    else:
-        # Direct telemetry data
-        format_version = telemetry_data.get("format_version")
-        actual_telemetry = telemetry_data
-        config = None
+    format_version = telemetry_data.get("format_version")
 
     if not format_version:
         raise TelemetryAnalysisError("Missing format_version in telemetry data")
@@ -742,80 +738,10 @@ def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
             f"Supported versions: {SUPPORTED_TELEMETRY_VERSIONS}"
         )
 
-    # If already v3.0, v3.1, or v4.1, return as-is (cast to TypedDict)
+    # Return current versions as-is
     if format_version in ["3.0", "3.1", "4.1"]:
-        result: TelemetryDataDict = actual_telemetry  # type: ignore
+        result: TelemetryDataDict = telemetry_data  # type: ignore
         return result
-
-    # Migrate from v1.0/v2.0 to v3.0
-    if format_version in ["1.0", "2.0"]:
-        documents = actual_telemetry.get("documents", {})
-        if not isinstance(documents, dict):
-            raise TelemetryAnalysisError(
-                "Invalid documents structure in telemetry data"
-            )
-
-        # Extract the single document (v1.0/v2.0 always have exactly one)
-        if not documents:
-            # Return empty v3.0 format
-            models: ModelsDict = {
-                "summary": "unknown",
-                "embedding": "unknown",
-            }
-            result = {
-                "format_version": "3.0",
-                "document_id": "unknown",
-                "source_document_tokens": 0,
-                "chunk_size": 0,
-                "indexed_at": 0,
-                "models": models,
-                "nodes": [],
-            }
-            return result  # type: ignore
-
-        doc_id, doc_data = next(iter(documents.items()))
-        metadata = doc_data.get("metadata", {})
-        nodes = doc_data.get("nodes", [])
-
-        # Build v3.0 format
-        v3_data: TelemetryDataDict = {
-            "format_version": "3.0",
-            "document_id": doc_id,
-            "source_document_tokens": metadata.get("source_document_tokens", 0),
-            "chunk_size": metadata.get("chunk_size", 0),
-            "indexed_at": metadata.get("indexed_at", 0),
-            "nodes": nodes,
-            "models": {
-                "summary": "unknown",
-                "embedding": "unknown",
-            },
-        }
-
-        # Add models if available from config wrapper
-        if config:
-            v3_data["models"] = {
-                "summary": config.get("summary_model", "unknown"),
-                "embedding": config.get("embedding_model", "unknown"),
-            }
-        else:
-            # Try to infer from first node with embedding/summary
-            summary_model = "unknown"
-            embedding_model = "unknown"
-
-            for node in nodes:
-                if node.get("embedding") and embedding_model == "unknown":
-                    embedding_model = node["embedding"].get("model", "unknown")
-                if node.get("summary_attempts") and summary_model == "unknown":
-                    attempts = node["summary_attempts"]
-                    if attempts:
-                        summary_model = attempts[0].get("model", "unknown")
-
-            v3_data["models"] = {
-                "summary": summary_model,
-                "embedding": embedding_model,
-            }
-
-        return v3_data
 
     # This shouldn't happen given the version check above
     raise TelemetryAnalysisError(f"Unhandled telemetry version: {format_version}")
