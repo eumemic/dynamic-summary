@@ -70,7 +70,7 @@ Additional Options:
     The script automatically:
     - Adds: --clear --telemetry --validate --debug --no-progress
     - Uses --target-chunk-tokens from baseline's chunk_size
-    - Uses --prev-context-tokens from baseline's chunk_size
+    - Uses --preceding-context-tokens from baseline's chunk_size
 
 Output Files:
     <output-dir>/telemetry.json      - Telemetry data from current run
@@ -183,7 +183,7 @@ else
     TARGET_CHUNK_TOKENS=$CHUNK_SIZE
     PREV_CONTEXT_TOKENS=$CHUNK_SIZE
     echo "  Using --target-chunk-tokens=$TARGET_CHUNK_TOKENS"
-    echo "  Using --prev-context-tokens=$PREV_CONTEXT_TOKENS"
+    echo "  Using --preceding-context-tokens=$PREV_CONTEXT_TOKENS"
 fi
 
 # Auto-detect document if not provided
@@ -244,7 +244,7 @@ python -m ragzoom.cli index \
     --debug \
     --no-progress \
     --target-chunk-tokens "$TARGET_CHUNK_TOKENS" \
-    --prev-context-tokens "$PREV_CONTEXT_TOKENS" \
+    --preceding-context-tokens "$PREV_CONTEXT_TOKENS" \
     "${EXTRA_ARGS[@]}" \
     2>&1 | tee "$LOG_FILE"
 
