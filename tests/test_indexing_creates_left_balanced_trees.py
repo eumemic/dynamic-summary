@@ -48,9 +48,9 @@ class TestIndexingCreatesLeftBalancedTrees:
             reporter=None,
         ):
             if right:  # Two children
-                return f"Summary of: {left[:20]}... and {right[:20]}...", 0
+                return f"Summary of: {left[:20]}... and {right[:20]}...", 0, 100
             else:  # Single child
-                return f"Summary of: {left[:20]}...", 0
+                return f"Summary of: {left[:20]}...", 0, 50
 
         tree_builder._get_embedding = mock_get_embedding
         tree_builder._get_embeddings_batch = mock_get_batch_embeddings

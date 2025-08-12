@@ -112,6 +112,7 @@ class SimpleMockStore:
             document_id=document_id,
             left_child_id=left_child_id,
             right_child_id=right_child_id,
+            token_count=kwargs.get("token_count"),
             is_pinned=kwargs.get("is_pinned", False),
             access_count=0,
             last_accessed=None,
@@ -442,6 +443,16 @@ class SimpleMockStore:
             if doc.content_hash == content_hash:
                 return doc.id
         return None
+
+    def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
+        """Get token statistics for a document."""
+        return {
+            "avg_tokens": 100.0,
+            "min_tokens": 50,
+            "max_tokens": 150,
+            "total_tokens": 1000,
+            "node_count": 10,
+        }
 
     def close(self) -> None:
         """Close the store (no-op for mock)."""

@@ -299,29 +299,24 @@ class Retriever:
     def _calculate_conservative_num_seeds(
         self, budget_tokens: int, document_id: str | None = None
     ) -> int:
-        """Calculate conservative num_seeds that is more grounded in document reality."""
+        """Calculate conservative num_seeds using efficient SQL aggregation."""
 
-        # Get all nodes for the document to calculate an average cost.
-        all_nodes = self.store.get_all_nodes_for_document(document_id)
-        if not all_nodes:
-            # Use a reasonable constant fallback with warning
+        if not document_id:
+            # Fallback when no document is specified - use reasonable default
+            return max(1, budget_tokens // 256)  # 256 tokens per node estimate
+
+        # Get token statistics using efficient SQL query
+        stats = self.store.get_document_token_stats(document_id)
+
+        if not stats["node_count"] or not stats["avg_tokens"]:
+            # Fallback if no nodes with token counts are found
             logger.warning(
                 f"No nodes found for document {document_id}, using default estimate"
             )
-            return max(1, budget_tokens // 200)  # 200 tokens per node estimate
+            return max(1, budget_tokens // 256)  # Default fallback
 
-        # Calculate actual average from real nodes
-        import tiktoken
-
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-        total_tokens = sum(len(tokenizer.encode(node.text)) for node in all_nodes)
-        average_tokens_per_node = total_tokens / len(all_nodes)
-
-        if average_tokens_per_node == 0:
-            average_tokens_per_node = 200  # Fallback constant
-
-        # Add safety buffer and calculate
-        safe_average_cost = average_tokens_per_node * 1.25
+        # Add a small safety buffer (e.g., 25%) to the average to be safe
+        safe_average_cost = stats["avg_tokens"] * 1.25
         conservative_num_seeds = max(1, int(budget_tokens // safe_average_cost))
 
         return conservative_num_seeds
