@@ -282,7 +282,7 @@ class Retriever:
         # Get token statistics using efficient SQL query
         stats = self.store.get_document_token_stats(document_id)
 
-        if stats["node_count"] == 0 or stats["avg_tokens"] == 0:
+        if not stats["node_count"] or not stats["avg_tokens"]:
             # Fallback if no nodes with token counts are found
             leaf_tokens = (
                 self.config.leaf_tokens if self.config.leaf_tokens > 0 else 256

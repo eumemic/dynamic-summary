@@ -732,6 +732,7 @@ class Store:
                     span_end INTEGER NOT NULL,
                     text TEXT NOT NULL,
                     summary TEXT,
+                    token_count INTEGER,
                     is_pinned INTEGER DEFAULT 0,
                     last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
                     access_count INTEGER DEFAULT 0,

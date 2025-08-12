@@ -110,6 +110,7 @@ class SimpleMockStore:
             document_id=document_id,
             left_child_id=left_child_id,
             right_child_id=right_child_id,
+            token_count=kwargs.get("token_count"),
             is_pinned=kwargs.get("is_pinned", False),
             access_count=0,
             last_accessed=None,
