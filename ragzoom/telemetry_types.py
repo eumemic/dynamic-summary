@@ -4,10 +4,11 @@ This module provides TypedDict definitions for all telemetry-related data struct
 enabling type-safe access to telemetry data and preventing bugs from accessing
 non-existent fields.
 
-Supports v1.0, v2.0, and v3.0 telemetry formats with appropriate NotRequired fields.
+Supports v3.0, v3.1, and v4.1 telemetry formats with appropriate NotRequired fields.
+Legacy v1.0 and v2.0 formats are no longer supported.
 """
 
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from typing_extensions import NotRequired
 
@@ -95,12 +96,16 @@ class DocumentDict(TypedDict):
     nodes: list[NodeTelemetryDict]
 
 
-# Models configuration (v3.0)
-class ModelsDict(TypedDict):
-    """Type definition for models configuration in v3.0."""
+# Configuration dictionary for v3.1+
+class ConfigDict(TypedDict):
+    """Type definition for configuration object in v3.1+ formats."""
 
-    summary: str
-    embedding: str
+    target_chunk_tokens: int
+    summary_model: str
+    embedding_model: str
+    # Additional config fields may be present
+    budget_tokens: NotRequired[int]
+    leaf_tokens: NotRequired[int]  # Legacy alias for target_chunk_tokens
 
 
 # Top-level telemetry structure for v1.0/v2.0
@@ -111,22 +116,52 @@ class TelemetryDataDictV2(TypedDict):
     documents: dict[str, DocumentDict]
 
 
-# Top-level telemetry structure for v3.0
+# Top-level telemetry structure for v3.0/v3.1
 class TelemetryDataDictV3(TypedDict):
-    """Type definition for v3.0 telemetry data structure (flat)."""
+    """Type definition for v3.0/v3.1 telemetry data structure (flat).
+
+    Note: v3.0 format may have legacy top-level chunk_size and models fields,
+    but v3.1+ stores this information in the config object.
+    """
 
     format_version: str
     document_id: str
     source_document_tokens: int
-    chunk_size: int
     indexed_at: float
-    models: ModelsDict
+    config: ConfigDict
     nodes: list[NodeTelemetryDict]
+    # Optional document path
+    document_path: NotRequired[str]
+
+    # Legacy fields for v3.0 backward compatibility (removed in current implementation)
+    chunk_size: NotRequired[int]
+    models: NotRequired[dict[str, str]]
 
 
-# Union type for all telemetry formats
-# For parse_telemetry_format, we always return v3.0 format
-TelemetryDataDict = TelemetryDataDictV3
+# Top-level telemetry structure for v4.1 (current)
+class TelemetryDataDictV4(TypedDict):
+    """Type definition for v4.1 telemetry data structure (current format).
+
+    This is the current telemetry format with full model metadata,
+    system prompts, and runtime information for reproducibility.
+    """
+
+    format_version: str
+    document_id: str
+    source_document_tokens: int
+    indexed_at: float
+    config: ConfigDict
+    model_metadata: dict[str, Any]
+    system_prompts: dict[str, str]
+    runtime_info: dict[str, Any]
+    nodes: list[NodeTelemetryDict]
+    # Optional document path
+    document_path: NotRequired[str]
+
+
+# Union type for all supported telemetry formats
+# For parse_telemetry_format, we normalize to the input format
+TelemetryDataDict = TelemetryDataDictV3 | TelemetryDataDictV4
 
 
 # Analysis result types
