@@ -21,7 +21,7 @@ class RagZoomService:
 
     def __init__(self) -> None:
         # Create separate configs
-        self.index_config = IndexConfig()
+        self.index_config = IndexConfig.load()  # Load defaults
         self.query_config = QueryConfig()
         self.operational_config: OperationalConfig = (
             OperationalConfig()
