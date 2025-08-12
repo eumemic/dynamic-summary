@@ -525,7 +525,6 @@ class TestBudgetValidation:
             span_start=0,
             span_end=200,
             document_id="test-doc",
-            summary="Summary of left and right parts",
             left_child_id="left_child",
             right_child_id="right_child",
         )
