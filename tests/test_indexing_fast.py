@@ -13,7 +13,7 @@ class TestIndexingFast:
         self, base_config, store, mock_openai_async_client
     ):
         """Test that the entire document is indexed, not just first 37%."""
-        config = base_config
+        config = base_config.index_config
 
         # Create a smaller test document for faster testing
         test_doc_parts = []
@@ -92,7 +92,7 @@ class TestIndexingFast:
         self, base_config, store, mock_openai_async_client
     ):
         """Test indexing a very small document to isolate the issue."""
-        config = base_config
+        config = base_config.index_config
         # Create a minimal document
         test_document = (
             "Sentence one. Sentence two. Sentence three. Sentence four. Sentence five."
@@ -129,7 +129,7 @@ class TestIndexingFast:
 
     def test_check_api_batch_limits(self, base_config, store, mock_openai_async_client):
         """Test if there's a limit on API batching causing truncation."""
-        config = base_config
+        config = base_config.index_config
         # Create document with many chunks to test batching
         # Reduced from 250 to 50 chunks - still tests batching but faster
         chunks = []

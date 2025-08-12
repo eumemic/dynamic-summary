@@ -3,8 +3,15 @@
 __version__ = "0.1.0"
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 
-__all__ = ["RagZoomConfig", "TreeBuilder", "Retriever", "Assembler"]
+__all__ = [
+    "IndexConfig",
+    "QueryConfig",
+    "OperationalConfig",
+    "TreeBuilder",
+    "Retriever",
+    "Assembler",
+]

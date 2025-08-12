@@ -6,9 +6,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from openai import OpenAI
-from openai._types import NOT_GIVEN
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.store import Store, TreeNode
 
@@ -36,27 +35,39 @@ class Retriever:
 
     def __init__(
         self,
-        config: RagZoomConfig,
+        query_config: QueryConfig,
         store: Store,
+        api_key: str = "",
         tree_builder: Optional["TreeBuilder"] = None,
     ):
-        """Initialize retriever."""
-        self.config = config
+        """Initialize retriever.
+
+        Args:
+            query_config: Query configuration
+            store: Store instance
+            api_key: OpenAI API key (if not provided, reads from OPENAI_API_KEY env)
+            tree_builder: Optional TreeBuilder instance
+        """
+        self.query_config = query_config
         self.store = store
-        self.client = OpenAI(api_key=config.openai_api_key)
-        self.dp_generator = DynamicTilingGenerator(config)
+
+        # Get API key from parameter or environment
+        import os
+
+        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError("OpenAI API key required for Retriever")
+
+        self.client = OpenAI(api_key=api_key)
+        self.dp_generator = DynamicTilingGenerator(query_config)
 
     def _get_query_embedding(self, query: str) -> list[float]:
         """Get embedding for query text."""
         try:
             response = self.client.embeddings.create(
-                model=self.config.embedding_model,
+                model=self.query_config.embedding_model,
                 input=query,
-                dimensions=(
-                    self.config.embedding_dimensions
-                    if self.config.embedding_dimensions is not None
-                    else NOT_GIVEN
-                ),
+                # Let OpenAI API determine dimensions - no need for hardcoded values
             )
             return response.data[0].embedding
         except Exception as e:
@@ -66,37 +77,47 @@ class Retriever:
     async def retrieve_async(
         self,
         query: str,
-        n_max: int | None = None,
+        num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
     ) -> RetrievalResult:
         """Async retrieval method with MMR diversity.
 
+        Args:
+            query: Query text to search for
+            num_seeds: Number of seed nodes to retrieve
+            budget_tokens: Token budget for the final summary
+            document_id: Optional document ID to filter by
+
         Supports three modes:
-        1. Budget only: Calculate conservative n_max to guarantee no overflow
-        2. Budget + n_max: Use n_max but drop nodes if needed for budget
-        3. n_max only: Just use n_max, no budget enforcement
+        1. Budget only: Calculate conservative num_seeds to guarantee no overflow
+        2. Budget + num_seeds: Use num_seeds but drop nodes if needed for budget
+        3. num_seeds only: Just use num_seeds, no budget enforcement
         """
         # Determine which mode we're in
-        if budget_tokens is not None and n_max is None:
-            # Mode 1: Budget only - calculate conservative n_max
-            n_max = self._calculate_conservative_n_max(budget_tokens, document_id)
-            logger.info(
-                f"Budget-only mode: calculated conservative n_max={n_max} for budget={budget_tokens}"
+        if budget_tokens is not None and num_seeds is None:
+            # Mode 1: Budget only - calculate conservative num_seeds
+            num_seeds = self._calculate_conservative_num_seeds(
+                budget_tokens, document_id
             )
-        elif budget_tokens is not None and n_max is not None:
-            # Mode 2: Budget + n_max - will enforce both constraints
-            logger.info(f"Mixed mode: n_max={n_max}, budget={budget_tokens}")
-        elif n_max is None:
-            # Mode 3: n_max only (using default)
-            n_max = self.config.n_max
-            logger.info(f"n_max-only mode: using n_max={n_max}")
+            logger.info(
+                f"Budget-only mode: calculated conservative num_seeds={num_seeds} for budget={budget_tokens}"
+            )
+        elif budget_tokens is not None and num_seeds is not None:
+            # Mode 2: Budget + num_seeds - will enforce both constraints
+            logger.info(f"Mixed mode: num_seeds={num_seeds}, budget={budget_tokens}")
+        elif num_seeds is None:
+            # Mode 3: num_seeds only (using default)
+            # Use a reasonable default chunk size for calculation
+            default_chunk_size = 256
+            num_seeds = self.query_config.budget_tokens // default_chunk_size
+            logger.info(f"num_seeds-only mode: using num_seeds={num_seeds}")
 
         # Get query embedding
         query_embedding = self._get_query_embedding(query)
 
-        # Step 1: Initial retrieval (2 * n_max candidates)
-        k_candidates = int(n_max * self.config.mmr_k_multiplier)
+        # Step 1: Initial retrieval (2 * num_seeds candidates)
+        k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
 
         # Filter by document_id if provided
         where_filter = {"document_id": document_id} if document_id else None
@@ -104,16 +125,16 @@ class Retriever:
             query_embedding, k_candidates, where=where_filter
         )
 
-        # Step 2: Apply MMR to get diverse n_max results
+        # Step 2: Apply MMR to get diverse num_seeds results
         selected_ids = self.store.compute_mmr_diverse_results(
-            query_embedding, candidates, self.config.mmr_lambda, n_max
+            query_embedding, candidates, self.query_config.mmr_lambda, num_seeds
         )
 
         # Step 3: Build coverage map (selected + ancestors)
         coverage_map = self._build_coverage_map(selected_ids)
 
         # Step 4: Apply pinned nodes
-        pinned_nodes = self.store.get_pinned_nodes(self.config.pin_depth_max)
+        pinned_nodes = self.store.get_pinned_nodes(self.store.PIN_DEPTH_MAX)
         for node in pinned_nodes:
             coverage_map[node.id] = True
 
@@ -193,7 +214,9 @@ class Retriever:
 
         # Step 5: Extract tiling using DP algorithm
         final_budget = (
-            budget_tokens if budget_tokens is not None else self.config.budget_tokens
+            budget_tokens
+            if budget_tokens is not None
+            else self.query_config.budget_tokens
         )
         dp_result = self.dp_generator.find_optimal_tiling(
             final_budget, scores, nodes, root_id
@@ -211,18 +234,24 @@ class Retriever:
     def retrieve(
         self,
         query: str,
-        n_max: int | None = None,
+        num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
     ) -> RetrievalResult:
         """Synchronous wrapper for retrieve_async.
+
+        Args:
+            query: Query text to search for
+            num_seeds: Number of seed nodes to retrieve
+            budget_tokens: Token budget for the final summary
+            document_id: Optional document ID to filter by
 
         Creates a new event loop if needed to run the async version.
         For async contexts, use retrieve_async directly.
         """
         # jscpd:ignore-end
         return asyncio.run(
-            self.retrieve_async(query, n_max, budget_tokens, document_id)
+            self.retrieve_async(query, num_seeds, budget_tokens, document_id)
         )
 
     def _build_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
@@ -267,31 +296,27 @@ class Retriever:
                 break
         return coverage_map
 
-    def _calculate_conservative_n_max(
+    def _calculate_conservative_num_seeds(
         self, budget_tokens: int, document_id: str | None = None
     ) -> int:
-        """Calculate conservative n_max using efficient SQL aggregation."""
+        """Calculate conservative num_seeds using efficient SQL aggregation."""
 
         if not document_id:
-            # Fallback when no document is specified
-            leaf_tokens = (
-                self.config.leaf_tokens if self.config.leaf_tokens > 0 else 256
-            )
-            return max(1, budget_tokens // leaf_tokens)
+            # Fallback when no document is specified - use reasonable default
+            return max(1, budget_tokens // 256)  # 256 tokens per node estimate
 
         # Get token statistics using efficient SQL query
         stats = self.store.get_document_token_stats(document_id)
 
         if not stats["node_count"] or not stats["avg_tokens"]:
             # Fallback if no nodes with token counts are found
-            leaf_tokens = (
-                self.config.leaf_tokens if self.config.leaf_tokens > 0 else 256
+            logger.warning(
+                f"No nodes found for document {document_id}, using default estimate"
             )
-            return max(1, budget_tokens // leaf_tokens)
+            return max(1, budget_tokens // 256)  # Default fallback
 
         # Add a small safety buffer (e.g., 25%) to the average to be safe
         safe_average_cost = stats["avg_tokens"] * 1.25
+        conservative_num_seeds = max(1, int(budget_tokens // safe_average_cost))
 
-        conservative_n_max = max(1, int(budget_tokens // safe_average_cost))
-
-        return conservative_n_max
+        return conservative_num_seeds

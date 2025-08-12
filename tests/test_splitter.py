@@ -2,7 +2,7 @@
 
 import os
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig
 from ragzoom.splitter import TextSplitter
 
 # Set required env var for tests
@@ -14,8 +14,8 @@ class TestTextSplitter:
 
     def test_split_basic_text(self):
         """Test basic text splitting."""
-        config = RagZoomConfig(leaf_tokens=50, adjacent_context_tokens=25)
-        splitter = TextSplitter(config)
+        index_config = IndexConfig(target_chunk_tokens=50, preceding_context_tokens=25)
+        splitter = TextSplitter(index_config)
 
         text = "This is a test. " * 50  # ~200 tokens
         chunks = splitter.split_text(text)
@@ -26,8 +26,8 @@ class TestTextSplitter:
 
     def test_split_respects_boundaries(self):
         """Test that splitter respects sentence boundaries."""
-        config = RagZoomConfig(leaf_tokens=50, adjacent_context_tokens=25)
-        splitter = TextSplitter(config)
+        index_config = IndexConfig(target_chunk_tokens=50, preceding_context_tokens=25)
+        splitter = TextSplitter(index_config)
 
         text = "First sentence. Second sentence. Third sentence. Fourth sentence."
         chunks = splitter.split_text(text)
@@ -39,8 +39,8 @@ class TestTextSplitter:
 
     def test_adjacent_context(self):
         """Test getting adjacent context for chunks."""
-        config = RagZoomConfig(leaf_tokens=50, adjacent_context_tokens=10)
-        splitter = TextSplitter(config)
+        index_config = IndexConfig(target_chunk_tokens=50, preceding_context_tokens=10)
+        splitter = TextSplitter(index_config)
 
         chunks = ["First chunk text.", "Second chunk text.", "Third chunk text."]
 
@@ -63,8 +63,8 @@ class TestTextSplitter:
 
     def test_token_counting(self):
         """Test token counting accuracy."""
-        config = RagZoomConfig(leaf_tokens=200, adjacent_context_tokens=75)
-        splitter = TextSplitter(config)
+        index_config = IndexConfig(target_chunk_tokens=200, preceding_context_tokens=75)
+        splitter = TextSplitter(index_config)
 
         text = "Hello world"
         token_count = splitter._token_length(text)
@@ -73,8 +73,8 @@ class TestTextSplitter:
 
     def test_empty_text(self):
         """Test handling of empty text."""
-        config = RagZoomConfig(leaf_tokens=200, adjacent_context_tokens=75)
-        splitter = TextSplitter(config)
+        index_config = IndexConfig(target_chunk_tokens=200, preceding_context_tokens=75)
+        splitter = TextSplitter(index_config)
 
         chunks = splitter.split_text("")
         # LangChain returns empty list for empty text
@@ -82,8 +82,8 @@ class TestTextSplitter:
 
     def test_sequential_chunks(self):
         """Test that chunks are sequential without overlap."""
-        config = RagZoomConfig(leaf_tokens=50, adjacent_context_tokens=25)
-        splitter = TextSplitter(config)
+        index_config = IndexConfig(target_chunk_tokens=50, preceding_context_tokens=25)
+        splitter = TextSplitter(index_config)
 
         text = " ".join([f"Word{i}" for i in range(200)])  # Long text
         chunks = splitter.split_text(text)

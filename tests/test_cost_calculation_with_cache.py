@@ -1,10 +1,15 @@
 """Test cost calculations with cached token discounts."""
 
-import json
-from pathlib import Path
 from typing import Any
 
 import pytest
+
+# Test-specific pricing data for backwards compatibility
+MODEL_PRICING = {
+    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006, "cache_discount": 0.5},
+    "gpt-4o": {"input": 0.0025, "output": 0.01, "cache_discount": 0.5},
+    "gpt-4": {"input": 0.03, "output": 0.06, "cache_discount": 0.5},
+}
 
 
 def calculate_summary_attempt_cost(attempt: dict[str, Any], pricing: dict) -> float:
@@ -16,9 +21,9 @@ def calculate_summary_attempt_cost(attempt: dict[str, Any], pricing: dict) -> fl
         return 0.0
 
     # Get pricing for the model
-    model_pricing = pricing.get("llms", {}).get(model)
-    if not model_pricing:
+    if model not in pricing:
         return 0.0
+    model_pricing = pricing[model]
 
     # Get token counts
     prompt_tokens = attempt.get("prompt_tokens", 0)
@@ -43,9 +48,7 @@ def calculate_summary_attempt_cost(attempt: dict[str, Any], pricing: dict) -> fl
 
 def analyze_summary_costs(telemetry_data: dict) -> dict:
     """Analyze summary costs from telemetry data."""
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
-    with open(pricing_path) as f:
-        pricing = json.load(f)
+    pricing = MODEL_PRICING
 
     costs = {
         "by_node": {},
@@ -117,10 +120,8 @@ def analyze_summary_costs(telemetry_data: dict) -> dict:
 
 def test_calculate_cost_with_cached_tokens():
     """Test that cached tokens receive appropriate discount."""
-    # Load pricing (will be updated to include cache_discount)
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
-    with open(pricing_path) as f:
-        pricing = json.load(f)
+    # Use pricing constants
+    pricing = MODEL_PRICING
 
     # Test attempt with cached tokens
     attempt = {
@@ -136,7 +137,7 @@ def test_calculate_cost_with_cached_tokens():
     # - 1200 cached tokens at 50% discount
     # - 300 non-cached tokens at full price
     # - 100 completion tokens at full price
-    model_pricing = pricing["llms"]["gpt-4o-mini"]
+    model_pricing = pricing["gpt-4o-mini"]
     cache_discount = model_pricing.get("cache_discount", 1.0)
 
     expected_cost = (
@@ -150,9 +151,7 @@ def test_calculate_cost_with_cached_tokens():
 
 def test_calculate_cost_without_cached_tokens():
     """Test backward compatibility when cached_tokens is not present."""
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
-    with open(pricing_path) as f:
-        pricing = json.load(f)
+    pricing = MODEL_PRICING
 
     # Old-style attempt without cached_tokens field
     attempt = {
@@ -164,7 +163,7 @@ def test_calculate_cost_without_cached_tokens():
     cost = calculate_summary_attempt_cost(attempt, pricing)
 
     # Should treat all tokens as non-cached
-    model_pricing = pricing["llms"]["gpt-4o-mini"]
+    model_pricing = pricing["gpt-4o-mini"]
     expected_cost = (
         (1500 * model_pricing["input"]) + (100 * model_pricing["output"])
     ) / 1000
@@ -174,9 +173,7 @@ def test_calculate_cost_without_cached_tokens():
 
 def test_calculate_cost_with_zero_cached_tokens():
     """Test that zero cached tokens works correctly."""
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
-    with open(pricing_path) as f:
-        pricing = json.load(f)
+    pricing = MODEL_PRICING
 
     attempt = {
         "model": "gpt-4o-mini",
@@ -188,7 +185,7 @@ def test_calculate_cost_with_zero_cached_tokens():
     cost = calculate_summary_attempt_cost(attempt, pricing)
 
     # All tokens at full price
-    model_pricing = pricing["llms"]["gpt-4o-mini"]
+    model_pricing = pricing["gpt-4o-mini"]
     expected_cost = (
         (1500 * model_pricing["input"]) + (100 * model_pricing["output"])
     ) / 1000
@@ -198,9 +195,7 @@ def test_calculate_cost_with_zero_cached_tokens():
 
 def test_calculate_cost_with_high_cache_rate():
     """Test cost savings with very high cache hit rate."""
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
-    with open(pricing_path) as f:
-        pricing = json.load(f)
+    pricing = MODEL_PRICING
 
     # 95% cache hit rate
     attempt = {
@@ -296,12 +291,10 @@ def test_analyze_summary_costs_with_cached_tokens():
 def test_cost_calculation_with_missing_model():
     """Test graceful handling when model pricing is not available."""
     pricing = {
-        "llms": {
-            "gpt-4o-mini": {
-                "input": 0.00015,
-                "output": 0.0006,
-                "cache_discount": 0.5,
-            }
+        "gpt-4o-mini": {
+            "input": 0.00015,
+            "output": 0.0006,
+            "cache_discount": 0.5,
         }
     }
 
@@ -321,9 +314,7 @@ def test_cost_calculation_with_missing_model():
 
 def test_cost_calculation_with_passthrough_model():
     """Test that passthrough summaries have zero cost."""
-    pricing_path = Path(__file__).parent.parent / "ragzoom" / "pricing.json"
-    with open(pricing_path) as f:
-        pricing = json.load(f)
+    pricing = MODEL_PRICING
 
     attempt = {
         "model": "passthrough",

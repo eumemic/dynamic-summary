@@ -12,17 +12,14 @@ All metrics are aggregated at the chunk-size level only (no tree-level breakdown
 Legacy functions are preserved for backward compatibility with telemetry_viz.py.
 """
 
-import json
 import logging
-import os
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from statistics import median
 from typing import Any, overload
 
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_types import (
     BatchEfficiencyDict,
     ModelsDict,
@@ -41,10 +38,7 @@ SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0", "3.0", "3.1"]
 # This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
 # estimate for backward compatibility with old telemetry data that didn't track source tokens.
 # The actual chunk size may vary, but this provides a reasonable approximation for cost metrics.
-# This can be overridden via the RAGZOOM_DEFAULT_LEAF_TOKEN_ESTIMATE environment variable.
-DEFAULT_LEAF_TOKEN_ESTIMATE = int(
-    os.getenv("RAGZOOM_DEFAULT_LEAF_TOKEN_ESTIMATE", "150")
-)
+DEFAULT_LEAF_TOKEN_ESTIMATE = 150
 
 
 # ============================================================================
@@ -53,7 +47,7 @@ DEFAULT_LEAF_TOKEN_ESTIMATE = int(
 
 
 def get_model_pricing(summary_model: str, embedding_model: str) -> dict[str, float]:
-    """Get pricing for specific models from pricing.json.
+    """Get pricing for specific models from pricing constants.
 
     Args:
         summary_model: Name of the LLM model
@@ -65,41 +59,13 @@ def get_model_pricing(summary_model: str, embedding_model: str) -> dict[str, flo
         - summary_output_cost_per_1k: Cost per 1K output tokens
         - embedding_cost_per_1k: Cost per 1K embedding tokens
     """
-    # Load pricing data
-    module_dir = Path(__file__).parent
-    pricing_path = module_dir / "pricing.json"
-
-    if not pricing_path.exists():
-        raise FileNotFoundError(
-            f"Pricing file not found at {pricing_path}. "
-            "Cannot compute cost metrics without pricing information."
-        )
-
-    with open(pricing_path) as f:
-        pricing_data = json.load(f)
-
-    # Get embedding price
-    if embedding_model not in pricing_data.get("embeddings", {}):
-        available = list(pricing_data.get("embeddings", {}).keys())
-        raise ValueError(
-            f"Embedding model '{embedding_model}' not found in pricing.json. "
-            f"Available models: {available}"
-        )
-
-    # Get LLM prices
-    if summary_model not in pricing_data.get("llms", {}):
-        available = list(pricing_data.get("llms", {}).keys())
-        raise ValueError(
-            f"Summary model '{summary_model}' not found in pricing.json. "
-            f"Available models: {available}"
-        )
-
-    llm_pricing = pricing_data["llms"][summary_model]
+    embedding_cost = get_embedding_cost(embedding_model)
+    summary_input_cost, summary_output_cost = get_llm_costs(summary_model)
 
     return {
-        "summary_input_cost_per_1k": llm_pricing["input"],
-        "summary_output_cost_per_1k": llm_pricing["output"],
-        "embedding_cost_per_1k": pricing_data["embeddings"][embedding_model],
+        "summary_input_cost_per_1k": summary_input_cost,
+        "summary_output_cost_per_1k": summary_output_cost,
+        "embedding_cost_per_1k": embedding_cost,
     }
 
 
@@ -118,14 +84,11 @@ class SimplifiedMetrics:
     metrics_by_chunk_size: dict[int, dict[str, dict[str, float]]]
 
 
-def compute_simplified_metrics(
-    telemetry_data: dict, config: RagZoomConfig | None = None
-) -> SimplifiedMetrics:
+def compute_simplified_metrics(telemetry_data: dict) -> SimplifiedMetrics:
     """Compute simplified metrics from telemetry data.
 
     Args:
         telemetry_data: Raw telemetry data
-        config: Configuration (deprecated, kept for backward compatibility)
 
     Returns:
         SimplifiedMetrics object with metrics organized by chunk size
@@ -701,38 +664,31 @@ class SummaryStats:
         return statistics.stdev(self.deviations)
 
 
-class TelemetryThresholds:
-    """Configurable thresholds for telemetry analysis and visualization.
+# Telemetry analysis thresholds
+HIGH_RETRY_RATE_THRESHOLD = 20.0
+GOOD_BATCH_UTILIZATION_THRESHOLD = 70.0
+LOW_BATCH_UTILIZATION_THRESHOLD = 50.0
+MULTIPLE_RETRY_THRESHOLD = 1
+HIGH_TARGET_FIT_ERROR_THRESHOLD = 20.0
+GOOD_TARGET_FIT_THRESHOLD = 10.0
+HIGH_COST_PER_NODE_THRESHOLD = 0.001
 
-    Thresholds can be overridden via environment variables:
-    - RAGZOOM_HIGH_RETRY_RATE_THRESHOLD (default: 20)
-    - RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD (default: 70)
-    - RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD (default: 50)
-    - RAGZOOM_MULTIPLE_RETRY_THRESHOLD (default: 1)
+
+class TelemetryThresholds:
+    """Legacy thresholds class for backward compatibility.
+
+    This class is preserved for compatibility with telemetry_viz.py.
+    New code should use the module-level constants directly.
     """
 
     def __init__(self) -> None:
-        self.high_retry_rate = float(
-            os.getenv("RAGZOOM_HIGH_RETRY_RATE_THRESHOLD", "20")
-        )
-        self.good_batch_utilization = float(
-            os.getenv("RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD", "70")
-        )
-        self.low_batch_utilization = float(
-            os.getenv("RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD", "50")
-        )
-        self.multiple_retry_threshold = int(
-            os.getenv("RAGZOOM_MULTIPLE_RETRY_THRESHOLD", "1")
-        )
-        self.high_target_fit_error = float(
-            os.getenv("RAGZOOM_HIGH_TARGET_FIT_ERROR_THRESHOLD", "20")
-        )
-        self.good_target_fit = float(
-            os.getenv("RAGZOOM_GOOD_TARGET_FIT_THRESHOLD", "10")
-        )
-        self.high_cost_per_node = float(
-            os.getenv("RAGZOOM_HIGH_COST_PER_NODE_THRESHOLD", "0.001")
-        )
+        self.high_retry_rate = HIGH_RETRY_RATE_THRESHOLD
+        self.good_batch_utilization = GOOD_BATCH_UTILIZATION_THRESHOLD
+        self.low_batch_utilization = LOW_BATCH_UTILIZATION_THRESHOLD
+        self.multiple_retry_threshold = MULTIPLE_RETRY_THRESHOLD
+        self.high_target_fit_error = HIGH_TARGET_FIT_ERROR_THRESHOLD
+        self.good_target_fit = GOOD_TARGET_FIT_THRESHOLD
+        self.high_cost_per_node = HIGH_COST_PER_NODE_THRESHOLD
 
 
 def get_telemetry_thresholds() -> TelemetryThresholds:
@@ -1178,9 +1134,7 @@ class ComputedMetrics:
     nodes_per_height: list[int]
 
 
-def compute_metrics_from_telemetry(
-    telemetry_data: dict, config: RagZoomConfig
-) -> ComputedMetrics:
+def compute_metrics_from_telemetry(telemetry_data: dict) -> ComputedMetrics:
     """Compute metrics from raw telemetry data.
 
     This function computes all metrics from raw telemetry data that were
@@ -1188,12 +1142,20 @@ def compute_metrics_from_telemetry(
 
     Args:
         telemetry_data: Raw telemetry data
-        config: Configuration with pricing information
 
     Returns:
         ComputedMetrics object with all computed values
     """
     parsed_data = parse_telemetry_format(telemetry_data)
+
+    # Get models from telemetry for cost calculations
+    models = telemetry_data.get("models", {})
+    embedding_model = models.get("embedding", "text-embedding-3-small")
+    summary_model = models.get("summary", "gpt-4o")
+
+    # Get costs using helper functions
+    embedding_cost_per_1k = get_embedding_cost(embedding_model)
+    summary_input_cost_per_1k, summary_output_cost_per_1k = get_llm_costs(summary_model)
 
     # Initialize metrics data with proper types
     metrics_data: dict[str, Any] = {
@@ -1203,9 +1165,9 @@ def compute_metrics_from_telemetry(
         # Document info
         "source_document_tokens": parsed_data.get("source_document_tokens", 0),
         # Cost config
-        "embedding_cost_per_1k": config.embedding_cost_per_1k,
-        "summary_input_cost_per_1k": config.summary_input_cost_per_1k,
-        "summary_output_cost_per_1k": config.summary_output_cost_per_1k,
+        "embedding_cost_per_1k": embedding_cost_per_1k,
+        "summary_input_cost_per_1k": summary_input_cost_per_1k,
+        "summary_output_cost_per_1k": summary_output_cost_per_1k,
         "total_embedding_tokens": 0,
         "embedding_api_calls": 0,
         "embedding_batch_sizes": [],
@@ -1295,12 +1257,12 @@ def compute_metrics_from_telemetry(
     # Calculate costs
     embedding_cost = (
         metrics_data["total_embedding_tokens"] / 1000
-    ) * config.embedding_cost_per_1k
+    ) * embedding_cost_per_1k
     summary_cost = (
         metrics_data["total_summary_prompt_tokens"] / 1000
-    ) * config.summary_input_cost_per_1k + (
+    ) * summary_input_cost_per_1k + (
         metrics_data["total_summary_completion_tokens"] / 1000
-    ) * config.summary_output_cost_per_1k
+    ) * summary_output_cost_per_1k
     total_cost = embedding_cost + summary_cost
 
     # Calculate tree height and nodes per height
@@ -1338,9 +1300,9 @@ def compute_metrics_from_telemetry(
         summary_api_calls=metrics_data["summary_api_calls"],
         chunks_created=chunks_created,
         # Cost metrics
-        embedding_cost_per_1k=config.embedding_cost_per_1k,
-        summary_input_cost_per_1k=config.summary_input_cost_per_1k,
-        summary_output_cost_per_1k=config.summary_output_cost_per_1k,
+        embedding_cost_per_1k=embedding_cost_per_1k,
+        summary_input_cost_per_1k=summary_input_cost_per_1k,
+        summary_output_cost_per_1k=summary_output_cost_per_1k,
         total_cost=total_cost,
         embedding_cost=embedding_cost,
         summary_cost=summary_cost,

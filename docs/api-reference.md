@@ -70,14 +70,12 @@ ragzoom query <query_text> [OPTIONS]
 - `--document-id, -d` - Document to query (REQUIRED)
 
 **Optional Parameters:**
-- `--n-nodes, -n` - Number of seed nodes (default: 20)
-- `--n-max` - Maximum leaf nodes in result
-- `--budget-tokens, -b` - Token budget for summary
-- `--no-cache` - Disable caching
+- `--num-seeds` - Number of seed nodes to retrieve
+- `--token-budget` - Token budget for summary
 - `--debug` - Show debug information and tree visualization
-- `--viz-width` - Tree visualization width (default: 120)
-- `--viz-coords` - Coordinate system: `source-chars` or `output-tokens` (default: output-tokens)
 - `--validate` - Enable validation checks
+- `--viz-width` - Tree visualization width (defaults to terminal width)
+- `--viz-coords` - Coordinate system: `source-chars` or `output-tokens` (default: output-tokens)
 
 **Examples:**
 ```bash
@@ -376,19 +374,22 @@ asyncio.run(main())
 ### Advanced Usage
 
 ```python
-from ragzoom import Store, TreeBuilder, Retriever, RagZoomConfig
+from ragzoom import Store, TreeBuilder, Retriever, IndexConfig, QueryConfig, OperationalConfig
 
 # Custom configuration
-config = RagZoomConfig(
+index_config = IndexConfig(
+    target_chunk_tokens=300
+)
+query_config = QueryConfig(
     budget_tokens=10000,
-    leaf_tokens=300,
     mmr_lambda=0.8
 )
+operational_config = OperationalConfig()
 
 # Initialize components
-store = Store(config)
-builder = TreeBuilder(store, config)
-retriever = Retriever(store, config)
+store = Store(operational_config)
+builder = TreeBuilder(index_config, store, operational_config.openai_api_key)
+retriever = Retriever(query_config, index_config, store, operational_config.openai_api_key)
 
 # Direct component usage
 nodes = store.get_leaf_nodes(document_id="my-doc")
@@ -399,7 +400,7 @@ result = retriever.retrieve("query", document_id="my-doc")
 
 ### Configuration Parameters
 
-All parameters can be set via environment variables with the `RAGZOOM_` prefix. For an overview of how these parameters affect system behavior, see [Architecture - Configuration](architecture.md#configuration).
+All parameters can be set via CLI options or config files. For an overview of how these parameters affect system behavior, see [Architecture - Configuration](architecture.md#configuration).
 
 #### Core Parameters
 
@@ -454,28 +455,55 @@ All parameters can be set via environment variables with the `RAGZOOM_` prefix. 
 
 ### Configuration Files
 
-#### Environment Variables
+#### CLI Options
 
-Create a `.env` file:
+Use CLI options for configuration:
 
 ```bash
-RAGZOOM_BUDGET_TOKENS=10000
-RAGZOOM_LEAF_TOKENS=300
-RAGZOOM_MMR_LAMBDA=0.8
-RAGZOOM_SUMMARY_MODEL=gpt-4o-mini
-RAGZOOM_LOG_LEVEL=DEBUG
+# Indexing with configuration
+ragzoom index document.txt \
+  --target-chunk-tokens 300 \
+  --summary-model gpt-4o-mini \
+  --debug
+
+# Querying with configuration
+ragzoom query "your question" -d document.txt \
+  --token-budget 10000 \
+  --mmr-lambda 0.8
+```
+
+#### Config Files
+
+Create a JSON config file:
+
+```json
+{
+  "target_chunk_tokens": 300,
+  "summary_model": "gpt-4o-mini",
+  "embedding_model": "text-embedding-3-large"
+}
+```
+
+Then use it:
+
+```bash
+ragzoom index document.txt --config myconfig.json
 ```
 
 #### Python Configuration
 
 ```python
-from ragzoom import RagZoomConfig
+from ragzoom import IndexConfig, QueryConfig, OperationalConfig
 
-config = RagZoomConfig(
+index_config = IndexConfig(
+    target_chunk_tokens=300,
+    summary_model="gpt-4o-mini"
+)
+query_config = QueryConfig(
     budget_tokens=10000,
-    leaf_tokens=300,
-    mmr_lambda=0.8,
-    summary_model="gpt-4o-mini",
+    mmr_lambda=0.8
+)
+operational_config = OperationalConfig(
     log_level="DEBUG"
 )
 ```

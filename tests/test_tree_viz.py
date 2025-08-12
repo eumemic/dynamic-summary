@@ -23,7 +23,7 @@ class TestTreeVisualization:
             span_end=100,
             parent_id=None,
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="left",
             right_child_id="right",
         )
@@ -36,7 +36,7 @@ class TestTreeVisualization:
             span_end=50,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="leaf1",
             right_child_id="leaf2",
         )
@@ -49,7 +49,7 @@ class TestTreeVisualization:
             span_end=100,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="leaf3",
             right_child_id="leaf4",
         )
@@ -70,7 +70,7 @@ class TestTreeVisualization:
                 span_end=end,
                 parent_id=parent,
                 document_id="doc1",
-                embedding=[0.5] * 384,
+                embedding=[0.5] * 1536,
             )
 
         # Create tiling (list of node IDs)
@@ -111,7 +111,7 @@ class TestTreeVisualization:
             span_end=100,
             parent_id=None,
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
         )
 
         # Empty tiling list
@@ -144,7 +144,7 @@ class TestTreeVisualization:
             span_end=100,
             parent_id=None,
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="leaf1",
             right_child_id="leaf2",
         )
@@ -157,7 +157,7 @@ class TestTreeVisualization:
             span_end=50,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
         )
 
         store.add_node(
@@ -167,7 +167,7 @@ class TestTreeVisualization:
             span_end=100,
             parent_id="root",
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
         )
 
         # Only leaf2 is selected
@@ -196,7 +196,7 @@ class TestTreeVisualization:
             span_start=0,
             span_end=100,
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="l1",
             right_child_id="r1",
         )
@@ -208,7 +208,7 @@ class TestTreeVisualization:
             span_start=0,
             span_end=50,
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="l2",
             right_child_id="r2",
         )
@@ -219,7 +219,7 @@ class TestTreeVisualization:
             span_start=50,
             span_end=100,
             document_id="doc1",
-            embedding=[0.5] * 384,
+            embedding=[0.5] * 1536,
             left_child_id="l3",
             right_child_id="r3",
         )
@@ -237,7 +237,7 @@ class TestTreeVisualization:
                 span_start=start,
                 span_end=end,
                 document_id="doc1",
-                embedding=[0.5] * 384,
+                embedding=[0.5] * 1536,
                 left_child_id=f"{node_id}_l",
                 right_child_id=f"{node_id}_r",
             )
@@ -261,7 +261,7 @@ class TestTreeVisualization:
                 span_start=start,
                 span_end=end,
                 document_id="doc1",
-                embedding=[0.5] * 384,
+                embedding=[0.5] * 1536,
             )
 
         # Mixed height tiling

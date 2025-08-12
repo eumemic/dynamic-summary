@@ -156,7 +156,7 @@ config = RagZoomConfig(
 The simplified metrics system provides actionable insights at the chunk-size level:
 
 ```python
-result = compute_simplified_metrics(telemetry, config)
+result = compute_simplified_metrics(telemetry)
 
 for chunk_size, metrics in result.metrics_by_chunk_size.items():
     print(f"\nChunk size: {chunk_size} tokens")

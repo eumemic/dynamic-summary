@@ -1,9 +1,22 @@
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import RagZoomConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
+
+
+class _TestConfig:
+    """Test configuration wrapper for compatibility."""
+
+    def __init__(self, index_config, query_config, operational_config):
+        self.index_config = index_config
+        self.query_config = query_config
+        self.operational_config = operational_config
+
+    @property
+    def target_chunk_tokens(self):
+        return self.index_config.target_chunk_tokens
 
 
 class TestDPTiling:
@@ -12,10 +25,21 @@ class TestDPTiling:
     @pytest.fixture
     def setup_system(self):
         """Set up a complete system with DP mode enabled and a mock store."""
-        config = RagZoomConfig(leaf_tokens=100)
+        index_config = IndexConfig(target_chunk_tokens=100)
+        query_config = QueryConfig(budget_tokens=1000)
+        operational_config = OperationalConfig(
+            openai_api_key="test-key",
+            sqlite_database_url="sqlite:///:memory:",
+            chroma_persist_directory=":memory:",
+        )
+        config = _TestConfig(index_config, query_config, operational_config)
         store = SimpleMockStore(config=config)
-        retriever = Retriever(config, store, tree_builder=None)
-        assembler = Assembler(config, store)
+        retriever = Retriever(
+            query_config=query_config,
+            store=store,
+            api_key=operational_config.openai_api_key,
+        )
+        assembler = Assembler(store)
         dp_generator = retriever.dp_generator
         return config, store, retriever, assembler, dp_generator
 
