@@ -830,11 +830,17 @@ class TelemetryVisualizer:
                 linewidth=2,
             )
 
-            # Add acceptable range band based on retry_threshold (cropped to data range)
+        # Apply axis limits first
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+
+        # Add acceptable range band based on retry_threshold (full width of plot)
+        # Use very large x-coordinates to ensure it extends beyond any possible axis limits
+        if chunk_size > 0:
             if retry_threshold is not None:
                 threshold_tokens = chunk_size * retry_threshold
                 ax.fill_between(
-                    [x_min, x_max],
+                    [-10000, 10000],  # Extend far beyond any possible data range
                     chunk_size - threshold_tokens,
                     chunk_size + threshold_tokens,
                     alpha=0.1,
@@ -844,7 +850,7 @@ class TelemetryVisualizer:
             else:
                 # Fallback to ±10 tokens if no retry_threshold found
                 ax.fill_between(
-                    [x_min, x_max],
+                    [-10000, 10000],  # Extend far beyond any possible data range
                     chunk_size - 10,
                     chunk_size + 10,
                     alpha=0.1,
@@ -852,22 +858,15 @@ class TelemetryVisualizer:
                     label="±10 token range",
                 )
 
-        # Apply axis limits
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
-
-        # Add diagonal reference line showing 1:1 ratio (cropped to visible area)
-        diag_min = max(x_min, y_min)
-        diag_max = min(x_max, y_max)
-        if diag_min < diag_max:  # Only draw if diagonal intersects visible area
-            ax.plot(
-                [diag_min, diag_max],
-                [diag_min, diag_max],
-                "k:",
-                alpha=0.3,
-                linewidth=1,
-                label="1:1 ratio",
-            )
+        # Add diagonal reference line showing 1:1 ratio (full plot extent)
+        ax.plot(
+            [x_min, x_max],
+            [x_min, x_max],
+            "k:",
+            alpha=0.3,
+            linewidth=1,
+            label="1:1 ratio",
+        )
 
         # Create custom legend for attempt numbers (matching cost breakdown)
         from matplotlib.patches import Patch
