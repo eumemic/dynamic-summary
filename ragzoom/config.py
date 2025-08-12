@@ -61,6 +61,19 @@ class IndexConfig:
     max_retries: int = 0
     embedding_batch_size: int = 100
 
+    def __post_init__(self) -> None:
+        """Validate configuration values."""
+        if not 0.0 <= self.retry_threshold <= 1.0:
+            raise ValueError(
+                f"retry_threshold must be between 0.0 and 1.0, got {self.retry_threshold}"
+            )
+        if self.max_retries < 0:
+            raise ValueError(f"max_retries cannot be negative, got {self.max_retries}")
+        if self.embedding_batch_size <= 0:
+            raise ValueError(
+                f"embedding_batch_size must be positive, got {self.embedding_batch_size}"
+            )
+
     def replace(self, **changes: Any) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -79,6 +92,21 @@ class QueryConfig:
     mmr_lambda: float = 0.7
     mmr_k_multiplier: float = 2.0
     embedding_model: str = "text-embedding-3-small"
+
+    def __post_init__(self) -> None:
+        """Validate configuration values."""
+        if not 0.0 <= self.mmr_lambda <= 1.0:
+            raise ValueError(
+                f"mmr_lambda must be between 0.0 and 1.0, got {self.mmr_lambda}"
+            )
+        if self.budget_tokens <= 0:
+            raise ValueError(
+                f"budget_tokens must be positive, got {self.budget_tokens}"
+            )
+        if self.mmr_k_multiplier <= 0:
+            raise ValueError(
+                f"mmr_k_multiplier must be positive, got {self.mmr_k_multiplier}"
+            )
 
     def replace(self, **changes: Any) -> "QueryConfig":
         """Create a new QueryConfig with some fields changed."""

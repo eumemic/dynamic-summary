@@ -51,10 +51,7 @@ class BackwardCompatibilityConfig:
         return self.query_config.budget_tokens
 
 
-# Set default API keys for tests if not already set
-if "RAGZOOM_OPENAI_API_KEY" not in os.environ:
-    os.environ["RAGZOOM_OPENAI_API_KEY"] = "test-key-for-tests"
-# Also set OPENAI_API_KEY for any code that uses it directly
+# Set default API key for tests if not already set
 if "OPENAI_API_KEY" not in os.environ:
     os.environ["OPENAI_API_KEY"] = "test-key-for-tests"
 
@@ -85,11 +82,8 @@ def pytest_configure(config):
 
 @pytest.fixture(scope="session", autouse=True)
 def ensure_api_key():
-    """Ensure API keys are set for all tests."""
-    # Set test API keys for tests
-    if "RAGZOOM_OPENAI_API_KEY" not in os.environ:
-        os.environ["RAGZOOM_OPENAI_API_KEY"] = "test-key-for-tests"
-    # Also set OPENAI_API_KEY for any code that uses it directly
+    """Ensure API key is set for all tests."""
+    # Set test API key for tests
     if "OPENAI_API_KEY" not in os.environ:
         os.environ["OPENAI_API_KEY"] = "test-key-for-tests"
     yield

@@ -95,9 +95,8 @@ class TestChunkSizeRegression:
         monkeypatch.setenv(
             "RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmp_path}/test.db"
         )
-        monkeypatch.setenv("RAGZOOM_CHROMA_DB_DIR", str(tmp_path / "chroma"))
-        monkeypatch.setenv("RAGZOOM_OPENAI_API_KEY", "test-key")
-        monkeypatch.setenv("RAGZOOM_LEAF_TOKENS", "200")
+        monkeypatch.setenv("RAGZOOM_CHROMA_PERSIST_DIRECTORY", str(tmp_path / "chroma"))
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
         # Create separate configs
         index_config = IndexConfig(target_chunk_tokens=200)

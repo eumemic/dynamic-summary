@@ -13,7 +13,6 @@ Legacy functions are preserved for backward compatibility with telemetry_viz.py.
 """
 
 import logging
-import os
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -39,10 +38,7 @@ SUPPORTED_TELEMETRY_VERSIONS = ["1.0", "2.0", "3.0", "3.1"]
 # This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
 # estimate for backward compatibility with old telemetry data that didn't track source tokens.
 # The actual chunk size may vary, but this provides a reasonable approximation for cost metrics.
-# This can be overridden via the RAGZOOM_DEFAULT_LEAF_TOKEN_ESTIMATE environment variable.
-DEFAULT_LEAF_TOKEN_ESTIMATE = int(
-    os.getenv("RAGZOOM_DEFAULT_LEAF_TOKEN_ESTIMATE", "150")
-)
+DEFAULT_LEAF_TOKEN_ESTIMATE = 150
 
 
 # ============================================================================
@@ -668,38 +664,31 @@ class SummaryStats:
         return statistics.stdev(self.deviations)
 
 
-class TelemetryThresholds:
-    """Configurable thresholds for telemetry analysis and visualization.
+# Telemetry analysis thresholds
+HIGH_RETRY_RATE_THRESHOLD = 20.0
+GOOD_BATCH_UTILIZATION_THRESHOLD = 70.0
+LOW_BATCH_UTILIZATION_THRESHOLD = 50.0
+MULTIPLE_RETRY_THRESHOLD = 1
+HIGH_TARGET_FIT_ERROR_THRESHOLD = 20.0
+GOOD_TARGET_FIT_THRESHOLD = 10.0
+HIGH_COST_PER_NODE_THRESHOLD = 0.001
 
-    Thresholds can be overridden via environment variables:
-    - RAGZOOM_HIGH_RETRY_RATE_THRESHOLD (default: 20)
-    - RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD (default: 70)
-    - RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD (default: 50)
-    - RAGZOOM_MULTIPLE_RETRY_THRESHOLD (default: 1)
+
+class TelemetryThresholds:
+    """Legacy thresholds class for backward compatibility.
+
+    This class is preserved for compatibility with telemetry_viz.py.
+    New code should use the module-level constants directly.
     """
 
     def __init__(self) -> None:
-        self.high_retry_rate = float(
-            os.getenv("RAGZOOM_HIGH_RETRY_RATE_THRESHOLD", "20")
-        )
-        self.good_batch_utilization = float(
-            os.getenv("RAGZOOM_GOOD_BATCH_UTILIZATION_THRESHOLD", "70")
-        )
-        self.low_batch_utilization = float(
-            os.getenv("RAGZOOM_LOW_BATCH_UTILIZATION_THRESHOLD", "50")
-        )
-        self.multiple_retry_threshold = int(
-            os.getenv("RAGZOOM_MULTIPLE_RETRY_THRESHOLD", "1")
-        )
-        self.high_target_fit_error = float(
-            os.getenv("RAGZOOM_HIGH_TARGET_FIT_ERROR_THRESHOLD", "20")
-        )
-        self.good_target_fit = float(
-            os.getenv("RAGZOOM_GOOD_TARGET_FIT_THRESHOLD", "10")
-        )
-        self.high_cost_per_node = float(
-            os.getenv("RAGZOOM_HIGH_COST_PER_NODE_THRESHOLD", "0.001")
-        )
+        self.high_retry_rate = HIGH_RETRY_RATE_THRESHOLD
+        self.good_batch_utilization = GOOD_BATCH_UTILIZATION_THRESHOLD
+        self.low_batch_utilization = LOW_BATCH_UTILIZATION_THRESHOLD
+        self.multiple_retry_threshold = MULTIPLE_RETRY_THRESHOLD
+        self.high_target_fit_error = HIGH_TARGET_FIT_ERROR_THRESHOLD
+        self.good_target_fit = GOOD_TARGET_FIT_THRESHOLD
+        self.high_cost_per_node = HIGH_COST_PER_NODE_THRESHOLD
 
 
 def get_telemetry_thresholds() -> TelemetryThresholds:

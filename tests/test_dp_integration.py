@@ -112,7 +112,7 @@ class TestDPIntegration:
     @pytest.fixture
     def mock_openai(self, monkeypatch):
         """Mock OpenAI for consistent embeddings and summaries."""
-        monkeypatch.setenv("RAGZOOM_OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
         # Mock embeddings
         async def mock_embedding(*args, **kwargs):
