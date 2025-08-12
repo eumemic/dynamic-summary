@@ -85,7 +85,6 @@ class SimpleMockStore:
         span_start: int,
         span_end: int,
         parent_id: str | None = None,
-        summary: str | None = None,
         document_id: str | None = None,
         left_child_id: str | None = None,
         right_child_id: str | None = None,
@@ -108,7 +107,6 @@ class SimpleMockStore:
             span_start=span_start,
             span_end=span_end,
             parent_id=parent_id,
-            summary=summary,
             document_id=document_id,
             left_child_id=left_child_id,
             right_child_id=right_child_id,
@@ -184,8 +182,12 @@ class SimpleMockStore:
         return [self.nodes[nid] for nid in node_ids if nid in self.nodes]
 
     def get_leaf_nodes(self, document_id: str | None = None) -> list[SimpleNamespace]:
-        """Get all leaf nodes (nodes without summary)."""
-        leaves = [n for n in self.nodes.values() if n.summary is None]
+        """Get all leaf nodes (nodes without children)."""
+        leaves = [
+            n
+            for n in self.nodes.values()
+            if n.left_child_id is None and n.right_child_id is None
+        ]
 
         if document_id:
             leaves = [n for n in leaves if n.document_id == document_id]
@@ -390,16 +392,15 @@ class SimpleMockStore:
 
         return pinned
 
-    def update_summary(
+    def update_text(
         self,
         node_id: str,
         text: str,
         embedding: list[float],
     ) -> None:
-        """Update a node's summary."""
+        """Update a node's text content."""
         node = self.nodes.get(node_id)
         if node:
-            node.summary = text
             node.text = text
             self.embeddings[node_id] = embedding
 
@@ -487,7 +488,6 @@ class SimpleMockStore:
     def _update_mock_results(self):
         """Update mock query results based on current state."""
         all_nodes = list(self.nodes.values())
-        [n for n in all_nodes if n.summary is None]
 
         # Setup different filter patterns
         def mock_filter_by(**kwargs):

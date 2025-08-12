@@ -150,7 +150,9 @@ class TestWhitespaceReconstruction:
             nodes = session.query(TreeNode).filter_by(document_id=doc_id).all()
 
             # Check leaf nodes for complete coverage
-            leaf_nodes = [n for n in nodes if n.summary is None]
+            leaf_nodes = [
+                n for n in nodes if n.left_child_id is None and n.right_child_id is None
+            ]
             leaf_nodes.sort(key=lambda x: x.span_start)
 
             # First node should start at 0

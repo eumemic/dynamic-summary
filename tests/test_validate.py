@@ -113,7 +113,7 @@ class TestTreeStructure:
             span_end=50,  # Invalid: start > end
             left_child_id=None,
             right_child_id=None,
-            summary="test",
+            text="test",
         )
 
         # Mock the query
