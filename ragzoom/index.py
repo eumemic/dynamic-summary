@@ -55,6 +55,41 @@ class TreeBuilder:
         """Generate unique node ID."""
         return str(uuid.uuid4())
 
+    def _validate_model_names(self) -> None:
+        """Validate that configured model names are in known lists.
+
+        This is a lightweight check that doesn't make API calls.
+        Unknown models will log a warning but proceed (to support new models).
+        """
+        # Known valid embedding models
+        valid_embedding_models = {
+            "text-embedding-3-small",
+            "text-embedding-3-large",
+            "text-embedding-ada-002",
+        }
+        if self.config.embedding_model not in valid_embedding_models:
+            logger.warning(
+                f"Embedding model '{self.config.embedding_model}' not in known list. "
+                f"Will attempt to use it anyway. Known models: {valid_embedding_models}"
+            )
+
+        # Known valid summary models
+        valid_summary_models = {
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4-turbo",
+            "gpt-4",
+            "gpt-3.5-turbo",
+            "gpt-5-nano",
+            "gpt-5-mini",
+            "gpt-5",
+        }
+        if self.config.summary_model not in valid_summary_models:
+            logger.warning(
+                f"Summary model '{self.config.summary_model}' not in known list. "
+                f"Will attempt to use it anyway. Known models: {valid_summary_models}"
+            )
+
     async def _get_embedding(self, text: str) -> list[float]:
         """Get embedding for text using OpenAI."""
         async with self.semaphore:
@@ -640,6 +675,9 @@ Here's the content to summarize:"""
             If reporter is None: document_id
             If reporter is provided: (document_id, metrics)
         """
+        # Validate model names to warn about potential issues
+        self._validate_model_names()
+
         # Compute content hash
         content_hash = self.store.compute_content_hash(text)
 
@@ -851,7 +889,12 @@ Here's the content to summarize:"""
             # Add document record
             if not existing_doc:
                 self.store.add_document(
-                    document_id, file_path, content_hash, len(chunks)
+                    document_id,
+                    file_path,
+                    content_hash,
+                    len(chunks),
+                    self.config.embedding_model,
+                    self.config.summary_model,
                 )
             else:
                 # Update existing document
@@ -863,6 +906,8 @@ Here's the content to summarize:"""
                         doc.content_hash = content_hash
                         doc.chunk_count = len(chunks)
                         doc.indexed_at = datetime.utcnow()
+                        doc.embedding_model = self.config.embedding_model
+                        doc.summary_model = self.config.summary_model
                         session.commit()
 
             # Build tree from leaves

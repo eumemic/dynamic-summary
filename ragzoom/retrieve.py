@@ -61,17 +61,44 @@ class Retriever:
         self.client = OpenAI(api_key=api_key)
         self.dp_generator = DynamicTilingGenerator(query_config)
 
-    def _get_query_embedding(self, query: str) -> list[float]:
-        """Get embedding for query text."""
+    def _get_query_embedding(
+        self, query: str, document_id: str | None = None
+    ) -> list[float]:
+        """Get embedding for query text.
+
+        Args:
+            query: Query text to embed
+            document_id: Optional document ID to auto-detect embedding model
+
+        If document_id is provided, uses the embedding model from that document.
+        Otherwise falls back to query_config.embedding_model.
+        """
+        # Auto-detect embedding model from document if provided
+        embedding_model = self.query_config.embedding_model
+        if document_id:
+            doc_embedding_model = self.store.get_document_embedding_model(document_id)
+            if doc_embedding_model:
+                embedding_model = doc_embedding_model
+                logger.debug(
+                    f"Auto-detected embedding model '{embedding_model}' for document {document_id}"
+                )
+            else:
+                logger.warning(
+                    f"No embedding model found for document {document_id}, using config default: {embedding_model}. "
+                    f"This may indicate the document was indexed before model tracking was implemented."
+                )
+
         try:
             response = self.client.embeddings.create(
-                model=self.query_config.embedding_model,
+                model=embedding_model,
                 input=query,
                 # Let OpenAI API determine dimensions - no need for hardcoded values
             )
             return response.data[0].embedding
         except Exception as e:
-            logger.error(f"Error getting query embedding: {e}")
+            logger.error(
+                f"Error getting query embedding with model {embedding_model}: {e}"
+            )
             raise
 
     async def retrieve_async(
@@ -113,8 +140,8 @@ class Retriever:
             num_seeds = self.query_config.budget_tokens // default_chunk_size
             logger.info(f"num_seeds-only mode: using num_seeds={num_seeds}")
 
-        # Get query embedding
-        query_embedding = self._get_query_embedding(query)
+        # Get query embedding (auto-detect model from document if provided)
+        query_embedding = self._get_query_embedding(query, document_id)
 
         # Step 1: Initial retrieval (2 * num_seeds candidates)
         k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
