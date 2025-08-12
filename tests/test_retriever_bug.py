@@ -84,7 +84,6 @@ class TestRetrieverBug:
             parent_id="root",
             left_child_id="L1",
             right_child_id="L2",
-            summary="Summary of chapters 1-2",
         )
         store.add_node(
             node_id="P2",
@@ -96,7 +95,6 @@ class TestRetrieverBug:
             parent_id="root",
             left_child_id="L3",
             right_child_id="L4",
-            summary="Summary of chapters 3-4",
         )
 
         store.add_node(
@@ -108,7 +106,6 @@ class TestRetrieverBug:
             document_id="test-doc",
             left_child_id="P1",
             right_child_id="P2",
-            summary="Full document summary",
         )
 
         retriever = Retriever(
