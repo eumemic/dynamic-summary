@@ -48,7 +48,7 @@ class TestWhitespaceReconstruction:
         """Setup test environment."""
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create separate configs
-            index_config = IndexConfig(
+            index_config = IndexConfig.load(
                 target_chunk_tokens=50,  # Reasonable chunk size
                 preceding_context_tokens=10,
             )

@@ -51,15 +51,17 @@ class IndexConfig:
 
     These parameters control how documents are chunked, summarized, and embedded.
     This is the configuration that gets saved to and loaded from config files.
+
+    Note: Always use IndexConfig.load() to create instances. Do not instantiate directly.
     """
 
-    target_chunk_tokens: int = 200
-    preceding_context_tokens: int = 75
-    summary_model: str = "gpt-4o"
-    embedding_model: str = "text-embedding-3-small"
-    retry_threshold: float = 0.2
-    max_retries: int = 0
-    embedding_batch_size: int = 100
+    target_chunk_tokens: int
+    preceding_context_tokens: int
+    summary_model: str
+    embedding_model: str
+    retry_threshold: float
+    max_retries: int
+    embedding_batch_size: int
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -73,6 +75,37 @@ class IndexConfig:
             raise ValueError(
                 f"embedding_batch_size must be positive, got {self.embedding_batch_size}"
             )
+
+    @classmethod
+    def load(cls, config_path: Path | None = None, **cli_options: Any) -> "IndexConfig":
+        """Load IndexConfig from file with CLI overrides.
+
+        This is the primary way to create IndexConfig instances.
+
+        Args:
+            config_path: Optional path to user config file. If not specified,
+                        loads from internal defaults.
+            **cli_options: CLI options that override config file
+
+        Returns:
+            IndexConfig instance
+        """
+        # Load the raw config dictionary (handles defaults internally)
+        config_dict = _load_index_config(config_path, **cli_options)
+
+        # Extract only the fields that IndexConfig expects
+        # These fields should all be present in the config after loading defaults
+        index_config_fields = {
+            "target_chunk_tokens": config_dict["target_chunk_tokens"],
+            "preceding_context_tokens": config_dict["preceding_context_tokens"],
+            "summary_model": config_dict["summary_model"],
+            "embedding_model": config_dict["embedding_model"],
+            "retry_threshold": config_dict["retry_threshold"],
+            "max_retries": config_dict["max_retries"],
+            "embedding_batch_size": config_dict["embedding_batch_size"],
+        }
+
+        return cls(**index_config_fields)
 
     def replace(self, **changes: Any) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
@@ -150,10 +183,12 @@ class OperationalConfig:
         return replace(self, **changes)
 
 
-def load_indexing_config(
+def _load_index_config(
     config_path: Path | None = None, **cli_options: Any
 ) -> dict[str, Any]:
     """Load indexing configuration with proper precedence.
+
+    Private function - use IndexConfig.load() instead.
 
     Args:
         config_path: Optional path to user config file

@@ -90,7 +90,7 @@ class TestBudgetGuarantee:
 
             # Create test configs with specific budget and temporary directory for ChromaDB
             with tempfile.TemporaryDirectory() as temp_dir:
-                index_config = IndexConfig(
+                index_config = IndexConfig.load(
                     target_chunk_tokens=200,  # Standard leaf size
                     preceding_context_tokens=50,
                 )
@@ -345,7 +345,7 @@ class TestBudgetGuarantee:
 
             # No OpenAI setup needed for assembler
 
-            index_config = IndexConfig(target_chunk_tokens=200)
+            index_config = IndexConfig.load(target_chunk_tokens=200)
             query_config = QueryConfig(budget_tokens=1000)
             operational_config = OperationalConfig(openai_api_key="test-key")
             store = SimpleMockStore(
@@ -425,7 +425,7 @@ class TestBudgetValidation:
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
 
-        index_config = IndexConfig(target_chunk_tokens=100)
+        index_config = IndexConfig.load(target_chunk_tokens=100)
         query_config = QueryConfig()
         operational_config = OperationalConfig()
         store = SimpleMockStore(config=(index_config, query_config, operational_config))
@@ -465,7 +465,7 @@ class TestBudgetValidation:
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
 
-        index_config = IndexConfig(target_chunk_tokens=100)
+        index_config = IndexConfig.load(target_chunk_tokens=100)
         query_config = QueryConfig()
         operational_config = OperationalConfig()
         store = SimpleMockStore(config=(index_config, query_config, operational_config))
@@ -493,7 +493,7 @@ class TestBudgetValidation:
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
 
-        index_config = IndexConfig(target_chunk_tokens=100)
+        index_config = IndexConfig.load(target_chunk_tokens=100)
         query_config = QueryConfig()
         operational_config = OperationalConfig()
         store = SimpleMockStore(config=(index_config, query_config, operational_config))

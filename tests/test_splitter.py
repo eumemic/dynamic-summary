@@ -14,7 +14,9 @@ class TestTextSplitter:
 
     def test_split_basic_text(self):
         """Test basic text splitting."""
-        index_config = IndexConfig(target_chunk_tokens=50, preceding_context_tokens=25)
+        index_config = IndexConfig.load(
+            target_chunk_tokens=50, preceding_context_tokens=25
+        )
         splitter = TextSplitter(index_config)
 
         text = "This is a test. " * 50  # ~200 tokens
@@ -26,7 +28,9 @@ class TestTextSplitter:
 
     def test_split_respects_boundaries(self):
         """Test that splitter respects sentence boundaries."""
-        index_config = IndexConfig(target_chunk_tokens=50, preceding_context_tokens=25)
+        index_config = IndexConfig.load(
+            target_chunk_tokens=50, preceding_context_tokens=25
+        )
         splitter = TextSplitter(index_config)
 
         text = "First sentence. Second sentence. Third sentence. Fourth sentence."
@@ -39,7 +43,9 @@ class TestTextSplitter:
 
     def test_adjacent_context(self):
         """Test getting adjacent context for chunks."""
-        index_config = IndexConfig(target_chunk_tokens=50, preceding_context_tokens=10)
+        index_config = IndexConfig.load(
+            target_chunk_tokens=50, preceding_context_tokens=10
+        )
         splitter = TextSplitter(index_config)
 
         chunks = ["First chunk text.", "Second chunk text.", "Third chunk text."]
@@ -63,7 +69,9 @@ class TestTextSplitter:
 
     def test_token_counting(self):
         """Test token counting accuracy."""
-        index_config = IndexConfig(target_chunk_tokens=200, preceding_context_tokens=75)
+        index_config = IndexConfig.load(
+            target_chunk_tokens=200, preceding_context_tokens=75
+        )
         splitter = TextSplitter(index_config)
 
         text = "Hello world"
@@ -73,7 +81,9 @@ class TestTextSplitter:
 
     def test_empty_text(self):
         """Test handling of empty text."""
-        index_config = IndexConfig(target_chunk_tokens=200, preceding_context_tokens=75)
+        index_config = IndexConfig.load(
+            target_chunk_tokens=200, preceding_context_tokens=75
+        )
         splitter = TextSplitter(index_config)
 
         chunks = splitter.split_text("")
@@ -82,7 +92,9 @@ class TestTextSplitter:
 
     def test_sequential_chunks(self):
         """Test that chunks are sequential without overlap."""
-        index_config = IndexConfig(target_chunk_tokens=50, preceding_context_tokens=25)
+        index_config = IndexConfig.load(
+            target_chunk_tokens=50, preceding_context_tokens=25
+        )
         splitter = TextSplitter(index_config)
 
         text = " ".join([f"Word{i}" for i in range(200)])  # Long text

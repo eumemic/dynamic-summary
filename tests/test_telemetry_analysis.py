@@ -8,6 +8,7 @@ from ragzoom.telemetry_analysis import (
     compute_batch_efficiency,
     compute_metrics_from_telemetry,
     compute_simplified_metrics,
+    detect_verbatim_concatenations,
     parse_telemetry_format,
 )
 
@@ -978,3 +979,171 @@ class TestFullMetricsComputation:
 
         # Verify that ALL attempts are counted in the totals
         # We should have 3 summary attempts total
+
+
+class TestVerbatimDetection:
+    """Test verbatim concatenation detection."""
+
+    def test_detect_no_verbatim(self) -> None:
+        """Test detection when no verbatim issues exist."""
+        nodes = [
+            {
+                "node_id": "node-1",
+                "height": 1,
+                "input_text_tokens": 400,
+                "summary_attempts": [
+                    {
+                        "prompt_tokens": 400,
+                        "actual_tokens": 200,  # 0.5 ratio - good compression
+                    }
+                ],
+            },
+            {
+                "node_id": "node-2",
+                "height": 2,
+                "input_text_tokens": 600,
+                "summary_attempts": [
+                    {
+                        "prompt_tokens": 600,
+                        "actual_tokens": 250,  # 0.42 ratio - good compression
+                    }
+                ],
+            },
+        ]
+
+        result = detect_verbatim_concatenations(nodes)
+        assert result["total_summaries"] == 2
+        assert result["verbatim_count"] == 0
+        assert result["verbatim_percentage"] == 0.0
+        assert len(result["worst_offenders"]) == 0
+
+    def test_detect_verbatim_issues(self) -> None:
+        """Test detection of verbatim concatenations."""
+        nodes = [
+            {
+                "node_id": "node-1",
+                "height": 1,
+                "input_text_tokens": 400,
+                "summary_attempts": [
+                    {
+                        "prompt_tokens": 400,
+                        "actual_tokens": 398,  # 0.995 ratio - verbatim!
+                    }
+                ],
+            },
+            {
+                "node_id": "node-2",
+                "height": 2,
+                "input_text_tokens": 600,
+                "summary_attempts": [
+                    {
+                        "prompt_tokens": 600,
+                        "actual_tokens": 600,  # 1.0 ratio - exact verbatim!
+                    }
+                ],
+            },
+            {
+                "node_id": "node-3",
+                "height": 1,
+                "input_text_tokens": 300,
+                "summary_attempts": [
+                    {
+                        "prompt_tokens": 300,
+                        "actual_tokens": 150,  # 0.5 ratio - good
+                    }
+                ],
+            },
+        ]
+
+        result = detect_verbatim_concatenations(nodes)
+        assert result["total_summaries"] == 3
+        assert result["verbatim_count"] == 2
+        assert result["verbatim_percentage"] == pytest.approx(66.67, 0.1)
+        assert len(result["worst_offenders"]) == 2
+
+        # Check worst offender is the 600-token one
+        worst = result["worst_offenders"][0]
+        assert worst["input_tokens"] == 600
+        assert worst["output_tokens"] == 600
+        assert worst["ratio"] == 1.0
+
+    def test_detect_verbatim_with_tolerance(self) -> None:
+        """Test detection with custom tolerance threshold."""
+        nodes = [
+            {
+                "node_id": "node-1",
+                "height": 1,
+                "input_text_tokens": 400,
+                "summary_attempts": [
+                    {
+                        "prompt_tokens": 400,
+                        "actual_tokens": 394,  # 0.985 ratio - within 2% default tolerance
+                    }
+                ],
+            },
+            {
+                "node_id": "node-2",
+                "height": 1,
+                "input_text_tokens": 400,
+                "summary_attempts": [
+                    {
+                        "prompt_tokens": 400,
+                        "actual_tokens": 382,  # 0.955 ratio - outside 2% tolerance, within 5%
+                    }
+                ],
+            },
+        ]
+
+        # With default 2% tolerance
+        result = detect_verbatim_concatenations(nodes, tolerance=0.02)
+        assert result["verbatim_count"] == 1  # Only the 0.98 ratio
+
+        # With 5% tolerance
+        result = detect_verbatim_concatenations(nodes, tolerance=0.05)
+        assert result["verbatim_count"] == 2  # Both are caught
+
+    def test_height_distribution(self) -> None:
+        """Test height distribution tracking."""
+        nodes = [
+            {
+                "node_id": f"node-{i}",
+                "height": i % 3 + 1,  # Heights 1, 2, 3, 1, 2, 3...
+                "input_text_tokens": 400,
+                "summary_attempts": [
+                    {
+                        "prompt_tokens": 400,
+                        "actual_tokens": (
+                            399 if i < 4 else 200
+                        ),  # First 4 are verbatim
+                    }
+                ],
+            }
+            for i in range(6)
+        ]
+
+        result = detect_verbatim_concatenations(nodes)
+        assert result["verbatim_count"] == 4
+        assert result["height_distribution"] == {1: 2, 2: 1, 3: 1}
+
+    def test_accepted_attempt_handling(self) -> None:
+        """Test that accepted_attempt index is respected."""
+        nodes = [
+            {
+                "node_id": "node-1",
+                "height": 1,
+                "summary_attempts": [
+                    {
+                        "prompt_tokens": 400,
+                        "completion_tokens": 400,  # Verbatim but not accepted
+                    },
+                    {
+                        "prompt_tokens": 400,
+                        "completion_tokens": 200,  # Good compression, accepted
+                    },
+                ],
+                "accepted_attempt": 1,  # Second attempt is accepted
+            },
+        ]
+
+        result = detect_verbatim_concatenations(nodes)
+        assert result["verbatim_count"] == 0  # Accepted attempt is not verbatim
