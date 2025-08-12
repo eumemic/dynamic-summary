@@ -270,30 +270,27 @@ class Retriever:
     def _calculate_conservative_n_max(
         self, budget_tokens: int, document_id: str | None = None
     ) -> int:
-        """Calculate conservative n_max that is more grounded in document reality."""
+        """Calculate conservative n_max using efficient SQL aggregation."""
 
-        # Get all nodes for the document to calculate an average cost.
-        # This is more realistic than a hardcoded multiplier.
-        all_nodes = self.store.get_all_nodes_for_document(document_id)
-        if not all_nodes:
-            # Fallback to old logic if no nodes are found
+        if not document_id:
+            # Fallback when no document is specified
             leaf_tokens = (
                 self.config.leaf_tokens if self.config.leaf_tokens > 0 else 256
             )
             return max(1, budget_tokens // leaf_tokens)
 
-        import tiktoken
+        # Get token statistics using efficient SQL query
+        stats = self.store.get_document_token_stats(document_id)
 
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-
-        total_tokens = sum(len(tokenizer.encode(node.text)) for node in all_nodes)
-        average_tokens_per_node = total_tokens / len(all_nodes)
-
-        if average_tokens_per_node == 0:
-            average_tokens_per_node = self.config.leaf_tokens
+        if not stats["node_count"] or not stats["avg_tokens"]:
+            # Fallback if no nodes with token counts are found
+            leaf_tokens = (
+                self.config.leaf_tokens if self.config.leaf_tokens > 0 else 256
+            )
+            return max(1, budget_tokens // leaf_tokens)
 
         # Add a small safety buffer (e.g., 25%) to the average to be safe
-        safe_average_cost = average_tokens_per_node * 1.25
+        safe_average_cost = stats["avg_tokens"] * 1.25
 
         conservative_n_max = max(1, int(budget_tokens // safe_average_cost))
 
