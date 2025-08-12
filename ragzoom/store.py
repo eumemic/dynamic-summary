@@ -47,7 +47,7 @@ class TreeNode(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int | None] = mapped_column(
         Integer, nullable=True
-    )  # Token count of text
+    )  # Token count of text content (raw text for leaves, summary for internal nodes)
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     access_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -845,11 +845,12 @@ class Store:
                 )
             else:
                 # Normal migration for other columns
+                # select_columns is built from database metadata, not user input
                 insert_sql = f"""
                     INSERT INTO tree_nodes_new
                     SELECT {', '.join(select_columns)}
                     FROM tree_nodes
-                """
+                """  # nosec B608 - columns from PRAGMA table_info, not user input
                 conn.execute(text(insert_sql))
 
             # Drop old table and rename new one

@@ -392,7 +392,7 @@ class SimpleMockStore:
 
         return pinned
 
-    def update_summary(
+    def update_text(
         self,
         node_id: str,
         text: str,
