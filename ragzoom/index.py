@@ -478,7 +478,21 @@ Remember: Your goal is to maximize information preservation while hitting the ta
                 f"(target: {target_tokens}). Skipping summarization."
             )
 
-            # Don't record passthrough as a summary attempt - it pollutes metrics
+            # Record passthrough as a summary attempt for telemetry visualization
+            # This helps show when nodes were processed even if they didn't need summarization
+            if reporter and parent_id:
+                start_time = time.time()
+                reporter.record_summary_attempt_v2(
+                    node_id=parent_id,
+                    target_tokens=target_tokens,
+                    input_text_tokens=current_token_count,
+                    prompt_tokens=0,  # No LLM call made
+                    completion_tokens=0,  # No LLM call made
+                    actual_tokens=current_token_count,
+                    model="passthrough",  # Indicates no summarization needed - text used as-is
+                    start_time=start_time,
+                    is_final=True,  # This is the only and final attempt
+                )
 
             return combined_text, 0, current_token_count  # No retries needed
 
@@ -788,6 +802,7 @@ Here's the content to summarize:"""
                     reporter.track_node_created(
                         node_id=node_id,
                         height=0,  # Leaves have height 0
+                        span=(chunk_start, chunk_end),
                     )
                 leaf_ids.append(node_id)
 
@@ -1012,8 +1027,8 @@ Here's the content to summarize:"""
         self,
         left_id: str,
         left_text: str,
-        right_id: str,
-        right_text: str,
+        right_id: str | None,
+        right_text: str | None,
         prev_context: str | None,
         document_id: str | None,
         reporter: TelemetryCollector | None = None,
@@ -1023,19 +1038,25 @@ Here's the content to summarize:"""
 
         # Get node data for span information
         left_node = self.store.get_node(left_id)
-        right_node = self.store.get_node(right_id)
+        right_node = self.store.get_node(right_id) if right_id else None
 
-        if not left_node or not right_node:
-            logger.error(
-                f"Failed to retrieve child nodes: left={left_id}, right={right_id}"
-            )
-            raise ValueError("Child nodes not found in store")
+        if not left_node:
+            logger.error(f"Failed to retrieve left child node: {left_id}")
+            raise ValueError("Left child node not found in store")
+        if right_id and not right_node:
+            logger.error(f"Failed to retrieve right child node: {right_id}")
+            raise ValueError("Right child node not found in store")
 
-        # Track parent node creation
+        # Track parent node creation with span from children
         if reporter:
+            if right_node:
+                parent_span = (left_node.span_start, right_node.span_end)
+            else:
+                parent_span = (left_node.span_start, left_node.span_end)
             reporter.track_node_created(
                 node_id=parent_id,
                 height=reporter._current_height + 1,  # Parent is one level higher
+                span=parent_span,
             )
 
         # Use consistent token budget for all heights
@@ -1045,7 +1066,7 @@ Here's the content to summarize:"""
         # Generate summary (async) with retry mechanism support
         summary, retry_count, token_count = await self._summarize_text(
             left_text,
-            right_text,
+            right_text or "",  # Pass empty string if no right text
             target_tokens,
             prev_context,
             parent_id,
@@ -1072,23 +1093,24 @@ Here's the content to summarize:"""
             text=summary,
             embedding=embedding,
             span_start=left_node.span_start,
-            span_end=right_node.span_end,
+            span_end=right_node.span_end if right_node else left_node.span_end,
             left_child_id=left_id,
-            right_child_id=right_id,
+            right_child_id=right_id,  # Can be None
             document_id=document_id,
             token_count=token_count,
         )
 
         # Update children's parent references
         self._update_parent_reference(left_id, parent_id)
-        self._update_parent_reference(right_id, parent_id)
+        if right_id:
+            self._update_parent_reference(right_id, parent_id)
 
         # Early validation: Check tree structure immediately after creating parent
         from ragzoom.validate import validate
 
         def check_parent_structure() -> str | None:
             # Check span validity
-            if left_node.span_start >= right_node.span_end:
+            if right_node and left_node.span_start >= right_node.span_end:
                 return f"Invalid parent span: left child starts at {left_node.span_start}, right child ends at {right_node.span_end}"
 
             # Skip gap check in early validation - we'll check it properly in final validation
@@ -1131,30 +1153,35 @@ Here's the content to summarize:"""
 
             # Process pairs concurrently
             tasks = []
-            pair_info = []
+            pair_info: list[tuple[int, int | None]] = []
 
-            # Handle odd number of nodes - keep last one unpaired
-            nodes_to_pair = len(current_level_ids)
-            if nodes_to_pair % 2 == 1:
-                nodes_to_pair -= 1  # We'll handle the last node separately
-
-            # Prepare all pairs
-            for i in range(0, nodes_to_pair, 2):
+            # Process all nodes in pairs, with the last one having no right child if odd
+            i = 0
+            while i < len(current_level_ids):
                 left_id = current_level_ids[i]
                 left_text = current_level_texts[i]
-                right_id = current_level_ids[i + 1]
-                right_text = current_level_texts[i + 1]
+
+                # Check if we have a right node
+                if i + 1 < len(current_level_ids):
+                    right_id = current_level_ids[i + 1]
+                    right_text = current_level_texts[i + 1]
+                    pair_info.append((i, i + 1))
+                    i += 2  # Move to next pair
+                else:
+                    # Odd node - no right child
+                    right_id = None
+                    right_text = None
+                    pair_info.append((i, None))
+                    i += 1  # This was the last node
 
                 # Get adjacent context
                 prev_context = None
-
-                if i > 0:
+                if pair_info[-1][0] > 0:  # Use the left index from the current pair
                     prev_context, _ = self.splitter.get_adjacent_context(
-                        current_level_texts, i - 1
+                        current_level_texts, pair_info[-1][0] - 1
                     )
 
                 # Create async task
-
                 task = self._process_node_pair(
                     left_id,
                     left_text,
@@ -1165,15 +1192,6 @@ Here's the content to summarize:"""
                     reporter,
                 )
                 tasks.append(task)
-                pair_info.append((i, i + 1))
-
-            # If there's an odd node at the end, create a parent with only left child
-            # This ensures all leaves remain at the same depth
-            odd_node = None
-            odd_node_text = None
-            if nodes_to_pair < len(current_level_ids):
-                odd_node = current_level_ids[-1]
-                odd_node_text = current_level_texts[-1]
 
             # Process all pairs concurrently
             if tasks:
@@ -1201,8 +1219,16 @@ Here's the content to summarize:"""
                     result = await task
 
                     # Update progress immediately when this pair completes
+                    # For odd nodes (single child), only update by 1
                     if progress:
-                        await progress.update(2)
+                        # Check if this is an odd node (has None for right child)
+                        if (
+                            task_index < len(pair_info)
+                            and pair_info[task_index][1] is None
+                        ):
+                            await progress.update(1)  # Single node processed
+                        else:
+                            await progress.update(2)  # Pair processed
 
                     # Log batch completion every 10 tasks
                     completed_count += 1
@@ -1236,75 +1262,6 @@ Here's the content to summarize:"""
 
                 # Add the parent nodes to next height
                 for parent_id, summary, _ in results:
-                    next_level_ids.append(parent_id)
-                    next_level_texts.append(summary)
-
-                # Handle odd node by creating a single-child parent
-                if odd_node:
-                    # Create a parent node with only a left child
-                    parent_id = self._generate_node_id()
-
-                    # Get the odd node for its span information
-                    odd_node_obj = self.store.get_node(odd_node)
-
-                    # Track parent node creation for telemetry
-                    if reporter and odd_node_obj:
-                        reporter.track_node_created(
-                            node_id=parent_id,
-                            height=current_height,  # Use current height
-                        )
-                    if not odd_node_obj:
-                        logger.error(f"Failed to retrieve odd node: {odd_node}")
-                        raise ValueError("Odd node not found in store")
-
-                    # For single-child parent, summary is essentially the child's text
-                    # but may be slightly condensed to fit token budget
-                    # odd_node_text is guaranteed to be non-None here due to the if condition
-                    assert odd_node_text is not None
-                    summary, retry_count, token_count = await self._summarize_text(
-                        odd_node_text,
-                        "",  # No right child
-                        self.config.target_chunk_tokens,
-                        prev_context=None,
-                        parent_id=parent_id,
-                        reporter=reporter,
-                    )
-
-                    # Get embedding for the summary
-                    start_time = time.time()
-                    embedding = await self._get_embedding(summary)
-
-                    # Track embedding for parent node
-                    if reporter:
-                        # Use the actual token count from the API for telemetry
-                        reporter.record_embedding_call_v2(
-                            node_embeddings=[(parent_id, token_count)],
-                            batch_size=1,
-                            model=self.config.embedding_model,
-                            start_time=start_time,
-                        )
-
-                    # Store the single-child parent node with the actual token count
-                    self.store.add_node(
-                        node_id=parent_id,
-                        text=summary,
-                        embedding=embedding,
-                        span_start=odd_node_obj.span_start,
-                        span_end=odd_node_obj.span_end,
-                        left_child_id=odd_node,
-                        right_child_id=None,  # No right child
-                        document_id=document_id,
-                        token_count=token_count,
-                    )
-
-                    # Update the odd node's parent reference
-                    self._update_parent_reference(odd_node, parent_id)
-
-                    # Update progress if tracking
-                    if progress:
-                        await progress.update(1)  # Count the odd node as processed
-
-                    # Add the new parent to the next level
                     next_level_ids.append(parent_id)
                     next_level_texts.append(summary)
 
