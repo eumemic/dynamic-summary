@@ -322,8 +322,10 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store):
     nodes = data["nodes"]
     test_node = next(n for n in nodes if n["node_id"] == "test_node")
 
-    # Passthrough nodes no longer record summary_attempts
-    assert "summary_attempts" not in test_node or test_node["summary_attempts"] == []
+    # Passthrough nodes now record summary_attempts for visualization with model="passthrough"
+    assert "summary_attempts" in test_node
+    assert len(test_node["summary_attempts"]) == 1
+    assert test_node["summary_attempts"][0]["model"] == "passthrough"
 
 
 @pytest.mark.asyncio
