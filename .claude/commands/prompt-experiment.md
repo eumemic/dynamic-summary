@@ -42,11 +42,12 @@ For each generation:
 1. Propose experiment parameters:
    - Sample size (default: 10 chunks)
    - Compression ratios (default: 14 ratios from 10-90%)
-   - Max concurrent requests (default: 30)
    - Adjust based on: number of strategies, time constraints, desired confidence
-2. After confirmation, run: `python prompt-experiments/run_experiments.py [params]`
+2. After confirmation, run: `python run_experiments.py --sample N`
+   **CRITICAL: Always use timeout=600000 (10 minutes) when running experiments via Bash tool to avoid interruption**
 3. Analyze results in `results/latest/` - focus on rankings and error patterns
-4. List visualization paths for easy access (command-clickable)
+4. **IMPORTANT**: List ABSOLUTE paths to all visualizations for command-click access
+   (Full path from root, not relative paths like `results/latest/*.png`)
 5. Summarize findings concisely with:
    - Top 3 performers with accuracy metrics
    - Bottom 3 failures and why they failed
