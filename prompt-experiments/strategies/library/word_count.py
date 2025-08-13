@@ -1,6 +1,6 @@
 """Word count targeting strategy."""
 
-from .base_strategy import TargetingStrategy
+from ..base_strategy import TargetingStrategy
 
 
 class WordCountStrategy(TargetingStrategy):

@@ -1,6 +1,6 @@
 """Relative character count targeting strategy."""
 
-from .base_strategy import TargetingStrategy
+from ..base_strategy import TargetingStrategy
 
 
 class RelativeCharStrategy(TargetingStrategy):
