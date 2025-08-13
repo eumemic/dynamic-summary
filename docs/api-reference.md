@@ -432,7 +432,7 @@ All parameters can be set via CLI options or config files. For an overview of ho
 |-----------|------|---------|-------------|
 | `embedding_model` | str | "text-embedding-3-small" | OpenAI embedding model |
 | `embedding_dimensions` | int | 1536 | Embedding vector dimensions |
-| `summary_model` | str | "gpt-4o" | Model for summarization |
+| `summary_model` | str | (see config) | Model for summarization |
 | `summary_max_tokens` | int | None | Max tokens for summaries |
 | `temperature` | float | 0.2 | Temperature for generation |
 | `timeout` | int | 120 | API timeout in seconds |

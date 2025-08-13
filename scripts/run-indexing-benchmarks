@@ -289,7 +289,6 @@ set +e
 python -m ragzoom.telemetry_cli compare \
     "$BASELINE" \
     "$TELEMETRY_FILE" \
-    --output-format markdown \
     > "$OUTPUT_DIR/comparison.md" 2>&1
 COMPARE_EXIT_CODE=$?
 set -e

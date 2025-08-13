@@ -374,14 +374,11 @@ ragzoom-telemetry analyze benchmark_results/telemetry_200_tokens.json
 # Compare two benchmarks (text format)
 ragzoom-telemetry compare baseline.json current.json
 
-# Compare with markdown format
-ragzoom-telemetry compare baseline.json current.json --output-format markdown
+# Compare telemetry (outputs markdown by default)
+ragzoom-telemetry compare baseline.json current.json
 
 # Compare with visualization generation
 ragzoom-telemetry compare baseline.json current.json --output comparison.png
-
-# Compare with both markdown format and visualization
-ragzoom-telemetry compare baseline.json current.json --output-format markdown --output comparison.png
 
 # Generate visualizations for a single file
 ragzoom-telemetry visualize baseline.json
