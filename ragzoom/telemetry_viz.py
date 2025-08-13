@@ -1065,7 +1065,7 @@ class TelemetryVisualizer:
         """Plot tree construction as rectangles showing span coverage over time.
 
         X-axis: Document span position
-        Y-axis: Time (seconds)
+        Y-axis: Time (seconds) from actual indexing start
         Rectangles: Each node with width=span coverage, height=processing duration
         Colors: Retry attempts (blue→green→yellow→orange→red)
         """
@@ -1109,8 +1109,12 @@ class TelemetryVisualizer:
             if span:
                 node_spans[node["node_id"]] = tuple(span)
 
+        # Get the actual indexing start time from telemetry
+        # This is when the TelemetryCollector was initialized
+        indexing_start_time = telemetry.get("indexed_at", None)
+
         # Track min/max for axis limits
-        min_time = None
+        min_time = None  # Will be set to indexed_at or first node time as baseline
         max_time = 0
         min_span = float("inf")
         max_span = 0
@@ -1146,15 +1150,25 @@ class TelemetryVisualizer:
             if not node.get("summary_attempts"):
                 # Draw a single pixel horizontal line for passthrough nodes
                 created_at = node.get("created_at", 0)
-                if min_time is None:
-                    min_time = created_at
-                else:
-                    min_time = min(min_time, created_at)
+
+                # Update max_time
                 max_time = max(max_time, created_at)
+
+                # Calculate relative time from indexing start
+                # Three-level fallback: indexed_at -> min_time -> current node time
+                # This handles telemetry without indexed_at (older versions)
+                if indexing_start_time is not None:
+                    baseline = indexing_start_time
+                elif min_time is not None:
+                    baseline = min_time
+                else:
+                    baseline = created_at
+                    min_time = created_at
+                relative_time = created_at - baseline
 
                 # Add gap between adjacent nodes for visual clarity
                 rect = Rectangle(
-                    (span_start, created_at - min_time),  # Position at creation time
+                    (span_start, relative_time),  # Position at relative time from start
                     max(
                         1, span_end - span_start - gap
                     ),  # Width = span coverage minus gap
@@ -1179,10 +1193,9 @@ class TelemetryVisualizer:
                 if start_time is None or end_time is None:
                     continue
 
-                if min_time is None:
+                # Update min_time tracking for fallback
+                if indexing_start_time is None and min_time is None:
                     min_time = start_time
-                else:
-                    min_time = min(min_time, start_time)
 
                 if cumulative_start is None:
                     cumulative_start = start_time
@@ -1193,11 +1206,21 @@ class TelemetryVisualizer:
                 color = attempt_colors[min(attempt_idx, 4)]  # Cap at 5+ (red)
                 is_accepted = attempt_idx == accepted_idx
 
+                # Calculate baseline for relative time
+                # Three-level fallback: indexed_at -> min_time -> current attempt time
+                if indexing_start_time is not None:
+                    baseline = indexing_start_time
+                elif min_time is not None:
+                    baseline = min_time
+                else:
+                    baseline = cumulative_start
+                    min_time = cumulative_start
+
                 # Draw rectangle for this attempt with gap
                 rect = Rectangle(
                     (
                         span_start,
-                        cumulative_start - min_time,
+                        cumulative_start - baseline,
                     ),  # (x, y) = (document position, relative time)
                     max(
                         1, span_end - span_start - gap
@@ -1212,9 +1235,17 @@ class TelemetryVisualizer:
                 cumulative_start = end_time
 
         # Set axis limits and labels
-        if min_time is not None and max_span > min_span:
-            ax.set_xlim(min_span, max_span)
-            ax.set_ylim(0, max_time - min_time if max_time > min_time else 1)
+        if max_span > min_span:
+            # Determine final baseline for Y-axis: prefer indexed_at, fallback to min_time
+            baseline = (
+                indexing_start_time if indexing_start_time is not None else min_time
+            )
+            if baseline is not None:
+                ax.set_xlim(min_span, max_span)
+                ax.set_ylim(0, max_time - baseline if max_time > baseline else 1)
+            else:
+                ax.set_xlim(min_span, max_span)
+                ax.set_ylim(0, 1)
             ax.set_xlabel("Document Position (characters)")
             ax.set_ylabel("Time Since Start (seconds)")
             ax.set_title(

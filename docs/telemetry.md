@@ -478,7 +478,7 @@ For comprehensive benchmarking with automated comparison and visualization, use 
 ```
 
 This script automatically:
-- Runs indexing with telemetry collection (`--clear --telemetry --validate --debug --no-progress`)
+- Runs indexing with telemetry collection (`--telemetry --validate --debug --no-progress`)
 - Generates comparison reports in markdown format
 - Creates visualization charts in PNG format
 - Captures full debug logs for troubleshooting

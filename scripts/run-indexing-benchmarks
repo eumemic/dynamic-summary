@@ -68,7 +68,7 @@ Document:
 Additional Options:
     All other options are passed through to the ragzoom index command.
     The script automatically:
-    - Adds: --clear --telemetry --validate --debug --no-progress
+    - Adds: --telemetry --validate --debug --no-progress
     - Extracts config from baseline and uses --config <baseline_config.json>
     - This ensures the exact same configuration as the baseline run
 
@@ -243,13 +243,12 @@ fi
 echo ""
 
 # Run indexing with telemetry
-# Implicitly adds: --clear --telemetry <file> --validate --debug --no-progress
+# Implicitly adds: --telemetry <file> --validate --debug --no-progress
 echo "📝 Running indexing with telemetry..."
 
 # Build command args
 INDEX_ARGS=(
     "$DOCUMENT"
-    --clear
     --telemetry "$TELEMETRY_FILE"
     --validate
     --debug
