@@ -1123,8 +1123,9 @@ class TelemetryVisualizer:
                 min_span = min(min_span, span_start)
                 max_span = max(max_span, span_end)
 
-        # Calculate gap size as 0.5% of total document span
-        gap = 0.005 * (max_span - min_span) if max_span > min_span else 5
+        # Calculate gap size: use fixed 20 chars for visual separation
+        # This provides consistent visual spacing regardless of document length
+        gap = 20
 
         # Process each node
         for node in nodes:
@@ -1157,7 +1158,7 @@ class TelemetryVisualizer:
                     max(
                         1, span_end - span_start - gap
                     ),  # Width = span coverage minus gap
-                    1e-3,  # Minimal height (1 millisecond or 1 pixel)
+                    0.5,  # Minimal height (0.5 seconds for visibility)
                     facecolor=attempt_colors[0],  # Blue
                     edgecolor="black",
                     linewidth=0.5,
