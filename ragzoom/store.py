@@ -668,6 +668,28 @@ class Store:
 
             return deleted_count
 
+    def clear_document(self, document_id: str) -> int:
+        """Clear all data for a document, including orphaned nodes and document record.
+
+        This handles both complete documents and orphaned nodes from interrupted indexing.
+        Unlike delete_document_nodes, this also removes the Document record.
+
+        Args:
+            document_id: ID of the document to clear
+
+        Returns:
+            Number of nodes deleted
+        """
+        # Delete all nodes with this document_id (handles orphaned nodes from interrupted runs)
+        deleted_count = self.delete_document_nodes(document_id)
+
+        # Also delete document record if it exists
+        with self.SessionLocal() as session:
+            session.query(Document).filter_by(id=document_id).delete()
+            session.commit()
+
+        return deleted_count
+
     def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
         """Get token statistics for a document using efficient SQL aggregation.
 
