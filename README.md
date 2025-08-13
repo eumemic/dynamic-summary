@@ -75,8 +75,8 @@ ragzoom index document.txt
 # Index with custom document ID
 ragzoom index document.txt --document-id my-doc
 
-# Re-index a document (clears existing data first)
-ragzoom index document.txt --clear
+# Re-index a document (automatically clears existing data)
+ragzoom index document.txt
 
 # List all indexed documents
 ragzoom documents
@@ -175,7 +175,7 @@ RagZoom maintains complete isolation between indexed documents:
   - Defaults to filename when indexing files
   - Can be explicitly set with `--document-id`
 - **Namespace Isolation**: Queries only search within the specified document
-- **Re-indexing**: Use `--clear` flag to replace existing documents
+- **Re-indexing**: Documents are automatically cleared before indexing
 - **Bulk Operations**: Clear individual documents or all data
 
 ## Advanced Usage Examples
@@ -190,7 +190,7 @@ ragzoom query "What were the key findings?" -d report-2023.pdf
 ragzoom query "What were the key findings?" -d report-2024.pdf
 
 # Re-index with updated content
-ragzoom index report-2024.pdf --clear
+ragzoom index report-2024.pdf
 
 # Remove old documents
 ragzoom clear -d report-2023.pdf --confirm
