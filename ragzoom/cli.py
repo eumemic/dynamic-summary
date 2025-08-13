@@ -84,7 +84,6 @@ def cli(ctx: click.Context) -> None:
 @cli.command()
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--document-id", help="Document ID (defaults to filename)")
-@click.option("--clear", is_flag=True, help="Clear existing document before indexing")
 @click.option(
     "--config",
     "config_path",
@@ -130,7 +129,6 @@ def index(
     ctx: click.Context,
     file_path: str,
     document_id: str | None,
-    clear: bool,
     config_path: Path | None,
     target_chunk_tokens: int | None,
     preceding_context_tokens: int | None,
@@ -204,21 +202,11 @@ def index(
         if not document_id:
             document_id = path.name
 
-        # Clear existing document if requested
-        if clear:
-            # Check if document exists
-            with store.SessionLocal() as session:
-                from ragzoom.store import Document
-
-                existing_doc = session.query(Document).filter_by(id=document_id).first()
-                if existing_doc:
-                    click.echo(f"Clearing existing document '{document_id}'...")
-                    # Delete document nodes
-                    deleted_count = store.delete_document_nodes(document_id)
-                    # Delete document record
-                    session.query(Document).filter_by(id=document_id).delete()
-                    session.commit()
-                    click.echo(f"   Cleared {deleted_count} nodes")
+        # Always clear existing data for the document (handles both complete and interrupted indexing)
+        click.echo(f"Clearing any existing data for '{document_id}'...")
+        deleted_count = store.clear_document(document_id)
+        if deleted_count > 0:
+            click.echo(f"   Cleared {deleted_count} nodes")
 
         click.echo(f"Indexing {path.name}...")
 
@@ -637,22 +625,8 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
                     abort=True,
                 )
 
-            # Check if document exists
-            with store.SessionLocal() as session:
-                from ragzoom.store import Document
-
-                doc = session.query(Document).filter_by(id=document_id).first()
-                if not doc:
-                    click.echo(f"❌ Document '{document_id}' not found")
-                    sys.exit(1)
-
-            # Delete document nodes
-            deleted_count = store.delete_document_nodes(document_id)
-
-            # Delete document record
-            with store.SessionLocal() as session:
-                session.query(Document).filter_by(id=document_id).delete()
-                session.commit()
+            # Clear document (handles both complete documents and orphaned nodes)
+            deleted_count = store.clear_document(document_id)
 
             click.echo(
                 f"✅ Cleared document '{document_id}' ({deleted_count} nodes deleted)"
