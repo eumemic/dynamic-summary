@@ -148,13 +148,9 @@ class ExperimentRunner:
     
     def get_compression_ratios(self):
         """Get list of compression ratios to test."""
-        # Standard ratios: 10%, 20%, ..., 90%
-        standard_ratios = [i/100 for i in range(10, 100, 10)]
-        
-        # Messy ratios
-        messy_ratios = [0.37, 0.42, 0.58, 0.63, 0.73]
-        
-        return sorted(standard_ratios + messy_ratios)
+        # Focused range: 30% to 80% in 10% increments
+        # This covers practical summarization use cases
+        return [0.30, 0.40, 0.50, 0.60, 0.70, 0.80]
     
     async def run_all_experiments(self, 
                                   sample_size: int = None,
@@ -163,14 +159,37 @@ class ExperimentRunner:
         """Run all experiments across strategies and compression ratios.
         
         Args:
-            sample_size: If set, randomly sample this many chunks instead of using all
+            sample_size: If set, sample this many chunks with balanced representation
             strategies: List of strategies to test (default: ALL_STRATEGIES)
             compression_ratios: List of compression ratios (default: standard set)
         """
         # Optionally sample chunks
         if sample_size and sample_size < len(self.chunks):
-            test_chunks = random.sample(self.chunks, sample_size)
-            print(f"Using random sample of {sample_size} chunks")
+            # Always use balanced sampling
+            # Create balanced sample across chunk sizes
+            by_size = {}
+            for chunk in self.chunks:
+                size = chunk.get("target_chunk_size", 200)
+                if size not in by_size:
+                    by_size[size] = []
+                by_size[size].append(chunk)
+            
+            # Sample equally from each size category
+            per_size = sample_size // len(by_size)
+            remainder = sample_size % len(by_size)
+            
+            test_chunks = []
+            for i, (size, chunks) in enumerate(sorted(by_size.items())):
+                n = per_size + (1 if i < remainder else 0)
+                n = min(n, len(chunks))  # Don't oversample
+                test_chunks.extend(random.sample(chunks, n))
+            
+            print(f"Using balanced sample of {len(test_chunks)} chunks")
+            # Show distribution
+            sizes = [c.get("target_chunk_size", 200) for c in test_chunks]
+            for size in sorted(set(sizes)):
+                count = sizes.count(size)
+                print(f"  {size}-token chunks: {count}")
         else:
             test_chunks = self.chunks
             print(f"Using all {len(test_chunks)} chunks")
@@ -283,7 +302,7 @@ async def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Run summarization length targeting experiments")
-    parser.add_argument("--sample", type=int, help="Sample size (default: use all chunks)")
+    parser.add_argument("--sample", type=int, help="Sample size with balanced chunk representation (default: use all chunks)")
     parser.add_argument("--output", help="Output file path")
     parser.add_argument("--max-concurrent", type=int, default=30,
                        help="Maximum concurrent API requests (default: 30)")
@@ -335,10 +354,10 @@ async def main():
     
     print(f"\n✅ Results saved to {output_dir}/")
     
-    # List all generated charts for easy clicking
-    print("\n📈 Generated visualizations:")
+    # List all generated charts with absolute paths for easy clicking
+    print("\n📈 Generated visualizations (command-click to open):")
     for png_file in sorted(output_dir.glob("*.png")):
-        print(f"  - {png_file}")
+        print(f"  - {png_file.absolute()}")
 
 
 if __name__ == "__main__":
