@@ -287,10 +287,15 @@ def create_visualizations(results: List[Dict], output_dir: str = "experiments/re
     plt.close()
     
     # 3. Scatter plot: Target vs Actual
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-    axes = axes.flatten()
+    strategies = df["strategy"].unique()
+    n_strategies = len(strategies)
+    n_cols = 3
+    n_rows = (n_strategies + n_cols - 1) // n_cols  # Ceiling division
     
-    for i, strategy in enumerate(df["strategy"].unique()[:6]):
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
+    axes = axes.flatten() if n_strategies > 1 else [axes]
+    
+    for i, strategy in enumerate(strategies):
         strategy_df = df[df["strategy"] == strategy]
         ax = axes[i]
         
@@ -309,6 +314,10 @@ def create_visualizations(results: List[Dict], output_dir: str = "experiments/re
         ax.set_xlabel("Target Tokens")
         ax.set_ylabel("Actual Tokens")
         ax.grid(True, alpha=0.3)
+    
+    # Hide any unused subplots
+    for i in range(n_strategies, len(axes)):
+        axes[i].set_visible(False)
     
     plt.suptitle("Target vs Actual Tokens by Strategy")
     plt.tight_layout()
