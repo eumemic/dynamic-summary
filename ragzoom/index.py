@@ -27,7 +27,7 @@ class TreeBuilder:
         config: IndexConfig,
         store: Store,
         api_key: str = "",
-        max_concurrent: int = 10,
+        max_concurrent: int = 30,
     ):
         """Initialize tree builder.
 
@@ -1255,14 +1255,8 @@ Here's the content to summarize:"""
                     track_progress(task, i) for i, task in enumerate(tasks)
                 ]
 
-                # Process tasks in smaller groups for better progress feedback
-                results = []
-                group_size = 20  # Process 20 at a time
-
-                for i in range(0, len(tracked_tasks), group_size):
-                    group = tracked_tasks[i : i + group_size]
-                    group_results = await asyncio.gather(*group)
-                    results.extend(group_results)
+                # Process all tasks concurrently (semaphore already controls parallelism)
+                results = await asyncio.gather(*tracked_tasks)
 
                 # Add the parent nodes to next height
                 for parent_id, summary, _ in results:
