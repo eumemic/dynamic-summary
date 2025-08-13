@@ -420,7 +420,7 @@ class SimpleMockStore:
         content_hash: str,
         chunk_count: int,
         embedding_model: str = "text-embedding-3-small",
-        summary_model: str = "gpt-4o",
+        summary_model: str = "gpt-5-nano",
     ) -> None:
         """Add a document record."""
         self.documents[document_id] = SimpleNamespace(

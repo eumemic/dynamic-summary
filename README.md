@@ -212,7 +212,6 @@ All configuration parameters can be passed as command-line options:
 # Indexing with custom settings
 ragzoom index document.txt \
   --target-chunk-tokens 300 \
-  --summary-model gpt-4o \
   --embedding-model text-embedding-3-large \
   --max-retries 2
 
@@ -230,7 +229,6 @@ Create JSON config files for reusable settings:
 {
   "target_chunk_tokens": 300,
   "preceding_context_tokens": 100,
-  "summary_model": "gpt-4o",
   "embedding_model": "text-embedding-3-large",
   "retry_threshold": 0.15,
   "max_retries": 2,
@@ -244,7 +242,6 @@ Use with the `--config` option:
 # Save config to file
 echo '{
   "target_chunk_tokens": 300,
-  "summary_model": "gpt-4o",
   "embedding_model": "text-embedding-3-large"
 }' > my-config.json
 
@@ -260,7 +257,7 @@ ragzoom index document.txt --config my-config.json --max-retries 3
 #### Indexing Parameters
 - `target_chunk_tokens`: Target size for leaf chunks (default: 200)
 - `preceding_context_tokens`: Context from adjacent chunks (default: 75)
-- `summary_model`: Model for summarization (default: "gpt-4o")
+- `summary_model`: Model for summarization
 - `embedding_model`: Model for embeddings (default: "text-embedding-3-small")
 - `retry_threshold`: Max deviation before retry, 0.2 = 20% (default: 0.2)
 - `max_retries`: Maximum summary retries (default: 0)
@@ -297,7 +294,6 @@ ragzoom index doc.txt --target-chunk-tokens 150 --max-retries 0
 # Production: High quality with retries
 ragzoom index doc.txt \
   --target-chunk-tokens 300 \
-  --summary-model gpt-4o \
   --max-retries 2 \
   --embedding-model text-embedding-3-large
 

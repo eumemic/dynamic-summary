@@ -781,7 +781,6 @@ def config(examples: bool, output_file: str | None) -> None:
             json.dumps(
                 {
                     "target_chunk_tokens": 150,
-                    "summary_model": "gpt-4o",
                     "embedding_model": "text-embedding-3-small",
                     "max_retries": 0,
                     "budget_tokens": 4000,
@@ -797,7 +796,6 @@ def config(examples: bool, output_file: str | None) -> None:
                 {
                     "target_chunk_tokens": 300,
                     "preceding_context_tokens": 100,
-                    "summary_model": "gpt-4o",
                     "embedding_model": "text-embedding-3-large",
                     "retry_threshold": 0.15,
                     "max_retries": 2,
@@ -815,7 +813,6 @@ def config(examples: bool, output_file: str | None) -> None:
             json.dumps(
                 {
                     "target_chunk_tokens": 100,
-                    "summary_model": "gpt-4o-mini",
                     "embedding_model": "text-embedding-3-small",
                     "max_retries": 0,
                     "embedding_batch_size": 200,
@@ -831,7 +828,6 @@ def config(examples: bool, output_file: str | None) -> None:
             json.dumps(
                 {
                     "target_chunk_tokens": 200,
-                    "summary_model": "gpt-4o-mini",
                     "embedding_model": "text-embedding-3-small",
                     "max_retries": 0,
                     "budget_tokens": 4000,
@@ -858,7 +854,6 @@ def config(examples: bool, output_file: str | None) -> None:
         sample_config = {
             "target_chunk_tokens": 200,
             "preceding_context_tokens": 75,
-            "summary_model": "gpt-4o",
             "embedding_model": "text-embedding-3-small",
             "retry_threshold": 0.2,
             "max_retries": 0,
