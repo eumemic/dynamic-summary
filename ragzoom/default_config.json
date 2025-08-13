@@ -1,7 +1,7 @@
 {
   "target_chunk_tokens": 200,
   "preceding_context_tokens": 75,
-  "summary_model": "gpt-4o",
+  "summary_model": "gpt-5-nano",
   "embedding_model": "text-embedding-3-small",
   "retry_threshold": 0.2,
   "max_retries": 0,
