@@ -1088,26 +1088,15 @@ Here's the content to summarize:"""
             reporter=reporter,
         )
 
-        # Get embedding for the summary
-        start_time = time.time()
-        embedding = await self._get_embedding(summary)
-
-        # Track embedding for parent node
-        if reporter and parent_id:
-            # Use the actual token count from the API for telemetry
-            reporter.record_embedding_call_v2(
-                node_embeddings=[(parent_id, token_count)],
-                batch_size=1,
-                model=self.config.embedding_model,
-                start_time=start_time,
-            )
+        # Embedding will be generated in batch after all summaries are collected
+        # This avoids 183 individual API calls for a typical level
 
         # Return data to be stored later in batch
         return {
             "node_data": {
                 "node_id": parent_id,
                 "text": summary,
-                "embedding": embedding,
+                "embedding": None,  # Will be filled in after batch generation
                 "span_start": left_node.span_start,
                 "span_end": right_node.span_end if right_node else left_node.span_end,
                 "left_child_id": left_id,
@@ -1121,7 +1110,7 @@ Here's the content to summarize:"""
             ],
             "parent_id": parent_id,
             "summary": summary,
-            "embedding": embedding,
+            "token_count": token_count,  # Pass token count for telemetry
             # Store validation data for later
             "validation_data": {
                 "left_span_start": left_node.span_start,
@@ -1274,6 +1263,35 @@ Here's the content to summarize:"""
 
                 # Process all tasks concurrently (semaphore already controls parallelism)
                 results = await asyncio.gather(*tracked_tasks)
+
+                # Batch generate embeddings for all summaries at this level
+                # This avoids individual API calls per node (e.g., 183 calls → 3 batch calls)
+                summaries = [r["summary"] for r in results]
+
+                start_time = time.time()
+                embeddings = await self._get_embeddings_batch(summaries)
+
+                # Track batch embedding call for telemetry
+                if reporter:
+                    node_embeddings = []
+                    for result in results:
+                        # Use the token count from summarization
+                        token_count = result.get(
+                            "token_count",
+                            len(self.splitter.tokenizer.encode(result["summary"])),
+                        )
+                        node_embeddings.append((result["parent_id"], token_count))
+
+                    reporter.record_embedding_call_v2(
+                        node_embeddings=node_embeddings,
+                        batch_size=len(summaries),
+                        model=self.config.embedding_model,
+                        start_time=start_time,
+                    )
+
+                # Update results with the generated embeddings
+                for result, embedding in zip(results, embeddings):
+                    result["node_data"]["embedding"] = embedding
 
                 # Extract data for batch processing
                 nodes_to_add = []
