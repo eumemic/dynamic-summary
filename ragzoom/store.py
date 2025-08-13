@@ -248,6 +248,124 @@ class Store:
 
         return node
 
+    def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
+        """Add multiple nodes to both SQLite and Chroma in batch.
+
+        Args:
+            nodes_data: List of dictionaries containing node data with keys:
+                - node_id, text, embedding, span_start, span_end,
+                - parent_id (optional), left_child_id (optional),
+                - right_child_id (optional), document_id (optional),
+                - token_count (optional)
+
+        Returns:
+            List of created TreeNode objects
+        """
+        if not nodes_data:
+            return []
+
+        # Validate all embeddings first
+        for data in nodes_data:
+            self._validate_embedding_dimension(data["embedding"])
+
+        nodes = []
+        with self.SessionLocal() as session:
+            # Create TreeNode objects
+            for data in nodes_data:
+                node = TreeNode(
+                    id=data["node_id"],
+                    parent_id=data.get("parent_id"),
+                    left_child_id=data.get("left_child_id"),
+                    right_child_id=data.get("right_child_id"),
+                    span_start=data["span_start"],
+                    span_end=data["span_end"],
+                    text=data["text"],
+                    document_id=data.get("document_id"),
+                    token_count=data.get("token_count"),
+                )
+                nodes.append(node)
+
+            # Bulk insert all nodes
+            session.bulk_save_objects(nodes)
+            session.commit()
+
+            # Add all to cache
+            for node in nodes:
+                self._add_to_cache(node)
+
+        # Batch add to Chroma
+        if nodes:
+            ids = []
+            embeddings = []
+            metadatas = []
+            documents = []
+
+            for data, node in zip(nodes_data, nodes):
+                ids.append(data["node_id"])
+                embeddings.append(np.array(data["embedding"], dtype=np.float32))
+                metadatas.append(
+                    {
+                        "span_start": int(data["span_start"]),
+                        "span_end": int(data["span_end"]),
+                        "parent_id": data.get("parent_id", ""),
+                        "is_leaf": int(
+                            1
+                            if (
+                                data.get("left_child_id") is None
+                                and data.get("right_child_id") is None
+                            )
+                            else 0
+                        ),
+                        "document_id": data.get("document_id", ""),
+                    }
+                )
+                documents.append(data["text"])
+
+            self.collection.add(
+                ids=ids,
+                embeddings=cast(Any, embeddings),
+                metadatas=cast(Any, metadatas),
+                documents=documents,
+            )
+
+        return nodes
+
+    def update_parent_references_batch(self, updates: list[tuple[str, str]]) -> None:
+        """Update parent references for multiple nodes in batch.
+
+        Args:
+            updates: List of (child_id, parent_id) tuples
+        """
+        if not updates:
+            return
+
+        with self.SessionLocal() as session:
+            # Build update mappings
+            update_mappings = [
+                {"id": child_id, "parent_id": parent_id}
+                for child_id, parent_id in updates
+            ]
+
+            # Bulk update - use execute with update statement for better compatibility
+            from sqlalchemy import update
+
+            for mapping in update_mappings:
+                stmt = (
+                    update(TreeNode)
+                    .where(TreeNode.id == mapping["id"])
+                    .values(parent_id=mapping["parent_id"])
+                )
+                session.execute(stmt)
+            session.commit()
+
+            # Invalidate cache for updated nodes
+            for child_id, _ in updates:
+                if child_id in self.node_cache:
+                    del self.node_cache[child_id]
+                    # Also remove from cache order
+                    if child_id in self.cache_order:
+                        self.cache_order.remove(child_id)
+
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID."""
         # Check cache first
