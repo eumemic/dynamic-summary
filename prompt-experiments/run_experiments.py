@@ -24,21 +24,26 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from openai import AsyncOpenAI
 import tiktoken
-from experiments.strategies import ALL_STRATEGIES
+from active_strategies import ACTIVE_STRATEGIES
 
 
 class ExperimentRunner:
     """Run summarization experiments with different targeting strategies."""
     
-    def __init__(self, corpus_path: str = "experiments/results/corpus.json",
-                 max_concurrent: int = 10):
+    def __init__(self, corpus_path: str = "results/corpus.json",
+                 max_concurrent: int = 30):
         """Initialize the experiment runner.
         
         Args:
             corpus_path: Path to the test corpus JSON file
             max_concurrent: Maximum concurrent API requests
         """
-        self.corpus_path = Path(corpus_path)
+        # Handle both relative and absolute paths
+        if Path(corpus_path).is_absolute():
+            self.corpus_path = Path(corpus_path)
+        else:
+            # Assume relative to prompt-experiments directory
+            self.corpus_path = Path(__file__).parent / corpus_path
         self.max_concurrent = max_concurrent
         self.semaphore = asyncio.Semaphore(max_concurrent)
         
@@ -124,10 +129,6 @@ class ExperimentRunner:
                     "duration": time.time() - start_time,
                 }
                 
-                # Update progress bar if provided
-                if pbar:
-                    pbar.update(1)
-                
             except Exception as e:
                 result = {
                     "chunk_id": chunk["id"],
@@ -155,11 +156,16 @@ class ExperimentRunner:
         
         return sorted(standard_ratios + messy_ratios)
     
-    async def run_all_experiments(self, sample_size: int = None):
+    async def run_all_experiments(self, 
+                                  sample_size: int = None,
+                                  strategies: List = None,
+                                  compression_ratios: List[float] = None):
         """Run all experiments across strategies and compression ratios.
         
         Args:
             sample_size: If set, randomly sample this many chunks instead of using all
+            strategies: List of strategies to test (default: ALL_STRATEGIES)
+            compression_ratios: List of compression ratios (default: standard set)
         """
         # Optionally sample chunks
         if sample_size and sample_size < len(self.chunks):
@@ -169,15 +175,22 @@ class ExperimentRunner:
             test_chunks = self.chunks
             print(f"Using all {len(test_chunks)} chunks")
         
+        # Use provided strategies or default to active strategies
+        if strategies is None:
+            strategies = ACTIVE_STRATEGIES
+        
         # Get compression ratios
-        compression_ratios = self.get_compression_ratios()
+        if compression_ratios is None:
+            compression_ratios = self.get_compression_ratios()
         
         # Calculate total experiments
-        total_experiments = len(test_chunks) * len(ALL_STRATEGIES) * len(compression_ratios)
+        total_experiments = len(test_chunks) * len(strategies) * len(compression_ratios)
         print(f"\nTotal experiments to run: {total_experiments}")
         print(f"  Chunks: {len(test_chunks)}")
-        print(f"  Strategies: {len(ALL_STRATEGIES)} ({', '.join(s.name for s in ALL_STRATEGIES)})")
         print(f"  Compression ratios: {len(compression_ratios)}")
+        print(f"  Strategies ({len(strategies)}):")
+        for s in strategies:
+            print(f"    - {s.name}")
         
         # Collect all experiment configurations first
         experiment_configs = []
@@ -193,7 +206,7 @@ class ExperimentRunner:
                 if target_tokens < 10 or target_tokens >= input_tokens:
                     continue
                 
-                for strategy in ALL_STRATEGIES:
+                for strategy in strategies:
                     experiment_configs.append({
                         "chunk": chunk,
                         "strategy": strategy,
@@ -252,7 +265,7 @@ class ExperimentRunner:
             "total_experiments": len(results),
             "successful": len(successful),
             "failed": failed,
-            "strategies": [s.name for s in ALL_STRATEGIES],
+            "strategies": [s.name for s in ACTIVE_STRATEGIES],
             "compression_ratios": self.get_compression_ratios(),
             "results": results
         }
@@ -272,8 +285,8 @@ async def main():
     parser = argparse.ArgumentParser(description="Run summarization length targeting experiments")
     parser.add_argument("--sample", type=int, help="Sample size (default: use all chunks)")
     parser.add_argument("--output", help="Output file path")
-    parser.add_argument("--max-concurrent", type=int, default=10,
-                       help="Maximum concurrent API requests (default: 10)")
+    parser.add_argument("--max-concurrent", type=int, default=30,
+                       help="Maximum concurrent API requests (default: 30)")
     
     args = parser.parse_args()
     
@@ -289,8 +302,43 @@ async def main():
     elapsed = time.time() - start_time
     print(f"\n⏱️  Experiments completed in {elapsed:.1f} seconds")
     
-    # Save results
-    runner.save_results(results, args.output)
+    # Save results with timestamp
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_dir = Path(f"results/{timestamp}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save raw results
+    output_file = output_dir / "raw_results.json"
+    runner.save_results(results, str(output_file))
+    
+    # Auto-run analysis and generate visualizations
+    print("\n📊 Generating analysis and visualizations...")
+    from analyze_results import main as analyze_main
+    
+    # Run analysis on the results we just saved
+    import sys
+    old_argv = sys.argv
+    sys.argv = ["analyze_results.py", str(output_file)]
+    
+    try:
+        analyze_main()
+    except Exception as e:
+        print(f"Warning: Analysis failed with error: {e}")
+    finally:
+        sys.argv = old_argv
+    
+    # Create symlink to latest results
+    latest_link = Path("results/latest")
+    if latest_link.exists() or latest_link.is_symlink():
+        latest_link.unlink()
+    latest_link.symlink_to(output_dir.name)
+    
+    print(f"\n✅ Results saved to {output_dir}/")
+    
+    # List all generated charts for easy clicking
+    print("\n📈 Generated visualizations:")
+    for png_file in sorted(output_dir.glob("*.png")):
+        print(f"  - {png_file}")
 
 
 if __name__ == "__main__":
