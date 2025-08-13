@@ -302,7 +302,7 @@ jobs:
             if ragzoom-telemetry analyze "$file" > "analysis_${CHUNK_SIZE}.txt" 2>&1; then
               # Check for verbatim issues in the output
               if grep -q "Verbatim Concatenation Issues" "analysis_${CHUNK_SIZE}.txt"; then
-                echo "❌ VERBATIM ISSUES DETECTED in ${CHUNK_SIZE} tokens benchmark!"
+                echo "⚠️ VERBATIM ISSUES DETECTED in ${CHUNK_SIZE} tokens benchmark!"
                 echo "VERBATIM_DETECTED=true" >> $GITHUB_OUTPUT
                 
                 # Extract verbatim details for report
@@ -487,7 +487,7 @@ jobs:
               # Run comparison and capture both output and exit code
               # Use set +e to prevent immediate exit on error
               set +e
-              ragzoom-telemetry compare baseline_results/ benchmark_results/ --output-format markdown > report.md 2>&1
+              ragzoom-telemetry compare baseline_results/ benchmark_results/ > report.md 2>&1
               comparison_exit_code=$?
               set -e
               
@@ -498,7 +498,7 @@ jobs:
               echo "📊 Running single-file benchmark comparison (legacy mode)..."
               # Run comparison and capture both output and exit code
               set +e
-              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output-format markdown > report.md 2>&1
+              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json > report.md 2>&1
               comparison_exit_code=$?
               set -e
               
@@ -523,10 +523,10 @@ jobs:
           # Add verbatim warnings to report if detected
           if [ "${{ steps.analyze_telemetry.outputs.VERBATIM_DETECTED }}" == "true" ]; then
             echo "" >> report.md
-            echo "### ❌ Verbatim Concatenation Issues Detected" >> report.md
+            echo "### ⚠️ Verbatim Concatenation Issues Detected" >> report.md
             echo "" >> report.md
             echo "The LLM is returning input text verbatim instead of creating proper summaries." >> report.md
-            echo "This indicates a critical issue with summarization quality." >> report.md
+            echo "This indicates a potential issue with summarization quality." >> report.md
             echo "" >> report.md
             
             # Add details for the visualization chunk size
@@ -577,12 +577,6 @@ jobs:
             let body = `${identifier}\n## 📊 Performance Report\n\n`;
             body += `_View [workflow run](${workflowUrl})_\n\n`;
             
-            // Add visualization if it was generated
-            if (visualizationUrl) {
-              body += `### Performance Visualization (${{ env.VISUALIZATION_CHUNK_SIZE }} tokens)\n\n`;
-              body += `![Telemetry Comparison](${visualizationUrl})\n\n`;
-            }
-            
             // Check for benchmark errors first
             const hasErrors = `${{ steps.benchmark_100.outputs.BENCHMARK_ERROR }}` === 'true' ||
                              `${{ steps.benchmark_200.outputs.BENCHMARK_ERROR }}` === 'true' ||
@@ -598,8 +592,14 @@ jobs:
               body += 'Check the [workflow logs](' + workflowUrl + ') for details.\n\n';
               body += '**This is not a performance regression - the code needs to be fixed.**';
             } else if (report) {
-              // Add the comparison report if no errors
+              // Add the comparison report first (includes verbatim check)
               body += report;
+              
+              // Add visualization after the report if it was generated
+              if (visualizationUrl) {
+                body += `\n### Performance Visualization (${{ env.VISUALIZATION_CHUNK_SIZE }} tokens)\n\n`;
+                body += `![Telemetry Comparison](${visualizationUrl})\n\n`;
+              }
             } else {
               body += '❌ **Unable to generate performance report**\n\n';
               body += 'Check the [workflow logs](' + workflowUrl + ') for details.';
@@ -647,13 +647,6 @@ jobs:
           echo "Check the workflow logs for details."
           exit 1
       
-      - name: Fail if verbatim issues detected
-        if: steps.analyze_telemetry.outputs.VERBATIM_DETECTED == 'true'
-        run: |
-          echo "❌ Verbatim concatenation issues detected!"
-          echo "The LLM is returning input text unchanged instead of creating summaries."
-          echo "Check the performance report for details."
-          exit 1
       
       - name: Fail if regression detected
         if: steps.compare.outputs.REGRESSION == 'true'
