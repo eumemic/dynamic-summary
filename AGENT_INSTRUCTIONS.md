@@ -18,6 +18,7 @@ which is included below. This file (CLAUDE.md) contains only agent-specific inst
 - **Use the Scientific Method:** For complex problems, form a hypothesis, propose a test to validate it, and discuss it with the user before implementing.
 - **Raise Blockers:** If you are instructed to do something and discover an insurmountable roadblock or a fundamental inconsistency, do not switch gears. Bring the issue to the user's attention and decide on a new course of action together.
 - **Leave the Codebase Better:** Always be looking for opportunities to improve the code you touch, whether it's by refactoring, adding a clarifying comment, or improving a variable name.
+- **No Fallback Code:** NEVER write fallback code that papers over issues. This includes: silent skipping (`if x: continue`), dummy values (`x = y or 0`), "sensible defaults" (`get(key, default_value)`), or any form of error suppression. If an invariant is violated or expected data is missing, fail hard with a clear error message. We need to be able to rely on invariants. Every assumption should be validated with explicit assertions or exceptions.
 - **Update Documentation:** If you discover that a document is out of date or missing information in the course of your work, update it as part of your task.
 - **Update These Rules:** If you discover a new principle or best practice during your work, add it to this file.
 
