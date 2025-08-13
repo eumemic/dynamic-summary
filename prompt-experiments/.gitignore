@@ -17,3 +17,6 @@ __pycache__/
 # Temporary test outputs
 test_*.json
 *.log
+# Experiment results (regeneratable)
+results/20*/
+results/latest
