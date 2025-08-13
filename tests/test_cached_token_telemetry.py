@@ -58,7 +58,7 @@ class MockOpenAIResponseWithCache:
 @pytest.mark.asyncio
 async def test_cached_tokens_recorded_in_telemetry(mock_store):
     """Test that cached tokens from OpenAI response are properly recorded."""
-    index_config = IndexConfig(
+    index_config = IndexConfig.load(
         retry_threshold=0.1,
         max_retries=1,  # Enable retries for this test
         target_chunk_tokens=100,
@@ -137,7 +137,7 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store):
 @pytest.mark.asyncio
 async def test_backward_compatibility_without_cached_tokens(mock_store):
     """Test that telemetry works correctly when OpenAI doesn't return cached_tokens."""
-    index_config = IndexConfig(target_chunk_tokens=100)
+    index_config = IndexConfig.load(target_chunk_tokens=100)
     operational_config = OperationalConfig(openai_api_key="test-key")
 
     # Create a config wrapper for backward compatibility with telemetry
@@ -201,7 +201,7 @@ async def test_backward_compatibility_without_cached_tokens(mock_store):
 @pytest.mark.asyncio
 async def test_cached_tokens_across_multiple_retries(mock_store):
     """Test that cached tokens increase with each retry as conversation grows."""
-    index_config = IndexConfig(
+    index_config = IndexConfig.load(
         retry_threshold=0.05,  # Very strict
         max_retries=3,
         target_chunk_tokens=100,
@@ -286,7 +286,7 @@ async def test_cached_tokens_across_multiple_retries(mock_store):
 @pytest.mark.asyncio
 async def test_passthrough_summary_has_no_cached_tokens(mock_store):
     """Test that passthrough summaries correctly report 0 cached tokens."""
-    index_config = IndexConfig(target_chunk_tokens=100)
+    index_config = IndexConfig.load(target_chunk_tokens=100)
     operational_config = OperationalConfig(openai_api_key="test-key")
 
     # Create a config wrapper for backward compatibility with telemetry
@@ -331,7 +331,7 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store):
 @pytest.mark.asyncio
 async def test_cached_tokens_with_high_cache_rate(mock_store):
     """Test scenario with very high cache hit rate (95%+)."""
-    index_config = IndexConfig(
+    index_config = IndexConfig.load(
         retry_threshold=0.1,
         max_retries=1,  # Enable retries for this test
         target_chunk_tokens=100,

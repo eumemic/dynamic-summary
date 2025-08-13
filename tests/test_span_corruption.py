@@ -18,7 +18,7 @@ class TestSpanCorruption:
         """Set up test system."""
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create separate configs
-            index_config = IndexConfig(
+            index_config = IndexConfig.load(
                 target_chunk_tokens=100,  # Small chunks to create many nodes
                 preceding_context_tokens=10,  # Must be less than leaf_tokens
             )

@@ -59,7 +59,7 @@ class TestTelemetryCollection:
     @pytest.fixture
     def config(self) -> IndexConfig:
         """Create test config."""
-        return IndexConfig(
+        return IndexConfig.load(
             target_chunk_tokens=100,
             preceding_context_tokens=50,
             embedding_batch_size=2,
@@ -200,7 +200,7 @@ class TestTelemetryIntegration:
     ) -> None:
         """Test that telemetry captures all nodes during indexing."""
         store = request.getfixturevalue(f"{store_type}_store")
-        index_config = IndexConfig(
+        index_config = IndexConfig.load(
             target_chunk_tokens=100,
             preceding_context_tokens=50,
             embedding_batch_size=2,

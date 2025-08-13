@@ -43,7 +43,7 @@ class MockOpenAIResponse:
 @pytest.mark.asyncio
 async def test_retry_maintains_conversation_history(mock_store):
     """Test that retries append to existing conversation instead of creating new ones."""
-    config = IndexConfig(
+    config = IndexConfig.load(
         retry_threshold=0.2,  # 20% deviation
         max_retries=3,
         target_chunk_tokens=100,  # Target tokens
@@ -133,7 +133,7 @@ async def test_retry_maintains_conversation_history(mock_store):
 @pytest.mark.asyncio
 async def test_retry_preserves_original_context(mock_store):
     """Test that retry requests can still see the original text being summarized."""
-    config = IndexConfig(
+    config = IndexConfig.load(
         retry_threshold=0.1,  # 10% deviation
         max_retries=1,  # Enable retries for this test
         target_chunk_tokens=100,
@@ -198,7 +198,7 @@ async def test_retry_preserves_original_context(mock_store):
 @pytest.mark.asyncio
 async def test_multiple_retries_build_conversation(mock_store):
     """Test that multiple retries continue building on the same conversation."""
-    config = IndexConfig(
+    config = IndexConfig.load(
         retry_threshold=0.1,
         max_retries=3,
         target_chunk_tokens=100,
@@ -257,7 +257,7 @@ async def test_multiple_retries_build_conversation(mock_store):
 @pytest.mark.asyncio
 async def test_no_retry_when_within_threshold(mock_store):
     """Test that no retry occurs when initial summary is within threshold."""
-    config = IndexConfig(
+    config = IndexConfig.load(
         retry_threshold=0.2,
         target_chunk_tokens=100,
     )
@@ -292,7 +292,7 @@ async def test_no_retry_when_within_threshold(mock_store):
 @pytest.mark.asyncio
 async def test_passthrough_for_text_under_target(mock_store):
     """Test that text under target tokens is passed through without LLM call."""
-    config = IndexConfig(target_chunk_tokens=100)
+    config = IndexConfig.load(target_chunk_tokens=100)
     indexer = TreeBuilder(config, mock_store)
 
     api_calls = []

@@ -14,7 +14,6 @@ from ragzoom.config import (
     IndexConfig,
     OperationalConfig,
     QueryConfig,
-    load_indexing_config,
 )
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
@@ -77,7 +76,7 @@ def cli(ctx: click.Context) -> None:
     """
     # Only create configs, not components
     ctx.ensure_object(dict)
-    ctx.obj["index_config"] = IndexConfig()
+    ctx.obj["index_config"] = IndexConfig.load()  # Load defaults
     ctx.obj["query_config"] = QueryConfig()
     ctx.obj["operational_config"] = OperationalConfig()
 
@@ -151,7 +150,7 @@ def index(
     Configuration can be set via:
     1. CLI options (highest priority)
     2. Config file specified with --config
-    3. Default values from default_config.json
+    3. Default values from internal configuration
 
     Examples:
       ragzoom index document.txt --target-chunk-tokens 300 --summary-model gpt-5-nano
@@ -162,7 +161,8 @@ def index(
 
     try:
         # Load indexing configuration with CLI overrides
-        indexing_config = load_indexing_config(
+        # Create config object with merged values
+        index_config = IndexConfig.load(
             config_path,
             target_chunk_tokens=target_chunk_tokens,
             preceding_context_tokens=preceding_context_tokens,
@@ -172,9 +172,6 @@ def index(
             max_retries=max_retries,
             embedding_batch_size=embedding_batch_size,
         )
-
-        # Create config objects with merged values
-        index_config = IndexConfig(**indexing_config)
         query_config = QueryConfig()  # Use defaults for indexing command
         operational_config = OperationalConfig()
 
