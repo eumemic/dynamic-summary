@@ -577,12 +577,6 @@ jobs:
             let body = `${identifier}\n## 📊 Performance Report\n\n`;
             body += `_View [workflow run](${workflowUrl})_\n\n`;
             
-            // Add visualization if it was generated
-            if (visualizationUrl) {
-              body += `### Performance Visualization (${{ env.VISUALIZATION_CHUNK_SIZE }} tokens)\n\n`;
-              body += `![Telemetry Comparison](${visualizationUrl})\n\n`;
-            }
-            
             // Check for benchmark errors first
             const hasErrors = `${{ steps.benchmark_100.outputs.BENCHMARK_ERROR }}` === 'true' ||
                              `${{ steps.benchmark_200.outputs.BENCHMARK_ERROR }}` === 'true' ||
@@ -598,8 +592,14 @@ jobs:
               body += 'Check the [workflow logs](' + workflowUrl + ') for details.\n\n';
               body += '**This is not a performance regression - the code needs to be fixed.**';
             } else if (report) {
-              // Add the comparison report if no errors
+              // Add the comparison report first (includes verbatim check)
               body += report;
+              
+              // Add visualization after the report if it was generated
+              if (visualizationUrl) {
+                body += `\n### Performance Visualization (${{ env.VISUALIZATION_CHUNK_SIZE }} tokens)\n\n`;
+                body += `![Telemetry Comparison](${visualizationUrl})\n\n`;
+              }
             } else {
               body += '❌ **Unable to generate performance report**\n\n';
               body += 'Check the [workflow logs](' + workflowUrl + ') for details.';
