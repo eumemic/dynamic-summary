@@ -430,25 +430,30 @@ def _load_and_compute_metrics(file_path: Path) -> tuple[dict, Any]:
     """Load telemetry file and compute simplified metrics.
 
     Returns:
-        Tuple of (telemetry_data, simplified_metrics)
+        Tuple of (full_data_with_config, simplified_metrics)
     """
     with open(file_path) as f:
         data = json.load(f)
 
-    # Handle wrapped telemetry format (with config/document/telemetry fields)
-    # If data has 'telemetry' field but no 'documents' field, it's wrapped
-    if "telemetry" in data and "documents" not in data:
+    # The telemetry data can be either:
+    # 1. Direct format: has 'nodes' at root level (standard telemetry file)
+    # 2. Wrapped format: has 'telemetry' field containing the nodes
+    if "telemetry" in data:
+        # Wrapped format - extract telemetry but keep full data for config
         telemetry_data = data["telemetry"]
+        full_data = data
     else:
+        # Direct format - data is already the telemetry
         telemetry_data = data
+        full_data = data
 
     # Compute metrics
     metrics = compute_simplified_metrics(telemetry_data)
 
-    return telemetry_data, metrics
+    return full_data, metrics
 
 
-def _compare_files(baseline_file: Path, current_file: Path, output: str) -> bool:
+def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     """Compare two telemetry files.
 
     Returns:
@@ -457,6 +462,10 @@ def _compare_files(baseline_file: Path, current_file: Path, output: str) -> bool
     # Load and compute metrics for both files
     baseline_data, baseline_metrics = _load_and_compute_metrics(baseline_file)
     current_data, current_metrics = _load_and_compute_metrics(current_file)
+
+    # Extract config if available
+    baseline_config = baseline_data.get("config")
+    current_config = current_data.get("config")
 
     # Detect if running in CI
     is_ci = current_data.get("environment", {}).get("ci", False)
@@ -478,14 +487,14 @@ def _compare_files(baseline_file: Path, current_file: Path, output: str) -> bool
     )
 
     # Format comparison with thresholds
-    if output == "markdown":
-        _format_markdown_comparison_with_thresholds(
-            baseline_metrics, current_metrics, common_sizes, thresholds_by_chunk
-        )
-    else:
-        _format_text_comparison_with_thresholds(
-            baseline_metrics, current_metrics, common_sizes, thresholds_by_chunk
-        )
+    _format_markdown_comparison_with_thresholds(
+        baseline_metrics,
+        current_metrics,
+        common_sizes,
+        thresholds_by_chunk,
+        baseline_config,
+        current_config,
+    )
 
     return has_regression
 
@@ -627,7 +636,7 @@ def _check_metrics_for_regressions_with_thresholds(
     return has_regression, thresholds_by_chunk
 
 
-def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> bool:
+def _compare_directories(baseline_dir: Path, current_dir: Path) -> bool:
     """Compare all matching telemetry files between two directories.
 
     Returns:
@@ -645,12 +654,20 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
 
     # Collect all metrics from all files
     all_chunk_metrics = {}  # chunk_size -> (baseline_metrics, current_metrics)
+    baseline_config = None
+    current_config = None
 
     for baseline_file, current_file in matches:
         try:
             # Load and compute metrics for both files
-            _, baseline_metrics = _load_and_compute_metrics(baseline_file)
-            _, current_metrics = _load_and_compute_metrics(current_file)
+            baseline_data, baseline_metrics = _load_and_compute_metrics(baseline_file)
+            current_data, current_metrics = _load_and_compute_metrics(current_file)
+
+            # Extract config from first file (they should all be the same)
+            if baseline_config is None and "config" in baseline_data:
+                baseline_config = baseline_data["config"]
+            if current_config is None and "config" in current_data:
+                current_config = current_data["config"]
 
             # Store metrics for each chunk size
             for chunk_size in baseline_metrics.metrics_by_chunk_size:
@@ -702,14 +719,14 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
     )
 
     # Format output with thresholds
-    if output == "markdown":
-        _format_markdown_comparison_with_thresholds(
-            baseline_combined, current_combined, chunk_sizes, thresholds_by_chunk
-        )
-    else:
-        _format_text_comparison_with_thresholds(
-            baseline_combined, current_combined, chunk_sizes, thresholds_by_chunk
-        )
+    _format_markdown_comparison_with_thresholds(
+        baseline_combined,
+        current_combined,
+        chunk_sizes,
+        thresholds_by_chunk,
+        baseline_config,
+        current_config,
+    )
 
     return has_regression
 
@@ -718,17 +735,12 @@ def _compare_directories(baseline_dir: Path, current_dir: Path, output: str) -> 
 @click.argument("baseline_path", type=click.Path(exists=True))
 @click.argument("current_path", type=click.Path(exists=True))
 @click.option(
-    "--output-format", "-f", type=click.Choice(["text", "markdown"]), default="text"
-)
-@click.option(
     "--output",
     "-o",
     type=click.Path(),
     help="Output file path for visualization (PNG/PDF/SVG)",
 )
-def compare(
-    baseline_path: str, current_path: str, output_format: str, output: str | None
-) -> None:
+def compare(baseline_path: str, current_path: str, output: str | None) -> None:
     """Compare telemetry data between files or directories.
 
     Examples:
@@ -745,9 +757,9 @@ def compare(
 
     # Check if both are directories or both are files
     if baseline.is_dir() and current.is_dir():
-        has_regression = _compare_directories(baseline, current, output_format)
+        has_regression = _compare_directories(baseline, current)
     elif baseline.is_file() and current.is_file():
-        has_regression = _compare_files(baseline, current, output_format)
+        has_regression = _compare_files(baseline, current)
     else:
         click.echo(
             "Error: Both arguments must be either files or directories", err=True
@@ -898,7 +910,6 @@ def _format_metrics_for_chunk_with_thresholds(
     base_metrics: dict,
     curr_metrics: dict,
     thresholds: dict[str, DynamicThreshold],
-    output_format: str,
 ) -> None:
     """Format all metrics for a single chunk size with dynamic thresholds."""
     # Target-fit metrics - include chunk size in first row
@@ -908,7 +919,6 @@ def _format_metrics_for_chunk_with_thresholds(
         base_metrics["target_fit"]["median_error"],
         curr_metrics["target_fit"]["median_error"],
         thresholds[MetricNames.MEDIAN_ERROR_KEY],
-        output_format=output_format,
         signed=True,
         is_error_metric=True,
         baseline_variance=base_metrics["target_fit"]["error_mad"],
@@ -920,7 +930,6 @@ def _format_metrics_for_chunk_with_thresholds(
         base_metrics["target_fit"]["p95_error"],
         curr_metrics["target_fit"]["p95_error"],
         thresholds[MetricNames.P95_ERROR_KEY],
-        output_format=output_format,
         signed=True,
         is_error_metric=True,
         baseline_variance=base_metrics["target_fit"]["error_mad"],
@@ -934,7 +943,6 @@ def _format_metrics_for_chunk_with_thresholds(
         base_metrics["target_fit"]["percent_within_10"],
         curr_metrics["target_fit"]["percent_within_10"],
         thresholds[MetricNames.PERCENT_WITHIN_10_KEY],
-        output_format=output_format,
         higher_is_better=True,
         baseline_variance=base_metrics["target_fit"]["percent_within_10_mad"],
         current_variance=curr_metrics["target_fit"]["percent_within_10_mad"],
@@ -947,7 +955,6 @@ def _format_metrics_for_chunk_with_thresholds(
         base_metrics["retries"]["retry_rate"],
         curr_metrics["retries"]["retry_rate"],
         thresholds[MetricNames.RETRY_RATE_KEY],
-        output_format=output_format,
         baseline_variance=base_metrics["retries"]["retry_mad"],
         current_variance=curr_metrics["retries"]["retry_mad"],
     )
@@ -959,7 +966,6 @@ def _format_metrics_for_chunk_with_thresholds(
         base_metrics["latency"]["median_seconds"],
         curr_metrics["latency"]["median_seconds"],
         thresholds[MetricNames.LATENCY_KEY],
-        output_format=output_format,
         baseline_variance=base_metrics["latency"]["latency_mad"],
         current_variance=curr_metrics["latency"]["latency_mad"],
     )
@@ -971,63 +977,10 @@ def _format_metrics_for_chunk_with_thresholds(
         base_metrics["cost"]["usd_per_node"],
         curr_metrics["cost"]["usd_per_node"],
         thresholds[MetricNames.COST_KEY],
-        output_format=output_format,
         is_cost=True,
         baseline_variance=base_metrics["cost"]["cost_mad"],
         current_variance=curr_metrics["cost"]["cost_mad"],
     )
-
-
-def _format_text_comparison_with_thresholds(
-    baseline: SimplifiedMetrics,
-    current: SimplifiedMetrics,
-    chunk_sizes: set[int],
-    thresholds_by_chunk: dict[int, dict[str, DynamicThreshold]],
-) -> None:
-    """Format comparison as plain text table with dynamic thresholds."""
-
-    # Build table header
-    click.echo("\n" + "=" * 139)
-    click.echo("Performance Comparison Report")
-    click.echo("=" * 139)
-
-    # Table headers - adjusted widths for variance display and multi-line change
-    header = f"{'Chunk Size':<12} | {'Metric':<20} | {'Baseline':>18} | {'Current':>18} | {'Change':>44} | {'Threshold':>15}"
-    click.echo("\n" + header)
-    click.echo("-" * len(header))
-
-    for chunk_size in sorted(chunk_sizes):
-        base_metrics = baseline.metrics_by_chunk_size[chunk_size]
-        curr_metrics = current.metrics_by_chunk_size[chunk_size]
-        thresholds = thresholds_by_chunk[chunk_size]
-
-        chunk_label = f"{chunk_size} tokens"
-        _format_metrics_for_chunk_with_thresholds(
-            chunk_label, base_metrics, curr_metrics, thresholds, "text"
-        )
-
-        # Add separator between chunk sizes (except for last one)
-        if chunk_size != max(chunk_sizes):
-            click.echo("-" * len(header))
-
-    # Add footer with legend
-    click.echo("\n" + "=" * 139)
-    click.echo("\nLegend:")
-    click.echo("  Values: Shows metric ±variance (e.g., '50.0 ±2.0 tok')")
-    click.echo("  Change format:")
-    click.echo("    Line 1: [emoji] absolute_change (percentage%)")
-    click.echo("    Line 2: [emoji] σ±variance_change (percentage%)")
-    click.echo("  Metric change indicators:")
-    click.echo("    🔴 = Regression detected (exceeds dynamic threshold)")
-    click.echo("    🟡 = Significant undesirable change (>1σ baseline variance)")
-    click.echo("    🟢 = Significant improvement (>1σ baseline variance)")
-    click.echo("    ⚪ = Insignificant change (<1σ baseline variance)")
-    click.echo("  Variance change indicators:")
-    click.echo("    🟡 = Significant variance increase (>50% of baseline, notable)")
-    click.echo(
-        "    🟢 = Significant variance decrease (>50% of baseline, improved stability)"
-    )
-    click.echo("    ⚪ = Insignificant variance change (<50% of baseline)")
 
 
 def _prepare_row_data(
@@ -1070,7 +1023,6 @@ def _format_comparison_row_with_threshold(
     baseline: float,
     current: float,
     threshold: DynamicThreshold,
-    output_format: str = "text",
     signed: bool = False,
     higher_is_better: bool = False,
     is_cost: bool = False,
@@ -1080,7 +1032,7 @@ def _format_comparison_row_with_threshold(
     current_variance: float | None = None,
 ) -> None:
     """Format a single row in the comparison table with dynamic threshold."""
-    for_table = output_format == "markdown"
+    for_table = True
 
     # Format baseline and current values with variance
     base_str = _format_value(
@@ -1114,29 +1066,11 @@ def _format_comparison_row_with_threshold(
         else:
             threshold_str = f"±{threshold.absolute_value:.2f}"
 
-    if output_format == "markdown":
-        # For markdown, replace newlines with <br> for proper rendering
-        change_str_md = change_str.replace("\n", "<br>")
-        click.echo(
-            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
-        )
-    else:
-        # Text format - split change_str by newline for multi-line display
-        change_lines = change_str.split("\n")
-        if len(change_lines) == 2:
-            # First line with absolute change
-            click.echo(
-                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_lines[0]:<44} | {threshold_str:>15}"
-            )
-            # Second line with percentage and variance
-            click.echo(
-                f"{'':12} | {'':20} | {'':18} | {'':18} | {change_lines[1]:<44} | {'':15}"
-            )
-        else:
-            # Fallback for single line
-            click.echo(
-                f"{category:<12} | {metric:<20} | {base_str:>18} | {curr_str:>18} | {change_str:<44} | {threshold_str:>15}"
-            )
+    # For markdown, replace newlines with <br> for proper rendering
+    change_str_md = change_str.replace("\n", "<br>")
+    click.echo(
+        f"| {category} | {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
+    )
 
 
 def _format_comparison_row(
@@ -1145,7 +1079,6 @@ def _format_comparison_row(
     baseline: float,
     current: float,
     unit: str,
-    output_format: str = "text",
     signed: bool = False,
     higher_is_better: bool = False,
     is_cost: bool = False,
@@ -1153,8 +1086,8 @@ def _format_comparison_row(
     regression_threshold: float | None = None,
     is_error_metric: bool = False,
 ) -> None:
-    """Format a single row in the comparison table (text or markdown)."""
-    for_table = output_format == "markdown"
+    """Format a single row in the comparison table (markdown only)."""
+    for_table = True
     base_str, curr_str, change_str = _prepare_row_data(
         baseline,
         current,
@@ -1168,15 +1101,7 @@ def _format_comparison_row(
         for_table=for_table,
     )
 
-    if output_format == "markdown":
-        click.echo(
-            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} |"
-        )
-    else:
-        # Text format - category is empty for data rows
-        click.echo(
-            f"{category:<12} | {metric:<20} | {base_str:>12} | {curr_str:>12} | {change_str:>12}"
-        )
+    click.echo(f"| {category} | {metric} | {base_str} | {curr_str} | {change_str} |")
 
 
 def _format_value(
@@ -1439,10 +1364,38 @@ def _format_markdown_comparison_with_thresholds(
     current: SimplifiedMetrics,
     chunk_sizes: set[int],
     thresholds_by_chunk: dict[int, dict[str, DynamicThreshold]],
+    baseline_config: dict | None = None,
+    current_config: dict | None = None,
 ) -> None:
     """Format comparison as markdown table with dynamic thresholds."""
 
     click.echo("# Performance Comparison Report\n")
+
+    # Add configuration comparison if available
+    if baseline_config is not None and current_config is not None:
+        click.echo("## Configuration\n")
+        click.echo("| Parameter | Baseline | Current |")
+        click.echo("|-----------|----------|---------|")
+
+        # Get all config keys from both configs
+        all_keys = sorted(set(baseline_config.keys()) | set(current_config.keys()))
+
+        for key in all_keys:
+            baseline_val = baseline_config.get(key, "—")
+            current_val = current_config.get(key, "—")
+
+            # Format the key for display
+            display_key = key.replace("_", " ").title()
+
+            # Highlight differences
+            if baseline_val != current_val:
+                click.echo(
+                    f"| **{display_key}** | {baseline_val} | **{current_val}** |"
+                )
+            else:
+                click.echo(f"| {display_key} | {baseline_val} | {current_val} |")
+
+        click.echo("\n## Performance Metrics\n")
 
     # Create unified table
     click.echo("| Chunk Size | Metric | Baseline | Current | Change | Threshold |")
@@ -1455,7 +1408,7 @@ def _format_markdown_comparison_with_thresholds(
 
         chunk_label = f"**{chunk_size} tokens**"
         _format_metrics_for_chunk_with_thresholds(
-            chunk_label, base_metrics, curr_metrics, thresholds, "markdown"
+            chunk_label, base_metrics, curr_metrics, thresholds
         )
 
     click.echo("")
