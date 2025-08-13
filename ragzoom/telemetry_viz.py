@@ -1114,7 +1114,7 @@ class TelemetryVisualizer:
         indexing_start_time = telemetry.get("indexed_at", None)
 
         # Track min/max for axis limits
-        min_time = indexing_start_time  # Use actual start time as baseline
+        min_time = None  # Will be set to indexed_at or first node time as baseline
         max_time = 0
         min_span = float("inf")
         max_span = 0
@@ -1155,11 +1155,13 @@ class TelemetryVisualizer:
                 max_time = max(max_time, created_at)
 
                 # Calculate relative time from indexing start
-                # Use indexed_at if available, otherwise fall back to first node time
-                baseline = (
-                    indexing_start_time if indexing_start_time is not None else min_time
-                )
-                if baseline is None:
+                # Three-level fallback: indexed_at -> min_time -> current node time
+                # This handles telemetry without indexed_at (older versions)
+                if indexing_start_time is not None:
+                    baseline = indexing_start_time
+                elif min_time is not None:
+                    baseline = min_time
+                else:
                     baseline = created_at
                     min_time = created_at
                 relative_time = created_at - baseline
@@ -1205,10 +1207,12 @@ class TelemetryVisualizer:
                 is_accepted = attempt_idx == accepted_idx
 
                 # Calculate baseline for relative time
-                baseline = (
-                    indexing_start_time if indexing_start_time is not None else min_time
-                )
-                if baseline is None:
+                # Three-level fallback: indexed_at -> min_time -> current attempt time
+                if indexing_start_time is not None:
+                    baseline = indexing_start_time
+                elif min_time is not None:
+                    baseline = min_time
+                else:
                     baseline = cumulative_start
                     min_time = cumulative_start
 
@@ -1232,7 +1236,7 @@ class TelemetryVisualizer:
 
         # Set axis limits and labels
         if max_span > min_span:
-            # Use indexed_at as baseline if available, otherwise use min_time
+            # Determine final baseline for Y-axis: prefer indexed_at, fallback to min_time
             baseline = (
                 indexing_start_time if indexing_start_time is not None else min_time
             )
