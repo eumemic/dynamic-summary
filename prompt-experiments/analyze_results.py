@@ -390,15 +390,16 @@ def generate_report(results_path: str = "experiments/results/raw_results.json"):
             report.append(f"### {size}")
             report.append(f"Best strategy: {best['strategy']} (mean error: {best['mean_abs_error_pct']:.2f}%)\n")
     
-    # Save report
-    output_path = Path("experiments/results/analysis_report.md")
+    # Save report to same directory as input file
+    input_dir = Path(results_path).parent
+    output_path = input_dir / "analysis_report.md"
     with open(output_path, "w") as f:
         f.write("\n".join(report))
     
     print(f"✅ Report saved to {output_path}")
     
-    # Create visualizations
-    create_visualizations(results)
+    # Create visualizations in same directory
+    create_visualizations(results, output_dir=input_dir)
 
 
 def main():
@@ -406,7 +407,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Analyze summarization experiment results")
-    parser.add_argument("--input", default="experiments/results/raw_results.json",
+    parser.add_argument("input", nargs="?", default="experiments/results/raw_results.json",
                        help="Path to raw results JSON")
     
     args = parser.parse_args()
