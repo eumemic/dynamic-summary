@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""
+Run summarization length targeting experiments.
+Tests different strategies for hitting target summary lengths.
+"""
+
+import asyncio
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Dict, List, Any
+import random
+from dotenv import load_dotenv
+from tqdm.asyncio import tqdm_asyncio
+from tqdm import tqdm
+
+# Load environment variables
+load_dotenv()
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from openai import AsyncOpenAI
+import tiktoken
+from experiments.strategies import ALL_STRATEGIES
+
+
+class ExperimentRunner:
+    """Run summarization experiments with different targeting strategies."""
+    
+    def __init__(self, corpus_path: str = "experiments/results/corpus.json",
+                 max_concurrent: int = 10):
+        """Initialize the experiment runner.
+        
+        Args:
+            corpus_path: Path to the test corpus JSON file
+            max_concurrent: Maximum concurrent API requests
+        """
+        self.corpus_path = Path(corpus_path)
+        self.max_concurrent = max_concurrent
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+        
+        # Initialize OpenAI client
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY environment variable is required")
+        self.client = AsyncOpenAI(api_key=api_key)
+        
+        # Initialize tokenizer
+        self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        
+        # Load corpus
+        self.load_corpus()
+        
+    def load_corpus(self):
+        """Load the test corpus from JSON."""
+        with open(self.corpus_path, "r", encoding="utf-8") as f:
+            corpus_data = json.load(f)
+        self.chunks = corpus_data["chunks"]
+        print(f"Loaded {len(self.chunks)} chunks from corpus")
+    
+    async def run_single_experiment(self, chunk: Dict, strategy: Any, 
+                                   target_tokens: int, pbar: tqdm = None) -> Dict[str, Any]:
+        """Run a single summarization experiment.
+        
+        Args:
+            chunk: Chunk data with text and metrics
+            strategy: The targeting strategy to use
+            target_tokens: Target token count for the summary
+            pbar: Optional progress bar to update
+            
+        Returns:
+            Dictionary with experiment results
+        """
+        async with self.semaphore:
+            # Get the prompt for this strategy
+            prompt = strategy.get_prompt(
+                chunk["text"],
+                chunk["metrics"],
+                target_tokens
+            )
+            
+            # Record start time
+            start_time = time.time()
+            
+            try:
+                # Make API call to GPT-5-nano
+                response = await self.client.chat.completions.create(
+                    model="gpt-5-nano",
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ],
+                    reasoning_effort="minimal",  # GPT-5 parameter
+                )
+                
+                # Get the summary
+                summary = response.choices[0].message.content
+                if not summary:
+                    raise ValueError("Empty response from model")
+                
+                # Measure actual tokens
+                actual_tokens = len(self.tokenizer.encode(summary))
+                actual_chars = len(summary)
+                actual_words = len(summary.split())
+                
+                # Calculate metrics
+                token_error = actual_tokens - target_tokens
+                token_error_pct = (token_error / target_tokens) * 100
+                
+                result = {
+                    "chunk_id": chunk["id"],
+                    "strategy": strategy.name,
+                    "target_tokens": target_tokens,
+                    "input_tokens": chunk["metrics"]["tokens"],
+                    "actual_tokens": actual_tokens,
+                    "actual_chars": actual_chars,
+                    "actual_words": actual_words,
+                    "token_error": token_error,
+                    "token_error_pct": token_error_pct,
+                    "summary": summary,
+                    "success": True,
+                    "duration": time.time() - start_time,
+                }
+                
+                # Update progress bar if provided
+                if pbar:
+                    pbar.update(1)
+                
+            except Exception as e:
+                result = {
+                    "chunk_id": chunk["id"],
+                    "strategy": strategy.name,
+                    "target_tokens": target_tokens,
+                    "input_tokens": chunk["metrics"]["tokens"],
+                    "error": str(e),
+                    "success": False,
+                    "duration": time.time() - start_time,
+                }
+            
+            # Update progress bar if provided
+            if pbar:
+                pbar.update(1)
+            
+            return result
+    
+    def get_compression_ratios(self):
+        """Get list of compression ratios to test."""
+        # Standard ratios: 10%, 20%, ..., 90%
+        standard_ratios = [i/100 for i in range(10, 100, 10)]
+        
+        # Messy ratios
+        messy_ratios = [0.37, 0.42, 0.58, 0.63, 0.73]
+        
+        return sorted(standard_ratios + messy_ratios)
+    
+    async def run_all_experiments(self, sample_size: int = None):
+        """Run all experiments across strategies and compression ratios.
+        
+        Args:
+            sample_size: If set, randomly sample this many chunks instead of using all
+        """
+        # Optionally sample chunks
+        if sample_size and sample_size < len(self.chunks):
+            test_chunks = random.sample(self.chunks, sample_size)
+            print(f"Using random sample of {sample_size} chunks")
+        else:
+            test_chunks = self.chunks
+            print(f"Using all {len(test_chunks)} chunks")
+        
+        # Get compression ratios
+        compression_ratios = self.get_compression_ratios()
+        
+        # Calculate total experiments
+        total_experiments = len(test_chunks) * len(ALL_STRATEGIES) * len(compression_ratios)
+        print(f"\nTotal experiments to run: {total_experiments}")
+        print(f"  Chunks: {len(test_chunks)}")
+        print(f"  Strategies: {len(ALL_STRATEGIES)} ({', '.join(s.name for s in ALL_STRATEGIES)})")
+        print(f"  Compression ratios: {len(compression_ratios)}")
+        
+        # Collect all experiment configurations first
+        experiment_configs = []
+        
+        for chunk in test_chunks:
+            input_tokens = chunk["metrics"]["tokens"]
+            
+            for ratio in compression_ratios:
+                # Calculate target tokens for this ratio
+                target_tokens = int(input_tokens * ratio)
+                
+                # Skip if target is too small or same as input
+                if target_tokens < 10 or target_tokens >= input_tokens:
+                    continue
+                
+                for strategy in ALL_STRATEGIES:
+                    experiment_configs.append({
+                        "chunk": chunk,
+                        "strategy": strategy,
+                        "compression_ratio": ratio,
+                        "target_tokens": target_tokens,
+                    })
+        
+        print(f"\nActual experiments after filtering: {len(experiment_configs)}")
+        print("Starting experiments...\n")
+        
+        # Create progress bar
+        pbar = tqdm(total=len(experiment_configs), desc="Running experiments", unit="exp")
+        
+        # Create tasks with progress bar
+        tasks = []
+        for config in experiment_configs:
+            task = self.run_single_experiment(
+                config["chunk"], 
+                config["strategy"], 
+                config["target_tokens"],
+                pbar
+            )
+            tasks.append(task)
+        
+        # Run all experiments concurrently
+        results = await asyncio.gather(*tasks)
+        
+        # Close progress bar
+        pbar.close()
+        
+        # Add compression ratio to results
+        for result, config in zip(results, experiment_configs):
+            result["compression_ratio"] = config["compression_ratio"]
+        
+        return results
+    
+    def save_results(self, results: List[Dict], output_path: str = None):
+        """Save experiment results to JSON.
+        
+        Args:
+            results: List of experiment results
+            output_path: Path to save results (default: experiments/results/raw_results.json)
+        """
+        if output_path is None:
+            output_path = "experiments/results/raw_results.json"
+        
+        output_file = Path(output_path)
+        output_file.parent.mkdir(exist_ok=True, parents=True)
+        
+        # Calculate summary statistics
+        successful = [r for r in results if r.get("success", False)]
+        failed = len(results) - len(successful)
+        
+        output_data = {
+            "timestamp": time.time(),
+            "total_experiments": len(results),
+            "successful": len(successful),
+            "failed": failed,
+            "strategies": [s.name for s in ALL_STRATEGIES],
+            "compression_ratios": self.get_compression_ratios(),
+            "results": results
+        }
+        
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+        
+        print(f"\n✅ Results saved to {output_file}")
+        print(f"   Successful: {len(successful)}")
+        print(f"   Failed: {failed}")
+
+
+async def main():
+    """Main entry point for running experiments."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Run summarization length targeting experiments")
+    parser.add_argument("--sample", type=int, help="Sample size (default: use all chunks)")
+    parser.add_argument("--output", help="Output file path")
+    parser.add_argument("--max-concurrent", type=int, default=10,
+                       help="Maximum concurrent API requests (default: 10)")
+    
+    args = parser.parse_args()
+    
+    # Create runner
+    runner = ExperimentRunner(max_concurrent=args.max_concurrent)
+    
+    # Run experiments
+    print("🚀 Starting summarization experiments...")
+    start_time = time.time()
+    
+    results = await runner.run_all_experiments(sample_size=args.sample)
+    
+    elapsed = time.time() - start_time
+    print(f"\n⏱️  Experiments completed in {elapsed:.1f} seconds")
+    
+    # Save results
+    runner.save_results(results, args.output)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
