@@ -131,6 +131,37 @@ class SimpleMockStore:
         # Update mock session results
         self._update_mock_results()
 
+    def add_nodes_batch(self, nodes_data: list[dict]) -> list[SimpleNamespace]:
+        """Add multiple nodes in batch - mock implementation."""
+        created_nodes = []
+        for data in nodes_data:
+            # Create node using add_node for consistency
+            self.add_node(
+                node_id=data["node_id"],
+                text=data["text"],
+                embedding=data["embedding"],
+                span_start=data["span_start"],
+                span_end=data["span_end"],
+                parent_id=data.get("parent_id"),
+                left_child_id=data.get("left_child_id"),
+                right_child_id=data.get("right_child_id"),
+                document_id=data.get("document_id"),
+                token_count=data.get("token_count"),
+            )
+            created_nodes.append(self.nodes[data["node_id"]])
+        return created_nodes
+
+    def update_parent_references_batch(self, updates: list[tuple[str, str]]) -> None:
+        """Update parent references in batch - mock implementation."""
+        for child_id, parent_id in updates:
+            if child_id in self.nodes:
+                self.nodes[child_id].parent_id = parent_id
+                # Invalidate cache for updated node
+                if child_id in self.node_cache:
+                    del self.node_cache[child_id]
+                    if child_id in self.cache_order:
+                        self.cache_order.remove(child_id)
+
     def get_node(self, node_id: str) -> SimpleNamespace | None:
         """Get a node by ID."""
         # Check cache first
