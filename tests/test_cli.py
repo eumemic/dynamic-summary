@@ -365,7 +365,7 @@ class TestCLI:
                 result = runner.invoke(cli, ["index", temp_file])
 
                 assert result.exit_code == 0
-                assert "Clearing any existing data" in result.output
+                assert "Clearing existing data" in result.output
                 assert "Cleared 5 nodes" in result.output
                 assert "Document indexed successfully!" in result.output
 
@@ -398,8 +398,8 @@ class TestCLI:
                 result = runner.invoke(cli, ["index", temp_file])
 
                 assert result.exit_code == 0
-                # Should still show clearing message (automatic)
-                assert "Clearing any existing data" in result.output
+                # Should NOT show clearing message when no nodes exist
+                assert "Clearing existing data" not in result.output
                 assert "Document indexed successfully!" in result.output
 
                 # Verify clear_document was called (automatic clearing)

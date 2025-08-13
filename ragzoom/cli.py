@@ -203,9 +203,9 @@ def index(
             document_id = path.name
 
         # Always clear existing data for the document (handles both complete and interrupted indexing)
-        click.echo(f"Clearing any existing data for '{document_id}'...")
         deleted_count = store.clear_document(document_id)
         if deleted_count > 0:
+            click.echo(f"Clearing existing data for '{document_id}'...")
             click.echo(f"   Cleared {deleted_count} nodes")
 
         click.echo(f"Indexing {path.name}...")

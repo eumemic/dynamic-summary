@@ -209,9 +209,7 @@ class TestAutomaticClearing:
 
                         assert result.exit_code == 0
                         # Should show clearing message for existing data
-                        assert (
-                            "Clearing" in result.output or "clearing" in result.output
-                        )
+                        assert "Clearing existing data" in result.output
 
             # Verify all nodes were deleted
             with store.SessionLocal() as session:
