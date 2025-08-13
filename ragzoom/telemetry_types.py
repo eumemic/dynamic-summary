@@ -65,6 +65,7 @@ class NodeTelemetryDict(TypedDict):
     created_at: float
 
     # Optional fields
+    span: NotRequired[tuple[int, int]]  # Document character positions (start, end)
     embedding: NotRequired[EmbeddingTelemetryDict]
     summary_attempts: NotRequired[list[SummaryAttemptDict]]
     accepted_attempt: NotRequired[int]  # Index of the accepted attempt

@@ -278,8 +278,8 @@ class TestTelemetryIntegration:
         # Get final telemetry data
         telemetry_data = reporter.finalize()
 
-        # Verify telemetry was collected (v4.1 format)
-        assert telemetry_data["format_version"] == "4.1"
+        # Verify telemetry was collected (v4.2 format)
+        assert telemetry_data["format_version"] == "4.2"
         assert telemetry_data["document_id"] == "telemetry-test"
         assert "nodes" in telemetry_data
 
