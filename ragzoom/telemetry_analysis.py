@@ -31,7 +31,7 @@ from ragzoom.telemetry_types import (
 logger = logging.getLogger(__name__)
 
 # Current supported telemetry format versions
-SUPPORTED_TELEMETRY_VERSIONS = ["3.0", "3.1", "4.1"]
+SUPPORTED_TELEMETRY_VERSIONS = ["3.0", "3.1", "4.1", "4.2"]
 
 # Default token estimate for leaf nodes when source tokens are not available
 # This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
@@ -857,7 +857,7 @@ def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
         )
 
     # Return current versions as-is
-    if format_version in ["3.0", "3.1", "4.1"]:
+    if format_version in ["3.0", "3.1", "4.1", "4.2"]:
         result: TelemetryDataDict = telemetry_data  # type: ignore
         return result
 

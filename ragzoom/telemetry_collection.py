@@ -43,9 +43,12 @@ logger = logging.getLogger(__name__)
 #   - Added model_metadata for complete model information
 #   - Added system_prompts used during indexing
 #   - Added runtime_info for environment details
+# - 4.2: Re-added span fields:
+#   - Added span_start and span_end from actual TreeNode data
+#   - These are the real character positions from the document
 #
 # Current format version (increment for breaking changes)
-TELEMETRY_FORMAT_VERSION = "4.1"
+TELEMETRY_FORMAT_VERSION = "4.2"
 
 
 @dataclass
@@ -128,6 +131,9 @@ class NodeTelemetry:
     node_id: str
     height: int
 
+    # Document span (character positions)
+    span: tuple[int, int] | None = None
+
     # Embedding telemetry
     embedding: EmbeddingTelemetry | None = None
 
@@ -153,6 +159,10 @@ class NodeTelemetry:
             "height": self.height,
             "created_at": self.created_at,
         }
+
+        # Add span if present
+        if self.span is not None:
+            result["span"] = self.span
 
         # Add input_text_tokens at node level if present
         if self.input_text_tokens is not None:
@@ -281,16 +291,19 @@ class TelemetryCollector:
         self,
         node_id: str,
         height: int,
+        span: tuple[int, int] | None = None,
     ) -> None:
         """Track when a node is created (before any API calls).
 
         Args:
             node_id: Unique identifier for the node
             height: Tree height (0 = leaves)
+            span: Character positions in document (start, end)
         """
         telemetry = NodeTelemetry(
             node_id=node_id,
             height=height,
+            span=span,
         )
         self.node_telemetry[node_id] = telemetry
 

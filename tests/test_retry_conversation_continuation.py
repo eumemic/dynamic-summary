@@ -322,10 +322,9 @@ async def test_passthrough_for_text_under_target(mock_store):
     assert retry_count == 0
     assert summary == "Short Text"
 
-    # Verify telemetry - passthrough nodes no longer record attempts
+    # Verify telemetry - passthrough nodes now record attempts for visualization
     data = reporter.get_telemetry_data("test_doc", config.target_chunk_tokens)
-    # Passthrough nodes should not have summary_attempts
-    assert (
-        "summary_attempts" not in data["nodes"][0]
-        or data["nodes"][0]["summary_attempts"] == []
-    )
+    # Passthrough nodes should have summary_attempts with model="passthrough"
+    assert "summary_attempts" in data["nodes"][0]
+    assert len(data["nodes"][0]["summary_attempts"]) == 1
+    assert data["nodes"][0]["summary_attempts"][0]["model"] == "passthrough"

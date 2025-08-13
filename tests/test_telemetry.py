@@ -84,9 +84,8 @@ class TestTelemetryCollection:
         assert "leaf-1" in reporter.node_telemetry
         node = reporter.node_telemetry["leaf-1"]
         assert node.height == 0
-        # Verify span fields removed
-        assert not hasattr(node, "span_start")
-        assert not hasattr(node, "span_end")
+        # Verify node is tracked
+        assert node.node_id == "leaf-1"
         # Verify node_type field removed
         assert not hasattr(node, "node_type")
 
@@ -279,8 +278,8 @@ class TestTelemetryIntegration:
         # Get final telemetry data
         telemetry_data = reporter.finalize()
 
-        # Verify telemetry was collected (v4.1 format)
-        assert telemetry_data["format_version"] == "4.1"
+        # Verify telemetry was collected (v4.2 format)
+        assert telemetry_data["format_version"] == "4.2"
         assert telemetry_data["document_id"] == "telemetry-test"
         assert "nodes" in telemetry_data
 
