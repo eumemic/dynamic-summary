@@ -881,7 +881,7 @@ class Store:
             # Add the new columns with default values
             # Use the current default models from config as fallback
             default_embedding_model = "text-embedding-3-small"
-            default_summary_model = "gpt-4o"
+            default_summary_model = "gpt-5-nano"
 
             # Check which columns are missing and add them
             result = conn.execute(text("PRAGMA table_info(documents)"))

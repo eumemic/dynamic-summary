@@ -1195,7 +1195,7 @@ def compute_metrics_from_telemetry(telemetry_data: dict) -> ComputedMetrics:
     # Get models from telemetry for cost calculations
     models = telemetry_data.get("models", {})
     embedding_model = models.get("embedding", "text-embedding-3-small")
-    summary_model = models.get("summary", "gpt-4o")
+    summary_model = models.get("summary", "gpt-5-nano")
 
     # Get costs using helper functions
     embedding_cost_per_1k = get_embedding_cost(embedding_model)
