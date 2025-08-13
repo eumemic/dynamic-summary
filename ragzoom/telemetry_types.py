@@ -65,7 +65,9 @@ class NodeTelemetryDict(TypedDict):
     created_at: float
 
     # Optional fields
-    span: NotRequired[tuple[int, int]]  # Document character positions (start, end)
+    span: NotRequired[
+        tuple[int, int]
+    ]  # Document character positions (start, end) - reintroduced in v4.2
     embedding: NotRequired[EmbeddingTelemetryDict]
     summary_attempts: NotRequired[list[SummaryAttemptDict]]
     accepted_attempt: NotRequired[int]  # Index of the accepted attempt
@@ -76,7 +78,6 @@ class NodeTelemetryDict(TypedDict):
     # v1 compatibility fields
     node_type: NotRequired[Literal["leaf", "summary"]]
     level: NotRequired[int]  # renamed to height in v2
-    span: NotRequired[list[int]]  # removed in v2
 
 
 # Document metadata types
