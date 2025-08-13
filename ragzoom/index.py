@@ -1222,8 +1222,10 @@ Here's the content to summarize:"""
                     # For odd nodes (single child), only update by 1
                     if progress:
                         # Check if this is an odd node (has None for right child)
-                        # Note: This assumes task_index matches pair_info index, which is true
-                        # because we enumerate tracked_tasks in the same order as tasks were created
+                        # task_index comes from enumerate(tasks) and corresponds to the position
+                        # in both the tasks list and pair_info list (created in the same loop).
+                        # Even though tasks complete out of order due to parallel execution,
+                        # each task's index is captured in its closure when track_progress is created.
                         if (
                             task_index < len(pair_info)
                             and pair_info[task_index][1] is None
