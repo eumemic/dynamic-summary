@@ -27,7 +27,6 @@ ragzoom index <input> [OPTIONS]
 
 **Options:**
 - `--document-id, -d` - Unique document identifier (default: filename)
-- `--clear` - Clear existing document before indexing
 - `--no-progress` - Disable progress bar
 - `--max-concurrent` - Maximum concurrent API calls (default: 10)
 - `--validate` - Enable validation checks during indexing
@@ -42,8 +41,8 @@ ragzoom index document.txt
 # Index with custom document ID
 ragzoom index document.txt --document-id my-doc
 
-# Re-index a document (clear then index)
-ragzoom index document.txt --clear
+# Re-index a document (automatically clears existing data)
+ragzoom index document.txt
 
 # Index with validation
 ragzoom index document.txt --validate
