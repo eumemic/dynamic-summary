@@ -13,7 +13,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from ragzoom.config import IndexConfig, is_gpt5_model
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.splitter import TextSplitter
-from ragzoom.store import Store
+from ragzoom.store import Store, TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
 
 logger = logging.getLogger(__name__)
@@ -885,21 +885,28 @@ Here's the content to summarize:"""
                 if async_progress:
                     await async_progress.update(len(batch_texts))
 
-            # Store all leaf nodes
+            # Prepare all leaf nodes for batch insertion
+            leaf_nodes_data = []
             for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
                 text = cast(str, data["text"])
                 # Count tokens for leaf nodes using tiktoken
                 token_count = len(self.splitter.tokenizer.encode(text))
 
-                self.store.add_node(
-                    node_id=cast(str, data["id"]),
-                    text=text,
-                    embedding=embedding,
-                    span_start=cast(int, data["span_start"]),
-                    span_end=cast(int, data["span_end"]),
-                    document_id=document_id,
-                    token_count=token_count,
+                leaf_nodes_data.append(
+                    {
+                        "node_id": cast(str, data["id"]),
+                        "text": text,
+                        "embedding": embedding,
+                        "span_start": cast(int, data["span_start"]),
+                        "span_end": cast(int, data["span_end"]),
+                        "document_id": document_id,
+                        "token_count": token_count,
+                    }
                 )
+
+            # Batch insert all leaf nodes at once
+            if leaf_nodes_data:
+                self.store.add_nodes_batch(leaf_nodes_data)
 
             # Add document record
             if not existing_doc:
@@ -1032,13 +1039,21 @@ Here's the content to summarize:"""
         prev_context: str | None,
         document_id: str | None,
         reporter: TelemetryCollector | None = None,
-    ) -> tuple[str, str, list[float]]:
-        """Process a single node pair - generate summary and embedding."""
+        left_node: TreeNode | None = None,  # Pre-fetched node data
+        right_node: TreeNode | None = None,  # Pre-fetched node data
+    ) -> dict[str, Any]:
+        """Process a single node pair - generate summary and embedding.
+
+        Returns:
+            Dictionary containing node data and parent updates to be applied later
+        """
         parent_id = self._generate_node_id()
 
-        # Get node data for span information
-        left_node = self.store.get_node(left_id)
-        right_node = self.store.get_node(right_id) if right_id else None
+        # Use pre-fetched nodes if provided, otherwise fetch them
+        if left_node is None:
+            left_node = self.store.get_node(left_id)
+        if right_id and right_node is None:
+            right_node = self.store.get_node(right_id)
 
         if not left_node:
             logger.error(f"Failed to retrieve left child node: {left_id}")
@@ -1073,54 +1088,35 @@ Here's the content to summarize:"""
             reporter=reporter,
         )
 
-        # Get embedding for the summary
-        start_time = time.time()
-        embedding = await self._get_embedding(summary)
+        # Embedding will be generated in batch after all summaries are collected
+        # This avoids 183 individual API calls for a typical level
 
-        # Track embedding for parent node
-        if reporter and parent_id:
-            # Use the actual token count from the API for telemetry
-            reporter.record_embedding_call_v2(
-                node_embeddings=[(parent_id, token_count)],
-                batch_size=1,
-                model=self.config.embedding_model,
-                start_time=start_time,
-            )
-
-        # Store the node data with the actual token count
-        self.store.add_node(
-            node_id=parent_id,
-            text=summary,
-            embedding=embedding,
-            span_start=left_node.span_start,
-            span_end=right_node.span_end if right_node else left_node.span_end,
-            left_child_id=left_id,
-            right_child_id=right_id,  # Can be None
-            document_id=document_id,
-            token_count=token_count,
-        )
-
-        # Update children's parent references
-        self._update_parent_reference(left_id, parent_id)
-        if right_id:
-            self._update_parent_reference(right_id, parent_id)
-
-        # Early validation: Check tree structure immediately after creating parent
-        from ragzoom.validate import validate
-
-        def check_parent_structure() -> str | None:
-            # Check span validity
-            if right_node and left_node.span_start >= right_node.span_end:
-                return f"Invalid parent span: left child starts at {left_node.span_start}, right child ends at {right_node.span_end}"
-
-            # Skip gap check in early validation - we'll check it properly in final validation
-            # where we have access to the original text to verify if gaps are just whitespace
-
-            return None
-
-        validate(check_parent_structure, f"tree structure for parent {parent_id}")
-
-        return parent_id, summary, embedding
+        # Return data to be stored later in batch
+        return {
+            "node_data": {
+                "node_id": parent_id,
+                "text": summary,
+                "embedding": None,  # Will be filled in after batch generation
+                "span_start": left_node.span_start,
+                "span_end": right_node.span_end if right_node else left_node.span_end,
+                "left_child_id": left_id,
+                "right_child_id": right_id,  # Can be None
+                "document_id": document_id,
+                "token_count": token_count,
+            },
+            "parent_updates": [
+                (left_id, parent_id),
+                (right_id, parent_id) if right_id else None,
+            ],
+            "parent_id": parent_id,
+            "summary": summary,
+            "token_count": token_count,  # Pass token count for telemetry
+            # Store validation data for later
+            "validation_data": {
+                "left_span_start": left_node.span_start,
+                "right_span_end": right_node.span_end if right_node else None,
+            },
+        }
 
     async def _build_tree_from_leaves(
         self,
@@ -1147,9 +1143,13 @@ Here's the content to summarize:"""
 
         current_height = 1  # Track height for logging (leaves are at height 0)
         while len(current_level_ids) > 1:
-            next_level_ids = []
-            next_level_texts = []
+            next_level_ids: list[str] = []
+            next_level_texts: list[str] = []
             # Note: current_height will be incremented after processing this height
+
+            # Pre-fetch all nodes for this level to avoid individual DB queries in tasks
+            all_nodes = self.store.get_nodes(current_level_ids)
+            nodes_by_id = {node.id: node for node in all_nodes}
 
             # Process pairs concurrently
             tasks = []
@@ -1181,7 +1181,11 @@ Here's the content to summarize:"""
                         current_level_texts, pair_info[-1][0] - 1
                     )
 
-                # Create async task
+                # Get pre-fetched nodes
+                left_node = nodes_by_id.get(left_id)
+                right_node = nodes_by_id.get(right_id) if right_id else None
+
+                # Create async task with pre-fetched nodes
                 task = self._process_node_pair(
                     left_id,
                     left_text,
@@ -1190,6 +1194,8 @@ Here's the content to summarize:"""
                     prev_context,
                     document_id,
                     reporter,
+                    left_node=left_node,
+                    right_node=right_node,
                 )
                 tasks.append(task)
 
@@ -1258,10 +1264,63 @@ Here's the content to summarize:"""
                 # Process all tasks concurrently (semaphore already controls parallelism)
                 results = await asyncio.gather(*tracked_tasks)
 
-                # Add the parent nodes to next height
-                for parent_id, summary, _ in results:
-                    next_level_ids.append(parent_id)
-                    next_level_texts.append(summary)
+                # Batch generate embeddings for all summaries at this level
+                # This avoids individual API calls per node (e.g., 183 calls → 3 batch calls)
+                summaries = [r["summary"] for r in results]
+
+                start_time = time.time()
+                embeddings = await self._get_embeddings_batch(summaries)
+
+                # Track batch embedding call for telemetry
+                if reporter:
+                    node_embeddings = []
+                    for result in results:
+                        # Use the token count from summarization
+                        token_count = result.get(
+                            "token_count",
+                            len(self.splitter.tokenizer.encode(result["summary"])),
+                        )
+                        node_embeddings.append((result["parent_id"], token_count))
+
+                    reporter.record_embedding_call_v2(
+                        node_embeddings=node_embeddings,
+                        batch_size=len(summaries),
+                        model=self.config.embedding_model,
+                        start_time=start_time,
+                    )
+
+                # Update results with the generated embeddings
+                for result, embedding in zip(results, embeddings):
+                    result["node_data"]["embedding"] = embedding
+
+                # Extract data for batch processing
+                nodes_to_add = []
+                parent_updates = []
+                next_level_ids = []
+                next_level_texts = []
+
+                for result in results:
+                    # Add node data for batch insertion
+                    nodes_to_add.append(result["node_data"])
+
+                    # Collect parent updates
+                    for update in result["parent_updates"]:
+                        if (
+                            update is not None
+                        ):  # Skip None updates (for nodes without right child)
+                            parent_updates.append(update)
+
+                    # Track IDs and texts for next level
+                    next_level_ids.append(result["parent_id"])
+                    next_level_texts.append(result["summary"])
+
+                # Batch store all nodes for this level
+                if nodes_to_add:
+                    self.store.add_nodes_batch(nodes_to_add)
+
+                # Batch update all parent references
+                if parent_updates:
+                    self.store.update_parent_references_batch(parent_updates)
 
             current_level_ids = next_level_ids
             current_level_texts = next_level_texts
