@@ -73,6 +73,9 @@ class TestCLI:
             store_instance.get_pinned_nodes.return_value = []
             store_instance.collection.count.return_value = 10
             store_instance.get_node_height.return_value = 3
+            store_instance.clear_document.return_value = (
+                0  # Default to no nodes cleared
+            )
 
             # Mock SessionLocal for database queries
             mock_session = Mock()
@@ -335,8 +338,8 @@ class TestCLI:
                 # The actual API key validation happens in the components, not CLI init
                 assert result.exit_code == 0 or result.exception is not None
 
-    def test_index_with_clear(self, runner, mock_ragzoom):
-        """Test indexing with --clear option."""
+    def test_index_with_automatic_clearing(self, runner, mock_ragzoom):
+        """Test that indexing automatically clears existing data."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Test content for clear.")
             temp_file = f.name
@@ -356,30 +359,25 @@ class TestCLI:
             mock_ragzoom[
                 "store_instance"
             ].SessionLocal.return_value.__enter__.return_value = mock_session
-            mock_ragzoom["store_instance"].delete_document_nodes.return_value = 5
+            mock_ragzoom["store_instance"].clear_document.return_value = 5
 
             with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(cli, ["index", temp_file, "--clear"])
+                result = runner.invoke(cli, ["index", temp_file])
 
                 assert result.exit_code == 0
-                assert (
-                    f"Clearing existing document '{os.path.basename(temp_file)}'"
-                    in result.output
-                )
+                assert "Clearing existing data" in result.output
                 assert "Cleared 5 nodes" in result.output
                 assert "Document indexed successfully!" in result.output
 
-                # Verify delete_document_nodes was called
-                mock_ragzoom[
-                    "store_instance"
-                ].delete_document_nodes.assert_called_once_with(
+                # Verify clear_document was called
+                mock_ragzoom["store_instance"].clear_document.assert_called_once_with(
                     os.path.basename(temp_file)
                 )
         finally:
             os.unlink(temp_file)
 
-    def test_index_with_clear_no_existing(self, runner, mock_ragzoom):
-        """Test indexing with --clear when document doesn't exist."""
+    def test_index_automatic_clearing_no_nodes(self, runner, mock_ragzoom):
+        """Test that automatic clearing works when no nodes exist."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Test content.")
             temp_file = f.name
@@ -394,17 +392,18 @@ class TestCLI:
             mock_ragzoom[
                 "store_instance"
             ].SessionLocal.return_value.__enter__.return_value = mock_session
+            mock_ragzoom["store_instance"].clear_document.return_value = 0
 
             with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(cli, ["index", temp_file, "--clear"])
+                result = runner.invoke(cli, ["index", temp_file])
 
                 assert result.exit_code == 0
-                # Should not show clearing message
-                assert "Clearing existing document" not in result.output
+                # Should NOT show clearing message when no nodes exist
+                assert "Clearing existing data" not in result.output
                 assert "Document indexed successfully!" in result.output
 
-                # Verify delete_document_nodes was NOT called
-                mock_ragzoom["store_instance"].delete_document_nodes.assert_not_called()
+                # Verify clear_document was called (automatic clearing)
+                mock_ragzoom["store_instance"].clear_document.assert_called_once()
         finally:
             os.unlink(temp_file)
 
@@ -439,7 +438,7 @@ class TestCLI:
         mock_ragzoom[
             "store_instance"
         ].SessionLocal.return_value.__enter__.return_value = mock_session
-        mock_ragzoom["store_instance"].delete_document_nodes.return_value = 10
+        mock_ragzoom["store_instance"].clear_document.return_value = 10
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
             result = runner.invoke(
@@ -449,28 +448,38 @@ class TestCLI:
             assert result.exit_code == 0
             assert "Cleared document 'test-doc' (10 nodes deleted)" in result.output
 
-            # Verify delete_document_nodes was called
-            mock_ragzoom[
-                "store_instance"
-            ].delete_document_nodes.assert_called_once_with("test-doc")
+            # Verify clear_document was called
+            mock_ragzoom["store_instance"].clear_document.assert_called_once_with(
+                "test-doc"
+            )
 
-    def test_clear_document_not_found(self, runner, mock_ragzoom):
-        """Test clearing a non-existent document."""
-        # Mock document doesn't exist
+    def test_clear_document_with_orphaned_nodes(self, runner, mock_ragzoom):
+        """Test clearing orphaned nodes (no Document record)."""
+        # Mock no document record but nodes exist
         mock_session = MagicMock()
         mock_session.query.return_value.filter_by.return_value.first.return_value = None
 
         mock_ragzoom[
             "store_instance"
         ].SessionLocal.return_value.__enter__.return_value = mock_session
+        mock_ragzoom["store_instance"].clear_document.return_value = (
+            248  # orphaned nodes
+        )
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
             result = runner.invoke(
-                cli, ["clear", "--document-id", "non-existent", "--confirm"]
+                cli, ["clear", "--document-id", "orphaned-doc", "--confirm"]
             )
 
-            assert result.exit_code == 1
-            assert "Document 'non-existent' not found" in result.output
+            assert result.exit_code == 0
+            assert (
+                "Cleared document 'orphaned-doc' (248 nodes deleted)" in result.output
+            )
+
+            # Verify clear_document was called even without Document record
+            mock_ragzoom["store_instance"].clear_document.assert_called_once_with(
+                "orphaned-doc"
+            )
 
     def test_clear_all_data(self, runner, mock_ragzoom):
         """Test clearing all data."""
