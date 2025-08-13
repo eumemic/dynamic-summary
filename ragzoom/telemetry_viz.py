@@ -1077,88 +1077,37 @@ class TelemetryVisualizer:
         # Define retry attempt colors (1=blue, 2=green, 3=yellow, 4=orange, 5+=red)
         attempt_colors = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#991b1b"]
 
-        # Calculate spans from token counts - don't modify nodes!
-        # Group nodes by height first
-        nodes_by_height: dict[int, list] = {}
-        for node in nodes:
-            height = node.get("height", 0)
-            if height not in nodes_by_height:
-                nodes_by_height[height] = []
-            nodes_by_height[height].append(node)
-
-        # Calculate spans externally based on token counts
+        # Only show visualization if we have real spans from telemetry
         node_spans = {}  # node_id -> (start, end)
-        chars_per_token = 4  # Rough estimate
 
-        # Process leaves first - derive spans from embedding.text_tokens
-        leaves = nodes_by_height.get(0, [])
-        position = 0
-        for leaf in leaves:
-            embedding = leaf.get("embedding")
-            if not embedding or "text_tokens" not in embedding:
-                raise ValueError(
-                    f"Node {leaf.get('node_id', 'unknown')} missing embedding.text_tokens - cannot calculate spans"
-                )
+        # Check if we have real spans from telemetry
+        has_real_spans = all(node.get("span") is not None for node in nodes)
 
-            tokens = embedding["text_tokens"]
-            chars = tokens * chars_per_token
-            node_spans[leaf["node_id"]] = (position, position + chars)
-            position += chars
-
-        # Process parents using left-balanced tree structure
-        for height in (
-            range(1, max(nodes_by_height.keys()) + 1) if nodes_by_height else range(0)
-        ):
-            parents = nodes_by_height.get(height, [])
-            children = nodes_by_height.get(height - 1, [])
-
-            if not children:
-                continue
-
-            # Sort children by their span start position
-            children_sorted = sorted(
-                children, key=lambda c: node_spans.get(c["node_id"], (0, 0))[0]
+        if not has_real_spans:
+            # Don't show visualization without real spans
+            ax.text(
+                0.5,
+                0.5,
+                "Tree Construction Timeline not available\n(telemetry format too old - missing span data)",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=10,
+                color="gray",
             )
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.spines["bottom"].set_visible(False)
+            ax.spines["left"].set_visible(False)
+            return
 
-            # Sort parents by creation time to maintain pairing order
-            parents_sorted = sorted(parents, key=lambda p: p.get("created_at", 0))
-
-            num_children = len(children_sorted)
-            has_single = num_children % 2 == 1
-
-            for i, parent in enumerate(parents_sorted):
-                # Calculate which children this parent covers (left-balanced)
-                if has_single and i == 0:
-                    # First parent gets single child
-                    child_ids = [children_sorted[0]["node_id"]]
-                else:
-                    # Regular pairing
-                    offset = 1 if has_single else 0
-                    adj_i = i - offset if has_single and i > 0 else i
-                    start_idx = offset + adj_i * 2
-                    end_idx = min(offset + (adj_i + 1) * 2, num_children)
-                    child_ids = [
-                        children_sorted[j]["node_id"] for j in range(start_idx, end_idx)
-                    ]
-
-                # Parent span = union of child spans
-                if not child_ids:
-                    raise ValueError(
-                        f"Parent {parent.get('node_id', 'unknown')} has no children assigned"
-                    )
-
-                child_spans = []
-                for cid in child_ids:
-                    if cid not in node_spans:
-                        raise ValueError(
-                            f"Child {cid} of parent {parent.get('node_id', 'unknown')} has no calculated span"
-                        )
-                    child_spans.append(node_spans[cid])
-
-                node_spans[parent["node_id"]] = (
-                    min(s[0] for s in child_spans),
-                    max(s[1] for s in child_spans),
-                )
+        # Use the real spans from TreeNode data
+        for node in nodes:
+            span = node.get("span")
+            if span:
+                node_spans[node["node_id"]] = tuple(span)
 
         # Track min/max for axis limits
         min_time = None
