@@ -343,7 +343,7 @@ mypy ragzoom/
 
 # Telemetry analysis
 ragzoom-telemetry analyze telemetry.json
-ragzoom-telemetry compare baseline.json current.json --output-format markdown
+ragzoom-telemetry compare baseline.json current.json
 ragzoom-telemetry visualize baseline.json current.json -o comparison.png
 
 # Git hooks (automatically installed by setup script)

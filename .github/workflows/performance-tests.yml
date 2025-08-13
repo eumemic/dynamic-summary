@@ -487,7 +487,7 @@ jobs:
               # Run comparison and capture both output and exit code
               # Use set +e to prevent immediate exit on error
               set +e
-              ragzoom-telemetry compare baseline_results/ benchmark_results/ --output-format markdown > report.md 2>&1
+              ragzoom-telemetry compare baseline_results/ benchmark_results/ > report.md 2>&1
               comparison_exit_code=$?
               set -e
               
@@ -498,7 +498,7 @@ jobs:
               echo "📊 Running single-file benchmark comparison (legacy mode)..."
               # Run comparison and capture both output and exit code
               set +e
-              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json --output-format markdown > report.md 2>&1
+              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json > report.md 2>&1
               comparison_exit_code=$?
               set -e
               
