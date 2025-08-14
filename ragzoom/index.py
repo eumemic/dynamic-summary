@@ -887,6 +887,8 @@ Here's the content to summarize:"""
 
             # Prepare all leaf nodes for batch insertion
             leaf_nodes_data = []
+            preceding_leaf_id = None  # Track preceding leaf for document order
+
             for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
                 text = cast(str, data["text"])
                 # Count tokens for leaf nodes using tiktoken
@@ -901,8 +903,12 @@ Here's the content to summarize:"""
                         "span_end": cast(int, data["span_end"]),
                         "document_id": document_id,
                         "token_count": token_count,
+                        "preceding_neighbor_id": preceding_leaf_id,
                     }
                 )
+
+                # Update preceding ID for next iteration
+                preceding_leaf_id = cast(str, data["id"])
 
             # Batch insert all leaf nodes at once
             if leaf_nodes_data:
@@ -1299,7 +1305,13 @@ Here's the content to summarize:"""
                 next_level_ids = []
                 next_level_texts = []
 
+                # Track preceding node for this level
+                preceding_node_id = None
+
                 for result in results:
+                    # Add preceding neighbor ID to node data
+                    result["node_data"]["preceding_neighbor_id"] = preceding_node_id
+
                     # Add node data for batch insertion
                     nodes_to_add.append(result["node_data"])
 
@@ -1313,6 +1325,9 @@ Here's the content to summarize:"""
                     # Track IDs and texts for next level
                     next_level_ids.append(result["parent_id"])
                     next_level_texts.append(result["summary"])
+
+                    # Update preceding ID for next iteration
+                    preceding_node_id = result["parent_id"]
 
                 # Batch store all nodes for this level
                 if nodes_to_add:
