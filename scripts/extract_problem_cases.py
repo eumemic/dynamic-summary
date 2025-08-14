@@ -4,10 +4,15 @@
 import argparse
 import json
 import sqlite3
+import sys
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Optional
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from ragzoom.config import IndexConfig
 
 @dataclass
 class ProblemCase:
@@ -41,8 +46,9 @@ def extract_problem_cases(
     with open(telemetry_path) as f:
         telemetry = json.load(f)
     
-    config = telemetry.get("config", {})
-    target_tokens = config.get("target_chunk_tokens", 200)
+    config_dict = telemetry.get("config", {})
+    config = IndexConfig.from_dict(config_dict)
+    target_tokens = config.target_chunk_tokens
     
     # Get document ID from telemetry
     document_id = telemetry.get("document_id")
@@ -143,7 +149,7 @@ def extract_problem_cases(
             "extraction_date": datetime.now().isoformat(),
             "database_path": str(db_path),
             "telemetry_path": str(telemetry_path),
-            "config": config,  # Full config from telemetry
+            "config": config_dict,  # Save as dict for JSON serialization
             "total_problem_nodes": len(cases),
             "cases_included": len(selected_cases)
         },
