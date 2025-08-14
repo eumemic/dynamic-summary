@@ -5,7 +5,6 @@ import argparse
 import json
 import sqlite3
 from pathlib import Path
-from collections import defaultdict
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Optional
@@ -23,6 +22,7 @@ class ProblemCase:
     divergence: int
     divergence_pct: float
     document_id: Optional[str] = None
+    preceding_context: Optional[str] = None
 
 def extract_problem_cases(
     telemetry_path: Path,
@@ -61,17 +61,18 @@ def extract_problem_cases(
     query = """
     SELECT 
         n.*,
-        ABS(n.token_count - ?) as divergence,
+        (n.token_count - ?) as divergence,
         (n.token_count - ?) * 100.0 / ? as divergence_pct
     FROM tree_nodes n
     WHERE n.left_child_id IS NOT NULL  -- Non-leaf nodes only
       AND n.token_count IS NOT NULL
       AND n.document_id = ?  -- Only nodes from this document
-    ORDER BY divergence DESC
+    ORDER BY ABS(n.token_count - ?) DESC  -- Order by absolute divergence
     LIMIT 500  -- Get more than we need for sampling
     """
+    # Note: The * selector will automatically include preceding_neighbor_id if it exists
     
-    cursor = conn.execute(query, (target_tokens, target_tokens, target_tokens, document_id))
+    cursor = conn.execute(query, (target_tokens, target_tokens, target_tokens, document_id, target_tokens))
     problem_nodes = cursor.fetchall()
     
     # Build cases with full context
@@ -94,6 +95,21 @@ def extract_problem_cases(
         # Calculate height
         height = calculate_height(conn, node["id"])
         
+        # Get preceding context from the preceding neighbor node
+        preceding_context = None
+        try:
+            preceding_neighbor_id = node["preceding_neighbor_id"]
+            if preceding_neighbor_id:
+                preceding_node = get_node(conn, preceding_neighbor_id)
+                if preceding_node:
+                    preceding_context = preceding_node["text"]
+        except (KeyError, IndexError) as e:
+            # Column doesn't exist in this database yet
+            raise ValueError(
+                "Database does not have preceding_neighbor_id column. "
+                "Please re-index the document to populate this field."
+            ) from e
+        
         case = ProblemCase(
             node_id=node["id"],
             height=height,
@@ -104,15 +120,17 @@ def extract_problem_cases(
             target_tokens=target_tokens,
             divergence=node["divergence"],
             divergence_pct=node["divergence_pct"],
-            document_id=node["document_id"]
+            document_id=node["document_id"],
+            preceding_context=preceding_context
         )
         cases.append(case)
     
     if skipped_not_in_telemetry > 0:
         print(f"Warning: Skipped {skipped_not_in_telemetry} nodes not found in telemetry (likely from different run)")
     
-    # Sample diverse cases
-    sampled = sample_diverse_cases(cases, max_cases)
+    # Just take the top N most divergent cases
+    # They're already sorted by divergence from the SQL query
+    selected_cases = cases[:max_cases]
     
     # Prepare output filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -127,9 +145,9 @@ def extract_problem_cases(
             "telemetry_path": str(telemetry_path),
             "config": config,  # Full config from telemetry
             "total_problem_nodes": len(cases),
-            "cases_included": len(sampled)
+            "cases_included": len(selected_cases)
         },
-        "cases": [asdict(c) for c in sampled]
+        "cases": [asdict(c) for c in selected_cases]
     }
     
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -137,13 +155,14 @@ def extract_problem_cases(
         json.dump(output, f, indent=2)
     
     # Print summary
-    print(f"Extracted {len(sampled)} problem cases:")
-    print(f"  Verbatim (>150%): {sum(1 for c in sampled if c.divergence_pct > 150)}")
-    print(f"  Severe overshoot (50-150%): {sum(1 for c in sampled if 50 < c.divergence_pct <= 150)}")
-    print(f"  Severe undershoot (<-30%): {sum(1 for c in sampled if c.divergence_pct < -30)}")
+    print(f"Extracted {len(selected_cases)} problem cases (from {len(cases)} total):")
+    print(f"  Verbatim (>150%): {sum(1 for c in selected_cases if c.divergence_pct > 150)}")
+    print(f"  Severe overshoot (50-150%): {sum(1 for c in selected_cases if 50 < c.divergence_pct <= 150)}")
+    print(f"  Severe undershoot (<-30%): {sum(1 for c in selected_cases if c.divergence_pct < -30)}")
+    print(f"  Moderate (other): {sum(1 for c in selected_cases if -30 <= c.divergence_pct <= 50)}")
     print(f"  Output: {output_path}")
     
-    return sampled
+    return selected_cases
 
 def get_node(conn, node_id):
     """Get node from database."""
@@ -163,44 +182,6 @@ def calculate_height(conn, node_id):
     
     return 1 + max(left_height, right_height)
 
-def sample_diverse_cases(cases, max_cases):
-    """Sample to get diversity across heights and divergence types."""
-    
-    if len(cases) <= max_cases:
-        return cases
-    
-    # Categorize
-    categories = defaultdict(list)
-    for case in cases:
-        height_cat = "low" if case.height <= 2 else "mid" if case.height <= 4 else "high"
-        
-        if case.divergence_pct > 150:
-            problem = "verbatim"
-        elif case.divergence_pct > 50:
-            problem = "overshoot"
-        elif case.divergence_pct < -30:
-            problem = "undershoot"
-        else:
-            problem = "moderate"
-        
-        categories[f"{height_cat}_{problem}"].append(case)
-    
-    # Sample from each category
-    sampled = []
-    per_category = max(2, max_cases // len(categories))
-    
-    # Priority order
-    priority = ["high_verbatim", "mid_verbatim", "low_verbatim",
-                "high_overshoot", "mid_overshoot", "low_overshoot",
-                "high_undershoot", "mid_undershoot", "low_undershoot",
-                "high_moderate", "mid_moderate", "low_moderate"]
-    
-    for key in priority:
-        if key in categories and len(sampled) < max_cases:
-            take = min(per_category, len(categories[key]), max_cases - len(sampled))
-            sampled.extend(categories[key][:take])
-    
-    return sampled
 
 def main():
     parser = argparse.ArgumentParser()
