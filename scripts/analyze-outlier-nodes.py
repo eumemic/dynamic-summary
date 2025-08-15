@@ -41,7 +41,7 @@ class SummaryCase:
 class BadSummaryAnalyzer:
     """Analyze bad summaries with distribution testing."""
     
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, target_tokens: Optional[int] = None):
         """Initialize analyzer with database connection."""
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path)
@@ -52,18 +52,18 @@ class BadSummaryAnalyzer:
         if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set")
         
-        # Create default config (we'll get actual config from DB if possible)
-        self.config = IndexConfig.load(
-            target_chunk_tokens=200,  # Default, will be overridden
-            summary_model="gpt-5-nano"
-        )
-        
-        # Check if database has token_count column
+        # Check what columns the database has
         cursor = self.conn.execute("PRAGMA table_info(tree_nodes)")
         columns = [row[1] for row in cursor.fetchall()]
         self.has_token_count = "token_count" in columns
+        self.has_preceding_neighbor = "preceding_neighbor_id" in columns
         
-        if not self.has_token_count:
+        # Determine target token count
+        if target_tokens is not None:
+            # Use explicitly provided target
+            self.target_tokens = target_tokens
+            print(f"Using specified target token count: {self.target_tokens}")
+        elif not self.has_token_count:
             print("Warning: Database lacks token_count column. Using text length approximation.")
             self.target_tokens = 200  # Default target
         else:
@@ -80,8 +80,11 @@ class BadSummaryAnalyzer:
                 self.target_tokens = 200  # Ultimate fallback
                 print(f"Using default target token count: {self.target_tokens}")
         
-        # Update config with discovered target
-        self.config = self.config.replace(target_chunk_tokens=self.target_tokens)
+        # Create config with determined target
+        self.config = IndexConfig.load(
+            target_chunk_tokens=self.target_tokens,
+            summary_model="gpt-5-nano"
+        )
         
         # Create store and TreeBuilder
         operational_config = OperationalConfig(
@@ -410,6 +413,8 @@ async def main():
                        help="Number of worst cases to analyze (default: 10)")
     parser.add_argument("--nodes", type=str,
                        help="Specific node IDs to analyze (comma-separated, overrides --top)")
+    parser.add_argument("--target", type=int,
+                       help="Target token count (default: infer from leaf nodes)")
     parser.add_argument("--runs", type=int, default=10,
                        help="Number of test runs per case (default: 10)")
     parser.add_argument("--max-concurrent", type=int, default=5,
@@ -422,7 +427,7 @@ async def main():
         sys.exit(1)
     
     # Create analyzer
-    analyzer = BadSummaryAnalyzer(args.db)
+    analyzer = BadSummaryAnalyzer(args.db, target_tokens=args.target)
     
     # Get cases to analyze
     if args.nodes:
