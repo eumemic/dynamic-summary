@@ -73,6 +73,7 @@ Additional Options:
     - This ensures the exact same configuration as the baseline run
 
 Output Files:
+    <output-dir>/ragzoom.db           - SQLite database from indexing run
     <output-dir>/baseline_config.json - Config extracted from baseline
     <output-dir>/telemetry.json      - Telemetry data from current run
     <output-dir>/log.txt              - Full indexing logs with debug output
@@ -231,12 +232,14 @@ validate_path "$DOCUMENT" "document"
 TELEMETRY_FILE="$OUTPUT_DIR/telemetry.json"
 LOG_FILE="$OUTPUT_DIR/log.txt"
 VISUALIZATION_FILE="$OUTPUT_DIR/visualization.png"
+DATABASE_FILE="$OUTPUT_DIR/ragzoom.db"
 
 echo ""
 echo "🚀 Starting indexing benchmark..."
 echo "  Baseline: $BASELINE"
 echo "  Document: $DOCUMENT"
 echo "  Output directory: $OUTPUT_DIR"
+echo "  Database: $DATABASE_FILE"
 if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
     echo "  Additional options: ${EXTRA_ARGS[@]}"
 fi
@@ -250,6 +253,7 @@ echo "📝 Running indexing with telemetry..."
 INDEX_ARGS=(
     "$DOCUMENT"
     --telemetry "$TELEMETRY_FILE"
+    --database "$DATABASE_FILE"
     --validate
     --debug
     --no-progress
@@ -326,6 +330,7 @@ fi
 
 echo ""
 echo "🎉 Benchmark complete! Results:"
+echo "  - Database: $OUTPUT_DIR/ragzoom.db"
 echo "  - Telemetry: $OUTPUT_DIR/telemetry.json"
 echo "  - Log: $OUTPUT_DIR/log.txt"
 echo "  - Comparison report: $OUTPUT_DIR/comparison.md"
