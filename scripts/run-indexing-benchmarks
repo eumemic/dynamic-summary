@@ -14,6 +14,9 @@
 set -e  # Exit on error
 set -o pipefail  # Also exit on pipe failures
 
+# Generate timestamp for this run
+TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+
 # Check required dependencies
 check_dependencies() {
     local missing_deps=()
@@ -57,9 +60,24 @@ Usage: $0 [--baseline <baseline.json>] [--output-dir <dir>] [document] [options]
 
 Run indexing benchmarks with telemetry comparison and visualization.
 
+ITERATIVE WORKFLOW (recommended):
+    After the first run, each subsequent run automatically uses the previous run as baseline:
+    
+    # First run (needs telemetry-baseline.json or --baseline)
+    $0
+    
+    # Subsequent runs (each compares against previous)
+    $0 && open benchmarks/latest/visualization.png
+    
+    # Make code changes, then run again to see impact
+    $0 && open benchmarks/latest/visualization.png
+
 Options:
-    --baseline <file>      Baseline telemetry JSON file (default: ./telemetry-baseline.json)
-    --output-dir <dir>     Directory for output files (default: benchmarks/)
+    --baseline <file>      Baseline telemetry JSON file 
+                          Default: benchmarks/latest/telemetry.json (if exists)
+                          Fallback: ./telemetry-baseline.json
+    --output-dir <dir>     Directory for output files
+                          Default: benchmarks/<timestamp> (e.g., benchmarks/20250815_163448)
     --help                 Show this help message and exit
     
 Document:
@@ -72,19 +90,22 @@ Additional Options:
     - Extracts config from baseline and uses --config <baseline_config.json>
     - This ensures the exact same configuration as the baseline run
 
-Output Files:
-    <output-dir>/ragzoom.db           - SQLite database from indexing run
-    <output-dir>/baseline_config.json - Config extracted from baseline
-    <output-dir>/telemetry.json      - Telemetry data from current run
-    <output-dir>/log.txt              - Full indexing logs with debug output
-    <output-dir>/comparison.md        - Markdown comparison report
-    <output-dir>/visualization.png    - Visual side-by-side comparison chart
+Output Structure:
+    benchmarks/
+    ├── 20250815_163448/          # Timestamped run directory
+    │   ├── ragzoom.db            # SQLite database from indexing
+    │   ├── baseline_config.json  # Config extracted from baseline
+    │   ├── telemetry.json        # Telemetry data (becomes next baseline)
+    │   ├── log.txt               # Full indexing logs with debug output
+    │   ├── comparison.md         # Markdown comparison report
+    │   └── visualization.png     # Visual side-by-side comparison
+    └── latest/                   # Symlink to most recent run
 
 Examples:
-    $0                                              # Use all defaults
+    $0                                              # Use all defaults (iterative mode)
     $0 document.txt                                 # Override document only
     $0 --baseline other.json                        # Override baseline
-    $0 --output-dir results/ document.txt           # Custom output and document
+    $0 --output-dir custom/dir document.txt        # Custom output (disables latest symlink)
 
 EOF
     exit 0
@@ -92,9 +113,10 @@ EOF
 
 # Initialize variables
 BASELINE=""
-OUTPUT_DIR="benchmarks"  # Default output directory
+OUTPUT_DIR=""  # Will be set to benchmarks/<timestamp> by default
 DOCUMENT=""  # Will be auto-detected or provided
 EXTRA_ARGS=()
+USE_DEFAULT_OUTPUT=true  # Track if user provided custom output dir
 
 # Function to validate paths against injection
 validate_path() {
@@ -126,6 +148,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --output-dir)
             OUTPUT_DIR="$2"
+            USE_DEFAULT_OUTPUT=false
             shift 2
             ;;
         --document-id|--max-retries|--retry-threshold|--target-chunk-tokens|--preceding-context-tokens|--summary-model|--embedding-model|--embedding-batch-size)
@@ -151,14 +174,29 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Set default output directory if not provided
+if [ "$USE_DEFAULT_OUTPUT" = true ]; then
+    OUTPUT_DIR="benchmarks/${TIMESTAMP}"
+    echo "Using timestamped output directory: $OUTPUT_DIR"
+fi
+
 # Check for default baseline if not provided
 if [ -z "$BASELINE" ]; then
-    if [ -f "./telemetry-baseline.json" ]; then
+    # First check for previous run in benchmarks/latest
+    if [ -f "benchmarks/latest/telemetry.json" ]; then
+        BASELINE="benchmarks/latest/telemetry.json"
+        echo "Using previous run as baseline: $BASELINE"
+    elif [ -f "./telemetry-baseline.json" ]; then
         BASELINE="./telemetry-baseline.json"
         echo "Using default baseline: $BASELINE"
     else
-        echo "Error: No baseline specified and ./telemetry-baseline.json not found"
-        echo "Usage: $0 [--baseline <baseline.json>] [--output-dir <dir>] [document] [options]"
+        echo "Error: No baseline specified and no previous run or telemetry-baseline.json found"
+        echo ""
+        echo "For first run, either:"
+        echo "  1. Create a baseline: python -m ragzoom.cli index <document> --telemetry telemetry-baseline.json"
+        echo "  2. Specify an existing baseline: $0 --baseline <baseline.json> ..."
+        echo ""
+        echo "After first run, subsequent runs will automatically use the previous run as baseline."
         exit 1
     fi
 fi
@@ -329,9 +367,30 @@ else
 fi
 
 echo ""
+
+# Update latest symlink if using default output structure
+if [ "$USE_DEFAULT_OUTPUT" = true ]; then
+    # Create benchmarks directory if it doesn't exist
+    mkdir -p benchmarks
+    
+    # Update the latest symlink
+    # Use relative path for the symlink target to make it portable
+    (cd benchmarks && ln -sfn "${TIMESTAMP}" latest)
+    
+    echo "📎 Updated benchmarks/latest symlink → $OUTPUT_DIR"
+    echo ""
+fi
+
 echo "🎉 Benchmark complete! Results:"
 echo "  - Database: $OUTPUT_DIR/ragzoom.db"
 echo "  - Telemetry: $OUTPUT_DIR/telemetry.json"
 echo "  - Log: $OUTPUT_DIR/log.txt"
 echo "  - Comparison report: $OUTPUT_DIR/comparison.md"
 echo "  - Visualization: $OUTPUT_DIR/visualization.png"
+
+if [ "$USE_DEFAULT_OUTPUT" = true ]; then
+    echo ""
+    echo "💡 Quick access via: benchmarks/latest/"
+    echo "   View results: open benchmarks/latest/visualization.png"
+    echo "   Next iteration: scripts/run-indexing-benchmarks"
+fi
