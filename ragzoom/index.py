@@ -353,22 +353,29 @@ class TreeBuilder:
             # Generate inline retry prompt with runtime conditions
             target_words = int(target_tokens * WORDS_PER_TOKEN)
             deviation_pct_rounded = round(deviation_pct * 100)
-            direction = "larger" if current_tokens > target_tokens else "smaller"
-            retry_prompt = f"Your summary was {deviation_pct_rounded}% {direction} than the target length. Try again, making it as close to {target_words} words as possible."
+            larger = current_tokens > target_tokens
+            direction = "larger" if larger else "smaller"
+            addendum = (
+                " Use your last attempt as a starting point and aggressively prune details to hit the target words."
+                if larger
+                else ""
+            )
+            retry_prompt = f"Your summary was {deviation_pct_rounded}% {direction} than the target length. Try again, making it as close to {target_words} words as possible.{addendum}"
 
             # Append current summary as assistant response
             messages.append({"role": "assistant", "content": summary})
             # Append retry instruction as user message
             messages.append({"role": "user", "content": retry_prompt})
 
-            # Determine reasoning effort based on retry count
-            # First retry uses low, second uses medium, third+ use high
-            if retry_count == 1:
-                reasoning_effort = "low"
-            elif retry_count == 2:
-                reasoning_effort = "medium"
-            else:
-                reasoning_effort = "high"
+            # if retry_count == 1:
+            #     reasoning_effort = "minimal"
+            # elif retry_count == 2:
+            #     reasoning_effort = "low"
+            # elif retry_count == 3:
+            #     reasoning_effort = "medium"
+            # else:
+            #     reasoning_effort = "high"
+            reasoning_effort = "minimal"
 
             logger.debug(
                 f"{node_info}Retry {retry_count} using {reasoning_effort} reasoning effort"
