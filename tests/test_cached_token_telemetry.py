@@ -351,7 +351,7 @@ async def test_cached_tokens_with_high_cache_rate(mock_store):
     async def mock_create(**kwargs):
         messages = kwargs.get("messages", [])
 
-        if len(messages) == 2:  # Initial call
+        if len(messages) == 4:  # Initial call (with vaccine)
             return MockOpenAIResponseWithCache(
                 content="A" * 120,
                 prompt_tokens=2000,
