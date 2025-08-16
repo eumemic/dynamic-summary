@@ -63,7 +63,7 @@ Run indexing benchmarks with telemetry comparison and visualization.
 ITERATIVE WORKFLOW (recommended):
     After the first run, each subsequent run automatically uses the previous run as baseline:
     
-    # First run (needs telemetry-baseline.json or --baseline)
+    # First run (needs telemetry.json or --baseline)
     $0
     
     # Subsequent runs (each compares against previous)
@@ -74,8 +74,10 @@ ITERATIVE WORKFLOW (recommended):
 
 Options:
     --baseline <file>      Baseline telemetry JSON file 
-                          Default: benchmarks/latest/telemetry.json (if exists)
-                          Fallback: ./telemetry-baseline.json
+                          Default search order:
+                          1. benchmarks/latest/telemetry.json (previous run)
+                          2. ./telemetry.json (current directory)
+                          3. <repo_root>/telemetry.json (if in worktree)
     --output-dir <dir>     Directory for output files
                           Default: benchmarks/<timestamp> (e.g., benchmarks/20250815_163448)
     --help                 Show this help message and exit
@@ -186,18 +188,38 @@ if [ -z "$BASELINE" ]; then
     if [ -f "benchmarks/latest/telemetry.json" ]; then
         BASELINE="benchmarks/latest/telemetry.json"
         echo "Using previous run as baseline: $BASELINE"
-    elif [ -f "./telemetry-baseline.json" ]; then
-        BASELINE="./telemetry-baseline.json"
-        echo "Using default baseline: $BASELINE"
+    elif [ -f "./telemetry.json" ]; then
+        BASELINE="./telemetry.json"
+        echo "Using baseline from current directory: $BASELINE"
     else
-        echo "Error: No baseline specified and no previous run or telemetry-baseline.json found"
-        echo ""
-        echo "For first run, either:"
-        echo "  1. Create a baseline: python -m ragzoom.cli index <document> --telemetry telemetry-baseline.json"
-        echo "  2. Specify an existing baseline: $0 --baseline <baseline.json> ..."
-        echo ""
-        echo "After first run, subsequent runs will automatically use the previous run as baseline."
-        exit 1
+        # Try to find repository root (parent of worktrees directory if in a worktree)
+        REPO_ROOT=""
+        if [[ "$PWD" == */worktrees/* ]]; then
+            # We're in a worktree, find the main repo
+            REPO_ROOT=$(echo "$PWD" | sed 's|/worktrees/.*||')
+        fi
+        
+        # Check repository root if different from current directory
+        if [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$PWD" ] && [ -f "$REPO_ROOT/telemetry.json" ]; then
+            BASELINE="$REPO_ROOT/telemetry.json"
+            echo "Using baseline from repository root: $BASELINE"
+        else
+            echo "Error: No baseline specified and no telemetry.json found"
+            echo ""
+            echo "Searched for telemetry.json in:"
+            echo "  1. benchmarks/latest/telemetry.json (previous run)"
+            echo "  2. ./telemetry.json (current directory)"
+            if [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$PWD" ]; then
+                echo "  3. $REPO_ROOT/telemetry.json (repository root)"
+            fi
+            echo ""
+            echo "For first run, either:"
+            echo "  1. Create a baseline: python -m ragzoom.cli index <document> --telemetry telemetry.json"
+            echo "  2. Specify an existing baseline: $0 --baseline <baseline.json> ..."
+            echo ""
+            echo "After first run, subsequent runs will automatically use the previous run as baseline."
+            exit 1
+        fi
     fi
 fi
 
