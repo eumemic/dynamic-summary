@@ -341,8 +341,17 @@ class BadSummaryAnalyzer:
         case = analysis["case"]
         stats = analysis["stats"]
         
+        # Calculate combined input size
+        import tiktoken
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+        left_tokens = len(tokenizer.encode(case.left_text))
+        right_tokens = len(tokenizer.encode(case.right_text))
+        combined_tokens = left_tokens + right_tokens
+        compression_ratio = (combined_tokens / case.target_tokens) if case.target_tokens > 0 else 0
+        
         print(f"\nNode {case.node_id} (height {case.height})")
-        print(f"  Original: {case.original_tokens} tokens ({case.divergence:+d} from target {case.target_tokens})")
+        print(f"  Input: {combined_tokens} tokens ({left_tokens}+{right_tokens}) → target {case.target_tokens} ({compression_ratio:.1f}x compression)")
+        print(f"  Original: {case.original_tokens} tokens ({case.divergence:+d} from target)")
         print(f"  Re-runs: {stats['min_tokens']}-{stats['max_tokens']} tokens "
               f"(mean: {stats['mean_tokens']:.0f}, median: {stats['median_tokens']:.0f})")
         print(f"  Verbatim: {stats['verbatim_rate']:.0f}% of runs")
@@ -419,6 +428,8 @@ async def main():
                        help="Number of test runs per case (default: 10)")
     parser.add_argument("--max-concurrent", type=int, default=5,
                        help="Maximum concurrent analyses (default: 5)")
+    parser.add_argument("--show-text", action="store_true",
+                       help="Show input and output text for cases")
     
     args = parser.parse_args()
     
@@ -442,6 +453,26 @@ async def main():
     
     # Run analysis
     await analyzer.run_analysis(cases, n_runs=args.runs, max_concurrent=args.max_concurrent)
+    
+    # Show detailed text if requested
+    if args.show_text and cases:
+        print("\n" + "="*60)
+        print("DETAILED TEXT ANALYSIS")
+        print("="*60)
+        
+        for case in cases[:3]:  # Show first 3 cases
+            import tiktoken
+            tokenizer = tiktoken.get_encoding("cl100k_base")
+            
+            print(f"\n### Node {case.node_id} (height {case.height})")
+            print(f"Target: {case.target_tokens} tokens, Original output: {case.original_tokens} tokens")
+            print(f"\n--- LEFT INPUT ({len(tokenizer.encode(case.left_text))} tokens) ---")
+            print(case.left_text[:500] + "..." if len(case.left_text) > 500 else case.left_text)
+            print(f"\n--- RIGHT INPUT ({len(tokenizer.encode(case.right_text))} tokens) ---")
+            print(case.right_text[:500] + "..." if len(case.right_text) > 500 else case.right_text)
+            print(f"\n--- ORIGINAL SUMMARY ({case.original_tokens} tokens) ---")
+            print(case.original_summary)
+            print("\n" + "-"*60)
 
 
 if __name__ == "__main__":
