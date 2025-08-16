@@ -279,15 +279,23 @@ class TreeBuilder:
         except Exception as e:
             logger.warning(f"Failed to record telemetry for summary attempt: {e}")
 
-    def _should_retry_summary(self, deviation_pct: float) -> bool:
+    def _should_retry_summary(self, current_tokens: int, target_tokens: int) -> bool:
         """Check if summary should be retried based on deviation from target.
 
+        Only retries overshoots - undershoots are accepted as they provide
+        smaller inputs to higher levels which naturally tend to overshoot.
+
         Args:
-            deviation_pct: Percentage deviation from target tokens
+            current_tokens: Current token count
+            target_tokens: Target token count
 
         Returns:
-            True if retry is needed, False otherwise
+            True if retry is needed (overshooting), False otherwise
         """
+        if current_tokens <= target_tokens:
+            return False  # Never retry undershoots
+
+        deviation_pct = (current_tokens - target_tokens) / target_tokens
         return deviation_pct > self.config.retry_threshold
 
     def _is_better_summary(
@@ -360,7 +368,7 @@ class TreeBuilder:
                 if larger
                 else ""
             )
-            retry_prompt = f"Your summary was {deviation_pct_rounded}% {direction} than the target length. Try again, making it as close to {target_words} words as possible.{addendum}"
+            retry_prompt = f"Your summary was {deviation_pct_rounded}% {direction} than the target length. Try again, making it AT MOST {target_words} words.{addendum}"
 
             # Append current summary as assistant response
             messages.append({"role": "assistant", "content": summary})
@@ -414,15 +422,15 @@ class TreeBuilder:
         actual_retries = 0
 
         for retry_count in range(1, self.config.max_retries + 1):
-            # Check if current best is within threshold
-            best_deviation_pct = abs((best_token_count - target_tokens) / target_tokens)
-
-            if not self._should_retry_summary(best_deviation_pct):
+            # Check if current best should be retried (only overshoots)
+            if not self._should_retry_summary(best_token_count, target_tokens):
                 return best_summary, actual_retries, best_attempt_index
 
+            deviation_tokens = best_token_count - target_tokens
+            deviation_pct = deviation_tokens / target_tokens
             logger.debug(
                 f"{node_info}Summary deviation: {best_token_count} tokens "
-                f"(target: {target_tokens}, {best_deviation_pct:.1%} off). "
+                f"(target: {target_tokens}, +{deviation_tokens} tokens, {deviation_pct:.1%} over). "
                 f"Retry {retry_count}/{self.config.max_retries}"
             )
 
@@ -458,7 +466,7 @@ class TreeBuilder:
                 )
 
             # If this new attempt is within threshold, accept it immediately
-            if not self._should_retry_summary(new_deviation_pct):
+            if not self._should_retry_summary(new_token_count, target_tokens):
                 logger.debug(
                     f"{node_info}Acceptable result: {new_token_count} tokens "
                     f"(target: {target_tokens}, {new_deviation_pct:.1%} deviation)"
@@ -553,7 +561,7 @@ class TreeBuilder:
 
         target_words = int(target_tokens * WORDS_PER_TOKEN)
 
-        instruction = f"""You will be given a piece of content to summarize. You are to summarize ONLY the content between the <SUMMARIZE_TEXT> tags in as close to {target_words} words as possible. Use the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
+        instruction = f"""You will be given a piece of content to summarize. You are to summarize ONLY the content between the <SUMMARIZE_TEXT> tags in AT MOST {target_words} words. Use the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
 
 Here's the content to summarize:"""
 
@@ -596,7 +604,7 @@ Here's the content to summarize:"""
                     messages.append(
                         {
                             "role": "user",
-                            "content": f"UNACCEPTABLE. You just returned the input text verbatim! I need you to CREATE A SUMMARY - extract and compress the key information to {target_words} words. Do not copy passages directly. Try again.",
+                            "content": f"UNACCEPTABLE. You just returned the input text verbatim! I need you to CREATE A SUMMARY - extract and compress the key information to AT MOST {target_words} words. Do not copy passages directly. Try again.",
                         }
                     )
 
@@ -632,11 +640,15 @@ Here's the content to summarize:"""
                         start_time=start_time,
                     )
 
-                # Use retry correction if deviation exceeds threshold
+                # Use retry correction only if overshooting threshold
                 retry_count = 0
                 accepted_attempt = 0  # Default to first attempt
 
-                if deviation_pct > self.config.retry_threshold:
+                # Only retry if overshooting (undershoots are beneficial)
+                if (
+                    current_tokens > target_tokens
+                    and deviation_pct > self.config.retry_threshold
+                ):
                     summary, retry_count, best_attempt_index = (
                         await self._retry_summary_correction(
                             summary,

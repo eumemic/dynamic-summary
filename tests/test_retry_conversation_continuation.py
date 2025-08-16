@@ -172,7 +172,7 @@ async def test_retry_preserves_original_context(mock_store):
                 part in user_content
                 for part in [original_text[:30], original_text[-30:]]
             )
-            return MockOpenAIResponse("A" * 50, 50, 10, 0)  # 50% under
+            return MockOpenAIResponse("A" * 150, 150, 10, 0)  # 50% over
 
         elif len(api_calls) == 2:
             # Verify original text is STILL accessible in conversation history
@@ -329,12 +329,11 @@ async def test_accept_retry_within_threshold_immediately(mock_store):
         api_calls.append(copy.deepcopy(kwargs))
 
         if len(api_calls) == 1:
-            # First attempt: 70 tokens (30% under, outside threshold)
-            return MockOpenAIResponse("A" * 70, 1000, 70, 0)
+            # First attempt: 130 tokens (30% over, outside threshold)
+            return MockOpenAIResponse("A" * 130, 1000, 130, 0)
         elif len(api_calls) == 2:
             # Second attempt: 115 tokens (15% over, WITHIN threshold)
-            # This should be accepted immediately even though it's "worse" than 70
-            # (70 is closer to target and under, which is preferred by _is_better_summary)
+            # This should be accepted immediately
             return MockOpenAIResponse("B" * 115, 1200, 115, 1000)
         else:
             # We should never get here!
