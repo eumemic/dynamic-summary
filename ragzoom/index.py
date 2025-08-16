@@ -16,6 +16,10 @@ from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store, TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
 
+# Convert tokens to words using experimentally-derived conversion factor
+# 0.75 (tokens->words) * 0.94 (bias compensation) = 0.705
+WORDS_PER_TOKEN = 0.75 * 0.94
+
 logger = logging.getLogger(__name__)
 
 
@@ -148,6 +152,7 @@ class TreeBuilder:
         messages: list[ChatCompletionMessageParam],
         target_tokens: int | None,
         node_info: str = "",
+        reasoning_effort: str | None = None,
     ) -> tuple[str, int, Any]:
         """Make OpenAI API call and return summary, token count, and response.
 
@@ -170,7 +175,8 @@ class TreeBuilder:
 
         if is_gpt5:
             # GPT-5 models need reasoning_effort="minimal" to output text instead of just reasoning
-            api_kwargs["reasoning_effort"] = "minimal"
+            # Use provided reasoning_effort or default to minimal
+            api_kwargs["reasoning_effort"] = reasoning_effort or "minimal"
         else:
             # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
             # Use a hardcoded reasonable temperature for summaries
@@ -319,6 +325,7 @@ class TreeBuilder:
         node_info: str,
         summary: str,
         current_tokens: int | None = None,
+        retry_count: int = 1,
     ) -> tuple[str, int, Any] | None:
         """Execute a single retry attempt.
 
@@ -328,6 +335,7 @@ class TreeBuilder:
             node_info: Node identifier for logging
             summary: Current summary to append to conversation
             current_tokens: Already-calculated token count (avoids re-tokenization)
+            retry_count: Current retry attempt number (1-based)
 
         Returns:
             Tuple of (new_summary, token_count, response) or None if failed
@@ -343,22 +351,32 @@ class TreeBuilder:
                 deviation_pct = 0.0
 
             # Generate inline retry prompt with runtime conditions
-            retry_prompt = f"""The summary you provided deviates significantly from the target token count of {target_tokens} tokens. Your summary was {current_tokens} tokens ({deviation_pct:.1%} off target).
-
-Please try again with a summary that:
-- Is closer to exactly {target_tokens} tokens
-- Maintains information density by including as much detail as possible within the token limit
-- Covers the full scope of the content from start to end
-- Abstracts over minor details where necessary to stay within the limit
-
-Remember: Your goal is to maximize information preservation while hitting the target token count as closely as possible."""
+            target_words = int(target_tokens * WORDS_PER_TOKEN)
+            deviation_pct_rounded = round(deviation_pct * 100)
+            direction = "larger" if current_tokens > target_tokens else "smaller"
+            retry_prompt = f"Your summary was {deviation_pct_rounded}% {direction} than the target length. Try again, making it as close to {target_words} words as possible."
 
             # Append current summary as assistant response
             messages.append({"role": "assistant", "content": summary})
             # Append retry instruction as user message
             messages.append({"role": "user", "content": retry_prompt})
 
-            return await self._make_summary_call(messages, target_tokens, node_info)
+            # Determine reasoning effort based on retry count
+            # First retry uses low, second uses medium, third+ use high
+            if retry_count == 1:
+                reasoning_effort = "low"
+            elif retry_count == 2:
+                reasoning_effort = "medium"
+            else:
+                reasoning_effort = "high"
+
+            logger.debug(
+                f"{node_info}Retry {retry_count} using {reasoning_effort} reasoning effort"
+            )
+
+            return await self._make_summary_call(
+                messages, target_tokens, node_info, reasoning_effort=reasoning_effort
+            )
         except ValueError:
             logger.warning(f"{node_info}Failed to get valid retry response")
             return None
@@ -405,7 +423,12 @@ Remember: Your goal is to maximize information preservation while hitting the ta
             # Execute retry attempt (pass current_tokens to avoid re-tokenization)
             retry_start = time.time()
             result = await self._execute_retry_attempt(
-                messages, target_tokens, node_info, best_summary, current_tokens
+                messages,
+                target_tokens,
+                node_info,
+                best_summary,
+                current_tokens,
+                retry_count,
             )
 
             if not result:
@@ -512,21 +535,10 @@ Remember: Your goal is to maximize information preservation while hitting the ta
                 trimmed_prev = prev_context
 
         # Build the summarization prompt inline
-        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
 
-CRITICAL REQUIREMENTS:
-- Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
-- The summary should be ≤{target_tokens} tokens in total
-- Make the summary as information-dense as possible while filling out (but not exceeding) the token limit
-- The summary should cover the full scope of the content from start to end, but abstract over minor details and omit verbal flourishes to stay within the token limit
-- Focus on key events, facts, and themes ONLY from the provided text
-- Do NOT include any concrete information from BEFORE the <SUMMARIZE_TEXT> tag or AFTER the </SUMMARIZE_TEXT> tag in the summary
-- Do NOT complete a sentence that is cut off with information from outside the <SUMMARIZE_TEXT> block
-- Do NOT infer or imagine details not present in the text
-- If the text references something without explaining it, do NOT try to explain it
-- IMPORTANT: Match voice and tense of the text you are summarizing! If you are summarizing a text written in the past tense, the summary MUST be in past tense
-- Try to match the tone and style of the text, as if the summary were written by the same author
-- Respond ONLY with your best attempt at a summary, do not break the fourth wall, say you can't summarize it, etc.
+        target_words = int(target_tokens * WORDS_PER_TOKEN)
+
+        instruction = f"""You will be given a piece of content to summarize. You are to summarize ONLY the content between the <SUMMARIZE_TEXT> tags in as close to {target_words} words as possible. Use the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
 
 Here's the content to summarize:"""
 

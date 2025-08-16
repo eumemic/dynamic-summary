@@ -80,10 +80,10 @@ async def test_retry_maintains_conversation_history(mock_store):
             assert messages[2]["role"] == "assistant"
             assert messages[2]["content"] == "A" * 150  # Previous response
             assert messages[3]["role"] == "user"
-            # Check that retry prompt contains expected content
-            assert "Please try again" in messages[3]["content"]
-            assert "100 tokens" in messages[3]["content"]  # Target tokens
-            assert "150 tokens" in messages[3]["content"]  # Current tokens
+            # Check that retry prompt contains expected content (word-based format)
+            assert "words" in messages[3]["content"]
+            assert "50%" in messages[3]["content"]  # Deviation percentage
+            assert "larger" in messages[3]["content"]  # Direction
 
             return MockOpenAIResponse(
                 content="B" * 95,  # Close to target
