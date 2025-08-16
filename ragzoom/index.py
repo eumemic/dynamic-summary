@@ -589,6 +589,17 @@ Here's the content to summarize:"""
                     {"role": "user", "content": full_prompt},
                 ]
 
+                # Anti-verbatim vaccine: Insert fake conversation showing verbatim copy being rejected
+                # This prevents the most common failure mode and improves consistency
+                if self.config.use_anti_verbatim_vaccine:
+                    messages.append({"role": "assistant", "content": combined_text})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": f"UNACCEPTABLE. You just returned the input text verbatim! I need you to CREATE A SUMMARY - extract and compress the key information to {target_words} words. Do not copy passages directly. Try again.",
+                        }
+                    )
+
                 start_time = time.time()
                 try:
                     summary, current_tokens, response = await self._make_summary_call(
