@@ -768,6 +768,7 @@ class TelemetryVisualizer:
         input_tokens = []
         output_tokens = []
         attempt_numbers = []
+        is_accepted = []  # Track which attempts are accepted
         node_count = 0  # Track actual number of nodes processed
 
         # Process nodes to extract ALL attempts (not just accepted ones)
@@ -784,12 +785,16 @@ class TelemetryVisualizer:
                 attempts = node.get("summary_attempts", [])
                 if attempts:  # Only count nodes that have attempts
                     node_count += 1
+                    # Get the accepted attempt index (defaults to last attempt)
+                    accepted_idx = node.get("accepted_attempt", len(attempts) - 1)
                     for attempt_num, attempt in enumerate(attempts, 1):
                         actual_tokens = attempt.get("actual_tokens", 0)
                         if actual_tokens > 0:
                             input_tokens.append(input_text_tokens)
                             output_tokens.append(actual_tokens)
                             attempt_numbers.append(attempt_num)
+                            # Check if this is the accepted attempt (0-based index)
+                            is_accepted.append(attempt_num - 1 == accepted_idx)
 
         if not input_tokens:
             ax.text(
@@ -812,7 +817,7 @@ class TelemetryVisualizer:
             else:
                 attempt_colors.append(colors[attempt_num - 1])  # Convert to 0-indexed
 
-        # Create scatter plot
+        # Create scatter plot - first plot all attempts
         ax.scatter(
             input_tokens,
             output_tokens,
@@ -821,6 +826,22 @@ class TelemetryVisualizer:
             s=50,
             edgecolors="none",
         )
+
+        # Then plot accepted attempts with black borders on top
+        accepted_inputs = [inp for inp, acc in zip(input_tokens, is_accepted) if acc]
+        accepted_outputs = [out for out, acc in zip(output_tokens, is_accepted) if acc]
+        accepted_colors = [col for col, acc in zip(attempt_colors, is_accepted) if acc]
+        if accepted_inputs:
+            ax.scatter(
+                accepted_inputs,
+                accepted_outputs,
+                c=accepted_colors,
+                alpha=0.6,
+                s=50,
+                edgecolors="black",
+                linewidths=1,
+                zorder=10,  # Draw on top
+            )
 
         # Set axis limits with margin around data (calculate early for use in other elements)
         x_margin = (max(input_tokens) - min(input_tokens)) * 0.05
@@ -894,17 +915,84 @@ class TelemetryVisualizer:
         )
 
         # Create custom legend for attempt numbers (matching cost breakdown)
+        # Use circles instead of rectangles
         legend_elements: list = [
-            Patch(facecolor=colors[0], label="Attempt 1", alpha=0.6),
-            Patch(facecolor=colors[1], label="Attempt 2", alpha=0.6),
-            Patch(facecolor=colors[2], label="Attempt 3", alpha=0.6),
-            Patch(facecolor=colors[3], label="Attempt 4", alpha=0.6),
-            Patch(facecolor=colors[4], label="Attempt 5+", alpha=0.6),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[0],
+                markersize=8,
+                label="Attempt 1",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[1],
+                markersize=8,
+                label="Attempt 2",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[2],
+                markersize=8,
+                label="Attempt 3",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[3],
+                markersize=8,
+                label="Attempt 4",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[4],
+                markersize=8,
+                label="Attempt 5+",
+                linestyle="None",
+                alpha=0.6,
+            ),
         ]
 
         # Only include legend items for attempt numbers that exist in the data
         max_attempts = max(attempt_numbers) if attempt_numbers else 0
         legend_elements = legend_elements[: min(max_attempts, 5)]
+
+        # Add accepted attempt indicator to legend with transparent fill
+        legend_elements.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="none",  # Transparent fill
+                markeredgecolor="black",
+                markersize=8,
+                markeredgewidth=1,
+                label="Accepted attempt",
+                linestyle="None",
+            )
+        )
 
         # Add statistics annotation
         # Calculate deviations from target (chunk_size) as percentages
