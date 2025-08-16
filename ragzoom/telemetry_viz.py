@@ -995,13 +995,13 @@ class TelemetryVisualizer:
         )
 
         # Add statistics annotation
-        # Calculate deviations from target (chunk_size) as percentages
-        if chunk_size > 0:
-            deviations_pct = [
-                (output - chunk_size) / chunk_size * 100 for output in output_tokens
+        # Calculate deviations from target (chunk_size) as percentages for ACCEPTED attempts only
+        if chunk_size > 0 and accepted_outputs:
+            accepted_deviations_pct = [
+                (output - chunk_size) / chunk_size * 100 for output in accepted_outputs
             ]
-            avg_deviation_pct = np.mean(deviations_pct)
-            median_deviation_pct = np.median(deviations_pct)
+            avg_deviation_pct = np.mean(accepted_deviations_pct)
+            median_deviation_pct = np.median(accepted_deviations_pct)
 
             # Calculate actual token positions for the lines
             avg_position = chunk_size * (1 + avg_deviation_pct / 100)
@@ -1050,6 +1050,10 @@ class TelemetryVisualizer:
                 ]
             )
 
+        elif chunk_size > 0:
+            # No accepted outputs, but chunk_size is valid
+            avg_deviation_pct = 0.0
+            median_deviation_pct = 0.0
         else:
             avg_deviation_pct = 0.0
             median_deviation_pct = 0.0
