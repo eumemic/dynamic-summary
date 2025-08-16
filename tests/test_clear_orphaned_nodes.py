@@ -38,7 +38,6 @@ class TestAutomaticClearing:
             retry_threshold=0.2,
             max_retries=0,
             embedding_batch_size=100,
-            use_anti_verbatim_vaccine=True,
         )
 
     @pytest.fixture

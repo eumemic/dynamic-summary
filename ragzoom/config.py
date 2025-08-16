@@ -62,7 +62,6 @@ class IndexConfig:
     retry_threshold: float
     max_retries: int
     embedding_batch_size: int
-    use_anti_verbatim_vaccine: bool
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -96,9 +95,6 @@ class IndexConfig:
             "retry_threshold": config_dict["retry_threshold"],
             "max_retries": config_dict["max_retries"],
             "embedding_batch_size": config_dict["embedding_batch_size"],
-            "use_anti_verbatim_vaccine": config_dict.get(
-                "use_anti_verbatim_vaccine", True
-            ),
         }
 
         return cls(**index_config_fields)
