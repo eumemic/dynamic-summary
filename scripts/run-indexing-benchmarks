@@ -61,9 +61,9 @@ Usage: $0 [--baseline <baseline.json>] [--output-dir <dir>] [document] [options]
 Run indexing benchmarks with telemetry comparison and visualization.
 
 ITERATIVE WORKFLOW (recommended):
-    The script automatically establishes a baseline on first run, then compares against it:
+    After the first run, each subsequent run automatically uses the previous run as baseline:
     
-    # First run (automatically establishes baseline)
+    # First run (needs telemetry-baseline.json or --baseline)
     $0
     
     # Subsequent runs (each compares against previous)
@@ -75,15 +75,13 @@ ITERATIVE WORKFLOW (recommended):
 Options:
     --baseline <file>      Baseline telemetry JSON file 
                           Default: benchmarks/latest/telemetry.json (if exists)
-                          If no baseline exists, runs in first-run mode
+                          Fallback: ./telemetry-baseline.json
     --output-dir <dir>     Directory for output files
                           Default: benchmarks/<timestamp> (e.g., benchmarks/20250815_163448)
     --help                 Show this help message and exit
     
 Document:
-    If not specified:
-    - First run: uses test_data/moby_dick_sample_small.txt
-    - Subsequent runs: auto-detects from baseline's document_id
+    If not specified, will auto-detect from baseline's document_id in test_data/
     
 Additional Options:
     All other options are passed through to the ragzoom index command.
@@ -119,7 +117,6 @@ OUTPUT_DIR=""  # Will be set to benchmarks/<timestamp> by default
 DOCUMENT=""  # Will be auto-detected or provided
 EXTRA_ARGS=()
 USE_DEFAULT_OUTPUT=true  # Track if user provided custom output dir
-FIRST_RUN=false  # Track if this is the first run (no baseline available)
 
 # Function to validate paths against injection
 validate_path() {
@@ -189,98 +186,80 @@ if [ -z "$BASELINE" ]; then
     if [ -f "benchmarks/latest/telemetry.json" ]; then
         BASELINE="benchmarks/latest/telemetry.json"
         echo "Using previous run as baseline: $BASELINE"
+    elif [ -f "./telemetry-baseline.json" ]; then
+        BASELINE="./telemetry-baseline.json"
+        echo "Using default baseline: $BASELINE"
     else
-        # No baseline available - this is the first run
-        FIRST_RUN=true
-        echo "No previous baseline found - this will be the first baseline"
-        echo "Future runs will automatically compare against this baseline"
+        echo "Error: No baseline specified and no previous run or telemetry-baseline.json found"
+        echo ""
+        echo "For first run, either:"
+        echo "  1. Create a baseline: python -m ragzoom.cli index <document> --telemetry telemetry-baseline.json"
+        echo "  2. Specify an existing baseline: $0 --baseline <baseline.json> ..."
+        echo ""
+        echo "After first run, subsequent runs will automatically use the previous run as baseline."
+        exit 1
     fi
 fi
 
-# Only validate baseline if we have one
-if [ "$FIRST_RUN" = false ]; then
-    # Validate baseline path
-    validate_path "$BASELINE" "baseline"
-    
-    if [ ! -f "$BASELINE" ]; then
-        echo "Error: Baseline file '$BASELINE' does not exist"
-        exit 1
-    fi
+# Validate baseline path
+validate_path "$BASELINE" "baseline"
+
+if [ ! -f "$BASELINE" ]; then
+    echo "Error: Baseline file '$BASELINE' does not exist"
+    exit 1
 fi
 
 # Create output directory early if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Extract metadata from baseline (skip if first run)
-if [ "$FIRST_RUN" = false ]; then
-    echo "Extracting configuration from baseline..."
-    DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
-    DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
+# Extract metadata from baseline
+echo "Extracting configuration from baseline..."
+DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
+DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
+
+# Extract config object from baseline
+CONFIG=$(jq -r '.config // empty' "$BASELINE")
+if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
+    # Save config to temporary file
+    CONFIG_FILE="$OUTPUT_DIR/baseline_config.json"
+    echo "$CONFIG" | jq '.' > "$CONFIG_FILE"
+    echo "  Extracted config from baseline telemetry"
+    echo "  Config saved to: $CONFIG_FILE"
     
-    # Extract config object from baseline
-    CONFIG=$(jq -r '.config // empty' "$BASELINE")
-    if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
-        # Save config to temporary file
-        CONFIG_FILE="$OUTPUT_DIR/baseline_config.json"
-        echo "$CONFIG" | jq '.' > "$CONFIG_FILE"
-        echo "  Extracted config from baseline telemetry"
-        echo "  Config saved to: $CONFIG_FILE"
-        
-        # Show key config values for visibility
-        TARGET_CHUNK_TOKENS=$(echo "$CONFIG" | jq -r '.target_chunk_tokens // empty')
-        if [ -n "$TARGET_CHUNK_TOKENS" ]; then
-            echo "  Target chunk tokens: $TARGET_CHUNK_TOKENS"
-        fi
-    else
-        echo "Warning: Could not extract config from baseline telemetry"
-        echo "  The indexer will use default configuration"
-        CONFIG_FILE=""
+    # Show key config values for visibility
+    TARGET_CHUNK_TOKENS=$(echo "$CONFIG" | jq -r '.target_chunk_tokens // empty')
+    if [ -n "$TARGET_CHUNK_TOKENS" ]; then
+        echo "  Target chunk tokens: $TARGET_CHUNK_TOKENS"
     fi
 else
-    # First run - no baseline config to extract
+    echo "Warning: Could not extract config from baseline telemetry"
+    echo "  The indexer will use default configuration"
     CONFIG_FILE=""
-    DOCUMENT_ID=""
-    DOCUMENT_PATH=""
 fi
 
 # Auto-detect document if not provided
 if [ -z "$DOCUMENT" ]; then
-    if [ "$FIRST_RUN" = true ]; then
-        # First run - use a default document
-        DEFAULT_DOC="test_data/moby_dick_sample_small.txt"
-        if [ -f "$DEFAULT_DOC" ]; then
-            DOCUMENT="$DEFAULT_DOC"
-            echo "  Using default document for first run: $DOCUMENT"
+    # First try to use document_path from telemetry (absolute path)
+    if [ -n "$DOCUMENT_PATH" ] && [ -f "$DOCUMENT_PATH" ]; then
+        DOCUMENT="$DOCUMENT_PATH"
+        echo "  Using document path from baseline: $DOCUMENT"
+    # Fall back to document_id in test_data for backward compatibility
+    elif [ -n "$DOCUMENT_ID" ]; then
+        echo "  Document ID from baseline: $DOCUMENT_ID"
+        if [ -f "./test_data/$DOCUMENT_ID" ]; then
+            DOCUMENT="./test_data/$DOCUMENT_ID"
+            echo "  Auto-detected document: $DOCUMENT"
         else
             echo ""
-            echo "Error: No document specified and default document not found: $DEFAULT_DOC"
+            echo "Error: Cannot find document './test_data/$DOCUMENT_ID'"
             echo "Please provide document path as argument"
             exit 1
         fi
     else
-        # Try to extract from baseline
-        # First try to use document_path from telemetry (absolute path)
-        if [ -n "$DOCUMENT_PATH" ] && [ -f "$DOCUMENT_PATH" ]; then
-            DOCUMENT="$DOCUMENT_PATH"
-            echo "  Using document path from baseline: $DOCUMENT"
-        # Fall back to document_id in test_data for backward compatibility
-        elif [ -n "$DOCUMENT_ID" ]; then
-            echo "  Document ID from baseline: $DOCUMENT_ID"
-            if [ -f "./test_data/$DOCUMENT_ID" ]; then
-                DOCUMENT="./test_data/$DOCUMENT_ID"
-                echo "  Auto-detected document: $DOCUMENT"
-            else
-                echo ""
-                echo "Error: Cannot find document './test_data/$DOCUMENT_ID'"
-                echo "Please provide document path as argument"
-                exit 1
-            fi
-        else
-            echo ""
-            echo "Error: No document specified and could not extract document_id or document_path from baseline"
-            echo "Please provide document path as argument"
-            exit 1
-        fi
+        echo ""
+        echo "Error: No document specified and could not extract document_id or document_path from baseline"
+        echo "Please provide document path as argument"
+        exit 1
     fi
 fi
 
@@ -295,11 +274,7 @@ DATABASE_FILE="$OUTPUT_DIR/ragzoom.db"
 
 echo ""
 echo "🚀 Starting indexing benchmark..."
-if [ "$FIRST_RUN" = true ]; then
-    echo "  Mode: First run (establishing baseline)"
-else
-    echo "  Baseline: $BASELINE"
-fi
+echo "  Baseline: $BASELINE"
 echo "  Document: $DOCUMENT"
 echo "  Output directory: $OUTPUT_DIR"
 echo "  Database: $DATABASE_FILE"
@@ -345,80 +320,50 @@ echo "✅ Indexing completed. Telemetry saved to $TELEMETRY_FILE"
 echo ""
 
 # Generate comparison report and visualization
-if [ "$FIRST_RUN" = true ]; then
-    echo "📊 Generating standalone visualization..."
-    
-    # Skip comparison report on first run
-    echo "  Skipping comparison report (no baseline available)"
-    
-    # Generate single-file visualization
-    echo "  Checking for visualization dependencies..."
-    if python -c "import matplotlib, seaborn, pandas" 2>/dev/null; then
-        echo "  Generating standalone visualization..."
-        # Single telemetry file mode
-        python -m ragzoom.telemetry_cli visualize \
-            "$TELEMETRY_FILE" \
-            --output "$VISUALIZATION_FILE" \
-            > "$OUTPUT_DIR/visualization.log" 2>&1 || VIZ_EXIT_CODE=$?
-        
-        # Default to 0 if not set (success case)
-        VIZ_EXIT_CODE=${VIZ_EXIT_CODE:-0}
-        
-        if [ $VIZ_EXIT_CODE -eq 0 ]; then
-            echo "  ✅ Visualization saved to $VISUALIZATION_FILE"
-        else
-            echo "  ❌ Visualization failed. Check $OUTPUT_DIR/visualization.log for details."
-        fi
-    else
-        echo "  ⚠️ Skipping visualization (missing dependencies: matplotlib/seaborn/pandas)"
-        echo "     Install with: pip install ragzoom[telemetry]"
-    fi
+echo "📊 Generating comparison report and visualization..."
+
+# Generate markdown comparison report
+echo "  Generating comparison report..."
+# Note: compare command returns exit code 1 when regression detected, but still generates report
+# Temporarily disable exit on error for this command
+set +e
+python -m ragzoom.telemetry_cli compare \
+    "$BASELINE" \
+    "$TELEMETRY_FILE" \
+    > "$OUTPUT_DIR/comparison.md" 2>&1
+COMPARE_EXIT_CODE=$?
+set -e
+
+if [ $COMPARE_EXIT_CODE -eq 0 ]; then
+    echo "  ✅ Comparison report saved to $OUTPUT_DIR/comparison.md"
+elif [ $COMPARE_EXIT_CODE -eq 1 ]; then
+    echo "  ⚠️ Comparison report saved to $OUTPUT_DIR/comparison.md (regression detected)"
 else
-    echo "📊 Generating comparison report and visualization..."
-    
-    # Generate markdown comparison report
-    echo "  Generating comparison report..."
-    # Note: compare command returns exit code 1 when regression detected, but still generates report
-    # Temporarily disable exit on error for this command
-    set +e
-    python -m ragzoom.telemetry_cli compare \
+    echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
+fi
+
+# Generate visualization (optional - check for dependencies)
+echo "  Checking for visualization dependencies..."
+if python -c "import matplotlib, seaborn, pandas" 2>/dev/null; then
+    echo "  Generating visualization..."
+    # Capture exit code without affecting error handling
+    python -m ragzoom.telemetry_cli visualize \
         "$BASELINE" \
         "$TELEMETRY_FILE" \
-        > "$OUTPUT_DIR/comparison.md" 2>&1
-    COMPARE_EXIT_CODE=$?
-    set -e
+        --output "$VISUALIZATION_FILE" \
+        > "$OUTPUT_DIR/visualization.log" 2>&1 || VIZ_EXIT_CODE=$?
     
-    if [ $COMPARE_EXIT_CODE -eq 0 ]; then
-        echo "  ✅ Comparison report saved to $OUTPUT_DIR/comparison.md"
-    elif [ $COMPARE_EXIT_CODE -eq 1 ]; then
-        echo "  ⚠️ Comparison report saved to $OUTPUT_DIR/comparison.md (regression detected)"
-    else
-        echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
-    fi
+    # Default to 0 if not set (success case)
+    VIZ_EXIT_CODE=${VIZ_EXIT_CODE:-0}
     
-    # Generate side-by-side visualization
-    echo "  Checking for visualization dependencies..."
-    if python -c "import matplotlib, seaborn, pandas" 2>/dev/null; then
-        echo "  Generating visualization..."
-        # Two telemetry files for comparison
-        python -m ragzoom.telemetry_cli visualize \
-            "$BASELINE" \
-            "$TELEMETRY_FILE" \
-            --output "$VISUALIZATION_FILE" \
-            > "$OUTPUT_DIR/visualization.log" 2>&1 || VIZ_EXIT_CODE=$?
-        
-        # Default to 0 if not set (success case)
-        VIZ_EXIT_CODE=${VIZ_EXIT_CODE:-0}
-        
-        if [ $VIZ_EXIT_CODE -eq 0 ]; then
-            echo "  ✅ Visualization saved to $VISUALIZATION_FILE"
-        else
-            echo "  ❌ Visualization failed. Check $OUTPUT_DIR/visualization.log for details."
-        fi
+    if [ $VIZ_EXIT_CODE -eq 0 ]; then
+        echo "  ✅ Visualization saved to $VISUALIZATION_FILE"
     else
-        echo "  ⚠️ Skipping visualization (missing dependencies: matplotlib/seaborn/pandas)"
-        echo "     Install with: pip install ragzoom[telemetry]"
+        echo "  ❌ Visualization failed. Check $OUTPUT_DIR/visualization.log for details."
     fi
+else
+    echo "  ⚠️ Skipping visualization (missing dependencies: matplotlib/seaborn/pandas)"
+    echo "     Install with: pip install ragzoom[telemetry]"
 fi
 
 echo ""
@@ -440,9 +385,7 @@ echo "🎉 Benchmark complete! Results:"
 echo "  - Database: $OUTPUT_DIR/ragzoom.db"
 echo "  - Telemetry: $OUTPUT_DIR/telemetry.json"
 echo "  - Log: $OUTPUT_DIR/log.txt"
-if [ "$FIRST_RUN" = false ]; then
-    echo "  - Comparison report: $OUTPUT_DIR/comparison.md"
-fi
+echo "  - Comparison report: $OUTPUT_DIR/comparison.md"
 echo "  - Visualization: $OUTPUT_DIR/visualization.png"
 
 if [ "$USE_DEFAULT_OUTPUT" = true ]; then
