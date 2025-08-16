@@ -407,27 +407,26 @@ class TreeBuilder:
         actual_retries = 0
 
         for retry_count in range(1, self.config.max_retries + 1):
-            # Check if we should retry
-            current_tokens = len(self.splitter.tokenizer.encode(best_summary))
-            deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
+            # Check if current best is within threshold
+            best_deviation_pct = abs((best_token_count - target_tokens) / target_tokens)
 
-            if not self._should_retry_summary(deviation_pct):
+            if not self._should_retry_summary(best_deviation_pct):
                 return best_summary, actual_retries, best_attempt_index
 
             logger.debug(
-                f"{node_info}Summary deviation: {current_tokens} tokens "
-                f"(target: {target_tokens}, {deviation_pct:.1%} off). "
+                f"{node_info}Summary deviation: {best_token_count} tokens "
+                f"(target: {target_tokens}, {best_deviation_pct:.1%} off). "
                 f"Retry {retry_count}/{self.config.max_retries}"
             )
 
-            # Execute retry attempt (pass current_tokens to avoid re-tokenization)
+            # Execute retry attempt (pass best_token_count to avoid re-tokenization)
             retry_start = time.time()
             result = await self._execute_retry_attempt(
                 messages,
                 target_tokens,
                 node_info,
                 best_summary,
-                current_tokens,
+                best_token_count,
                 retry_count,
             )
 
@@ -437,6 +436,7 @@ class TreeBuilder:
             new_summary, new_token_count, retry_response = result
             actual_retries = retry_count
             new_distance = abs(new_token_count - target_tokens)
+            new_deviation_pct = abs((new_token_count - target_tokens) / target_tokens)
 
             # Track retry attempt with telemetry
             if reporter:
@@ -450,7 +450,15 @@ class TreeBuilder:
                     start_time=retry_start,
                 )
 
-            # Check if this attempt is better
+            # If this new attempt is within threshold, accept it immediately
+            if not self._should_retry_summary(new_deviation_pct):
+                logger.debug(
+                    f"{node_info}Acceptable result: {new_token_count} tokens "
+                    f"(target: {target_tokens}, {new_deviation_pct:.1%} deviation)"
+                )
+                return new_summary, actual_retries, actual_retries
+
+            # Otherwise, check if this attempt is better than our current best
             if self._is_better_summary(
                 new_token_count,
                 new_distance,
@@ -458,18 +466,19 @@ class TreeBuilder:
                 best_distance_from_target,
                 target_tokens,
             ):
+                old_best = best_token_count  # Save for logging
                 best_summary = new_summary
                 best_token_count = new_token_count
                 best_distance_from_target = new_distance
                 best_attempt_index = actual_retries
 
                 logger.debug(
-                    f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
+                    f"{node_info}Better result: {old_best} -> {new_token_count} tokens "
                     f"(target: {target_tokens}, distance: {new_distance})"
                 )
             else:
                 logger.debug(
-                    f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
+                    f"{node_info}No improvement: {new_token_count} tokens "
                     f"(best so far: {best_token_count} tokens)"
                 )
 
@@ -514,7 +523,6 @@ class TreeBuilder:
                     actual_tokens=current_token_count,
                     model="passthrough",  # Indicates no summarization needed - text used as-is
                     start_time=start_time,
-                    is_final=True,  # This is the only and final attempt
                 )
 
             return combined_text, 0, current_token_count  # No retries needed

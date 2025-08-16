@@ -290,6 +290,66 @@ async def test_no_retry_when_within_threshold(mock_store):
 
 
 @pytest.mark.asyncio
+async def test_accept_retry_within_threshold_immediately(mock_store):
+    """Test that we accept a retry attempt immediately when it's within threshold.
+
+    This tests the bug where attempts within the threshold were being ignored
+    if they weren't 'better' than previous attempts.
+    """
+    config = IndexConfig.load(
+        retry_threshold=0.2,  # 20% deviation threshold
+        max_retries=3,
+        target_chunk_tokens=100,
+    )
+
+    indexer = TreeBuilder(config, mock_store)
+    api_calls = []
+
+    async def mock_create(**kwargs):
+        """Return different responses based on call number."""
+        import copy
+
+        api_calls.append(copy.deepcopy(kwargs))
+
+        if len(api_calls) == 1:
+            # First attempt: 70 tokens (30% under, outside threshold)
+            return MockOpenAIResponse("A" * 70, 1000, 70, 0)
+        elif len(api_calls) == 2:
+            # Second attempt: 115 tokens (15% over, WITHIN threshold)
+            # This should be accepted immediately even though it's "worse" than 70
+            # (70 is closer to target and under, which is preferred by _is_better_summary)
+            return MockOpenAIResponse("B" * 115, 1200, 115, 1000)
+        else:
+            # We should never get here!
+            pytest.fail(
+                f"Should not make call #{len(api_calls)} - "
+                "attempt 2 was within threshold"
+            )
+
+    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+        with patch.object(
+            indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
+        ):
+            summary, retry_count, token_count = await indexer._summarize_text(
+                left_text="Test content that is much longer to trigger summarization"
+                * 2,
+                right_text="More content that also needs to be long enough" * 2,
+                target_tokens=100,
+                parent_id="test",
+            )
+
+    # With the BUGGY version: 115 is not "better" than 70, so it keeps 70 as best
+    # and continues retrying, making a 3rd call
+    # With the FIXED version: it should stop at attempt 2 and return 115
+
+    # This assertion will FAIL with buggy version (will be 3 instead of 2)
+    assert len(api_calls) == 2, "Should stop after second attempt (within threshold)"
+    assert retry_count == 1, "Should have done exactly 1 retry"
+    assert summary == "B" * 115, "Should return the second attempt's summary"
+    assert token_count == 115, "Should return the second attempt's token count"
+
+
+@pytest.mark.asyncio
 async def test_passthrough_for_text_under_target(mock_store):
     """Test that text under target tokens is passed through without LLM call."""
     config = IndexConfig.load(target_chunk_tokens=100)
