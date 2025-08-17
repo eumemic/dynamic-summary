@@ -89,14 +89,13 @@ Additional Options:
     All other options are passed through to the ragzoom index command.
     The script automatically:
     - Adds: --telemetry --validate --debug --no-progress
-    - Extracts config from baseline and uses --config <baseline_config.json>
-    - This ensures the exact same configuration as the baseline run
+    - Extracts target_chunk_tokens from baseline (for fair comparison)
+    - Uses current default_config.json for all other settings (to test improvements)
 
 Output Structure:
     benchmarks/
     ├── 20250815_163448/          # Timestamped run directory
     │   ├── ragzoom.db            # SQLite database from indexing
-    │   ├── baseline_config.json  # Config extracted from baseline
     │   ├── telemetry.json        # Telemetry data (becomes next baseline)
     │   ├── log.txt               # Full indexing logs with debug output
     │   ├── comparison.md         # Markdown comparison report
@@ -239,24 +238,19 @@ echo "Extracting configuration from baseline..."
 DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
 DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
 
-# Extract config object from baseline
+# Extract ONLY target_chunk_tokens from baseline for fair comparison
+# All other settings should use current defaults from default_config.json
 CONFIG=$(jq -r '.config // empty' "$BASELINE")
+TARGET_CHUNK_TOKENS=""
 if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
-    # Save config to temporary file
-    CONFIG_FILE="$OUTPUT_DIR/baseline_config.json"
-    echo "$CONFIG" | jq '.' > "$CONFIG_FILE"
-    echo "  Extracted config from baseline telemetry"
-    echo "  Config saved to: $CONFIG_FILE"
-    
-    # Show key config values for visibility
     TARGET_CHUNK_TOKENS=$(echo "$CONFIG" | jq -r '.target_chunk_tokens // empty')
     if [ -n "$TARGET_CHUNK_TOKENS" ]; then
-        echo "  Target chunk tokens: $TARGET_CHUNK_TOKENS"
+        echo "  Extracted target_chunk_tokens from baseline: $TARGET_CHUNK_TOKENS"
+        echo "  All other settings will use current defaults from default_config.json"
     fi
 else
     echo "Warning: Could not extract config from baseline telemetry"
     echo "  The indexer will use default configuration"
-    CONFIG_FILE=""
 fi
 
 # Auto-detect document if not provided
@@ -319,9 +313,10 @@ INDEX_ARGS=(
     --no-progress
 )
 
-# Add config file if we extracted one
-if [ -n "$CONFIG_FILE" ]; then
-    INDEX_ARGS+=(--config "$CONFIG_FILE")
+# Add target_chunk_tokens if we extracted it from baseline
+# This ensures fair comparison while using current defaults for everything else
+if [ -n "$TARGET_CHUNK_TOKENS" ]; then
+    INDEX_ARGS+=(--target-chunk-tokens "$TARGET_CHUNK_TOKENS")
 fi
 
 # Add any extra arguments
