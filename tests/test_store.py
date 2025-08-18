@@ -9,6 +9,7 @@ from ragzoom.config import OperationalConfig
 from ragzoom.store import Store
 
 
+@pytest.mark.integration
 class TestStore:
     """Test the Store class."""
 
@@ -19,10 +20,11 @@ class TestStore:
         temp_dir = tempfile.mkdtemp()
         db_path = f"{temp_dir}/test.db"
 
-        # Override config
+        # Override config - use SQLite for integration tests
+        # Real PostgreSQL would require a running database
         config = OperationalConfig(
             openai_api_key="test-key",
-            database_url=f"postgresql:///{db_path}",
+            database_url=f"sqlite:///{db_path}",
         )
 
         store = Store(config, embedding_model="text-embedding-3-small")

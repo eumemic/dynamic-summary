@@ -335,7 +335,10 @@ async def get_status(
     """Get system status."""
     try:
         # Gather stats
-        all_nodes = service.store.collection.count()
+        with service.store.SessionLocal() as session:
+            from ragzoom.store import TreeNode
+
+            all_nodes = session.query(TreeNode).count()
         leaf_nodes = service.store.get_leaf_nodes()
         root = service.store.get_root_node()
         pinned = service.store.get_pinned_nodes()

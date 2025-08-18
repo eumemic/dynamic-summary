@@ -1,7 +1,6 @@
 """Concurrency tests for thread safety."""
 
 import asyncio
-import os
 import tempfile
 from unittest.mock import Mock, patch
 

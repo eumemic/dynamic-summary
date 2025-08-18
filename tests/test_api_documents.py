@@ -1,6 +1,5 @@
 """Tests for document API endpoints."""
 
-import os
 import tempfile
 from unittest.mock import Mock, patch
 

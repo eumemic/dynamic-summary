@@ -70,15 +70,16 @@ class TestCLI:
             ]
             store_instance.get_root_node.return_value = Mock(depth=3)
             store_instance.get_pinned_nodes.return_value = []
-            store_instance.collection.count.return_value = 10
             store_instance.get_node_height.return_value = 3
             store_instance.clear_document.return_value = (
                 0  # Default to no nodes cleared
             )
 
-            # Mock SessionLocal for database queries
+            # Mock SessionLocal for database queries (handles count queries)
             mock_session = Mock()
             mock_query = Mock()
+            # Set up count to return 10 for TreeNode queries
+            mock_query.count = Mock(return_value=10)
 
             # Mock leaf nodes query
             leaf_nodes = [

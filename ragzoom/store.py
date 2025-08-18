@@ -4,11 +4,11 @@ import hashlib
 import logging
 from collections import deque
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from pgvector.sqlalchemy import Vector, register_vector
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     DateTime,
     ForeignKey,
@@ -16,10 +16,17 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    event,
     select,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+
+# Import register_vector from the appropriate module
+try:
+    from pgvector.psycopg import register_vector
+except ImportError:
+    from pgvector.psycopg2 import register_vector
 
 from ragzoom.config import OperationalConfig
 
@@ -98,7 +105,11 @@ class Store:
 
         # Initialize PostgreSQL with pgvector
         self.engine = create_engine(config.database_url)
-        register_vector(self.engine)
+
+        # Register pgvector extension using event listener
+        @event.listens_for(self.engine, "connect")
+        def register_vector_extension(dbapi_conn, connection_record):
+            register_vector(dbapi_conn)
 
         # Handle migration before creating tables with new schema
         self._run_migrations()
@@ -768,9 +779,9 @@ class Store:
             with self.engine.begin() as conn:
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         except Exception as e:
-            logger.debug(f"Migration check failed (this is normal for new databases): {e}")
-
-
+            logger.debug(
+                f"Migration check failed (this is normal for new databases): {e}"
+            )
 
     def close(self) -> None:
         """Close database connections and cleanup resources."""

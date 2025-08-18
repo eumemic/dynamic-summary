@@ -62,11 +62,15 @@ class SimpleMockStore:
                     return result_mock
                 return query_mock
 
+            def count_impl():
+                # Return count of all nodes for TreeNode queries
+                return len(self.nodes)
+
             query_mock.filter_by = filter_by_impl
             query_mock.filter = MagicMock(return_value=query_mock)
             query_mock.all = MagicMock(return_value=[])
             query_mock.first = MagicMock(return_value=None)
-            query_mock.count = MagicMock(return_value=0)
+            query_mock.count = count_impl  # Use the actual implementation
 
             return query_mock
 
@@ -139,6 +143,8 @@ class SimpleMockStore:
 
         # Update mock session results
         self._update_mock_results()
+
+        return node
 
     def add_nodes_batch(self, nodes_data: list[dict]) -> list[SimpleNamespace]:
         """Add multiple nodes in batch - mock implementation."""

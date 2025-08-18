@@ -92,9 +92,7 @@ class TestChunkSizeRegression:
     async def test_indexed_chunks_have_correct_size(self, tmp_path, monkeypatch):
         """Test that indexed chunks in the database have the correct token size."""
         # Set up test environment
-        monkeypatch.setenv(
-            "RAGZOOM_DATABASE_URL", f"postgresql:///{tmp_path}/test.db"
-        )
+        monkeypatch.setenv("RAGZOOM_DATABASE_URL", f"postgresql:///{tmp_path}/test.db")
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
         # Create separate configs

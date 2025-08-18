@@ -133,7 +133,7 @@ def mock_store(base_config) -> Generator[SimpleMockStore, None, None]:
 @pytest.fixture
 def real_store(base_config) -> Generator[Store, None, None]:
     """Create a real store for integration testing."""
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with tempfile.TemporaryDirectory():
         operational_config = OperationalConfig(
             openai_api_key=base_config.openai_api_key,
             database_url=base_config.database_url,

@@ -563,7 +563,10 @@ def status(ctx: click.Context) -> None:
         operational_config = ctx.obj["operational_config"]
         store = Store(operational_config, embedding_model=index_config.embedding_model)
         # Gather stats
-        all_nodes = store.collection.count()
+        with store.SessionLocal() as session:
+            from ragzoom.store import TreeNode
+
+            all_nodes = session.query(TreeNode).count()
         leaf_nodes = store.get_leaf_nodes()
         root = store.get_root_node()
         pinned = store.get_pinned_nodes()
@@ -654,7 +657,6 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
                 session.query(TreeNode).delete()
                 session.query(Document).delete()
                 session.commit()
-
 
             # Clear the cache
             store.node_cache.clear()

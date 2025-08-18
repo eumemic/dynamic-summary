@@ -173,7 +173,7 @@ class OperationalConfig:
     """
 
     openai_api_key: str = ""
-    database_url: str = "postgresql://localhost/ragzoom"
+    database_url: str = "postgresql+psycopg://localhost/ragzoom"
     cache_size: int = 1000
     log_level: str = "INFO"
     validate_pipeline: bool = False
