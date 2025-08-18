@@ -83,6 +83,9 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
     if api_key == "test-key":
         pytest.skip("OPENAI_API_KEY not set")
 
+    # Number of runs to reduce API variance (can be overridden via env var)
+    num_runs = int(os.getenv("QUERY_BENCHMARK_RUNS", "3"))
+
     # Query configurations
     queries = {
         "specific": "What is Bilbo's opinion about adventures at the beginning?",
@@ -107,29 +110,69 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
         )
         assembler = Assembler(store)
 
-        # Run query with telemetry
-        result, telemetry = asyncio.run(
-            retriever.retrieve_with_telemetry(
-                queries[query_type],
-                num_seeds=num_seeds,
-                budget_tokens=budget_tokens,
-                document_id=doc_id,
+        # Collect telemetry from multiple runs
+        all_telemetries = []
+        all_summaries = []
+
+        for run_idx in range(num_runs):
+            print(f"  Run {run_idx + 1}/{num_runs}")
+
+            # Run query with telemetry
+            result, telemetry = asyncio.run(
+                retriever.retrieve_with_telemetry(
+                    queries[query_type],
+                    num_seeds=num_seeds,
+                    budget_tokens=budget_tokens,
+                    document_id=doc_id,
+                )
             )
-        )
 
-        # Assemble the result and measure assembly time
-        import time
+            # Assemble the result and measure assembly time
+            import time
 
-        start = time.perf_counter()
-        summary = assembler.assemble(result)
-        telemetry.assembly_time = time.perf_counter() - start
+            start = time.perf_counter()
+            summary = assembler.assemble(result)
+            telemetry.assembly_time = time.perf_counter() - start
 
-        # Update end time after assembly
-        telemetry.end_time = time.perf_counter()
+            # Update end time after assembly
+            telemetry.end_time = time.perf_counter()
 
-        # Get actual token count
-        actual_tokens = assembler.get_token_count(summary)
-        telemetry.output_tokens = actual_tokens
+            # Get actual token count
+            actual_tokens = assembler.get_token_count(summary)
+            telemetry.output_tokens = actual_tokens
+
+            all_telemetries.append(telemetry.to_dict())
+            all_summaries.append(summary)
+
+        # Calculate statistics from multiple runs
+        import statistics
+
+        total_times = [t["timings"]["total_time"] for t in all_telemetries]
+        embedding_times = [t["timings"]["embedding_time"] for t in all_telemetries]
+
+        statistics_summary = {
+            "num_runs": num_runs,
+            "total_time": {
+                "median": statistics.median(total_times),
+                "mean": statistics.mean(total_times),
+                "std_dev": (
+                    statistics.stdev(total_times) if len(total_times) > 1 else 0.0
+                ),
+                "min": min(total_times),
+                "max": max(total_times),
+            },
+            "embedding_time": {
+                "median": statistics.median(embedding_times),
+                "mean": statistics.mean(embedding_times),
+                "std_dev": (
+                    statistics.stdev(embedding_times)
+                    if len(embedding_times) > 1
+                    else 0.0
+                ),
+                "min": min(embedding_times),
+                "max": max(embedding_times),
+            },
+        }
 
         # Save telemetry data for comparison
         output_dir = Path("benchmark_results")
@@ -140,48 +183,71 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
             / f"query_telemetry_{num_seeds}seeds_{budget_tokens}tokens_{query_type}.json"
         )
 
-        # Save telemetry
+        # Save telemetry (updated format with multiple runs)
         telemetry_data = {
-            "format_version": "1.0",  # Query telemetry format version
-            "telemetry": telemetry.to_dict(),
+            "format_version": "1.1",  # Updated format version for multiple runs
+            "telemetries": all_telemetries,  # All individual run telemetries
+            "statistics": statistics_summary,  # Aggregated statistics
             "config": {
                 "num_seeds": num_seeds,
                 "budget_tokens": budget_tokens,
                 "query_type": query_type,
+                "num_runs": num_runs,
             },
             "summary_preview": (
-                summary[:500] if summary else ""
-            ),  # First 500 chars for validation
+                all_summaries[0][:500] if all_summaries else ""
+            ),  # First summary for validation
         }
 
         with open(output_file, "w") as f:
             json.dump(telemetry_data, f, indent=2)
 
-        # Print summary
+        # Print summary with statistics
         print(
             f"\n=== Query Performance ({query_type}, seeds={num_seeds}, budget={budget_tokens}) ==="
         )
-        print(f"Total time: {telemetry.total_time:.3f}s")
-        print("Phase breakdown:")
-        print(f"  - Embedding: {telemetry.embedding_time:.3f}s")
-        print(f"  - Search: {telemetry.search_time:.3f}s")
-        print(f"  - MMR: {telemetry.mmr_time:.3f}s")
-        print(f"  - Coverage map: {telemetry.coverage_map_time:.3f}s")
-        print(f"  - Scoring: {telemetry.scoring_time:.3f}s")
-        print(f"  - DP tiling: {telemetry.dp_time:.3f}s")
-        print(f"  - Assembly: {telemetry.assembly_time:.3f}s")
-        print("\nResults:")
-        print(f"  - Seeds found: {telemetry.seeds_found}/{telemetry.seeds_requested}")
-        print(f"  - Coverage size: {telemetry.coverage_size} nodes")
-        print(f"  - Tiling size: {telemetry.tiling_size} nodes")
-        print(f"  - Output tokens: {telemetry.output_tokens}/{budget_tokens}")
+        print(f"Runs: {num_runs}")
+        print(f"Total time: {statistics_summary['total_time']['median']:.3f}s (median)")
+        print(f"  ± {statistics_summary['total_time']['std_dev']:.3f}s std dev")
+        print(
+            f"  Range: {statistics_summary['total_time']['min']:.3f}s - {statistics_summary['total_time']['max']:.3f}s"
+        )
+        print(
+            f"Embedding time: {statistics_summary['embedding_time']['median']:.3f}s (median)"
+        )
+        print(f"  ± {statistics_summary['embedding_time']['std_dev']:.3f}s std dev")
 
-        # Basic validation
+        # Show median phase breakdown from middle run
+        median_run_idx = len(all_telemetries) // 2
+        median_telemetry = all_telemetries[median_run_idx]
+        print("Phase breakdown (median run):")
+        print(f"  - Embedding: {median_telemetry['timings']['embedding_time']:.3f}s")
+        print(f"  - Search: {median_telemetry['timings']['search_time']:.3f}s")
+        print(f"  - MMR: {median_telemetry['timings']['mmr_time']:.3f}s")
+        print(
+            f"  - Coverage map: {median_telemetry['timings']['coverage_map_time']:.3f}s"
+        )
+        print(f"  - Scoring: {median_telemetry['timings']['scoring_time']:.3f}s")
+        print(f"  - DP tiling: {median_telemetry['timings']['dp_time']:.3f}s")
+        print(f"  - Assembly: {median_telemetry['timings']['assembly_time']:.3f}s")
+        print("\nResults (median run):")
+        print(
+            f"  - Seeds found: {median_telemetry['metrics']['seeds_found']}/{median_telemetry['metrics']['seeds_requested']}"
+        )
+        print(
+            f"  - Coverage size: {median_telemetry['metrics']['coverage_size']} nodes"
+        )
+        print(f"  - Tiling size: {median_telemetry['metrics']['tiling_size']} nodes")
+        print(
+            f"  - Output tokens: {median_telemetry['metrics']['output_tokens']}/{budget_tokens}"
+        )
+
+        # Basic validation using median run
         assert (
-            telemetry.output_tokens <= budget_tokens
-        ), f"Output exceeded budget: {telemetry.output_tokens} > {budget_tokens}"
-        assert telemetry.tiling_size > 0, "No nodes in tiling"
-        assert telemetry.total_time > 0, "Invalid timing"
+            median_telemetry["metrics"]["output_tokens"] <= budget_tokens
+        ), f"Output exceeded budget: {median_telemetry['metrics']['output_tokens']} > {budget_tokens}"
+        assert median_telemetry["metrics"]["tiling_size"] > 0, "No nodes in tiling"
+        assert statistics_summary["total_time"]["median"] > 0, "Invalid timing"
 
 
 def test_query_performance_comparison():

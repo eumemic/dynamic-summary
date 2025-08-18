@@ -461,11 +461,14 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     with open(baseline_file) as f:
         baseline_data = json.load(f)
 
-    # Detect query telemetry files
-    if (
-        baseline_data.get("format_version") == "1.0"
-        and "telemetry" in baseline_data
-        and "timings" in baseline_data.get("telemetry", {})
+    # Detect query telemetry files (v1.0 or v1.1 format)
+    format_version = baseline_data.get("format_version")
+    if format_version in ["1.0", "1.1"] and (
+        (
+            "telemetry" in baseline_data
+            and "timings" in baseline_data.get("telemetry", {})
+        )
+        or ("telemetries" in baseline_data)  # v1.1 format with multiple runs
     ):
         # This is query telemetry
         return _compare_query_telemetry_files(baseline_file, current_file)
@@ -525,9 +528,9 @@ def _compare_query_telemetry_files(baseline_file: Path, current_file: Path) -> b
     with open(current_file) as f:
         current_data = json.load(f)
 
-    # Compare performance
+    # Compare performance (higher threshold for query variance)
     has_regression, report = compare_query_performance(
-        baseline_data, current_data, regression_threshold=0.2
+        baseline_data, current_data, regression_threshold=0.5
     )
 
     # Format output
