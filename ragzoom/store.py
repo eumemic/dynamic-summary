@@ -45,8 +45,8 @@ class TreeNode(Base):
     span_start: Mapped[int] = mapped_column(Integer, nullable=False)
     span_end: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    token_count: Mapped[int | None] = mapped_column(
-        Integer, nullable=True
+    token_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
     )  # Token count of text content (raw text for leaves, summary for internal nodes)
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -204,7 +204,7 @@ class Store:
         left_child_id: str | None = None,
         right_child_id: str | None = None,
         document_id: str | None = None,
-        token_count: int | None = None,
+        token_count: int = 0,
     ) -> TreeNode:
         """Add a node to both SQLite and Chroma."""
         # Validate embedding dimension
@@ -259,7 +259,7 @@ class Store:
                 - node_id, text, embedding, span_start, span_end,
                 - parent_id (optional), left_child_id (optional),
                 - right_child_id (optional), document_id (optional),
-                - token_count (optional)
+                - token_count (defaults to 0)
 
         Returns:
             List of created TreeNode objects
@@ -284,7 +284,7 @@ class Store:
                     span_end=data["span_end"],
                     text=data["text"],
                     document_id=data.get("document_id"),
-                    token_count=data.get("token_count"),
+                    token_count=data.get("token_count", 0),
                     preceding_neighbor_id=data.get("preceding_neighbor_id"),
                 )
                 nodes.append(node)

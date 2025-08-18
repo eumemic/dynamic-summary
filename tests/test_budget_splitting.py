@@ -20,7 +20,12 @@ class TestBudgetSplitting:
         right_text = " ".join(["word"] * 100)  # ~100 tokens
 
         left_child = TreeNode(
-            id="left", text=left_text, span_start=0, span_end=100, parent_id="parent"
+            id="left",
+            text=left_text,
+            span_start=0,
+            span_end=100,
+            parent_id="parent",
+            token_count=100,
         )
 
         right_child = TreeNode(
@@ -29,6 +34,7 @@ class TestBudgetSplitting:
             span_start=100,
             span_end=200,
             parent_id="parent",
+            token_count=100,
         )
 
         parent = TreeNode(
@@ -38,6 +44,7 @@ class TestBudgetSplitting:
             span_end=200,
             left_child_id="left",
             right_child_id="right",
+            token_count=10,
         )
 
         # Set up generator's nodes dict
@@ -79,7 +86,12 @@ class TestBudgetSplitting:
         right_text = " ".join(["word"] * 50)  # ~50 tokens
 
         left_child = TreeNode(
-            id="left", text=left_text, span_start=0, span_end=150, parent_id="parent"
+            id="left",
+            text=left_text,
+            span_start=0,
+            span_end=150,
+            parent_id="parent",
+            token_count=150,
         )
 
         right_child = TreeNode(
@@ -88,6 +100,7 @@ class TestBudgetSplitting:
             span_start=150,
             span_end=200,
             parent_id="parent",
+            token_count=50,
         )
 
         parent = TreeNode(
@@ -97,6 +110,7 @@ class TestBudgetSplitting:
             span_end=200,
             left_child_id="left",
             right_child_id="right",
+            token_count=10,
         )
 
         generator._nodes = {"left": left_child, "right": right_child, "parent": parent}
@@ -127,7 +141,12 @@ class TestBudgetSplitting:
         right_text = " ".join(["word"] * 100)  # ~100 tokens
 
         left_child = TreeNode(
-            id="left", text=left_text, span_start=0, span_end=100, parent_id="parent"
+            id="left",
+            text=left_text,
+            span_start=0,
+            span_end=100,
+            parent_id="parent",
+            token_count=100,
         )
 
         right_child = TreeNode(
@@ -136,6 +155,7 @@ class TestBudgetSplitting:
             span_start=100,
             span_end=200,
             parent_id="parent",
+            token_count=100,
         )
 
         parent = TreeNode(
@@ -145,6 +165,7 @@ class TestBudgetSplitting:
             span_end=200,
             left_child_id="left",
             right_child_id="right",
+            token_count=10,
         )
 
         generator._nodes = {"left": left_child, "right": right_child, "parent": parent}
