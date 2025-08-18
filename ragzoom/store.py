@@ -11,6 +11,7 @@ from typing import Any, cast
 import chromadb
 import numpy as np
 from chromadb.config import Settings
+from numpy.typing import NDArray
 from sqlalchemy import (
     DateTime,
     ForeignKey,
@@ -175,7 +176,7 @@ class Store:
         return None
 
     def _validate_embedding_dimension(
-        self, embedding: list[float] | np.ndarray
+        self, embedding: list[float] | NDArray[np.float64]
     ) -> None:
         """Validate embedding dimension matches expected."""
         if not embedding:
@@ -197,7 +198,7 @@ class Store:
         self,
         node_id: str,
         text: str,
-        embedding: list[float] | np.ndarray,
+        embedding: list[float] | NDArray[np.float64],
         span_start: int,
         span_end: int,
         parent_id: str | None = None,
@@ -451,10 +452,10 @@ class Store:
 
     def search_similar(
         self,
-        query_embedding: list[float] | np.ndarray,
+        query_embedding: list[float] | NDArray[np.float64],
         n_results: int,
-        where: dict | None = None,
-    ) -> list[tuple[str, float, dict]]:
+        where: dict[str, Any] | None = None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
         """Search for similar nodes using Chroma.
 
         Returns list of (id, similarity, metadata) tuples where similarity is in [0, 1].
@@ -636,8 +637,8 @@ class Store:
 
     def compute_mmr_diverse_results(
         self,
-        query_embedding: list[float] | np.ndarray,
-        candidates: list[tuple[str, float, dict]],
+        query_embedding: list[float] | NDArray[np.float64],
+        candidates: list[tuple[str, float, dict[str, Any]]],
         lambda_param: float,
         k: int,
     ) -> list[str]:
@@ -844,7 +845,7 @@ class Store:
                 "node_count": result.node_count or 0,
             }
 
-    def _run_migrations(self):
+    def _run_migrations(self) -> None:
         """Run any necessary database migrations."""
         try:
             with self.engine.connect() as conn:
@@ -1133,7 +1134,7 @@ class Store:
             # Don't fail the migration if ChromaDB cleanup fails
             # This is a one-time cleanup that's not critical
 
-    def close(self):
+    def close(self) -> None:
         """Close database connections and cleanup resources."""
         if hasattr(self, "engine"):
             self.engine.dispose()
