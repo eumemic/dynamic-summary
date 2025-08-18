@@ -263,30 +263,49 @@ def compute_dynamic_threshold(
     )
 
 
-def _match_telemetry_files(dir1: Path, dir2: Path) -> list[tuple[Path, Path]]:
+def _match_telemetry_files(
+    dir1: Path, dir2: Path
+) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
     """Match telemetry files between two directories by filename.
 
-    Returns list of (baseline_file, current_file) tuples.
+    Returns tuple of (indexing_matches, query_matches) where each is a list of (baseline_file, current_file) tuples.
     """
-    # Find telemetry files in both directories
-    dir1_files = list(dir1.glob("telemetry_*_tokens.json"))
-    dir2_files = list(dir2.glob("telemetry_*_tokens.json"))
+    # Find indexing telemetry files in both directories
+    dir1_indexing = list(dir1.glob("telemetry_*_tokens.json"))
+    dir2_indexing = list(dir2.glob("telemetry_*_tokens.json"))
 
-    # Also support generic telemetry.json files
-    dir1_files.extend(dir1.glob("telemetry.json"))
-    dir2_files.extend(dir2.glob("telemetry.json"))
+    # Also support generic telemetry.json files for indexing
+    dir1_indexing.extend(dir1.glob("telemetry.json"))
+    dir2_indexing.extend(dir2.glob("telemetry.json"))
 
-    # Create mapping by filename
-    dir1_map = {f.name: f for f in dir1_files}
-    dir2_map = {f.name: f for f in dir2_files}
+    # Find query telemetry files in both directories
+    dir1_query = list(dir1.glob("query_telemetry_*.json"))
+    dir2_query = list(dir2.glob("query_telemetry_*.json"))
 
-    # Find matching pairs
-    matches = []
-    for filename, file1 in dir1_map.items():
-        if filename in dir2_map:
-            matches.append((file1, dir2_map[filename]))
+    # Create mappings by filename for indexing files
+    dir1_indexing_map = {f.name: f for f in dir1_indexing}
+    dir2_indexing_map = {f.name: f for f in dir2_indexing}
 
-    return sorted(matches, key=lambda x: x[0].name)
+    # Create mappings by filename for query files
+    dir1_query_map = {f.name: f for f in dir1_query}
+    dir2_query_map = {f.name: f for f in dir2_query}
+
+    # Find matching pairs for indexing telemetry
+    indexing_matches = []
+    for filename, file1 in dir1_indexing_map.items():
+        if filename in dir2_indexing_map:
+            indexing_matches.append((file1, dir2_indexing_map[filename]))
+
+    # Find matching pairs for query telemetry
+    query_matches = []
+    for filename, file1 in dir1_query_map.items():
+        if filename in dir2_query_map:
+            query_matches.append((file1, dir2_query_map[filename]))
+
+    return (
+        sorted(indexing_matches, key=lambda x: x[0].name),
+        sorted(query_matches, key=lambda x: x[0].name),
+    )
 
 
 def _check_telemetry_deps() -> None:
@@ -727,91 +746,131 @@ def _compare_directories(baseline_dir: Path, current_dir: Path) -> bool:
     Returns:
         True if any regression detected
     """
-    # Find matching files
-    matches = _match_telemetry_files(baseline_dir, current_dir)
+    # Find matching files for both indexing and query telemetry
+    indexing_matches, query_matches = _match_telemetry_files(baseline_dir, current_dir)
 
-    if not matches:
+    if not indexing_matches and not query_matches:
         click.echo(
             f"No matching telemetry files found between {baseline_dir} and {current_dir}",
             err=True,
         )
         sys.exit(1)
 
-    # Collect all metrics from all files
-    all_chunk_metrics = {}  # chunk_size -> (baseline_metrics, current_metrics)
-    baseline_config = None
-    current_config = None
+    has_regression = False
 
-    for baseline_file, current_file in matches:
+    # Process indexing telemetry files first
+    if indexing_matches:
+        # Collect all metrics from indexing files
+        all_chunk_metrics = {}  # chunk_size -> (baseline_metrics, current_metrics)
+        baseline_config = None
+        current_config = None
+
+        for baseline_file, current_file in indexing_matches:
+            try:
+                # Load and compute metrics for both files
+                baseline_data, baseline_metrics = _load_and_compute_metrics(
+                    baseline_file
+                )
+                current_data, current_metrics = _load_and_compute_metrics(current_file)
+
+                # Extract config from first file (they should all be the same)
+                if baseline_config is None and "config" in baseline_data:
+                    baseline_config = baseline_data["config"]
+                if current_config is None and "config" in current_data:
+                    current_config = current_data["config"]
+
+                # Store metrics for each chunk size
+                for chunk_size in baseline_metrics.metrics_by_chunk_size:
+                    if chunk_size in current_metrics.metrics_by_chunk_size:
+                        all_chunk_metrics[chunk_size] = (
+                            baseline_metrics.metrics_by_chunk_size[chunk_size],
+                            current_metrics.metrics_by_chunk_size[chunk_size],
+                        )
+            except Exception as e:
+                click.echo(f"Error loading {baseline_file.name}: {e}", err=True)
+
+        if all_chunk_metrics:
+            # Generate unified comparison table
+            # First, reorganize the data into the format expected by the existing comparison functions
+            from ragzoom.telemetry_analysis import SimplifiedMetrics
+
+            # Create pseudo SimplifiedMetrics objects with all chunk sizes
+            baseline_combined_dict = {}
+            current_combined_dict = {}
+
+            for chunk_size in sorted(all_chunk_metrics.keys()):
+                baseline_metrics, current_metrics = all_chunk_metrics[chunk_size]
+                baseline_combined_dict[chunk_size] = baseline_metrics
+                current_combined_dict[chunk_size] = current_metrics
+
+            baseline_combined = SimplifiedMetrics(
+                metrics_by_chunk_size=baseline_combined_dict
+            )
+            current_combined = SimplifiedMetrics(
+                metrics_by_chunk_size=current_combined_dict
+            )
+
+            # Use existing comparison formatting functions
+            chunk_sizes = set(all_chunk_metrics.keys())
+
+            # Check for regressions with dynamic thresholds
+            # Detect CI from any of the files (use False as default)
+            is_ci = False
+            for _, _ in indexing_matches:
+                # Could check environment from files, but for now default to False
+                pass
+
+            indexing_has_regression, thresholds_by_chunk = (
+                _check_metrics_for_regressions_with_thresholds(
+                    baseline_combined, current_combined, chunk_sizes, is_ci
+                )
+            )
+
+            # Format output with thresholds
+            _format_markdown_comparison_with_thresholds(
+                baseline_combined,
+                current_combined,
+                chunk_sizes,
+                thresholds_by_chunk,
+                baseline_config,
+                current_config,
+            )
+
+            has_regression = has_regression or indexing_has_regression
+        else:
+            click.echo("### Indexing Performance")
+            click.echo("⚠️ No indexing benchmark files found for comparison")
+
+    # Process query telemetry files
+    if query_matches:
+        query_has_regression = _process_query_matches(query_matches)
+        has_regression = has_regression or query_has_regression
+    else:
+        click.echo("\n### Query Performance")
+        click.echo("⚠️ No query benchmark files found for comparison")
+
+    return has_regression
+
+
+def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
+    """Process query telemetry file matches and output comparison.
+
+    Returns:
+        True if any regression detected
+    """
+    click.echo("\n### Query Performance")
+
+    has_regression = False
+
+    # Process each query telemetry file pair
+    for baseline_file, current_file in query_matches:
         try:
-            # Load and compute metrics for both files
-            baseline_data, baseline_metrics = _load_and_compute_metrics(baseline_file)
-            current_data, current_metrics = _load_and_compute_metrics(current_file)
-
-            # Extract config from first file (they should all be the same)
-            if baseline_config is None and "config" in baseline_data:
-                baseline_config = baseline_data["config"]
-            if current_config is None and "config" in current_data:
-                current_config = current_data["config"]
-
-            # Store metrics for each chunk size
-            for chunk_size in baseline_metrics.metrics_by_chunk_size:
-                if chunk_size in current_metrics.metrics_by_chunk_size:
-                    all_chunk_metrics[chunk_size] = (
-                        baseline_metrics.metrics_by_chunk_size[chunk_size],
-                        current_metrics.metrics_by_chunk_size[chunk_size],
-                    )
+            query_has_regression = _compare_query_telemetry_files(
+                baseline_file, current_file
+            )
+            has_regression = has_regression or query_has_regression
         except Exception as e:
-            click.echo(f"Error loading {baseline_file.name}: {e}", err=True)
-
-    if not all_chunk_metrics:
-        click.echo(
-            "⚠️ Warning: No common chunk sizes found between directories", err=True
-        )
-        # Still allow continuing without exiting
-        return False  # No regression since we can't compare
-
-    # Generate unified comparison table
-    # First, reorganize the data into the format expected by the existing comparison functions
-    from ragzoom.telemetry_analysis import SimplifiedMetrics
-
-    # Create pseudo SimplifiedMetrics objects with all chunk sizes
-    baseline_combined_dict = {}
-    current_combined_dict = {}
-
-    for chunk_size in sorted(all_chunk_metrics.keys()):
-        baseline_metrics, current_metrics = all_chunk_metrics[chunk_size]
-        baseline_combined_dict[chunk_size] = baseline_metrics
-        current_combined_dict[chunk_size] = current_metrics
-
-    baseline_combined = SimplifiedMetrics(metrics_by_chunk_size=baseline_combined_dict)
-    current_combined = SimplifiedMetrics(metrics_by_chunk_size=current_combined_dict)
-
-    # Use existing comparison formatting functions
-    chunk_sizes = set(all_chunk_metrics.keys())
-
-    # Check for regressions with dynamic thresholds
-    # Detect CI from any of the files (use False as default)
-    is_ci = False
-    for _, _ in matches:
-        # Could check environment from files, but for now default to False
-        pass
-
-    has_regression, thresholds_by_chunk = (
-        _check_metrics_for_regressions_with_thresholds(
-            baseline_combined, current_combined, chunk_sizes, is_ci
-        )
-    )
-
-    # Format output with thresholds
-    _format_markdown_comparison_with_thresholds(
-        baseline_combined,
-        current_combined,
-        chunk_sizes,
-        thresholds_by_chunk,
-        baseline_config,
-        current_config,
-    )
+            click.echo(f"Error comparing {baseline_file.name}: {e}", err=True)
 
     return has_regression
 
