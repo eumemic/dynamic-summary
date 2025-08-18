@@ -808,20 +808,16 @@ class TelemetryVisualizer:
             ax.set_title("Summary Compression Patterns")
             return
 
-        # Define colors for attempt numbers (distinct colors, soft palette)
-        colors = [
-            "#66c2a5",  # Teal (attempt 1)
-            "#fc8d62",  # Orange (attempt 2)
-            "#8da0cb",  # Blue (attempt 3)
-            "#e78ac3",  # Pink (attempt 4)
-            "#a6d854",  # Green (attempt 5+)
-        ]
+        # Create color map for attempt numbers (same colors as cost breakdown)
+        colors = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#991b1b"]  # Blue to red
 
         # Map each attempt to a color
         attempt_colors = []
         for attempt_num in attempt_numbers:
-            color_idx = min(attempt_num - 1, len(colors) - 1)
-            attempt_colors.append(colors[color_idx])
+            if attempt_num >= len(colors):
+                attempt_colors.append(colors[-1])  # 5+ attempts = darkest red
+            else:
+                attempt_colors.append(colors[attempt_num - 1])  # Convert to 0-indexed
 
         # Create scatter plot - first plot all attempts
         ax.scatter(
