@@ -1,4 +1,7 @@
-"""Configuration management for RagZoom."""
+"""Configuration management for RagZoom.
+
+Test change to verify query baseline comparison works.
+"""
 
 import json
 import os
