@@ -179,29 +179,20 @@ class Retriever:
             # Get embeddings and compute similarities for ancestors
             for node_id in nodes_needing_scores:
                 ancestor_node: TreeNode | None = self.store.get_node(node_id)
-                if ancestor_node is not None:
-                    # Get node's embedding from Chroma
+                if ancestor_node is not None and ancestor_node.embedding is not None:
                     try:
-                        result = self.store.collection.get(
-                            ids=[node_id], include=["embeddings"]
-                        )
-                        embeddings = result.get("embeddings")
-                        if embeddings is not None and len(embeddings) > 0:
-                            node_embedding = embeddings[0]
-                            # Compute cosine similarity
-                            import numpy as np
+                        import numpy as np
 
-                            query_vec = np.array(query_embedding)
-                            node_vec = np.array(node_embedding)
-                            # Cosine similarity = dot product of normalized vectors
-                            similarity = float(
-                                np.dot(query_vec, node_vec)
-                                / (np.linalg.norm(query_vec) * np.linalg.norm(node_vec))
-                            )
-                            scores[node_id] = max(0.0, min(1.0, similarity))
+                        query_vec = np.array(query_embedding)
+                        node_vec = np.array(ancestor_node.embedding)
+                        similarity = float(
+                            np.dot(query_vec, node_vec)
+                            / (np.linalg.norm(query_vec) * np.linalg.norm(node_vec))
+                        )
+                        scores[node_id] = max(0.0, min(1.0, similarity))
                     except Exception as e:
                         logger.warning(
-                            f"Failed to get embedding for node {node_id}: {e}"
+                            f"Failed to compute embedding similarity for node {node_id}: {e}"
                         )
                         scores[node_id] = 0.0
 

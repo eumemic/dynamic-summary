@@ -15,16 +15,14 @@ class TestStore:
     @pytest.fixture
     def temp_store(self):
         """Create a temporary store for testing."""
-        # Create temporary directories
+        # Create temporary directory
         temp_dir = tempfile.mkdtemp()
-        chroma_dir = f"{temp_dir}/chroma"
         db_path = f"{temp_dir}/test.db"
 
         # Override config
         config = OperationalConfig(
             openai_api_key="test-key",
-            chroma_persist_directory=chroma_dir,
-            sqlite_database_url=f"sqlite:///{db_path}",
+            database_url=f"postgresql:///{db_path}",
         )
 
         store = Store(config, embedding_model="text-embedding-3-small")

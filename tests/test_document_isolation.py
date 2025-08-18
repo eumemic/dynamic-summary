@@ -83,7 +83,7 @@ class TestDocumentIsolation:
     @pytest.fixture
     def setup(self, mock_openai):
         """Create test environment."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory():
             index_config = IndexConfig.load(
                 target_chunk_tokens=50,
                 preceding_context_tokens=25,
@@ -93,8 +93,7 @@ class TestDocumentIsolation:
             )
             operational_config = OperationalConfig(
                 openai_api_key="test-key",
-                chroma_persist_directory=temp_dir,
-                sqlite_database_url="sqlite:///:memory:",
+                database_url="postgresql:///:memory:",
             )
             config = BackwardCompatibilityConfig(
                 index_config, query_config, operational_config

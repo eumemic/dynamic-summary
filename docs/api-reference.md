@@ -440,8 +440,7 @@ All parameters can be set via CLI options or config files. For an overview of ho
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `database_url` | str | "ragzoom.db" | SQLite database path |
-| `chroma_path` | str | "./chroma_db" | ChromaDB storage path |
+| `database_url` | str | "postgresql://localhost/ragzoom" | PostgreSQL database URL |
 | `cache_size` | int | 1000 | LRU cache size |
 
 #### Operational Settings
