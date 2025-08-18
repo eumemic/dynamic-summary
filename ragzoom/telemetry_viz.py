@@ -768,6 +768,7 @@ class TelemetryVisualizer:
         input_tokens = []
         output_tokens = []
         attempt_numbers = []
+        is_accepted = []  # Track which attempts are accepted
         node_count = 0  # Track actual number of nodes processed
 
         # Process nodes to extract ALL attempts (not just accepted ones)
@@ -784,12 +785,16 @@ class TelemetryVisualizer:
                 attempts = node.get("summary_attempts", [])
                 if attempts:  # Only count nodes that have attempts
                     node_count += 1
+                    # Get the accepted attempt index (defaults to last attempt)
+                    accepted_idx = node.get("accepted_attempt", len(attempts) - 1)
                     for attempt_num, attempt in enumerate(attempts, 1):
                         actual_tokens = attempt.get("actual_tokens", 0)
                         if actual_tokens > 0:
                             input_tokens.append(input_text_tokens)
                             output_tokens.append(actual_tokens)
                             attempt_numbers.append(attempt_num)
+                            # Check if this is the accepted attempt (0-based index)
+                            is_accepted.append(attempt_num - 1 == accepted_idx)
 
         if not input_tokens:
             ax.text(
@@ -812,7 +817,7 @@ class TelemetryVisualizer:
             else:
                 attempt_colors.append(colors[attempt_num - 1])  # Convert to 0-indexed
 
-        # Create scatter plot
+        # Create scatter plot - first plot all attempts
         ax.scatter(
             input_tokens,
             output_tokens,
@@ -821,6 +826,22 @@ class TelemetryVisualizer:
             s=50,
             edgecolors="none",
         )
+
+        # Then plot accepted attempts with black borders on top
+        accepted_inputs = [inp for inp, acc in zip(input_tokens, is_accepted) if acc]
+        accepted_outputs = [out for out, acc in zip(output_tokens, is_accepted) if acc]
+        accepted_colors = [col for col, acc in zip(attempt_colors, is_accepted) if acc]
+        if accepted_inputs:
+            ax.scatter(
+                accepted_inputs,
+                accepted_outputs,
+                c=accepted_colors,
+                alpha=0.6,
+                s=50,
+                edgecolors="black",
+                linewidths=1,
+                zorder=10,  # Draw on top
+            )
 
         # Set axis limits with margin around data (calculate early for use in other elements)
         x_margin = (max(input_tokens) - min(input_tokens)) * 0.05
@@ -858,27 +879,29 @@ class TelemetryVisualizer:
         if chunk_size > 0:
             if retry_threshold is not None:
                 threshold_tokens = chunk_size * retry_threshold
+                # With undershoot elimination, we accept all undershoots (0 to target)
+                # and only retry overshoots beyond target + threshold
                 ax.fill_between(
                     x_extend,
-                    chunk_size - threshold_tokens,
-                    chunk_size + threshold_tokens,
+                    0,  # Accept all undershoots
+                    chunk_size + threshold_tokens,  # Retry beyond this
                     alpha=0.1,
                     color="green",
-                    label=f"±{retry_threshold*100:.0f}% retry threshold",
+                    label=f"Acceptance range (0 to +{retry_threshold*100:.0f}%)",
                 )
             else:
                 # Warn when retry_threshold is missing and use fallback
                 logging.warning(
                     "retry_threshold not found in telemetry config. "
-                    "Using fallback ±10 token range."
+                    "Using fallback acceptance range 0 to target+10 tokens."
                 )
                 ax.fill_between(
                     x_extend,
-                    chunk_size - 10,
-                    chunk_size + 10,
+                    0,  # Accept all undershoots
+                    chunk_size + 10,  # Retry beyond target + 10
                     alpha=0.1,
                     color="green",
-                    label="±10 token range (fallback)",
+                    label="Acceptance range (0 to +10 tokens)",
                 )
 
         # Add diagonal reference line showing 1:1 ratio (extend well beyond visible area)
@@ -894,26 +917,93 @@ class TelemetryVisualizer:
         )
 
         # Create custom legend for attempt numbers (matching cost breakdown)
+        # Use circles instead of rectangles
         legend_elements: list = [
-            Patch(facecolor=colors[0], label="Attempt 1", alpha=0.6),
-            Patch(facecolor=colors[1], label="Attempt 2", alpha=0.6),
-            Patch(facecolor=colors[2], label="Attempt 3", alpha=0.6),
-            Patch(facecolor=colors[3], label="Attempt 4", alpha=0.6),
-            Patch(facecolor=colors[4], label="Attempt 5+", alpha=0.6),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[0],
+                markersize=8,
+                label="Attempt 1",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[1],
+                markersize=8,
+                label="Attempt 2",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[2],
+                markersize=8,
+                label="Attempt 3",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[3],
+                markersize=8,
+                label="Attempt 4",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[4],
+                markersize=8,
+                label="Attempt 5+",
+                linestyle="None",
+                alpha=0.6,
+            ),
         ]
 
         # Only include legend items for attempt numbers that exist in the data
         max_attempts = max(attempt_numbers) if attempt_numbers else 0
         legend_elements = legend_elements[: min(max_attempts, 5)]
 
+        # Add accepted attempt indicator to legend with transparent fill
+        legend_elements.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor="none",  # Transparent fill
+                markeredgecolor="black",
+                markersize=8,
+                markeredgewidth=1,
+                label="Accepted attempt",
+                linestyle="None",
+            )
+        )
+
         # Add statistics annotation
-        # Calculate deviations from target (chunk_size) as percentages
-        if chunk_size > 0:
-            deviations_pct = [
-                (output - chunk_size) / chunk_size * 100 for output in output_tokens
+        # Calculate deviations from target (chunk_size) as percentages for ACCEPTED attempts only
+        if chunk_size > 0 and accepted_outputs:
+            accepted_deviations_pct = [
+                (output - chunk_size) / chunk_size * 100 for output in accepted_outputs
             ]
-            avg_deviation_pct = np.mean(deviations_pct)
-            median_deviation_pct = np.median(deviations_pct)
+            avg_deviation_pct = np.mean(accepted_deviations_pct)
+            median_deviation_pct = np.median(accepted_deviations_pct)
 
             # Calculate actual token positions for the lines
             avg_position = chunk_size * (1 + avg_deviation_pct / 100)
@@ -962,6 +1052,10 @@ class TelemetryVisualizer:
                 ]
             )
 
+        elif chunk_size > 0:
+            # No accepted outputs, but chunk_size is valid
+            avg_deviation_pct = 0.0
+            median_deviation_pct = 0.0
         else:
             avg_deviation_pct = 0.0
             median_deviation_pct = 0.0

@@ -73,17 +73,20 @@ async def test_retry_maintains_conversation_history(mock_store):
 
         # Second call (retry): should have full conversation
         elif len(api_calls) == 2:
-            # Verify conversation continuity
-            assert len(messages) == 4  # system, user, assistant, user
+            # Verify conversation continuity (with vaccine: system, user, vaccine_assistant, vaccine_user, assistant, user)
+            assert len(messages) == 6  # Including vaccine messages
             assert messages[0]["role"] == "system"
             assert messages[1]["role"] == "user"
-            assert messages[2]["role"] == "assistant"
-            assert messages[2]["content"] == "A" * 150  # Previous response
-            assert messages[3]["role"] == "user"
-            # Check that retry prompt contains expected content
-            assert "Please try again" in messages[3]["content"]
-            assert "100 tokens" in messages[3]["content"]  # Target tokens
-            assert "150 tokens" in messages[3]["content"]  # Current tokens
+            assert messages[2]["role"] == "assistant"  # Vaccine response
+            assert messages[3]["role"] == "user"  # Vaccine correction
+            assert "UNACCEPTABLE" in messages[3]["content"]
+            assert messages[4]["role"] == "assistant"
+            assert messages[4]["content"] == "A" * 150  # Previous response
+            assert messages[5]["role"] == "user"
+            # Check that retry prompt contains expected content (word-based format)
+            assert "words" in messages[5]["content"]
+            assert "50%" in messages[5]["content"]  # Deviation percentage
+            assert "larger" in messages[5]["content"]  # Direction
 
             return MockOpenAIResponse(
                 content="B" * 95,  # Close to target
@@ -116,18 +119,24 @@ async def test_retry_maintains_conversation_history(mock_store):
     assert retry_count == 1, "Should have performed 1 retry"
     assert summary == "B" * 95, "Should return the adjusted summary"
 
-    # Verify first call structure - it starts with 2 messages
+    # Verify first call structure - with vaccine it has 4 messages
     first_call = api_calls[0]
-    assert len(first_call["messages"]) == 2  # system + user
+    assert (
+        len(first_call["messages"]) == 4
+    )  # system + user + vaccine_assistant + vaccine_user
 
     # Verify second call has the full conversation (messages were appended)
     second_call = api_calls[1]
-    assert len(second_call["messages"]) == 4  # system + user + assistant + user
+    assert (
+        len(second_call["messages"]) == 6
+    )  # system + user + vaccine_ass + vaccine_user + assistant + user
     assert second_call["messages"][0]["role"] == "system"
     assert second_call["messages"][1]["role"] == "user"  # Original prompt
-    assert second_call["messages"][2]["role"] == "assistant"  # First attempt response
-    assert second_call["messages"][2]["content"] == "A" * 150  # Previous summary
-    assert second_call["messages"][3]["role"] == "user"  # Retry instruction
+    assert second_call["messages"][2]["role"] == "assistant"  # Vaccine response
+    assert second_call["messages"][3]["role"] == "user"  # Vaccine correction
+    assert second_call["messages"][4]["role"] == "assistant"  # First attempt response
+    assert second_call["messages"][4]["content"] == "A" * 150  # Previous summary
+    assert second_call["messages"][5]["role"] == "user"  # Retry instruction
 
 
 @pytest.mark.asyncio
@@ -163,12 +172,14 @@ async def test_retry_preserves_original_context(mock_store):
                 part in user_content
                 for part in [original_text[:30], original_text[-30:]]
             )
-            return MockOpenAIResponse("A" * 50, 50, 10, 0)  # 50% under
+            return MockOpenAIResponse("A" * 150, 150, 10, 0)  # 50% over
 
         elif len(api_calls) == 2:
             # Verify original text is STILL accessible in conversation history
             user_messages = [msg for msg in messages if msg["role"] == "user"]
-            assert len(user_messages) == 2  # Original + retry prompt
+            assert (
+                len(user_messages) == 3
+            )  # Original + vaccine correction + retry prompt
 
             # Original prompt should still contain parts of the text
             assert any(
@@ -218,17 +229,21 @@ async def test_multiple_retries_build_conversation(mock_store):
             return MockOpenAIResponse("A" * 150, 1000, 150, 0)  # Too long
 
         elif call_num == 2:
-            assert len(messages) == 4  # system, user, assistant, user
+            assert (
+                len(messages) == 6
+            )  # system, user, vaccine_ass, vaccine_user, assistant, user
             return MockOpenAIResponse("B" * 130, 1200, 130, 1000)  # Still too long
 
         elif call_num == 3:
-            assert len(messages) == 6  # Conversation continues to grow
+            assert len(messages) == 8  # Conversation continues to grow (with vaccine)
             assert messages[0]["role"] == "system"
             assert messages[1]["role"] == "user"  # Original
-            assert messages[2]["role"] == "assistant"  # First attempt
-            assert messages[3]["role"] == "user"  # First retry prompt
-            assert messages[4]["role"] == "assistant"  # Second attempt
-            assert messages[5]["role"] == "user"  # Second retry prompt
+            assert messages[2]["role"] == "assistant"  # Vaccine response
+            assert messages[3]["role"] == "user"  # Vaccine correction
+            assert messages[4]["role"] == "assistant"  # First attempt
+            assert messages[5]["role"] == "user"  # First retry prompt
+            assert messages[6]["role"] == "assistant"  # Second attempt
+            assert messages[7]["role"] == "user"  # Second retry prompt
             return MockOpenAIResponse("C" * 105, 1400, 105, 1200)  # Acceptable
 
         return MockOpenAIResponse("", 0, 0)
@@ -249,9 +264,11 @@ async def test_multiple_retries_build_conversation(mock_store):
     assert retry_count == 2  # Two retries after initial
     assert summary == "C" * 105
 
-    # Verify conversation grew correctly
+    # Verify conversation grew correctly (with vaccine)
     final_messages = api_calls[-1]["messages"]
-    assert len(final_messages) == 6
+    assert (
+        len(final_messages) == 8
+    )  # system + user + vaccine_ass + vaccine_user + 2x(ass + user)
 
 
 @pytest.mark.asyncio
@@ -287,6 +304,65 @@ async def test_no_retry_when_within_threshold(mock_store):
     assert len(api_calls) == 1, "Should only make initial call"
     assert retry_count == 0, "No retries needed"
     assert summary == "A" * 105
+
+
+@pytest.mark.asyncio
+async def test_accept_retry_within_threshold_immediately(mock_store):
+    """Test that we accept a retry attempt immediately when it's within threshold.
+
+    This tests the bug where attempts within the threshold were being ignored
+    if they weren't 'better' than previous attempts.
+    """
+    config = IndexConfig.load(
+        retry_threshold=0.2,  # 20% deviation threshold
+        max_retries=3,
+        target_chunk_tokens=100,
+    )
+
+    indexer = TreeBuilder(config, mock_store)
+    api_calls = []
+
+    async def mock_create(**kwargs):
+        """Return different responses based on call number."""
+        import copy
+
+        api_calls.append(copy.deepcopy(kwargs))
+
+        if len(api_calls) == 1:
+            # First attempt: 130 tokens (30% over, outside threshold)
+            return MockOpenAIResponse("A" * 130, 1000, 130, 0)
+        elif len(api_calls) == 2:
+            # Second attempt: 115 tokens (15% over, WITHIN threshold)
+            # This should be accepted immediately
+            return MockOpenAIResponse("B" * 115, 1200, 115, 1000)
+        else:
+            # We should never get here!
+            pytest.fail(
+                f"Should not make call #{len(api_calls)} - "
+                "attempt 2 was within threshold"
+            )
+
+    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+        with patch.object(
+            indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
+        ):
+            summary, retry_count, token_count = await indexer._summarize_text(
+                left_text="Test content that is much longer to trigger summarization"
+                * 2,
+                right_text="More content that also needs to be long enough" * 2,
+                target_tokens=100,
+                parent_id="test",
+            )
+
+    # With the BUGGY version: 115 is not "better" than 70, so it keeps 70 as best
+    # and continues retrying, making a 3rd call
+    # With the FIXED version: it should stop at attempt 2 and return 115
+
+    # This assertion will FAIL with buggy version (will be 3 instead of 2)
+    assert len(api_calls) == 2, "Should stop after second attempt (within threshold)"
+    assert retry_count == 1, "Should have done exactly 1 retry"
+    assert summary == "B" * 115, "Should return the second attempt's summary"
+    assert token_count == 115, "Should return the second attempt's token count"
 
 
 @pytest.mark.asyncio

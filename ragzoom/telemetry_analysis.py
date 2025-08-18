@@ -185,7 +185,8 @@ def compute_simplified_metrics(telemetry_data: dict) -> SimplifiedMetrics:
                     {"summary": summary_model, "embedding": embedding_model},
                 ),
                 "dispersion": compute_dispersion_metrics(chunk_nodes),
-                "verbatim": detect_verbatim_concatenations(chunk_nodes),
+                # Verbatim detection removed - use scripts/analyze-outlier-nodes.py instead
+                # which properly ignores passthrough nodes and undershoots
             }
 
     return SimplifiedMetrics(metrics_by_chunk_size=metrics_by_chunk_size)

@@ -45,7 +45,6 @@ class SummaryAttemptDict(TypedDict):
         int
     ]  # Number of cached prompt tokens (for prompt caching)
     prompt_tokens_details: NotRequired[dict]  # Full OpenAI prompt token details
-    is_final: NotRequired[bool]  # Whether this attempt was the one actually used
     # Backwards compatibility for old telemetry files
     status: NotRequired[Literal["accepted", "rejected_over", "rejected_under", "error"]]
     rejection_reason: NotRequired[str | None]
