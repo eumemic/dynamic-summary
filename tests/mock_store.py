@@ -28,8 +28,8 @@ class SimpleMockStore:
         self.mock_scores: dict[str, float] = {}
 
         # Cache simulation
-        self.node_cache = OrderedDict()
-        self.cache_order = deque(maxlen=1000)
+        self._node_cache = OrderedDict()
+        self._cache_order = deque(maxlen=1000)
 
         # Mock SessionLocal for tests that use direct DB access
         self._setup_session_mock()
@@ -46,24 +46,77 @@ class SimpleMockStore:
             query_mock = MagicMock()
 
             def filter_by_impl(**kwargs):
-                # Handle TreeNode queries
-                if "id" in kwargs:
-                    node_id = kwargs["id"]
-                    # Return a mock that will find our node
-                    result_mock = MagicMock()
+                # Handle TreeNode queries - check for TreeNode or similar patterns
+                model_name = getattr(model_class, '__name__', str(model_class))
+                if 'TreeNode' in model_name or 'Node' in model_name:
+                    if "id" in kwargs:
+                        node_id = kwargs["id"]
+                        # Return a mock that will find our node
+                        result_mock = MagicMock()
 
-                    def first_impl():
-                        # Return the actual node from our store
-                        if node_id in self.nodes:
-                            return self.nodes[node_id]
-                        return None
+                        def first_impl():
+                            # Return the actual node from our store
+                            if node_id in self.nodes:
+                                return self.nodes[node_id]
+                            return None
 
-                    result_mock.first = first_impl
-                    return result_mock
-                return query_mock
+                        result_mock.first = first_impl
+                        return result_mock
+                    elif "document_id" in kwargs:
+                        doc_id = kwargs["document_id"]
+                        parent_id = kwargs.get("parent_id")
+                        result_mock = MagicMock()
+                        
+                        def all_impl():
+                            nodes = [node for node in self.nodes.values() if node.document_id == doc_id]
+                            if parent_id is not None:
+                                nodes = [node for node in nodes if node.parent_id == parent_id]
+                            return nodes
+                        
+                        def count_impl():
+                            nodes = all_impl()
+                            return len(nodes)
+                        
+                        def first_impl():
+                            nodes = all_impl()
+                            return nodes[0] if nodes else None
+                            
+                        result_mock.all = all_impl
+                        result_mock.count = count_impl
+                        result_mock.first = first_impl
+                        return result_mock
+                    else:
+                        result_mock = MagicMock()
+                        result_mock.all.return_value = list(self.nodes.values())
+                        result_mock.count.return_value = len(self.nodes)
+                        return result_mock
+                
+                # Handle Document queries
+                elif 'Document' in model_name:
+                    if "id" in kwargs:
+                        doc_id = kwargs["id"]
+                        result_mock = MagicMock()
+                        
+                        def first_impl():
+                            return self.documents.get(doc_id)
+                            
+                        result_mock.first = first_impl
+                        return result_mock
+                    else:
+                        result_mock = MagicMock()
+                        result_mock.all.return_value = list(self.documents.values())
+                        result_mock.count.return_value = len(self.documents)
+                        return result_mock
+                
+                # Default fallback
+                result_mock = MagicMock()
+                result_mock.all.return_value = []
+                result_mock.count.return_value = 0
+                result_mock.first.return_value = None
+                return result_mock
 
             def count_impl():
-                # Return count of all nodes for TreeNode queries
+                # Return count of all nodes for TreeNode queries by default
                 return len(self.nodes)
 
             query_mock.filter_by = filter_by_impl
@@ -174,20 +227,20 @@ class SimpleMockStore:
             if child_id in self.nodes:
                 self.nodes[child_id].parent_id = parent_id
                 # Invalidate cache for updated node
-                if child_id in self.node_cache:
-                    del self.node_cache[child_id]
-                    if child_id in self.cache_order:
-                        self.cache_order.remove(child_id)
+                if child_id in self._node_cache:
+                    del self._node_cache[child_id]
+                    if child_id in self._cache_order:
+                        self._cache_order.remove(child_id)
 
     def get_node(self, node_id: str) -> SimpleNamespace | None:
         """Get a node by ID."""
         # Check cache first
-        if node_id in self.node_cache:
+        if node_id in self._node_cache:
             # Move to end (most recently used)
-            if node_id in self.cache_order:
-                self.cache_order.remove(node_id)
-            self.cache_order.append(node_id)
-            return self.node_cache[node_id]
+            if node_id in self._cache_order:
+                self._cache_order.remove(node_id)
+            self._cache_order.append(node_id)
+            return self._node_cache[node_id]
 
         # Get from storage
         node = self.nodes.get(node_id)
@@ -525,7 +578,7 @@ class SimpleMockStore:
         for node_id in node_ids:
             self.nodes.pop(node_id, None)
             self.embeddings.pop(node_id, None)
-            self.node_cache.pop(node_id, None)
+            self._node_cache.pop(node_id, None)
             self.pinned_nodes.discard(node_id)
 
         self.document_nodes.pop(document_id, None)
@@ -554,22 +607,40 @@ class SimpleMockStore:
             "node_count": 10,
         }
 
+    def clear_document(self, document_id: str) -> int:
+        """Clear all data for a document."""
+        # Count nodes before deleting
+        node_count = len([n for n in self.nodes.values() if n.document_id == document_id])
+        self.delete_document_nodes(document_id)
+        return node_count
+
     def close(self) -> None:
         """Close the store (no-op for mock)."""
         pass
 
+    # Add cache attributes for CLI compatibility
+    @property  
+    def node_cache(self):
+        """Mock node_cache for CLI compatibility."""
+        return self._node_cache if hasattr(self, '_node_cache') else {}
+        
+    @property
+    def cache_order(self):
+        """Mock cache_order for CLI compatibility."""
+        return self._cache_order if hasattr(self, '_cache_order') else []
+
     def _add_to_cache(self, node) -> None:
         """Add node to cache."""
-        if node.id in self.node_cache:
-            if node.id in self.cache_order:
-                self.cache_order.remove(node.id)
-        elif len(self.cache_order) >= self.cache_order.maxlen:
+        if node.id in self._node_cache:
+            if node.id in self._cache_order:
+                self._cache_order.remove(node.id)
+        elif len(self._cache_order) >= self._cache_order.maxlen:
             # Evict LRU
-            lru_id = self.cache_order.popleft()
-            self.node_cache.pop(lru_id, None)
+            lru_id = self._cache_order.popleft()
+            self._node_cache.pop(lru_id, None)
 
-        self.node_cache[node.id] = node
-        self.cache_order.append(node.id)
+        self._node_cache[node.id] = node
+        self._cache_order.append(node.id)
 
     def _update_mock_results(self):
         """Update mock query results based on current state."""

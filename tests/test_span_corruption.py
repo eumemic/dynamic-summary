@@ -14,42 +14,34 @@ class TestSpanCorruption:
     """Test span corruption issues in tree building."""
 
     @pytest.fixture
-    def setup_system(self):
+    def setup_system(self, store):
         """Set up test system."""
-        with tempfile.TemporaryDirectory():
-            # Create separate configs
-            index_config = IndexConfig.load(
-                target_chunk_tokens=100,  # Small chunks to create many nodes
-                preceding_context_tokens=10,  # Must be less than leaf_tokens
-            )
-            query_config = QueryConfig(budget_tokens=1000)
-            operational_config = OperationalConfig(
-                openai_api_key="test-key",
-                database_url="postgresql:///:memory:",
-            )
+        # Create separate configs
+        index_config = IndexConfig.load(
+            target_chunk_tokens=100,  # Small chunks to create many nodes
+            preceding_context_tokens=10,  # Must be less than leaf_tokens
+        )
+        query_config = QueryConfig(budget_tokens=1000)
+        operational_config = OperationalConfig(
+            openai_api_key="test-key",
+        )
 
-            store = Store(
-                operational_config, embedding_model=index_config.embedding_model
-            )
-            tree_builder = TreeBuilder(
-                index_config, store, api_key=operational_config.openai_api_key
-            )
+        tree_builder = TreeBuilder(
+            index_config, store, api_key=operational_config.openai_api_key
+        )
 
-            # Mock API calls
-            mock_client = AsyncMock()
-            tree_builder.client = mock_client
+        # Mock API calls
+        mock_client = AsyncMock()
+        tree_builder.client = mock_client
 
-            # Create a config wrapper for backward compatibility
-            from tests.conftest import BackwardCompatibilityConfig
+        # Create a config wrapper for backward compatibility
+        from tests.conftest import BackwardCompatibilityConfig
 
-            config = BackwardCompatibilityConfig(
-                index_config, query_config, operational_config
-            )
+        config = BackwardCompatibilityConfig(
+            index_config, query_config, operational_config
+        )
 
-            yield config, store, tree_builder, mock_client
-
-            # Close store to prevent file handle leaks
-            store.close()
+        yield config, store, tree_builder, mock_client
 
     @pytest.mark.asyncio
     async def test_odd_nodes_create_invalid_spans(self, setup_system):
