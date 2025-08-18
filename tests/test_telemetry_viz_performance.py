@@ -57,7 +57,7 @@ def generate_test_telemetry(num_nodes: int) -> dict:
             )
 
     return {
-        "format_version": "3.0",
+        "format_version": "4.2",
         "document_id": "test_doc",
         "source_document_tokens": num_nodes * 100,
         "indexed_at": 1234567890.0,
@@ -66,6 +66,9 @@ def generate_test_telemetry(num_nodes: int) -> dict:
             "summary_model": "gpt-4o-mini",
             "embedding_model": "text-embedding-3-small",
         },
+        "model_metadata": {},
+        "system_prompts": {},
+        "runtime_info": {},
         "nodes": nodes,
     }
 

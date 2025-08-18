@@ -17,7 +17,7 @@ class TestTelemetryCompare:
         """Create sample telemetry data for testing."""
         # Return just the telemetry structure, not wrapped in another object
         return {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test.txt",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -26,6 +26,9 @@ class TestTelemetryCompare:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "node1",
