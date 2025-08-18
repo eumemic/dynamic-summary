@@ -1,6 +1,5 @@
 """Test budget guarantees in retrieval and assembly."""
 
-import tempfile
 from unittest.mock import Mock, patch
 
 import pytest
@@ -9,14 +8,13 @@ from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store
 
 
 class TestBudgetGuarantee:
     """Test that budget guarantees are enforced by construction."""
 
     @pytest.fixture
-    def setup_system(self):
+    def setup_system(self, store):
         """Set up a test system with mocked API."""
         # Mock OpenAI clients
         with (
@@ -87,44 +85,35 @@ class TestBudgetGuarantee:
             instance_sync.embeddings = mock_embeddings_sync
             mock_retrieve_client.return_value = instance_sync
 
-            # Create test configs with specific budget and temporary directory for ChromaDB
-            with tempfile.TemporaryDirectory():
-                index_config = IndexConfig.load(
-                    target_chunk_tokens=200,  # Standard leaf size
-                    preceding_context_tokens=50,
-                )
-                query_config = QueryConfig(
-                    budget_tokens=1000,  # Strict budget for testing
-                )
-                operational_config = OperationalConfig(
-                    openai_api_key="test-key",
-                    database_url="postgresql:///:memory:",
-                )
+            # Create test configs with specific budget
+            index_config = IndexConfig.load(
+                target_chunk_tokens=200,  # Standard leaf size
+                preceding_context_tokens=50,
+            )
+            query_config = QueryConfig(
+                budget_tokens=1000,  # Strict budget for testing
+            )
+            operational_config = OperationalConfig(
+                openai_api_key="test-key",
+            )
+            
+            tree_builder = TreeBuilder(
+                index_config,
+                store,
+                api_key=operational_config.openai_api_key,
+            )
+            retriever = Retriever(
+                query_config,
+                store,
+                api_key=operational_config.openai_api_key,
+            )
+            assembler = Assembler(store)
 
-                store = Store(
-                    operational_config,
-                    embedding_model=index_config.embedding_model,
-                )
-                tree_builder = TreeBuilder(
-                    index_config,
-                    store,
-                    api_key=operational_config.openai_api_key,
-                )
-                retriever = Retriever(
-                    query_config,
-                    store,
-                    api_key=operational_config.openai_api_key,
-                )
-                assembler = Assembler(store)
-
-                yield (
-                    index_config,
-                    query_config,
-                    operational_config,
-                ), store, tree_builder, retriever, assembler
-
-                # Close store to prevent file handle leaks
-                store.close()
+            yield (
+                index_config,
+                query_config,
+                operational_config,
+            ), store, tree_builder, retriever, assembler
 
     def test_budget_never_exceeded_worst_case(self, setup_system):
         """Test that assembly never exceeds budget even in worst case."""

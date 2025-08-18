@@ -128,6 +128,7 @@ class SimpleMockStore:
             access_count=0,
             last_accessed=None,
             created_at=None,
+            embedding=embedding,  # Include embedding in the node
         )
 
         # Store node and embedding
@@ -422,6 +423,40 @@ class SimpleMockStore:
         for candidate in candidates[:k]:
             result_ids.append(candidate[0])
         return result_ids
+
+    def get_document_by_path(self, file_path: str):
+        """Mock get document by path."""
+        # Check documents by file_path
+        for doc in self.documents.values():
+            if hasattr(doc, 'file_path') and doc.file_path == file_path:
+                return doc
+        return None
+
+    def get_document_by_id(self, document_id: str):
+        """Mock get document by ID."""
+        return self.documents.get(document_id)
+
+    def add_document(self, document_id: str, file_path: str | None, content_hash: str, 
+                    chunk_count: int, embedding_model: str, summary_model: str):
+        """Mock add document."""
+        from types import SimpleNamespace
+        doc = SimpleNamespace(
+            id=document_id,
+            file_path=file_path,
+            content_hash=content_hash,
+            chunk_count=chunk_count,
+            embedding_model=embedding_model,
+            summary_model=summary_model,
+            indexed_at=None
+        )
+        self.documents[document_id] = doc
+        return doc
+
+    @staticmethod
+    def compute_content_hash(content: str) -> str:
+        """Mock content hash computation."""
+        import hashlib
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     def pin_node(self, node_id: str) -> None:
         """Pin a node."""

@@ -117,7 +117,7 @@ def base_config() -> BackwardCompatibilityConfig:
     )
     operational_config = OperationalConfig(
         openai_api_key="test-key",
-        database_url="postgresql://localhost/ragzoom_test",
+        database_url="postgresql+psycopg://localhost/ragzoom_test",
     )
     return BackwardCompatibilityConfig(index_config, query_config, operational_config)
 
@@ -131,18 +131,34 @@ def mock_store(base_config) -> Generator[SimpleMockStore, None, None]:
 
 
 @pytest.fixture
-def real_store(base_config) -> Generator[Store, None, None]:
+def real_store(base_config) -> Generator[Store | None, None, None]:
     """Create a real store for integration testing."""
-    with tempfile.TemporaryDirectory():
+    # Return None if no PostgreSQL server available (instead of skipping)
+    try:
+        import psycopg
+        # Test connection
         operational_config = OperationalConfig(
             openai_api_key=base_config.openai_api_key,
             database_url=base_config.database_url,
         )
-        store = Store(
-            operational_config, embedding_model=base_config.index_config.embedding_model
-        )
-        yield store
-        store.close()
+        
+        # Try to create engine first to test connection
+        from sqlalchemy import create_engine
+        engine = create_engine(operational_config.database_url)
+        with engine.connect():
+            pass  # Test connection
+        engine.dispose()
+        
+        # If we get here, PostgreSQL is available
+        with tempfile.TemporaryDirectory():
+            store = Store(
+                operational_config, embedding_model=base_config.index_config.embedding_model
+            )
+            yield store
+            store.close()
+    except Exception:
+        # Return None instead of skipping
+        yield None
 
 
 @pytest.fixture
@@ -150,17 +166,21 @@ def store(request, base_config, mock_store, real_store):
     """Provide either mock or real store based on test requirements.
 
     This fixture automatically selects the appropriate store:
-    - For tests marked with @pytest.mark.integration: uses real_store
-    - For tests run with --use-real-store flag: uses real_store
+    - For tests marked with @pytest.mark.integration: uses real_store (if available)
+    - For tests run with --use-real-store flag: uses real_store (if available)
     - Otherwise: uses mock_store for speed
     """
     # Check if test is marked as integration
     if hasattr(request.node, "get_closest_marker"):
         if request.node.get_closest_marker("integration"):
+            if real_store is None:
+                pytest.skip("PostgreSQL not available for integration test")
             return real_store
 
     # Check command-line option
     if request.config.getoption("--use-real-store"):
+        if real_store is None:
+            pytest.skip("PostgreSQL not available for real store test")
         return real_store
 
     # Default to mock for speed

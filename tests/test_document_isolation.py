@@ -1,6 +1,5 @@
 """Test document isolation - queries should only return results from specified document."""
 
-import tempfile
 from unittest.mock import Mock, patch
 
 import pytest
@@ -9,7 +8,6 @@ from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store
 from tests.conftest import BackwardCompatibilityConfig
 
 
@@ -81,40 +79,33 @@ class TestDocumentIsolation:
             yield
 
     @pytest.fixture
-    def setup(self, mock_openai):
+    def setup(self, mock_openai, store):
         """Create test environment."""
-        with tempfile.TemporaryDirectory():
-            index_config = IndexConfig.load(
-                target_chunk_tokens=50,
-                preceding_context_tokens=25,
-            )
-            query_config = QueryConfig(
-                budget_tokens=1000,
-            )
-            operational_config = OperationalConfig(
-                openai_api_key="test-key",
-                database_url="postgresql:///:memory:",
-            )
-            config = BackwardCompatibilityConfig(
-                index_config, query_config, operational_config
-            )
+        index_config = IndexConfig.load(
+            target_chunk_tokens=50,
+            preceding_context_tokens=25,
+        )
+        query_config = QueryConfig(
+            budget_tokens=1000,
+        )
+        operational_config = OperationalConfig(
+            openai_api_key="test-key",
+        )
+        config = BackwardCompatibilityConfig(
+            index_config, query_config, operational_config
+        )
+        
+        tree_builder = TreeBuilder(
+            index_config, store, api_key=operational_config.openai_api_key
+        )
+        retriever = Retriever(
+            query_config,
+            store,
+            api_key=operational_config.openai_api_key,
+        )
+        assembler = Assembler(store)
 
-            store = Store(
-                operational_config, embedding_model=index_config.embedding_model
-            )
-            tree_builder = TreeBuilder(
-                index_config, store, api_key=operational_config.openai_api_key
-            )
-            retriever = Retriever(
-                query_config,
-                store,
-                api_key=operational_config.openai_api_key,
-            )
-            assembler = Assembler(store)
-
-            yield config, store, tree_builder, retriever, assembler
-
-            store.close()
+        yield config, store, tree_builder, retriever, assembler
 
     def test_document_isolation(self, setup):
         """Test that queries only return results from the specified document."""
