@@ -105,11 +105,28 @@ class TestIntegration:
             yield
 
     @pytest.fixture
-    def temp_system(self, mock_openai):
+    def temp_system(self, request, mock_openai, store):
         """Create a complete temporary RagZoom system."""
-        # Create temporary directory
-        temp_dir = tempfile.mkdtemp()
-        db_path = f"{temp_dir}/test.db"
+        # Check if we should use real PostgreSQL store or temporary SQLite
+        use_real_store = request.config.getoption("--use-real-store", default=False)
+
+        if use_real_store:
+            # Use the real PostgreSQL store for integration tests
+            if store is None:
+                pytest.skip("PostgreSQL not available for integration test")
+            real_store = store
+            temp_dir = None  # No cleanup needed for real store
+        else:
+            # Create temporary directory and SQLite store for fast tests
+            temp_dir = tempfile.mkdtemp()
+            db_path = f"{temp_dir}/test.db"
+            operational_config = OperationalConfig(
+                openai_api_key="test-key",
+                database_url=f"postgresql:///{db_path}",
+            )
+            real_store = Store(
+                operational_config, embedding_model="text-embedding-3-small"
+            )
 
         # Create separate configs
         index_config = IndexConfig.load(
@@ -117,19 +134,20 @@ class TestIntegration:
             preceding_context_tokens=25,  # Must be less than leaf_tokens
         )
         query_config = QueryConfig(budget_tokens=500)
+
+        # Create operational config
         operational_config = OperationalConfig(
             openai_api_key="test-key",
-            database_url=f"postgresql:///{db_path}",
+            database_url=real_store.config.database_url,  # Use the store's database URL
         )
 
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
         tree_builder = TreeBuilder(
-            index_config, store, api_key=operational_config.openai_api_key
+            index_config, real_store, api_key=operational_config.openai_api_key
         )
         retriever = Retriever(
-            query_config, store, api_key=operational_config.openai_api_key
+            query_config, real_store, api_key=operational_config.openai_api_key
         )
-        assembler = Assembler(store)
+        assembler = Assembler(real_store)
 
         # Create a config wrapper for backward compatibility
         from tests.conftest import BackwardCompatibilityConfig
@@ -138,11 +156,12 @@ class TestIntegration:
             index_config, query_config, operational_config
         )
 
-        yield config, store, tree_builder, retriever, assembler
+        yield config, real_store, tree_builder, retriever, assembler
 
-        # Cleanup - close store first to release file handles
-        store.close()
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        # Cleanup - only cleanup temp SQLite, not real store
+        if not use_real_store and temp_dir:
+            real_store.close()
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_index_and_query(self, temp_system):
         """Test indexing a document and querying it."""

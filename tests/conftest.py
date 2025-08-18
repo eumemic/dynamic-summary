@@ -179,9 +179,10 @@ def store(request, base_config, mock_store):
                     try:
                         from sqlalchemy import create_engine, text
 
-                        admin_engine = create_engine(cleanup_info["admin_url"])
+                        admin_engine = create_engine(
+                            cleanup_info["admin_url"], isolation_level="AUTOCOMMIT"
+                        )
                         with admin_engine.connect() as conn:
-                            conn.execute(text("COMMIT"))  # End any existing transaction
                             # Terminate connections and drop database
                             conn.execute(
                                 text(
@@ -216,9 +217,10 @@ def store(request, base_config, mock_store):
                 try:
                     from sqlalchemy import create_engine, text
 
-                    admin_engine = create_engine(cleanup_info["admin_url"])
+                    admin_engine = create_engine(
+                        cleanup_info["admin_url"], isolation_level="AUTOCOMMIT"
+                    )
                     with admin_engine.connect() as conn:
-                        conn.execute(text("COMMIT"))  # End any existing transaction
                         # Terminate connections and drop database
                         conn.execute(
                             text(
@@ -258,12 +260,6 @@ def _create_real_store(base_config) -> Store | None:
             # Use base URL for custom URLs (non-test scenarios)
             test_db_url = base_db_url
 
-        # Test connection
-        operational_config = OperationalConfig(
-            openai_api_key=base_config.openai_api_key,
-            database_url=test_db_url,
-        )
-
         # Try to create engine first to test connection
         from sqlalchemy import create_engine, text
 
@@ -273,10 +269,9 @@ def _create_real_store(base_config) -> Store | None:
             test_db_name = test_db_url.split("/")[-1]
             base_engine_url = "/".join(test_db_url.split("/")[:-1]) + "/postgres"
 
-            # Create the test database
-            admin_engine = create_engine(base_engine_url)
+            # Create the test database using autocommit to avoid transaction block issues
+            admin_engine = create_engine(base_engine_url, isolation_level="AUTOCOMMIT")
             with admin_engine.connect() as conn:
-                conn.execute(text("COMMIT"))  # End any existing transaction
                 # Safe database name validation
                 import re
 
@@ -286,13 +281,19 @@ def _create_real_store(base_config) -> Store | None:
                     raise ValueError(f"Invalid test database name: {test_db_name}")
             admin_engine.dispose()
 
-        # Test connection to the target database
-        engine = create_engine(operational_config.database_url)
+        # Test connection to the target database using the unique URL
+        engine = create_engine(test_db_url)
         with engine.connect() as conn:
             # Create vector extension if needed
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.commit()
         engine.dispose()
+
+        # Create operational config with the unique database URL
+        operational_config = OperationalConfig(
+            openai_api_key=base_config.openai_api_key,
+            database_url=test_db_url,  # Use the unique database URL
+        )
 
         # If we get here, PostgreSQL is available
         store = Store(
