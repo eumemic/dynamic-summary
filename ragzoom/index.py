@@ -16,6 +16,10 @@ from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store, TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
 
+# Convert tokens to words using experimentally-derived conversion factor
+# 0.75 (tokens->words) * 0.94 (bias compensation) = 0.705
+WORDS_PER_TOKEN = 0.75 * 0.94
+
 logger = logging.getLogger(__name__)
 
 
@@ -148,6 +152,7 @@ class TreeBuilder:
         messages: list[ChatCompletionMessageParam],
         target_tokens: int | None,
         node_info: str = "",
+        reasoning_effort: str | None = None,
     ) -> tuple[str, int, Any]:
         """Make OpenAI API call and return summary, token count, and response.
 
@@ -170,7 +175,8 @@ class TreeBuilder:
 
         if is_gpt5:
             # GPT-5 models need reasoning_effort="minimal" to output text instead of just reasoning
-            api_kwargs["reasoning_effort"] = "minimal"
+            # Use provided reasoning_effort or default to minimal
+            api_kwargs["reasoning_effort"] = reasoning_effort or "minimal"
         else:
             # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
             # Use a hardcoded reasonable temperature for summaries
@@ -273,15 +279,23 @@ class TreeBuilder:
         except Exception as e:
             logger.warning(f"Failed to record telemetry for summary attempt: {e}")
 
-    def _should_retry_summary(self, deviation_pct: float) -> bool:
+    def _should_retry_summary(self, current_tokens: int, target_tokens: int) -> bool:
         """Check if summary should be retried based on deviation from target.
 
+        Only retries overshoots - undershoots are accepted as they provide
+        smaller inputs to higher levels which naturally tend to overshoot.
+
         Args:
-            deviation_pct: Percentage deviation from target tokens
+            current_tokens: Current token count
+            target_tokens: Target token count
 
         Returns:
-            True if retry is needed, False otherwise
+            True if retry is needed (overshooting), False otherwise
         """
+        if current_tokens <= target_tokens:
+            return False  # Never retry undershoots
+
+        deviation_pct = (current_tokens - target_tokens) / target_tokens
         return deviation_pct > self.config.retry_threshold
 
     def _is_better_summary(
@@ -319,6 +333,7 @@ class TreeBuilder:
         node_info: str,
         summary: str,
         current_tokens: int | None = None,
+        retry_count: int = 1,
     ) -> tuple[str, int, Any] | None:
         """Execute a single retry attempt.
 
@@ -328,6 +343,7 @@ class TreeBuilder:
             node_info: Node identifier for logging
             summary: Current summary to append to conversation
             current_tokens: Already-calculated token count (avoids re-tokenization)
+            retry_count: Current retry attempt number (1-based)
 
         Returns:
             Tuple of (new_summary, token_count, response) or None if failed
@@ -343,22 +359,39 @@ class TreeBuilder:
                 deviation_pct = 0.0
 
             # Generate inline retry prompt with runtime conditions
-            retry_prompt = f"""The summary you provided deviates significantly from the target token count of {target_tokens} tokens. Your summary was {current_tokens} tokens ({deviation_pct:.1%} off target).
-
-Please try again with a summary that:
-- Is closer to exactly {target_tokens} tokens
-- Maintains information density by including as much detail as possible within the token limit
-- Covers the full scope of the content from start to end
-- Abstracts over minor details where necessary to stay within the limit
-
-Remember: Your goal is to maximize information preservation while hitting the target token count as closely as possible."""
+            target_words = int(target_tokens * WORDS_PER_TOKEN)
+            deviation_pct_rounded = round(deviation_pct * 100)
+            larger = current_tokens > target_tokens
+            direction = "larger" if larger else "smaller"
+            addendum = (
+                " Use your last attempt as a starting point and aggressively prune details to hit the target words."
+                if larger
+                else ""
+            )
+            retry_prompt = f"Your summary was {deviation_pct_rounded}% {direction} than the target length. Try again, making it AT MOST {target_words} words.{addendum}"
 
             # Append current summary as assistant response
             messages.append({"role": "assistant", "content": summary})
             # Append retry instruction as user message
             messages.append({"role": "user", "content": retry_prompt})
 
-            return await self._make_summary_call(messages, target_tokens, node_info)
+            # if retry_count == 1:
+            #     reasoning_effort = "minimal"
+            # elif retry_count == 2:
+            #     reasoning_effort = "low"
+            # elif retry_count == 3:
+            #     reasoning_effort = "medium"
+            # else:
+            #     reasoning_effort = "high"
+            reasoning_effort = "minimal"
+
+            logger.debug(
+                f"{node_info}Retry {retry_count} using {reasoning_effort} reasoning effort"
+            )
+
+            return await self._make_summary_call(
+                messages, target_tokens, node_info, reasoning_effort=reasoning_effort
+            )
         except ValueError:
             logger.warning(f"{node_info}Failed to get valid retry response")
             return None
@@ -389,23 +422,27 @@ Remember: Your goal is to maximize information preservation while hitting the ta
         actual_retries = 0
 
         for retry_count in range(1, self.config.max_retries + 1):
-            # Check if we should retry
-            current_tokens = len(self.splitter.tokenizer.encode(best_summary))
-            deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
-
-            if not self._should_retry_summary(deviation_pct):
+            # Check if current best should be retried (only overshoots)
+            if not self._should_retry_summary(best_token_count, target_tokens):
                 return best_summary, actual_retries, best_attempt_index
 
+            deviation_tokens = best_token_count - target_tokens
+            deviation_pct = deviation_tokens / target_tokens
             logger.debug(
-                f"{node_info}Summary deviation: {current_tokens} tokens "
-                f"(target: {target_tokens}, {deviation_pct:.1%} off). "
+                f"{node_info}Summary deviation: {best_token_count} tokens "
+                f"(target: {target_tokens}, +{deviation_tokens} tokens, {deviation_pct:.1%} over). "
                 f"Retry {retry_count}/{self.config.max_retries}"
             )
 
-            # Execute retry attempt (pass current_tokens to avoid re-tokenization)
+            # Execute retry attempt (pass best_token_count to avoid re-tokenization)
             retry_start = time.time()
             result = await self._execute_retry_attempt(
-                messages, target_tokens, node_info, best_summary, current_tokens
+                messages,
+                target_tokens,
+                node_info,
+                best_summary,
+                best_token_count,
+                retry_count,
             )
 
             if not result:
@@ -414,6 +451,7 @@ Remember: Your goal is to maximize information preservation while hitting the ta
             new_summary, new_token_count, retry_response = result
             actual_retries = retry_count
             new_distance = abs(new_token_count - target_tokens)
+            new_deviation_pct = abs((new_token_count - target_tokens) / target_tokens)
 
             # Track retry attempt with telemetry
             if reporter:
@@ -427,7 +465,15 @@ Remember: Your goal is to maximize information preservation while hitting the ta
                     start_time=retry_start,
                 )
 
-            # Check if this attempt is better
+            # If this new attempt is within threshold, accept it immediately
+            if not self._should_retry_summary(new_token_count, target_tokens):
+                logger.debug(
+                    f"{node_info}Acceptable result: {new_token_count} tokens "
+                    f"(target: {target_tokens}, {new_deviation_pct:.1%} deviation)"
+                )
+                return new_summary, actual_retries, actual_retries
+
+            # Otherwise, check if this attempt is better than our current best
             if self._is_better_summary(
                 new_token_count,
                 new_distance,
@@ -435,18 +481,19 @@ Remember: Your goal is to maximize information preservation while hitting the ta
                 best_distance_from_target,
                 target_tokens,
             ):
+                old_best = best_token_count  # Save for logging
                 best_summary = new_summary
                 best_token_count = new_token_count
                 best_distance_from_target = new_distance
                 best_attempt_index = actual_retries
 
                 logger.debug(
-                    f"{node_info}Better result: {current_tokens} -> {new_token_count} tokens "
+                    f"{node_info}Better result: {old_best} -> {new_token_count} tokens "
                     f"(target: {target_tokens}, distance: {new_distance})"
                 )
             else:
                 logger.debug(
-                    f"{node_info}No improvement: {current_tokens} -> {new_token_count} tokens "
+                    f"{node_info}No improvement: {new_token_count} tokens "
                     f"(best so far: {best_token_count} tokens)"
                 )
 
@@ -491,7 +538,6 @@ Remember: Your goal is to maximize information preservation while hitting the ta
                     actual_tokens=current_token_count,
                     model="passthrough",  # Indicates no summarization needed - text used as-is
                     start_time=start_time,
-                    is_final=True,  # This is the only and final attempt
                 )
 
             return combined_text, 0, current_token_count  # No retries needed
@@ -512,21 +558,12 @@ Remember: Your goal is to maximize information preservation while hitting the ta
                 trimmed_prev = prev_context
 
         # Build the summarization prompt inline
-        instruction = f"""You are an expert summarizer. You will be given a piece of content to summarize, embedded within the context in which it appears in a source document. You are to summarize only the content between the <SUMMARIZE_TEXT> tags in ≤{target_tokens} tokens, using the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). The summary should be ≤{target_tokens} tokens in total. You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
 
-CRITICAL REQUIREMENTS:
-- Summarize ONLY the content between the <SUMMARIZE_TEXT> and </SUMMARIZE_TEXT> tags
-- The summary should be ≤{target_tokens} tokens in total
-- Make the summary as information-dense as possible while filling out (but not exceeding) the token limit
-- The summary should cover the full scope of the content from start to end, but abstract over minor details and omit verbal flourishes to stay within the token limit
-- Focus on key events, facts, and themes ONLY from the provided text
-- Do NOT include any concrete information from BEFORE the <SUMMARIZE_TEXT> tag or AFTER the </SUMMARIZE_TEXT> tag in the summary
-- Do NOT complete a sentence that is cut off with information from outside the <SUMMARIZE_TEXT> block
-- Do NOT infer or imagine details not present in the text
-- If the text references something without explaining it, do NOT try to explain it
-- IMPORTANT: Match voice and tense of the text you are summarizing! If you are summarizing a text written in the past tense, the summary MUST be in past tense
-- Try to match the tone and style of the text, as if the summary were written by the same author
-- Respond ONLY with your best attempt at a summary, do not break the fourth wall, say you can't summarize it, etc.
+        target_words = int(target_tokens * WORDS_PER_TOKEN)
+
+        instruction = f"""You will be given a piece of content to summarize. You are to summarize ONLY the content between the <SUMMARIZE_TEXT> tags in AT MOST {target_words} words. Use the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
+
+Make your summary information-dense, covering the full temporal scope of the source material. Match the voice, tense, and tone of the original text insofar as possible. Abstract over details as necessary to fit within the word limit while preserving key events and themes.
 
 Here's the content to summarize:"""
 
@@ -562,6 +599,17 @@ Here's the content to summarize:"""
                     {"role": "user", "content": full_prompt},
                 ]
 
+                # Anti-verbatim vaccine: Insert fake conversation showing verbatim copy being rejected
+                # This prevents the most common failure mode and improves consistency
+                if self.config.use_anti_verbatim_vaccine:
+                    messages.append({"role": "assistant", "content": combined_text})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": f"UNACCEPTABLE. You just returned the input text verbatim! I need you to CREATE A SUMMARY - extract and compress the key information to AT MOST {target_words} words. Do not copy passages directly. Try again.",
+                        }
+                    )
+
                 start_time = time.time()
                 try:
                     summary, current_tokens, response = await self._make_summary_call(
@@ -594,11 +642,15 @@ Here's the content to summarize:"""
                         start_time=start_time,
                     )
 
-                # Use retry correction if deviation exceeds threshold
+                # Use retry correction only if overshooting threshold
                 retry_count = 0
                 accepted_attempt = 0  # Default to first attempt
 
-                if deviation_pct > self.config.retry_threshold:
+                # Only retry if overshooting (undershoots are beneficial)
+                if (
+                    current_tokens > target_tokens
+                    and deviation_pct > self.config.retry_threshold
+                ):
                     summary, retry_count, best_attempt_index = (
                         await self._retry_summary_correction(
                             summary,
@@ -887,6 +939,8 @@ Here's the content to summarize:"""
 
             # Prepare all leaf nodes for batch insertion
             leaf_nodes_data = []
+            preceding_leaf_id = None  # Track preceding leaf for document order
+
             for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
                 text = cast(str, data["text"])
                 # Count tokens for leaf nodes using tiktoken
@@ -901,8 +955,12 @@ Here's the content to summarize:"""
                         "span_end": cast(int, data["span_end"]),
                         "document_id": document_id,
                         "token_count": token_count,
+                        "preceding_neighbor_id": preceding_leaf_id,
                     }
                 )
+
+                # Update preceding ID for next iteration
+                preceding_leaf_id = cast(str, data["id"])
 
             # Batch insert all leaf nodes at once
             if leaf_nodes_data:
@@ -1299,7 +1357,13 @@ Here's the content to summarize:"""
                 next_level_ids = []
                 next_level_texts = []
 
+                # Track preceding node for this level
+                preceding_node_id = None
+
                 for result in results:
+                    # Add preceding neighbor ID to node data
+                    result["node_data"]["preceding_neighbor_id"] = preceding_node_id
+
                     # Add node data for batch insertion
                     nodes_to_add.append(result["node_data"])
 
@@ -1313,6 +1377,9 @@ Here's the content to summarize:"""
                     # Track IDs and texts for next level
                     next_level_ids.append(result["parent_id"])
                     next_level_texts.append(result["summary"])
+
+                    # Update preceding ID for next iteration
+                    preceding_node_id = result["parent_id"]
 
                 # Batch store all nodes for this level
                 if nodes_to_add:

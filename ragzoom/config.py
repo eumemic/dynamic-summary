@@ -62,6 +62,7 @@ class IndexConfig:
     retry_threshold: float
     max_retries: int
     embedding_batch_size: int
+    use_anti_verbatim_vaccine: bool
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -75,6 +76,32 @@ class IndexConfig:
             raise ValueError(
                 f"embedding_batch_size must be positive, got {self.embedding_batch_size}"
             )
+
+    @classmethod
+    def from_dict(cls, config_dict: dict) -> "IndexConfig":
+        """Create IndexConfig from a dictionary (e.g., from telemetry JSON).
+
+        Args:
+            config_dict: Dictionary with config fields
+
+        Returns:
+            IndexConfig instance
+        """
+        # Extract only the fields that IndexConfig expects
+        index_config_fields = {
+            "target_chunk_tokens": config_dict["target_chunk_tokens"],
+            "preceding_context_tokens": config_dict["preceding_context_tokens"],
+            "summary_model": config_dict["summary_model"],
+            "embedding_model": config_dict["embedding_model"],
+            "retry_threshold": config_dict["retry_threshold"],
+            "max_retries": config_dict["max_retries"],
+            "embedding_batch_size": config_dict["embedding_batch_size"],
+            "use_anti_verbatim_vaccine": config_dict.get(
+                "use_anti_verbatim_vaccine", True
+            ),
+        }
+
+        return cls(**index_config_fields)
 
     @classmethod
     def load(cls, config_path: Path | None = None, **cli_options: Any) -> "IndexConfig":
@@ -93,19 +120,8 @@ class IndexConfig:
         # Load the raw config dictionary (handles defaults internally)
         config_dict = _load_index_config(config_path, **cli_options)
 
-        # Extract only the fields that IndexConfig expects
-        # These fields should all be present in the config after loading defaults
-        index_config_fields = {
-            "target_chunk_tokens": config_dict["target_chunk_tokens"],
-            "preceding_context_tokens": config_dict["preceding_context_tokens"],
-            "summary_model": config_dict["summary_model"],
-            "embedding_model": config_dict["embedding_model"],
-            "retry_threshold": config_dict["retry_threshold"],
-            "max_retries": config_dict["max_retries"],
-            "embedding_batch_size": config_dict["embedding_batch_size"],
-        }
-
-        return cls(**index_config_fields)
+        # Use from_dict to create the instance
+        return cls.from_dict(config_dict)
 
     def replace(self, **changes: Any) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""

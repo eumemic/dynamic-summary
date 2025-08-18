@@ -109,6 +109,11 @@ def cli(ctx: click.Context) -> None:
     help="Directory for data storage (default: current directory)",
 )
 @click.option(
+    "--database",
+    type=click.Path(),
+    help="Path to SQLite database file (default: ./ragzoom.db)",
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Show debug information including token usage statistics",
@@ -138,6 +143,7 @@ def index(
     max_retries: int | None,
     embedding_batch_size: int | None,
     data_dir: str | None,
+    database: str | None,
     debug: bool,
     telemetry_file: str | None,
     validate: bool,
@@ -179,6 +185,13 @@ def index(
             operational_config = operational_config.replace(
                 chroma_persist_directory=str(data_path / "chroma_db"),
                 sqlite_database_url=f"sqlite:///{data_path / 'ragzoom.db'}",
+            )
+
+        # Override database path if provided (takes precedence over data_dir)
+        if database:
+            db_path = Path(database).resolve()
+            operational_config = operational_config.replace(
+                sqlite_database_url=f"sqlite:///{db_path}",
             )
 
         # Update context with new configs

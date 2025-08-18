@@ -14,6 +14,9 @@
 set -e  # Exit on error
 set -o pipefail  # Also exit on pipe failures
 
+# Generate timestamp for this run
+TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+
 # Check required dependencies
 check_dependencies() {
     local missing_deps=()
@@ -57,9 +60,26 @@ Usage: $0 [--baseline <baseline.json>] [--output-dir <dir>] [document] [options]
 
 Run indexing benchmarks with telemetry comparison and visualization.
 
+ITERATIVE WORKFLOW (recommended):
+    After the first run, each subsequent run automatically uses the previous run as baseline:
+    
+    # First run (needs telemetry.json or --baseline)
+    $0
+    
+    # Subsequent runs (each compares against previous)
+    $0 && open benchmarks/latest/visualization.png
+    
+    # Make code changes, then run again to see impact
+    $0 && open benchmarks/latest/visualization.png
+
 Options:
-    --baseline <file>      Baseline telemetry JSON file (default: ./telemetry-baseline.json)
-    --output-dir <dir>     Directory for output files (default: benchmarks/)
+    --baseline <file>      Baseline telemetry JSON file 
+                          Default search order:
+                          1. benchmarks/latest/telemetry.json (previous run)
+                          2. ./telemetry.json (current directory)
+                          3. <repo_root>/telemetry.json (if in worktree)
+    --output-dir <dir>     Directory for output files
+                          Default: benchmarks/<timestamp> (e.g., benchmarks/20250815_163448)
     --help                 Show this help message and exit
     
 Document:
@@ -69,21 +89,24 @@ Additional Options:
     All other options are passed through to the ragzoom index command.
     The script automatically:
     - Adds: --telemetry --validate --debug --no-progress
-    - Extracts config from baseline and uses --config <baseline_config.json>
-    - This ensures the exact same configuration as the baseline run
+    - Extracts target_chunk_tokens from baseline (for fair comparison)
+    - Uses current default_config.json for all other settings (to test improvements)
 
-Output Files:
-    <output-dir>/baseline_config.json - Config extracted from baseline
-    <output-dir>/telemetry.json      - Telemetry data from current run
-    <output-dir>/log.txt              - Full indexing logs with debug output
-    <output-dir>/comparison.md        - Markdown comparison report
-    <output-dir>/visualization.png    - Visual side-by-side comparison chart
+Output Structure:
+    benchmarks/
+    ├── 20250815_163448/          # Timestamped run directory
+    │   ├── ragzoom.db            # SQLite database from indexing
+    │   ├── telemetry.json        # Telemetry data (becomes next baseline)
+    │   ├── log.txt               # Full indexing logs with debug output
+    │   ├── comparison.md         # Markdown comparison report
+    │   └── visualization.png     # Visual side-by-side comparison
+    └── latest/                   # Symlink to most recent run
 
 Examples:
-    $0                                              # Use all defaults
+    $0                                              # Use all defaults (iterative mode)
     $0 document.txt                                 # Override document only
     $0 --baseline other.json                        # Override baseline
-    $0 --output-dir results/ document.txt           # Custom output and document
+    $0 --output-dir custom/dir document.txt        # Custom output (disables latest symlink)
 
 EOF
     exit 0
@@ -91,9 +114,10 @@ EOF
 
 # Initialize variables
 BASELINE=""
-OUTPUT_DIR="benchmarks"  # Default output directory
+OUTPUT_DIR=""  # Will be set to benchmarks/<timestamp> by default
 DOCUMENT=""  # Will be auto-detected or provided
 EXTRA_ARGS=()
+USE_DEFAULT_OUTPUT=true  # Track if user provided custom output dir
 
 # Function to validate paths against injection
 validate_path() {
@@ -125,6 +149,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --output-dir)
             OUTPUT_DIR="$2"
+            USE_DEFAULT_OUTPUT=false
             shift 2
             ;;
         --document-id|--max-retries|--retry-threshold|--target-chunk-tokens|--preceding-context-tokens|--summary-model|--embedding-model|--embedding-batch-size)
@@ -150,15 +175,50 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Set default output directory if not provided
+if [ "$USE_DEFAULT_OUTPUT" = true ]; then
+    OUTPUT_DIR="benchmarks/${TIMESTAMP}"
+    echo "Using timestamped output directory: $OUTPUT_DIR"
+fi
+
 # Check for default baseline if not provided
 if [ -z "$BASELINE" ]; then
-    if [ -f "./telemetry-baseline.json" ]; then
-        BASELINE="./telemetry-baseline.json"
-        echo "Using default baseline: $BASELINE"
+    # First check for previous run in benchmarks/latest
+    if [ -f "benchmarks/latest/telemetry.json" ]; then
+        BASELINE="benchmarks/latest/telemetry.json"
+        echo "Using previous run as baseline: $BASELINE"
+    elif [ -f "./telemetry.json" ]; then
+        BASELINE="./telemetry.json"
+        echo "Using baseline from current directory: $BASELINE"
     else
-        echo "Error: No baseline specified and ./telemetry-baseline.json not found"
-        echo "Usage: $0 [--baseline <baseline.json>] [--output-dir <dir>] [document] [options]"
-        exit 1
+        # Try to find repository root (parent of worktrees directory if in a worktree)
+        REPO_ROOT=""
+        if [[ "$PWD" == */worktrees/* ]]; then
+            # We're in a worktree, find the main repo
+            REPO_ROOT=$(echo "$PWD" | sed 's|/worktrees/.*||')
+        fi
+        
+        # Check repository root if different from current directory
+        if [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$PWD" ] && [ -f "$REPO_ROOT/telemetry.json" ]; then
+            BASELINE="$REPO_ROOT/telemetry.json"
+            echo "Using baseline from repository root: $BASELINE"
+        else
+            echo "Error: No baseline specified and no telemetry.json found"
+            echo ""
+            echo "Searched for telemetry.json in:"
+            echo "  1. benchmarks/latest/telemetry.json (previous run)"
+            echo "  2. ./telemetry.json (current directory)"
+            if [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$PWD" ]; then
+                echo "  3. $REPO_ROOT/telemetry.json (repository root)"
+            fi
+            echo ""
+            echo "For first run, either:"
+            echo "  1. Create a baseline: python -m ragzoom.cli index <document> --telemetry telemetry.json"
+            echo "  2. Specify an existing baseline: $0 --baseline <baseline.json> ..."
+            echo ""
+            echo "After first run, subsequent runs will automatically use the previous run as baseline."
+            exit 1
+        fi
     fi
 fi
 
@@ -178,24 +238,19 @@ echo "Extracting configuration from baseline..."
 DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
 DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
 
-# Extract config object from baseline
+# Extract ONLY target_chunk_tokens from baseline for fair comparison
+# All other settings should use current defaults from default_config.json
 CONFIG=$(jq -r '.config // empty' "$BASELINE")
+TARGET_CHUNK_TOKENS=""
 if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
-    # Save config to temporary file
-    CONFIG_FILE="$OUTPUT_DIR/baseline_config.json"
-    echo "$CONFIG" | jq '.' > "$CONFIG_FILE"
-    echo "  Extracted config from baseline telemetry"
-    echo "  Config saved to: $CONFIG_FILE"
-    
-    # Show key config values for visibility
     TARGET_CHUNK_TOKENS=$(echo "$CONFIG" | jq -r '.target_chunk_tokens // empty')
     if [ -n "$TARGET_CHUNK_TOKENS" ]; then
-        echo "  Target chunk tokens: $TARGET_CHUNK_TOKENS"
+        echo "  Extracted target_chunk_tokens from baseline: $TARGET_CHUNK_TOKENS"
+        echo "  All other settings will use current defaults from default_config.json"
     fi
 else
     echo "Warning: Could not extract config from baseline telemetry"
     echo "  The indexer will use default configuration"
-    CONFIG_FILE=""
 fi
 
 # Auto-detect document if not provided
@@ -231,12 +286,14 @@ validate_path "$DOCUMENT" "document"
 TELEMETRY_FILE="$OUTPUT_DIR/telemetry.json"
 LOG_FILE="$OUTPUT_DIR/log.txt"
 VISUALIZATION_FILE="$OUTPUT_DIR/visualization.png"
+DATABASE_FILE="$OUTPUT_DIR/ragzoom.db"
 
 echo ""
 echo "🚀 Starting indexing benchmark..."
 echo "  Baseline: $BASELINE"
 echo "  Document: $DOCUMENT"
 echo "  Output directory: $OUTPUT_DIR"
+echo "  Database: $DATABASE_FILE"
 if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
     echo "  Additional options: ${EXTRA_ARGS[@]}"
 fi
@@ -250,14 +307,16 @@ echo "📝 Running indexing with telemetry..."
 INDEX_ARGS=(
     "$DOCUMENT"
     --telemetry "$TELEMETRY_FILE"
+    --database "$DATABASE_FILE"
     --validate
     --debug
     --no-progress
 )
 
-# Add config file if we extracted one
-if [ -n "$CONFIG_FILE" ]; then
-    INDEX_ARGS+=(--config "$CONFIG_FILE")
+# Add target_chunk_tokens if we extracted it from baseline
+# This ensures fair comparison while using current defaults for everything else
+if [ -n "$TARGET_CHUNK_TOKENS" ]; then
+    INDEX_ARGS+=(--target-chunk-tokens "$TARGET_CHUNK_TOKENS")
 fi
 
 # Add any extra arguments
@@ -325,8 +384,30 @@ else
 fi
 
 echo ""
+
+# Update latest symlink if using default output structure
+if [ "$USE_DEFAULT_OUTPUT" = true ]; then
+    # Create benchmarks directory if it doesn't exist
+    mkdir -p benchmarks
+    
+    # Update the latest symlink
+    # Use relative path for the symlink target to make it portable
+    (cd benchmarks && ln -sfn "${TIMESTAMP}" latest)
+    
+    echo "📎 Updated benchmarks/latest symlink → $OUTPUT_DIR"
+    echo ""
+fi
+
 echo "🎉 Benchmark complete! Results:"
+echo "  - Database: $OUTPUT_DIR/ragzoom.db"
 echo "  - Telemetry: $OUTPUT_DIR/telemetry.json"
 echo "  - Log: $OUTPUT_DIR/log.txt"
 echo "  - Comparison report: $OUTPUT_DIR/comparison.md"
 echo "  - Visualization: $OUTPUT_DIR/visualization.png"
+
+if [ "$USE_DEFAULT_OUTPUT" = true ]; then
+    echo ""
+    echo "💡 Quick access via: benchmarks/latest/"
+    echo "   View results: open benchmarks/latest/visualization.png"
+    echo "   Next iteration: scripts/run-indexing-benchmarks"
+fi
