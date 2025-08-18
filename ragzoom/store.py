@@ -385,9 +385,9 @@ class Store:
         for data in nodes_data:
             self._validate_embedding_dimension(data["embedding"])
 
-        nodes = []
         with self.SessionLocal() as session:
-            # Create TreeNode objects
+            # Create TreeNode objects for regular session.add_all()
+            nodes = []
             for data in nodes_data:
                 node = TreeNode(
                     id=data["node_id"],
@@ -404,8 +404,8 @@ class Store:
                 )
                 nodes.append(node)
 
-            # Bulk insert all nodes - use bulk_save_objects for PostgreSQL compatibility
-            session.bulk_save_objects(nodes)
+            # Use add_all for proper object tracking and session management
+            session.add_all(nodes)
             session.commit()
 
             # Add all to cache
