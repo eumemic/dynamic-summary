@@ -19,7 +19,7 @@ class TestTelemetryFormatParsing:
     def test_parse_v3_telemetry_format(self) -> None:
         """Test parsing v3.0 telemetry format (already flat)."""
         telemetry_data = {
-            "format_version": "3.0",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 5000,
             "indexed_at": 1234567890.0,
@@ -28,6 +28,9 @@ class TestTelemetryFormatParsing:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "node-1",
@@ -38,8 +41,7 @@ class TestTelemetryFormatParsing:
         }
 
         result = parse_telemetry_format(telemetry_data)
-        # Should remain as v3.0
-        assert result["format_version"] == "3.0"
+        assert result["format_version"] == "4.2"
         assert result["document_id"] == "test_doc"
         assert result["source_document_tokens"] == 5000
         assert result["config"]["target_chunk_tokens"] == 200
@@ -51,7 +53,7 @@ class TestTelemetryFormatParsing:
     def test_parse_v3_1_telemetry_format(self) -> None:
         """Test parsing v3.1 telemetry format."""
         telemetry_data = {
-            "format_version": "3.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 5000,
             "indexed_at": 1234567890.0,
@@ -60,6 +62,9 @@ class TestTelemetryFormatParsing:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "node-1",
@@ -70,7 +75,7 @@ class TestTelemetryFormatParsing:
         }
 
         result = parse_telemetry_format(telemetry_data)
-        assert result["format_version"] == "3.1"
+        assert result["format_version"] == "4.2"
         assert result["document_id"] == "test_doc"
         assert result["source_document_tokens"] == 5000
         assert result["config"]["target_chunk_tokens"] == 200
@@ -80,7 +85,7 @@ class TestTelemetryFormatParsing:
     def test_parse_v4_1_telemetry_format(self) -> None:
         """Test parsing v4.1 telemetry format."""
         telemetry_data = {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 5000,
             "indexed_at": 1234567890.0,
@@ -89,6 +94,9 @@ class TestTelemetryFormatParsing:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "node-1",
@@ -99,7 +107,7 @@ class TestTelemetryFormatParsing:
         }
 
         result = parse_telemetry_format(telemetry_data)
-        assert result["format_version"] == "4.1"
+        assert result["format_version"] == "4.2"
         assert result["document_id"] == "test_doc"
         assert result["source_document_tokens"] == 5000
         assert result["config"]["target_chunk_tokens"] == 200
@@ -115,7 +123,7 @@ class TestTelemetryFormatParsing:
 
     def test_parse_unsupported_format_version(self) -> None:
         """Test parsing telemetry with unsupported format version."""
-        telemetry_data = {"format_version": "2.0", "documents": {}}
+        telemetry_data = {"format_version": "4.1", "nodes": []}
 
         with pytest.raises(
             TelemetryAnalysisError, match="Unsupported telemetry format version"
@@ -254,7 +262,7 @@ class TestSimplifiedMetrics:
     def sample_telemetry(self) -> dict:
         """Create sample telemetry data with summary attempts."""
         return {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -263,6 +271,9 @@ class TestSimplifiedMetrics:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "summary-1",
@@ -330,7 +341,7 @@ class TestSimplifiedMetrics:
     def test_simplified_metrics_empty_data(self) -> None:
         """Test simplified metrics with empty telemetry."""
         empty_telemetry = {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 0,
             "indexed_at": 1234567890.0,
@@ -339,6 +350,9 @@ class TestSimplifiedMetrics:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [],
         }
 
@@ -350,7 +364,7 @@ class TestSimplifiedMetrics:
     def test_simplified_metrics_only_leaf_nodes(self) -> None:
         """Test simplified metrics with only leaf nodes (no summaries)."""
         leaf_only_telemetry = {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -359,6 +373,9 @@ class TestSimplifiedMetrics:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "leaf-1",
@@ -410,7 +427,7 @@ class TestBatchEfficiency:
     def test_compute_batch_efficiency(self) -> None:
         """Test computing batch efficiency from telemetry."""
         telemetry_data = {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -419,6 +436,9 @@ class TestBatchEfficiency:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "node-1",
@@ -477,7 +497,7 @@ class TestBatchEfficiency:
     def test_batch_efficiency_empty_data(self) -> None:
         """Test batch efficiency with empty telemetry."""
         empty_telemetry = {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 0,
             "indexed_at": 1234567890.0,
@@ -486,6 +506,9 @@ class TestBatchEfficiency:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [],
         }
 
@@ -505,15 +528,18 @@ class TestRetryAnalysis:
         """Test that successful attempts equals number of summary nodes (new format)."""
         # Create telemetry with 3 summary nodes, some with multiple attempts
         telemetry_data = {
-            "format_version": "3.0",
+            "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 1000,
-            "chunk_size": 100,
             "indexed_at": 1234567890.0,
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 # Leaf node - should be skipped
                 {
@@ -617,15 +643,18 @@ class TestRetryAnalysis:
         """Test backward compatibility without accepted_attempt field."""
         # Format without accepted_attempt field (should use last attempt)
         telemetry_data = {
-            "format_version": "3.0",
+            "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 1000,
-            "chunk_size": 100,
             "indexed_at": 1234567890.0,
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 # Summary node with multiple attempts, no accepted_attempt field
                 {
@@ -666,7 +695,7 @@ class TestRetryAnalysis:
     def test_analyze_retry_patterns(self) -> None:
         """Test analyzing retry patterns from telemetry."""
         telemetry_data = {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -675,6 +704,9 @@ class TestRetryAnalysis:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "summary-1",
@@ -778,7 +810,7 @@ class TestRetryAnalysis:
     def test_retry_analysis_no_retries(self) -> None:
         """Test retry analysis with no retries."""
         telemetry_data = {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -787,6 +819,9 @@ class TestRetryAnalysis:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "summary-1",
@@ -824,7 +859,7 @@ class TestFullMetricsComputation:
     def full_telemetry(self) -> dict:
         """Create comprehensive telemetry data."""
         return {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 2000,
             "indexed_at": 1234567890.0,
@@ -833,6 +868,9 @@ class TestFullMetricsComputation:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "leaf-1",
@@ -910,9 +948,7 @@ class TestFullMetricsComputation:
         assert metrics.chunks_created == 2  # 2 leaf nodes
         assert metrics.summary_api_calls == 1
 
-        # Check summary stats (bucketed by actual target_tokens from telemetry)
-        assert 100 in metrics.summary_stats  # The test data has target_tokens=100
-        assert metrics.summary_stats[100].count == 1
+        # ComputedMetrics no longer includes summary_stats (removed legacy functionality)
 
         # Check batch sizes
         assert len(metrics.embedding_batch_sizes) == 2
@@ -922,7 +958,7 @@ class TestFullMetricsComputation:
     def test_metrics_include_retry_attempts(self) -> None:
         """Test that metrics include ALL attempts, not just accepted ones."""
         telemetry = {
-            "format_version": "4.1",
+            "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 100,
             "indexed_at": 1234567890.0,
@@ -931,6 +967,9 @@ class TestFullMetricsComputation:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "node_id": "summary-1",

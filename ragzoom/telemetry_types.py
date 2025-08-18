@@ -4,11 +4,10 @@ This module provides TypedDict definitions for all telemetry-related data struct
 enabling type-safe access to telemetry data and preventing bugs from accessing
 non-existent fields.
 
-Supports v3.0, v3.1, and v4.1 telemetry formats with appropriate NotRequired fields.
-Legacy v1.0 and v2.0 formats are no longer supported.
+Supports only v4.2 telemetry format. All legacy formats have been removed.
 """
 
-from typing import Any, Literal, TypedDict
+from typing import Any, TypedDict
 
 from typing_extensions import NotRequired
 
@@ -23,8 +22,6 @@ class EmbeddingTelemetryDict(TypedDict):
     model: str
     start_time: float
     end_time: float
-    # v1 compatibility
-    timestamp: NotRequired[float]
 
 
 # Summary attempt types
@@ -40,20 +37,13 @@ class SummaryAttemptDict(TypedDict):
     start_time: float
     end_time: float
 
-    # Optional fields (including backwards compatibility)
+    # Optional fields
     cached_tokens: NotRequired[
         int
     ]  # Number of cached prompt tokens (for prompt caching)
     prompt_tokens_details: NotRequired[
         dict[str, Any]
     ]  # Full OpenAI prompt token details
-    # Backwards compatibility for old telemetry files
-    status: NotRequired[Literal["accepted", "rejected_over", "rejected_under", "error"]]
-    rejection_reason: NotRequired[str | None]
-
-    # v1 compatibility - removed in v2
-    is_retry: NotRequired[bool]
-    timestamp: NotRequired[float]
 
 
 # Node telemetry types
@@ -75,10 +65,6 @@ class NodeTelemetryDict(TypedDict):
     input_text_tokens: NotRequired[
         int
     ]  # Combined tokens from children (for non-leaf nodes)
-
-    # v1 compatibility fields
-    node_type: NotRequired[Literal["leaf", "summary"]]
-    level: NotRequired[int]  # renamed to height in v2
 
 
 # Document metadata types
@@ -108,42 +94,11 @@ class ConfigDict(TypedDict):
     embedding_model: str
     # Additional config fields may be present
     budget_tokens: NotRequired[int]
-    leaf_tokens: NotRequired[int]  # Legacy alias for target_chunk_tokens
 
 
-# Top-level telemetry structure for v1.0/v2.0
-class TelemetryDataDictV2(TypedDict):
-    """Type definition for v1.0/v2.0 telemetry data structure."""
-
-    format_version: str
-    documents: dict[str, DocumentDict]
-
-
-# Top-level telemetry structure for v3.0/v3.1
-class TelemetryDataDictV3(TypedDict):
-    """Type definition for v3.0/v3.1 telemetry data structure (flat).
-
-    Note: v3.0 format may have legacy top-level chunk_size and models fields,
-    but v3.1+ stores this information in the config object.
-    """
-
-    format_version: str
-    document_id: str
-    source_document_tokens: int
-    indexed_at: float
-    config: ConfigDict
-    nodes: list[NodeTelemetryDict]
-    # Optional document path
-    document_path: NotRequired[str]
-
-    # Legacy fields for v3.0 backward compatibility (removed in current implementation)
-    chunk_size: NotRequired[int]
-    models: NotRequired[dict[str, str]]
-
-
-# Top-level telemetry structure for v4.1 (current)
-class TelemetryDataDictV4(TypedDict):
-    """Type definition for v4.1 telemetry data structure (current format).
+# Top-level telemetry structure for v4.2 (current format)
+class TelemetryDataDict(TypedDict):
+    """Type definition for v4.2 telemetry data structure (current format).
 
     This is the current telemetry format with full model metadata,
     system prompts, and runtime information for reproducibility.
@@ -160,11 +115,6 @@ class TelemetryDataDictV4(TypedDict):
     nodes: list[NodeTelemetryDict]
     # Optional document path
     document_path: NotRequired[str]
-
-
-# Union type for all supported telemetry formats
-# For parse_telemetry_format, we normalize to the input format
-TelemetryDataDict = TelemetryDataDictV3 | TelemetryDataDictV4
 
 
 # Analysis result types
