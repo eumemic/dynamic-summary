@@ -92,6 +92,80 @@ class Store:
     # Class constant for pin depth limit (dormant feature)
     PIN_DEPTH_MAX = 2
 
+    @classmethod
+    def temporary(cls, embedding_model: str = "text-embedding-3-small"):
+        """Create a temporary store for testing/benchmarking.
+
+        Returns a context manager that yields a Store instance with a temporary
+        PostgreSQL database that is automatically cleaned up.
+        """
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _temporary_store():
+            # Create temporary database URL using a unique database name
+            import uuid
+
+            temp_db_name = f"ragzoom_temp_{uuid.uuid4().hex[:8]}"
+
+            # Use the auto-start Docker PostgreSQL feature
+            temp_config = OperationalConfig(
+                openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+                # Use default database URL which will trigger auto-start
+                database_url=f"postgresql+psycopg://postgres:postgres@localhost:5432/{temp_db_name}",
+            )
+
+            # Create the store (this will auto-start Docker if needed)
+            store = cls(temp_config, embedding_model=embedding_model)
+
+            try:
+                # Create the temporary database
+                from sqlalchemy import create_engine, text
+
+                admin_engine = create_engine(
+                    "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+                )
+                with admin_engine.connect() as conn:
+                    conn.execute(text("COMMIT"))  # End any existing transaction
+                    conn.execute(text(f"CREATE DATABASE {temp_db_name}"))
+                admin_engine.dispose()
+
+                # Create the vector extension in the new database
+                with store.engine.connect() as conn:
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                    conn.commit()
+
+                # Create tables
+                from ragzoom.store import Base
+
+                Base.metadata.create_all(store.engine)
+
+                yield store
+            finally:
+                # Cleanup: drop the temporary database
+                try:
+                    store.close()
+                    admin_engine = create_engine(
+                        "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+                    )
+                    with admin_engine.connect() as conn:
+                        conn.execute(text("COMMIT"))  # End any existing transaction
+                        # Terminate connections to the database before dropping
+                        conn.execute(
+                            text(
+                                f"SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = '{temp_db_name}' AND pid <> pg_backend_pid()"
+                            )
+                        )
+                        conn.execute(text(f"DROP DATABASE IF EXISTS {temp_db_name}"))
+                    admin_engine.dispose()
+                except Exception as e:
+                    # Log cleanup failure but don't raise
+                    logger.warning(
+                        f"Failed to cleanup temporary database {temp_db_name}: {e}"
+                    )
+
+        return _temporary_store()
+
     def __init__(
         self, config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
     ):
