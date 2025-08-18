@@ -78,7 +78,7 @@ class IndexConfig:
             )
 
     @classmethod
-    def from_dict(cls, config_dict: dict) -> "IndexConfig":
+    def from_dict(cls, config_dict: dict[str, Any]) -> "IndexConfig":
         """Create IndexConfig from a dictionary (e.g., from telemetry JSON).
 
         Args:

@@ -202,8 +202,8 @@ class TestTargetFitMetrics:
 
         # Errors should be: -5 (95-100), +5 (105-100), -2 (98-100)
         # Median of [-5, -2, 5] = -2
-        assert result["median_error"] == -2.0
-        assert result["percent_within_10"] == 100.0  # All within ±10
+        assert result.median_error == -2.0
+        assert result.percent_within_10 == 100.0  # All within ±10
 
     def test_compute_median_error_backward_compat(self) -> None:
         """Test median error with format without accepted_attempt field."""
@@ -241,8 +241,8 @@ class TestTargetFitMetrics:
 
         # Should use the last attempt (90 tokens)
         # Error should be: -10 (90-100)
-        assert result["median_error"] == -10.0
-        assert result["percent_within_10"] == 100.0
+        assert result.median_error == -10.0
+        assert result.percent_within_10 == 100.0
 
 
 class TestSimplifiedMetrics:
@@ -311,21 +311,21 @@ class TestSimplifiedMetrics:
 
         # For each chunk size with data
         for chunk_size, metrics in result.metrics_by_chunk_size.items():
-            # Should have all metric categories
-            assert "target_fit" in metrics
-            assert "retries" in metrics
-            assert "latency" in metrics
-            assert "cost" in metrics
-            assert "dispersion" in metrics
+            # Should have all metric categories as attributes
+            assert hasattr(metrics, "target_fit")
+            assert hasattr(metrics, "retries")
+            assert hasattr(metrics, "latency")
+            assert hasattr(metrics, "cost")
+            assert hasattr(metrics, "dispersion")
 
             # Target-fit metrics
-            assert "median_error" in metrics["target_fit"]
-            assert "p95_error" in metrics["target_fit"]
-            assert "percent_within_10" in metrics["target_fit"]
+            assert hasattr(metrics.target_fit, "median_error")
+            assert hasattr(metrics.target_fit, "p95_error")
+            assert hasattr(metrics.target_fit, "percent_within_10")
 
             # Retry metrics
-            assert "retry_rate" in metrics["retries"]
-            assert "max_retries" in metrics["retries"]
+            assert hasattr(metrics.retries, "retry_rate")
+            assert hasattr(metrics.retries, "max_retries")
 
     def test_simplified_metrics_empty_data(self) -> None:
         """Test simplified metrics with empty telemetry."""
@@ -379,14 +379,14 @@ class TestSimplifiedMetrics:
 
         # Verify cost calculations for the chunk size
         for chunk_size, metrics in result.metrics_by_chunk_size.items():
-            cost_metrics = metrics["cost"]
+            cost_metrics = metrics.cost
 
             # Check that cost metrics exist and are reasonable
-            assert "usd_per_node" in cost_metrics
-            assert "total_prompt_tokens" in cost_metrics
-            assert "total_completion_tokens" in cost_metrics
-            assert cost_metrics["usd_per_node"] > 0
-            assert cost_metrics["total_prompt_tokens"] > 0
+            assert hasattr(cost_metrics, "usd_per_node")
+            assert hasattr(cost_metrics, "total_prompt_tokens")
+            assert hasattr(cost_metrics, "total_completion_tokens")
+            assert cost_metrics.usd_per_node > 0
+            assert cost_metrics.total_prompt_tokens > 0
 
             # Verify cost calculation is correct
             # Based on sample data: 2 nodes with 250 + 300 = 550 prompt tokens, 90 + 110 = 200 completion tokens
@@ -395,13 +395,13 @@ class TestSimplifiedMetrics:
             expected_total_cost = 0.0002025
             # USD per node (2 nodes)
             expected_usd_per_node = expected_total_cost / 2
-            assert cost_metrics["usd_per_node"] == pytest.approx(
+            assert cost_metrics.usd_per_node == pytest.approx(
                 expected_usd_per_node, rel=0.01
             )
 
             # Verify token counts
-            assert cost_metrics["total_prompt_tokens"] == 550
-            assert cost_metrics["total_completion_tokens"] == 200
+            assert cost_metrics.total_prompt_tokens == 550
+            assert cost_metrics.total_completion_tokens == 200
 
 
 class TestBatchEfficiency:

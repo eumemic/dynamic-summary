@@ -506,7 +506,7 @@ class TelemetryCollector:
         self.tree_height = max(self.tree_height, height)
         self._update_memory_usage()
 
-    def finalize(self) -> dict:
+    def finalize(self) -> dict[str, Any]:
         """Finalize telemetry collection and return raw telemetry data.
 
         Returns:
@@ -531,7 +531,7 @@ class TelemetryCollector:
             self.document_id, self.config.target_chunk_tokens
         )
 
-    def get_telemetry_data(self, document_id: str, chunk_size: int) -> dict:
+    def get_telemetry_data(self, document_id: str, chunk_size: int) -> dict[str, Any]:
         """Export raw telemetry data in standard format for analysis.
 
         Args:
