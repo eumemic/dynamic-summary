@@ -1,12 +1,6 @@
 """Tests for storage functionality."""
 
-import shutil
-import tempfile
-
 import pytest
-
-from ragzoom.config import OperationalConfig
-from ragzoom.store import Store
 
 
 @pytest.mark.integration
@@ -14,25 +8,11 @@ class TestStore:
     """Test the Store class."""
 
     @pytest.fixture
-    def temp_store(self):
-        """Create a temporary store for testing."""
-        # Create temporary directory
-        temp_dir = tempfile.mkdtemp()
-        db_path = f"{temp_dir}/test.db"
-
-        # Override config - use SQLite for integration tests
-        # Real PostgreSQL would require a running database
-        config = OperationalConfig(
-            openai_api_key="test-key",
-            database_url=f"sqlite:///{db_path}",
-        )
-
-        store = Store(config, embedding_model="text-embedding-3-small")
-        yield store
-
-        # Cleanup - close store first to release file handles
-        store.close()
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    def temp_store(self, store):
+        """Create a temporary store for testing using conftest store fixture."""
+        # For integration tests, use the store fixture from conftest.py
+        # which handles PostgreSQL with proper isolation or SQLite fallback
+        return store
 
     def test_add_node(self, temp_store):
         """Test adding a node to the store."""

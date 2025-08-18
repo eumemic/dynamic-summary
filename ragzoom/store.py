@@ -232,13 +232,25 @@ class Store:
                     f"Error: {str(e)}"
                 )
 
-        # Initialize PostgreSQL with pgvector
+        # Initialize database engine
         self.engine = create_engine(database_url)
 
-        # Register pgvector extension using event listener
-        @event.listens_for(self.engine, "connect")
-        def register_vector_extension(dbapi_conn, connection_record):
-            register_vector(dbapi_conn)
+        # Register pgvector extension only for PostgreSQL connections
+        if database_url.startswith("postgresql"):
+
+            @event.listens_for(self.engine, "connect")
+            def register_vector_extension(dbapi_conn, connection_record):
+                try:
+                    # Get the underlying psycopg connection for pgvector registration
+                    raw_conn = (
+                        dbapi_conn.connection
+                        if hasattr(dbapi_conn, "connection")
+                        else dbapi_conn
+                    )
+                    register_vector(raw_conn)
+                except Exception as e:
+                    logger.warning(f"Failed to register pgvector: {e}")
+                    # Don't fail the connection - tables can still be created
 
         # Handle migration before creating tables with new schema
         self._run_migrations()
