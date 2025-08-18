@@ -110,8 +110,8 @@ def cli(ctx: click.Context) -> None:
 )
 @click.option(
     "--database",
-    type=click.Path(),
-    help="Path to SQLite database file (default: ./ragzoom.db)",
+    type=str,
+    help="PostgreSQL database URL (default: postgresql://localhost/ragzoom)",
 )
 @click.option(
     "--debug",
@@ -179,20 +179,15 @@ def index(
         query_config = QueryConfig()  # Use defaults for indexing command
         operational_config = OperationalConfig()
 
-        # Override data directory if provided
+        # Override database URL if provided
         if data_dir:
             data_path = Path(data_dir)
             operational_config = operational_config.replace(
-                chroma_persist_directory=str(data_path / "chroma_db"),
-                sqlite_database_url=f"sqlite:///{data_path / 'ragzoom.db'}",
+                database_url=f"postgresql:///{data_path / 'ragzoom'}",
             )
 
-        # Override database path if provided (takes precedence over data_dir)
         if database:
-            db_path = Path(database).resolve()
-            operational_config = operational_config.replace(
-                sqlite_database_url=f"sqlite:///{db_path}",
-            )
+            operational_config = operational_config.replace(database_url=database)
 
         # Update context with new configs
         ctx.obj["index_config"] = index_config
@@ -649,7 +644,7 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
             if not confirm:
                 click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
 
-            # Clear SQLite data
+            # Clear database data
             with store.SessionLocal() as session:
                 # Import models
                 from ragzoom.store import Document, TreeNode
@@ -660,11 +655,6 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
                 session.query(Document).delete()
                 session.commit()
 
-            # Clear Chroma collection - delete all documents
-            # Get all IDs first
-            results = store.collection.get()
-            if results["ids"]:
-                store.collection.delete(ids=results["ids"])
 
             # Clear the cache
             store.node_cache.clear()

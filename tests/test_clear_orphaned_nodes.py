@@ -46,8 +46,7 @@ class TestAutomaticClearing:
         """Create operational configuration for test database."""
         return OperationalConfig(
             openai_api_key="test-key",
-            sqlite_database_url=f"sqlite:///{temp_db}",
-            chroma_persist_directory=str(temp_db.parent / "chroma_test"),
+            database_url=f"postgresql:///{temp_db}",
             cache_size=100,
         )
 

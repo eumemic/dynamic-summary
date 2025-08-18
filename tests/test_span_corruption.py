@@ -16,7 +16,7 @@ class TestSpanCorruption:
     @pytest.fixture
     def setup_system(self):
         """Set up test system."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory():
             # Create separate configs
             index_config = IndexConfig.load(
                 target_chunk_tokens=100,  # Small chunks to create many nodes
@@ -25,8 +25,7 @@ class TestSpanCorruption:
             query_config = QueryConfig(budget_tokens=1000)
             operational_config = OperationalConfig(
                 openai_api_key="test-key",
-                sqlite_database_url="sqlite:///:memory:",
-                chroma_persist_directory=temp_dir,
+                database_url="postgresql:///:memory:",
             )
 
             store = Store(

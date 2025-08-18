@@ -22,7 +22,6 @@ class TestBudgetGuarantee:
         with (
             patch("ragzoom.index.AsyncOpenAI") as mock_index_client,
             patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
-            patch("chromadb.PersistentClient"),
         ):
 
             # Setup async mocks for indexing
@@ -89,7 +88,7 @@ class TestBudgetGuarantee:
             mock_retrieve_client.return_value = instance_sync
 
             # Create test configs with specific budget and temporary directory for ChromaDB
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory():
                 index_config = IndexConfig.load(
                     target_chunk_tokens=200,  # Standard leaf size
                     preceding_context_tokens=50,
@@ -99,8 +98,7 @@ class TestBudgetGuarantee:
                 )
                 operational_config = OperationalConfig(
                     openai_api_key="test-key",
-                    sqlite_database_url="sqlite:///:memory:",
-                    chroma_persist_directory=temp_dir,
+                    database_url="postgresql:///:memory:",
                 )
 
                 store = Store(
