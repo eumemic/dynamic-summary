@@ -80,7 +80,6 @@ class SummaryAttempt:
         start_time: When this attempt started
         end_time: When this attempt completed
         cached_tokens: Number of cached prompt tokens (for prompt caching)
-        is_final: Whether this attempt was the one actually used
     """
 
     # Inputs
@@ -100,7 +99,6 @@ class SummaryAttempt:
 
     # Optional fields with defaults
     cached_tokens: int = 0  # Number of cached prompt tokens (for prompt caching)
-    is_final: bool = False  # Whether this attempt was the one actually used
 
     @property
     def deviation_percent(self) -> float:
@@ -194,9 +192,6 @@ class NodeTelemetry:
                     "start_time": attempt.start_time,
                     "end_time": attempt.end_time,
                 }
-                # Add is_final if True (omit if False for smaller JSON)
-                if attempt.is_final:
-                    attempt_dict["is_final"] = True
                 # Handle cached_tokens, which might be MagicMock in tests
                 cached_tokens_value = getattr(attempt, "cached_tokens", 0)
                 if hasattr(cached_tokens_value, "__gt__"):  # Check if it's comparable
@@ -428,7 +423,6 @@ class TelemetryCollector:
         model: str,
         start_time: float,
         cached_tokens: int = 0,
-        is_final: bool = False,
     ) -> None:
         """Record a summary attempt.
 
@@ -442,7 +436,6 @@ class TelemetryCollector:
             model: Model used for summary
             start_time: When the API call started
             cached_tokens: Number of cached prompt tokens (for prompt caching)
-            is_final: Whether this attempt was the one actually used
         """
         # Update aggregate metrics
         self.summary_api_calls += 1
@@ -475,7 +468,6 @@ class TelemetryCollector:
             start_time=start_time,
             end_time=time.time(),
             cached_tokens=cached_tokens,
-            is_final=is_final,
         )
         self.node_telemetry[node_id].summary_attempts.append(attempt)
 

@@ -82,3 +82,4 @@ visualization.svg
 # Code duplication reports
 jscpd-report.json
 report/
+/results/
