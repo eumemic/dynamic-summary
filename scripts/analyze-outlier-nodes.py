@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -41,8 +42,15 @@ class SummaryCase:
 class BadSummaryAnalyzer:
     """Analyze bad summaries with distribution testing."""
     
-    def __init__(self, db_path: Path, target_tokens: Optional[int] = None):
-        """Initialize analyzer with database connection."""
+    def __init__(self, db_path: Path, telemetry_path: Optional[Path] = None, 
+                 target_tokens: Optional[int] = None):
+        """Initialize analyzer with database connection.
+        
+        Args:
+            db_path: Path to the ragzoom.db database
+            telemetry_path: Path to telemetry.json to read config from
+            target_tokens: Optional override for target token count
+        """
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
@@ -58,33 +66,36 @@ class BadSummaryAnalyzer:
         self.has_token_count = "token_count" in columns
         self.has_preceding_neighbor = "preceding_neighbor_id" in columns
         
-        # Determine target token count
-        if target_tokens is not None:
-            # Use explicitly provided target
-            self.target_tokens = target_tokens
-            print(f"Using specified target token count: {self.target_tokens}")
-        elif not self.has_token_count:
-            print("Warning: Database lacks token_count column. Using text length approximation.")
-            self.target_tokens = 200  # Default target
-        else:
-            # Try to infer target from leaf node token counts
-            cursor = self.conn.execute(
-                "SELECT token_count FROM tree_nodes WHERE left_child_id IS NULL AND token_count IS NOT NULL LIMIT 100"
-            )
-            leaf_tokens = [row["token_count"] for row in cursor.fetchall()]
-            if leaf_tokens:
-                # Assume target is median of leaf tokens (they should be roughly consistent)
-                self.target_tokens = int(statistics.median(leaf_tokens))
-                print(f"Inferred target token count: {self.target_tokens} (from {len(leaf_tokens)} leaf nodes)")
-            else:
-                self.target_tokens = 200  # Ultimate fallback
-                print(f"Using default target token count: {self.target_tokens}")
+        # Load config from telemetry if available
+        config_dict = None
+        if telemetry_path and telemetry_path.exists():
+            with open(telemetry_path, 'r') as f:
+                telemetry = json.load(f)
+            if 'config' in telemetry:
+                config_dict = telemetry['config']
+                print(f"Loaded config from telemetry: {telemetry_path}")
         
-        # Create config with determined target
-        self.config = IndexConfig.load(
-            target_chunk_tokens=self.target_tokens,
-            summary_model="gpt-5-nano"
-        )
+        # Override specific values if provided
+        if target_tokens is not None:
+            if config_dict:
+                config_dict['target_chunk_tokens'] = target_tokens
+            else:
+                config_dict = {'target_chunk_tokens': target_tokens}
+            print(f"Overriding target token count: {target_tokens}")
+        
+        # Create config using all values from telemetry (or defaults)
+        if config_dict:
+            # Use IndexConfig.from_dict to load all config values
+            self.config = IndexConfig.from_dict(config_dict)
+            self.target_tokens = self.config.target_chunk_tokens
+            self.retry_threshold = self.config.retry_threshold
+            print(f"Config: target={self.target_tokens} tokens, retry_threshold={self.retry_threshold}, model={self.config.summary_model}")
+        else:
+            # Use defaults
+            self.config = IndexConfig.load()
+            self.target_tokens = self.config.target_chunk_tokens
+            self.retry_threshold = self.config.retry_threshold
+            print(f"Using default config: target={self.target_tokens} tokens, retry_threshold={self.retry_threshold}")
         
         # Create store and TreeBuilder
         operational_config = OperationalConfig(
@@ -96,7 +107,12 @@ class BadSummaryAnalyzer:
         self.tree_builder = TreeBuilder(self.config, self.store, api_key=api_key)
         
     def get_worst_cases(self, top_n: int) -> List[SummaryCase]:
-        """Get the worst N cases by absolute divergence."""
+        """Get the worst N cases by absolute divergence that exceed retry threshold.
+        
+        Only returns cases that would have triggered retries:
+        - Overshoots > 20% (retry_threshold)
+        - Ignores undershoots (they're never retried per undershoot elimination)
+        """
         if self.has_token_count:
             query = """
             SELECT 
@@ -112,13 +128,17 @@ class BadSummaryAnalyzer:
             FROM tree_nodes n
             WHERE n.left_child_id IS NOT NULL  -- Non-leaf nodes only
               AND n.token_count IS NOT NULL
+              AND n.token_count > ?  -- Only overshoots (undershoots are never retried)
+              AND (n.token_count - ?) * 100.0 / ? > ?  -- Exceeds retry threshold
             ORDER BY abs_divergence DESC
             LIMIT ?
             """
             
             cursor = self.conn.execute(
                 query, 
-                (self.target_tokens, self.target_tokens, self.target_tokens, self.target_tokens, top_n)
+                (self.target_tokens, self.target_tokens, self.target_tokens, self.target_tokens, 
+                 self.target_tokens, self.target_tokens, self.target_tokens, 
+                 self.retry_threshold * 100, top_n)
             )
         else:
             # Use text length as approximation (roughly 4 chars per token)
@@ -136,13 +156,17 @@ class BadSummaryAnalyzer:
             FROM tree_nodes n
             WHERE n.left_child_id IS NOT NULL  -- Non-leaf nodes only
               AND n.text IS NOT NULL
+              AND LENGTH(n.text) / 4 > ?  -- Only overshoots (undershoots are never retried)
+              AND (LENGTH(n.text) / 4 - ?) * 100.0 / ? > ?  -- Exceeds retry threshold
             ORDER BY abs_divergence DESC
             LIMIT ?
             """
             
             cursor = self.conn.execute(
                 query, 
-                (self.target_tokens, self.target_tokens, self.target_tokens, self.target_tokens, top_n)
+                (self.target_tokens, self.target_tokens, self.target_tokens, self.target_tokens,
+                 self.target_tokens, self.target_tokens, self.target_tokens, 
+                 self.retry_threshold * 100, top_n)
             )
         
         cases = []
@@ -416,14 +440,20 @@ class BadSummaryAnalyzer:
 
 async def main():
     parser = argparse.ArgumentParser(description="Analyze bad summaries with distribution testing")
-    parser.add_argument("--db", type=Path, default=Path("./ragzoom.db"),
-                       help="Database path (default: ./ragzoom.db)")
+    
+    # Default to benchmarks/latest if it exists
+    default_db = Path("benchmarks/latest/ragzoom.db") if Path("benchmarks/latest/ragzoom.db").exists() else Path("./ragzoom.db")
+    
+    parser.add_argument("--db", type=Path, default=default_db,
+                       help=f"Database path (default: {default_db})")
+    parser.add_argument("--telemetry", type=Path, default=None,
+                       help="Path to telemetry.json to read config from (default: auto-detect from db path)")
     parser.add_argument("--top", type=int, default=10,
                        help="Number of worst cases to analyze (default: 10)")
     parser.add_argument("--nodes", type=str,
                        help="Specific node IDs to analyze (comma-separated, overrides --top)")
     parser.add_argument("--target", type=int,
-                       help="Target token count (default: infer from leaf nodes)")
+                       help="Target token count (overrides value from telemetry)")
     parser.add_argument("--runs", type=int, default=10,
                        help="Number of test runs per case (default: 10)")
     parser.add_argument("--max-concurrent", type=int, default=5,
@@ -437,8 +467,17 @@ async def main():
         print(f"Error: Database {args.db} does not exist")
         sys.exit(1)
     
+    # Auto-detect telemetry path if not provided
+    telemetry_path = args.telemetry
+    if telemetry_path is None:
+        # Try to find telemetry.json in the same directory as the database
+        potential_telemetry = args.db.parent / "telemetry.json"
+        if potential_telemetry.exists():
+            telemetry_path = potential_telemetry
+            print(f"Auto-detected telemetry: {telemetry_path}")
+    
     # Create analyzer
-    analyzer = BadSummaryAnalyzer(args.db, target_tokens=args.target)
+    analyzer = BadSummaryAnalyzer(args.db, telemetry_path=telemetry_path, target_tokens=args.target)
     
     # Get cases to analyze
     if args.nodes:
