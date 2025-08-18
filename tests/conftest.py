@@ -244,19 +244,18 @@ def _create_real_store(base_config) -> Store | None:
     """Create a real store for integration testing, or return None if unavailable."""
     try:
         # Create unique database name for test isolation
-        import os
         import uuid
 
         # Use test-specific database URL or create unique one
         base_db_url = base_config.database_url
-        if "ragzoom_test" in base_db_url and not os.getenv("PYTEST_XDIST_WORKER"):
-            # Create unique database name for this test
+        if "ragzoom_test" in base_db_url:
+            # Always create unique database name for each test to ensure isolation
             unique_suffix = uuid.uuid4().hex[:8]
             test_db_url = base_db_url.replace(
                 "ragzoom_test", f"ragzoom_test_{unique_suffix}"
             )
         else:
-            # Use base URL for distributed testing or custom URLs
+            # Use base URL for custom URLs (non-test scenarios)
             test_db_url = base_db_url
 
         # Test connection
