@@ -337,10 +337,7 @@ def analyze(telemetry_file: Path) -> None:
     with open(telemetry_file) as f:
         telemetry_data = json.load(f)
 
-    # Handle wrapped telemetry format (with config/document/telemetry fields)
-    # If data has 'telemetry' field but no 'documents' field, it's wrapped
-    if "telemetry" in telemetry_data and "documents" not in telemetry_data:
-        telemetry_data = telemetry_data["telemetry"]
+    # Handle standard format 4.2 telemetry data
 
     # Compute metrics
     metrics = compute_simplified_metrics(telemetry_data)
