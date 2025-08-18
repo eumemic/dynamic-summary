@@ -8,7 +8,11 @@ from typing import Any
 
 import click
 
-from ragzoom.telemetry_analysis import SimplifiedMetrics, compute_simplified_metrics
+from ragzoom.telemetry_analysis import (
+    ChunkMetrics,
+    SimplifiedMetrics,
+    compute_simplified_metrics,
+)
 
 
 # Metric name constants for consistency
@@ -181,7 +185,7 @@ def get_variance_emoji(
 
 
 def compute_dynamic_threshold(
-    baseline_metrics: dict[str, Any],
+    baseline_metrics: ChunkMetrics,
     metric_name: str,
     variance_key: str,
     config: ThresholdConfig,
@@ -205,15 +209,15 @@ def compute_dynamic_threshold(
         MetricNames.P95_ERROR,
         MetricNames.PERCENT_WITHIN_10,
     ]:
-        variance = baseline_metrics["target_fit"].get(variance_key, 0.0)
+        variance = getattr(baseline_metrics.target_fit, variance_key, 0.0)
     elif metric_name in [MetricNames.MEDIAN_SECONDS]:
-        variance = baseline_metrics["latency"].get(variance_key, 0.0)
+        variance = getattr(baseline_metrics.latency, variance_key, 0.0)
     elif metric_name == MetricNames.MAD:
-        variance = baseline_metrics["dispersion"].get("mad", 0.0)
+        variance = baseline_metrics.dispersion.mad
     elif metric_name == MetricNames.RETRY_RATE:
-        variance = baseline_metrics["retries"].get(variance_key, 0.0)
+        variance = getattr(baseline_metrics.retries, variance_key, 0.0)
     elif metric_name in [MetricNames.USD_PER_NODE, MetricNames.COST]:
-        variance = baseline_metrics["cost"].get(variance_key, 0.0)
+        variance = getattr(baseline_metrics.cost, variance_key, 0.0)
     else:
         # For metrics without variance data, don't enforce any threshold
         return DynamicThreshold(
@@ -331,36 +335,36 @@ def analyze(telemetry_file: Path) -> None:
         click.echo(f"{'='*60}")
 
         # Target-fit metrics
-        target_fit = chunk_metrics["target_fit"]
+        target_fit = chunk_metrics.target_fit
         click.echo("\n📏 Target-fit Accuracy")
-        click.echo(f"  Median error:        {target_fit['median_error']:+.1f} tokens")
-        click.echo(f"  p95 error:           {target_fit['p95_error']:+.1f} tokens")
-        click.echo(f"  Within ±10 tokens:   {target_fit['percent_within_10']:.1f}%")
-        click.echo(f"  Max overshoot:       {target_fit['max_overshoot']:+.0f} tokens")
-        click.echo(f"  Max undershoot:      {target_fit['max_undershoot']:+.0f} tokens")
+        click.echo(f"  Median error:        {target_fit.median_error:+.1f} tokens")
+        click.echo(f"  p95 error:           {target_fit.p95_error:+.1f} tokens")
+        click.echo(f"  Within ±10 tokens:   {target_fit.percent_within_10:.1f}%")
+        click.echo(f"  Max overshoot:       {target_fit.max_overshoot:+.0f} tokens")
+        click.echo(f"  Max undershoot:      {target_fit.max_undershoot:+.0f} tokens")
 
         # Retry metrics
-        retries = chunk_metrics["retries"]
+        retries = chunk_metrics.retries
         click.echo("\n🔄 Retry Efficiency")
         click.echo(
-            f"  Retry rate:          {retries['retry_rate']:.2f} extra attempts/node"
+            f"  Retry rate:          {retries.retry_rate:.2f} extra attempts/node"
         )
-        click.echo(f"  Max retries:         {retries['max_retries']:.0f}")
+        click.echo(f"  Max retries:         {retries.max_retries:.0f}")
 
         # Latency metrics
-        latency = chunk_metrics["latency"]
+        latency = chunk_metrics.latency
         click.echo("\n⏱️  Latency")
-        click.echo(f"  Median time/node:    {latency['median_seconds']:.2f}s")
-        click.echo(f"  p95 time/node:       {latency['p95_seconds']:.2f}s")
-        click.echo(f"  Total indexing:      {latency['total_indexing_seconds']:.1f}s")
+        click.echo(f"  Median time/node:    {latency.median_seconds:.2f}s")
+        click.echo(f"  p95 time/node:       {latency.p95_seconds:.2f}s")
+        click.echo(f"  Total indexing:      {latency.total_indexing_seconds:.1f}s")
 
         # Cost metrics
-        cost = chunk_metrics["cost"]
+        cost = chunk_metrics.cost
         click.echo("\n💰 Cost & Tokens")
-        click.echo(f"  Prompt tokens:       {cost['total_prompt_tokens']:,}")
-        click.echo(f"  Completion tokens:   {cost['total_completion_tokens']:,}")
-        click.echo(f"  Total tokens:        {cost['total_tokens']:,}")
-        click.echo(f"  USD per node:        ${cost['usd_per_node']:.4f}")
+        click.echo(f"  Prompt tokens:       {cost.total_prompt_tokens:,}")
+        click.echo(f"  Completion tokens:   {cost.total_completion_tokens:,}")
+        click.echo(f"  Total tokens:        {cost.total_tokens:,}")
+        click.echo(f"  USD per node:        ${cost.usd_per_node:.4f}")
 
         # Outlier detection message
         click.echo("\n💡 To analyze problematic summaries:")
@@ -491,8 +495,8 @@ class MetricCheckConfig:
 
 
 def _check_single_metric_regression(
-    base_metrics: dict[str, Any],
-    curr_metrics: dict[str, Any],
+    base_metrics: ChunkMetrics,
+    curr_metrics: ChunkMetrics,
     metric_config: MetricCheckConfig,
     threshold_config: ThresholdConfig,
     is_ci: bool,
@@ -512,8 +516,10 @@ def _check_single_metric_regression(
     )
 
     # Get values
-    base_val = base_metrics[metric_config.metric_group][metric_config.metric_field]
-    curr_val = curr_metrics[metric_config.metric_group][metric_config.metric_field]
+    base_group = getattr(base_metrics, metric_config.metric_group)
+    curr_group = getattr(curr_metrics, metric_config.metric_group)
+    base_val = getattr(base_group, metric_config.metric_field)
+    curr_val = getattr(curr_group, metric_config.metric_field)
 
     # Apply absolute if needed
     if metric_config.use_absolute:
@@ -885,8 +891,8 @@ def visualize(input_paths: tuple[str, ...], output: str | None, format: str) -> 
 
 def _format_metrics_for_chunk_with_thresholds(
     chunk_label: str,
-    base_metrics: dict[str, Any],
-    curr_metrics: dict[str, Any],
+    base_metrics: ChunkMetrics,
+    curr_metrics: ChunkMetrics,
     thresholds: dict[str, DynamicThreshold],
 ) -> None:
     """Format all metrics for a single chunk size with dynamic thresholds."""
@@ -894,70 +900,70 @@ def _format_metrics_for_chunk_with_thresholds(
     _format_comparison_row_with_threshold(
         chunk_label,
         "Median error",
-        base_metrics["target_fit"]["median_error"],
-        curr_metrics["target_fit"]["median_error"],
+        base_metrics.target_fit.median_error,
+        curr_metrics.target_fit.median_error,
         thresholds[MetricNames.MEDIAN_ERROR_KEY],
         signed=True,
         is_error_metric=True,
-        baseline_variance=base_metrics["target_fit"]["error_mad"],
-        current_variance=curr_metrics["target_fit"]["error_mad"],
+        baseline_variance=base_metrics.target_fit.error_mad,
+        current_variance=curr_metrics.target_fit.error_mad,
     )
     _format_comparison_row_with_threshold(
         "",
         "p95 error",
-        base_metrics["target_fit"]["p95_error"],
-        curr_metrics["target_fit"]["p95_error"],
+        base_metrics.target_fit.p95_error,
+        curr_metrics.target_fit.p95_error,
         thresholds[MetricNames.P95_ERROR_KEY],
         signed=True,
         is_error_metric=True,
-        baseline_variance=base_metrics["target_fit"]["error_mad"],
-        current_variance=curr_metrics["target_fit"]["error_mad"],
+        baseline_variance=base_metrics.target_fit.error_mad,
+        current_variance=curr_metrics.target_fit.error_mad,
     )
 
     # Percent within ±10 tokens (now with dynamic threshold)
     _format_comparison_row_with_threshold(
         "",
         "Within ±10 tokens",
-        base_metrics["target_fit"]["percent_within_10"],
-        curr_metrics["target_fit"]["percent_within_10"],
+        base_metrics.target_fit.percent_within_10,
+        curr_metrics.target_fit.percent_within_10,
         thresholds[MetricNames.PERCENT_WITHIN_10_KEY],
         higher_is_better=True,
-        baseline_variance=base_metrics["target_fit"]["percent_within_10_mad"],
-        current_variance=curr_metrics["target_fit"]["percent_within_10_mad"],
+        baseline_variance=base_metrics.target_fit.percent_within_10_mad,
+        current_variance=curr_metrics.target_fit.percent_within_10_mad,
     )
 
     # Retry metrics
     _format_comparison_row_with_threshold(
         "",
         "Avg retries/node",
-        base_metrics["retries"]["retry_rate"],
-        curr_metrics["retries"]["retry_rate"],
+        base_metrics.retries.retry_rate,
+        curr_metrics.retries.retry_rate,
         thresholds[MetricNames.RETRY_RATE_KEY],
-        baseline_variance=base_metrics["retries"]["retry_mad"],
-        current_variance=curr_metrics["retries"]["retry_mad"],
+        baseline_variance=base_metrics.retries.retry_mad,
+        current_variance=curr_metrics.retries.retry_mad,
     )
 
     # Latency metrics
     _format_comparison_row_with_threshold(
         "",
         "Median time/node",
-        base_metrics["latency"]["median_seconds"],
-        curr_metrics["latency"]["median_seconds"],
+        base_metrics.latency.median_seconds,
+        curr_metrics.latency.median_seconds,
         thresholds[MetricNames.LATENCY_KEY],
-        baseline_variance=base_metrics["latency"]["latency_mad"],
-        current_variance=curr_metrics["latency"]["latency_mad"],
+        baseline_variance=base_metrics.latency.latency_mad,
+        current_variance=curr_metrics.latency.latency_mad,
     )
 
     # Cost metrics
     _format_comparison_row_with_threshold(
         "",
         "USD per node",
-        base_metrics["cost"]["usd_per_node"],
-        curr_metrics["cost"]["usd_per_node"],
+        base_metrics.cost.usd_per_node,
+        curr_metrics.cost.usd_per_node,
         thresholds[MetricNames.COST_KEY],
         is_cost=True,
-        baseline_variance=base_metrics["cost"]["cost_mad"],
-        current_variance=curr_metrics["cost"]["cost_mad"],
+        baseline_variance=base_metrics.cost.cost_mad,
+        current_variance=curr_metrics.cost.cost_mad,
     )
 
 
