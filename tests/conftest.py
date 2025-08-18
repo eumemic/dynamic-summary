@@ -96,9 +96,16 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip_unit)
     else:
         # Skip integration tests by default unless --use-real-store is specified
-        if not config.getoption("--use-real-store"):
+        # Exception: In CI, run integration tests by default
+        should_run_integration = (
+            config.getoption("--use-real-store")
+            or os.getenv("CI")
+            or os.getenv("GITHUB_ACTIONS")
+        )
+
+        if not should_run_integration:
             skip_integration = pytest.mark.skip(
-                reason="Integration test - use --use-real-store to run"
+                reason="Integration test - use --use-real-store to run or run in CI"
             )
             for item in items:
                 if "integration" in item.keywords:
@@ -117,7 +124,9 @@ def base_config() -> BackwardCompatibilityConfig:
     )
     operational_config = OperationalConfig(
         openai_api_key="test-key",
-        database_url="postgresql+psycopg://localhost/ragzoom_test",
+        database_url=os.getenv(
+            "RAGZOOM_DATABASE_URL", "postgresql+psycopg://localhost/ragzoom_test"
+        ),
     )
     return BackwardCompatibilityConfig(index_config, query_config, operational_config)
 
@@ -135,30 +144,40 @@ def real_store(base_config) -> Generator[Store | None, None, None]:
     """Create a real store for integration testing."""
     # Return None if no PostgreSQL server available (instead of skipping)
     try:
-        import psycopg
         # Test connection
         operational_config = OperationalConfig(
             openai_api_key=base_config.openai_api_key,
             database_url=base_config.database_url,
         )
-        
+
         # Try to create engine first to test connection
         from sqlalchemy import create_engine
+
         engine = create_engine(operational_config.database_url)
         with engine.connect():
             pass  # Test connection
         engine.dispose()
-        
+
         # If we get here, PostgreSQL is available
         with tempfile.TemporaryDirectory():
             store = Store(
-                operational_config, embedding_model=base_config.index_config.embedding_model
+                operational_config,
+                embedding_model=base_config.index_config.embedding_model,
             )
             yield store
             store.close()
-    except Exception:
-        # Return None instead of skipping
-        yield None
+    except Exception as e:
+        # In CI, fail hard if PostgreSQL is not available
+        # In local dev, return None to allow graceful skipping
+        import os
+
+        if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
+            pytest.fail(
+                f"PostgreSQL is required for integration tests in CI but was not available: {e}"
+            )
+        else:
+            # Return None instead of skipping - let individual tests handle it
+            yield None
 
 
 @pytest.fixture

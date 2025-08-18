@@ -1,13 +1,11 @@
 """Test for span corruption bug in tree building."""
 
-import tempfile
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.store import Store
 
 
 class TestSpanCorruption:

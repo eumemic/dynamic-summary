@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import os
 from collections import deque
 from datetime import datetime
 from typing import Any
@@ -103,8 +104,43 @@ class Store:
         self.config = config
         self.embedding_model = embedding_model
 
+        # Auto-start Docker PostgreSQL if using default database URL
+        # and no explicit database URL is set via environment
+        database_url = config.database_url
+
+        # Check if we should auto-start Docker PostgreSQL
+        should_auto_start = (
+            database_url == "postgresql+psycopg://localhost/ragzoom"
+            and not os.getenv("RAGZOOM_DATABASE_URL")  # User didn't explicitly set URL
+            and not os.getenv("RAGZOOM_NO_DOCKER")  # User didn't disable Docker
+        )
+
+        if should_auto_start:
+            try:
+                from ragzoom.docker_postgres import DockerPostgres
+
+                docker_pg = DockerPostgres()
+                database_url = docker_pg.ensure_running()
+                logger.info("✅ PostgreSQL ready in Docker container")
+            except ImportError:
+                logger.debug("Docker PostgreSQL management not available")
+            except OSError:
+                # User-friendly errors from DockerPostgres - re-raise as-is
+                # Don't log here since CLI will handle the user-facing message
+                raise
+            except Exception as e:
+                logger.debug(
+                    f"Auto-start failed: {e}"
+                )  # Debug level for technical details
+                # Re-raise with helpful context
+                raise OSError(
+                    f"\n❌ Failed to start PostgreSQL automatically.\n\n"
+                    f"Run 'ragzoom doctor' to diagnose the issue.\n"
+                    f"Error: {str(e)}"
+                )
+
         # Initialize PostgreSQL with pgvector
-        self.engine = create_engine(config.database_url)
+        self.engine = create_engine(database_url)
 
         # Register pgvector extension using event listener
         @event.listens_for(self.engine, "connect")

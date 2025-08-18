@@ -1,6 +1,5 @@
 """Test whitespace gap reconstruction in text splitter."""
 
-import tempfile
 from unittest.mock import Mock, patch
 
 import pytest
@@ -8,7 +7,6 @@ import pytest
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
-from ragzoom.store import Store
 
 
 class TestWhitespaceReconstruction:

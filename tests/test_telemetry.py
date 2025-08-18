@@ -200,6 +200,18 @@ class TestTelemetryIntegration:
     ) -> None:
         """Test that telemetry captures all nodes during indexing."""
         store = request.getfixturevalue(f"{store_type}_store")
+
+        # Skip if real store not available (PostgreSQL not running)
+        # But fail hard in CI environment
+        if store is None:
+            import os
+
+            if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
+                pytest.fail(
+                    "PostgreSQL is required for integration tests in CI but was not available"
+                )
+            else:
+                pytest.skip("PostgreSQL not available for real store test")
         index_config = IndexConfig.load(
             target_chunk_tokens=100,
             preceding_context_tokens=50,

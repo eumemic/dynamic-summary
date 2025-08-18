@@ -312,8 +312,25 @@ def index(
 
             click.echo(f"✅ Telemetry saved to {output_file}")
 
+    except OSError as e:
+        # Clean user-friendly errors (no "Error indexing document" prefix)
+        click.echo(str(e), err=True)
+        sys.exit(1)
     except Exception as e:
-        click.echo(f"❌ Error indexing document: {e}", err=True)
+        # Handle database and other unexpected errors
+        error_msg = str(e).lower()
+        if "connection" in error_msg or "postgresql" in error_msg:
+            click.echo(
+                "\n❌ Database connection failed.\n\n"
+                "Try these steps:\n"
+                "  1. Run 'ragzoom doctor' to check your setup\n"
+                "  2. Ensure Docker is running\n"
+                "  3. Check README.md for setup instructions\n\n"
+                f"Technical error: {type(e).__name__}",
+                err=True,
+            )
+        else:
+            click.echo(f"❌ Error indexing document: {e}", err=True)
         sys.exit(1)
 
 
@@ -856,6 +873,142 @@ def config(examples: bool, output_file: str | None) -> None:
         click.echo("  ragzoom config --examples     Show configuration examples")
         click.echo("  ragzoom config --create FILE  Create a sample config file")
         click.echo("\nFor detailed help: ragzoom config --help")
+
+
+@cli.command()
+def doctor() -> None:
+    """Check system setup and diagnose potential issues."""
+    import subprocess
+
+    click.echo("🏥 RagZoom System Check")
+    click.echo("=" * 24)
+
+    issues_found = False
+
+    # Check Python environment
+    click.echo(f"✅ Python: {sys.version.split()[0]} ({sys.executable})")
+
+    # Check for virtual environment
+    if hasattr(sys, "real_prefix") or (
+        hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix
+    ):
+        click.echo("✅ Virtual environment: Active")
+    else:
+        click.echo("⚠️  Virtual environment: None (consider using one)")
+
+    # Check Docker availability
+    try:
+        result = subprocess.run(
+            ["docker", "--version"], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            click.echo(f"✅ Docker: {version}")
+
+            # Check Docker daemon
+            try:
+                subprocess.run(
+                    ["docker", "ps"], capture_output=True, check=True, timeout=5
+                )
+                click.echo("✅ Docker daemon: Running")
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                click.echo("❌ Docker daemon: Not running")
+                click.echo(
+                    "   Start Docker Desktop or run: sudo systemctl start docker"
+                )
+                issues_found = True
+        else:
+            raise subprocess.CalledProcessError(result.returncode, "docker")
+
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+    ):
+        click.echo("❌ Docker: Not found or not working")
+        click.echo("   Install Docker Desktop from https://docker.com")
+        issues_found = True
+
+    # Check PostgreSQL container status
+    if not issues_found:  # Only check if Docker is working
+        try:
+            from ragzoom.docker_postgres import DockerPostgres
+
+            docker_pg = DockerPostgres()
+            status = docker_pg.get_status()
+
+            if status["container_exists"]:
+                if status["container_running"]:
+                    if status["postgres_ready"]:
+                        click.echo("✅ PostgreSQL: Running and ready")
+                        click.echo(f"   Container: {docker_pg.container_name}")
+                        click.echo(f"   Connection: {status['connection_url']}")
+                    else:
+                        click.echo("⚠️  PostgreSQL: Container running but not ready")
+                        click.echo(
+                            "   Container may be starting up, wait a moment and try again"
+                        )
+                else:
+                    click.echo("⚠️  PostgreSQL: Container exists but not running")
+                    click.echo(f"   Run: docker start {docker_pg.container_name}")
+            else:
+                click.echo("⚠️  PostgreSQL: No container found")
+                click.echo("   Will be created automatically on first use")
+
+        except ImportError:
+            click.echo("❌ PostgreSQL management: Not available")
+            issues_found = True
+
+    # Test database connection
+    if not issues_found:
+        try:
+            click.echo("\n🔗 Testing database connection...")
+
+            # Create operational config
+            operational_config = OperationalConfig()
+
+            # Try to create a store (this will auto-start PostgreSQL if needed)
+            store = Store(operational_config)
+
+            # Test basic operation
+            with store.SessionLocal() as session:
+                # Simple query to test connection
+                from sqlalchemy import text
+
+                session.execute(text("SELECT 1"))
+
+            click.echo("✅ Database connection: Working")
+            store.close()
+
+        except Exception as e:
+            click.echo("❌ Database connection: Failed")
+            click.echo(f"   Error: {e}")
+            issues_found = True
+
+    # Check OpenAI API key
+    import os
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if api_key:
+        if api_key.startswith("sk-") and len(api_key) > 20:
+            click.echo("✅ OpenAI API key: Set")
+        else:
+            click.echo("⚠️  OpenAI API key: Set but format looks invalid")
+            click.echo("   Should start with 'sk-' and be longer than 20 characters")
+    else:
+        click.echo("⚠️  OpenAI API key: Not set")
+        click.echo("   Set OPENAI_API_KEY environment variable or add to .env file")
+
+    # Summary
+    click.echo("\n📋 Summary")
+    if not issues_found:
+        click.echo("🎉 System looks good! You're ready to use RagZoom.")
+        click.echo("\nTry: ragzoom index document.txt")
+    else:
+        click.echo("⚠️  Issues found. Please address the problems above.")
+        click.echo(
+            "\nFor help, see: https://github.com/eumemic/dynamic-summary#installation"
+        )
 
 
 # Telemetry commands are available via optional dependencies

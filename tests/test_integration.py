@@ -17,6 +17,7 @@ from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
 
 
+@pytest.mark.integration
 class TestIntegration:
     """Test complete workflow integration scenarios.
 

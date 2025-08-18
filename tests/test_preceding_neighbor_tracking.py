@@ -17,6 +17,19 @@ class TestPrecedingNeighborTracking:
         """Test that leaf nodes correctly track their preceding neighbor."""
         # Get the appropriate store based on parameter
         store = request.getfixturevalue(f"{store_type}_store")
+
+        # Skip if real store not available (PostgreSQL not running)
+        # But fail hard in CI environment
+        if store is None:
+            import os
+
+            if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
+                pytest.fail(
+                    "PostgreSQL is required for integration tests in CI but was not available"
+                )
+            else:
+                pytest.skip("PostgreSQL not available for real store test")
+
         config = base_config.index_config
 
         # Create test document with clear chunk boundaries
@@ -62,6 +75,18 @@ class TestPrecedingNeighborTracking:
         """Test that internal nodes at each tree level track their preceding neighbor."""
         # Get the appropriate store based on parameter
         store = request.getfixturevalue(f"{store_type}_store")
+
+        # Skip if real store not available (PostgreSQL not running)
+        # But fail hard in CI environment
+        if store is None:
+            import os
+
+            if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
+                pytest.fail(
+                    "PostgreSQL is required for integration tests in CI but was not available"
+                )
+            else:
+                pytest.skip("PostgreSQL not available for real store test")
         config = base_config.index_config
 
         # Create test document that will create multiple tree levels
@@ -130,6 +155,19 @@ class TestPrecedingNeighborTracking:
         """Test that we can reconstruct preceding context using preceding_neighbor_id."""
         # Get the appropriate store based on parameter
         store = request.getfixturevalue(f"{store_type}_store")
+
+        # Skip if real store not available (PostgreSQL not running)
+        # But fail hard in CI environment
+        if store is None:
+            import os
+
+            if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
+                pytest.fail(
+                    "PostgreSQL is required for integration tests in CI but was not available"
+                )
+            else:
+                pytest.skip("PostgreSQL not available for real store test")
+
         config = base_config.index_config
 
         # Create test document with clear markers

@@ -124,9 +124,9 @@ class TestStoreMock:
 
         # Test SessionLocal count query (used by api.py and cli.py)
         with mock_store.SessionLocal() as session:
-            count = session.query(
-                None
-            ).count()  # TreeNode class doesn't matter for mock
+            from ragzoom.store import TreeNode
+
+            count = session.query(TreeNode).count()
             assert count == 5
 
     def test_add_node_returns_node(self, mock_store):

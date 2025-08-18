@@ -1,7 +1,6 @@
 """Concurrency tests for thread safety."""
 
 import asyncio
-import tempfile
 from unittest.mock import Mock, patch
 
 import pytest
@@ -84,7 +83,7 @@ class TestConcurrency:
                 self.index_config = IndexConfig.load()
                 self.query_config = QueryConfig()
                 self.operational_config = OperationalConfig(openai_api_key="test-key")
-                
+
                 self.store = mock_store
                 self.tree_builder = TreeBuilder(
                     self.index_config,

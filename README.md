@@ -20,6 +20,14 @@ Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system tha
 
 ## Installation
 
+### Requirements
+
+- **Python 3.10+**
+- **Docker** (for PostgreSQL database)
+- **OpenAI API key**
+
+### Quick Setup
+
 ```bash
 # Clone the repository
 git clone <repository-url>
@@ -29,18 +37,74 @@ cd dynamic-summary
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Run the development setup script
+# Run the automated setup script
 ./scripts/setup-dev.sh
 
-# Add your OpenAI API key to .env
+# Add your OpenAI API key
 echo "OPENAI_API_KEY=your-key-here" >> .env
 ```
 
-The setup script will:
-- Install all dependencies
-- Set up git hooks for automated testing
-- Configure your development environment
-- Verify everything is working
+The setup script automatically:
+- Installs all Python dependencies
+- **Starts PostgreSQL in Docker** (with pgvector extension)
+- Sets up git hooks for automated testing
+- Configures your development environment
+- Verifies everything is working
+
+### Verify Setup
+
+```bash
+# Check system status
+ragzoom doctor
+
+# Should show all green checkmarks ✅
+```
+
+### Alternative: pip install
+
+```bash
+pip install ragzoom
+# PostgreSQL will auto-start on first use (requires Docker)
+```
+
+### Database Configuration
+
+RagZoom automatically manages PostgreSQL for you:
+
+- **Automatic**: PostgreSQL starts in Docker on first use
+- **No configuration needed** for development
+- **Persistent data** across restarts
+
+#### Advanced Database Setup
+
+Using existing PostgreSQL:
+```bash
+export RAGZOOM_DATABASE_URL="postgresql+psycopg://user:pass@host/db"
+ragzoom index document.txt
+```
+
+Using Docker Compose (optional):
+```bash
+docker-compose up -d    # Start PostgreSQL
+ragzoom index document.txt
+```
+
+Disable auto-Docker (use manual setup):
+```bash
+export RAGZOOM_NO_DOCKER=1
+export RAGZOOM_DATABASE_URL="postgresql+psycopg://localhost/ragzoom"
+```
+
+#### Troubleshooting
+
+```bash
+# System diagnostics
+ragzoom doctor
+
+# Common fixes:
+docker start ragzoom-postgres    # Start stopped container
+docker logs ragzoom-postgres     # Check database logs
+```
 
 ### Optional: Telemetry Tools
 
@@ -65,6 +129,19 @@ This approach provides:
 For comprehensive telemetry documentation, see [docs/telemetry.md](docs/telemetry.md)
 
 ## Quick Start
+
+### First Time Use
+
+```bash
+# Index your first document (PostgreSQL starts automatically)
+ragzoom index document.txt
+# ✨ PostgreSQL container created and started automatically
+
+# Query the document
+ragzoom query "What is this document about?" -d document.txt
+```
+
+That's it! No database setup, no configuration files needed.
 
 ### CLI Usage
 
@@ -92,6 +169,9 @@ ragzoom clear --confirm
 
 # Show system status
 ragzoom status
+
+# Check system health
+ragzoom doctor
 
 # Pin important nodes
 ragzoom pin <node-id>

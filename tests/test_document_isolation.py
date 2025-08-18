@@ -94,7 +94,7 @@ class TestDocumentIsolation:
         config = BackwardCompatibilityConfig(
             index_config, query_config, operational_config
         )
-        
+
         tree_builder = TreeBuilder(
             index_config, store, api_key=operational_config.openai_api_key
         )

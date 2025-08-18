@@ -156,10 +156,14 @@ class TestAutomaticClearing:
                     node for node in all_nodes if node.id in old_node_ids
                 ]
 
-                assert len(remaining_old_nodes) == 0, f"Found {len(remaining_old_nodes)} old orphaned nodes that should have been cleared"
-                
+                assert (
+                    len(remaining_old_nodes) == 0
+                ), f"Found {len(remaining_old_nodes)} old orphaned nodes that should have been cleared"
+
                 # Should have exactly 1 new node from the mock indexing
-                assert len(all_nodes) == 1, f"Expected exactly 1 new node after reindexing, found {len(all_nodes)}"
+                assert (
+                    len(all_nodes) == 1
+                ), f"Expected exactly 1 new node after reindexing, found {len(all_nodes)}"
 
         finally:
             os.unlink(temp_file)
@@ -240,17 +244,21 @@ class TestAutomaticClearing:
                 all_nodes = (
                     session.query(TreeNode).filter_by(document_id=document_id).all()
                 )
-                
+
                 # Check that none of the old node IDs exist (they were node_0 through node_247)
                 old_node_ids = [f"node_{i}" for i in range(248)]
                 remaining_old_nodes = [
                     node for node in all_nodes if node.id in old_node_ids
                 ]
-                
-                assert len(remaining_old_nodes) == 0, f"Found {len(remaining_old_nodes)} old nodes that should have been cleared"
-                
+
+                assert (
+                    len(remaining_old_nodes) == 0
+                ), f"Found {len(remaining_old_nodes)} old nodes that should have been cleared"
+
                 # Should have exactly 1 new node from the mock indexing
-                assert len(all_nodes) == 1, f"Expected exactly 1 new node after reindexing, found {len(all_nodes)}"
+                assert (
+                    len(all_nodes) == 1
+                ), f"Expected exactly 1 new node after reindexing, found {len(all_nodes)}"
 
         finally:
             os.unlink(temp_file)

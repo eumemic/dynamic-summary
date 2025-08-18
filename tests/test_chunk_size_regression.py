@@ -8,7 +8,6 @@ import tiktoken
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
-from ragzoom.store import Store
 
 
 class TestChunkSizeRegression:

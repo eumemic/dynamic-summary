@@ -96,7 +96,7 @@ class TestBudgetGuarantee:
             operational_config = OperationalConfig(
                 openai_api_key="test-key",
             )
-            
+
             tree_builder = TreeBuilder(
                 index_config,
                 store,

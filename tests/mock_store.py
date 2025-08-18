@@ -44,19 +44,25 @@ class SimpleMockStore:
         # Create a proper query mock that can handle filter_by and update nodes
         def create_query_mock(model_class):
             # Determine the model type
-            model_name = getattr(model_class, '__name__', str(model_class))
-            
+            model_name = getattr(model_class, "__name__", str(model_class))
+
             query_mock = MagicMock()
 
             # Set up model-specific all() and count() methods based on the model type
-            if 'TreeNode' in model_name or 'Node' in model_name:
+            if "TreeNode" in model_name or "Node" in model_name:
                 query_mock.all = MagicMock(return_value=list(self.nodes.values()))
                 query_mock.count = MagicMock(return_value=len(self.nodes))
-                query_mock.first = MagicMock(return_value=list(self.nodes.values())[0] if self.nodes else None)
-            elif 'Document' in model_name:
+                query_mock.first = MagicMock(
+                    return_value=list(self.nodes.values())[0] if self.nodes else None
+                )
+            elif "Document" in model_name:
                 query_mock.all = MagicMock(return_value=list(self.documents.values()))
                 query_mock.count = MagicMock(return_value=len(self.documents))
-                query_mock.first = MagicMock(return_value=list(self.documents.values())[0] if self.documents else None)
+                query_mock.first = MagicMock(
+                    return_value=(
+                        list(self.documents.values())[0] if self.documents else None
+                    )
+                )
             else:
                 # Default fallback
                 query_mock.all = MagicMock(return_value=[])
@@ -64,8 +70,8 @@ class SimpleMockStore:
                 query_mock.first = MagicMock(return_value=None)
 
             def filter_by_impl(**kwargs):
-                # Handle TreeNode queries - check for TreeNode or similar patterns                
-                if 'TreeNode' in model_name or 'Node' in model_name:
+                # Handle TreeNode queries - check for TreeNode or similar patterns
+                if "TreeNode" in model_name or "Node" in model_name:
                     if "id" in kwargs:
                         node_id = kwargs["id"]
                         # Return a mock that will find our node
@@ -83,21 +89,29 @@ class SimpleMockStore:
                         doc_id = kwargs["document_id"]
                         parent_id = kwargs.get("parent_id")
                         result_mock = MagicMock()
-                        
+
                         def all_impl():
-                            nodes = [node for node in self.nodes.values() if node.document_id == doc_id]
+                            nodes = [
+                                node
+                                for node in self.nodes.values()
+                                if node.document_id == doc_id
+                            ]
                             if parent_id is not None:
-                                nodes = [node for node in nodes if node.parent_id == parent_id]
+                                nodes = [
+                                    node
+                                    for node in nodes
+                                    if node.parent_id == parent_id
+                                ]
                             return nodes
-                        
+
                         def count_impl():
                             nodes = all_impl()
                             return len(nodes)
-                        
+
                         def first_impl():
                             nodes = all_impl()
                             return nodes[0] if nodes else None
-                            
+
                         result_mock.all = all_impl
                         result_mock.count = count_impl
                         result_mock.first = first_impl
@@ -107,16 +121,16 @@ class SimpleMockStore:
                         result_mock.all.return_value = list(self.nodes.values())
                         result_mock.count.return_value = len(self.nodes)
                         return result_mock
-                
+
                 # Handle Document queries
-                elif 'Document' in model_name:
+                elif "Document" in model_name:
                     if "id" in kwargs:
                         doc_id = kwargs["id"]
                         result_mock = MagicMock()
-                        
+
                         def first_impl():
                             return self.documents.get(doc_id)
-                            
+
                         result_mock.first = first_impl
                         return result_mock
                     else:
@@ -124,9 +138,11 @@ class SimpleMockStore:
                         result_mock = MagicMock()
                         result_mock.all.return_value = list(self.documents.values())
                         result_mock.count.return_value = len(self.documents)
-                        result_mock.first.return_value = list(self.documents.values())[0] if self.documents else None
+                        result_mock.first.return_value = (
+                            list(self.documents.values())[0] if self.documents else None
+                        )
                         return result_mock
-                
+
                 # Default fallback
                 result_mock = MagicMock()
                 result_mock.all.return_value = []
@@ -493,7 +509,7 @@ class SimpleMockStore:
         """Mock get document by path."""
         # Check documents by file_path
         for doc in self.documents.values():
-            if hasattr(doc, 'file_path') and doc.file_path == file_path:
+            if hasattr(doc, "file_path") and doc.file_path == file_path:
                 return doc
         return None
 
@@ -501,11 +517,19 @@ class SimpleMockStore:
         """Mock get document by ID."""
         return self.documents.get(document_id)
 
-    def add_document(self, document_id: str, file_path: str | None, content_hash: str, 
-                    chunk_count: int, embedding_model: str, summary_model: str):
+    def add_document(
+        self,
+        document_id: str,
+        file_path: str | None,
+        content_hash: str,
+        chunk_count: int,
+        embedding_model: str,
+        summary_model: str,
+    ):
         """Mock add document."""
         from datetime import datetime
         from types import SimpleNamespace
+
         doc = SimpleNamespace(
             id=document_id,
             file_path=file_path,
@@ -513,7 +537,7 @@ class SimpleMockStore:
             chunk_count=chunk_count,
             embedding_model=embedding_model,
             summary_model=summary_model,
-            indexed_at=datetime.utcnow()
+            indexed_at=datetime.utcnow(),
         )
         self.documents[document_id] = doc
         return doc
@@ -521,7 +545,7 @@ class SimpleMockStore:
     @staticmethod
     def compute_content_hash(content: str) -> str:
         """Mock content hash computation."""
-        import hashlib
+
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     def pin_node(self, node_id: str) -> None:
@@ -556,15 +580,10 @@ class SimpleMockStore:
             node.text = text
             self.embeddings[node_id] = embedding
 
-    def get_document_by_id(self, document_id: str) -> SimpleNamespace | None:
-        """Get a document by ID."""
-        return self.documents.get(document_id)
-
     def get_document_embedding_model(self, document_id: str) -> str | None:
         """Get the embedding model used for a specific document."""
         doc = self.get_document_by_id(document_id)
         return doc.embedding_model if doc and hasattr(doc, "embedding_model") else None
-
 
     def delete_document_nodes(self, document_id: str) -> None:
         """Delete all nodes for a document."""
@@ -580,10 +599,6 @@ class SimpleMockStore:
         self.documents.pop(document_id, None)
 
         self._update_mock_results()
-
-    def compute_content_hash(self, content: str) -> str:
-        """Compute hash of content."""
-        return hashlib.sha256(content.encode()).hexdigest()
 
     def find_existing_document(self, content_hash: str) -> str | None:
         """Find document by content hash."""
@@ -605,7 +620,9 @@ class SimpleMockStore:
     def clear_document(self, document_id: str) -> int:
         """Clear all data for a document."""
         # Count nodes before deleting
-        node_count = len([n for n in self.nodes.values() if n.document_id == document_id])
+        node_count = len(
+            [n for n in self.nodes.values() if n.document_id == document_id]
+        )
         self.delete_document_nodes(document_id)
         return node_count
 
@@ -614,15 +631,15 @@ class SimpleMockStore:
         pass
 
     # Add cache attributes for CLI compatibility
-    @property  
+    @property
     def node_cache(self):
         """Mock node_cache for CLI compatibility."""
-        return self._node_cache if hasattr(self, '_node_cache') else {}
-        
+        return self._node_cache if hasattr(self, "_node_cache") else {}
+
     @property
     def cache_order(self):
         """Mock cache_order for CLI compatibility."""
-        return self._cache_order if hasattr(self, '_cache_order') else []
+        return self._cache_order if hasattr(self, "_cache_order") else []
 
     def _add_to_cache(self, node) -> None:
         """Add node to cache."""
