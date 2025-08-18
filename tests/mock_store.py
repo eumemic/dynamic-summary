@@ -43,11 +43,28 @@ class SimpleMockStore:
 
         # Create a proper query mock that can handle filter_by and update nodes
         def create_query_mock(model_class):
+            # Determine the model type
+            model_name = getattr(model_class, '__name__', str(model_class))
+            
             query_mock = MagicMock()
 
+            # Set up model-specific all() and count() methods based on the model type
+            if 'TreeNode' in model_name or 'Node' in model_name:
+                query_mock.all = MagicMock(return_value=list(self.nodes.values()))
+                query_mock.count = MagicMock(return_value=len(self.nodes))
+                query_mock.first = MagicMock(return_value=list(self.nodes.values())[0] if self.nodes else None)
+            elif 'Document' in model_name:
+                query_mock.all = MagicMock(return_value=list(self.documents.values()))
+                query_mock.count = MagicMock(return_value=len(self.documents))
+                query_mock.first = MagicMock(return_value=list(self.documents.values())[0] if self.documents else None)
+            else:
+                # Default fallback
+                query_mock.all = MagicMock(return_value=[])
+                query_mock.count = MagicMock(return_value=0)
+                query_mock.first = MagicMock(return_value=None)
+
             def filter_by_impl(**kwargs):
-                # Handle TreeNode queries - check for TreeNode or similar patterns
-                model_name = getattr(model_class, '__name__', str(model_class))
+                # Handle TreeNode queries - check for TreeNode or similar patterns                
                 if 'TreeNode' in model_name or 'Node' in model_name:
                     if "id" in kwargs:
                         node_id = kwargs["id"]
@@ -103,9 +120,11 @@ class SimpleMockStore:
                         result_mock.first = first_impl
                         return result_mock
                     else:
+                        # Handle .all() query for listing all documents
                         result_mock = MagicMock()
                         result_mock.all.return_value = list(self.documents.values())
                         result_mock.count.return_value = len(self.documents)
+                        result_mock.first.return_value = list(self.documents.values())[0] if self.documents else None
                         return result_mock
                 
                 # Default fallback
@@ -115,15 +134,8 @@ class SimpleMockStore:
                 result_mock.first.return_value = None
                 return result_mock
 
-            def count_impl():
-                # Return count of all nodes for TreeNode queries by default
-                return len(self.nodes)
-
             query_mock.filter_by = filter_by_impl
             query_mock.filter = MagicMock(return_value=query_mock)
-            query_mock.all = MagicMock(return_value=[])
-            query_mock.first = MagicMock(return_value=None)
-            query_mock.count = count_impl  # Use the actual implementation
 
             return query_mock
 
@@ -492,6 +504,7 @@ class SimpleMockStore:
     def add_document(self, document_id: str, file_path: str | None, content_hash: str, 
                     chunk_count: int, embedding_model: str, summary_model: str):
         """Mock add document."""
+        from datetime import datetime
         from types import SimpleNamespace
         doc = SimpleNamespace(
             id=document_id,
@@ -500,7 +513,7 @@ class SimpleMockStore:
             chunk_count=chunk_count,
             embedding_model=embedding_model,
             summary_model=summary_model,
-            indexed_at=None
+            indexed_at=datetime.utcnow()
         )
         self.documents[document_id] = doc
         return doc
@@ -552,24 +565,6 @@ class SimpleMockStore:
         doc = self.get_document_by_id(document_id)
         return doc.embedding_model if doc and hasattr(doc, "embedding_model") else None
 
-    def add_document(
-        self,
-        document_id: str,
-        file_path: str | None,
-        content_hash: str,
-        chunk_count: int,
-        embedding_model: str = "text-embedding-3-small",
-        summary_model: str = "gpt-5-nano",
-    ) -> None:
-        """Add a document record."""
-        self.documents[document_id] = SimpleNamespace(
-            id=document_id,
-            file_path=file_path,
-            content_hash=content_hash,
-            chunk_count=chunk_count,
-            embedding_model=embedding_model,
-            summary_model=summary_model,
-        )
 
     def delete_document_nodes(self, document_id: str) -> None:
         """Delete all nodes for a document."""

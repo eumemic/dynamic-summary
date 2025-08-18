@@ -82,16 +82,52 @@ class TestDocumentAPI:
             yield
 
     @pytest.fixture
-    def client(self, mock_openai, monkeypatch):
+    def client(self, mock_openai, monkeypatch, mock_store):
         """Create test client with mocked dependencies."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-            monkeypatch.setenv(
-                "RAGZOOM_DATABASE_URL", f"postgresql:///{tmpdir}/test.db"
-            )
+        from ragzoom.api import get_ragzoom_service
+        from ragzoom.assemble import Assembler
+        from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+        from ragzoom.index import TreeBuilder
+        from ragzoom.retrieve import Retriever
 
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+        # Create a mock service that uses our mock store
+        class MockRagZoomService:
+            def __init__(self):
+                self.index_config = IndexConfig.load()
+                self.query_config = QueryConfig()
+                self.operational_config = OperationalConfig(openai_api_key="test-key")
+                
+                self.store = mock_store
+                self.tree_builder = TreeBuilder(
+                    self.index_config,
+                    self.store,
+                    api_key=self.operational_config.openai_api_key,
+                )
+                self.retriever = Retriever(
+                    self.query_config,
+                    self.store,
+                    api_key=self.operational_config.openai_api_key,
+                )
+                self.assembler = Assembler(self.store)
+
+            def close(self):
+                """Mock close method."""
+                pass
+
+        def mock_get_ragzoom_service():
+            return MockRagZoomService()
+
+        # Override the dependency
+        app.dependency_overrides[get_ragzoom_service] = mock_get_ragzoom_service
+
+        try:
             with TestClient(app) as client:
                 yield client
+        finally:
+            # Clean up the override
+            app.dependency_overrides.clear()
 
     def test_index_with_filename_as_default_id(self, client):
         """Test that filename is used as document_id when not specified."""

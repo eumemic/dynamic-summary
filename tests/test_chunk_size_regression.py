@@ -88,21 +88,18 @@ class TestChunkSizeRegression:
             50 <= avg_tokens <= config.target_chunk_tokens * 1.2
         ), f"Average chunk size {avg_tokens} tokens is outside reasonable range (expected 50-{int(config.target_chunk_tokens * 1.2)})"
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_indexed_chunks_have_correct_size(self, tmp_path, monkeypatch):
+    async def test_indexed_chunks_have_correct_size(self, store, monkeypatch):
         """Test that indexed chunks in the database have the correct token size."""
         # Set up test environment
-        monkeypatch.setenv("RAGZOOM_DATABASE_URL", f"postgresql:///{tmp_path}/test.db")
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
         # Create separate configs
         index_config = IndexConfig.load(target_chunk_tokens=200)
         operational_config = OperationalConfig(
             openai_api_key="test-key",
-            database_url=f"postgresql:///{tmp_path}/test.db",
         )
-
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
         tokenizer = tiktoken.get_encoding("cl100k_base")
 
         # Create test document with more varied content
@@ -116,8 +113,6 @@ class TestChunkSizeRegression:
         """
             * 50
         )  # Create a larger, more realistic document
-        test_file = tmp_path / "test.txt"
-        test_file.write_text(test_doc)
 
         # Mock API responses
         mock_async_client = MagicMock()
@@ -141,7 +136,7 @@ class TestChunkSizeRegression:
             builder = TreeBuilder(
                 index_config, store, api_key=operational_config.openai_api_key
             )
-            await builder.add_document_async(str(test_file))
+            await builder.add_document_async(test_doc, document_id="test-doc")
 
         # Check leaf node sizes
         leaf_nodes = []
@@ -205,6 +200,3 @@ class TestChunkSizeRegression:
             assert (
                 token_count <= max_summary_tokens
             ), f"Parent node {node.id} has {token_count} tokens, too large"
-
-        # Close store to prevent file handle leaks
-        store.close()
