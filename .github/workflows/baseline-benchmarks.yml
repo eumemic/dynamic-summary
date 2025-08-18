@@ -44,10 +44,17 @@ jobs:
         run: |
           mkdir -p benchmark_results
           
-          # Run benchmarks for different chunk sizes
+          # Run indexing benchmarks for different chunk sizes
           for chunk_size in 100 200 400; do
-            echo "Running benchmark with chunk_size=$chunk_size"
+            echo "Running indexing benchmark with chunk_size=$chunk_size"
             pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-$chunk_size" -v
+          done
+          
+          # Run query benchmarks (same configurations as PR tests)
+          echo "Running query performance benchmarks..."
+          for config in "specific-2000-10" "broad-2000-10" "complex-2000-10"; do
+            echo "Running query benchmark with config=$config"
+            pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v
           done
           
           # Add metadata
