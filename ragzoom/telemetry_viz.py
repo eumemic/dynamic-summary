@@ -15,6 +15,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+from matplotlib.axes import Axes
 from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -61,7 +62,9 @@ class TelemetryVisualizer:
         self.output_path = output_path
         self.thresholds = get_telemetry_thresholds()
 
-    def _extract_nodes_from_telemetry(self, telemetry: dict) -> list[dict[str, Any]]:
+    def _extract_nodes_from_telemetry(
+        self, telemetry: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Extract nodes from telemetry data, handling both v1.0/v2.0 and v3.0 formats.
 
         Args:
@@ -81,7 +84,7 @@ class TelemetryVisualizer:
             nodes_data = telemetry.get("nodes", [])
             return nodes_data if isinstance(nodes_data, list) else []
 
-    def _extract_chunk_size_from_telemetry(self, telemetry: dict) -> int:
+    def _extract_chunk_size_from_telemetry(self, telemetry: dict[str, Any]) -> int:
         """Extract chunk size from telemetry data, handling both formats.
 
         Args:
@@ -202,7 +205,9 @@ class TelemetryVisualizer:
 
         print(f"Saved visualization to {self.output_path}")
 
-    def _get_cost_functions(self, telemetry: dict) -> tuple:
+    def _get_cost_functions(
+        self, telemetry: dict[str, Any]
+    ) -> tuple[float, float, float]:
         """Get cost calculation functions for models in telemetry."""
         # Get models from config
         config = telemetry.get("config", {})
@@ -390,7 +395,9 @@ class TelemetryVisualizer:
 
         print(f"Saved side-by-side comparison to {self.output_path}")
 
-    def _plot_token_usage_by_tree_level(self, telemetry: dict, ax: plt.Axes) -> None:
+    def _plot_token_usage_by_tree_level(
+        self, telemetry: dict[str, Any], ax: Axes
+    ) -> None:
         """Plot token usage by tree level with stacked bars."""
         # Group tokens by height
         tokens_by_height: dict[int, dict[str, list[float]]] = {}
@@ -472,7 +479,7 @@ class TelemetryVisualizer:
         ax.legend()
         ax.grid(True, alpha=0.3, axis="y")
 
-    def _plot_cost_breakdown(self, telemetry: dict, ax: plt.Axes) -> None:
+    def _plot_cost_breakdown(self, telemetry: dict[str, Any], ax: Axes) -> None:
         """Plot cost breakdown by attempt number as vertical stacked bar."""
         # Get cost functions for models in telemetry
         embedding_cost_per_1k, summary_input_cost_per_1k, summary_output_cost_per_1k = (
@@ -555,7 +562,7 @@ class TelemetryVisualizer:
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3, axis="y")
 
-    def _plot_batch_efficiency(self, telemetry: dict, ax: plt.Axes) -> None:
+    def _plot_batch_efficiency(self, telemetry: dict[str, Any], ax: Axes) -> None:
         """Plot embedding batch efficiency with clear explanations."""
         batch_eff = compute_batch_efficiency(telemetry)
 
@@ -636,7 +643,7 @@ class TelemetryVisualizer:
             fontsize=8,
         )
 
-    def _plot_retry_patterns(self, telemetry: dict, ax: plt.Axes) -> None:
+    def _plot_retry_patterns(self, telemetry: dict[str, Any], ax: Axes) -> None:
         """Plot retry attempt distribution as stacked bar chart (cumulative)."""
         # Count nodes by number of attempts
         attempt_counts: dict[int, int] = {}
@@ -723,7 +730,7 @@ class TelemetryVisualizer:
         ax.grid(True, alpha=0.3, axis="y")
 
     def _extract_summary_deviations_from_telemetry(
-        self, telemetry: dict
+        self, telemetry: dict[str, Any]
     ) -> list[float]:
         """Extract summary accuracy deviations from telemetry data.
 
@@ -758,7 +765,7 @@ class TelemetryVisualizer:
 
         return deviations
 
-    def _plot_summary_scatter(self, telemetry: dict, ax: plt.Axes) -> None:
+    def _plot_summary_scatter(self, telemetry: dict[str, Any], ax: Axes) -> None:
         """Plot input vs output token scatter plot, color-coded by attempt number."""
         # Extract chunk size (target) and nodes from telemetry data
         chunk_size = self._extract_chunk_size_from_telemetry(telemetry)
@@ -920,7 +927,7 @@ class TelemetryVisualizer:
 
         # Create custom legend for attempt numbers (matching cost breakdown)
         # Use circles instead of rectangles
-        legend_elements: list = [
+        legend_elements: list[Line2D] = [
             Line2D(
                 [0],
                 [0],
@@ -1088,7 +1095,7 @@ class TelemetryVisualizer:
             fontsize=8,
         )
 
-    def _plot_node_timeline(self, telemetry: dict, ax: plt.Axes) -> None:
+    def _plot_node_timeline(self, telemetry: dict[str, Any], ax: Axes) -> None:
         """Plot summary node creation timeline."""
         # Extract summary completion times (when summaries actually finished)
         creation_times = []
@@ -1157,7 +1164,9 @@ class TelemetryVisualizer:
             fontsize=8,
         )
 
-    def _plot_tree_construction_timeline(self, telemetry: dict, ax: plt.Axes) -> None:
+    def _plot_tree_construction_timeline(
+        self, telemetry: dict[str, Any], ax: Axes
+    ) -> None:
         """Plot tree construction as rectangles showing span coverage over time.
 
         X-axis: Document span position
@@ -1396,7 +1405,7 @@ class TelemetryVisualizer:
             )
             ax.set_title("Tree Construction Timeline")
 
-    def _plot_token_distributions(self, telemetry: dict, ax: plt.Axes) -> None:
+    def _plot_token_distributions(self, telemetry: dict[str, Any], ax: Axes) -> None:
         """Plot token count distributions by attempt number using violin plots."""
         import pandas as pd
 

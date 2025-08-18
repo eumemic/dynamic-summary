@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import asdict
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -122,7 +123,7 @@ class SystemStatusResponse(BaseModel):
     leaf_nodes: int
     tree_depth: int
     pinned_nodes: int
-    config: dict
+    config: dict[str, Any]
 
 
 class DocumentInfo(BaseModel):

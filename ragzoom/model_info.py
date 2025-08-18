@@ -6,7 +6,7 @@ This module provides a singleton class for accessing model information
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 
 class ModelInfo:
@@ -18,7 +18,7 @@ class ModelInfo:
     """
 
     _instance: Optional["ModelInfo"] = None
-    _data: dict = {}
+    _data: dict[str, Any] = {}
 
     def __new__(cls) -> "ModelInfo":
         """Create or return the singleton instance."""
