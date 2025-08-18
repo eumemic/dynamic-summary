@@ -813,11 +813,32 @@ class Store:
         """Run any necessary database migrations."""
         try:
             with self.engine.begin() as conn:
+                # Create vector extension - this is required for pgvector Vector() columns
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                logger.debug("Vector extension created successfully")
         except Exception as e:
-            logger.debug(
-                f"Migration check failed (this is normal for new databases): {e}"
-            )
+            # This is a critical error - we can't create Vector columns without the extension
+            error_msg = str(e).lower()
+            if "permission denied" in error_msg:
+                raise OSError(
+                    f"\n❌ Unable to create vector extension: permission denied.\n\n"
+                    f"This usually happens when the database user lacks superuser privileges.\n"
+                    f"Try running 'ragzoom doctor' to check your setup.\n\n"
+                    f"Technical error: {e}"
+                )
+            elif "could not access file" in error_msg or "no such file" in error_msg:
+                raise OSError(
+                    f"\n❌ Vector extension not available in this PostgreSQL installation.\n\n"
+                    f"Make sure you're using the pgvector/pgvector Docker image.\n"
+                    f"Run 'ragzoom doctor' to check your setup.\n\n"
+                    f"Technical error: {e}"
+                )
+            else:
+                raise OSError(
+                    f"\n❌ Failed to initialize vector extension.\n\n"
+                    f"This is required for storing embeddings. Run 'ragzoom doctor' to diagnose.\n\n"
+                    f"Technical error: {e}"
+                )
 
     def close(self) -> None:
         """Close database connections and cleanup resources."""

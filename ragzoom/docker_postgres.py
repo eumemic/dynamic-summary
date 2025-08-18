@@ -245,7 +245,40 @@ class DockerPostgres:
                 "PostgreSQL container started but is not accepting connections"
             )
 
+        # Initialize vector extension if needed
+        self._initialize_vector_extension()
+
         return self.get_connection_url()
+
+    def _initialize_vector_extension(self) -> None:
+        """Initialize the vector extension in the PostgreSQL database."""
+        try:
+            logger.debug("Initializing vector extension...")
+            subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    self.container_name,
+                    "psql",
+                    "-U",
+                    "postgres",
+                    "-d",
+                    self.DATABASE,
+                    "-c",
+                    "CREATE EXTENSION IF NOT EXISTS vector;",
+                ],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+            logger.debug("Vector extension initialized successfully")
+        except subprocess.CalledProcessError as e:
+            logger.debug(f"Vector extension initialization failed: {e}")
+            if e.stderr:
+                logger.debug(f"PostgreSQL error: {e.stderr.decode()}")
+            # Don't raise here - let the Store._run_migrations() handle the error
+        except subprocess.TimeoutExpired:
+            logger.debug("Timeout while initializing vector extension")
 
     def stop_container(self) -> bool:
         """Stop the PostgreSQL container."""

@@ -979,11 +979,7 @@ Here's the content to summarize:"""
                 # Update preceding ID for next iteration
                 preceding_leaf_id = cast(str, data["id"])
 
-            # Batch insert all leaf nodes at once
-            if leaf_nodes_data:
-                self.store.add_nodes_batch(leaf_nodes_data)
-
-            # Add document record
+            # Add document record BEFORE creating nodes (foreign key constraint)
             if not existing_doc:
                 self.store.add_document(
                     document_id,
@@ -993,6 +989,10 @@ Here's the content to summarize:"""
                     self.config.embedding_model,
                     self.config.summary_model,
                 )
+
+            # Batch insert all leaf nodes at once
+            if leaf_nodes_data:
+                self.store.add_nodes_batch(leaf_nodes_data)
             else:
                 # Update existing document
                 with self.store.SessionLocal() as session:
