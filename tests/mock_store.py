@@ -111,6 +111,7 @@ class SimpleMockStore:
             left_child_id=left_child_id,
             right_child_id=right_child_id,
             token_count=kwargs.get("token_count"),
+            preceding_neighbor_id=kwargs.get("preceding_neighbor_id"),
             is_pinned=kwargs.get("is_pinned", False),
             access_count=0,
             last_accessed=None,
@@ -147,6 +148,7 @@ class SimpleMockStore:
                 right_child_id=data.get("right_child_id"),
                 document_id=data.get("document_id"),
                 token_count=data.get("token_count"),
+                preceding_neighbor_id=data.get("preceding_neighbor_id"),
             )
             created_nodes.append(self.nodes[data["node_id"]])
         return created_nodes
@@ -314,6 +316,10 @@ class SimpleMockStore:
             raise ValueError(f"Node {node_id} not found")
 
         return node.parent_id is None
+
+    def get_all_nodes(self) -> list[SimpleNamespace]:
+        """Get all nodes from the mock store."""
+        return list(self.nodes.values())
 
     def get_all_nodes_for_document(
         self, document_id: str | None

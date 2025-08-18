@@ -55,6 +55,9 @@ class TreeNode(Base):
     document_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("documents.id"), nullable=True
     )
+    preceding_neighbor_id: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # ID of the node that immediately precedes this one at the same tree level
 
 
 class Document(Base):
@@ -282,6 +285,7 @@ class Store:
                     text=data["text"],
                     document_id=data.get("document_id"),
                     token_count=data.get("token_count"),
+                    preceding_neighbor_id=data.get("preceding_neighbor_id"),
                 )
                 nodes.append(node)
 
@@ -870,6 +874,10 @@ class Store:
                     # Migration: Drop summary column if present
                     elif "summary" in columns:
                         self._drop_column_migration(conn, "summary")
+
+                    # Migration: Add preceding_neighbor_id column if not present
+                    if "preceding_neighbor_id" not in columns:
+                        self._add_preceding_neighbor_column_migration(conn)
                 else:
                     logger.debug(
                         "tree_nodes table does not exist yet, will be created by SQLAlchemy"
@@ -1009,6 +1017,24 @@ class Store:
             conn.execute(text("ROLLBACK"))
             logger.error(f"Failed to drop {column_name} column: {e}")
             raise
+
+    def _add_preceding_neighbor_column_migration(self, conn: Any) -> None:
+        """Add preceding_neighbor_id column to tree_nodes table.
+
+        Args:
+            conn: Database connection
+        """
+        logger.info("Adding preceding_neighbor_id column to tree_nodes table...")
+        try:
+            conn.execute(
+                text("ALTER TABLE tree_nodes ADD COLUMN preceding_neighbor_id VARCHAR")
+            )
+            logger.info(
+                "Successfully added preceding_neighbor_id column to tree_nodes table"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to add preceding_neighbor_id column: {e}")
+            # This is okay - the column might already exist
 
     def _add_document_model_columns_migration(self, conn: Any) -> None:
         """Add embedding_model and summary_model columns to documents table."""

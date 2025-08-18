@@ -362,33 +362,11 @@ def analyze(telemetry_file: Path) -> None:
         click.echo(f"  Total tokens:        {cost['total_tokens']:,}")
         click.echo(f"  USD per node:        ${cost['usd_per_node']:.4f}")
 
-        # Verbatim detection
-        if "verbatim" in chunk_metrics:
-            verbatim = chunk_metrics["verbatim"]
-            if isinstance(verbatim, dict):
-                verbatim_count = verbatim.get("verbatim_count", 0)
-                if isinstance(verbatim_count, int | float) and verbatim_count > 0:
-                    click.echo("\n⚠️  Verbatim Concatenation Issues")
-                    click.echo(f"  Total summaries:     {verbatim['total_summaries']}")
-                    click.echo(f"  Verbatim count:      {verbatim['verbatim_count']}")
-                    click.echo(
-                        f"  Verbatim %:          {verbatim['verbatim_percentage']:.1f}%"
-                    )
-
-                    worst_offenders = verbatim.get("worst_offenders", [])
-                    if worst_offenders:
-                        click.echo("\n  Worst offenders:")
-                        for offender in worst_offenders[:3]:  # Show top 3
-                            click.echo(
-                                f"    - Height {offender['height']}: {offender['input_tokens']} → {offender['output_tokens']} tokens (ratio: {offender['ratio']:.3f})"
-                            )
-
-                    height_dist = verbatim.get("height_distribution", {})
-                    if isinstance(height_dist, dict) and height_dist:
-                        click.echo("\n  Distribution by height:")
-                        for height in sorted(height_dist.keys()):
-                            count = height_dist[height]
-                            click.echo(f"    Height {height}: {count} occurrences")
+        # Outlier detection message
+        click.echo("\n💡 To analyze problematic summaries:")
+        click.echo(
+            "   python scripts/analyze-outlier-nodes.py --db benchmarks/latest/ragzoom.db"
+        )
 
     click.echo(f"\n{'='*60}\n")
 
