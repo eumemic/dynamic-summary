@@ -759,7 +759,7 @@ class TelemetryVisualizer:
         return deviations
 
     def _plot_summary_scatter(self, telemetry: dict, ax: plt.Axes) -> None:
-        """Plot input vs output token scatter plot, color-coded by retry count."""
+        """Plot input vs output token scatter plot, color-coded by attempt number."""
         # Extract chunk size (target) and nodes from telemetry data
         chunk_size = self._extract_chunk_size_from_telemetry(telemetry)
         nodes = self._extract_nodes_from_telemetry(telemetry)
@@ -810,6 +810,8 @@ class TelemetryVisualizer:
 
         # Create color map for attempt numbers (same colors as cost breakdown)
         colors = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#991b1b"]  # Blue to red
+
+        # Map each attempt to a color
         attempt_colors = []
         for attempt_num in attempt_numbers:
             if attempt_num >= len(colors):
@@ -1260,6 +1262,9 @@ class TelemetryVisualizer:
                     min_time = created_at
                 relative_time = created_at - baseline
 
+                # For passthrough nodes, use first attempt color (blue)
+                color = attempt_colors[0]
+
                 # Add gap between adjacent nodes for visual clarity
                 rect = Rectangle(
                     (span_start, relative_time),  # Position at relative time from start
@@ -1267,7 +1272,7 @@ class TelemetryVisualizer:
                         1, span_end - span_start - gap
                     ),  # Width = span coverage minus gap
                     0.5,  # Minimal height (0.5 seconds for visibility)
-                    facecolor=attempt_colors[0],  # Blue
+                    facecolor=color,
                     edgecolor="black",
                     linewidth=0.5,
                     alpha=0.9,
@@ -1278,6 +1283,8 @@ class TelemetryVisualizer:
             # Process summary nodes with attempts
             attempts = node["summary_attempts"]
             accepted_idx = node.get("accepted_attempt", len(attempts) - 1)
+
+            # Color will be determined per attempt
 
             cumulative_start = None
             for attempt_idx, attempt in enumerate(attempts):
@@ -1297,7 +1304,11 @@ class TelemetryVisualizer:
                 max_time = max(max_time, end_time)
 
                 # Determine color based on attempt number
-                color = attempt_colors[min(attempt_idx, 4)]  # Cap at 5+ (red)
+                attempt_num = attempt_idx + 1  # Convert to 1-based
+                if attempt_num >= len(attempt_colors):
+                    color = attempt_colors[-1]  # 5+ attempts = darkest red
+                else:
+                    color = attempt_colors[attempt_num - 1]  # Convert to 0-indexed
                 is_accepted = attempt_idx == accepted_idx
 
                 # Calculate baseline for relative time
