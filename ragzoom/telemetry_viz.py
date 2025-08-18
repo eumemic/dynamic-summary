@@ -759,7 +759,7 @@ class TelemetryVisualizer:
         return deviations
 
     def _plot_summary_scatter(self, telemetry: dict, ax: plt.Axes) -> None:
-        """Plot input vs output token scatter plot, color-coded by tree height."""
+        """Plot input vs output token scatter plot, color-coded by attempt number."""
         # Extract chunk size (target) and nodes from telemetry data
         chunk_size = self._extract_chunk_size_from_telemetry(telemetry)
         nodes = self._extract_nodes_from_telemetry(telemetry)
@@ -767,8 +767,7 @@ class TelemetryVisualizer:
         # Prepare data for scatter plot - one dot per attempt
         input_tokens = []
         output_tokens = []
-        node_heights = []
-        attempt_numbers = []  # Keep for statistics
+        attempt_numbers = []
         is_accepted = []  # Track which attempts are accepted
         node_count = 0  # Track actual number of nodes processed
 
@@ -793,8 +792,7 @@ class TelemetryVisualizer:
                         if actual_tokens > 0:
                             input_tokens.append(input_text_tokens)
                             output_tokens.append(actual_tokens)
-                            node_heights.append(height)
-                            attempt_numbers.append(attempt_num)  # Keep for stats
+                            attempt_numbers.append(attempt_num)
                             # Check if this is the accepted attempt (0-based index)
                             is_accepted.append(attempt_num - 1 == accepted_idx)
 
@@ -810,28 +808,26 @@ class TelemetryVisualizer:
             ax.set_title("Summary Compression Patterns")
             return
 
-        # Create rainbow color map for tree heights
-        # Rainbow palette from purple (height 1) to red (height 5+)
-        height_palette = [
-            "#9333ea",  # Purple (height 1)
-            "#3b82f6",  # Blue (height 2)
-            "#10b981",  # Green (height 3)
-            "#fbbf24",  # Yellow/Amber (height 4)
-            "#f97316",  # Orange (height 5)
-            "#dc2626",  # Red (height 6+)
+        # Define colors for attempt numbers (distinct colors, soft palette)
+        colors = [
+            "#66c2a5",  # Teal (attempt 1)
+            "#fc8d62",  # Orange (attempt 2)
+            "#8da0cb",  # Blue (attempt 3)
+            "#e78ac3",  # Pink (attempt 4)
+            "#a6d854",  # Green (attempt 5+)
         ]
 
-        # Map each point's height to a color
-        point_colors = []
-        for height in node_heights:
-            color_idx = min(height - 1, len(height_palette) - 1) if height > 0 else 0
-            point_colors.append(height_palette[color_idx])
+        # Map each attempt to a color
+        attempt_colors = []
+        for attempt_num in attempt_numbers:
+            color_idx = min(attempt_num - 1, len(colors) - 1)
+            attempt_colors.append(colors[color_idx])
 
         # Create scatter plot - first plot all attempts
         ax.scatter(
             input_tokens,
             output_tokens,
-            c=point_colors,
+            c=attempt_colors,
             alpha=0.6,
             s=50,
             edgecolors="none",
@@ -840,7 +836,7 @@ class TelemetryVisualizer:
         # Then plot accepted attempts with black borders on top
         accepted_inputs = [inp for inp, acc in zip(input_tokens, is_accepted) if acc]
         accepted_outputs = [out for out, acc in zip(output_tokens, is_accepted) if acc]
-        accepted_colors = [col for col, acc in zip(point_colors, is_accepted) if acc]
+        accepted_colors = [col for col, acc in zip(attempt_colors, is_accepted) if acc]
         if accepted_inputs:
             ax.scatter(
                 accepted_inputs,
@@ -926,19 +922,65 @@ class TelemetryVisualizer:
             label="1:1 ratio",
         )
 
-        # Create custom legend for tree heights
+        # Create custom legend for attempt numbers (matching cost breakdown)
+        # Use circles instead of rectangles
         legend_elements: list = [
-            Patch(facecolor=height_palette[0], label="Height 1", alpha=0.6),
-            Patch(facecolor=height_palette[1], label="Height 2", alpha=0.6),
-            Patch(facecolor=height_palette[2], label="Height 3", alpha=0.6),
-            Patch(facecolor=height_palette[3], label="Height 4", alpha=0.6),
-            Patch(facecolor=height_palette[4], label="Height 5", alpha=0.6),
-            Patch(facecolor=height_palette[5], label="Height 6+", alpha=0.6),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[0],
+                markersize=8,
+                label="Attempt 1",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[1],
+                markersize=8,
+                label="Attempt 2",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[2],
+                markersize=8,
+                label="Attempt 3",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[3],
+                markersize=8,
+                label="Attempt 4",
+                linestyle="None",
+                alpha=0.6,
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=colors[4],
+                markersize=8,
+                label="Attempt 5+",
+                linestyle="None",
+                alpha=0.6,
+            ),
         ]
-
-        # Only include legend items for heights that exist in the data
-        max_height = max(node_heights) if node_heights else 0
-        legend_elements = legend_elements[: min(max_height, len(height_palette))]
 
         # Add accepted attempt indicator to legend with transparent fill
         legend_elements.append(
