@@ -879,27 +879,29 @@ class TelemetryVisualizer:
         if chunk_size > 0:
             if retry_threshold is not None:
                 threshold_tokens = chunk_size * retry_threshold
+                # With undershoot elimination, we accept all undershoots (0 to target)
+                # and only retry overshoots beyond target + threshold
                 ax.fill_between(
                     x_extend,
-                    chunk_size - threshold_tokens,
-                    chunk_size + threshold_tokens,
+                    0,  # Accept all undershoots
+                    chunk_size + threshold_tokens,  # Retry beyond this
                     alpha=0.1,
                     color="green",
-                    label=f"±{retry_threshold*100:.0f}% retry threshold",
+                    label=f"Acceptance range (0 to +{retry_threshold*100:.0f}%)",
                 )
             else:
                 # Warn when retry_threshold is missing and use fallback
                 logging.warning(
                     "retry_threshold not found in telemetry config. "
-                    "Using fallback ±10 token range."
+                    "Using fallback acceptance range 0 to target+10 tokens."
                 )
                 ax.fill_between(
                     x_extend,
-                    chunk_size - 10,
-                    chunk_size + 10,
+                    0,  # Accept all undershoots
+                    chunk_size + 10,  # Retry beyond target + 10
                     alpha=0.1,
                     color="green",
-                    label="±10 token range (fallback)",
+                    label="Acceptance range (0 to +10 tokens)",
                 )
 
         # Add diagonal reference line showing 1:1 ratio (extend well beyond visible area)
