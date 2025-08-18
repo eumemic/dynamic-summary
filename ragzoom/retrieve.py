@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -10,6 +11,7 @@ from openai import OpenAI
 from ragzoom.config import QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.store import Store, TreeNode
+from ragzoom.telemetry_query import QueryTelemetry
 
 if TYPE_CHECKING:
     from ragzoom.index import TreeBuilder
@@ -347,3 +349,203 @@ class Retriever:
         conservative_num_seeds = max(1, int(budget_tokens // safe_average_cost))
 
         return conservative_num_seeds
+
+    # jscpd:ignore-start
+    async def retrieve_with_telemetry(
+        self,
+        query: str,
+        num_seeds: int | None = None,
+        budget_tokens: int | None = None,
+        document_id: str | None = None,
+    ) -> tuple[RetrievalResult, QueryTelemetry]:
+        """Async retrieval with detailed telemetry collection.
+
+        Args:
+            query: Query text to search for
+            num_seeds: Number of seed nodes to retrieve
+            budget_tokens: Token budget for the final summary
+            document_id: Optional document ID to filter by
+
+        Returns:
+            Tuple of (RetrievalResult, QueryTelemetry) with detailed timing info
+        """
+        telemetry = QueryTelemetry(
+            query_text=query,
+            num_seeds=num_seeds,
+            budget_tokens=budget_tokens,
+            document_id=document_id,
+        )
+
+        # Determine which mode we're in
+        if budget_tokens is not None and num_seeds is None:
+            # Mode 1: Budget only - calculate conservative num_seeds
+            num_seeds = self._calculate_conservative_num_seeds(
+                budget_tokens, document_id
+            )
+            logger.info(
+                f"Budget-only mode: calculated conservative num_seeds={num_seeds} for budget={budget_tokens}"
+            )
+        elif budget_tokens is not None and num_seeds is not None:
+            # Mode 2: Budget + num_seeds - will enforce both constraints
+            logger.info(f"Mixed mode: num_seeds={num_seeds}, budget={budget_tokens}")
+        elif num_seeds is None:
+            # Mode 3: num_seeds only (using default)
+            default_chunk_size = 256
+            num_seeds = self.query_config.budget_tokens // default_chunk_size
+            logger.info(f"num_seeds-only mode: using num_seeds={num_seeds}")
+
+        telemetry.seeds_requested = num_seeds
+
+        # Phase 1: Get query embedding
+        start = time.perf_counter()
+        query_embedding = self._get_query_embedding(query, document_id)
+        telemetry.embedding_time = time.perf_counter() - start
+        telemetry.embedding_model = self.query_config.embedding_model
+
+        # Phase 2: Initial retrieval (2 * num_seeds candidates)
+        k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
+
+        # Filter by document_id if provided
+        where_filter = {"document_id": document_id} if document_id else None
+
+        start = time.perf_counter()
+        candidates = self.store.search_similar(
+            query_embedding, k_candidates, where=where_filter
+        )
+        telemetry.search_time = time.perf_counter() - start
+        telemetry.candidates_retrieved = len(candidates)
+
+        # Phase 3: Apply MMR to get diverse num_seeds results
+        start = time.perf_counter()
+        selected_ids = self.store.compute_mmr_diverse_results(
+            query_embedding, candidates, self.query_config.mmr_lambda, num_seeds
+        )
+        telemetry.mmr_time = time.perf_counter() - start
+        telemetry.seeds_found = len(selected_ids)
+
+        # Phase 4: Build coverage map (selected + ancestors)
+        start = time.perf_counter()
+        coverage_map = self._build_coverage_map(selected_ids)
+
+        # Apply pinned nodes
+        pinned_nodes = self.store.get_pinned_nodes(self.store.PIN_DEPTH_MAX)
+        for node in pinned_nodes:
+            coverage_map[node.id] = True
+        telemetry.coverage_map_time = time.perf_counter() - start
+        telemetry.coverage_size = len(coverage_map)
+
+        # Phase 5: Build scores map - compute similarity for ALL nodes in coverage map
+        start = time.perf_counter()
+        scores = {}
+
+        # First, add scores for the candidate nodes (already have similarities)
+        for node_id, similarity, _ in candidates:
+            if node_id in coverage_map:
+                scores[node_id] = similarity
+
+        # Then, compute similarities for all other nodes in coverage map
+        nodes_needing_scores = set(coverage_map.keys()) - set(scores.keys())
+        if nodes_needing_scores:
+            # Get embeddings and compute similarities for ancestors
+            for node_id in nodes_needing_scores:
+                ancestor_node: TreeNode | None = self.store.get_node(node_id)
+                if ancestor_node is not None:
+                    # Get node's embedding from Chroma
+                    try:
+                        result = self.store.collection.get(
+                            ids=[node_id], include=["embeddings"]
+                        )
+                        embeddings = result.get("embeddings")
+                        if embeddings is not None and len(embeddings) > 0:
+                            node_embedding = embeddings[0]
+                            # Compute cosine similarity
+                            import numpy as np
+
+                            query_vec = np.array(query_embedding)
+                            node_vec = np.array(node_embedding)
+                            # Cosine similarity = dot product of normalized vectors
+                            similarity = float(
+                                np.dot(query_vec, node_vec)
+                                / (np.linalg.norm(query_vec) * np.linalg.norm(node_vec))
+                            )
+                            scores[node_id] = max(0.0, min(1.0, similarity))
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to get embedding for node {node_id}: {e}"
+                        )
+                        scores[node_id] = 0.0
+        telemetry.scoring_time = time.perf_counter() - start
+
+        # Handle empty coverage map case
+        if not coverage_map:
+            telemetry.end_time = time.perf_counter()
+            # No nodes selected, return empty result
+            return (
+                RetrievalResult(
+                    node_ids=selected_ids,
+                    scores=scores,
+                    coverage_map=coverage_map,
+                    tiling=[],
+                    nodes={},
+                ),
+                telemetry,
+            )
+
+        # Load all nodes in coverage map to avoid redundant loading later
+        # Use batch loading for efficiency
+        nodes: dict[str, TreeNode] = {}
+        node_ids_to_load = list(coverage_map.keys())
+        if node_ids_to_load:
+            loaded_nodes = self.store.get_nodes(node_ids_to_load)
+            for node in loaded_nodes:
+                nodes[node.id] = node
+
+        # Find the root node in the coverage map
+        root_id = None
+        for node_id, node in nodes.items():
+            # Check if this node has no parent in the coverage map
+            if node.parent_id is None or node.parent_id not in nodes:
+                root_id = node_id
+                break
+
+        if not root_id:
+            # No root found - this should never happen as coverage map should include all ancestors
+            raise ValueError(
+                f"No root node found in coverage map. Coverage map has {len(nodes)} nodes but none have no parent in the map."
+            )
+
+        # Phase 6: Extract tiling using DP algorithm
+        final_budget = (
+            budget_tokens
+            if budget_tokens is not None
+            else self.query_config.budget_tokens
+        )
+
+        start = time.perf_counter()
+        dp_result = self.dp_generator.find_optimal_tiling(
+            final_budget, scores, nodes, root_id
+        )
+        telemetry.dp_time = time.perf_counter() - start
+        telemetry.tiling_size = len(dp_result.tiling.node_ids)
+
+        # Calculate output tokens (we'll need assembly for exact count)
+        telemetry.output_tokens = sum(
+            nodes[node_id].token_count
+            for node_id in dp_result.tiling.node_ids
+            if node_id in nodes
+        )
+
+        telemetry.end_time = time.perf_counter()
+
+        return (
+            RetrievalResult(
+                node_ids=selected_ids,
+                scores=scores,
+                coverage_map=coverage_map,
+                tiling=dp_result.tiling.node_ids,
+                nodes=nodes,
+            ),
+            telemetry,
+        )
+
+    # jscpd:ignore-end

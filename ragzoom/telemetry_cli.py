@@ -441,6 +441,20 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     Returns:
         True if regression detected
     """
+    # Check if this is query telemetry by looking for format_version or telemetry field
+    with open(baseline_file) as f:
+        baseline_data = json.load(f)
+
+    # Detect query telemetry files
+    if (
+        baseline_data.get("format_version") == "1.0"
+        and "telemetry" in baseline_data
+        and "timings" in baseline_data.get("telemetry", {})
+    ):
+        # This is query telemetry
+        return _compare_query_telemetry_files(baseline_file, current_file)
+
+    # Otherwise, it's indexing telemetry
     # Load and compute metrics for both files
     baseline_data, baseline_metrics = _load_and_compute_metrics(baseline_file)
     current_data, current_metrics = _load_and_compute_metrics(current_file)
@@ -477,6 +491,93 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
         baseline_config,
         current_config,
     )
+
+    return has_regression
+
+
+def _compare_query_telemetry_files(baseline_file: Path, current_file: Path) -> bool:
+    """Compare two query telemetry files.
+
+    Returns:
+        True if regression detected
+    """
+    from ragzoom.telemetry_analysis import compare_query_performance
+
+    # Load query telemetry files
+    with open(baseline_file) as f:
+        baseline_data = json.load(f)
+    with open(current_file) as f:
+        current_data = json.load(f)
+
+    # Compare performance
+    has_regression, report = compare_query_performance(
+        baseline_data, current_data, regression_threshold=0.2
+    )
+
+    # Format output
+    click.echo("\n### Query Performance Comparison\n")
+
+    # Show summary
+    summary = report["summary"]
+    click.echo(f"**Baseline P50 Latency:** {summary['baseline_p50']:.3f}s")
+    click.echo(f"**Current P50 Latency:** {summary['current_p50']:.3f}s")
+    click.echo(f"**Query Count:** {summary['current_queries']} queries\n")
+
+    # Show regressions if any
+    if report["regressions"]:
+        click.echo("#### ❌ Performance Regressions\n")
+        click.echo("| Phase | Baseline | Current | Change |")
+        click.echo("|-------|----------|---------|--------|")
+        for reg in report["regressions"]:
+            phase = reg["phase"]
+            baseline = reg["baseline"]
+            current = reg["current"]
+            change = reg["change_percent"]
+            click.echo(
+                f"| {phase} | {baseline:.3f}s | {current:.3f}s | +{change:.1f}% |"
+            )
+        click.echo("")
+
+    # Show improvements if any
+    if report["improvements"]:
+        click.echo("#### ✅ Performance Improvements\n")
+        click.echo("| Phase | Baseline | Current | Change |")
+        click.echo("|-------|----------|---------|--------|")
+        for imp in report["improvements"]:
+            phase = imp["phase"]
+            baseline = imp["baseline"]
+            current = imp["current"]
+            change = imp["change_percent"]
+            click.echo(
+                f"| {phase} | {baseline:.3f}s | {current:.3f}s | {change:.1f}% |"
+            )
+        click.echo("")
+
+    # Show phase breakdown
+    current_metrics = report["current_metrics"]
+    phase_breakdown = current_metrics["phase_breakdown"]
+
+    click.echo("#### Phase Breakdown\n")
+    click.echo("| Phase | Time (s) | % of Total |")
+    click.echo("|-------|----------|------------|")
+
+    total_time = phase_breakdown.get("total_time", 1.0)
+    for phase, time_val in sorted(
+        phase_breakdown.items(), key=lambda x: x[1], reverse=True
+    ):
+        if phase != "total_time" and time_val > 0:
+            percentage = (time_val / total_time) * 100
+            phase_name = phase.replace("_time", "").replace("_", " ").title()
+            click.echo(f"| {phase_name} | {time_val:.3f} | {percentage:.1f}% |")
+
+    click.echo("")
+
+    # Show efficiency metrics
+    click.echo("#### Efficiency Metrics\n")
+    efficiency = current_metrics["efficiency"]
+    click.echo(f"- **Seeds Utilization:** {efficiency['seeds_utilization']:.1%}")
+    click.echo(f"- **Budget Utilization:** {efficiency['budget_utilization']:.1%}")
+    click.echo(f"- **Coverage Efficiency:** {efficiency['coverage_efficiency']:.1%}")
 
     return has_regression
 

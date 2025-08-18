@@ -247,6 +247,19 @@ jobs:
             echo "BENCHMARK_ERROR=true" >> $GITHUB_OUTPUT  # Mark as error, not just failed
           fi
       
+      - name: Run query benchmarks - subset
+        id: query_benchmark
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Running query performance benchmarks (subset for CI)..."
+          # Run a limited set of query benchmarks for CI (3 configurations)
+          # Full matrix would be 3x3x3=27 tests, too expensive for every PR
+          if ! pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "10-2000-specific or 10-2000-broad or 10-2000-complex" -v; then
+            echo "⚠️ Query benchmarks failed but continuing..."
+            echo "QUERY_BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+          fi
+      
       - name: Update comment - benchmarks complete
         uses: actions/github-script@v7
         with:
@@ -263,6 +276,7 @@ jobs:
             - ✅ 100 tokens benchmark complete
             - ✅ 200 tokens benchmark complete
             - ✅ 400 tokens benchmark complete
+            - ✅ Query benchmarks complete
             - ⏱️ Generating visualization...`;
             
             const { data: comments } = await github.rest.issues.listComments({
