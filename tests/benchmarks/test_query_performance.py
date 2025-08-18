@@ -90,7 +90,7 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
         "complex": "How do the dwarves convince Bilbo to join their quest, and what are their motivations?",
     }
 
-    query_config = QueryConfig.load(
+    query_config = QueryConfig(
         budget_tokens=budget_tokens,
     )
 

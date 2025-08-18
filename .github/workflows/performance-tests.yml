@@ -704,6 +704,14 @@ jobs:
           echo "Check the workflow logs for details."
           exit 1
       
+      - name: Fail if query benchmarks failed
+        if: steps.query_benchmark.outputs.QUERY_BENCHMARK_FAILED == 'true'
+        run: |
+          echo "❌ Query benchmark failures detected!"
+          echo "Failed configurations: ${{ steps.query_benchmark.outputs.QUERY_FAILED_CONFIGS }}"
+          echo "Query benchmarks must pass to ensure query performance is working correctly."
+          echo "Check the workflow logs for details."
+          exit 1
       
       - name: Fail if regression detected
         if: steps.compare.outputs.REGRESSION == 'true'

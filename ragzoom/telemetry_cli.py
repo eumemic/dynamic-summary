@@ -846,8 +846,32 @@ def _compare_directories(baseline_dir: Path, current_dir: Path) -> bool:
         query_has_regression = _process_query_matches(query_matches)
         has_regression = has_regression or query_has_regression
     else:
+        # Check if current directory has query files but baseline doesn't (new feature case)
+        current_query_files = list(current_dir.glob("query_telemetry_*.json"))
+        baseline_query_files = list(baseline_dir.glob("query_telemetry_*.json"))
+
         click.echo("\n### Query Performance")
-        click.echo("⚠️ No query benchmark files found for comparison")
+
+        if current_query_files and not baseline_query_files:
+            click.echo("📊 **New feature: Query benchmarks added**")
+            click.echo(
+                f"Found {len(current_query_files)} query benchmark files in current version."
+            )
+            click.echo(
+                "Baseline comparison unavailable (query benchmarks are a new feature)."
+            )
+
+            # Show current query performance metrics without comparison
+            for query_file in current_query_files[:3]:  # Show first 3 for brevity
+                click.echo(f"\n**Configuration:** {query_file.name}")
+                # Could add basic metrics display here if needed
+
+        elif not current_query_files and not baseline_query_files:
+            click.echo(
+                "⚠️ No query benchmark files found in either baseline or current version"
+            )
+        else:
+            click.echo("⚠️ No matching query benchmark files found for comparison")
 
     return has_regression
 
