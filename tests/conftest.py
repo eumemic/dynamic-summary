@@ -173,6 +173,31 @@ def store(request, base_config, mock_store):
             try:
                 yield real_store
             finally:
+                # Cleanup test database if needed
+                if hasattr(real_store, "_test_db_cleanup"):
+                    cleanup_info = real_store._test_db_cleanup
+                    try:
+                        from sqlalchemy import create_engine, text
+
+                        admin_engine = create_engine(cleanup_info["admin_url"])
+                        with admin_engine.connect() as conn:
+                            conn.execute(text("COMMIT"))  # End any existing transaction
+                            # Terminate connections and drop database
+                            conn.execute(
+                                text(
+                                    "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = :db_name AND pid <> pg_backend_pid()"
+                                ),
+                                {"db_name": cleanup_info["db_name"]},
+                            )
+                            conn.execute(
+                                text(
+                                    f"DROP DATABASE IF EXISTS {cleanup_info['db_name']}"
+                                )
+                            )  # nosec B608
+                        admin_engine.dispose()
+                    except Exception:
+                        pass  # Ignore cleanup errors
+
                 real_store.close()
             return
 
@@ -185,6 +210,29 @@ def store(request, base_config, mock_store):
         try:
             yield real_store
         finally:
+            # Cleanup test database if needed
+            if hasattr(real_store, "_test_db_cleanup"):
+                cleanup_info = real_store._test_db_cleanup
+                try:
+                    from sqlalchemy import create_engine, text
+
+                    admin_engine = create_engine(cleanup_info["admin_url"])
+                    with admin_engine.connect() as conn:
+                        conn.execute(text("COMMIT"))  # End any existing transaction
+                        # Terminate connections and drop database
+                        conn.execute(
+                            text(
+                                "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = :db_name AND pid <> pg_backend_pid()"
+                            ),
+                            {"db_name": cleanup_info["db_name"]},
+                        )
+                        conn.execute(
+                            text(f"DROP DATABASE IF EXISTS {cleanup_info['db_name']}")
+                        )  # nosec B608
+                    admin_engine.dispose()
+                except Exception:
+                    pass  # Ignore cleanup errors
+
             real_store.close()
         return
 
@@ -195,18 +243,56 @@ def store(request, base_config, mock_store):
 def _create_real_store(base_config) -> Store | None:
     """Create a real store for integration testing, or return None if unavailable."""
     try:
+        # Create unique database name for test isolation
+        import os
+        import uuid
+
+        # Use test-specific database URL or create unique one
+        base_db_url = base_config.database_url
+        if "ragzoom_test" in base_db_url and not os.getenv("PYTEST_XDIST_WORKER"):
+            # Create unique database name for this test
+            unique_suffix = uuid.uuid4().hex[:8]
+            test_db_url = base_db_url.replace(
+                "ragzoom_test", f"ragzoom_test_{unique_suffix}"
+            )
+        else:
+            # Use base URL for distributed testing or custom URLs
+            test_db_url = base_db_url
+
         # Test connection
         operational_config = OperationalConfig(
             openai_api_key=base_config.openai_api_key,
-            database_url=base_config.database_url,
+            database_url=test_db_url,
         )
 
         # Try to create engine first to test connection
-        from sqlalchemy import create_engine
+        from sqlalchemy import create_engine, text
 
+        # If using unique database, create it first
+        if test_db_url != base_db_url:
+            # Extract database name from URL
+            test_db_name = test_db_url.split("/")[-1]
+            base_engine_url = "/".join(test_db_url.split("/")[:-1]) + "/postgres"
+
+            # Create the test database
+            admin_engine = create_engine(base_engine_url)
+            with admin_engine.connect() as conn:
+                conn.execute(text("COMMIT"))  # End any existing transaction
+                # Safe database name validation
+                import re
+
+                if re.match(r"^[a-zA-Z0-9_]+$", test_db_name):
+                    conn.execute(text(f"CREATE DATABASE {test_db_name}"))  # nosec B608
+                else:
+                    raise ValueError(f"Invalid test database name: {test_db_name}")
+            admin_engine.dispose()
+
+        # Test connection to the target database
         engine = create_engine(operational_config.database_url)
-        with engine.connect():
-            pass  # Test connection
+        with engine.connect() as conn:
+            # Create vector extension if needed
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
         engine.dispose()
 
         # If we get here, PostgreSQL is available
@@ -214,6 +300,14 @@ def _create_real_store(base_config) -> Store | None:
             operational_config,
             embedding_model=base_config.index_config.embedding_model,
         )
+
+        # Store cleanup info for later
+        if test_db_url != base_db_url:
+            store._test_db_cleanup = {
+                "db_name": test_db_name,
+                "admin_url": base_engine_url,
+            }
+
         return store
     except Exception:
         # Return None - let individual tests decide how to handle unavailable PostgreSQL

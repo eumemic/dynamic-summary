@@ -127,7 +127,15 @@ class Store:
                 )
                 with admin_engine.connect() as conn:
                     conn.execute(text("COMMIT"))  # End any existing transaction
-                    conn.execute(text(f"CREATE DATABASE {temp_db_name}"))
+                    # Safe database name validation - only alphanumeric and underscore
+                    import re
+
+                    if re.match(r"^[a-zA-Z0-9_]+$", temp_db_name):  # nosec B608
+                        conn.execute(
+                            text(f"CREATE DATABASE {temp_db_name}")
+                        )  # nosec B608
+                    else:
+                        raise ValueError(f"Invalid temp database name: {temp_db_name}")
                 admin_engine.dispose()
 
                 # Create the vector extension in the new database
@@ -153,10 +161,21 @@ class Store:
                         # Terminate connections to the database before dropping
                         conn.execute(
                             text(
-                                f"SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = '{temp_db_name}' AND pid <> pg_backend_pid()"
-                            )
+                                "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = :db_name AND pid <> pg_backend_pid()"
+                            ),
+                            {"db_name": temp_db_name},
                         )
-                        conn.execute(text(f"DROP DATABASE IF EXISTS {temp_db_name}"))
+                        # Safe database name validation - only alphanumeric and underscore
+                        import re
+
+                        if re.match(r"^[a-zA-Z0-9_]+$", temp_db_name):  # nosec B608
+                            conn.execute(
+                                text(f"DROP DATABASE IF EXISTS {temp_db_name}")
+                            )  # nosec B608
+                        else:
+                            logger.warning(
+                                f"Invalid temp database name: {temp_db_name}"
+                            )
                     admin_engine.dispose()
                 except Exception as e:
                     # Log cleanup failure but don't raise
@@ -374,7 +393,9 @@ class Store:
                 nodes.append(node)
 
             # Bulk insert all nodes
-            session.bulk_save_objects(nodes)
+            session.add_all(
+                nodes
+            )  # Use add_all instead of bulk_save_objects for better ORM integration
             session.commit()
 
             # Add all to cache
