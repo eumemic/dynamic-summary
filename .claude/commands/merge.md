@@ -33,7 +33,7 @@ Merge the current PR and sync with master.
    ```
 3. **Merge**: `gh pr merge --squash` (GitHub auto-deletes the remote branch)
 4. **Sync with master**: `git fetch origin && git reset --hard origin/master`
-5. **Push to recreate remote**: `git push -u origin <branch>` (recreate remote worktree branch)
+5. **Push to recreate remote**: `git push -u origin $(git branch --show-current)` (recreate remote worktree branch)
 6. **Ready for next PR**: The worktree branch is now synced and ready for the next feature
 
 ## Error Handling
