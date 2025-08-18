@@ -309,20 +309,20 @@ class TelemetryVisualizer:
                 14,
             )  # Half the width, slightly taller for double Summary Accuracy
 
-        # Use plt.subplots with axis sharing for automatic synchronization
-        # Note: We share y-axis within rows (left vs right comparison)
-        # but NOT x-axis within columns as each row has different x-axis semantics
-        fig, axes = plt.subplots(
+        # Create figure with GridSpec for flexible subplot arrangement
+        # Note: We can't use simple sharex='row' because each row has different x-axis semantics
+        # Row 1: Cost breakdown (categorical x-axis) - no x-sharing
+        # Row 2: Summary scatter (numeric x-axis) - needs x-sharing
+        # Row 3: Timeline (numeric x-axis) - needs x-sharing
+        fig = plt.figure(figsize=figsize)
+        gs = GridSpec(
             3,
             2,
-            figsize=figsize,
-            sharey="row",  # Share y-axis within rows for comparison
-            gridspec_kw={
-                "hspace": 0.2,
-                "wspace": 0.15,
-                "top": 0.92,
-                "height_ratios": [0.5, 1.5, 2],
-            },
+            figure=fig,
+            hspace=0.2,
+            wspace=0.15,
+            top=0.92,
+            height_ratios=[0.5, 1.5, 2],
         )
 
         # Add super title
@@ -332,35 +332,38 @@ class TelemetryVisualizer:
             y=0.97,
         )
 
-        # 1. Cost Breakdown
-        self._plot_cost_breakdown(telemetry1, axes[0, 0])
-        axes[0, 0].set_title("Cost Breakdown", fontsize=12)
+        # 1. Cost Breakdown (no axis sharing needed)
+        ax1_left = fig.add_subplot(gs[0, 0])
+        ax1_right = fig.add_subplot(gs[0, 1], sharey=ax1_left)
 
-        self._plot_cost_breakdown(telemetry2, axes[0, 1])
-        axes[0, 1].set_title("Cost Breakdown", fontsize=12)
-        axes[0, 1].set_ylabel("")  # Remove y-axis label
+        self._plot_cost_breakdown(telemetry1, ax1_left)
+        ax1_left.set_title("Cost Breakdown", fontsize=12)
 
-        # 2. Summary Compression Patterns
-        self._plot_summary_scatter(telemetry1, axes[1, 0])
-        axes[1, 0].set_title("Summary Compression Patterns", fontsize=12)
+        self._plot_cost_breakdown(telemetry2, ax1_right)
+        ax1_right.set_title("Cost Breakdown", fontsize=12)
+        ax1_right.set_ylabel("")  # Remove y-axis label
 
-        self._plot_summary_scatter(telemetry2, axes[1, 1])
-        axes[1, 1].set_title("Summary Compression Patterns", fontsize=12)
-        axes[1, 1].set_ylabel("")  # Remove y-axis label
+        # 2. Summary Compression Patterns (share both axes)
+        ax2_left = fig.add_subplot(gs[1, 0])
+        ax2_right = fig.add_subplot(gs[1, 1], sharex=ax2_left, sharey=ax2_left)
 
-        # Manually share x-axis for scatter plots (both show input tokens)
-        axes[1, 0].sharex(axes[1, 1])
+        self._plot_summary_scatter(telemetry1, ax2_left)
+        ax2_left.set_title("Summary Compression Patterns", fontsize=12)
 
-        # 3. Tree Construction Timeline
-        self._plot_tree_construction_timeline(telemetry1, axes[2, 0])
-        axes[2, 0].set_title("Tree Construction Timeline", fontsize=12)
+        self._plot_summary_scatter(telemetry2, ax2_right)
+        ax2_right.set_title("Summary Compression Patterns", fontsize=12)
+        ax2_right.set_ylabel("")  # Remove y-axis label
 
-        self._plot_tree_construction_timeline(telemetry2, axes[2, 1])
-        axes[2, 1].set_title("Tree Construction Timeline", fontsize=12)
-        axes[2, 1].set_ylabel("")  # Remove y-axis label
+        # 3. Tree Construction Timeline (share both axes)
+        ax3_left = fig.add_subplot(gs[2, 0])
+        ax3_right = fig.add_subplot(gs[2, 1], sharex=ax3_left, sharey=ax3_left)
 
-        # Manually share x-axis for timeline plots (both show document position)
-        axes[2, 0].sharex(axes[2, 1])
+        self._plot_tree_construction_timeline(telemetry1, ax3_left)
+        ax3_left.set_title("Tree Construction Timeline", fontsize=12)
+
+        self._plot_tree_construction_timeline(telemetry2, ax3_right)
+        ax3_right.set_title("Tree Construction Timeline", fontsize=12)
+        ax3_right.set_ylabel("")  # Remove y-axis label
 
         # Save figure
         self._ensure_output_dir()
