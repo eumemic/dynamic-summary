@@ -334,18 +334,14 @@ def validate_tiling(
 
     # Check budget compliance if budget is provided
     if budget_tokens is not None:
-        import tiktoken
-
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-
         total_tokens = 0
         for node_id in tiling:
             node = store.get_node(node_id)
-            if not node or not node.text:
+            if not node:
                 continue
 
             # For atomic nodes, just count the full text
-            tokens = len(tokenizer.encode(node.text))
+            tokens = node.token_count
             total_tokens += tokens
 
         if total_tokens > budget_tokens:

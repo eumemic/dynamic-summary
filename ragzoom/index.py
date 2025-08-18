@@ -22,6 +22,10 @@ WORDS_PER_TOKEN = 0.75 * 0.94
 
 logger = logging.getLogger(__name__)
 
+# Token to word conversion factor from experiments (see issue #132):
+# 0.75 (tokens->words conversion) * 0.94 (bias compensation for systematic overshoot)
+WORDS_PER_TOKEN = 0.75 * 0.94
+
 
 class TreeBuilder:
     """Tree builder with concurrent processing."""
@@ -58,6 +62,10 @@ class TreeBuilder:
     def _generate_node_id(self) -> str:
         """Generate unique node ID."""
         return str(uuid.uuid4())
+
+    def _tokens_to_words(self, target_tokens: int) -> int:
+        """Convert target token count to target word count with bias compensation."""
+        return int(target_tokens * WORDS_PER_TOKEN)
 
     def _validate_model_names(self) -> None:
         """Validate that configured model names are in known lists.
@@ -507,6 +515,8 @@ class TreeBuilder:
         prev_context: str | None = None,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
+        left_token_count: int | None = None,
+        right_token_count: int | None = None,
     ) -> tuple[str, int, int]:
         """Summarize text using LLM.
 
@@ -581,9 +591,13 @@ Here's the content to summarize:"""
         full_prompt = "\n\n".join(prompt_parts)
 
         # Calculate input text tokens for metrics tracking
-        input_text_tokens = len(self.splitter.tokenizer.encode(left_text)) + len(
-            self.splitter.tokenizer.encode(right_text)
-        )
+        if left_token_count is not None and right_token_count is not None:
+            input_text_tokens = left_token_count + right_token_count
+        else:
+            # Fallback if token counts not provided
+            input_text_tokens = len(self.splitter.tokenizer.encode(left_text))
+            if right_text:
+                input_text_tokens += len(self.splitter.tokenizer.encode(right_text))
 
         async with self.semaphore:
             try:
@@ -917,7 +931,12 @@ Here's the content to summarize:"""
                     for j in range(i, batch_end):
                         node_id = chunk_data[j]["id"]
                         text = chunk_data[j]["text"]
-                        token_count = len(self.splitter.tokenizer.encode(text))
+                        # Cache token count to avoid re-tokenization later
+                        if "token_count" not in chunk_data[j]:
+                            chunk_data[j]["token_count"] = len(
+                                self.splitter.tokenizer.encode(text)
+                            )
+                        token_count = chunk_data[j]["token_count"]
                         node_embeddings.append((node_id, token_count))
 
                     start_time = time.time()
@@ -943,8 +962,10 @@ Here's the content to summarize:"""
 
             for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
                 text = cast(str, data["text"])
-                # Count tokens for leaf nodes using tiktoken
-                token_count = len(self.splitter.tokenizer.encode(text))
+                # Use cached token count if available, otherwise compute it
+                token_count = data.get(
+                    "token_count", len(self.splitter.tokenizer.encode(text))
+                )
 
                 leaf_nodes_data.append(
                     {
@@ -1144,6 +1165,8 @@ Here's the content to summarize:"""
             prev_context,
             parent_id,
             reporter=reporter,
+            left_token_count=left_node.token_count,
+            right_token_count=right_node.token_count if right_node else 0,
         )
 
         # Embedding will be generated in batch after all summaries are collected

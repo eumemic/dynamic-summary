@@ -843,7 +843,7 @@ def config(examples: bool, output_file: str | None) -> None:
             "preceding_context_tokens": 75,
             "embedding_model": "text-embedding-3-small",
             "retry_threshold": 0.2,
-            "max_retries": 0,
+            "max_retries": 2,
             "embedding_batch_size": 100,
             "budget_tokens": 8000,
             "mmr_lambda": 0.7,
