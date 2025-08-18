@@ -539,7 +539,7 @@ class TelemetryCollector:
             chunk_size: Chunk size used for indexing (for metadata)
 
         Returns:
-            Dictionary in telemetry format v3.0 (flat structure)
+            Dictionary in telemetry format v4.2 (flat structure)
         """
         # Convert all node telemetry to dict format
         nodes_data = []
