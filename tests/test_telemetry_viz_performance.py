@@ -6,13 +6,13 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import matplotlib.pyplot as plt
 import pytest
 
-pytest.importorskip("matplotlib")
+# Skip all tests in this module if matplotlib is not available
+plt = pytest.importorskip("matplotlib.pyplot")
 pytest.importorskip("seaborn")
 
-from ragzoom.telemetry_viz import TelemetryVisualizer
+from ragzoom.telemetry_viz import TelemetryVisualizer  # noqa: E402
 
 
 def generate_test_telemetry(num_nodes: int) -> dict:
@@ -157,10 +157,12 @@ class TestVisualizationPerformance:
             set_lim_count = 0
             get_lim_count = 0
 
-            original_set_xlim = plt.Axes.set_xlim
-            original_set_ylim = plt.Axes.set_ylim
-            original_get_xlim = plt.Axes.get_xlim
-            original_get_ylim = plt.Axes.get_ylim
+            from matplotlib.axes import Axes
+
+            original_set_xlim = Axes.set_xlim
+            original_set_ylim = Axes.set_ylim
+            original_get_xlim = Axes.get_xlim
+            original_get_ylim = Axes.get_ylim
 
             def counting_set_xlim(self, *args, **kwargs):
                 nonlocal set_lim_count
@@ -183,10 +185,10 @@ class TestVisualizationPerformance:
                 return original_get_ylim(self, *args, **kwargs)
 
             with (
-                patch.object(plt.Axes, "set_xlim", counting_set_xlim),
-                patch.object(plt.Axes, "set_ylim", counting_set_ylim),
-                patch.object(plt.Axes, "get_xlim", counting_get_xlim),
-                patch.object(plt.Axes, "get_ylim", counting_get_ylim),
+                patch.object(Axes, "set_xlim", counting_set_xlim),
+                patch.object(Axes, "set_ylim", counting_set_ylim),
+                patch.object(Axes, "get_xlim", counting_get_xlim),
+                patch.object(Axes, "get_ylim", counting_get_ylim),
                 patch("matplotlib.pyplot.savefig"),
                 patch("matplotlib.pyplot.close"),
             ):
