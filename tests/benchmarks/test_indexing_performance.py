@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig
+from ragzoom.config import IndexConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.store import Store
 
@@ -56,17 +56,13 @@ def test_indexing_performance(leaf_tokens, document_type):
     """Benchmark indexing performance at different chunk sizes with real documents."""
     # Create config for this specific test
     api_key = os.getenv("OPENAI_API_KEY", "test-key")
-    
+
     # Skip if no API key
     if api_key == "test-key":
         pytest.skip("OPENAI_API_KEY not set")
-    
+
     index_config = IndexConfig.load(
         target_chunk_tokens=leaf_tokens,
-    )
-    
-    operational_config = OperationalConfig(
-        openai_api_key=api_key,
     )
 
     # Get test document
@@ -120,26 +116,26 @@ def test_indexing_performance(leaf_tokens, document_type):
         if chunk_metrics:
             print("\n--- Simplified Metrics ---")
             # ChunkMetrics is now a dataclass with typed attributes
-            if hasattr(chunk_metrics, 'target_fit'):
+            if hasattr(chunk_metrics, "target_fit"):
                 print("\nTarget Fit:")
                 tf = chunk_metrics.target_fit
                 print(f"  median_error: {tf.median_error:.2f}")
                 print(f"  p95_error: {tf.p95_error:.2f}")
                 print(f"  percent_within_10: {tf.percent_within_10:.2f}")
-            
-            if hasattr(chunk_metrics, 'retries'):
+
+            if hasattr(chunk_metrics, "retries"):
                 print("\nRetries:")
                 r = chunk_metrics.retries
                 print(f"  retry_rate: {r.retry_rate:.2f}")
                 print(f"  max_retries: {r.max_retries:.0f}")
-            
-            if hasattr(chunk_metrics, 'latency'):
+
+            if hasattr(chunk_metrics, "latency"):
                 print("\nLatency:")
-                l = chunk_metrics.latency
-                print(f"  median_seconds: {l.median_seconds:.2f}")
-                print(f"  total_indexing_seconds: {l.total_indexing_seconds:.2f}")
-            
-            if hasattr(chunk_metrics, 'cost'):
+                latency = chunk_metrics.latency
+                print(f"  median_seconds: {latency.median_seconds:.2f}")
+                print(f"  total_indexing_seconds: {latency.total_indexing_seconds:.2f}")
+
+            if hasattr(chunk_metrics, "cost"):
                 print("\nCost:")
                 c = chunk_metrics.cost
                 print(f"  usd_per_node: ${c.usd_per_node:.4f}")
@@ -164,7 +160,6 @@ def test_performance_comparison():
         pytest.skip("No benchmark results to compare")
 
     # Import needed for computing metrics from telemetry
-    from ragzoom.config import IndexConfig, OperationalConfig
     from ragzoom.telemetry_analysis import (
         compute_metrics_from_telemetry,
         compute_simplified_metrics,
