@@ -60,8 +60,7 @@ class TestCLI:
             # Mock operational config
             operational_config_instance = Mock()
             operational_config_instance.openai_api_key = "test-key"
-            operational_config_instance.chroma_persist_directory = "./chroma_db"
-            operational_config_instance.sqlite_database_url = "sqlite:///./ragzoom.db"
+            operational_config_instance.database_url = "postgresql:///ragzoom"
             mock_operational_config.return_value = operational_config_instance
 
             # Mock store

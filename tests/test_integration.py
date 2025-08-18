@@ -106,9 +106,8 @@ class TestIntegration:
     @pytest.fixture
     def temp_system(self, mock_openai):
         """Create a complete temporary RagZoom system."""
-        # Create temporary directories
+        # Create temporary directory
         temp_dir = tempfile.mkdtemp()
-        chroma_dir = f"{temp_dir}/chroma"
         db_path = f"{temp_dir}/test.db"
 
         # Create separate configs
@@ -119,8 +118,7 @@ class TestIntegration:
         query_config = QueryConfig(budget_tokens=500)
         operational_config = OperationalConfig(
             openai_api_key="test-key",
-            chroma_persist_directory=chroma_dir,
-            sqlite_database_url=f"sqlite:///{db_path}",
+            database_url=f"postgresql:///{db_path}",
         )
 
         store = Store(operational_config, embedding_model=index_config.embedding_model)

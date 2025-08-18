@@ -124,11 +124,10 @@ class TestRetrieverBug:
 
         # Mock the vector search to return only L3
         # This simulates what happens with --num-seeds 1 when L3 is most relevant
-        def mock_query_chroma(embedding, n_results, document_id=None):
-            # Return L3 as the only result
-            return {"ids": [["L3"]], "distances": [[0.1]]}
+        def mock_search_similar(embedding, n_results, where=None):
+            return [("L3", 0.95, {})]
 
-        store.query_chroma = mock_query_chroma
+        store.search_similar = mock_search_similar
 
         # Mock the query embedding generation
         retriever._get_query_embedding = lambda query, document_id=None: [0.3] * 1536
@@ -153,10 +152,10 @@ class TestRetrieverBug:
         config, store, retriever = setup_tree_for_bug_demo
 
         # Mock vector search to return only L3
-        def mock_query_chroma(embedding, n_results, document_id=None):
-            return {"ids": [["L3"]], "distances": [[0.1]]}
+        def mock_search_similar(embedding, n_results, where=None):
+            return [("L3", 0.95, {})]
 
-        store.query_chroma = mock_query_chroma
+        store.search_similar = mock_search_similar
 
         # Mock the query embedding generation
         retriever._get_query_embedding = lambda query, document_id=None: [0.3] * 1536

@@ -31,12 +31,8 @@ class BackwardCompatibilityConfig:
         return self.operational_config.openai_api_key
 
     @property
-    def sqlite_database_url(self) -> str:
-        return self.operational_config.sqlite_database_url
-
-    @property
-    def chroma_persist_directory(self) -> str:
-        return self.operational_config.chroma_persist_directory
+    def database_url(self) -> str:
+        return self.operational_config.database_url
 
     @property
     def target_chunk_tokens(self) -> int:
@@ -121,8 +117,7 @@ def base_config() -> BackwardCompatibilityConfig:
     )
     operational_config = OperationalConfig(
         openai_api_key="test-key",
-        sqlite_database_url="sqlite:///:memory:",
-        chroma_persist_directory=":memory:",  # Will be overridden for real store
+        database_url="postgresql://localhost/ragzoom_test",
     )
     return BackwardCompatibilityConfig(index_config, query_config, operational_config)
 
@@ -139,11 +134,9 @@ def mock_store(base_config) -> Generator[SimpleMockStore, None, None]:
 def real_store(base_config) -> Generator[Store, None, None]:
     """Create a real store for integration testing."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Create operational config with real directory for ChromaDB
         operational_config = OperationalConfig(
             openai_api_key=base_config.openai_api_key,
-            sqlite_database_url=base_config.sqlite_database_url,
-            chroma_persist_directory=temp_dir,
+            database_url=base_config.database_url,
         )
         store = Store(
             operational_config, embedding_model=base_config.index_config.embedding_model

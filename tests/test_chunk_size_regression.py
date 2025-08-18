@@ -93,17 +93,15 @@ class TestChunkSizeRegression:
         """Test that indexed chunks in the database have the correct token size."""
         # Set up test environment
         monkeypatch.setenv(
-            "RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmp_path}/test.db"
+            "RAGZOOM_DATABASE_URL", f"postgresql:///{tmp_path}/test.db"
         )
-        monkeypatch.setenv("RAGZOOM_CHROMA_PERSIST_DIRECTORY", str(tmp_path / "chroma"))
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
         # Create separate configs
         index_config = IndexConfig.load(target_chunk_tokens=200)
         operational_config = OperationalConfig(
             openai_api_key="test-key",
-            sqlite_database_url=f"sqlite:///{tmp_path}/test.db",
-            chroma_persist_directory=str(tmp_path / "chroma"),
+            database_url=f"postgresql:///{tmp_path}/test.db",
         )
 
         store = Store(operational_config, embedding_model=index_config.embedding_model)

@@ -43,11 +43,11 @@ The system is composed of several key modules that work together.
 
 -   **`ragzoom.index.TreeBuilder`**: The component responsible for building the node tree from a source document. It splits the text, creates leaf nodes, and then recursively calls an LLM to generate parent summaries in a bottom-up fashion.
 
--   **`ragzoom.store.Store`**: The persistence layer. It uses a dual-backend approach:
-    -   **SQLite (`sqlalchemy`):** Stores the tree structure, node metadata (ID, parent/child relationships, spans), and the summary text. Note: Depth is calculated dynamically, not stored.
-    -   **ChromaDB (`chromadb`):** Stores vector embeddings of the node summaries for efficient semantic search.
-    -   **LRU Cache**: In-memory cache for frequently accessed nodes (default: 1000 nodes).
-    -   **Node IDs**: Generated as UUIDs using `uuid.uuid4()`.
+-   **`ragzoom.store.Store`**: The persistence layer backed by a single
+    PostgreSQL database with the `pgvector` extension. Both the tree structure
+    and vector embeddings live in one transactional store, ensuring atomic
+    updates. An LRU cache keeps frequently accessed nodes in memory (default:
+    1000 nodes). Node IDs are generated as UUIDs using `uuid.uuid4()`.
 
 -   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent node or recurse into children for higher detail. Budget is split proportionally based on relevance scores. For a comprehensive technical deep dive into this algorithm, see [The Tiling Algorithm: Deep Dive](deep-dives/tiling-algorithm.md).
 
@@ -80,11 +80,11 @@ graph TD;
 graph TD;
     A[Query] --> B(Retriever);
     B --> C{Embedding Search};
-    C --> D(Store - ChromaDB);
+    C --> D(Store - PostgreSQL);
     D -- Seed Nodes --> B;
     B -- MMR Selection --> B2{Coverage Map};
     B2 -- Root Node & Scores --> E(DynamicTilingGenerator);
-    E -- Requests Nodes --> F(Store - SQLite);
+    E -- Requests Nodes --> F(Store - PostgreSQL);
     F -- Node Data --> E;
     E -- Optimal Tiling --> B;
     B -- Node IDs --> G(Assembler);

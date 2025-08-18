@@ -269,8 +269,7 @@ ragzoom index document.txt --config my-config.json --max-retries 3
 - `mmr_k_multiplier`: Retrieve k_multiplier * N_max candidates (default: 2.0)
 
 #### Operational Parameters
-- `chroma_dir`: Chroma persistence directory (default: "./chroma_db")
-- `database_url`: SQLite database URL (default: "sqlite:///./ragzoom.db")
+- `database_url`: PostgreSQL database URL (default: "postgresql://localhost/ragzoom")
 - `cache_size`: LRU cache size (default: 1000)
 - `log_level`: Logging level: DEBUG, INFO, WARNING, ERROR (default: "INFO")
 
@@ -311,7 +310,7 @@ ragzoom index doc.txt --debug --validate --log-level DEBUG
 ```
 ragzoom/
 ├── splitter.py      # Text chunking with boundary awareness
-├── store.py         # SQLite + Chroma storage layer
+├── store.py         # PostgreSQL storage layer with pgvector
 ├── index.py         # Tree building and summarization
 ├── retrieve.py      # MMR-based retrieval logic
 ├── assemble.py      # Tiling assembly

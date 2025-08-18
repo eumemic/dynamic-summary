@@ -88,10 +88,7 @@ class TestDocumentAPI:
         with tempfile.TemporaryDirectory() as tmpdir:
             monkeypatch.setenv("OPENAI_API_KEY", "test-key")
             monkeypatch.setenv(
-                "RAGZOOM_CHROMA_PERSIST_DIRECTORY", os.path.join(tmpdir, "chroma")
-            )
-            monkeypatch.setenv(
-                "RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmpdir}/test.db"
+                "RAGZOOM_DATABASE_URL", f"postgresql:///{tmpdir}/test.db"
             )
 
             with TestClient(app) as client:

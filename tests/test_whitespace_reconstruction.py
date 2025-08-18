@@ -46,7 +46,7 @@ class TestWhitespaceReconstruction:
     @pytest.fixture
     def setup(self, mock_openai):
         """Setup test environment."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory():
             # Create separate configs
             index_config = IndexConfig.load(
                 target_chunk_tokens=50,  # Reasonable chunk size
@@ -55,8 +55,7 @@ class TestWhitespaceReconstruction:
             query_config = QueryConfig(budget_tokens=1000)
             operational_config = OperationalConfig(
                 openai_api_key="test-key",
-                chroma_persist_directory=temp_dir,
-                sqlite_database_url="sqlite:///:memory:",
+                database_url="postgresql:///:memory:",
             )
 
             store = Store(
