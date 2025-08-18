@@ -255,9 +255,30 @@ jobs:
           echo "Running query performance benchmarks (subset for CI)..."
           # Run a limited set of query benchmarks for CI (3 configurations)
           # Full matrix would be 3x3x3=27 tests, too expensive for every PR
-          if ! pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "10-2000-specific or 10-2000-broad or 10-2000-complex" -v; then
-            echo "⚠️ Query benchmarks failed but continuing..."
+          
+          failed_configs=""
+          
+          # Test each configuration individually to track specific failures
+          for config in "10-2000-specific" "10-2000-broad" "10-2000-complex"; do
+            echo "Testing configuration: $config"
+            if ! pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v --tb=short; then
+              echo "❌ Query benchmark failed for: $config"
+              if [ -z "$failed_configs" ]; then
+                failed_configs="$config"
+              else
+                failed_configs="$failed_configs, $config"
+              fi
+            else
+              echo "✅ Query benchmark passed for: $config"
+            fi
+          done
+          
+          if [ -n "$failed_configs" ]; then
             echo "QUERY_BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
+            echo "QUERY_FAILED_CONFIGS=$failed_configs" >> $GITHUB_OUTPUT
+            echo "⚠️ Query benchmarks failed for: $failed_configs"
+          else
+            echo "✅ All query benchmarks passed"
           fi
       
       - name: Update comment - benchmarks complete
@@ -620,6 +641,16 @@ jobs:
             } else if (report) {
               // Add the comparison report first (includes verbatim check)
               body += report;
+              
+              // Add query benchmark status if there were failures
+              const queryFailed = `${{ steps.query_benchmark.outputs.QUERY_BENCHMARK_FAILED }}` === 'true';
+              const failedConfigs = `${{ steps.query_benchmark.outputs.QUERY_FAILED_CONFIGS }}`;
+              
+              if (queryFailed && failedConfigs) {
+                body += `\n### ⚠️ Query Benchmark Failures\n\n`;
+                body += `Some query performance benchmarks failed: **${failedConfigs}**\n\n`;
+                body += `This may indicate issues with query processing or API connectivity.\n\n`;
+              }
               
               // Add visualization after the report if it was generated
               if (visualizationUrl) {

@@ -136,11 +136,13 @@ class Retriever:
             # Mode 2: Budget + num_seeds - will enforce both constraints
             logger.info(f"Mixed mode: num_seeds={num_seeds}, budget={budget_tokens}")
         elif num_seeds is None:
-            # Mode 3: num_seeds only (using default)
-            # Use a reasonable default chunk size for calculation
-            default_chunk_size = 256
-            num_seeds = self.query_config.budget_tokens // default_chunk_size
-            logger.info(f"num_seeds-only mode: using num_seeds={num_seeds}")
+            # Mode 3: Neither provided - use config default budget_tokens to calculate num_seeds
+            num_seeds = self._calculate_conservative_num_seeds(
+                self.query_config.budget_tokens, document_id
+            )
+            logger.info(
+                f"Default mode: calculated conservative num_seeds={num_seeds} from budget={self.query_config.budget_tokens}"
+            )
 
         # Get query embedding (auto-detect model from document if provided)
         query_embedding = self._get_query_embedding(query, document_id)
@@ -159,13 +161,8 @@ class Retriever:
             query_embedding, candidates, self.query_config.mmr_lambda, num_seeds
         )
 
-        # Step 3: Build coverage map (selected + ancestors)
-        coverage_map = self._build_coverage_map(selected_ids)
-
-        # Step 4: Apply pinned nodes
-        pinned_nodes = self.store.get_pinned_nodes(self.store.PIN_DEPTH_MAX)
-        for node in pinned_nodes:
-            coverage_map[node.id] = True
+        # Step 3: Build coverage map (selected + ancestors + pinned nodes)
+        coverage_map = self._build_complete_coverage_map(selected_ids)
 
         # Build scores map - compute similarity for ALL nodes in coverage map
         scores = {}
@@ -259,7 +256,7 @@ class Retriever:
             nodes=nodes,
         )
 
-    # jscpd:ignore-start
+    # jscpd:ignore-start - Sync wrapper for async method (legitimate duplication pattern)
     def retrieve(
         self,
         query: str,
@@ -325,24 +322,50 @@ class Retriever:
                 break
         return coverage_map
 
+    def _build_complete_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
+        """Build complete coverage map including selected nodes, ancestors, and pinned nodes."""
+        # Build base coverage map (selected + ancestors + siblings for coverage property)
+        coverage_map = self._build_coverage_map(selected_ids)
+
+        # Add pinned nodes
+        pinned_nodes = self.store.get_pinned_nodes(self.store.PIN_DEPTH_MAX)
+        for node in pinned_nodes:
+            coverage_map[node.id] = True
+
+        return coverage_map
+
     def _calculate_conservative_num_seeds(
         self, budget_tokens: int, document_id: str | None = None
     ) -> int:
         """Calculate conservative num_seeds using efficient SQL aggregation."""
 
         if not document_id:
-            # Fallback when no document is specified - use reasonable default
-            return max(1, budget_tokens // 256)  # 256 tokens per node estimate
+            # Cross-document query: use conservative estimate based on typical chunk size
+            # This should be rare - most queries specify document_id for better cost estimation
+            from ragzoom.config import IndexConfig
+
+            # Use the default target chunk size as a reasonable estimate for cross-document queries
+            default_config = IndexConfig.load()
+            estimated_chunk_size = default_config.target_chunk_tokens
+            logger.info(
+                f"Cross-document query: using estimated chunk size {estimated_chunk_size} for num_seeds calculation"
+            )
+            return max(1, int(budget_tokens // estimated_chunk_size))
 
         # Get token statistics using efficient SQL query
         stats = self.store.get_document_token_stats(document_id)
 
         if not stats["node_count"] or not stats["avg_tokens"]:
-            # Fallback if no nodes with token counts are found
+            # Document has no nodes or missing token stats - fall back to config default
+            from ragzoom.config import IndexConfig
+
+            default_config = IndexConfig.load()
+            estimated_chunk_size = default_config.target_chunk_tokens
             logger.warning(
-                f"No nodes found for document {document_id}, using default estimate"
+                f"Document {document_id} has no token statistics. "
+                f"Using default chunk size estimate: {estimated_chunk_size}"
             )
-            return max(1, budget_tokens // 256)  # Default fallback
+            return max(1, int(budget_tokens // estimated_chunk_size))
 
         # Add a small safety buffer (e.g., 25%) to the average to be safe
         safe_average_cost = stats["avg_tokens"] * 1.25
@@ -350,7 +373,7 @@ class Retriever:
 
         return conservative_num_seeds
 
-    # jscpd:ignore-start
+    # jscpd:ignore-start - Telemetry version duplicates core logic (measurement overhead)
     async def retrieve_with_telemetry(
         self,
         query: str,
@@ -389,10 +412,13 @@ class Retriever:
             # Mode 2: Budget + num_seeds - will enforce both constraints
             logger.info(f"Mixed mode: num_seeds={num_seeds}, budget={budget_tokens}")
         elif num_seeds is None:
-            # Mode 3: num_seeds only (using default)
-            default_chunk_size = 256
-            num_seeds = self.query_config.budget_tokens // default_chunk_size
-            logger.info(f"num_seeds-only mode: using num_seeds={num_seeds}")
+            # Mode 3: Neither provided - use config default budget_tokens to calculate num_seeds
+            num_seeds = self._calculate_conservative_num_seeds(
+                self.query_config.budget_tokens, document_id
+            )
+            logger.info(
+                f"Default mode: calculated conservative num_seeds={num_seeds} from budget={self.query_config.budget_tokens}"
+            )
 
         telemetry.seeds_requested = num_seeds
 
@@ -423,14 +449,9 @@ class Retriever:
         telemetry.mmr_time = time.perf_counter() - start
         telemetry.seeds_found = len(selected_ids)
 
-        # Phase 4: Build coverage map (selected + ancestors)
+        # Phase 4: Build coverage map (selected + ancestors + pinned nodes)
         start = time.perf_counter()
-        coverage_map = self._build_coverage_map(selected_ids)
-
-        # Apply pinned nodes
-        pinned_nodes = self.store.get_pinned_nodes(self.store.PIN_DEPTH_MAX)
-        for node in pinned_nodes:
-            coverage_map[node.id] = True
+        coverage_map = self._build_complete_coverage_map(selected_ids)
         telemetry.coverage_map_time = time.perf_counter() - start
         telemetry.coverage_size = len(coverage_map)
 
