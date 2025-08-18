@@ -106,7 +106,7 @@ def test_indexing_performance(leaf_tokens, document_type):
         simplified = compute_simplified_metrics(telemetry)
 
         # Get metrics for this chunk size
-        chunk_metrics = simplified.metrics_by_chunk_size.get(leaf_tokens, {})
+        chunk_metrics = simplified.metrics_by_chunk_size.get(leaf_tokens)
 
         # Print summary
         print(f"\n=== Performance Summary ({doc_name}, leaf_tokens={leaf_tokens}) ===")
@@ -119,21 +119,31 @@ def test_indexing_performance(leaf_tokens, document_type):
         # Print new simplified metrics if available
         if chunk_metrics:
             print("\n--- Simplified Metrics ---")
-            for category, values in chunk_metrics.items():
-                print(f"\n{category.title()}:")
-                if isinstance(values, dict):
-                    for metric, value in values.items():
-                        # Handle different value types properly
-                        if isinstance(value, (int, float)):
-                            print(f"  {metric}: {value:.2f}")
-                        elif isinstance(value, list):
-                            print(f"  {metric}: {len(value)} items")
-                        elif isinstance(value, dict):
-                            print(f"  {metric}: {value}")
-                        else:
-                            print(f"  {metric}: {value}")
-                else:
-                    print(f"  {values}")
+            # ChunkMetrics is now a dataclass with typed attributes
+            if hasattr(chunk_metrics, 'target_fit'):
+                print("\nTarget Fit:")
+                tf = chunk_metrics.target_fit
+                print(f"  median_error: {tf.median_error:.2f}")
+                print(f"  p95_error: {tf.p95_error:.2f}")
+                print(f"  percent_within_10: {tf.percent_within_10:.2f}")
+            
+            if hasattr(chunk_metrics, 'retries'):
+                print("\nRetries:")
+                r = chunk_metrics.retries
+                print(f"  retry_rate: {r.retry_rate:.2f}")
+                print(f"  max_retries: {r.max_retries:.0f}")
+            
+            if hasattr(chunk_metrics, 'latency'):
+                print("\nLatency:")
+                l = chunk_metrics.latency
+                print(f"  median_seconds: {l.median_seconds:.2f}")
+                print(f"  total_indexing_seconds: {l.total_indexing_seconds:.2f}")
+            
+            if hasattr(chunk_metrics, 'cost'):
+                print("\nCost:")
+                c = chunk_metrics.cost
+                print(f"  usd_per_node: ${c.usd_per_node:.4f}")
+                print(f"  total_tokens: {c.total_tokens:,}")
 
         # Summary accuracy (simplified - using only available properties)
         if hasattr(basic_metrics, "summary_stats") and basic_metrics.summary_stats:

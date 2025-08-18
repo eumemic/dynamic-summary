@@ -324,12 +324,12 @@ class TestTelemetryCompare:
 
         # Check that dynamic threshold was computed
         assert threshold.is_computed is True
-        assert threshold.baseline_variance == metrics["target_fit"]["error_mad"]
+        assert threshold.baseline_variance == metrics.target_fit.error_mad
         assert threshold.k_factors == (3.0, 2.0)
 
         # The MAD comes from the actual data - errors are [-50, -52, -48]
         # Median error = -50, MAD = median([0, 2, 2]) = 2.0
-        expected_mad = metrics["target_fit"]["error_mad"]
+        expected_mad = metrics.target_fit.error_mad
         if expected_mad == 0.0:  # Zero variance means no threshold
             assert threshold.absolute_value is None
             assert not threshold.is_computed

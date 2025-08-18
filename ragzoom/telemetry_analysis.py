@@ -97,13 +97,87 @@ class VerbatimDetectionResult(TypedDict):
 
 
 @dataclass
+class TargetFitMetrics:
+    """Metrics for target-fit accuracy."""
+
+    median_error: float
+    p95_error: float
+    percent_within_10: float
+    max_overshoot: float
+    max_undershoot: float
+    error_mad: float
+    error_iqr: float
+    error_std: float
+    percent_within_10_mad: float
+    percent_within_10_std: float
+
+
+@dataclass
+class RetryMetrics:
+    """Metrics for retry patterns."""
+
+    retry_rate: float
+    max_retries: float
+    retry_mad: float
+    retry_std: float
+
+
+@dataclass
+class LatencyMetrics:
+    """Metrics for processing latency."""
+
+    median_seconds: float
+    p95_seconds: float
+    total_indexing_seconds: float
+    latency_mad: float
+    latency_iqr: float
+    latency_std: float
+
+
+@dataclass
+class CostMetrics:
+    """Metrics for cost analysis."""
+
+    total_prompt_tokens: int
+    total_completion_tokens: int
+    total_tokens: int
+    usd_per_node: float
+    cost_mad: float
+    cost_iqr: float
+    cost_std: float
+
+
+@dataclass
+class DispersionMetrics:
+    """Metrics for data dispersion."""
+
+    mad: float
+    iqr: float
+    p25: float
+    p75: float
+    cv: float
+    std: float
+
+
+@dataclass
+class ChunkMetrics:
+    """All metrics for a specific chunk size."""
+
+    target_fit: TargetFitMetrics
+    retries: RetryMetrics
+    latency: LatencyMetrics
+    cost: CostMetrics
+    dispersion: DispersionMetrics
+
+
+@dataclass
 class SimplifiedMetrics:
     """Simplified metrics structure organized by chunk size."""
 
-    metrics_by_chunk_size: dict[int, dict[str, Any]]
+    metrics_by_chunk_size: dict[int, ChunkMetrics]
 
 
-def compute_simplified_metrics(telemetry_data: dict) -> SimplifiedMetrics:
+def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetrics:
     """Compute simplified metrics from telemetry data.
 
     Args:
@@ -176,25 +250,23 @@ def compute_simplified_metrics(telemetry_data: dict) -> SimplifiedMetrics:
     for target_size in sorted(nodes_by_target.keys()):
         chunk_nodes = nodes_by_target[target_size]
         if chunk_nodes:
-            metrics_by_chunk_size[target_size] = {
-                "target_fit": compute_target_fit_metrics(chunk_nodes, target_size),
-                "retries": compute_retry_metrics(chunk_nodes),
-                "latency": compute_latency_metrics(chunk_nodes),
-                "cost": compute_cost_metrics(
+            metrics_by_chunk_size[target_size] = ChunkMetrics(
+                target_fit=compute_target_fit_metrics(chunk_nodes, target_size),
+                retries=compute_retry_metrics(chunk_nodes),
+                latency=compute_latency_metrics(chunk_nodes),
+                cost=compute_cost_metrics(
                     chunk_nodes,
                     {"summary": summary_model, "embedding": embedding_model},
                 ),
-                "dispersion": compute_dispersion_metrics(chunk_nodes),
-                # Verbatim detection removed - use scripts/analyze-outlier-nodes.py instead
-                # which properly ignores passthrough nodes and undershoots
-            }
+                dispersion=compute_dispersion_metrics(chunk_nodes),
+            )
 
     return SimplifiedMetrics(metrics_by_chunk_size=metrics_by_chunk_size)
 
 
 def compute_target_fit_metrics(
     nodes: list[NodeTelemetryDict], target_size: int
-) -> dict[str, float]:
+) -> TargetFitMetrics:
     """Compute target-fit accuracy metrics.
 
     Returns:
@@ -235,19 +307,18 @@ def compute_target_fit_metrics(
                     max_undershoot = error
 
     if not errors:
-        return {
-            "median_error": 0.0,
-            "p95_error": 0.0,
-            "percent_within_10": 0.0,
-            "max_overshoot": 0.0,
-            "max_undershoot": 0.0,
-            "error_mad": 0.0,
-            "error_iqr": 0.0,
-            "error_std": 0.0,
-            "percent_within_10_mad": 0.0,
-            "percent_within_10_iqr": 0.0,
-            "percent_within_10_std": 0.0,
-        }
+        return TargetFitMetrics(
+            median_error=0.0,
+            p95_error=0.0,
+            percent_within_10=0.0,
+            max_overshoot=0.0,
+            max_undershoot=0.0,
+            error_mad=0.0,
+            error_iqr=0.0,
+            error_std=0.0,
+            percent_within_10_mad=0.0,
+            percent_within_10_std=0.0,
+        )
 
     sorted_errors = sorted(errors)
     median_error = median(sorted_errors)
@@ -279,12 +350,6 @@ def compute_target_fit_metrics(
         ]
         percent_within_10_mad = median(absolute_deviations)
 
-        # Calculate IQR
-        sorted_within_10 = sorted(percent_within_10_values)
-        p25_within_10 = _compute_percentile(sorted_within_10, 0.25)
-        p75_within_10 = _compute_percentile(sorted_within_10, 0.75)
-        percent_within_10_iqr = p75_within_10 - p25_within_10
-
         # Calculate standard deviation
         if len(percent_within_10_values) > 1:
             percent_within_10_std = statistics.stdev(percent_within_10_values)
@@ -292,25 +357,23 @@ def compute_target_fit_metrics(
             percent_within_10_std = 0.0
     else:
         percent_within_10_mad = 0.0
-        percent_within_10_iqr = 0.0
         percent_within_10_std = 0.0
 
-    return {
-        "median_error": median_error,
-        "p95_error": p95_error,
-        "percent_within_10": percent_within_10,
-        "max_overshoot": max_overshoot,
-        "max_undershoot": max_undershoot,
-        "error_mad": error_mad,
-        "error_iqr": error_iqr,
-        "error_std": error_std,
-        "percent_within_10_mad": percent_within_10_mad,
-        "percent_within_10_iqr": percent_within_10_iqr,
-        "percent_within_10_std": percent_within_10_std,
-    }
+    return TargetFitMetrics(
+        median_error=median_error,
+        p95_error=p95_error,
+        percent_within_10=percent_within_10,
+        max_overshoot=max_overshoot,
+        max_undershoot=max_undershoot,
+        error_mad=error_mad,
+        error_iqr=error_iqr,
+        error_std=error_std,
+        percent_within_10_mad=percent_within_10_mad,
+        percent_within_10_std=percent_within_10_std,
+    )
 
 
-def compute_retry_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
+def compute_retry_metrics(nodes: list[NodeTelemetryDict]) -> RetryMetrics:
     """Compute retry efficiency metrics.
 
     Returns:
@@ -344,30 +407,23 @@ def compute_retry_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
         absolute_deviations = [abs(r - median_retries) for r in node_retries_list]
         retry_mad = median(absolute_deviations)
 
-        sorted_retries = sorted(float(r) for r in node_retries_list)
-        p25_retries = _compute_percentile(sorted_retries, 0.25)
-        p75_retries = _compute_percentile(sorted_retries, 0.75)
-        retry_iqr = p75_retries - p25_retries
-
         if len(node_retries_list) > 1:
             retry_std = statistics.stdev(node_retries_list)
         else:
             retry_std = 0.0
     else:
         retry_mad = 0.0
-        retry_iqr = 0.0
         retry_std = 0.0
 
-    return {
-        "retry_rate": retry_rate,
-        "max_retries": max_retries,
-        "retry_mad": retry_mad,
-        "retry_iqr": retry_iqr,
-        "retry_std": retry_std,
-    }
+    return RetryMetrics(
+        retry_rate=retry_rate,
+        max_retries=float(max_retries),
+        retry_mad=retry_mad,
+        retry_std=retry_std,
+    )
 
 
-def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
+def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> LatencyMetrics:
     """Compute latency metrics.
 
     Returns:
@@ -401,14 +457,14 @@ def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
             total_time += node_time
 
     if not node_times:
-        return {
-            "median_seconds": 0.0,
-            "p95_seconds": 0.0,
-            "total_indexing_seconds": 0.0,
-            "latency_mad": 0.0,
-            "latency_iqr": 0.0,
-            "latency_std": 0.0,
-        }
+        return LatencyMetrics(
+            median_seconds=0.0,
+            p95_seconds=0.0,
+            total_indexing_seconds=0.0,
+            latency_mad=0.0,
+            latency_iqr=0.0,
+            latency_std=0.0,
+        )
 
     sorted_times = sorted(node_times)
     median_seconds = median(sorted_times)
@@ -427,19 +483,19 @@ def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, float]:
     else:
         latency_std = 0.0
 
-    return {
-        "median_seconds": median_seconds,
-        "p95_seconds": p95_seconds,
-        "total_indexing_seconds": total_time,
-        "latency_mad": latency_mad,
-        "latency_iqr": latency_iqr,
-        "latency_std": latency_std,
-    }
+    return LatencyMetrics(
+        median_seconds=median_seconds,
+        p95_seconds=p95_seconds,
+        total_indexing_seconds=total_time,
+        latency_mad=latency_mad,
+        latency_iqr=latency_iqr,
+        latency_std=latency_std,
+    )
 
 
 def compute_cost_metrics(
     nodes: list[NodeTelemetryDict], models: dict[str, str]
-) -> dict[str, float]:
+) -> CostMetrics:
     """Compute cost and token metrics.
 
     Args:
@@ -529,18 +585,18 @@ def compute_cost_metrics(
         cost_iqr = 0.0
         cost_std = 0.0
 
-    return {
-        "total_prompt_tokens": total_prompt_tokens,
-        "total_completion_tokens": total_completion_tokens,
-        "total_tokens": total_tokens,
-        "usd_per_node": usd_per_node,
-        "cost_mad": cost_mad,
-        "cost_iqr": cost_iqr,
-        "cost_std": cost_std,
-    }
+    return CostMetrics(
+        total_prompt_tokens=total_prompt_tokens,
+        total_completion_tokens=total_completion_tokens,
+        total_tokens=total_tokens,
+        usd_per_node=usd_per_node,
+        cost_mad=cost_mad,
+        cost_iqr=cost_iqr,
+        cost_std=cost_std,
+    )
 
 
-def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]:
+def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> DispersionMetrics:
     """Compute comprehensive dispersion metrics.
 
     Returns:
@@ -562,14 +618,14 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]
                 actual_tokens.append(tokens)
 
     if not actual_tokens:
-        return {
-            "mad": 0.0,
-            "iqr": 0.0,
-            "p25": 0.0,
-            "p75": 0.0,
-            "cv": 0.0,
-            "std": 0.0,
-        }
+        return DispersionMetrics(
+            mad=0.0,
+            iqr=0.0,
+            p25=0.0,
+            p75=0.0,
+            cv=0.0,
+            std=0.0,
+        )
 
     # Calculate MAD: median(|x_i - median(x)|)
     median_tokens = median(actual_tokens)
@@ -591,14 +647,14 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> dict[str, Any]
         std = 0.0
         cv = 0.0
 
-    return {
-        "mad": mad,
-        "iqr": iqr,
-        "p25": p25,
-        "p75": p75,
-        "cv": cv,
-        "std": std,
-    }
+    return DispersionMetrics(
+        mad=mad,
+        iqr=iqr,
+        p25=p25,
+        p75=p75,
+        cv=cv,
+        std=std,
+    )
 
 
 def detect_verbatim_concatenations(
@@ -831,7 +887,7 @@ class TelemetryAnalysisError(Exception):
     pass
 
 
-def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
+def parse_telemetry_format(telemetry_data: dict[str, Any]) -> TelemetryDataDict:
     """Parse telemetry data.
 
     Args:
@@ -866,7 +922,7 @@ def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
     raise TelemetryAnalysisError(f"Unhandled telemetry version: {format_version}")
 
 
-def compute_batch_efficiency(telemetry_data: dict) -> BatchEfficiencyDict:
+def compute_batch_efficiency(telemetry_data: dict[str, Any]) -> BatchEfficiencyDict:
     """Analyze embedding batch utilization from telemetry data.
 
     Args:
@@ -963,7 +1019,7 @@ def get_accepted_attempt(
     return summary_attempts[-1], len(summary_attempts) - 1
 
 
-def analyze_retry_patterns(telemetry_data: dict) -> RetryAnalysisDict:
+def analyze_retry_patterns(telemetry_data: dict[str, Any]) -> RetryAnalysisDict:
     """Analyze summary retry patterns from telemetry data.
 
     Args:
@@ -1096,7 +1152,7 @@ def analyze_retry_patterns(telemetry_data: dict) -> RetryAnalysisDict:
 
 
 def compute_summary_stats_from_telemetry(
-    telemetry_data: dict,
+    telemetry_data: dict[str, Any],
 ) -> dict[int, SummaryStats]:
     """Compute summary statistics from raw telemetry data.
 
@@ -1179,7 +1235,7 @@ class ComputedMetrics:
     nodes_per_height: list[int]
 
 
-def compute_metrics_from_telemetry(telemetry_data: dict) -> ComputedMetrics:
+def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMetrics:
     """Compute metrics from raw telemetry data.
 
     This function computes all metrics from raw telemetry data that were
