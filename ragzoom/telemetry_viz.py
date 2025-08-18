@@ -307,12 +307,18 @@ class TelemetryVisualizer:
 
         # Telemetry data already contains model information for cost calculations
 
-        # Create figure with side-by-side subplots (only 3 rows)
+        # Create figure with side-by-side subplots using built-in axis sharing
         if figsize is None:
             figsize = (
                 10,
                 14,
             )  # Half the width, slightly taller for double Summary Accuracy
+
+        # Create figure with GridSpec for flexible subplot arrangement
+        # Note: We can't use simple sharex='row' because each row has different x-axis semantics
+        # Row 1: Cost breakdown (categorical x-axis) - no x-sharing
+        # Row 2: Summary scatter (numeric x-axis) - needs x-sharing
+        # Row 3: Timeline (numeric x-axis) - needs x-sharing
         fig = plt.figure(figsize=figsize)
         gs = GridSpec(
             3,
@@ -331,60 +337,38 @@ class TelemetryVisualizer:
             y=0.97,
         )
 
-        # 1. Cost Breakdown
+        # 1. Cost Breakdown (no axis sharing needed)
         ax1_left = fig.add_subplot(gs[0, 0])
+        ax1_right = fig.add_subplot(gs[0, 1], sharey=ax1_left)
+
         self._plot_cost_breakdown(telemetry1, ax1_left)
         ax1_left.set_title("Cost Breakdown", fontsize=12)
 
-        ax1_right = fig.add_subplot(gs[0, 1])
         self._plot_cost_breakdown(telemetry2, ax1_right)
         ax1_right.set_title("Cost Breakdown", fontsize=12)
         ax1_right.set_ylabel("")  # Remove y-axis label
 
-        # Share y-axis scale for cost comparison
-        max_y = max(ax1_left.get_ylim()[1], ax1_right.get_ylim()[1])
-        ax1_left.set_ylim(0, max_y)
-        ax1_right.set_ylim(0, max_y)
-
-        # 2. Summary Compression Patterns
+        # 2. Summary Compression Patterns (share both axes)
         ax2_left = fig.add_subplot(gs[1, 0])
+        ax2_right = fig.add_subplot(gs[1, 1], sharex=ax2_left, sharey=ax2_left)
+
         self._plot_summary_scatter(telemetry1, ax2_left)
         ax2_left.set_title("Summary Compression Patterns", fontsize=12)
 
-        ax2_right = fig.add_subplot(gs[1, 1])
         self._plot_summary_scatter(telemetry2, ax2_right)
         ax2_right.set_title("Summary Compression Patterns", fontsize=12)
         ax2_right.set_ylabel("")  # Remove y-axis label
 
-        # Share both axes for scatter plots comparison
-        max_x = max(ax2_left.get_xlim()[1], ax2_right.get_xlim()[1])
-        min_x = min(ax2_left.get_xlim()[0], ax2_right.get_xlim()[0])
-        ax2_left.set_xlim(min_x, max_x)
-        ax2_right.set_xlim(min_x, max_x)
-
-        max_y = max(ax2_left.get_ylim()[1], ax2_right.get_ylim()[1])
-        min_y = min(ax2_left.get_ylim()[0], ax2_right.get_ylim()[0])
-        ax2_left.set_ylim(min_y, max_y)
-        ax2_right.set_ylim(min_y, max_y)
-
-        # 3. Tree Construction Timeline
+        # 3. Tree Construction Timeline (share both axes)
         ax3_left = fig.add_subplot(gs[2, 0])
+        ax3_right = fig.add_subplot(gs[2, 1], sharex=ax3_left, sharey=ax3_left)
+
         self._plot_tree_construction_timeline(telemetry1, ax3_left)
         ax3_left.set_title("Tree Construction Timeline", fontsize=12)
 
-        ax3_right = fig.add_subplot(gs[2, 1])
         self._plot_tree_construction_timeline(telemetry2, ax3_right)
         ax3_right.set_title("Tree Construction Timeline", fontsize=12)
         ax3_right.set_ylabel("")  # Remove y-axis label
-
-        # Share both axes for timeline comparison
-        max_x = max(ax3_left.get_xlim()[1], ax3_right.get_xlim()[1])
-        ax3_left.set_xlim(0, max_x)
-        ax3_right.set_xlim(0, max_x)
-
-        max_y = max(ax3_left.get_ylim()[1], ax3_right.get_ylim()[1])
-        ax3_left.set_ylim(0, max_y)
-        ax3_right.set_ylim(0, max_y)
 
         # Save figure
         self._ensure_output_dir()
