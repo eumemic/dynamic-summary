@@ -33,7 +33,8 @@ Merge the current PR and sync with master.
    ```
 3. **Merge**: `gh pr merge --squash` (GitHub auto-deletes the remote branch)
 4. **Sync with master**: `git fetch origin && git reset --hard origin/master`
-5. **Ready for next PR**: The worktree branch is now synced and ready for the next feature
+5. **Push to update remote**: `git push --force-with-lease origin` (sync remote worktree branch)
+6. **Ready for next PR**: The worktree branch is now synced and ready for the next feature
 
 ## Error Handling
 - No PR found → "Create PR first with /pr"
