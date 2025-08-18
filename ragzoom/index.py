@@ -16,15 +16,11 @@ from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store, TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
 
-# Convert tokens to words using experimentally-derived conversion factor
-# 0.75 (tokens->words) * 0.94 (bias compensation) = 0.705
-WORDS_PER_TOKEN = 0.75 * 0.94
-
-logger = logging.getLogger(__name__)
-
 # Token to word conversion factor from experiments (see issue #132):
 # 0.75 (tokens->words conversion) * 0.94 (bias compensation for systematic overshoot)
 WORDS_PER_TOKEN = 0.75 * 0.94
+
+logger = logging.getLogger(__name__)
 
 
 class TreeBuilder:
