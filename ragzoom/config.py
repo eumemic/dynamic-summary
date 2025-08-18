@@ -183,8 +183,12 @@ class OperationalConfig:
         if not self.openai_api_key:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
 
-        # Allow environment overrides for storage path (for testing)
-        if os.environ.get("RAGZOOM_DATABASE_URL"):
+        # Allow environment overrides for storage path only if using default value
+        # This ensures explicitly set database URLs (e.g., for test isolation) are not overridden
+        if (
+            self.database_url == "postgresql+psycopg://localhost/ragzoom"
+            and os.environ.get("RAGZOOM_DATABASE_URL")
+        ):
             self.database_url = os.environ["RAGZOOM_DATABASE_URL"]
 
     def replace(self, **changes: Any) -> "OperationalConfig":

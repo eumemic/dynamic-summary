@@ -250,6 +250,7 @@ def _create_real_store(base_config) -> Store | None:
 
         # Use test-specific database URL or create unique one
         base_db_url = base_config.database_url
+
         if "ragzoom_test" in base_db_url:
             # Always create unique database name for each test to ensure isolation
             unique_suffix = uuid.uuid4().hex[:8]

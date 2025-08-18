@@ -105,16 +105,18 @@ class TestIntegration:
             yield
 
     @pytest.fixture
-    def temp_system(self, request, mock_openai, store):
+    def temp_system(self, request, mock_openai, base_config):
         """Create a complete temporary RagZoom system."""
         # Check if we should use real PostgreSQL store or temporary SQLite
         use_real_store = request.config.getoption("--use-real-store", default=False)
 
         if use_real_store:
-            # Use the real PostgreSQL store for integration tests
-            if store is None:
+            # Create a fresh real PostgreSQL store for each test
+            from tests.conftest import _create_real_store
+
+            real_store = _create_real_store(base_config)
+            if real_store is None:
                 pytest.skip("PostgreSQL not available for integration test")
-            real_store = store
             temp_dir = None  # No cleanup needed for real store
         else:
             # Create temporary directory and SQLite store for fast tests
@@ -122,7 +124,7 @@ class TestIntegration:
             db_path = f"{temp_dir}/test.db"
             operational_config = OperationalConfig(
                 openai_api_key="test-key",
-                database_url=f"postgresql:///{db_path}",
+                database_url=f"sqlite:///{db_path}",  # Use SQLite URL for fast tests
             )
             real_store = Store(
                 operational_config, embedding_model="text-embedding-3-small"
@@ -158,8 +160,34 @@ class TestIntegration:
 
         yield config, real_store, tree_builder, retriever, assembler
 
-        # Cleanup - only cleanup temp SQLite, not real store
-        if not use_real_store and temp_dir:
+        # Cleanup
+        if use_real_store:
+            # Cleanup real PostgreSQL store and unique database
+            if hasattr(real_store, "_test_db_cleanup"):
+                cleanup_info = real_store._test_db_cleanup
+                try:
+                    from sqlalchemy import create_engine, text
+
+                    admin_engine = create_engine(
+                        cleanup_info["admin_url"], isolation_level="AUTOCOMMIT"
+                    )
+                    with admin_engine.connect() as conn:
+                        # Terminate connections and drop database
+                        conn.execute(
+                            text(
+                                "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = :db_name AND pid <> pg_backend_pid()"
+                            ),
+                            {"db_name": cleanup_info["db_name"]},
+                        )
+                        conn.execute(
+                            text(f"DROP DATABASE IF EXISTS {cleanup_info['db_name']}")
+                        )  # nosec B608
+                    admin_engine.dispose()
+                except Exception:
+                    pass  # Ignore cleanup errors
+            real_store.close()
+        elif temp_dir:
+            # Cleanup temp SQLite
             real_store.close()
             shutil.rmtree(temp_dir, ignore_errors=True)
 
