@@ -152,20 +152,16 @@ class TokenPositionResolver(PositionResolver):
                     # If child is covered but has zero cost, use its full text cost
                     if left_cost == 0.0 and node.left_child_id in self.coverage_map:
                         left_child = self.store.get_node(node.left_child_id)
-                        if left_child and left_child.text:
-                            left_cost = float(
-                                len(self.tokenizer.encode(left_child.text))
-                            )
+                        if left_child:
+                            left_cost = float(left_child.token_count)
 
                 if node.right_child_id:
                     right_cost = compute_cost(node.right_child_id)
                     # If child is covered but has zero cost, use its full text cost
                     if right_cost == 0.0 and node.right_child_id in self.coverage_map:
                         right_child = self.store.get_node(node.right_child_id)
-                        if right_child and right_child.text:
-                            right_cost = float(
-                                len(self.tokenizer.encode(right_child.text))
-                            )
+                        if right_child:
+                            right_cost = float(right_child.token_count)
 
                 total_cost = left_cost + right_cost
 
@@ -292,8 +288,8 @@ def build_ascii_tree(
             node_infos = []
             for node_id in tiling:
                 node = store.get_node(node_id)
-                if node and node.text:
-                    token_cost = len(tokenizer.encode(node.text))
+                if node:
+                    token_cost = node.token_count
                     node_infos.append(
                         SimpleNodeInfo(
                             node_id=node_id,

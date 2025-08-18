@@ -100,7 +100,15 @@ class SimpleMockStore:
                 f"got {len(embedding)}"
             )
 
-        # Create node
+        # Create node - compute token_count if not provided
+        import tiktoken
+
+        if "token_count" not in kwargs:
+            tokenizer = tiktoken.get_encoding("cl100k_base")
+            token_count = len(tokenizer.encode(text))
+        else:
+            token_count = kwargs.get("token_count")
+
         node = SimpleNamespace(
             id=node_id,
             text=text,
@@ -110,7 +118,7 @@ class SimpleMockStore:
             document_id=document_id,
             left_child_id=left_child_id,
             right_child_id=right_child_id,
-            token_count=kwargs.get("token_count"),
+            token_count=token_count,
             preceding_neighbor_id=kwargs.get("preceding_neighbor_id"),
             is_pinned=kwargs.get("is_pinned", False),
             access_count=0,
