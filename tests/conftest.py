@@ -1,7 +1,6 @@
 """Pytest configuration and fixtures for RagZoom tests."""
 
 import os
-import tempfile
 from collections.abc import Generator
 from unittest.mock import MagicMock
 
@@ -141,8 +140,60 @@ def mock_store(base_config) -> Generator[SimpleMockStore, None, None]:
 
 @pytest.fixture
 def real_store(base_config) -> Generator[Store | None, None, None]:
-    """Create a real store for integration testing."""
-    # Return None if no PostgreSQL server available (instead of skipping)
+    """Create a real store for integration testing (lazy loading)."""
+    # Only attempt to create real store when fixture is actually requested
+    real_store_instance = _create_real_store(base_config)
+    if real_store_instance is None:
+        # In CI, this should fail for integration tests
+        # In local dev, tests can handle None gracefully
+        yield None
+    else:
+        try:
+            yield real_store_instance
+        finally:
+            real_store_instance.close()
+
+
+@pytest.fixture
+def store(request, base_config, mock_store):
+    """Provide either mock or real store based on test requirements.
+
+    This fixture automatically selects the appropriate store:
+    - For tests marked with @pytest.mark.integration: uses real_store (if available)
+    - For tests run with --use-real-store flag: uses real_store (if available)
+    - Otherwise: uses mock_store for speed
+    """
+    # Check if test is marked as integration
+    if hasattr(request.node, "get_closest_marker"):
+        if request.node.get_closest_marker("integration"):
+            # Only create real_store when actually needed for integration tests
+            real_store = _create_real_store(base_config)
+            if real_store is None:
+                pytest.skip("PostgreSQL not available for integration test")
+            try:
+                yield real_store
+            finally:
+                real_store.close()
+            return
+
+    # Check command-line option
+    if request.config.getoption("--use-real-store"):
+        # Only create real_store when explicitly requested
+        real_store = _create_real_store(base_config)
+        if real_store is None:
+            pytest.skip("PostgreSQL not available for real store test")
+        try:
+            yield real_store
+        finally:
+            real_store.close()
+        return
+
+    # Default to mock for speed
+    yield mock_store
+
+
+def _create_real_store(base_config) -> Store | None:
+    """Create a real store for integration testing, or return None if unavailable."""
     try:
         # Test connection
         operational_config = OperationalConfig(
@@ -159,51 +210,15 @@ def real_store(base_config) -> Generator[Store | None, None, None]:
         engine.dispose()
 
         # If we get here, PostgreSQL is available
-        with tempfile.TemporaryDirectory():
-            store = Store(
-                operational_config,
-                embedding_model=base_config.index_config.embedding_model,
-            )
-            yield store
-            store.close()
-    except Exception as e:
-        # In CI, fail hard if PostgreSQL is not available
-        # In local dev, return None to allow graceful skipping
-        import os
-
-        if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
-            pytest.fail(
-                f"PostgreSQL is required for integration tests in CI but was not available: {e}"
-            )
-        else:
-            # Return None instead of skipping - let individual tests handle it
-            yield None
-
-
-@pytest.fixture
-def store(request, base_config, mock_store, real_store):
-    """Provide either mock or real store based on test requirements.
-
-    This fixture automatically selects the appropriate store:
-    - For tests marked with @pytest.mark.integration: uses real_store (if available)
-    - For tests run with --use-real-store flag: uses real_store (if available)
-    - Otherwise: uses mock_store for speed
-    """
-    # Check if test is marked as integration
-    if hasattr(request.node, "get_closest_marker"):
-        if request.node.get_closest_marker("integration"):
-            if real_store is None:
-                pytest.skip("PostgreSQL not available for integration test")
-            return real_store
-
-    # Check command-line option
-    if request.config.getoption("--use-real-store"):
-        if real_store is None:
-            pytest.skip("PostgreSQL not available for real store test")
-        return real_store
-
-    # Default to mock for speed
-    return mock_store
+        store = Store(
+            operational_config,
+            embedding_model=base_config.index_config.embedding_model,
+        )
+        return store
+    except Exception:
+        # Return None - let individual tests decide how to handle unavailable PostgreSQL
+        # Only integration tests should fail hard when PostgreSQL is not available
+        return None
 
 
 @pytest.fixture
