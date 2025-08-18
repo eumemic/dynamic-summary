@@ -118,7 +118,14 @@ class TestChunkSizeRegression:
 
         # Mock embeddings (one per chunk) - needs to be async
         async def mock_embeddings(*args, **kwargs):
-            return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in range(5)])
+            # Get the actual number of input texts
+            input_texts = kwargs.get("input", [])
+            if isinstance(input_texts, str):
+                input_texts = [input_texts]
+            num_embeddings = len(input_texts)
+            return MagicMock(
+                data=[MagicMock(embedding=[0.1] * 1536) for _ in range(num_embeddings)]
+            )
 
         mock_async_client.embeddings.create.side_effect = mock_embeddings
 

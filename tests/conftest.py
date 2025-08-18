@@ -124,7 +124,8 @@ def base_config() -> BackwardCompatibilityConfig:
     operational_config = OperationalConfig(
         openai_api_key="test-key",
         database_url=os.getenv(
-            "RAGZOOM_DATABASE_URL", "postgresql+psycopg://localhost/ragzoom_test"
+            "RAGZOOM_DATABASE_URL",
+            "postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test",
         ),
     )
     return BackwardCompatibilityConfig(index_config, query_config, operational_config)
