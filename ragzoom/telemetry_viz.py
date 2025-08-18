@@ -978,6 +978,10 @@ class TelemetryVisualizer:
             ),
         ]
 
+        # Only include legend items for attempt numbers that exist in the data
+        max_attempts = max(attempt_numbers) if attempt_numbers else 0
+        legend_elements = legend_elements[: min(max_attempts, 5)]
+
         # Add accepted attempt indicator to legend with transparent fill
         legend_elements.append(
             Line2D(
@@ -1370,9 +1374,7 @@ class TelemetryVisualizer:
                     max_attempts = max(max_attempts, len(node["summary_attempts"]))
 
             if max_attempts > 0:
-                legend_elements = legend_elements[
-                    : min(max_attempts, len(attempt_colors))
-                ]
+                legend_elements = legend_elements[:max_attempts]
                 # Place legend inside the plot area at top, below the title
                 ax.legend(
                     handles=legend_elements,
