@@ -88,9 +88,9 @@ class DynamicTilingGenerator:
 
     def _get_node_cost(self, node: "TreeNode") -> int:
         """Get the token cost of a node."""
-        if not node or not node.text:
+        if not node:
             return 0
-        return len(self.tokenizer.encode(node.text))
+        return node.token_count
 
     def _get_subtree_relevance(
         self, node: "TreeNode", scores: dict[str, float]
