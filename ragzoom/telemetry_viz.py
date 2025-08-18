@@ -1159,22 +1159,15 @@ class TelemetryVisualizer:
         X-axis: Document span position
         Y-axis: Time (seconds) from actual indexing start
         Rectangles: Each node with width=span coverage, height=processing duration
-        Colors: Tree height (deeper levels = darker colors)
+        Colors: Retry attempts (blue→green→yellow→orange→red)
         """
         from matplotlib.patches import Rectangle
 
         # Extract nodes from telemetry
         nodes = self._extract_nodes_from_telemetry(telemetry)
 
-        # Define height-based colors (deeper levels = darker)
-        # Using a perceptually uniform color progression from light to dark
-        height_colors = [
-            "#e3f2fd",  # Very light blue (height 1)
-            "#90caf9",  # Light blue (height 2)
-            "#42a5f5",  # Medium blue (height 3)
-            "#1e88e5",  # Dark blue (height 4)
-            "#1565c0",  # Very dark blue (height 5+)
-        ]
+        # Define retry attempt colors (1=blue, 2=green, 3=yellow, 4=orange, 5+=red)
+        attempt_colors = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#991b1b"]
 
         # Only show visualization if we have real spans from telemetry
         node_spans = {}  # node_id -> (start, end)
@@ -1249,7 +1242,6 @@ class TelemetryVisualizer:
             if not node.get("summary_attempts"):
                 # Draw a single pixel horizontal line for passthrough nodes
                 created_at = node.get("created_at", 0)
-                node_height = node.get("height", 0)
 
                 # Update max_time
                 max_time = max(max_time, created_at)
@@ -1266,13 +1258,8 @@ class TelemetryVisualizer:
                     min_time = created_at
                 relative_time = created_at - baseline
 
-                # Determine color based on tree height
-                color_idx = (
-                    min(node_height - 1, len(height_colors) - 1)
-                    if node_height > 0
-                    else 0
-                )
-                color = height_colors[color_idx]
+                # For passthrough nodes, use first attempt color (blue)
+                color = attempt_colors[0]
 
                 # Add gap between adjacent nodes for visual clarity
                 rect = Rectangle(
@@ -1292,13 +1279,8 @@ class TelemetryVisualizer:
             # Process summary nodes with attempts
             attempts = node["summary_attempts"]
             accepted_idx = node.get("accepted_attempt", len(attempts) - 1)
-            node_height = node.get("height", 0)
 
-            # Determine color based on tree height (same for all attempts of this node)
-            color_idx = (
-                min(node_height - 1, len(height_colors) - 1) if node_height > 0 else 0
-            )
-            node_color = height_colors[color_idx]
+            # Color will be determined per attempt
 
             cumulative_start = None
             for attempt_idx, attempt in enumerate(attempts):
@@ -1317,8 +1299,12 @@ class TelemetryVisualizer:
 
                 max_time = max(max_time, end_time)
 
-                # Use the node color for all attempts
-                color = node_color
+                # Determine color based on attempt number
+                attempt_num = attempt_idx + 1  # Convert to 1-based
+                if attempt_num >= len(attempt_colors):
+                    color = attempt_colors[-1]  # 5+ attempts = darkest red
+                else:
+                    color = attempt_colors[attempt_num - 1]  # Convert to 0-indexed
                 is_accepted = attempt_idx == accepted_idx
 
                 # Calculate baseline for relative time
@@ -1368,24 +1354,25 @@ class TelemetryVisualizer:
             )
             ax.grid(True, alpha=0.3)
 
-            # Add legend for tree height colors
+            # Add legend for attempt colors
             legend_elements = [
-                Patch(facecolor=height_colors[0], label="Height 1", alpha=0.9),
-                Patch(facecolor=height_colors[1], label="Height 2", alpha=0.9),
-                Patch(facecolor=height_colors[2], label="Height 3", alpha=0.9),
-                Patch(facecolor=height_colors[3], label="Height 4", alpha=0.9),
-                Patch(facecolor=height_colors[4], label="Height 5+", alpha=0.9),
+                Patch(facecolor=attempt_colors[0], label="Attempt 1", alpha=0.9),
+                Patch(facecolor=attempt_colors[1], label="Attempt 2", alpha=0.9),
+                Patch(facecolor=attempt_colors[2], label="Attempt 3", alpha=0.9),
+                Patch(facecolor=attempt_colors[3], label="Attempt 4", alpha=0.9),
+                Patch(facecolor=attempt_colors[4], label="Attempt 5+", alpha=0.9),
             ]
 
-            # Only include legend items for heights that exist
-            max_height = 0
+            # Only include legend items for attempts that exist
+            max_attempts = 0
             for node in nodes:
-                node_height = node.get("height", 0)
-                if node_height > 0:  # Only summary nodes
-                    max_height = max(max_height, node_height)
+                if node.get("summary_attempts"):
+                    max_attempts = max(max_attempts, len(node["summary_attempts"]))
 
-            if max_height > 0:
-                legend_elements = legend_elements[: min(max_height, len(height_colors))]
+            if max_attempts > 0:
+                legend_elements = legend_elements[
+                    : min(max_attempts, len(attempt_colors))
+                ]
                 # Place legend inside the plot area at top, below the title
                 ax.legend(
                     handles=legend_elements,
