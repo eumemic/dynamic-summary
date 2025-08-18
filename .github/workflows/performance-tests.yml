@@ -369,8 +369,20 @@ jobs:
               git add "$IMAGE_PATH"
               git commit -m "Add telemetry visualization for PR #${{ github.event.pull_request.number }} (run: ${{ github.run_id }})"
               
-              # Push to gh-pages
-              git push origin gh-pages
+              # Push to gh-pages with retry on conflict
+              # Pull and rebase to handle concurrent pushes from other workflows
+              if ! git push origin gh-pages; then
+                echo "⚠️ Push failed, attempting to pull and retry..."
+                git pull --rebase origin gh-pages
+                if ! git push origin gh-pages; then
+                  echo "❌ Failed to push after retry - visualization won't be published"
+                  echo "⚠️ This doesn't affect the performance report itself"
+                else
+                  echo "✅ Successfully pushed after retry"
+                fi
+              else
+                echo "✅ Successfully pushed on first attempt"
+              fi
               
               # Return to main directory
               cd ${{ github.workspace }}
