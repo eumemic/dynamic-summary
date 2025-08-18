@@ -259,7 +259,7 @@ jobs:
           failed_configs=""
           
           # Test each configuration individually to track specific failures
-          for config in "10-2000-specific" "10-2000-broad" "10-2000-complex"; do
+          for config in "specific-2000-10" "broad-2000-10" "complex-2000-10"; do
             echo "Testing configuration: $config"
             if ! pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v --tb=short; then
               echo "❌ Query benchmark failed for: $config"
