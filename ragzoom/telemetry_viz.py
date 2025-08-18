@@ -65,7 +65,7 @@ class TelemetryVisualizer:
     def _extract_nodes_from_telemetry(
         self, telemetry: dict[str, Any]
     ) -> list[dict[str, Any]]:
-        """Extract nodes from telemetry data, handling both v1.0/v2.0 and v3.0 formats.
+        """Extract nodes from telemetry data.
 
         Args:
             telemetry: Telemetry data dictionary
@@ -73,19 +73,12 @@ class TelemetryVisualizer:
         Returns:
             List of node dictionaries
         """
-        if "documents" in telemetry:
-            # v1.0/v2.0 format with documents dictionary
-            nodes: list[dict[str, Any]] = []
-            for doc_data in telemetry.get("documents", {}).values():
-                nodes.extend(doc_data.get("nodes", []))
-            return nodes
-        else:
-            # v3.0 flat format
-            nodes_data = telemetry.get("nodes", [])
-            return nodes_data if isinstance(nodes_data, list) else []
+        # Format 4.2: nodes are at the top level
+        nodes_data = telemetry.get("nodes", [])
+        return nodes_data if isinstance(nodes_data, list) else []
 
     def _extract_chunk_size_from_telemetry(self, telemetry: dict[str, Any]) -> int:
-        """Extract chunk size from telemetry data, handling both formats.
+        """Extract chunk size from telemetry data.
 
         Args:
             telemetry: Telemetry data dictionary
@@ -93,18 +86,10 @@ class TelemetryVisualizer:
         Returns:
             Chunk size in tokens, or 0 if not found
         """
-        if "documents" in telemetry:
-            # v1.0/v2.0 format - use first document with valid chunk_size
-            for doc_data in telemetry.get("documents", {}).values():
-                chunk_size = doc_data.get("metadata", {}).get("chunk_size", 0)
-                if chunk_size > 0:
-                    return int(chunk_size)
-            return 0
-        else:
-            # v3.0+ format - read from config
-            config = telemetry.get("config", {})
-            chunk_size = config.get("target_chunk_tokens", 0)
-            return int(chunk_size) if chunk_size else 0
+        # Format 4.2: read from config
+        config = telemetry.get("config", {})
+        chunk_size = config.get("target_chunk_tokens", 0)
+        return int(chunk_size) if chunk_size else 0
 
     def _ensure_output_dir(self) -> None:
         """Ensure the output directory exists, creating it if necessary."""
@@ -145,12 +130,9 @@ class TelemetryVisualizer:
         # Load data
         data = self.load_benchmark_data(benchmark_path)
 
-        # Handle both wrapped and direct v3.0 formats
-        if "telemetry" in data:
-            # Legacy wrapped format: {"telemetry": {...}, "config": {...}}
-            telemetry = data["telemetry"]
-        elif "format_version" in data:
-            # Direct v3.0 format: {"format_version": "3.0", ...}
+        # Handle format 4.2
+        if "format_version" in data:
+            # Standard format 4.2: {"format_version": "4.2", ...}
             telemetry = data
         else:
             print(f"Warning: No telemetry data found in {benchmark_path}")
@@ -287,19 +269,15 @@ class TelemetryVisualizer:
         data1 = self.load_benchmark_data(file1)
         data2 = self.load_benchmark_data(file2)
 
-        # Handle both wrapped and direct v3.0 formats for file1
-        if "telemetry" in data1:
-            telemetry1 = data1["telemetry"]
-        elif "format_version" in data1:
+        # Handle format 4.2 for file1
+        if "format_version" in data1:
             telemetry1 = data1
         else:
             print(f"Warning: No telemetry data found in {file1}")
             return
 
-        # Handle both wrapped and direct v3.0 formats for file2
-        if "telemetry" in data2:
-            telemetry2 = data2["telemetry"]
-        elif "format_version" in data2:
+        # Handle format 4.2 for file2
+        if "format_version" in data2:
             telemetry2 = data2
         else:
             print(f"Warning: No telemetry data found in {file2}")

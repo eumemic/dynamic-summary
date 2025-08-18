@@ -34,50 +34,50 @@ class TestTelemetryVisualizer:
     def sample_telemetry_data(self) -> dict:
         """Create sample telemetry data for testing."""
         return {
-            "format_version": "2.0",
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "format_version": "4.2",
+            "document_id": "test_doc",
+            "source_document_tokens": 1000,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 200,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
-            "documents": {
-                "test_doc": {
-                    "metadata": {
-                        "source_document_tokens": 1000,
-                        "chunk_size": 200,
-                        "indexed_at": 1234567890.0,
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
+            "nodes": [
+                {
+                    "node_id": "leaf-1",
+                    "height": 0,
+                    "created_at": 1234567890.0,
+                    "embedding": {
+                        "text_tokens": 195,
+                        "batch_size": 1,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
+                        "start_time": 1234567890.0,
+                        "end_time": 1234567891.0,
                     },
-                    "nodes": [
+                },
+                {
+                    "node_id": "summary-1",
+                    "height": 1,
+                    "created_at": 1234567892.0,
+                    "summary_attempts": [
                         {
-                            "node_id": "leaf-1",
-                            "height": 0,
-                            "created_at": 1234567890.0,
-                            "embedding": {
-                                "text_tokens": 195,
-                                "batch_size": 1,
-                                "model": "text-embedding-3-small",
-                                "start_time": 1234567890.0,
-                                "end_time": 1234567891.0,
-                            },
-                        },
-                        {
-                            "node_id": "summary-1",
-                            "height": 1,
-                            "created_at": 1234567892.0,
-                            "summary_attempts": [
-                                {
-                                    "status": "accepted",
-                                    "is_retry": False,
-                                    "prompt_tokens": 400,
-                                    "completion_tokens": 100,
-                                    "input_text_tokens": 195,
-                                    "actual_tokens": 98,
-                                    "target_tokens": 100,
-                                }
-                            ],
-                        },
+                            "target_tokens": 100,
+                            "prompt_tokens": 400,
+                            "completion_tokens": 100,
+                            "actual_tokens": 98,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567892.0,
+                            "end_time": 1234567893.0,
+                        }
                     ],
-                }
-            },
+                    "accepted_attempt": 0,
+                },
+            ],
         }
 
     @pytest.fixture
@@ -211,14 +211,18 @@ class TestTelemetryVisualizer:
         # Test empty batch efficiency
         fig, ax = plt.subplots()
         empty_telemetry = {
-            "format_version": "3.0",
+            "format_version": "4.2",
             "document_id": "empty",
             "source_document_tokens": 0,
             "indexed_at": 0,
             "config": {
+                "target_chunk_tokens": 100,
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [],
         }
         visualizer._plot_batch_efficiency(empty_telemetry, ax)
@@ -235,23 +239,37 @@ class TestTelemetryVisualizer:
 
         fig, ax = plt.subplots()
         telemetry = {
-            "format_version": "2.0",
-            "models": {
-                "summary": "gpt-4o-mini",
-                "embedding": "text-embedding-3-small",
+            "format_version": "4.2",
+            "document_id": "test",
+            "source_document_tokens": 100,
+            "indexed_at": 1234567890.0,
+            "config": {
+                "target_chunk_tokens": 100,
+                "summary_model": "gpt-4o-mini",
+                "embedding_model": "text-embedding-3-small",
             },
-            "documents": {
-                "test": {
-                    "nodes": [
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
+            "nodes": [
+                {
+                    "node_id": "node-1",
+                    "height": 1,
+                    "created_at": 1234567890.0,
+                    "summary_attempts": [
                         {
-                            "height": 1,
-                            "summary_attempts": [
-                                {"status": "accepted", "is_retry": False}
-                            ],
+                            "target_tokens": 100,
+                            "prompt_tokens": 150,
+                            "completion_tokens": 95,
+                            "actual_tokens": 95,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567890.0,
+                            "end_time": 1234567891.0,
                         }
-                    ]
+                    ],
+                    "accepted_attempt": 0,
                 }
-            },
+            ],
         }
 
         visualizer._plot_retry_patterns(telemetry, ax)
@@ -272,27 +290,41 @@ class TestTelemetryVisualizer:
         fig, ax = plt.subplots()
 
         # Add more nodes for better distribution
-        sample_telemetry_data["documents"]["test_doc"]["nodes"].extend(
+        sample_telemetry_data["nodes"].extend(
             [
                 {
+                    "node_id": "summary-2",
                     "height": 1,
+                    "created_at": 1234567894.0,
                     "summary_attempts": [
                         {
-                            "status": "accepted",
-                            "actual_tokens": 95,
                             "target_tokens": 100,
+                            "prompt_tokens": 400,
+                            "completion_tokens": 95,
+                            "actual_tokens": 95,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567894.0,
+                            "end_time": 1234567895.0,
                         }
                     ],
+                    "accepted_attempt": 0,
                 },
                 {
+                    "node_id": "summary-3",
                     "height": 2,
+                    "created_at": 1234567896.0,
                     "summary_attempts": [
                         {
-                            "status": "accepted",
-                            "actual_tokens": 102,
                             "target_tokens": 100,
+                            "prompt_tokens": 400,
+                            "completion_tokens": 102,
+                            "actual_tokens": 102,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567896.0,
+                            "end_time": 1234567897.0,
                         }
                     ],
+                    "accepted_attempt": 0,
                 },
             ]
         )
@@ -314,14 +346,18 @@ class TestTelemetryVisualizer:
 
         fig, ax = plt.subplots()
         telemetry = {
-            "format_version": "3.0",
+            "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 300,
             "indexed_at": 0,
             "config": {
+                "target_chunk_tokens": 100,
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [
                 {
                     "embedding": {

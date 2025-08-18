@@ -31,8 +31,8 @@ from ragzoom.telemetry_types import (
 
 logger = logging.getLogger(__name__)
 
-# Current supported telemetry format versions
-SUPPORTED_TELEMETRY_VERSIONS = ["3.0", "3.1", "4.1", "4.2"]
+# Current supported telemetry format version
+SUPPORTED_TELEMETRY_VERSION = "4.2"
 
 # Default token estimate for leaf nodes when source tokens are not available
 # This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
@@ -222,22 +222,12 @@ def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetr
         final_attempt = None
 
         if accepted_idx is not None:
-            # New format: use the explicitly marked accepted attempt
+            # Format 4.2: use the explicitly marked accepted attempt
             if 0 <= accepted_idx < len(summary_attempts):
                 final_attempt = summary_attempts[accepted_idx]
         else:
-            # Backward compatibility
-            has_status = any("status" in a for a in summary_attempts)
-            if has_status:
-                # Old format with status: find accepted attempt
-                for attempt in summary_attempts:
-                    if attempt.get("status") == "accepted":
-                        final_attempt = attempt
-                        break
-
-            # If no accepted found or no status field, use last attempt
-            if final_attempt is None:
-                final_attempt = summary_attempts[-1]
+            # Fallback: use last attempt if accepted_attempt index is missing
+            final_attempt = summary_attempts[-1]
 
         if final_attempt:
             target_tokens = final_attempt.get("target_tokens", 0)
@@ -721,7 +711,7 @@ def detect_verbatim_concatenations(
 
         # Check if it's essentially verbatim (within tolerance)
         if abs(ratio - 1.0) <= tolerance:
-            height = node.get("height", node.get("level", 0))
+            height = node["height"]
             offender: VerbatimOffender = {
                 "node_id": node["node_id"],
                 "height": height,
@@ -908,19 +898,15 @@ def parse_telemetry_format(telemetry_data: dict[str, Any]) -> TelemetryDataDict:
     if not format_version:
         raise TelemetryAnalysisError("Missing format_version in telemetry data")
 
-    if format_version not in SUPPORTED_TELEMETRY_VERSIONS:
+    if format_version != SUPPORTED_TELEMETRY_VERSION:
         raise TelemetryAnalysisError(
             f"Unsupported telemetry format version: {format_version}. "
-            f"Supported versions: {SUPPORTED_TELEMETRY_VERSIONS}"
+            f"Supported version: {SUPPORTED_TELEMETRY_VERSION}"
         )
 
-    # Return current versions as-is
-    if format_version in ["3.0", "3.1", "4.1", "4.2"]:
-        result: TelemetryDataDict = telemetry_data  # type: ignore
-        return result
-
-    # This shouldn't happen given the version check above
-    raise TelemetryAnalysisError(f"Unhandled telemetry version: {format_version}")
+    # Return format 4.2 data as-is
+    result: TelemetryDataDict = telemetry_data  # type: ignore
+    return result
 
 
 def compute_batch_efficiency(telemetry_data: dict[str, Any]) -> BatchEfficiencyDict:
@@ -1297,7 +1283,7 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
             max_timestamp = max(max_timestamp, created_at)
 
         # Track height distribution
-        height = node.get("height", node.get("level", 0))
+        height = node["height"]
         height_counts[height] = height_counts.get(height, 0) + 1
 
         # Process embeddings
