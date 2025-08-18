@@ -20,6 +20,7 @@ from statistics import median
 from typing import Any, TypedDict, overload
 
 from ragzoom.config import get_embedding_cost, get_llm_costs
+from ragzoom.telemetry_query import QueryPhaseMetrics
 from ragzoom.telemetry_types import (
     BatchEfficiencyDict,
     NodeTelemetryDict,
@@ -1415,3 +1416,200 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
         tree_height=tree_height,
         nodes_per_height=nodes_per_height,
     )
+
+
+# ============================================================================
+# QUERY TELEMETRY ANALYSIS
+# ============================================================================
+
+
+def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics:
+    """Analyze query performance telemetry.
+
+    Args:
+        telemetry_data: Query telemetry data or list of telemetry data
+
+    Returns:
+        QueryPhaseMetrics with aggregated performance metrics
+    """
+    # Handle both single telemetry and list of telemetries
+    if isinstance(telemetry_data, dict) and "telemetry" in telemetry_data:
+        # Single telemetry file
+        telemetries = [telemetry_data["telemetry"]]
+    elif isinstance(telemetry_data, list):
+        # List of telemetry data
+        telemetries = telemetry_data
+    else:
+        # Assume it's already the telemetry dict
+        telemetries = [telemetry_data]
+
+    if not telemetries:
+        raise ValueError("No query telemetry data provided")
+
+    # Collect all timings and metrics
+    all_timings: dict[str, list[float]] = {
+        "embedding_time": [],
+        "search_time": [],
+        "mmr_time": [],
+        "coverage_map_time": [],
+        "scoring_time": [],
+        "dp_time": [],
+        "assembly_time": [],
+        "total_time": [],
+    }
+
+    seeds_utilizations = []
+    budget_utilizations = []
+    coverage_efficiencies = []
+
+    for telemetry in telemetries:
+        timings = telemetry.get("timings", {})
+        metrics = telemetry.get("metrics", {})
+
+        # Collect phase timings
+        for phase in all_timings:
+            if phase in timings:
+                all_timings[phase].append(timings[phase])
+
+        # Calculate efficiency metrics
+        if metrics.get("seeds_requested", 0) > 0:
+            seeds_utilizations.append(
+                metrics.get("seeds_found", 0) / metrics["seeds_requested"]
+            )
+
+        if telemetry.get("budget_tokens", 0) > 0:
+            budget_utilizations.append(
+                metrics.get("output_tokens", 0) / telemetry["budget_tokens"]
+            )
+
+        if metrics.get("coverage_size", 0) > 0:
+            coverage_efficiencies.append(
+                metrics.get("tiling_size", 0) / metrics["coverage_size"]
+            )
+
+    # Calculate phase breakdown (median values)
+    phase_breakdown = {}
+    for phase, times in all_timings.items():
+        if times:
+            phase_breakdown[phase] = statistics.median(times)
+        else:
+            phase_breakdown[phase] = 0.0
+
+    # Calculate efficiency metrics (averages)
+    seeds_utilization = (
+        sum(seeds_utilizations) / len(seeds_utilizations) if seeds_utilizations else 0.0
+    )
+    budget_utilization = (
+        sum(budget_utilizations) / len(budget_utilizations)
+        if budget_utilizations
+        else 0.0
+    )
+    coverage_efficiency = (
+        sum(coverage_efficiencies) / len(coverage_efficiencies)
+        if coverage_efficiencies
+        else 0.0
+    )
+
+    # Calculate latency percentiles
+    total_times = all_timings["total_time"]
+    if total_times:
+        sorted_times = sorted(total_times)
+        n = len(sorted_times)
+        p50_latency = sorted_times[n // 2]
+        p95_latency = sorted_times[int(n * 0.95)] if n > 1 else sorted_times[0]
+        p99_latency = sorted_times[int(n * 0.99)] if n > 1 else sorted_times[0]
+    else:
+        p50_latency = p95_latency = p99_latency = 0.0
+
+    return QueryPhaseMetrics(
+        phase_breakdown=phase_breakdown,
+        seeds_utilization=seeds_utilization,
+        budget_utilization=budget_utilization,
+        coverage_efficiency=coverage_efficiency,
+        p50_latency=p50_latency,
+        p95_latency=p95_latency,
+        p99_latency=p99_latency,
+        query_count=len(telemetries),
+    )
+
+
+def compare_query_performance(
+    baseline_telemetry: dict[str, Any],
+    current_telemetry: dict[str, Any],
+    regression_threshold: float = 0.2,
+) -> tuple[bool, dict[str, Any]]:
+    """Compare query performance and detect regressions.
+
+    Args:
+        baseline_telemetry: Baseline query telemetry data
+        current_telemetry: Current query telemetry data
+        regression_threshold: Threshold for regression detection (default 20%)
+
+    Returns:
+        Tuple of (has_regression, comparison_report)
+    """
+    baseline_metrics = analyze_query_telemetry(baseline_telemetry)
+    current_metrics = analyze_query_telemetry(current_telemetry)
+
+    has_regression = False
+    regressions = []
+    improvements = []
+
+    # Check for regressions in each phase
+    for phase, baseline_time in baseline_metrics.phase_breakdown.items():
+        current_time = current_metrics.phase_breakdown.get(phase, 0)
+
+        if baseline_time > 0:
+            change_ratio = (current_time - baseline_time) / baseline_time
+
+            if change_ratio > regression_threshold:
+                has_regression = True
+                regressions.append(
+                    {
+                        "phase": phase.replace("_time", ""),
+                        "baseline": baseline_time,
+                        "current": current_time,
+                        "change_percent": change_ratio * 100,
+                    }
+                )
+            elif change_ratio < -regression_threshold:
+                improvements.append(
+                    {
+                        "phase": phase.replace("_time", ""),
+                        "baseline": baseline_time,
+                        "current": current_time,
+                        "change_percent": change_ratio * 100,
+                    }
+                )
+
+    # Check overall latency
+    if baseline_metrics.p50_latency > 0:
+        p50_change = (
+            current_metrics.p50_latency - baseline_metrics.p50_latency
+        ) / baseline_metrics.p50_latency
+        if p50_change > regression_threshold:
+            has_regression = True
+            regressions.append(
+                {
+                    "phase": "p50_latency",
+                    "baseline": baseline_metrics.p50_latency,
+                    "current": current_metrics.p50_latency,
+                    "change_percent": p50_change * 100,
+                }
+            )
+
+    comparison_report = {
+        "has_regression": has_regression,
+        "regressions": regressions,
+        "improvements": improvements,
+        "baseline_metrics": baseline_metrics.to_dict(),
+        "current_metrics": current_metrics.to_dict(),
+        "summary": {
+            "baseline_p50": baseline_metrics.p50_latency,
+            "current_p50": current_metrics.p50_latency,
+            "baseline_queries": baseline_metrics.query_count,
+            "current_queries": current_metrics.query_count,
+        },
+    }
+
+    return has_regression, comparison_report

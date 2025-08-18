@@ -251,11 +251,13 @@ class TestTelemetryCompare:
         (dir2 / "telemetry.json").touch()
         (dir2 / "telemetry_300_tokens.json").touch()  # Only in dir2
 
-        matches = _match_telemetry_files(dir1, dir2)
+        indexing_matches, query_matches = _match_telemetry_files(dir1, dir2)
 
-        # Should match 3 files
-        assert len(matches) == 3
-        match_names = [m[0].name for m in matches]
+        # Should match 3 indexing files
+        assert len(indexing_matches) == 3
+        assert len(query_matches) == 0  # No query files in this test
+
+        match_names = [m[0].name for m in indexing_matches]
         assert "telemetry_100_tokens.json" in match_names
         assert "telemetry_200_tokens.json" in match_names
         assert "telemetry.json" in match_names
