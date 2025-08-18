@@ -404,10 +404,8 @@ class Store:
                 )
                 nodes.append(node)
 
-            # Bulk insert all nodes
-            session.add_all(
-                nodes
-            )  # Use add_all instead of bulk_save_objects for better ORM integration
+            # Bulk insert all nodes - use bulk_save_objects for PostgreSQL compatibility
+            session.bulk_save_objects(nodes)
             session.commit()
 
             # Add all to cache

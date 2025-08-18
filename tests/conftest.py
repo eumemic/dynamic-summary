@@ -291,10 +291,20 @@ def _create_real_store(base_config) -> Store | None:
         engine.dispose()
 
         # Create operational config with the unique database URL
-        operational_config = OperationalConfig(
-            openai_api_key=base_config.openai_api_key,
-            database_url=test_db_url,  # Use the unique database URL
-        )
+        # Temporarily remove environment override to ensure our unique URL is used
+        original_env = os.environ.get("RAGZOOM_DATABASE_URL")
+        if "RAGZOOM_DATABASE_URL" in os.environ:
+            del os.environ["RAGZOOM_DATABASE_URL"]
+
+        try:
+            operational_config = OperationalConfig(
+                openai_api_key=base_config.openai_api_key,
+                database_url=test_db_url,  # Use the unique database URL
+            )
+        finally:
+            # Restore environment variable
+            if original_env is not None:
+                os.environ["RAGZOOM_DATABASE_URL"] = original_env
 
         # If we get here, PostgreSQL is available
         store = Store(
