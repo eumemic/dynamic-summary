@@ -186,7 +186,7 @@ class TreeBuilder:
             # Use a hardcoded reasonable temperature for summaries
             api_kwargs["temperature"] = 0.3
 
-        response = await self.client.chat.completions.create(**api_kwargs)  # type: ignore
+        response = await self.client.chat.completions.create(**api_kwargs)
 
         content = response.choices[0].message.content
         if not content:
@@ -735,7 +735,7 @@ Here's the content to summarize:"""
         file_path: str | None = None,
         show_progress: bool = True,
         reporter: TelemetryCollector = ...,
-    ) -> tuple[str, dict]: ...
+    ) -> tuple[str, dict[str, Any]]: ...
 
     async def _add_document_impl(
         self,
@@ -744,7 +744,7 @@ Here's the content to summarize:"""
         file_path: str | None = None,
         show_progress: bool = True,
         reporter: TelemetryCollector | None = None,
-    ) -> str | tuple[str, dict]:
+    ) -> str | tuple[str, dict[str, Any]]:
         """Add a document to the tree, creating leaf nodes.
 
         Returns:
@@ -1055,7 +1055,7 @@ Here's the content to summarize:"""
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = False,
-    ) -> tuple[str, dict]:
+    ) -> tuple[str, dict[str, Any]]:
         """Add document and return telemetry data. Used for benchmarking.
 
         This is a convenience method that creates a TelemetryCollector internally

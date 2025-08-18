@@ -103,7 +103,7 @@ class SimplifiedMetrics:
     metrics_by_chunk_size: dict[int, dict[str, Any]]
 
 
-def compute_simplified_metrics(telemetry_data: dict) -> SimplifiedMetrics:
+def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetrics:
     """Compute simplified metrics from telemetry data.
 
     Args:
@@ -831,7 +831,7 @@ class TelemetryAnalysisError(Exception):
     pass
 
 
-def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
+def parse_telemetry_format(telemetry_data: dict[str, Any]) -> TelemetryDataDict:
     """Parse telemetry data.
 
     Args:
@@ -866,7 +866,7 @@ def parse_telemetry_format(telemetry_data: dict) -> TelemetryDataDict:
     raise TelemetryAnalysisError(f"Unhandled telemetry version: {format_version}")
 
 
-def compute_batch_efficiency(telemetry_data: dict) -> BatchEfficiencyDict:
+def compute_batch_efficiency(telemetry_data: dict[str, Any]) -> BatchEfficiencyDict:
     """Analyze embedding batch utilization from telemetry data.
 
     Args:
@@ -963,7 +963,7 @@ def get_accepted_attempt(
     return summary_attempts[-1], len(summary_attempts) - 1
 
 
-def analyze_retry_patterns(telemetry_data: dict) -> RetryAnalysisDict:
+def analyze_retry_patterns(telemetry_data: dict[str, Any]) -> RetryAnalysisDict:
     """Analyze summary retry patterns from telemetry data.
 
     Args:
@@ -1096,7 +1096,7 @@ def analyze_retry_patterns(telemetry_data: dict) -> RetryAnalysisDict:
 
 
 def compute_summary_stats_from_telemetry(
-    telemetry_data: dict,
+    telemetry_data: dict[str, Any],
 ) -> dict[int, SummaryStats]:
     """Compute summary statistics from raw telemetry data.
 
@@ -1179,7 +1179,7 @@ class ComputedMetrics:
     nodes_per_height: list[int]
 
 
-def compute_metrics_from_telemetry(telemetry_data: dict) -> ComputedMetrics:
+def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMetrics:
     """Compute metrics from raw telemetry data.
 
     This function computes all metrics from raw telemetry data that were

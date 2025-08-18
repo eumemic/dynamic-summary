@@ -404,7 +404,7 @@ def check_regression_with_dynamic_threshold(
     return is_regression, absolute_change
 
 
-def _load_and_compute_metrics(file_path: Path) -> tuple[dict, Any]:
+def _load_and_compute_metrics(file_path: Path) -> tuple[dict[str, Any], Any]:
     """Load telemetry file and compute simplified metrics.
 
     Returns:
@@ -885,8 +885,8 @@ def visualize(input_paths: tuple[str, ...], output: str | None, format: str) -> 
 
 def _format_metrics_for_chunk_with_thresholds(
     chunk_label: str,
-    base_metrics: dict,
-    curr_metrics: dict,
+    base_metrics: dict[str, Any],
+    curr_metrics: dict[str, Any],
     thresholds: dict[str, DynamicThreshold],
 ) -> None:
     """Format all metrics for a single chunk size with dynamic thresholds."""
@@ -1342,8 +1342,8 @@ def _format_markdown_comparison_with_thresholds(
     current: SimplifiedMetrics,
     chunk_sizes: set[int],
     thresholds_by_chunk: dict[int, dict[str, DynamicThreshold]],
-    baseline_config: dict | None = None,
-    current_config: dict | None = None,
+    baseline_config: dict[str, Any] | None = None,
+    current_config: dict[str, Any] | None = None,
 ) -> None:
     """Format comparison as markdown table with dynamic thresholds."""
 
