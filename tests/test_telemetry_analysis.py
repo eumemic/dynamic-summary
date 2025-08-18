@@ -123,7 +123,7 @@ class TestTelemetryFormatParsing:
 
     def test_parse_unsupported_format_version(self) -> None:
         """Test parsing telemetry with unsupported format version."""
-        telemetry_data = {"format_version": "2.0", "documents": {}}
+        telemetry_data = {"format_version": "4.1", "nodes": []}
 
         with pytest.raises(
             TelemetryAnalysisError, match="Unsupported telemetry format version"
@@ -948,9 +948,7 @@ class TestFullMetricsComputation:
         assert metrics.chunks_created == 2  # 2 leaf nodes
         assert metrics.summary_api_calls == 1
 
-        # Check summary stats (bucketed by actual target_tokens from telemetry)
-        assert 100 in metrics.summary_stats  # The test data has target_tokens=100
-        assert metrics.summary_stats[100].count == 1
+        # ComputedMetrics no longer includes summary_stats (removed legacy functionality)
 
         # Check batch sizes
         assert len(metrics.embedding_batch_sizes) == 2

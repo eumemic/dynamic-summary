@@ -24,7 +24,6 @@ from ragzoom.config import get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_analysis import (
     compute_batch_efficiency,
     get_accepted_attempt,
-    get_telemetry_thresholds,
 )
 from ragzoom.telemetry_config import (
     DEFAULT_FONT_SIZE,
@@ -60,7 +59,6 @@ class TelemetryVisualizer:
     def __init__(self, output_path: Path) -> None:
         """Initialize visualizer with output file path."""
         self.output_path = output_path
-        self.thresholds = get_telemetry_thresholds()
 
     def _extract_nodes_from_telemetry(
         self, telemetry: dict[str, Any]
@@ -161,16 +159,9 @@ class TelemetryVisualizer:
         # Add title and metadata
         if "config" in data:
             # Get chunk size from config
-            if "leaf_tokens" in data["config"]:
-                # Legacy format
-                chunk_size = data["config"]["leaf_tokens"]
-            elif "target_chunk_tokens" in data["config"]:
-                # Current format
-                chunk_size = data["config"]["target_chunk_tokens"]
-            else:
-                chunk_size = "Unknown"
+            chunk_size = data["config"].get("target_chunk_tokens", "Unknown")
         elif "chunk_size" in telemetry:
-            # v3.0 format has chunk_size directly
+            # Get chunk size from metadata
             chunk_size = telemetry["chunk_size"]
         else:
             chunk_size = "Unknown"
@@ -369,7 +360,7 @@ class TelemetryVisualizer:
 
         # Process nodes
         for node in nodes:
-            height = node.get("height", node.get("level", 0))
+            height = node["height"]
             if height == 0:
                 continue  # Skip leaf nodes
 
@@ -456,7 +447,7 @@ class TelemetryVisualizer:
 
         # Process all attempts from summary nodes
         for node in nodes:
-            height = node.get("height", node.get("level", 0))
+            height = node["height"]
             if height > 0:  # Summary nodes only
                 attempts = node.get("summary_attempts", [])
                 for attempt_num, attempt in enumerate(attempts, 1):
@@ -616,7 +607,7 @@ class TelemetryVisualizer:
         # Count attempts for each summary node
         total_summary_nodes = 0
         for node in nodes:
-            height = node.get("height", node.get("level", 0))
+            height = node["height"]
             if height > 0:  # Summary nodes only
                 total_summary_nodes += 1
                 attempts = node.get("summary_attempts", [])
@@ -712,7 +703,7 @@ class TelemetryVisualizer:
         # Process nodes
         for node in nodes:
             # Only process summary nodes (height > 0)
-            height = node.get("height", node.get("level", 0))
+            height = node["height"]
             if height > 0:
                 # Look for accepted summary attempts
                 # Cast to NodeTelemetryDict for type safety
@@ -742,7 +733,7 @@ class TelemetryVisualizer:
 
         # Process nodes to extract ALL attempts (not just accepted ones)
         for node in nodes:
-            height = node.get("height", node.get("level", 0))
+            height = node["height"]
             if height > 0:  # Summary nodes only
                 # Get input tokens (tokens being summarized)
                 input_text_tokens = node.get("input_text_tokens")
@@ -1210,7 +1201,7 @@ class TelemetryVisualizer:
             span_start, span_end = node_spans[node_id]
 
             # Skip only leaf nodes (height 0) - they're raw text chunks
-            if node.get("height", 0) == 0:
+            if node["height"] == 0:
                 continue
 
             # Handle passthrough nodes (no summary attempts) - draw as single pixel line
@@ -1379,7 +1370,7 @@ class TelemetryVisualizer:
 
         # Process all attempts from summary nodes
         for node in nodes:
-            height = node.get("height", node.get("level", 0))
+            height = node["height"]
             if height > 0:  # Summary nodes only
                 attempts = node.get("summary_attempts", [])
                 for attempt_num, attempt in enumerate(attempts, 1):

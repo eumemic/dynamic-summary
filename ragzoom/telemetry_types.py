@@ -4,8 +4,7 @@ This module provides TypedDict definitions for all telemetry-related data struct
 enabling type-safe access to telemetry data and preventing bugs from accessing
 non-existent fields.
 
-Supports v3.0, v3.1, and v4.1 telemetry formats with appropriate NotRequired fields.
-Legacy v1.0 and v2.0 formats are no longer supported.
+Supports only v4.2 telemetry format. All legacy formats have been removed.
 """
 
 from typing import Any, TypedDict

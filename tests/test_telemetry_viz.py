@@ -101,7 +101,7 @@ class TestTelemetryVisualizer:
         visualizer = TelemetryVisualizer(output_path)
         assert visualizer.output_path == output_path
         assert temp_output_dir.exists()
-        assert hasattr(visualizer, "thresholds")
+        # Thresholds were removed as part of legacy cleanup
 
     def test_load_benchmark_data(
         self, visualizer: TelemetryVisualizer, temp_output_dir: Path
@@ -156,7 +156,7 @@ class TestTelemetryVisualizer:
         """Test that visualize_single_benchmark creates expected outputs."""
         # Create minimal telemetry data that won't trigger complex plotting
         minimal_data = {
-            "format_version": "3.0",
+            "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 0,
             "indexed_at": 0,
@@ -165,6 +165,9 @@ class TestTelemetryVisualizer:
                 "summary_model": "gpt-4o-mini",
                 "embedding_model": "text-embedding-3-small",
             },
+            "model_metadata": {},
+            "system_prompts": {},
+            "runtime_info": {},
             "nodes": [],
         }
 
