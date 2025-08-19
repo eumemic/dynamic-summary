@@ -140,20 +140,32 @@ class TelemetryVisualizer:
         fig = plt.figure(
             figsize=(FIGURE_WIDTH * 0.33, FIGURE_HEIGHT * 0.6)
         )  # Reduce width by 2/3 and height
-        gs = GridSpec(
-            3, 1, figure=fig, hspace=0.3, top=0.94, height_ratios=[0.5, 1.5, 2]
+        # Use GridSpecFromSubplotSpec for different gaps between rows
+        from matplotlib.gridspec import GridSpecFromSubplotSpec
+
+        # Create main grid with 2 sections for different spacing
+        main_gs = GridSpec(
+            2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[2, 2]
         )
 
+        # Top section: Cost Breakdown and Summary Compression (further apart)
+        top_gs = GridSpecFromSubplotSpec(
+            2, 1, subplot_spec=main_gs[0], hspace=0.3, height_ratios=[0.6, 1.4]
+        )
+
+        # Bottom section: Tree Construction Timeline
+        bottom_gs = GridSpecFromSubplotSpec(1, 1, subplot_spec=main_gs[1])
+
         # 1. Cost Breakdown
-        ax1 = fig.add_subplot(gs[0, :])
+        ax1 = fig.add_subplot(top_gs[0])
         self._plot_cost_breakdown(telemetry, ax1)
 
         # 2. Summary Compression Patterns
-        ax2 = fig.add_subplot(gs[1, :])
+        ax2 = fig.add_subplot(top_gs[1])
         self._plot_summary_scatter(telemetry, ax2)
 
         # 3. Tree Construction Timeline
-        ax3 = fig.add_subplot(gs[2, :])
+        ax3 = fig.add_subplot(bottom_gs[0])
         self._plot_tree_construction_timeline(telemetry, ax3)
 
         # Add title and metadata
@@ -289,15 +301,25 @@ class TelemetryVisualizer:
         # Row 2: Summary scatter (numeric x-axis) - needs x-sharing
         # Row 3: Timeline (numeric x-axis) - needs x-sharing
         fig = plt.figure(figsize=figsize)
-        gs = GridSpec(
-            3,
-            2,
-            figure=fig,
-            hspace=0.2,
-            wspace=0.15,
-            top=0.92,
-            height_ratios=[0.5, 1.5, 2],
+        from matplotlib.gridspec import GridSpecFromSubplotSpec
+
+        # Create main grid with 2 sections for different spacing
+        main_gs = GridSpec(
+            2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[2, 2]
         )
+
+        # Top section: Cost Breakdown and Summary Compression (further apart)
+        top_gs = GridSpecFromSubplotSpec(
+            2,
+            2,
+            subplot_spec=main_gs[0],
+            hspace=0.3,
+            wspace=0.15,
+            height_ratios=[0.6, 1.4],
+        )
+
+        # Bottom section: Tree Construction Timeline
+        bottom_gs = GridSpecFromSubplotSpec(1, 2, subplot_spec=main_gs[1], wspace=0.15)
 
         # Add super title
         fig.suptitle(
@@ -307,8 +329,8 @@ class TelemetryVisualizer:
         )
 
         # 1. Cost Breakdown (no axis sharing needed)
-        ax1_left = fig.add_subplot(gs[0, 0])
-        ax1_right = fig.add_subplot(gs[0, 1], sharey=ax1_left)
+        ax1_left = fig.add_subplot(top_gs[0, 0])
+        ax1_right = fig.add_subplot(top_gs[0, 1], sharey=ax1_left)
 
         self._plot_cost_breakdown(telemetry1, ax1_left)
         ax1_left.set_title("Cost Breakdown", fontsize=12)
@@ -318,8 +340,8 @@ class TelemetryVisualizer:
         ax1_right.set_ylabel("")  # Remove y-axis label
 
         # 2. Summary Compression Patterns (share both axes)
-        ax2_left = fig.add_subplot(gs[1, 0])
-        ax2_right = fig.add_subplot(gs[1, 1], sharex=ax2_left, sharey=ax2_left)
+        ax2_left = fig.add_subplot(top_gs[1, 0])
+        ax2_right = fig.add_subplot(top_gs[1, 1], sharex=ax2_left, sharey=ax2_left)
 
         self._plot_summary_scatter(telemetry1, ax2_left)
         ax2_left.set_title("Summary Compression Patterns", fontsize=12)
@@ -329,14 +351,14 @@ class TelemetryVisualizer:
         ax2_right.set_ylabel("")  # Remove y-axis label
 
         # 3. Tree Construction Timeline (share both axes)
-        ax3_left = fig.add_subplot(gs[2, 0])
-        ax3_right = fig.add_subplot(gs[2, 1], sharex=ax3_left, sharey=ax3_left)
+        ax3_left = fig.add_subplot(bottom_gs[0, 0])
+        ax3_right = fig.add_subplot(bottom_gs[0, 1], sharex=ax3_left, sharey=ax3_left)
 
         self._plot_tree_construction_timeline(telemetry1, ax3_left)
-        ax3_left.set_title("Tree Construction Timeline", fontsize=12)
+        ax3_left.set_title("Tree Construction Timeline", fontsize=12, pad=25)
 
         self._plot_tree_construction_timeline(telemetry2, ax3_right)
-        ax3_right.set_title("Tree Construction Timeline", fontsize=12)
+        ax3_right.set_title("Tree Construction Timeline", fontsize=12, pad=25)
         ax3_right.set_ylabel("")  # Remove y-axis label
 
         # Save figure
@@ -445,6 +467,15 @@ class TelemetryVisualizer:
         # Extract nodes from telemetry data
         nodes = self._extract_nodes_from_telemetry(telemetry)
 
+        # Calculate embedding cost
+        total_embedding_tokens = 0
+        for node in nodes:
+            embedding = node.get("embedding")
+            if embedding:
+                total_embedding_tokens += embedding.get("text_tokens", 0)
+
+        embedding_cost = (total_embedding_tokens / 1000) * embedding_cost_per_1k
+
         # Process all attempts from summary nodes
         for node in nodes:
             height = node["height"]
@@ -465,8 +496,9 @@ class TelemetryVisualizer:
                     display_num = min(attempt_num, 5)
                     costs_by_attempt[display_num] += attempt_cost
 
-        # Calculate total cost (excluding embeddings)
-        total_cost = sum(costs_by_attempt.values())
+        # Calculate total cost (including embeddings now)
+        summary_cost = sum(costs_by_attempt.values())
+        total_cost = embedding_cost + summary_cost
 
         if total_cost == 0:
             ax.text(
@@ -481,28 +513,51 @@ class TelemetryVisualizer:
             return
 
         # Create vertical stacked bar
+        # Use purple for embeddings, then the standard retry colors
         colors = [
-            "#2563eb",
-            "#10b981",
-            "#f59e0b",
-            "#ef4444",
-            "#991b1b",
-        ]  # Same as retry patterns
-        labels = ["Attempt 1", "Attempt 2", "Attempt 3", "Attempt 4", "Attempt 5+"]
+            "#9333ea",  # Purple for embeddings
+            "#2563eb",  # Blue for initial
+            "#10b981",  # Green for retry 1
+            "#f59e0b",  # Yellow for retry 2
+            "#ef4444",  # Orange for retry 3
+            "#991b1b",  # Red for retry 4+
+        ]
+        labels = [
+            "Embeddings",
+            "Initial attempt",
+            "Retry 1",
+            "Retry 2",
+            "Retry 3",
+            "Retry 4+",
+        ]
 
-        # Single vertical bar centered with black border
-        bottom = 0
+        # Single vertical bar centered - start with embeddings at bottom
+        bottom = 0.0
+
+        # Add embeddings bar first (at the bottom)
+        if embedding_cost > 0:
+            ax.bar(
+                0.5,
+                embedding_cost,
+                bottom=bottom,
+                color=colors[0],
+                label=labels[0],
+                width=0.3,
+            )
+            bottom += embedding_cost
+
+        # Then add summary attempt costs on top
         for attempt_num in range(1, 6):
             cost = costs_by_attempt[attempt_num]
             if cost > 0:  # Only plot if there's cost
-                label = labels[attempt_num - 1]
-                color = colors[attempt_num - 1]
+                label = labels[attempt_num]  # Adjusted index for new labels list
+                color = colors[attempt_num]  # Adjusted index for new colors list
                 ax.bar(
                     0.5,
                     cost,
                     bottom=bottom,
                     color=color,
-                    label=label,  # Simplified label without cost
+                    label=label,
                     width=0.3,
                 )
                 bottom += cost
@@ -510,7 +565,7 @@ class TelemetryVisualizer:
         ax.set_ylim(0, total_cost * 1.2)  # Add 20% padding for legend
         ax.set_xlim(0, 1)
         ax.set_ylabel("Cost ($)")
-        ax.set_title(f"Cost Breakdown by Attempt\nTotal: ${total_cost:.4f}")
+        ax.set_title(f"Cost Breakdown\nTotal: ${total_cost:.4f}")
         ax.set_xticks([])  # Hide x-axis ticks
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3, axis="y")
@@ -888,7 +943,7 @@ class TelemetryVisualizer:
                 color="w",
                 markerfacecolor=colors[0],
                 markersize=8,
-                label="Attempt 1",
+                label="Initial attempt",
                 linestyle="None",
                 alpha=0.6,
             ),
@@ -899,7 +954,7 @@ class TelemetryVisualizer:
                 color="w",
                 markerfacecolor=colors[1],
                 markersize=8,
-                label="Attempt 2",
+                label="Retry 1",
                 linestyle="None",
                 alpha=0.6,
             ),
@@ -910,7 +965,7 @@ class TelemetryVisualizer:
                 color="w",
                 markerfacecolor=colors[2],
                 markersize=8,
-                label="Attempt 3",
+                label="Retry 2",
                 linestyle="None",
                 alpha=0.6,
             ),
@@ -921,7 +976,7 @@ class TelemetryVisualizer:
                 color="w",
                 markerfacecolor=colors[3],
                 markersize=8,
-                label="Attempt 4",
+                label="Retry 3",
                 linestyle="None",
                 alpha=0.6,
             ),
@@ -932,7 +987,7 @@ class TelemetryVisualizer:
                 color="w",
                 markerfacecolor=colors[4],
                 markersize=8,
-                label="Attempt 5+",
+                label="Retry 4+",
                 linestyle="None",
                 alpha=0.6,
             ),
@@ -1034,7 +1089,7 @@ class TelemetryVisualizer:
         avg_attempts = np.mean(attempt_numbers)
 
         stats_text = (
-            f"Avg attempts: {avg_attempts:.2f}\n"
+            f"Avg attempts per node: {avg_attempts:.2f}\n"
             f"Total attempts: {len(input_tokens)} ({node_count} nodes)"
         )
         ax.text(
@@ -1315,18 +1370,20 @@ class TelemetryVisualizer:
                 ax.set_ylim(0, 1)
             ax.set_xlabel("Document Position (characters)")
             ax.set_ylabel("Time Since Start (seconds)")
+            # Add extra padding at the top for the legend
             ax.set_title(
-                "Tree Construction Timeline\n(Shows how nodes are built over time)"
+                "Tree Construction Timeline",
+                pad=25,  # Add padding to make room for legend
             )
             ax.grid(True, alpha=0.3)
 
             # Add legend for attempt colors
             legend_elements = [
-                Patch(facecolor=attempt_colors[0], label="Attempt 1", alpha=0.9),
-                Patch(facecolor=attempt_colors[1], label="Attempt 2", alpha=0.9),
-                Patch(facecolor=attempt_colors[2], label="Attempt 3", alpha=0.9),
-                Patch(facecolor=attempt_colors[3], label="Attempt 4", alpha=0.9),
-                Patch(facecolor=attempt_colors[4], label="Attempt 5+", alpha=0.9),
+                Patch(facecolor=attempt_colors[0], label="Initial attempt", alpha=0.9),
+                Patch(facecolor=attempt_colors[1], label="Retry 1", alpha=0.9),
+                Patch(facecolor=attempt_colors[2], label="Retry 2", alpha=0.9),
+                Patch(facecolor=attempt_colors[3], label="Retry 3", alpha=0.9),
+                Patch(facecolor=attempt_colors[4], label="Retry 4+", alpha=0.9),
             ]
 
             # Only include legend items for attempts that exist
@@ -1337,14 +1394,14 @@ class TelemetryVisualizer:
 
             if max_attempts > 0:
                 legend_elements = legend_elements[:max_attempts]
-                # Place legend inside the plot area at top, below the title
+                # Place legend horizontally between title and chart
                 ax.legend(
                     handles=legend_elements,
                     loc="upper center",
-                    bbox_to_anchor=(0.5, 0.98),
-                    ncol=min(len(legend_elements), 6),
+                    bbox_to_anchor=(0.5, 1.05),  # Position above chart, below title
+                    ncol=min(len(legend_elements), 6),  # Horizontal layout
                     fontsize=8,
-                    frameon=True,
+                    frameon=False,  # Remove frame for cleaner look
                 )
         else:
             # No valid data to plot
@@ -1381,9 +1438,13 @@ class TelemetryVisualizer:
                         token_data.append(
                             {
                                 "attempt": (
-                                    f"Attempt {display_num}"
-                                    if display_num < 5
-                                    else "Attempt 5+"
+                                    "Initial attempt"
+                                    if display_num == 1
+                                    else (
+                                        f"Retry {display_num - 1}"
+                                        if display_num < 5
+                                        else "Retry 4+"
+                                    )
                                 ),
                                 "actual_tokens": actual_tokens,
                                 "attempt_order": display_num,  # For sorting
