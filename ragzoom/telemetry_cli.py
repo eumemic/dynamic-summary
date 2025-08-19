@@ -1124,7 +1124,15 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
         absolute_change = current_time - baseline_time
         phase_threshold = dynamic_thresholds.get(phase_key, float("inf"))
 
-        if baseline_time > 0 and absolute_change > phase_threshold:
+        # Add minimum absolute threshold for time-based metrics to prevent microsecond noise
+        # from triggering false regressions (e.g., 0.0001s -> 0.00012s showing as +20%)
+        min_time_threshold = 0.001  # 1ms minimum threshold for time regressions
+
+        if (
+            baseline_time > 0
+            and absolute_change > phase_threshold
+            and absolute_change > min_time_threshold
+        ):
             configs_with_regressions.append(
                 (display_name, change_percent, phase_threshold, baseline_time)
             )
