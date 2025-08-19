@@ -6,6 +6,7 @@ import tempfile
 import pytest
 
 from ragzoom.config import OperationalConfig
+from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
 from ragzoom.store import Store
 
 
@@ -220,15 +221,12 @@ class TestStore:
         # pin_depth_max is hardcoded to 2 in the config
 
         # Pin nodes at different depths
-        success = temp_store.pin_node("root")  # depth 0 - should succeed
-        assert success is True
-
-        success = temp_store.pin_node("level2")  # depth 2 - should succeed
-        assert success is True
+        temp_store.pin_node("root")  # depth 0 - should succeed
+        temp_store.pin_node("level2")  # depth 2 - should succeed
 
         # Try to pin deep node (should fail)
-        success = temp_store.pin_node("level3")  # depth 3 - should fail
-        assert success is False
+        with pytest.raises(InvalidOperationError, match="exceeds maximum pin depth"):
+            temp_store.pin_node("level3")  # depth 3 - should fail
 
         # Check pinned nodes
         pinned = temp_store.get_pinned_nodes()
@@ -350,8 +348,11 @@ class TestStore:
         assert temp_store.is_root_node("left") is False
         assert temp_store.is_root_node("ll") is False
 
+        # Test with non-existent node
+        assert temp_store.is_root_node("non-existent") is False
+
         # Test non-existent node
-        with pytest.raises(ValueError, match="Node non-existent not found"):
+        with pytest.raises(NodeNotFoundError):
             temp_store.get_node_depth("non-existent")
 
     def test_node_height_calculation(self, temp_store):
@@ -438,6 +439,9 @@ class TestStore:
         assert temp_store.is_leaf_node("rc") is True
         assert temp_store.is_leaf_node("left") is False
         assert temp_store.is_leaf_node("root") is False
+
+        # Test with non-existent node
+        assert temp_store.is_leaf_node("non-existent") is False
 
         # Test non-existent node
         assert temp_store.get_node("non-existent") is None
@@ -534,3 +538,44 @@ class TestStore:
         # Even for the deepest node, we only traverse up to root
         # This is O(depth) = O(log n) for balanced trees
         assert temp_store.get_node_depth("chain_9") == 9
+
+    def test_error_handling_patterns(self, temp_store):
+        """Test consistent error handling patterns."""
+        # Create a simple tree for testing
+        temp_store.add_node(
+            node_id="root",
+            text="Root",
+            embedding=[0.1] * 1536,
+            span_start=0,
+            span_end=100,
+            height=0,
+        )
+
+        # Test NodeNotFoundError for calculation methods
+        with pytest.raises(NodeNotFoundError) as exc_info:
+            temp_store.get_node_depth("missing")
+        assert exc_info.value.node_id == "missing"
+
+        # Test InvalidOperationError for already pinned node
+        temp_store.pin_node("root")  # Pin the node first
+        with pytest.raises(InvalidOperationError, match="already pinned"):
+            temp_store.pin_node("root")  # Try to pin again
+
+        # Test InvalidOperationError for embedding validation
+        with pytest.raises(InvalidOperationError, match="Embedding cannot be empty"):
+            temp_store.add_node(
+                node_id="bad",
+                text="Bad node",
+                embedding=[],  # Empty embedding
+                span_start=0,
+                span_end=10,
+            )
+
+        # Test predicate methods return False for missing nodes (don't raise)
+        assert temp_store.is_leaf_node("missing") is False
+        assert temp_store.is_root_node("missing") is False
+
+        # Test query methods return None for missing items (don't raise)
+        assert temp_store.get_node("missing") is None
+        assert temp_store.get_document_by_id("missing") is None
+        assert temp_store.get_document_embedding_model("missing") is None
