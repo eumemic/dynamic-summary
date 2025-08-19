@@ -1,6 +1,5 @@
 """Test whitespace gap reconstruction in text splitter."""
 
-import tempfile
 from unittest.mock import Mock, patch
 
 import pytest
@@ -8,7 +7,6 @@ import pytest
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
-from ragzoom.store import Store
 
 
 class TestWhitespaceReconstruction:
@@ -44,39 +42,31 @@ class TestWhitespaceReconstruction:
             yield
 
     @pytest.fixture
-    def setup(self, mock_openai):
+    def setup(self, mock_openai, store):
         """Setup test environment."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Create separate configs
-            index_config = IndexConfig.load(
-                target_chunk_tokens=50,  # Reasonable chunk size
-                preceding_context_tokens=10,
-            )
-            query_config = QueryConfig(budget_tokens=1000)
-            operational_config = OperationalConfig(
-                openai_api_key="test-key",
-                chroma_persist_directory=temp_dir,
-                sqlite_database_url="sqlite:///:memory:",
-            )
+        # Create separate configs
+        index_config = IndexConfig.load(
+            target_chunk_tokens=50,  # Reasonable chunk size
+            preceding_context_tokens=10,
+        )
+        query_config = QueryConfig(budget_tokens=1000)
+        operational_config = OperationalConfig(
+            openai_api_key="test-key",
+        )
 
-            store = Store(
-                operational_config, embedding_model=index_config.embedding_model
-            )
-            tree_builder = TreeBuilder(
-                index_config, store, api_key=operational_config.openai_api_key
-            )
+        tree_builder = TreeBuilder(
+            index_config, store, api_key=operational_config.openai_api_key
+        )
 
-            # Create a config wrapper for TextSplitter backward compatibility
-            from tests.conftest import BackwardCompatibilityConfig
+        # Create a config wrapper for TextSplitter backward compatibility
+        from tests.conftest import BackwardCompatibilityConfig
 
-            config = BackwardCompatibilityConfig(
-                index_config, query_config, operational_config
-            )
-            splitter = TextSplitter(config)
+        config = BackwardCompatibilityConfig(
+            index_config, query_config, operational_config
+        )
+        splitter = TextSplitter(config)
 
-            yield config, store, tree_builder, splitter
-
-            store.close()
+        yield config, store, tree_builder, splitter
 
     def test_whitespace_gap_reconstruction(self, setup):
         """Test that whitespace gaps between chunks are properly reconstructed."""

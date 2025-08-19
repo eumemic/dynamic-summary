@@ -46,8 +46,7 @@ class TestAutomaticClearing:
         """Create operational configuration for test database."""
         return OperationalConfig(
             openai_api_key="test-key",
-            sqlite_database_url=f"sqlite:///{temp_db}",
-            chroma_persist_directory=str(temp_db.parent / "chroma_test"),
+            database_url=f"postgresql:///{temp_db}",
             cache_size=100,
         )
 
@@ -67,7 +66,7 @@ class TestAutomaticClearing:
             store.add_node(
                 node_id=f"node_{i}",
                 text=f"Text content {i}",
-                embedding=[0.1] * 100,  # Dummy embedding
+                embedding=[0.1] * 1536,  # Dummy embedding
                 span_start=span_start,
                 span_end=span_end,
                 document_id=document_id,
@@ -79,14 +78,11 @@ class TestAutomaticClearing:
         # (which happens at the end of indexing)
 
     def test_automatic_clearing_deletes_orphaned_nodes(
-        self, temp_db, config, operational_config
+        self, temp_db, config, operational_config, store
     ):
         """Test that automatic clearing deletes orphaned nodes from interrupted indexing."""
         runner = CliRunner()
         document_id = "test_document.txt"
-
-        # Initialize store with test database
-        store = Store(operational_config)
 
         # Simulate an interrupted indexing that left orphaned nodes
         self.simulate_interrupted_indexing(store, document_id, num_nodes=248)
@@ -116,12 +112,27 @@ class TestAutomaticClearing:
             with patch("ragzoom.cli.TreeBuilder") as mock_builder:
                 mock_instance = MagicMock()
                 mock_builder.return_value = mock_instance
-                mock_instance.add_document.return_value = document_id
+
+                # Mock add_document to add a root node for stats calculation
+                def mock_add_document_side_effect(*args, **kwargs):
+                    # Add a mock root node so CLI stats calculation works
+                    store.add_node(
+                        node_id="mock_root",
+                        text="Mock root node",
+                        span_start=0,
+                        span_end=100,
+                        parent_id=None,
+                        document_id=document_id,
+                        embedding=[0.1] * 1536,
+                    )
+                    return document_id
+
+                mock_instance.add_document.side_effect = mock_add_document_side_effect
 
                 # Mock successful indexing that returns proper stats
-                with patch("ragzoom.cli.Store") as mock_store_class:
+                with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
                     # Use the real store for database operations
-                    mock_store_class.return_value = store
+                    mock_create_store.return_value = store
 
                     with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
                         # Run index (clearing should be automatic)
@@ -134,35 +145,35 @@ class TestAutomaticClearing:
 
             # Check if orphaned nodes were deleted
             with store.SessionLocal() as session:
-                remaining_nodes = (
-                    session.query(TreeNode)
-                    .filter_by(
-                        document_id=document_id,
-                        parent_id=None,
-                        left_child_id=None,
-                        right_child_id=None,
-                    )
-                    .count()
+                all_nodes = (
+                    session.query(TreeNode).filter_by(document_id=document_id).all()
                 )
 
-                # Automatic clearing should delete all orphaned nodes
+                # Automatic clearing should have deleted old nodes and added new ones
+                # Check that none of the old node IDs exist (they were node_0 through node_247)
+                old_node_ids = [f"node_{i}" for i in range(248)]
+                remaining_old_nodes = [
+                    node for node in all_nodes if node.id in old_node_ids
+                ]
+
                 assert (
-                    remaining_nodes == 0
-                ), f"Automatic clearing should delete orphaned nodes, but {remaining_nodes} remain."
+                    len(remaining_old_nodes) == 0
+                ), f"Found {len(remaining_old_nodes)} old orphaned nodes that should have been cleared"
+
+                # Should have exactly 1 new node from the mock indexing
+                assert (
+                    len(all_nodes) == 1
+                ), f"Expected exactly 1 new node after reindexing, found {len(all_nodes)}"
 
         finally:
             os.unlink(temp_file)
-            store.close()
 
     def test_automatic_clearing_works_with_document_record(
-        self, temp_db, config, operational_config
+        self, temp_db, config, operational_config, store
     ):
         """Test that automatic clearing works correctly when a Document record exists."""
         runner = CliRunner()
         document_id = "test_document.txt"
-
-        # Initialize store with test database
-        store = Store(operational_config)
 
         # Simulate a complete indexing (with Document record)
         self.simulate_interrupted_indexing(store, document_id, num_nodes=248)
@@ -199,8 +210,24 @@ class TestAutomaticClearing:
                 mock_builder.return_value = mock_instance
                 mock_instance.add_document.return_value = document_id
 
-                with patch("ragzoom.cli.Store") as mock_store_class:
-                    mock_store_class.return_value = store
+                # Mock add_document to add a root node for stats calculation
+                def mock_add_document_side_effect(*args, **kwargs):
+                    # Add a mock root node so CLI stats calculation works
+                    store.add_node(
+                        node_id="mock_root",
+                        text="Mock root node",
+                        span_start=0,
+                        span_end=100,
+                        parent_id=None,
+                        document_id=document_id,
+                        embedding=[0.1] * 1536,
+                    )
+                    return document_id
+
+                mock_instance.add_document.side_effect = mock_add_document_side_effect
+
+                with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
+                    mock_create_store.return_value = store
 
                     with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
                         # Run index (clearing should be automatic)
@@ -208,19 +235,30 @@ class TestAutomaticClearing:
                             cli, ["index", temp_file, "--document-id", document_id]
                         )
 
-                        assert result.exit_code == 0
+                        assert result.exit_code == 0, f"Command failed: {result.output}"
                         # Should show clearing message for existing data
                         assert "Clearing existing data" in result.output
 
-            # Verify all nodes were deleted
+            # Verify old nodes were cleared and new ones added
             with store.SessionLocal() as session:
-                remaining_nodes = (
-                    session.query(TreeNode).filter_by(document_id=document_id).count()
+                all_nodes = (
+                    session.query(TreeNode).filter_by(document_id=document_id).all()
                 )
+
+                # Check that none of the old node IDs exist (they were node_0 through node_247)
+                old_node_ids = [f"node_{i}" for i in range(248)]
+                remaining_old_nodes = [
+                    node for node in all_nodes if node.id in old_node_ids
+                ]
+
                 assert (
-                    remaining_nodes == 0
-                ), f"Expected 0 nodes after clear, found {remaining_nodes}"
+                    len(remaining_old_nodes) == 0
+                ), f"Found {len(remaining_old_nodes)} old nodes that should have been cleared"
+
+                # Should have exactly 1 new node from the mock indexing
+                assert (
+                    len(all_nodes) == 1
+                ), f"Expected exactly 1 new node after reindexing, found {len(all_nodes)}"
 
         finally:
             os.unlink(temp_file)
-            store.close()

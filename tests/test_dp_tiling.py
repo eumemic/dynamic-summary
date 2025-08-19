@@ -29,8 +29,7 @@ class TestDPTiling:
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(
             openai_api_key="test-key",
-            sqlite_database_url="sqlite:///:memory:",
-            chroma_persist_directory=":memory:",
+            database_url="postgresql:///:memory:",
         )
         config = _TestConfig(index_config, query_config, operational_config)
         store = SimpleMockStore(config=config)

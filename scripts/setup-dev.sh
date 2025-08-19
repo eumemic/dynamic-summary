@@ -98,7 +98,76 @@ fi
 pip install -q -e "$PROJECT_ROOT"
 echo -e "${GREEN}✓ Installed RagZoom in development mode${NC}"
 
-# 4. Set up environment file
+# 4. Set up PostgreSQL with Docker
+echo ""
+echo "🐘 Setting up PostgreSQL database..."
+
+# Check if Docker is available
+if command -v docker &> /dev/null; then
+    echo -e "${GREEN}✓ Docker found${NC}"
+    
+    # Check if Docker daemon is running
+    if docker info &> /dev/null; then
+        echo -e "${GREEN}✓ Docker daemon is running${NC}"
+        
+        # Check if PostgreSQL container already exists
+        CONTAINER_NAME="ragzoom-postgres"
+        if docker ps -a --format "{{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
+            echo -e "${YELLOW}⚠️  PostgreSQL container already exists${NC}"
+            
+            # Check if it's running
+            if docker ps --format "{{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
+                echo -e "${GREEN}✓ PostgreSQL container is running${NC}"
+            else
+                echo -e "${YELLOW}⚠️  Starting existing PostgreSQL container...${NC}"
+                docker start "${CONTAINER_NAME}"
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}✓ PostgreSQL container started${NC}"
+                else
+                    echo -e "${RED}✗ Failed to start PostgreSQL container${NC}"
+                fi
+            fi
+        else
+            echo "Creating PostgreSQL container with pgvector..."
+            docker run -d \
+                --name "${CONTAINER_NAME}" \
+                -e POSTGRES_PASSWORD=postgres \
+                -e POSTGRES_DB=ragzoom \
+                -p 5432:5432 \
+                pgvector/pgvector:pg16
+            
+            if [ $? -eq 0 ]; then
+                echo -e "${GREEN}✓ PostgreSQL container created and started${NC}"
+                echo "   Waiting for PostgreSQL to be ready..."
+                
+                # Wait for PostgreSQL to be ready
+                for i in {1..30}; do
+                    if docker exec "${CONTAINER_NAME}" pg_isready -U postgres -d ragzoom &> /dev/null; then
+                        echo -e "${GREEN}✓ PostgreSQL is ready!${NC}"
+                        break
+                    fi
+                    if [ $i -eq 30 ]; then
+                        echo -e "${YELLOW}⚠️  PostgreSQL may still be starting up${NC}"
+                        echo "   Run 'ragzoom doctor' to check status"
+                    fi
+                    sleep 1
+                done
+            else
+                echo -e "${RED}✗ Failed to create PostgreSQL container${NC}"
+                echo "   You may need to set up PostgreSQL manually"
+            fi
+        fi
+    else
+        echo -e "${YELLOW}⚠️  Docker is installed but daemon is not running${NC}"
+        echo "   Start Docker Desktop or run: sudo systemctl start docker"
+    fi
+else
+    echo -e "${YELLOW}⚠️  Docker not found${NC}"
+    echo "   Install Docker Desktop from https://docker.com"
+    echo "   Or set RAGZOOM_DATABASE_URL to use existing PostgreSQL"
+fi
+
+# 5. Set up environment file
 echo ""
 echo "🔐 Checking environment configuration..."
 
@@ -115,14 +184,14 @@ else
     echo -e "${GREEN}✓ .env file exists${NC}"
 fi
 
-# 5. Create necessary directories
+# 6. Create necessary directories
 echo ""
 echo "📁 Setting up directories..."
 
 mkdir -p "$PROJECT_ROOT/logs"
 echo -e "${GREEN}✓ Created logs directory${NC}"
 
-# 6. Run tests to verify setup
+# 7. Run tests to verify setup
 echo ""
 echo "🧪 Running tests to verify setup..."
 
@@ -134,7 +203,7 @@ else
     echo -e "${RED}✗ Tests failed - check your setup${NC}"
 fi
 
-# 7. Display helpful information
+# 8. Display helpful information
 echo ""
 echo "✨ Setup complete!"
 echo ""
@@ -144,6 +213,12 @@ echo "   • Quick tests: ./test_quick.sh"
 echo "   • Format code: black ragzoom/ tests/"
 echo "   • Lint code: ruff check ragzoom/ tests/"
 echo "   • Type check: mypy ragzoom/"
+echo ""
+echo "🐘 PostgreSQL (Docker):"
+echo "   • Check status: ragzoom doctor"
+echo "   • Start container: docker start ragzoom-postgres"
+echo "   • Stop container: docker stop ragzoom-postgres"
+echo "   • View logs: docker logs ragzoom-postgres"
 echo ""
 echo "🪝 Git hooks installed:"
 echo "   • pre-commit: Dispatches to worktree's own scripts/git-hooks/pre-commit"

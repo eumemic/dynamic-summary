@@ -126,7 +126,7 @@ async def test_resummarize(node_id: str, target_tokens: int = 200):
         
         # Create a temporary store (we won't save to it)
         from ragzoom.config import OperationalConfig
-        op_config = OperationalConfig(sqlite_database_url="sqlite:///temp.db")
+        op_config = OperationalConfig(database_url="postgresql://temp")
         store = Store(op_config, embedding_model=config.embedding_model)
         
         # Create tree builder
