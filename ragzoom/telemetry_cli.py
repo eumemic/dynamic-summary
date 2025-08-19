@@ -514,11 +514,13 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     return has_regression
 
 
-def _compare_query_telemetry_files(baseline_file: Path, current_file: Path) -> bool:
-    """Compare two query telemetry files.
+def _compare_query_files_silent(
+    baseline_file: Path, current_file: Path
+) -> tuple[bool, dict]:
+    """Compare two query telemetry files silently and return results.
 
     Returns:
-        True if regression detected
+        Tuple of (has_regression, report_dict)
     """
     from ragzoom.telemetry_analysis import compare_query_performance
 
@@ -532,6 +534,18 @@ def _compare_query_telemetry_files(baseline_file: Path, current_file: Path) -> b
     has_regression, report = compare_query_performance(
         baseline_data, current_data, regression_threshold=0.5
     )
+
+    return has_regression, report
+
+
+def _compare_query_telemetry_files(baseline_file: Path, current_file: Path) -> bool:
+    """Compare two query telemetry files.
+
+    Returns:
+        True if regression detected
+    """
+    # Use silent comparison and output verbose results
+    has_regression, report = _compare_query_files_silent(baseline_file, current_file)
 
     # Format output
     click.echo("\n### Query Performance Comparison\n")
@@ -885,16 +899,74 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
     click.echo("\n### Query Performance")
 
     has_regression = False
+    results = []
+    regression_details = []
 
-    # Process each query telemetry file pair
+    # Collect results from all query configurations
     for baseline_file, current_file in query_matches:
         try:
-            query_has_regression = _compare_query_telemetry_files(
+            config_name = baseline_file.name.replace("query_telemetry_", "").replace(
+                ".json", ""
+            )
+
+            # Get comparison results without outputting immediately
+            query_has_regression, report = _compare_query_files_silent(
                 baseline_file, current_file
             )
             has_regression = has_regression or query_has_regression
+
+            summary = report["summary"]
+            baseline_p50 = summary["baseline_p50"]
+            current_p50 = summary["current_p50"]
+            change_percent = (
+                ((current_p50 - baseline_p50) / baseline_p50) * 100
+                if baseline_p50 > 0
+                else 0
+            )
+
+            status = "❌" if query_has_regression else "✅"
+            results.append(
+                {
+                    "config": config_name,
+                    "baseline": baseline_p50,
+                    "current": current_p50,
+                    "change": change_percent,
+                    "status": status,
+                    "has_regression": query_has_regression,
+                    "report": report,
+                }
+            )
+
+            # Collect regression details for later
+            if query_has_regression:
+                regression_details.append((config_name, report))
+
         except Exception as e:
             click.echo(f"Error comparing {baseline_file.name}: {e}", err=True)
+
+    # Output concise summary table
+    if results:
+        click.echo("\n| Configuration | Baseline | Current | Change | Status |")
+        click.echo("|---------------|----------|---------|--------|--------|")
+
+        for result in results:
+            config = result["config"]
+            baseline = result["baseline"]
+            current = result["current"]
+            change = result["change"]
+            status = result["status"]
+
+            click.echo(
+                f"| {config} | {baseline:.3f}s | {current:.3f}s | {change:+.1f}% | {status} |"
+            )
+
+        # Show regression details only for failing configs
+        for config_name, report in regression_details:
+            click.echo(f"\n❌ **Regression in {config_name}**:")
+            for reg in report["regressions"]:
+                phase = reg["phase"]
+                change = reg["change_percent"]
+                click.echo(f"  - {phase}: {change:+.1f}%")
 
     return has_regression
 
