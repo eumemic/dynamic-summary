@@ -530,7 +530,8 @@ def _compare_query_files_silent(
     with open(current_file) as f:
         current_data = json.load(f)
 
-    # Compare performance (higher threshold for query variance)
+    # Use 50% regression threshold for query benchmarks due to API variance
+    # (vs 20% for deterministic indexing operations)
     has_regression, report = compare_query_performance(
         baseline_data, current_data, regression_threshold=0.5
     )
@@ -890,85 +891,189 @@ def _compare_directories(baseline_dir: Path, current_dir: Path) -> bool:
     return has_regression
 
 
+def _aggregate_phase_data(
+    query_matches: list[tuple[Path, Path]],
+) -> tuple[dict[str, float], dict[str, float], int, bool]:
+    """Aggregate phase timing data across all query configurations.
+
+    Returns:
+        Tuple of (baseline_phases, current_phases, total_samples, has_any_regression)
+    """
+    from ragzoom.telemetry_analysis import analyze_query_telemetry
+
+    # Known phases in query telemetry
+    phases = [
+        "embedding_time",
+        "search_time",
+        "mmr_time",
+        "coverage_map_time",
+        "scoring_time",
+        "dp_time",
+        "assembly_time",
+        "total_time",
+    ]
+
+    baseline_all_phases: dict[str, list[float]] = {phase: [] for phase in phases}
+    current_all_phases: dict[str, list[float]] = {phase: [] for phase in phases}
+    total_samples = 0
+    has_any_regression = False
+
+    for baseline_file, current_file in query_matches:
+        try:
+            # Get comparison results
+            query_has_regression, report = _compare_query_files_silent(
+                baseline_file, current_file
+            )
+            has_any_regression = has_any_regression or query_has_regression
+
+            # Load raw telemetry to extract all runs
+            with open(baseline_file) as f:
+                baseline_data = json.load(f)
+            with open(current_file) as f:
+                current_data = json.load(f)
+
+            # Analyze telemetries to get phase breakdowns
+            baseline_metrics = analyze_query_telemetry(baseline_data)
+            current_metrics = analyze_query_telemetry(current_data)
+
+            # Add phase data to aggregation
+            for phase in phases:
+                baseline_time = baseline_metrics.phase_breakdown.get(phase, 0.0)
+                current_time = current_metrics.phase_breakdown.get(phase, 0.0)
+
+                baseline_all_phases[phase].append(baseline_time)
+                current_all_phases[phase].append(current_time)
+
+            # Count samples based on telemetry format
+            if baseline_data.get("format_version") == "1.1":
+                total_samples += len(baseline_data.get("telemetries", []))
+            else:
+                total_samples += 1
+
+        except Exception as e:
+            click.echo(
+                f"Warning: Could not process {baseline_file.name}: {e}", err=True
+            )
+
+    # Calculate averages across all configurations
+    baseline_phases = {}
+    current_phases = {}
+
+    for phase in phases:
+        baseline_phases[phase] = (
+            sum(baseline_all_phases[phase]) / len(baseline_all_phases[phase])
+            if baseline_all_phases[phase]
+            else 0.0
+        )
+        current_phases[phase] = (
+            sum(current_all_phases[phase]) / len(current_all_phases[phase])
+            if current_all_phases[phase]
+            else 0.0
+        )
+
+    return baseline_phases, current_phases, total_samples, has_any_regression
+
+
 def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
-    """Process query telemetry file matches and output comparison.
+    """Process query telemetry file matches and output phase breakdown comparison.
 
     Returns:
         True if any regression detected
     """
-    click.echo("\n### Query Performance")
+    if not query_matches:
+        return False
 
-    has_regression = False
-    results = []
-    regression_details = []
+    # Aggregate phase data across all configurations
+    baseline_phases, current_phases, total_samples, has_any_regression = (
+        _aggregate_phase_data(query_matches)
+    )
 
-    # Collect results from all query configurations
-    for baseline_file, current_file in query_matches:
-        try:
-            config_name = baseline_file.name.replace("query_telemetry_", "").replace(
-                ".json", ""
-            )
+    if not baseline_phases:
+        click.echo("\n### Query Performance\n❌ No valid telemetry data found")
+        return False
 
-            # Get comparison results without outputting immediately
-            query_has_regression, report = _compare_query_files_silent(
-                baseline_file, current_file
-            )
-            has_regression = has_regression or query_has_regression
+    # Calculate configuration count
+    config_count = len(query_matches)
+    runs_per_config = total_samples // config_count if config_count > 0 else 0
 
-            summary = report["summary"]
-            baseline_p50 = summary["baseline_p50"]
-            current_p50 = summary["current_p50"]
-            change_percent = (
-                ((current_p50 - baseline_p50) / baseline_p50) * 100
-                if baseline_p50 > 0
-                else 0
-            )
+    click.echo("\n### Query Performance Phase Breakdown")
+    click.echo(
+        f"Averaged across {config_count} configurations × {runs_per_config} runs each ({total_samples} samples total)"
+    )
 
-            status = "❌" if query_has_regression else "✅"
-            results.append(
-                {
-                    "config": config_name,
-                    "baseline": baseline_p50,
-                    "current": current_p50,
-                    "change": change_percent,
-                    "status": status,
-                    "has_regression": query_has_regression,
-                    "report": report,
-                }
-            )
+    # Build phase breakdown table
+    click.echo("\n| Phase | Baseline | Current | Change | % of Total |")
+    click.echo("|-------|----------|---------|--------|------------|")
 
-            # Collect regression details for later
-            if query_has_regression:
-                regression_details.append((config_name, report))
+    # Calculate total time for percentage calculation
+    baseline_total = baseline_phases.get("total_time", 0.0)
+    current_total = current_phases.get("total_time", 0.0)
 
-        except Exception as e:
-            click.echo(f"Error comparing {baseline_file.name}: {e}", err=True)
+    # Show individual phases (excluding total_time for now)
+    phase_order = [
+        ("Embedding", "embedding_time"),
+        ("Search", "search_time"),
+        ("MMR", "mmr_time"),
+        ("Coverage Map", "coverage_map_time"),
+        ("Scoring", "scoring_time"),
+        ("DP Tiling", "dp_time"),
+        ("Assembly", "assembly_time"),
+    ]
 
-    # Output concise summary table
-    if results:
-        click.echo("\n| Configuration | Baseline | Current | Change | Status |")
-        click.echo("|---------------|----------|---------|--------|--------|")
+    configs_with_regressions = []
 
-        for result in results:
-            config = result["config"]
-            baseline = result["baseline"]
-            current = result["current"]
-            change = result["change"]
-            status = result["status"]
+    for display_name, phase_key in phase_order:
+        baseline_time = baseline_phases.get(phase_key, 0.0)
+        current_time = current_phases.get(phase_key, 0.0)
 
-            click.echo(
-                f"| {config} | {baseline:.3f}s | {current:.3f}s | {change:+.1f}% | {status} |"
-            )
+        # Calculate change percentage
+        change_percent = (
+            ((current_time - baseline_time) / baseline_time) * 100
+            if baseline_time > 0
+            else 0
+        )
 
-        # Show regression details only for failing configs
-        for config_name, report in regression_details:
-            click.echo(f"\n❌ **Regression in {config_name}**:")
-            for reg in report["regressions"]:
-                phase = reg["phase"]
-                change = reg["change_percent"]
-                click.echo(f"  - {phase}: {change:+.1f}%")
+        # Calculate percentage of total time
+        percent_of_total = (
+            (current_time / current_total) * 100 if current_total > 0 else 0
+        )
 
-    return has_regression
+        # Check for significant regression in this phase
+        if baseline_time > 0 and (current_time - baseline_time) / baseline_time > 0.5:
+            configs_with_regressions.append((display_name, change_percent))
+
+        click.echo(
+            f"| {display_name} | {baseline_time:.3f}s | {current_time:.3f}s | "
+            f"{change_percent:+.1f}% | {percent_of_total:.1f}% |"
+        )
+
+    # Show total row
+    total_change_percent = (
+        ((current_total - baseline_total) / baseline_total) * 100
+        if baseline_total > 0
+        else 0
+    )
+
+    click.echo(
+        f"| **Total** | **{baseline_total:.3f}s** | **{current_total:.3f}s** | "
+        f"**{total_change_percent:+.1f}%** | **100%** |"
+    )
+
+    # Show overall status and regression details
+    if has_any_regression:
+        click.echo(
+            "\n❌ Performance regression detected (threshold: 50% for API variance)"
+        )
+
+        # Show which phases had regressions
+        if configs_with_regressions:
+            click.echo("\n**Regressed phases:**")
+            for phase_name, change in configs_with_regressions:
+                click.echo(f"  - {phase_name}: {change:+.1f}%")
+    else:
+        click.echo("\n✅ No regressions detected (threshold: 50% for API variance)")
+
+    return has_any_regression
 
 
 @cli.command()
