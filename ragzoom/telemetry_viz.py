@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from matplotlib.axes import Axes
-from matplotlib.gridspec import GridSpec
+from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
@@ -44,6 +44,16 @@ sns.set_palette("husl")
 matplotlib.rcParams["figure.dpi"] = DISPLAY_DPI
 matplotlib.rcParams["savefig.dpi"] = SAVE_DPI
 matplotlib.rcParams["font.size"] = DEFAULT_FONT_SIZE
+
+# Color constants for visualization consistency
+EMBEDDINGS_COLOR = "#9333ea"  # Purple for embeddings
+ATTEMPT_COLORS = [
+    "#2563eb",  # Blue for initial attempt
+    "#10b981",  # Green for retry 1
+    "#f59e0b",  # Yellow for retry 2
+    "#ef4444",  # Orange for retry 3
+    "#991b1b",  # Red for retry 4+
+]
 
 
 class TelemetryVisualizer:
@@ -141,14 +151,13 @@ class TelemetryVisualizer:
             figsize=(FIGURE_WIDTH * 0.33, FIGURE_HEIGHT * 0.6)
         )  # Reduce width by 2/3 and height
         # Use GridSpecFromSubplotSpec for different gaps between rows
-        from matplotlib.gridspec import GridSpecFromSubplotSpec
 
         # Create main grid with 2 sections for different spacing
         main_gs = GridSpec(
             2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[2, 2]
         )
 
-        # Top section: Cost Breakdown and Summary Compression (further apart)
+        # Top section: Cost Breakdown and Summary Compression (closer together)
         top_gs = GridSpecFromSubplotSpec(
             2, 1, subplot_spec=main_gs[0], hspace=0.3, height_ratios=[0.6, 1.4]
         )
@@ -301,14 +310,13 @@ class TelemetryVisualizer:
         # Row 2: Summary scatter (numeric x-axis) - needs x-sharing
         # Row 3: Timeline (numeric x-axis) - needs x-sharing
         fig = plt.figure(figsize=figsize)
-        from matplotlib.gridspec import GridSpecFromSubplotSpec
 
         # Create main grid with 2 sections for different spacing
         main_gs = GridSpec(
             2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[2, 2]
         )
 
-        # Top section: Cost Breakdown and Summary Compression (further apart)
+        # Top section: Cost Breakdown and Summary Compression (closer together)
         top_gs = GridSpecFromSubplotSpec(
             2,
             2,
@@ -514,14 +522,7 @@ class TelemetryVisualizer:
 
         # Create vertical stacked bar
         # Use purple for embeddings, then the standard retry colors
-        colors = [
-            "#9333ea",  # Purple for embeddings
-            "#2563eb",  # Blue for initial
-            "#10b981",  # Green for retry 1
-            "#f59e0b",  # Yellow for retry 2
-            "#ef4444",  # Orange for retry 3
-            "#991b1b",  # Red for retry 4+
-        ]
+        colors = [EMBEDDINGS_COLOR] + ATTEMPT_COLORS
         labels = [
             "Embeddings",
             "Initial attempt",
@@ -706,7 +707,7 @@ class TelemetryVisualizer:
 
         # Don't reverse - keep ≥1 at bottom
         # Use same colors as Summary Accuracy (blue to red gradient)
-        colors = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#991b1b"][: len(labels)]
+        colors = ATTEMPT_COLORS[: len(labels)]
 
         # Create stacked bar - each full cumulative count stacked on top
         bar_width = 0.4
@@ -824,7 +825,7 @@ class TelemetryVisualizer:
             return
 
         # Create color map for attempt numbers (same colors as cost breakdown)
-        colors = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#991b1b"]  # Blue to red
+        colors = ATTEMPT_COLORS  # Blue to red gradient for attempts
 
         # Map each attempt to a color
         attempt_colors = []
@@ -1188,7 +1189,7 @@ class TelemetryVisualizer:
         nodes = self._extract_nodes_from_telemetry(telemetry)
 
         # Define retry attempt colors (1=blue, 2=green, 3=yellow, 4=orange, 5+=red)
-        attempt_colors = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#991b1b"]
+        attempt_colors = ATTEMPT_COLORS
 
         # Only show visualization if we have real spans from telemetry
         node_spans = {}  # node_id -> (start, end)
@@ -1471,7 +1472,7 @@ class TelemetryVisualizer:
         attempt_order = df["attempt"].unique()
 
         # Create violin plot with same colors as Summary Accuracy
-        colors = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#991b1b"]
+        colors = ATTEMPT_COLORS
 
         # Map colors to attempts
         palette = {attempt: colors[i] for i, attempt in enumerate(attempt_order[:5])}
