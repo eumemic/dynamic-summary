@@ -26,7 +26,7 @@ class TestCLI:
             patch("ragzoom.cli.IndexConfig") as mock_index_config,
             patch("ragzoom.cli.QueryConfig") as mock_query_config,
             patch("ragzoom.cli.OperationalConfig") as mock_operational_config,
-            patch("ragzoom.cli.Store") as mock_store,
+            patch("ragzoom.cli.create_store_with_docker") as mock_create_store,
             patch("ragzoom.cli.TreeBuilder") as mock_builder,
             patch("ragzoom.cli.Retriever") as mock_retriever,
             patch("ragzoom.cli.Assembler") as mock_assembler,
@@ -61,8 +61,7 @@ class TestCLI:
             # Mock operational config
             operational_config_instance = Mock()
             operational_config_instance.openai_api_key = "test-key"
-            operational_config_instance.chroma_persist_directory = "./chroma_db"
-            operational_config_instance.sqlite_database_url = "sqlite:///./ragzoom.db"
+            operational_config_instance.database_url = "postgresql:///ragzoom"
             mock_operational_config.return_value = operational_config_instance
 
             # Mock store
@@ -72,14 +71,15 @@ class TestCLI:
             ]
             store_instance.get_root_node.return_value = Mock(height=3)
             store_instance.get_pinned_nodes.return_value = []
-            store_instance.collection.count.return_value = 10
             store_instance.clear_document.return_value = (
                 0  # Default to no nodes cleared
             )
 
-            # Mock SessionLocal for database queries
+            # Mock SessionLocal for database queries (handles count queries)
             mock_session = Mock()
             mock_query = Mock()
+            # Set up count to return 10 for TreeNode queries
+            mock_query.count = Mock(return_value=10)
 
             # Mock leaf nodes query
             leaf_nodes = [
@@ -117,7 +117,7 @@ class TestCLI:
             mock_context_manager.__exit__ = Mock(return_value=None)
             store_instance.SessionLocal.return_value = mock_context_manager
 
-            mock_store.return_value = store_instance
+            mock_create_store.return_value = store_instance
 
             # Mock tree builder
             builder_instance = Mock()
@@ -149,7 +149,7 @@ class TestCLI:
                 "index_config": mock_index_config,
                 "query_config": mock_query_config,
                 "operational_config": mock_operational_config,
-                "store": mock_store,
+                "create_store": mock_create_store,
                 "builder": mock_builder,
                 "retriever": mock_retriever,
                 "assembler": mock_assembler,

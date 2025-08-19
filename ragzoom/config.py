@@ -173,8 +173,7 @@ class OperationalConfig:
     """
 
     openai_api_key: str = ""
-    chroma_persist_directory: str = "./chroma_db"
-    sqlite_database_url: str = "sqlite:///./ragzoom.db"
+    database_url: str = "postgresql+psycopg://localhost/ragzoom"
     cache_size: int = 1000
     log_level: str = "INFO"
     validate_pipeline: bool = False
@@ -184,13 +183,9 @@ class OperationalConfig:
         if not self.openai_api_key:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
 
-        # Allow environment overrides for storage paths (for testing)
-        if os.environ.get("RAGZOOM_CHROMA_PERSIST_DIRECTORY"):
-            self.chroma_persist_directory = os.environ[
-                "RAGZOOM_CHROMA_PERSIST_DIRECTORY"
-            ]
-        if os.environ.get("RAGZOOM_SQLITE_DATABASE_URL"):
-            self.sqlite_database_url = os.environ["RAGZOOM_SQLITE_DATABASE_URL"]
+        # Allow environment overrides for storage path (for testing)
+        if os.environ.get("RAGZOOM_DATABASE_URL"):
+            self.database_url = os.environ["RAGZOOM_DATABASE_URL"]
 
     def replace(self, **changes: Any) -> "OperationalConfig":
         """Create a new OperationalConfig with some fields changed."""

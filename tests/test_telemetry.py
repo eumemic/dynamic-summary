@@ -200,6 +200,10 @@ class TestTelemetryIntegration:
     ) -> None:
         """Test that telemetry captures all nodes during indexing."""
         store = request.getfixturevalue(f"{store_type}_store")
+
+        # Skip if real store not available (PostgreSQL not running)
+        if store is None:
+            pytest.skip("PostgreSQL not available for real store test")
         index_config = IndexConfig.load(
             target_chunk_tokens=100,
             preceding_context_tokens=50,
