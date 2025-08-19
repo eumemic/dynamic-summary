@@ -24,6 +24,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from ragzoom.config import OperationalConfig
+from ragzoom.exceptions import (
+    InvalidOperationError,
+    NodeNotFoundError,
+    StorageError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +88,20 @@ class Document(Base):
 
 
 class Store:
-    """Combined storage for tree structure (SQLite) and embeddings (Chroma)."""
+    """Combined storage for tree structure (SQLite) and embeddings (Chroma).
+
+    Error Handling Contract:
+    - Query methods (get_*): Return None for not found, never raise for missing items
+    - Predicate methods (is_*): Return False for missing items, never raise
+    - Command methods (add_*, pin_*, delete_*): Raise specific exceptions for failures
+    - Calculation methods (get_node_depth): Raise NodeNotFoundError for missing nodes
+
+    Exceptions:
+    - NodeNotFoundError: When a requested node cannot be found
+    - DocumentNotFoundError: When a requested document cannot be found
+    - InvalidOperationError: When operation cannot be performed (validation, already exists, etc.)
+    - StorageError: When storage backend encounters internal errors
+    """
 
     # Class constant for pin depth limit (dormant feature)
     PIN_DEPTH_MAX = 2
@@ -183,7 +201,7 @@ class Store:
     ) -> None:
         """Validate embedding dimension matches expected."""
         if not embedding:
-            raise ValueError("Embedding cannot be empty")
+            raise InvalidOperationError("Embedding cannot be empty")
 
         actual_dim = len(embedding)
 
@@ -192,7 +210,7 @@ class Store:
             self._expected_embedding_dim = actual_dim
             logger.debug(f"Setting embedding dimension reference to {actual_dim}")
         elif actual_dim != self._expected_embedding_dim:
-            raise ValueError(
+            raise InvalidOperationError(
                 f"Embedding dimension mismatch: expected {self._expected_embedding_dim}, "
                 f"got {actual_dim}. Check embedding_model configuration."
             )
@@ -519,28 +537,38 @@ class Store:
 
             return pinned_nodes
 
-    def pin_node(self, node_id: str) -> bool:
-        """Pin a node if it's within allowed depth."""
+    def pin_node(self, node_id: str) -> None:
+        """Pin a node if it's within allowed depth.
+
+        Raises:
+            NodeNotFoundError: If the node does not exist
+            InvalidOperationError: If the node is too deep or already pinned
+        """
         node = self.get_node(node_id)
         if not node:
-            return False
+            raise NodeNotFoundError(node_id)
 
         node_depth = self.get_node_depth(node_id)
         if node_depth > self.PIN_DEPTH_MAX:
-            return False
+            raise InvalidOperationError(
+                f"Node {node_id} is at depth {node_depth}, which exceeds maximum pin depth {self.PIN_DEPTH_MAX}"
+            )
 
         # Check if already pinned
         if node.is_pinned == 1:
-            logger.info(f"Node {node_id} is already pinned")
-            return False
+            raise InvalidOperationError(f"Node {node_id} is already pinned")
 
         with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
-            if node:
-                node.is_pinned = 1
+            db_node = session.query(TreeNode).filter_by(id=node_id).first()
+            if db_node:
+                db_node.is_pinned = 1
                 session.commit()
-                return True
-        return False
+                # Update cached node as well
+                if node_id in self.node_cache:
+                    self.node_cache[node_id].is_pinned = 1
+            else:
+                # This shouldn't happen since we checked above, but handle it
+                raise NodeNotFoundError(node_id)
 
     def get_leaf_nodes(self) -> list[TreeNode]:
         """Get all leaf nodes (nodes without children)."""
@@ -582,10 +610,13 @@ class Store:
 
         Returns 0 for root nodes, incrementing by 1 for each level down.
         This follows the standard tree convention where root is at depth 0.
+
+        Raises:
+            NodeNotFoundError: If the node does not exist
         """
         node = self.get_node(node_id)
         if not node:
-            raise ValueError(f"Node {node_id} not found")
+            raise NodeNotFoundError(node_id)
 
         depth = 0
         current_id = node.parent_id
@@ -600,18 +631,26 @@ class Store:
         return depth
 
     def is_leaf_node(self, node_id: str) -> bool:
-        """Check if a node is a leaf (has no children)."""
+        """Check if a node is a leaf (has no children).
+
+        Returns:
+            False if the node does not exist, True if it's a leaf, False if it has children
+        """
         node = self.get_node(node_id)
         if not node:
-            raise ValueError(f"Node {node_id} not found")
+            return False
 
         return not node.left_child_id and not node.right_child_id
 
     def is_root_node(self, node_id: str) -> bool:
-        """Check if a node is a root (has no parent)."""
+        """Check if a node is a root (has no parent).
+
+        Returns:
+            False if the node does not exist, True if it's a root, False if it has a parent
+        """
         node = self.get_node(node_id)
         if not node:
-            raise ValueError(f"Node {node_id} not found")
+            return False
 
         return node.parent_id is None
 
@@ -699,12 +738,20 @@ class Store:
             return session.query(Document).filter_by(file_path=file_path).first()
 
     def get_document_by_id(self, document_id: str) -> Document | None:
-        """Get a document by ID."""
+        """Get a document by ID.
+
+        Returns:
+            Document if found, None otherwise
+        """
         with self.SessionLocal() as session:
             return session.query(Document).filter_by(id=document_id).first()
 
     def get_document_embedding_model(self, document_id: str) -> str | None:
-        """Get the embedding model used for a specific document."""
+        """Get the embedding model used for a specific document.
+
+        Returns:
+            Embedding model name if document found, None otherwise
+        """
         doc = self.get_document_by_id(document_id)
         return doc.embedding_model if doc else None
 
@@ -966,7 +1013,7 @@ class Store:
                     if col_name in current_columns:
                         # Validate column name for security
                         if col_name not in valid_columns:
-                            raise ValueError(f"Invalid column name: {col_name}")
+                            raise StorageError(f"Invalid column name: {col_name}")
                         select_columns.append(col_name)
 
             # Add foreign keys
