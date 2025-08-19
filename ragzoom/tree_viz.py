@@ -267,15 +267,13 @@ def build_ascii_tree(
         # Load only nodes that are in the coverage map
         all_nodes = []
         for node_id in coverage_map:
-            if preloaded_nodes and node_id in preloaded_nodes:
-                node = preloaded_nodes[node_id]
-                if node.document_id == document_id:
-                    all_nodes.append(node)
-            else:
-                # Fallback to store only if preloaded_nodes not available
-                store_node = store.get_node(node_id)
-                if store_node and store_node.document_id == document_id:
-                    all_nodes.append(store_node)
+            if not preloaded_nodes or node_id not in preloaded_nodes:
+                raise ValueError(
+                    f"Node {node_id} in coverage_map but not in preloaded_nodes - invariant violated"
+                )
+            node = preloaded_nodes[node_id]
+            if node.document_id == document_id:
+                all_nodes.append(node)
         if not all_nodes:
             return "No nodes found in coverage map"
     else:
@@ -305,12 +303,11 @@ def build_ascii_tree(
 
             node_infos = []
             for node_id in tiling:
-                if preloaded_nodes and node_id in preloaded_nodes:
-                    node = preloaded_nodes[node_id]
-                else:
+                if not preloaded_nodes or node_id not in preloaded_nodes:
                     raise ValueError(
                         f"Node {node_id} not found in preloaded_nodes - invariant violated"
                     )
+                node = preloaded_nodes[node_id]
 
                 token_cost = node.token_count
                 node_infos.append(
