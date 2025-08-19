@@ -13,6 +13,7 @@ from ragzoom.telemetry_analysis import (
     SimplifiedMetrics,
     compute_simplified_metrics,
 )
+from ragzoom.telemetry_query import QueryPhaseMetrics
 
 
 # Metric name constants for consistency
@@ -891,13 +892,71 @@ def _compare_directories(baseline_dir: Path, current_dir: Path) -> bool:
     return has_regression
 
 
+def _calculate_query_phase_thresholds(
+    baseline_metrics: QueryPhaseMetrics,
+) -> dict[str, float]:
+    """Calculate dynamic thresholds for query phases based on their variance characteristics.
+
+    Different phases have different variance patterns:
+    - API phases (embedding): High variance, need looser thresholds (5-sigma)
+    - Local compute (DP, scoring): Low variance, tighter thresholds (3-sigma)
+    - I/O phases (search, MMR): Medium variance, medium thresholds (4-sigma)
+
+    Returns:
+        Dict mapping phase names to absolute threshold values
+    """
+    # Phase categorization with different k-factors
+    phase_categories: dict[str, dict[str, Any]] = {
+        # API phases: high variance due to API non-determinism (5-sigma)
+        "api": {
+            "phases": ["embedding_time"],
+            "k1": 3.0,  # Between-run variance
+            "k2": 2.0,  # Baseline uncertainty
+        },
+        # Local compute phases: deterministic, low variance (3-sigma)
+        "local": {
+            "phases": ["dp_time", "scoring_time", "assembly_time"],
+            "k1": 2.0,
+            "k2": 1.0,
+        },
+        # I/O phases: medium variance from system factors (4-sigma)
+        "io": {
+            "phases": ["search_time", "mmr_time", "coverage_map_time"],
+            "k1": 2.5,
+            "k2": 1.5,
+        },
+        # Total time uses API threshold since embedding dominates
+        "total": {
+            "phases": ["total_time"],
+            "k1": 3.0,
+            "k2": 2.0,
+        },
+    }
+
+    thresholds: dict[str, float] = {}
+
+    for category, config in phase_categories.items():
+        for phase in config["phases"]:
+            variance = baseline_metrics.phase_variance.get(phase, 0.0)
+
+            if variance > 0:
+                # Calculate threshold: (k1 + k2) × MAD
+                threshold = (config["k1"] + config["k2"]) * variance
+                thresholds[phase] = threshold
+            else:
+                # No variance data or zero variance - no threshold enforcement
+                thresholds[phase] = float("inf")
+
+    return thresholds
+
+
 def _aggregate_phase_data(
     query_matches: list[tuple[Path, Path]],
-) -> tuple[dict[str, float], dict[str, float], int, bool]:
+) -> tuple[dict[str, float], dict[str, float], int, bool, QueryPhaseMetrics | None]:
     """Aggregate phase timing data across all query configurations.
 
     Returns:
-        Tuple of (baseline_phases, current_phases, total_samples, has_any_regression)
+        Tuple of (baseline_phases, current_phases, total_samples, has_any_regression, baseline_metrics)
     """
     from ragzoom.telemetry_analysis import analyze_query_telemetry
 
@@ -917,6 +976,9 @@ def _aggregate_phase_data(
     current_all_phases: dict[str, list[float]] = {phase: [] for phase in phases}
     total_samples = 0
     has_any_regression = False
+    baseline_metrics = (
+        None  # Will store the first baseline metrics for threshold calculation
+    )
 
     for baseline_file, current_file in query_matches:
         try:
@@ -933,12 +995,16 @@ def _aggregate_phase_data(
                 current_data = json.load(f)
 
             # Analyze telemetries to get phase breakdowns
-            baseline_metrics = analyze_query_telemetry(baseline_data)
+            baseline_file_metrics = analyze_query_telemetry(baseline_data)
             current_metrics = analyze_query_telemetry(current_data)
+
+            # Store the first baseline metrics for threshold calculation
+            if baseline_metrics is None:
+                baseline_metrics = baseline_file_metrics
 
             # Add phase data to aggregation
             for phase in phases:
-                baseline_time = baseline_metrics.phase_breakdown.get(phase, 0.0)
+                baseline_time = baseline_file_metrics.phase_breakdown.get(phase, 0.0)
                 current_time = current_metrics.phase_breakdown.get(phase, 0.0)
 
                 baseline_all_phases[phase].append(baseline_time)
@@ -971,7 +1037,13 @@ def _aggregate_phase_data(
             else 0.0
         )
 
-    return baseline_phases, current_phases, total_samples, has_any_regression
+    return (
+        baseline_phases,
+        current_phases,
+        total_samples,
+        has_any_regression,
+        baseline_metrics,
+    )
 
 
 def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
@@ -984,13 +1056,20 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
         return False
 
     # Aggregate phase data across all configurations
-    baseline_phases, current_phases, total_samples, has_any_regression = (
-        _aggregate_phase_data(query_matches)
-    )
+    (
+        baseline_phases,
+        current_phases,
+        total_samples,
+        has_any_regression,
+        baseline_metrics,
+    ) = _aggregate_phase_data(query_matches)
 
-    if not baseline_phases:
+    if not baseline_phases or baseline_metrics is None:
         click.echo("\n### Query Performance\n❌ No valid telemetry data found")
         return False
+
+    # Calculate dynamic thresholds for each phase
+    dynamic_thresholds = _calculate_query_phase_thresholds(baseline_metrics)
 
     # Calculate configuration count
     config_count = len(query_matches)
@@ -1038,9 +1117,14 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
             (current_time / current_total) * 100 if current_total > 0 else 0
         )
 
-        # Check for significant regression in this phase
-        if baseline_time > 0 and (current_time - baseline_time) / baseline_time > 0.5:
-            configs_with_regressions.append((display_name, change_percent))
+        # Check for significant regression using dynamic threshold
+        absolute_change = current_time - baseline_time
+        phase_threshold = dynamic_thresholds.get(phase_key, float("inf"))
+
+        if baseline_time > 0 and absolute_change > phase_threshold:
+            configs_with_regressions.append(
+                (display_name, change_percent, phase_threshold, baseline_time)
+            )
 
         click.echo(
             f"| {display_name} | {baseline_time:.3f}s | {current_time:.3f}s | "
@@ -1059,21 +1143,36 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
         f"**{total_change_percent:+.1f}%** | **100%** |"
     )
 
+    # Check if any phases had regressions using dynamic thresholds
+    has_phase_regressions = len(configs_with_regressions) > 0
+
     # Show overall status and regression details
-    if has_any_regression:
+    if has_any_regression or has_phase_regressions:
         click.echo(
-            "\n❌ Performance regression detected (threshold: 50% for API variance)"
+            "\n❌ Performance regression detected (dynamic thresholds: 3σ local, 4σ I/O, 5σ API)"
         )
 
         # Show which phases had regressions
         if configs_with_regressions:
             click.echo("\n**Regressed phases:**")
-            for phase_name, change in configs_with_regressions:
-                click.echo(f"  - {phase_name}: {change:+.1f}%")
+            for phase_name, change, threshold, baseline in configs_with_regressions:
+                phase_key = phase_name.lower().replace(" ", "_") + "_time"
+                variance = baseline_metrics.phase_variance.get(phase_key, 0.0)
+                if variance > 0:
+                    sigma_level = threshold / variance
+                    click.echo(
+                        f"  - {phase_name}: {change:+.1f}% (exceeded {sigma_level:.1f}σ threshold)"
+                    )
+                else:
+                    click.echo(
+                        f"  - {phase_name}: {change:+.1f}% (no variance baseline)"
+                    )
     else:
-        click.echo("\n✅ No regressions detected (threshold: 50% for API variance)")
+        click.echo(
+            "\n✅ No regressions detected (dynamic thresholds: 3σ local, 4σ I/O, 5σ API)"
+        )
 
-    return has_any_regression
+    return has_any_regression or has_phase_regressions
 
 
 @cli.command()

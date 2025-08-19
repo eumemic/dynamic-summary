@@ -1263,20 +1263,25 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
     if isinstance(telemetry_data, dict):
         format_version = telemetry_data.get("format_version")
         if format_version == "1.1" and "telemetries" in telemetry_data:
-            # v1.1 format with multiple runs
+            # v1.1 format with multiple runs and pre-calculated statistics
             telemetries = telemetry_data["telemetries"]
+            statistics_data = telemetry_data.get("statistics", {})
         elif "telemetry" in telemetry_data:
             # v1.0 format - single telemetry file
             telemetries = [telemetry_data["telemetry"]]
+            statistics_data = {}
         else:
             # Assume it's already the telemetry dict
             telemetries = [telemetry_data]
+            statistics_data = {}
     elif isinstance(telemetry_data, list):
         # List of telemetry data
         telemetries = telemetry_data
+        statistics_data = {}
     else:
         # Assume it's already the telemetry dict
         telemetries = [telemetry_data]
+        statistics_data = {}
 
     if not telemetries:
         raise ValueError("No query telemetry data provided")
@@ -1322,13 +1327,37 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
                 metrics.get("tiling_size", 0) / metrics["coverage_size"]
             )
 
-    # Calculate phase breakdown (median values)
+    # Calculate phase breakdown (median values) and variance (MAD)
     phase_breakdown = {}
-    for phase, times in all_timings.items():
-        if times:
-            phase_breakdown[phase] = statistics.median(times)
-        else:
-            phase_breakdown[phase] = 0.0
+    phase_variance = {}
+
+    # Use pre-calculated statistics if available (v1.1 format)
+    if statistics_data:
+        for phase in all_timings.keys():
+            if phase in statistics_data:
+                phase_stats = statistics_data[phase]
+                phase_breakdown[phase] = phase_stats.get("median", 0.0)
+                phase_variance[phase] = phase_stats.get("mad", 0.0)
+            else:
+                phase_breakdown[phase] = 0.0
+                phase_variance[phase] = 0.0
+    else:
+        # Calculate from raw telemetry data (v1.0 format or legacy)
+        for phase, times in all_timings.items():
+            if times:
+                median_time = statistics.median(times)
+                phase_breakdown[phase] = median_time
+
+                # Calculate MAD for robust variance measurement
+                absolute_deviations = [abs(t - median_time) for t in times]
+                phase_variance[phase] = (
+                    statistics.median(absolute_deviations)
+                    if absolute_deviations
+                    else 0.0
+                )
+            else:
+                phase_breakdown[phase] = 0.0
+                phase_variance[phase] = 0.0
 
     # Calculate efficiency metrics (averages)
     seeds_utilization = (
@@ -1358,6 +1387,7 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
 
     return QueryPhaseMetrics(
         phase_breakdown=phase_breakdown,
+        phase_variance=phase_variance,
         seeds_utilization=seeds_utilization,
         budget_utilization=budget_utilization,
         coverage_efficiency=coverage_efficiency,

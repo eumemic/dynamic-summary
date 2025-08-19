@@ -147,32 +147,48 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
         # Calculate statistics from multiple runs
         import statistics
 
-        total_times = [t["timings"]["total_time"] for t in all_telemetries]
-        embedding_times = [t["timings"]["embedding_time"] for t in all_telemetries]
+        # All timing phases to calculate statistics for
+        timing_phases = [
+            "embedding_time",
+            "search_time",
+            "mmr_time",
+            "coverage_map_time",
+            "scoring_time",
+            "dp_time",
+            "assembly_time",
+            "total_time",
+        ]
 
-        statistics_summary = {
-            "num_runs": num_runs,
-            "total_time": {
-                "median": statistics.median(total_times),
-                "mean": statistics.mean(total_times),
-                "std_dev": (
-                    statistics.stdev(total_times) if len(total_times) > 1 else 0.0
-                ),
-                "min": min(total_times),
-                "max": max(total_times),
-            },
-            "embedding_time": {
-                "median": statistics.median(embedding_times),
-                "mean": statistics.mean(embedding_times),
-                "std_dev": (
-                    statistics.stdev(embedding_times)
-                    if len(embedding_times) > 1
+        statistics_summary = {"num_runs": num_runs}
+
+        # Calculate statistics for each phase
+        for phase in timing_phases:
+            phase_times = [
+                t["timings"][phase] for t in all_telemetries if phase in t["timings"]
+            ]
+
+            if phase_times:
+                # Calculate basic statistics
+                median_time = statistics.median(phase_times)
+                mean_time = statistics.mean(phase_times)
+                std_dev = statistics.stdev(phase_times) if len(phase_times) > 1 else 0.0
+
+                # Calculate MAD for robust variance measurement
+                absolute_deviations = [abs(t - median_time) for t in phase_times]
+                mad = (
+                    statistics.median(absolute_deviations)
+                    if absolute_deviations
                     else 0.0
-                ),
-                "min": min(embedding_times),
-                "max": max(embedding_times),
-            },
-        }
+                )
+
+                statistics_summary[phase] = {
+                    "median": median_time,
+                    "mean": mean_time,
+                    "std_dev": std_dev,
+                    "mad": mad,  # Median Absolute Deviation for robust variance
+                    "min": min(phase_times),
+                    "max": max(phase_times),
+                }
 
         # Save telemetry data for comparison
         output_dir = Path("benchmark_results")

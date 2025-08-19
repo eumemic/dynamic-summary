@@ -115,6 +115,9 @@ class QueryPhaseMetrics:
     # Phase timing breakdown (median values across queries)
     phase_breakdown: dict[str, float]
 
+    # Phase variance data (MAD values for dynamic thresholds)
+    phase_variance: dict[str, float]
+
     # Efficiency metrics
     seeds_utilization: float  # seeds_found / seeds_requested
     budget_utilization: float  # output_tokens / budget_tokens
@@ -132,6 +135,7 @@ class QueryPhaseMetrics:
         """Convert to dictionary for reporting."""
         return {
             "phase_breakdown": self.phase_breakdown,
+            "phase_variance": self.phase_variance,
             "efficiency": {
                 "seeds_utilization": self.seeds_utilization,
                 "budget_utilization": self.budget_utilization,
