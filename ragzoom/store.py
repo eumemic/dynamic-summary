@@ -1005,7 +1005,7 @@ class Store:
                     INSERT INTO tree_nodes_new
                     SELECT {', '.join(select_columns)}
                     FROM tree_nodes
-                """  # Columns validated against whitelist above
+                """  # nosec B608 - columns validated against whitelist above
                 conn.execute(text(insert_sql))
 
             # Drop old table and rename new one
