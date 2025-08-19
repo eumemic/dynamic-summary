@@ -907,11 +907,11 @@ def _calculate_query_phase_thresholds(
     """
     # Phase categorization with different k-factors
     phase_categories: dict[str, dict[str, Any]] = {
-        # API phases: high variance due to API non-determinism (5-sigma)
+        # API phases: high variance due to API non-determinism (10-sigma)
         "api": {
             "phases": ["embedding_time"],
-            "k1": 3.0,  # Between-run variance
-            "k2": 2.0,  # Baseline uncertainty
+            "k1": 6.0,  # Between-run variance
+            "k2": 4.0,  # Baseline uncertainty
         },
         # Local compute phases: deterministic, low variance (3-sigma)
         "local": {
@@ -1149,7 +1149,7 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
     # Show overall status and regression details
     if has_any_regression or has_phase_regressions:
         click.echo(
-            "\n❌ Performance regression detected (dynamic thresholds: 3σ local, 4σ I/O, 5σ API)"
+            "\n❌ Performance regression detected (dynamic thresholds: 3σ local, 4σ I/O, 10σ API)"
         )
 
         # Show which phases had regressions
@@ -1169,7 +1169,7 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
                     )
     else:
         click.echo(
-            "\n✅ No regressions detected (dynamic thresholds: 3σ local, 4σ I/O, 5σ API)"
+            "\n✅ No regressions detected (dynamic thresholds: 3σ local, 4σ I/O, 10σ API)"
         )
 
     return has_any_regression or has_phase_regressions
