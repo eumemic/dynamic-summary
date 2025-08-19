@@ -365,6 +365,7 @@ class TestStore:
             span_end=100,
             left_child_id="left",
             right_child_id="right",
+            height=2,
         )
 
         temp_store.add_node(
@@ -376,6 +377,7 @@ class TestStore:
             parent_id="root",
             left_child_id="ll",
             right_child_id="lr",
+            height=1,
         )
 
         temp_store.add_node(
@@ -386,6 +388,7 @@ class TestStore:
             span_end=100,
             parent_id="root",
             left_child_id="rc",
+            height=1,
         )
 
         temp_store.add_node(
@@ -395,6 +398,7 @@ class TestStore:
             span_start=0,
             span_end=25,
             parent_id="left",
+            height=0,
         )
 
         temp_store.add_node(
@@ -404,6 +408,7 @@ class TestStore:
             span_start=25,
             span_end=50,
             parent_id="left",
+            height=0,
         )
 
         temp_store.add_node(
@@ -413,6 +418,7 @@ class TestStore:
             span_start=50,
             span_end=75,
             parent_id="right",
+            height=0,
         )
 
         # Test height calculations
@@ -446,6 +452,7 @@ class TestStore:
             embedding=[0.1] * 1536,
             span_start=0,
             span_end=10,
+            height=0,
         )
 
         assert temp_store.get_node_depth("single") == 0  # Root has depth 0
@@ -461,6 +468,7 @@ class TestStore:
             span_start=0,
             span_end=20,
             left_child_id="left_only_child",
+            height=1,
         )
 
         temp_store.add_node(
@@ -470,6 +478,7 @@ class TestStore:
             span_start=0,
             span_end=10,
             parent_id="parent_left_only",
+            height=0,
         )
 
         assert temp_store.get_node_height("parent_left_only") == 1
@@ -483,6 +492,7 @@ class TestStore:
             span_start=0,
             span_end=20,
             right_child_id="right_only_child",
+            height=1,
         )
 
         temp_store.add_node(
@@ -492,6 +502,7 @@ class TestStore:
             span_start=10,
             span_end=20,
             parent_id="parent_right_only",
+            height=0,
         )
 
         assert temp_store.get_node_height("parent_right_only") == 1

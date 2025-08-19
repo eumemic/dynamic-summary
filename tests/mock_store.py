@@ -124,6 +124,7 @@ class SimpleMockStore:
             access_count=0,
             last_accessed=None,
             created_at=None,
+            height=kwargs.get("height", 0),  # Add height support
         )
 
         # Store node and embedding
@@ -157,6 +158,7 @@ class SimpleMockStore:
                 document_id=data.get("document_id"),
                 token_count=data.get("token_count"),
                 preceding_neighbor_id=data.get("preceding_neighbor_id"),
+                height=data.get("height", 0),  # Pass through height parameter
             )
             created_nodes.append(self.nodes[data["node_id"]])
         return created_nodes
