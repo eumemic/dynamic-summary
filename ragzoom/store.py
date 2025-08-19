@@ -251,11 +251,15 @@ class Store:
                     logger.debug(f"pgvector registration note: {e}")
                     # Don't fail the connection - tables can still be created
 
-        # Initialize database schema and extensions
-        self._initialize_database()
+        # Create vector extension first (required for Vector columns)
+        self._create_vector_extension()
 
         # Create all tables (will only create missing ones)
         Base.metadata.create_all(self.engine)
+
+        # Run migrations for existing databases
+        self._run_migrations()
+
         self.SessionLocal = sessionmaker(bind=self.engine)
 
         # LRU cache for hot nodes
@@ -894,38 +898,16 @@ class Store:
                 "node_count": result.node_count or 0,
             }
 
-    def _initialize_database(self) -> None:
-        """Initialize database with required extensions and schema updates.
+    def _create_vector_extension(self) -> None:
+        """Create the pgvector extension required for embedding storage.
 
-        This method ensures:
-        1. pgvector extension is available for embedding storage
-        2. Schema migrations are applied for backward compatibility
+        This must be done before creating tables that use Vector columns.
         """
         try:
             with self.engine.begin() as conn:
                 # Create vector extension - this is required for pgvector Vector() columns
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                 logger.debug("Vector extension created successfully")
-
-                # Add height column if it doesn't exist (for existing databases)
-                conn.execute(
-                    text(
-                        """
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name = 'tree_nodes'
-                            AND column_name = 'height'
-                        ) THEN
-                            ALTER TABLE tree_nodes
-                            ADD COLUMN height INTEGER NOT NULL DEFAULT 0;
-                        END IF;
-                    END $$;
-                """
-                    )
-                )
-                logger.debug("Height column migration completed")
         except Exception as e:
             # This is a critical error - we can't create Vector columns without the extension
             error_msg = str(e).lower()
@@ -945,10 +927,42 @@ class Store:
                 )
             else:
                 raise OSError(
-                    f"\n❌ Failed to initialize vector extension.\n\n"
+                    f"\n❌ Failed to create vector extension.\n\n"
                     f"This is required for storing embeddings. Run 'ragzoom doctor' to diagnose.\n\n"
                     f"Technical error: {e}"
                 )
+
+    def _run_migrations(self) -> None:
+        """Run database migrations for existing databases.
+
+        This must be called after tables are created to handle schema updates
+        for existing databases that need migration.
+        """
+        try:
+            with self.engine.begin() as conn:
+                # Add height column if it doesn't exist (for existing databases)
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'height'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN height INTEGER NOT NULL DEFAULT 0;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+                logger.debug("Database migrations completed")
+        except Exception as e:
+            # Migration failures are not critical - the column might already exist
+            # or this might be a new database where tables have the column already
+            logger.debug(f"Migration note: {e}")
 
     def close(self) -> None:
         """Close database connections and cleanup resources."""
