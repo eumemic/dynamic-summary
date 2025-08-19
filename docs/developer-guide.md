@@ -9,8 +9,7 @@ Welcome to the RagZoom project! This comprehensive guide covers the technology s
 -   **Core Language:** Python 3.11+
 -   **API Framework:** FastAPI
 -   **CLI Framework:** `click`
--   **Vector Database:** `chromadb` for storing embeddings and performing semantic search.
--   **Metadata Store:** SQLite with `sqlalchemy` for storing the node tree structure and all other metadata.
+-   **Database:** PostgreSQL with the `pgvector` extension storing both metadata and embeddings.
 -   **LLM Interaction:** `openai` for generating summaries and embeddings.
 -   **Tokenization:** `tiktoken` for accurately counting tokens.
 
@@ -40,7 +39,7 @@ Getting your environment set up correctly is the most important first step.
 Our test suite is organized to balance thoroughness with development speed:
 
 - **Unit Tests**: Fast tests using `SimpleMockStore` for algorithmic logic
-- **Integration Tests**: Tests that use real SQLite/ChromaDB (marked with `@pytest.mark.integration`)
+- **Integration Tests**: Tests that use real PostgreSQL (marked with `@pytest.mark.integration`)
 - **Slow Tests**: Tests taking >5 seconds (marked with `@pytest.mark.slow`)
 - **Concurrency Tests**: Thread safety and parallel operation tests
 
@@ -314,7 +313,6 @@ git commit --no-verify
 
 If `pytest` crashes with a segmentation fault:
 ```bash
-rm -rf chroma_db/  # ChromaDB corruption is usually the cause
 pytest tests/      # Retry
 ```
 

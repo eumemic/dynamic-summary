@@ -8,7 +8,6 @@ import tiktoken
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
-from ragzoom.store import Store
 
 
 class TestChunkSizeRegression:
@@ -88,25 +87,18 @@ class TestChunkSizeRegression:
             50 <= avg_tokens <= config.target_chunk_tokens * 1.2
         ), f"Average chunk size {avg_tokens} tokens is outside reasonable range (expected 50-{int(config.target_chunk_tokens * 1.2)})"
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_indexed_chunks_have_correct_size(self, tmp_path, monkeypatch):
+    async def test_indexed_chunks_have_correct_size(self, store, monkeypatch):
         """Test that indexed chunks in the database have the correct token size."""
         # Set up test environment
-        monkeypatch.setenv(
-            "RAGZOOM_SQLITE_DATABASE_URL", f"sqlite:///{tmp_path}/test.db"
-        )
-        monkeypatch.setenv("RAGZOOM_CHROMA_PERSIST_DIRECTORY", str(tmp_path / "chroma"))
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
         # Create separate configs
         index_config = IndexConfig.load(target_chunk_tokens=200)
         operational_config = OperationalConfig(
             openai_api_key="test-key",
-            sqlite_database_url=f"sqlite:///{tmp_path}/test.db",
-            chroma_persist_directory=str(tmp_path / "chroma"),
         )
-
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
         tokenizer = tiktoken.get_encoding("cl100k_base")
 
         # Create test document with more varied content
@@ -120,15 +112,20 @@ class TestChunkSizeRegression:
         """
             * 50
         )  # Create a larger, more realistic document
-        test_file = tmp_path / "test.txt"
-        test_file.write_text(test_doc)
 
         # Mock API responses
         mock_async_client = MagicMock()
 
         # Mock embeddings (one per chunk) - needs to be async
         async def mock_embeddings(*args, **kwargs):
-            return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in range(5)])
+            # Get the actual number of input texts
+            input_texts = kwargs.get("input", [])
+            if isinstance(input_texts, str):
+                input_texts = [input_texts]
+            num_embeddings = len(input_texts)
+            return MagicMock(
+                data=[MagicMock(embedding=[0.1] * 1536) for _ in range(num_embeddings)]
+            )
 
         mock_async_client.embeddings.create.side_effect = mock_embeddings
 
@@ -145,7 +142,7 @@ class TestChunkSizeRegression:
             builder = TreeBuilder(
                 index_config, store, api_key=operational_config.openai_api_key
             )
-            await builder.add_document_async(str(test_file))
+            await builder.add_document_async(test_doc, document_id="test-doc")
 
         # Check leaf node sizes
         leaf_nodes = []
@@ -209,6 +206,3 @@ class TestChunkSizeRegression:
             assert (
                 token_count <= max_summary_tokens
             ), f"Parent node {node.id} has {token_count} tokens, too large"
-
-        # Close store to prevent file handle leaks
-        store.close()

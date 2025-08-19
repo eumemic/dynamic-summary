@@ -1,0 +1,36 @@
+# Optional Docker Compose for RagZoom development
+# 
+# This is an alternative to the automatic Docker PostgreSQL setup.
+# Advanced users can use this for more control over the database setup.
+#
+# Usage:
+#   docker-compose up -d        # Start PostgreSQL in background
+#   docker-compose down         # Stop and remove containers
+#   docker-compose logs db      # View PostgreSQL logs
+
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: ragzoom-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ragzoom
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      # Persist database data
+      - ragzoom_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ragzoom"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  ragzoom_postgres_data:
+    name: ragzoom_postgres_data

@@ -100,8 +100,7 @@ class BadSummaryAnalyzer:
         # Create store and TreeBuilder
         operational_config = OperationalConfig(
             openai_api_key=api_key,
-            sqlite_database_url="sqlite:///:memory:",
-            chroma_persist_directory=None
+            database_url="postgresql:///:memory:",
         )
         self.store = Store(operational_config, embedding_model=self.config.embedding_model)
         self.tree_builder = TreeBuilder(self.config, self.store, api_key=api_key)
