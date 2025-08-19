@@ -756,11 +756,11 @@ def _check_metrics_for_regressions_with_thresholds(
     return has_regression, thresholds_by_chunk
 
 
-def _compare_directories(baseline_dir: Path, current_dir: Path) -> bool:
+def _compare_directories(baseline_dir: Path, current_dir: Path) -> tuple[bool, bool]:
     """Compare all matching telemetry files between two directories.
 
     Returns:
-        True if any regression detected
+        Tuple of (has_regression, has_query_benchmarks)
     """
     # Find matching files for both indexing and query telemetry
     indexing_matches, query_matches = _match_telemetry_files(baseline_dir, current_dir)
@@ -889,7 +889,7 @@ def _compare_directories(baseline_dir: Path, current_dir: Path) -> bool:
         else:
             click.echo("⚠️ No matching query benchmark files found for comparison")
 
-    return has_regression
+    return has_regression, bool(query_matches)
 
 
 def _calculate_query_phase_thresholds(
@@ -1201,9 +1201,10 @@ def compare(baseline_path: str, current_path: str, output: str | None) -> None:
 
     # Check if both are directories or both are files
     if baseline.is_dir() and current.is_dir():
-        has_regression = _compare_directories(baseline, current)
+        has_regression, has_query_benchmarks = _compare_directories(baseline, current)
     elif baseline.is_file() and current.is_file():
         has_regression = _compare_files(baseline, current)
+        has_query_benchmarks = False  # Single file comparisons are indexing telemetry
     else:
         click.echo(
             "Error: Both arguments must be either files or directories", err=True
@@ -1254,7 +1255,10 @@ def compare(baseline_path: str, current_path: str, output: str | None) -> None:
         click.echo("\n❌ Performance regression detected!", err=True)
         sys.exit(1)
     else:
-        click.echo("\n✅ No regressions detected")
+        # Only show general success message if no query benchmarks were processed
+        # (query benchmarks print their own detailed success message)
+        if not has_query_benchmarks:
+            click.echo("\n✅ No regressions detected")
 
 
 @cli.command("visualize")
