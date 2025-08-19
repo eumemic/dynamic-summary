@@ -89,8 +89,21 @@ class TestTreeVisualization:
             "leaf3": True,
             "leaf4": True,
         }
+
+        # Preload nodes as the production code does
+        preloaded_nodes = {}
+        for node_id in coverage_map:
+            node = store.get_node(node_id)
+            if node:
+                preloaded_nodes[node_id] = node
+
         viz = build_ascii_tree(
-            tiling, store, "doc1", width=40, coverage_map=coverage_map
+            tiling,
+            store,
+            "doc1",
+            width=40,
+            coverage_map=coverage_map,
+            preloaded_nodes=preloaded_nodes,
         )
 
         # Check basic structure
@@ -180,8 +193,20 @@ class TestTreeVisualization:
         # Coverage map includes all nodes
         coverage_map = {"root": True, "leaf1": True, "leaf2": True}
 
+        # Preload nodes as the production code does
+        preloaded_nodes = {}
+        for node_id in coverage_map:
+            node = store.get_node(node_id)
+            if node:
+                preloaded_nodes[node_id] = node
+
         viz = build_ascii_tree(
-            tiling, store, "doc1", width=60, coverage_map=coverage_map
+            tiling,
+            store,
+            "doc1",
+            width=60,
+            coverage_map=coverage_map,
+            preloaded_nodes=preloaded_nodes,
         )
 
         # Check that the visualization includes expected elements
