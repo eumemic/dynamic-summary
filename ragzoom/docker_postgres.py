@@ -91,7 +91,7 @@ class DockerPostgres:
     def create_container(self) -> bool:
         """Create the PostgreSQL container."""
         try:
-            logger.debug(f"Creating PostgreSQL container: {self.container_name}")
+            logger.info(f"Creating PostgreSQL container: {self.container_name}")
             subprocess.run(
                 [
                     "docker",
@@ -112,22 +112,22 @@ class DockerPostgres:
                 timeout=60,
             )
 
-            logger.debug("PostgreSQL container created successfully")
+            logger.info("PostgreSQL container created successfully")
             return True
 
         except subprocess.CalledProcessError as e:
-            logger.debug(f"Failed to create PostgreSQL container: {e}")
+            logger.error(f"Failed to create PostgreSQL container: {e}")
             if e.stderr:
-                logger.debug(f"Docker error: {e.stderr.decode()}")
+                logger.debug(f"Docker error details: {e.stderr.decode()}")
             return False
         except subprocess.TimeoutExpired:
-            logger.debug("Timeout while creating PostgreSQL container")
+            logger.error("Timeout while creating PostgreSQL container")
             return False
 
     def start_container(self) -> bool:
         """Start the PostgreSQL container."""
         try:
-            logger.debug(f"Starting PostgreSQL container: {self.container_name}")
+            logger.info(f"Starting PostgreSQL container: {self.container_name}")
             subprocess.run(
                 ["docker", "start", self.container_name],
                 check=True,
@@ -135,16 +135,16 @@ class DockerPostgres:
                 timeout=30,
             )
 
-            logger.debug("PostgreSQL container started successfully")
+            logger.info("PostgreSQL container started successfully")
             return True
 
         except subprocess.CalledProcessError as e:
-            logger.debug(f"Failed to start PostgreSQL container: {e}")
+            logger.error(f"Failed to start PostgreSQL container: {e}")
             if e.stderr:
-                logger.debug(f"Docker error: {e.stderr.decode()}")
+                logger.debug(f"Docker error details: {e.stderr.decode()}")
             return False
         except subprocess.TimeoutExpired:
-            logger.debug("Timeout while starting PostgreSQL container")
+            logger.error("Timeout while starting PostgreSQL container")
             return False
 
     def wait_for_ready(self, timeout: int = 30) -> bool:
@@ -156,7 +156,7 @@ class DockerPostgres:
         Returns:
             True if PostgreSQL is ready, False if timeout reached
         """
-        logger.debug("Waiting for PostgreSQL to be ready...")
+        logger.info("Waiting for PostgreSQL to be ready...")
         start_time = time.time()
 
         while time.time() - start_time < timeout:
@@ -178,7 +178,7 @@ class DockerPostgres:
                 )
 
                 if result.returncode == 0:
-                    logger.debug("PostgreSQL is ready!")
+                    logger.info("PostgreSQL is ready")
                     return True
 
             except subprocess.TimeoutExpired:
@@ -186,7 +186,7 @@ class DockerPostgres:
 
             time.sleep(1)
 
-        logger.debug(f"PostgreSQL not ready after {timeout} seconds")
+        logger.warning(f"PostgreSQL not ready after {timeout} seconds")
         return False
 
     def get_connection_url(self) -> str:
@@ -223,27 +223,33 @@ class DockerPostgres:
                 "Then try again."
             )
 
+        # Track whether we need to wait for readiness
+        needs_readiness_check = False
+
         # Check if container exists
         if not self.container_exists():
-            logger.debug("PostgreSQL container does not exist, creating...")
+            logger.info("PostgreSQL container does not exist, creating...")
             if not self.create_container():
                 raise RuntimeError(
                     f"Failed to create PostgreSQL container: {self.container_name}"
                 )
+            needs_readiness_check = True
 
         # Check if container is running
         if not self.container_running():
-            logger.debug("PostgreSQL container is not running, starting...")
+            logger.info("PostgreSQL container is not running, starting...")
             if not self.start_container():
                 raise RuntimeError(
                     f"Failed to start PostgreSQL container: {self.container_name}"
                 )
+            needs_readiness_check = True
 
-        # Wait for PostgreSQL to be ready
-        if not self.wait_for_ready():
-            raise RuntimeError(
-                "PostgreSQL container started but is not accepting connections"
-            )
+        # Only wait for PostgreSQL readiness if we just started/created the container
+        if needs_readiness_check:
+            if not self.wait_for_ready():
+                raise RuntimeError(
+                    "PostgreSQL container started but is not accepting connections"
+                )
 
         return self.get_connection_url()
 

@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 # Suppress noisy HTTP logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
+# Suppress noisy SQLAlchemy logs even in debug mode
+logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
 
 
 def configure_logging_level(debug: bool) -> None:

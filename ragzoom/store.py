@@ -23,13 +23,22 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-# Import register_vector from the appropriate module
+from ragzoom.config import OperationalConfig
+from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
+
+# Import pgvector registration function
 try:
     from pgvector.psycopg import register_vector
-except ImportError:
-    from pgvector.psycopg2 import register_vector
 
-from ragzoom.config import OperationalConfig
+    PGVECTOR_AVAILABLE = True
+except ImportError:
+    try:
+        from pgvector.psycopg2 import register_vector
+
+        PGVECTOR_AVAILABLE = True
+    except ImportError:
+        PGVECTOR_AVAILABLE = False
+        register_vector = None
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +98,11 @@ class Document(Base):
 class Store:
     """Combined storage for tree structure and embeddings in PostgreSQL."""
 
-    # Class constant for pin depth limit (dormant feature)
-    PIN_DEPTH_MAX = 2
+    # Class constants
+    PIN_DEPTH_MAX = 2  # Maximum depth for pinned nodes (dormant feature)
+    DEFAULT_CACHE_SIZE = 1000  # Default LRU cache size for hot nodes
+    DEFAULT_POOL_SIZE = 10  # Default connection pool size
+    DEFAULT_MAX_OVERFLOW = 20  # Default max overflow connections
 
     @classmethod
     def temporary(cls, embedding_model: str = "text-embedding-3-small"):
@@ -103,79 +115,34 @@ class Store:
 
         @contextmanager
         def _temporary_store():
-            # Create temporary database URL using a unique database name
-            import uuid
-
-            temp_db_name = f"ragzoom_temp_{uuid.uuid4().hex[:8]}"
+            # Generate unique database name
+            temp_db_name = get_temp_db_name()
 
             try:
-                # First, create the temporary database
-                from sqlalchemy import create_engine, text
+                # Create temporary database
+                temp_db_url = create_temp_database(temp_db_name)
 
-                admin_engine = create_engine(
-                    "postgresql+psycopg://postgres:postgres@localhost:5432/postgres",
-                    isolation_level="AUTOCOMMIT",
-                )
-                with admin_engine.connect() as conn:
-                    # Safe database name validation - only alphanumeric and underscore
-                    import re
-
-                    if re.match(r"^[a-zA-Z0-9_]+$", temp_db_name):  # nosec B608
-                        conn.execute(
-                            text(f"CREATE DATABASE {temp_db_name}")
-                        )  # nosec B608
-                    else:
-                        raise ValueError(f"Invalid temp database name: {temp_db_name}")
-                admin_engine.dispose()
-
-                # Now create the store configuration with the existing database
+                # Create store configuration
                 temp_config = OperationalConfig(
                     openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
-                    database_url=f"postgresql+psycopg://postgres:postgres@localhost:5432/{temp_db_name}",
+                    database_url=temp_db_url,
                 )
 
-                # Create the store (database now exists, so migrations will work)
+                # Create the store
                 store = cls(temp_config, embedding_model=embedding_model)
 
-                # Create tables (vector extension already created in _run_migrations)
-                from ragzoom.store import Base
-
+                # Create tables
                 Base.metadata.create_all(store.engine)
 
                 yield store
             finally:
-                # Cleanup: drop the temporary database
+                # Cleanup
                 try:
-                    store.close()
-                    admin_engine = create_engine(
-                        "postgresql+psycopg://postgres:postgres@localhost:5432/postgres",
-                        isolation_level="AUTOCOMMIT",
-                    )
-                    with admin_engine.connect() as conn:
-                        # Terminate connections to the database before dropping
-                        conn.execute(
-                            text(
-                                "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = :db_name AND pid <> pg_backend_pid()"
-                            ),
-                            {"db_name": temp_db_name},
-                        )
-                        # Safe database name validation - only alphanumeric and underscore
-                        import re
-
-                        if re.match(r"^[a-zA-Z0-9_]+$", temp_db_name):  # nosec B608
-                            conn.execute(
-                                text(f"DROP DATABASE IF EXISTS {temp_db_name}")
-                            )  # nosec B608
-                        else:
-                            logger.warning(
-                                f"Invalid temp database name: {temp_db_name}"
-                            )
-                    admin_engine.dispose()
+                    if "store" in locals():
+                        store.close()
+                    drop_temp_database(temp_db_name)
                 except Exception as e:
-                    # Log cleanup failure but don't raise
-                    logger.warning(
-                        f"Failed to cleanup temporary database {temp_db_name}: {e}"
-                    )
+                    logger.warning(f"Failed to cleanup temporary store: {e}")
 
         return _temporary_store()
 
@@ -226,11 +193,22 @@ class Store:
                     f"Error: {str(e)}"
                 )
 
-        # Initialize database engine
-        self.engine = create_engine(database_url)
+        # Initialize database engine with connection pooling
+        # Get pool configuration from environment or use defaults
+        pool_size = int(os.getenv("RAGZOOM_DB_POOL_SIZE", str(self.DEFAULT_POOL_SIZE)))
+        max_overflow = int(
+            os.getenv("RAGZOOM_DB_MAX_OVERFLOW", str(self.DEFAULT_MAX_OVERFLOW))
+        )
+
+        self.engine = create_engine(
+            database_url,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_pre_ping=True,  # Verify connections before using
+        )
 
         # Register pgvector extension only for PostgreSQL connections
-        if database_url.startswith("postgresql"):
+        if database_url.startswith("postgresql") and PGVECTOR_AVAILABLE:
 
             @event.listens_for(self.engine, "connect")
             def register_vector_extension(dbapi_conn, connection_record):
@@ -241,9 +219,10 @@ class Store:
                         if hasattr(dbapi_conn, "connection")
                         else dbapi_conn
                     )
-                    register_vector(raw_conn)
+                    if register_vector:
+                        register_vector(raw_conn)
                 except Exception as e:
-                    logger.warning(f"Failed to register pgvector: {e}")
+                    logger.debug(f"pgvector registration note: {e}")
                     # Don't fail the connection - tables can still be created
 
         # Handle migration before creating tables with new schema
@@ -254,8 +233,9 @@ class Store:
         self.SessionLocal = sessionmaker(bind=self.engine)
 
         # LRU cache for hot nodes
+        cache_size = config.cache_size if config.cache_size else self.DEFAULT_CACHE_SIZE
         self.node_cache: dict[str, TreeNode] = {}
-        self.cache_order: deque[str] = deque(maxlen=config.cache_size)
+        self.cache_order: deque[str] = deque(maxlen=cache_size)
 
         # Cache expected embedding dimension for validation
         self._expected_embedding_dim = self._get_expected_embedding_dimension()
@@ -553,6 +533,9 @@ class Store:
         output = []
         for row in rows:
             distance = float(row.distance)
+            # Convert cosine distance to similarity score
+            # Cosine distance ranges from 0 (identical) to 2 (opposite)
+            # We map this to similarity: 1 (identical) to 0 (opposite)
             similarity = 1.0 - (distance / 2.0)
             similarity = max(0.0, min(1.0, similarity))
             metadata = {

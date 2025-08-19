@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
 from ragzoom.store import Store
 from tests.mock_store import SimpleMockStore
 
@@ -178,25 +179,9 @@ def store(request, base_config, mock_store):
                 if hasattr(real_store, "_test_db_cleanup"):
                     cleanup_info = real_store._test_db_cleanup
                     try:
-                        from sqlalchemy import create_engine, text
-
-                        admin_engine = create_engine(
-                            cleanup_info["admin_url"], isolation_level="AUTOCOMMIT"
+                        drop_temp_database(
+                            cleanup_info["db_name"], cleanup_info["admin_url"]
                         )
-                        with admin_engine.connect() as conn:
-                            # Terminate connections and drop database
-                            conn.execute(
-                                text(
-                                    "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = :db_name AND pid <> pg_backend_pid()"
-                                ),
-                                {"db_name": cleanup_info["db_name"]},
-                            )
-                            conn.execute(
-                                text(
-                                    f"DROP DATABASE IF EXISTS {cleanup_info['db_name']}"
-                                )
-                            )  # nosec B608
-                        admin_engine.dispose()
                     except Exception:
                         pass  # Ignore cleanup errors
 
@@ -216,23 +201,9 @@ def store(request, base_config, mock_store):
             if hasattr(real_store, "_test_db_cleanup"):
                 cleanup_info = real_store._test_db_cleanup
                 try:
-                    from sqlalchemy import create_engine, text
-
-                    admin_engine = create_engine(
-                        cleanup_info["admin_url"], isolation_level="AUTOCOMMIT"
+                    drop_temp_database(
+                        cleanup_info["db_name"], cleanup_info["admin_url"]
                     )
-                    with admin_engine.connect() as conn:
-                        # Terminate connections and drop database
-                        conn.execute(
-                            text(
-                                "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = :db_name AND pid <> pg_backend_pid()"
-                            ),
-                            {"db_name": cleanup_info["db_name"]},
-                        )
-                        conn.execute(
-                            text(f"DROP DATABASE IF EXISTS {cleanup_info['db_name']}")
-                        )  # nosec B608
-                    admin_engine.dispose()
                 except Exception:
                     pass  # Ignore cleanup errors
 
@@ -246,50 +217,24 @@ def store(request, base_config, mock_store):
 def _create_real_store(base_config) -> Store | None:
     """Create a real store for integration testing, or return None if unavailable."""
     try:
-        # Create unique database name for test isolation
-        import uuid
-
         # Use test-specific database URL or create unique one
         base_db_url = base_config.database_url
 
         if "ragzoom_test" in base_db_url:
             # Always create unique database name for each test to ensure isolation
-            unique_suffix = uuid.uuid4().hex[:8]
-            test_db_url = base_db_url.replace(
-                "ragzoom_test", f"ragzoom_test_{unique_suffix}"
-            )
+            test_db_name = get_temp_db_name("ragzoom_test")
+            # Extract base URL and construct new URL
+            base_url_parts = base_db_url.split("/")
+            base_url_parts[-1] = test_db_name
+            test_db_url = "/".join(base_url_parts)
+
+            # Create the test database
+            admin_url = "/".join(base_url_parts[:-1]) + "/postgres"
+            create_temp_database(test_db_name, admin_url)
         else:
             # Use base URL for custom URLs (non-test scenarios)
             test_db_url = base_db_url
-
-        # Try to create engine first to test connection
-        from sqlalchemy import create_engine, text
-
-        # If using unique database, create it first
-        if test_db_url != base_db_url:
-            # Extract database name from URL
-            test_db_name = test_db_url.split("/")[-1]
-            base_engine_url = "/".join(test_db_url.split("/")[:-1]) + "/postgres"
-
-            # Create the test database using autocommit to avoid transaction block issues
-            admin_engine = create_engine(base_engine_url, isolation_level="AUTOCOMMIT")
-            with admin_engine.connect() as conn:
-                # Safe database name validation
-                import re
-
-                if re.match(r"^[a-zA-Z0-9_]+$", test_db_name):
-                    conn.execute(text(f"CREATE DATABASE {test_db_name}"))  # nosec B608
-                else:
-                    raise ValueError(f"Invalid test database name: {test_db_name}")
-            admin_engine.dispose()
-
-        # Test connection to the target database using the unique URL
-        engine = create_engine(test_db_url)
-        with engine.connect() as conn:
-            # Create vector extension if needed
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            conn.commit()
-        engine.dispose()
+            test_db_name = None
 
         # Create operational config with the unique database URL
         # Temporarily remove environment override to ensure our unique URL is used
@@ -314,10 +259,10 @@ def _create_real_store(base_config) -> Store | None:
         )
 
         # Store cleanup info for later
-        if test_db_url != base_db_url:
+        if test_db_name:
             store._test_db_cleanup = {
                 "db_name": test_db_name,
-                "admin_url": base_engine_url,
+                "admin_url": admin_url,
             }
 
         return store
