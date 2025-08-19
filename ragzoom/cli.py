@@ -15,6 +15,7 @@ from ragzoom.config import (
     OperationalConfig,
     QueryConfig,
 )
+from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import TreeNode, create_store_with_docker
@@ -566,13 +567,14 @@ def pin(ctx: click.Context, node_id: str) -> None:
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
-        success = store.pin_node(node_id)
-
-        if success:
-            click.echo(f"✅ Node {node_id} pinned successfully!")
-        else:
-            click.echo(f"❌ Failed to pin node {node_id} (doesn't exist or too deep)")
-            sys.exit(1)
+        store.pin_node(node_id)
+        click.echo(f"✅ Node {node_id} pinned successfully!")
+    except NodeNotFoundError:
+        click.echo(f"❌ Node {node_id} not found")
+        sys.exit(1)
+    except InvalidOperationError as e:
+        click.echo(f"❌ Failed to pin node {node_id}: {e}")
+        sys.exit(1)
 
     except Exception as e:
         click.echo(f"❌ Error pinning node: {e}", err=True)
