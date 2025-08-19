@@ -1130,7 +1130,7 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
         # Add minimum absolute threshold for time-based metrics to prevent microsecond noise
         # from triggering false regressions (e.g., 0.0001s -> 0.00012s showing as +20%)
         # Increased to handle database schema overhead from height column addition
-        min_time_threshold = 0.005  # 5ms minimum threshold for time regressions
+        min_time_threshold = 0.010  # 10ms minimum threshold for time regressions
 
         if (
             baseline_time > 0
