@@ -32,8 +32,14 @@ class PositionResolver(ABC):
 class CharacterPositionResolver(PositionResolver):
     """Character-based positioning (current default behavior)."""
 
-    def __init__(self, all_nodes: list[TreeNode], store: Store):
+    def __init__(
+        self,
+        all_nodes: list[TreeNode],
+        store: Store,
+        preloaded_nodes: dict[str, "TreeNode"] | None = None,
+    ):
         self.store = store
+        self.preloaded_nodes = preloaded_nodes or {}
         self.doc_start = min(node.span_start for node in all_nodes)
         self.doc_end = max(node.span_end for node in all_nodes)
 
@@ -43,9 +49,11 @@ class CharacterPositionResolver(PositionResolver):
     def get_node_position_in_tiling(
         self, node_id: str, node_index: int
     ) -> tuple[float, float]:
-        node = self.store.get_node(node_id)
-        if not node:
-            return (0.0, 0.0)
+        if node_id not in self.preloaded_nodes:
+            raise ValueError(
+                f"Node {node_id} not found in preloaded_nodes - invariant violated"
+            )
+        node = self.preloaded_nodes[node_id]
         return (
             float(node.span_start - self.doc_start),
             float(node.span_end - self.doc_start),
@@ -67,6 +75,7 @@ class TokenPositionResolver(PositionResolver):
         coverage_map: dict[str, bool],
         store: Store,
         tokenizer: Any = None,
+        preloaded_nodes: dict[str, "TreeNode"] | None = None,
     ):
         # Validate inputs
         if not node_infos:
@@ -78,6 +87,7 @@ class TokenPositionResolver(PositionResolver):
         self.node_infos = node_infos
         self.coverage_map = coverage_map
         self.tokenizer = tokenizer or tiktoken.get_encoding("cl100k_base")
+        self.preloaded_nodes = preloaded_nodes or {}
 
         # Build node lookup for quick access
         self.node_lookup = {info.node_id: idx for idx, info in enumerate(node_infos)}
@@ -110,6 +120,14 @@ class TokenPositionResolver(PositionResolver):
         self.node_positions: dict[str, tuple[float, float]] = {}
         self._compute_node_positions()
 
+    def _get_node(self, node_id: str) -> "TreeNode":
+        """Get node from preloaded cache - must be present (correct-by-construction)."""
+        if node_id not in self.preloaded_nodes:
+            raise ValueError(
+                f"Node {node_id} not found in preloaded_nodes - invariant violated"
+            )
+        return self.preloaded_nodes[node_id]
+
     def get_extent(self) -> float:
         return self.total_tokens
 
@@ -130,11 +148,7 @@ class TokenPositionResolver(PositionResolver):
             if node_id in node_costs:
                 return node_costs[node_id]
 
-            node = self.store.get_node(node_id)
-            if not node:
-                # Handle missing node gracefully
-                node_costs[node_id] = 0.0
-                return 0.0
+            node = self._get_node(node_id)
 
             # Check if this node is in the tiling
             total_cost = 0.0
@@ -147,21 +161,19 @@ class TokenPositionResolver(PositionResolver):
                 left_cost = 0.0
                 right_cost = 0.0
 
-                if node.left_child_id:
+                if node.left_child_id and node.left_child_id in self.coverage_map:
                     left_cost = compute_cost(node.left_child_id)
                     # If child is covered but has zero cost, use its full text cost
-                    if left_cost == 0.0 and node.left_child_id in self.coverage_map:
-                        left_child = self.store.get_node(node.left_child_id)
-                        if left_child:
-                            left_cost = float(left_child.token_count)
+                    if left_cost == 0.0:
+                        left_child = self._get_node(node.left_child_id)
+                        left_cost = float(left_child.token_count)
 
-                if node.right_child_id:
+                if node.right_child_id and node.right_child_id in self.coverage_map:
                     right_cost = compute_cost(node.right_child_id)
                     # If child is covered but has zero cost, use its full text cost
-                    if right_cost == 0.0 and node.right_child_id in self.coverage_map:
-                        right_child = self.store.get_node(node.right_child_id)
-                        if right_child:
-                            right_cost = float(right_child.token_count)
+                    if right_cost == 0.0:
+                        right_child = self._get_node(node.right_child_id)
+                        right_cost = float(right_child.token_count)
 
                 total_cost = left_cost + right_cost
 
@@ -177,8 +189,8 @@ class TokenPositionResolver(PositionResolver):
             if node_id in self.node_positions:
                 return self.node_positions[node_id]
 
-            node = self.store.get_node(node_id)
-            if not node or node_costs.get(node_id, 0) == 0:
+            node = self._get_node(node_id)
+            if node_costs.get(node_id, 0) == 0:
                 self.node_positions[node_id] = (0.0, 0.0)
                 return (0.0, 0.0)
 
@@ -255,9 +267,15 @@ def build_ascii_tree(
         # Load only nodes that are in the coverage map
         all_nodes = []
         for node_id in coverage_map:
-            node = store.get_node(node_id)
-            if node and node.document_id == document_id:
-                all_nodes.append(node)
+            if preloaded_nodes and node_id in preloaded_nodes:
+                node = preloaded_nodes[node_id]
+                if node.document_id == document_id:
+                    all_nodes.append(node)
+            else:
+                # Fallback to store only if preloaded_nodes not available
+                store_node = store.get_node(node_id)
+                if store_node and store_node.document_id == document_id:
+                    all_nodes.append(store_node)
         if not all_nodes:
             return "No nodes found in coverage map"
     else:
@@ -287,24 +305,29 @@ def build_ascii_tree(
 
             node_infos = []
             for node_id in tiling:
-                node = store.get_node(node_id)
-                if node:
-                    token_cost = node.token_count
-                    node_infos.append(
-                        SimpleNodeInfo(
-                            node_id=node_id,
-                            token_cost=token_cost,
-                            span_start=node.span_start,
-                            span_end=node.span_end,
-                        )
+                if preloaded_nodes and node_id in preloaded_nodes:
+                    node = preloaded_nodes[node_id]
+                else:
+                    raise ValueError(
+                        f"Node {node_id} not found in preloaded_nodes - invariant violated"
                     )
 
+                token_cost = node.token_count
+                node_infos.append(
+                    SimpleNodeInfo(
+                        node_id=node_id,
+                        token_cost=token_cost,
+                        span_start=node.span_start,
+                        span_end=node.span_end,
+                    )
+                )
+
         position_resolver = TokenPositionResolver(
-            node_infos, coverage_map or {}, store, tokenizer
+            node_infos, coverage_map or {}, store, tokenizer, preloaded_nodes
         )
     else:
         # Default to character-based resolver
-        position_resolver = CharacterPositionResolver(all_nodes, store)
+        position_resolver = CharacterPositionResolver(all_nodes, store, preloaded_nodes)
 
     # Get coordinate space extent
     extent = position_resolver.get_extent()
