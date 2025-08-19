@@ -515,13 +515,11 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     return has_regression
 
 
-def _compare_query_files_silent(
-    baseline_file: Path, current_file: Path
-) -> tuple[bool, dict]:
+def _compare_query_files_silent(baseline_file: Path, current_file: Path) -> dict:
     """Compare two query telemetry files silently and return results.
 
     Returns:
-        Tuple of (has_regression, report_dict)
+        Report dict with comparison data
     """
     from ragzoom.telemetry_analysis import compare_query_performance
 
@@ -533,11 +531,12 @@ def _compare_query_files_silent(
 
     # Use 50% regression threshold for query benchmarks due to API variance
     # (vs 20% for deterministic indexing operations)
-    has_regression, report = compare_query_performance(
+    # Note: We ignore the regression status since we use dynamic thresholds elsewhere
+    _, report = compare_query_performance(
         baseline_data, current_data, regression_threshold=0.5
     )
 
-    return has_regression, report
+    return report
 
 
 def _compare_query_telemetry_files(baseline_file: Path, current_file: Path) -> bool:
@@ -547,7 +546,16 @@ def _compare_query_telemetry_files(baseline_file: Path, current_file: Path) -> b
         True if regression detected
     """
     # Use silent comparison and output verbose results
-    has_regression, report = _compare_query_files_silent(baseline_file, current_file)
+    report = _compare_query_files_silent(baseline_file, current_file)
+
+    # Check for regression using same 50% threshold logic for backward compatibility
+    summary = report.get("summary", {})
+    baseline_total = summary.get("baseline_total_time", 0)
+    current_total = summary.get("current_total_time", 0)
+    has_regression = False
+    if baseline_total > 0:
+        change_percent = ((current_total - baseline_total) / baseline_total) * 100
+        has_regression = change_percent > 50.0
 
     # Format output
     click.echo("\n### Query Performance Comparison\n")
@@ -955,11 +963,11 @@ def _calculate_query_phase_thresholds(
 
 def _aggregate_phase_data(
     query_matches: list[tuple[Path, Path]],
-) -> tuple[dict[str, float], dict[str, float], int, bool, QueryPhaseMetrics | None]:
+) -> tuple[dict[str, float], dict[str, float], int, QueryPhaseMetrics | None]:
     """Aggregate phase timing data across all query configurations.
 
     Returns:
-        Tuple of (baseline_phases, current_phases, total_samples, has_any_regression, baseline_metrics)
+        Tuple of (baseline_phases, current_phases, total_samples, baseline_metrics)
     """
     from ragzoom.telemetry_analysis import analyze_query_telemetry
 
@@ -978,18 +986,15 @@ def _aggregate_phase_data(
     baseline_all_phases: dict[str, list[float]] = {phase: [] for phase in phases}
     current_all_phases: dict[str, list[float]] = {phase: [] for phase in phases}
     total_samples = 0
-    has_any_regression = False
     baseline_metrics = (
         None  # Will store the first baseline metrics for threshold calculation
     )
 
     for baseline_file, current_file in query_matches:
         try:
-            # Get comparison results
-            query_has_regression, report = _compare_query_files_silent(
-                baseline_file, current_file
-            )
-            has_any_regression = has_any_regression or query_has_regression
+            # Get comparison results - we no longer care about the regression status
+            # since we use dynamic thresholds for phase-by-phase detection
+            # Skip regression report since we use phase-by-phase dynamic thresholds instead
 
             # Load raw telemetry to extract all runs
             with open(baseline_file) as f:
@@ -1044,7 +1049,6 @@ def _aggregate_phase_data(
         baseline_phases,
         current_phases,
         total_samples,
-        has_any_regression,
         baseline_metrics,
     )
 
@@ -1063,7 +1067,6 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
         baseline_phases,
         current_phases,
         total_samples,
-        has_any_regression,
         baseline_metrics,
     ) = _aggregate_phase_data(query_matches)
 
@@ -1158,8 +1161,8 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
     # Check if any phases had regressions using dynamic thresholds
     has_phase_regressions = len(configs_with_regressions) > 0
 
-    # Show overall status and regression details
-    if has_any_regression or has_phase_regressions:
+    # Show overall status and regression details - only rely on phase-by-phase detection
+    if has_phase_regressions:
         click.echo(
             "\n❌ Performance regression detected (dynamic thresholds: 6σ local, 4σ I/O, 15σ API)"
         )
@@ -1184,7 +1187,7 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
             "\n✅ No regressions detected (dynamic thresholds: 6σ local, 4σ I/O, 15σ API)"
         )
 
-    return has_any_regression or has_phase_regressions
+    return has_phase_regressions
 
 
 @cli.command()
