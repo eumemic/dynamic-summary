@@ -2,84 +2,22 @@
 
 import hashlib
 import logging
-from collections import deque
-from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
-import chromadb
 import numpy as np
-from chromadb.config import Settings
 from numpy.typing import NDArray
-from sqlalchemy import (
-    DateTime,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    create_engine,
-    text,
-)
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from ragzoom.config import OperationalConfig
+from ragzoom.models import Document, TreeNode
+from ragzoom.repositories.document_repository import DocumentRepository
+from ragzoom.repositories.node_repository import NodeRepository
+from ragzoom.services.cache_manager import CacheManager
+from ragzoom.services.search_service import SearchService
+from ragzoom.services.tree_navigator import TreeNavigator
+from ragzoom.storage.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class TreeNode(Base):
-    """SQLite model for tree nodes."""
-
-    __tablename__ = "tree_nodes"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    parent_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("tree_nodes.id"), nullable=True
-    )
-    left_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    right_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    span_start: Mapped[int] = mapped_column(Integer, nullable=False)
-    span_end: Mapped[int] = mapped_column(Integer, nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    token_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )  # Token count of text content (raw text for leaves, summary for internal nodes)
-    is_pinned: Mapped[int] = mapped_column(Integer, default=0)
-    last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    access_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    document_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("documents.id"), nullable=True
-    )
-    preceding_neighbor_id: Mapped[str | None] = mapped_column(
-        String, nullable=True
-    )  # ID of the node that immediately precedes this one at the same tree level
-    height: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )  # Distance to furthest leaf (0 for leaves, incrementing upward)
-
-
-class Document(Base):
-    """SQLite model for documents."""
-
-    __tablename__ = "documents"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    file_path: Mapped[str | None] = mapped_column(
-        String, nullable=True, unique=True
-    )  # Path to the source file
-    content_hash: Mapped[str] = mapped_column(
-        String, nullable=False
-    )  # SHA256 hash of content
-    indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
-    embedding_model: Mapped[str] = mapped_column(String, nullable=False)
-    summary_model: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class Store:
@@ -100,103 +38,26 @@ class Store:
         self.config = config
         self.embedding_model = embedding_model
 
-        # Initialize SQLite
-        self.engine = create_engine(
-            config.sqlite_database_url, connect_args={"check_same_thread": False}
-        )
+        # Initialize components using dependency injection
+        self.db_manager = DatabaseManager(config, embedding_model)
+        self.cache_manager = CacheManager[TreeNode](config.cache_size)
+        self.node_repo = NodeRepository(self.db_manager, self.cache_manager)
+        self.doc_repo = DocumentRepository(self.db_manager, self.cache_manager)
+        self.search_service = SearchService(self.db_manager)
+        self.tree_navigator = TreeNavigator(self.node_repo)
 
-        # Handle migration before creating tables with new schema
-        self._run_migrations()
+        # Expose properties for backward compatibility
+        self.SessionLocal = self.db_manager.SessionLocal
+        self.collection = self.db_manager.collection
+        self.engine = self.db_manager.engine
+        self.chroma_client = self.db_manager.chroma_client
 
-        # Create all tables (will only create missing ones)
-        Base.metadata.create_all(self.engine)
-        self.SessionLocal = sessionmaker(bind=self.engine)
+        # Cache properties for backward compatibility
+        self.node_cache = self.cache_manager.cache
+        self.cache_order = self.cache_manager.cache_order
 
-        # Initialize Chroma
-        self.chroma_client = chromadb.PersistentClient(
-            path=config.chroma_persist_directory,
-            settings=Settings(anonymized_telemetry=False),
-        )
-
-        # Create or get collection
-        self.collection = self.chroma_client.get_or_create_collection(
-            name="ragzoom_nodes",
-            metadata={"hnsw:space": "cosine"},
-        )
-
-        # LRU cache for hot nodes
-        self.node_cache: dict[str, TreeNode] = {}
-        self.cache_order: deque[str] = deque(maxlen=config.cache_size)
-
-        # Cache expected embedding dimension for validation
-        self._expected_embedding_dim = self._get_expected_embedding_dimension()
-
-    def _get_from_cache(self, node_id: str) -> TreeNode | None:
-        """Get node from cache if available."""
-        if node_id in self.node_cache:
-            # Move to end (most recently used)
-            self.cache_order.remove(node_id)
-            self.cache_order.append(node_id)
-            return self.node_cache[node_id]
-        return None
-
-    def _add_to_cache(self, node: TreeNode) -> None:
-        """Add node to cache, evicting LRU if necessary."""
-        if node.id in self.node_cache:
-            self.cache_order.remove(node.id)
-        elif (
-            self.cache_order.maxlen and len(self.cache_order) >= self.cache_order.maxlen
-        ):
-            # Evict LRU
-            lru_id = self.cache_order.popleft()
-            del self.node_cache[lru_id]
-
-        self.node_cache[node.id] = node
-        self.cache_order.append(node.id)
-
-    def _get_expected_embedding_dimension(self) -> int | None:
-        """Get expected embedding dimension from existing data.
-
-        We no longer maintain hardcoded dimension info since OpenAI API
-        is the source of truth. This method tries to infer from existing data.
-        """
-        # Try to infer from existing data
-        try:
-            # Get any existing embedding from collection
-            results = self.collection.peek(limit=1)
-            embeddings = results.get("embeddings")
-            if (
-                embeddings is not None
-                and isinstance(embeddings, list)
-                and len(embeddings) > 0
-            ):
-                return len(embeddings[0])
-        except Exception as e:
-            logger.debug(f"Could not infer embedding dimension: {e}")
-
-        # If no existing data, don't enforce validation
-        # This allows tests and first-time setups to work with any dimension
-        return None
-
-    def _validate_embedding_dimension(
-        self, embedding: list[float] | NDArray[np.float64]
-    ) -> None:
-        """Validate embedding dimension matches expected."""
-        if not embedding:
-            raise ValueError("Embedding cannot be empty")
-
-        actual_dim = len(embedding)
-
-        # If we don't have an expected dimension yet, use this as the reference
-        if self._expected_embedding_dim is None:
-            self._expected_embedding_dim = actual_dim
-            logger.debug(f"Setting embedding dimension reference to {actual_dim}")
-        elif actual_dim != self._expected_embedding_dim:
-            raise ValueError(
-                f"Embedding dimension mismatch: expected {self._expected_embedding_dim}, "
-                f"got {actual_dim}. Check embedding_model configuration."
-            )
-
+    # Node operations - delegate to NodeRepository
+    # jscpd:ignore-start
     def add_node(
         self,
         node_id: str,
@@ -212,315 +73,47 @@ class Store:
         height: int = 0,
     ) -> TreeNode:
         """Add a node to both SQLite and Chroma."""
-        # Validate embedding dimension
-        self._validate_embedding_dimension(embedding)
-
-        with self.SessionLocal() as session:
-            node = TreeNode(
-                id=node_id,
-                parent_id=parent_id,
-                left_child_id=left_child_id,
-                right_child_id=right_child_id,
-                span_start=span_start,
-                span_end=span_end,
-                text=text,
-                document_id=document_id,
-                token_count=token_count,
-                height=height,
-            )
-            session.add(node)
-            session.commit()
-
-            # Add to cache
-            self._add_to_cache(node)
-
-        # Add to Chroma
-        # Convert to numpy array if needed
-        embedding_array = np.array(embedding, dtype=np.float32)
-        self.collection.add(
-            ids=[node_id],
-            embeddings=cast(Any, [embedding_array]),
-            metadatas=[
-                {
-                    "span_start": span_start,
-                    "span_end": span_end,
-                    "parent_id": parent_id or "",
-                    "is_leaf": (
-                        1 if (left_child_id is None and right_child_id is None) else 0
-                    ),
-                    "document_id": document_id
-                    or "",  # ChromaDB doesn't accept None values
-                }
-            ],
-            documents=[text],
+        return self.node_repo.add_node(
+            node_id,
+            text,
+            embedding,
+            span_start,
+            span_end,
+            parent_id,
+            left_child_id,
+            right_child_id,
+            document_id,
+            token_count,
+            height,
         )
-
-        return node
+    # jscpd:ignore-end
 
     def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
-        """Add multiple nodes to both SQLite and Chroma in batch.
-
-        Args:
-            nodes_data: List of dictionaries containing node data with keys:
-                - node_id, text, embedding, span_start, span_end,
-                - parent_id (optional), left_child_id (optional),
-                - right_child_id (optional), document_id (optional),
-                - token_count (defaults to 0), height (defaults to 0)
-
-        Returns:
-            List of created TreeNode objects
-        """
-        if not nodes_data:
-            return []
-
-        # Validate all embeddings first
-        for data in nodes_data:
-            self._validate_embedding_dimension(data["embedding"])
-
-        nodes = []
-        with self.SessionLocal() as session:
-            # Create TreeNode objects
-            for data in nodes_data:
-                node = TreeNode(
-                    id=data["node_id"],
-                    parent_id=data.get("parent_id"),
-                    left_child_id=data.get("left_child_id"),
-                    right_child_id=data.get("right_child_id"),
-                    span_start=data["span_start"],
-                    span_end=data["span_end"],
-                    text=data["text"],
-                    document_id=data.get("document_id"),
-                    token_count=data.get("token_count", 0),
-                    preceding_neighbor_id=data.get("preceding_neighbor_id"),
-                    height=data.get("height", 0),
-                )
-                nodes.append(node)
-
-            # Bulk insert all nodes
-            session.bulk_save_objects(nodes)
-            session.commit()
-
-            # Add all to cache
-            for node in nodes:
-                self._add_to_cache(node)
-
-        # Batch add to Chroma
-        if nodes:
-            ids = []
-            embeddings = []
-            metadatas = []
-            documents = []
-
-            for data, node in zip(nodes_data, nodes):
-                ids.append(data["node_id"])
-                embeddings.append(np.array(data["embedding"], dtype=np.float32))
-                metadatas.append(
-                    {
-                        "span_start": int(data["span_start"]),
-                        "span_end": int(data["span_end"]),
-                        "parent_id": data.get("parent_id", ""),
-                        "is_leaf": int(
-                            1
-                            if (
-                                data.get("left_child_id") is None
-                                and data.get("right_child_id") is None
-                            )
-                            else 0
-                        ),
-                        "document_id": data.get("document_id", ""),
-                    }
-                )
-                documents.append(data["text"])
-
-            self.collection.add(
-                ids=ids,
-                embeddings=cast(Any, embeddings),
-                metadatas=cast(Any, metadatas),
-                documents=documents,
-            )
-
-        return nodes
+        """Add multiple nodes to both SQLite and Chroma in batch."""
+        return self.node_repo.add_nodes_batch(nodes_data)
 
     def update_parent_references_batch(self, updates: list[tuple[str, str]]) -> None:
-        """Update parent references for multiple nodes in batch.
-
-        Args:
-            updates: List of (child_id, parent_id) tuples
-        """
-        if not updates:
-            return
-
-        with self.SessionLocal() as session:
-            # Build update mappings
-            update_mappings = [
-                {"id": child_id, "parent_id": parent_id}
-                for child_id, parent_id in updates
-            ]
-
-            # Bulk update - use execute with update statement for better compatibility
-            from sqlalchemy import update
-
-            for mapping in update_mappings:
-                stmt = (
-                    update(TreeNode)
-                    .where(TreeNode.id == mapping["id"])
-                    .values(parent_id=mapping["parent_id"])
-                )
-                session.execute(stmt)
-            session.commit()
-
-            # Invalidate cache for updated nodes
-            for child_id, _ in updates:
-                if child_id in self.node_cache:
-                    del self.node_cache[child_id]
-                    # Also remove from cache order
-                    if child_id in self.cache_order:
-                        self.cache_order.remove(child_id)
+        """Update parent references for multiple nodes in batch."""
+        self.node_repo.update_parent_references_batch(updates)
 
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID."""
-        # Check cache first
-        cached = self._get_from_cache(node_id)
-        if cached:
-            return cached
-
-        with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
-            if node:
-                self._add_to_cache(node)
-            return node
+        return self.node_repo.get_node(node_id)
 
     def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes by their IDs."""
-        # First, try to get as many as possible from the cache
-        cached_nodes: list[TreeNode] = [
-            node for nid in node_ids if (node := self._get_from_cache(nid)) is not None
-        ]
-        cached_ids = {node.id for node in cached_nodes}
-
-        # Then, get the rest from the database
-        ids_to_fetch = [nid for nid in node_ids if nid not in cached_ids]
-
-        db_nodes = []
-        if ids_to_fetch:
-            with self.SessionLocal() as session:
-                db_nodes = (
-                    session.query(TreeNode).filter(TreeNode.id.in_(ids_to_fetch)).all()
-                )
-                for node in db_nodes:
-                    self._add_to_cache(node)
-
-        return cached_nodes + db_nodes
+        return self.node_repo.get_nodes(node_ids)
 
     def update_node_access(self, node_id: str) -> None:
         """Update access time and count for a node."""
-        with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
-            if node:
-                node.last_accessed = datetime.utcnow()
-                node.access_count += 1
-                session.commit()
-
-    def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
-        """Get left and right children of a node."""
-        node = self.get_node(node_id)
-        if not node:
-            return None, None
-
-        left = self.get_node(node.left_child_id) if node.left_child_id else None
-        right = self.get_node(node.right_child_id) if node.right_child_id else None
-        return left, right
-
-    def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
-        """Get all ancestors of given nodes using batch loading for efficiency."""
-        all_ancestors = set()
-        current_level = set(node_ids)
-
-        # Keep going until we've reached all roots
-        while current_level:
-            # Batch load all nodes at current level
-            nodes_at_level = self.get_nodes(list(current_level))
-
-            # Collect parent IDs for next level
-            next_level = set()
-            for node in nodes_at_level:
-                if node.parent_id and node.parent_id not in all_ancestors:
-                    all_ancestors.add(node.parent_id)
-                    next_level.add(node.parent_id)
-
-            # Move up to next level
-            current_level = next_level
-
-        # Batch load all ancestors and return
-        if all_ancestors:
-            return self.get_nodes(list(all_ancestors))
-        return []
-
-    def search_similar(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        n_results: int,
-        where: dict[str, Any] | None = None,
-    ) -> list[tuple[str, float, dict[str, Any]]]:
-        """Search for similar nodes using Chroma.
-
-        Returns list of (id, similarity, metadata) tuples where similarity is in [0, 1].
-        """
-        # Convert to numpy array if needed
-        query_array = np.array(query_embedding, dtype=np.float32)
-        results = self.collection.query(
-            query_embeddings=cast(Any, [query_array]),
-            n_results=n_results,
-            where=where,
-        )
-
-        # Return list of (id, similarity, metadata) tuples
-        output = []
-        ids = results.get("ids")
-        distances = results.get("distances")
-        metadatas = results.get("metadatas")
-
-        if ids and distances and metadatas and len(ids) > 0:
-            for i in range(len(ids[0])):
-                # Convert cosine distance to similarity
-                # Cosine distance ranges from 0 to 2, where 0 is identical
-                # Similarity = 1 - (distance / 2) to map to [0, 1]
-                distance = float(distances[0][i])
-                similarity = 1.0 - (distance / 2.0)
-                # Ensure similarity is in valid range [0, 1]
-                similarity = max(0.0, min(1.0, similarity))
-
-                output.append(
-                    (
-                        ids[0][i],
-                        similarity,
-                        (
-                            dict(metadatas[0][i])
-                            if isinstance(metadatas[0][i], dict)
-                            else {}
-                        ),
-                    )
-                )
-
-        return output
+        self.node_repo.update_node_access(node_id)
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
-        """Get nodes that are pinned (always included in coverage)."""
-        with self.SessionLocal() as session:
-            pinned_nodes = session.query(TreeNode).filter_by(is_pinned=1).all()
-
-            if depth_max is not None:
-                # Filter by calculated depth
-                filtered_nodes = []
-                for node in pinned_nodes:
-                    if self.get_node_depth(node.id) <= depth_max:
-                        filtered_nodes.append(node)
-                return filtered_nodes
-
-            return pinned_nodes
+        """Get all pinned nodes up to optional max depth."""
+        return self.node_repo.get_pinned_nodes(depth_max)
 
     def pin_node(self, node_id: str) -> bool:
-        """Pin a node if it's within allowed depth."""
+        """Pin a node (mark as important)."""
         node = self.get_node(node_id)
         if not node:
             return False
@@ -534,179 +127,28 @@ class Store:
             logger.info(f"Node {node_id} is already pinned")
             return False
 
-        with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
-            if node:
-                node.is_pinned = 1
-                session.commit()
-                return True
-        return False
+        return self.node_repo.pin_node(node_id)
 
     def get_leaf_nodes(self) -> list[TreeNode]:
-        """Get all leaf nodes (nodes without children)."""
-        with self.SessionLocal() as session:
-            return (
-                session.query(TreeNode)
-                .filter(
-                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
-                )
-                .all()
-            )
-
-    def get_root_node(self) -> TreeNode | None:
-        """Get the root node (node with no parent)."""
-        with self.SessionLocal() as session:
-            return session.query(TreeNode).filter_by(parent_id=None).first()
-
-    def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
-        """Get the root node for a specific document."""
-        with self.SessionLocal() as session:
-            query = session.query(TreeNode).filter_by(parent_id=None)
-            if document_id:
-                query = query.filter_by(document_id=document_id)
-            return query.first()
+        """Get all leaf nodes (nodes with no children)."""
+        return self.node_repo.get_leaf_nodes()
 
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
-        """Get all nodes for a specific document."""
-        with self.SessionLocal() as session:
-            if document_id:
-                return session.query(TreeNode).filter_by(document_id=document_id).all()
-            else:
-                # If no document_id, maybe return all nodes? Or raise error?
-                # For now, let's return all nodes, but this could be memory intensive
-                logger.warning("No document_id provided, returning all nodes in store.")
-                return session.query(TreeNode).all()
+        """Get all nodes for a document."""
+        return self.node_repo.get_all_nodes_for_document(document_id)
 
-    def get_node_depth(self, node_id: str) -> int:
-        """Calculate depth of a node (distance from root).
-
-        Returns 0 for root nodes, incrementing by 1 for each level down.
-        This follows the standard tree convention where root is at depth 0.
-        """
-        node = self.get_node(node_id)
-        if not node:
-            raise ValueError(f"Node {node_id} not found")
-
-        depth = 0
-        current_id = node.parent_id
-
-        while current_id:
-            depth += 1
-            parent = self.get_node(current_id)
-            if not parent:
-                break
-            current_id = parent.parent_id
-
-        return depth
-
-    def is_leaf_node(self, node_id: str) -> bool:
-        """Check if a node is a leaf (has no children)."""
-        node = self.get_node(node_id)
-        if not node:
-            raise ValueError(f"Node {node_id} not found")
-
-        return not node.left_child_id and not node.right_child_id
-
-    def is_root_node(self, node_id: str) -> bool:
-        """Check if a node is a root (has no parent)."""
-        node = self.get_node(node_id)
-        if not node:
-            raise ValueError(f"Node {node_id} not found")
-
-        return node.parent_id is None
-
-    def compute_mmr_diverse_results(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, Any]]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        """Apply MMR (Maximal Marginal Relevance) to get diverse results."""
-        if not candidates or k <= 0:
-            return []
-
-        # Get embeddings for all candidates
-        candidate_ids = [c[0] for c in candidates]
-
-        # Batch retrieve embeddings
-        results = self.collection.get(ids=candidate_ids, include=["embeddings"])
-
-        # Create ID to embedding mapping for O(1) lookup
-        embeddings = results.get("embeddings")
-        ids = results.get("ids")
-        if embeddings is None or ids is None:
-            return []
-
-        id_to_embedding = {ids[i]: np.array(embeddings[i]) for i in range(len(ids))}
-
-        # Build candidate embeddings array in order
-        cand_embs = np.array([id_to_embedding[cid] for cid in candidate_ids])
-        query_emb = np.array(query_embedding)
-
-        # Vectorized similarity computation
-        query_sims = np.dot(cand_embs, query_emb)
-
-        # MMR iterative selection with optimized operations
-        selected_mask = np.zeros(len(candidates), dtype="bool")
-        selected_indices = []
-
-        # Select first item (highest relevance)
-        first_idx = np.argmax(query_sims)
-        selected_indices.append(first_idx)
-        selected_mask[first_idx] = True
-
-        # Pre-compute pairwise similarities for efficiency
-        if len(candidates) > 1:
-            pairwise_sims = np.dot(cand_embs, cand_embs.T)
-
-        # Select remaining items
-        for _ in range(1, min(k, len(candidates))):
-            # Vectorized MMR computation for all unselected
-            unselected_mask = ~selected_mask
-            if not np.any(unselected_mask):
-                break
-
-            # Relevance scores for unselected
-            relevances = query_sims[unselected_mask]
-
-            # Max similarity to any selected item (vectorized)
-            max_sims = (
-                np.max(pairwise_sims[np.ix_(unselected_mask, selected_mask)], axis=1)
-                if np.any(selected_mask)
-                else np.zeros(int(np.sum(unselected_mask)))
-            )
-
-            # MMR scores
-            mmr_scores = lambda_param * relevances - (1 - lambda_param) * max_sims
-
-            # Get index in unselected subset
-            best_unselected_idx = np.argmax(mmr_scores)
-
-            # Convert to original index
-            unselected_indices = np.where(unselected_mask)[0]
-            best_idx = unselected_indices[best_unselected_idx]
-
-            selected_indices.append(best_idx)
-            selected_mask[best_idx] = True
-
-        # Return selected node IDs
-        return [candidates[i][0] for i in selected_indices]
-
+    # Document operations - delegate to DocumentRepository
     def get_document_by_path(self, file_path: str) -> Document | None:
         """Get a document by file path."""
-        with self.SessionLocal() as session:
-            return session.query(Document).filter_by(file_path=file_path).first()
+        return self.doc_repo.get_document_by_path(file_path)
 
     def get_document_by_id(self, document_id: str) -> Document | None:
         """Get a document by ID."""
-        with self.SessionLocal() as session:
-            return session.query(Document).filter_by(id=document_id).first()
+        return self.doc_repo.get_document_by_id(document_id)
 
     def get_document_embedding_model(self, document_id: str) -> str | None:
         """Get the embedding model used for a specific document."""
-        doc = self.get_document_by_id(document_id)
-        return doc.embedding_model if doc else None
+        return self.doc_repo.get_document_embedding_model(document_id)
 
     def add_document(
         self,
@@ -717,553 +159,127 @@ class Store:
         embedding_model: str,
         summary_model: str,
     ) -> Document:
-        """Add a document record.
-
-        Args:
-            document_id: Unique identifier for the document
-            file_path: Optional path to the source file
-            content_hash: SHA256 hash of the document content
-            chunk_count: Number of chunks in the document
-            embedding_model: Name of the embedding model used for indexing
-            summary_model: Name of the summarization model used
-
-        Note: Model name validation is performed by the indexing layer
-        to ensure they're valid OpenAI models before storage.
-        """
-        with self.SessionLocal() as session:
-            doc = Document(
-                id=document_id,
-                file_path=file_path,
-                content_hash=content_hash,
-                chunk_count=chunk_count,
-                embedding_model=embedding_model,
-                summary_model=summary_model,
-            )
-            session.add(doc)
-            session.commit()
-            return doc
+        """Add a document record."""
+        return self.doc_repo.add_document(
+            document_id,
+            file_path,
+            content_hash,
+            chunk_count,
+            embedding_model,
+            summary_model,
+        )
 
     def delete_document_nodes(self, document_id: str) -> int:
         """Delete all nodes associated with a document."""
-        with self.SessionLocal() as session:
-            # Get all nodes for this document
-            nodes = session.query(TreeNode).filter_by(document_id=document_id).all()
-            node_ids = [n.id for n in nodes]
-
-            # Delete from SQLite
-            deleted_count = (
-                session.query(TreeNode).filter_by(document_id=document_id).delete()
-            )
-            session.commit()
-
-            # Delete from Chroma
-            if node_ids:
-                self.collection.delete(ids=node_ids)
-
-            # Clear from cache
-            for node_id in node_ids:
-                if node_id in self.node_cache:
-                    del self.node_cache[node_id]
-                    try:
-                        self.cache_order.remove(node_id)
-                    except ValueError:
-                        pass
-
-            return deleted_count
+        return self.doc_repo.delete_document_nodes(document_id)
 
     def clear_document(self, document_id: str) -> int:
-        """Clear all data for a document, including orphaned nodes and document record.
-
-        This handles both complete documents and orphaned nodes from interrupted indexing.
-        Unlike delete_document_nodes, this also removes the Document record.
-
-        Args:
-            document_id: ID of the document to clear
-
-        Returns:
-            Number of nodes deleted
-        """
-        # Delete all nodes with this document_id (handles orphaned nodes from interrupted runs)
-        deleted_count = self.delete_document_nodes(document_id)
-
-        # Also delete document record if it exists
-        with self.SessionLocal() as session:
-            session.query(Document).filter_by(id=document_id).delete()
-            session.commit()
-
-        return deleted_count
+        """Clear all data for a document, including orphaned nodes and document record."""
+        return self.doc_repo.clear_document(document_id)
 
     def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
-        """Get token statistics for a document using efficient SQL aggregation.
+        """Get token statistics for a document using efficient SQL aggregation."""
+        return self.doc_repo.get_document_token_stats(document_id)
 
-        Returns:
-            Dict with keys: avg_tokens, min_tokens, max_tokens, total_tokens, node_count
-        """
-        with self.SessionLocal() as session:
-            from sqlalchemy import func
-
-            result = (
-                session.query(
-                    func.avg(TreeNode.token_count).label("avg_tokens"),
-                    func.min(TreeNode.token_count).label("min_tokens"),
-                    func.max(TreeNode.token_count).label("max_tokens"),
-                    func.sum(TreeNode.token_count).label("total_tokens"),
-                    func.count(TreeNode.id).label("node_count"),
-                )
-                .filter(
-                    TreeNode.document_id == document_id,
-                    TreeNode.token_count.isnot(None),
-                )
-                .one()
-            )
-
-            return {
-                "avg_tokens": float(result.avg_tokens) if result.avg_tokens else 0.0,
-                "min_tokens": result.min_tokens or 0,
-                "max_tokens": result.max_tokens or 0,
-                "total_tokens": result.total_tokens or 0,
-                "node_count": result.node_count or 0,
-            }
-
-    def _run_migrations(self) -> None:
-        """Run any necessary database migrations."""
-        try:
-            with self.engine.connect() as conn:
-                # Check if tree_nodes table exists first
-                result = conn.execute(
-                    text(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name='tree_nodes'"
-                    )
-                )
-                if result.fetchone():
-                    # Table exists, check columns
-                    result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
-                    columns = [row[1] for row in result.fetchall()]
-
-                    # Migration: Drop is_dirty column if present
-                    if "is_dirty" in columns:
-                        self._drop_column_migration(conn, "is_dirty")
-
-                    # Migration: Drop depth column if present
-                    elif "depth" in columns:
-                        self._drop_column_migration(
-                            conn,
-                            "depth",
-                            cleanup_callback=self._clean_chromadb_metadata,
-                        )
-
-                    # Migration: Drop summary column if present
-                    elif "summary" in columns:
-                        self._drop_column_migration(conn, "summary")
-
-                    # Migration: Add preceding_neighbor_id column if not present
-                    if "preceding_neighbor_id" not in columns:
-                        self._add_preceding_neighbor_column_migration(conn)
-
-                    # Migration: Add height column if not present
-                    if "height" not in columns:
-                        self._add_height_column_migration(conn)
-                else:
-                    logger.debug(
-                        "tree_nodes table does not exist yet, will be created by SQLAlchemy"
-                    )
-
-                # Check if documents table needs model columns migration
-                result = conn.execute(
-                    text(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name='documents'"
-                    )
-                )
-                if result.fetchone():
-                    # Table exists, check if it has the new columns
-                    result = conn.execute(text("PRAGMA table_info(documents)"))
-                    columns = [row[1] for row in result.fetchall()]
-
-                    missing_embedding = "embedding_model" not in columns
-                    missing_summary = "summary_model" not in columns
-                    if missing_embedding or missing_summary:
-                        self._add_document_model_columns_migration(conn)
-                else:
-                    logger.debug(
-                        "documents table does not exist yet, will be created by SQLAlchemy"
-                    )
-        except Exception as e:
-            logger.debug(
-                f"Migration check failed (this is normal for new databases): {e}"
-            )
-
-    def _drop_column_migration(
+    # Search operations - delegate to SearchService
+    def search_similar(
         self,
-        conn: Any,
-        column_name: str,
-        cleanup_callback: Callable[[], None] | None = None,
+        query_embedding: list[float] | NDArray[np.float64],
+        n_results: int,
+        where: dict[str, Any] | None = None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Search for similar nodes using Chroma."""
+        return self.search_service.search_similar(query_embedding, n_results, where)
+
+    def compute_mmr_diverse_results(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        candidates: list[tuple[str, float, dict[str, Any]]],
+        lambda_param: float,
+        k: int,
+    ) -> list[str]:
+        """Apply MMR (Maximal Marginal Relevance) to get diverse results."""
+        return self.search_service.compute_mmr_diverse_results(
+            query_embedding, candidates, lambda_param, k
+        )
+
+    # Tree navigation operations - delegate to TreeNavigator
+    def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
+        """Get left and right children of a node."""
+        return self.tree_navigator.get_children(node_id)
+
+    def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
+        """Get all ancestors of given nodes using batch loading for efficiency."""
+        return self.tree_navigator.get_ancestors(node_ids)
+
+    def get_root_node(self) -> TreeNode | None:
+        """Get the root node (node with no parent)."""
+        return self.tree_navigator.get_root_node()
+
+    def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
+        """Get the root node for a specific document."""
+        return self.tree_navigator.get_root_node_for_document(document_id)
+
+    def get_node_depth(self, node_id: str) -> int:
+        """Calculate depth of a node (distance from root)."""
+        return self.tree_navigator.get_node_depth(node_id)
+
+    def is_leaf_node(self, node_id: str) -> bool:
+        """Check if a node is a leaf (has no children)."""
+        return self.tree_navigator.is_leaf_node(node_id)
+
+    def is_root_node(self, node_id: str) -> bool:
+        """Check if a node is a root (has no parent)."""
+        return self.tree_navigator.is_root_node(node_id)
+
+    # Cache operations - delegate to CacheManager
+    def _get_from_cache(self, node_id: str) -> TreeNode | None:
+        """Get item from cache (for backward compatibility)."""
+        return self.cache_manager.get(node_id)
+
+    def _add_to_cache(self, node: TreeNode) -> None:
+        """Add item to cache (for backward compatibility)."""
+        self.cache_manager.put(node.id, node)
+
+    # Database validation - delegate to DatabaseManager
+    def _validate_embedding_dimension(
+        self, embedding: list[float] | NDArray[np.float64]
     ) -> None:
-        """Drop a column from tree_nodes table using SQLite table recreation pattern.
+        """Validate that embedding has correct dimension."""
+        self.db_manager.validate_embedding_dimension(embedding)
 
-        Args:
-            conn: Database connection
-            column_name: Name of column to drop
-            cleanup_callback: Optional callback to run after successful migration
-        """
-        logger.info(f"Found deprecated {column_name} column, dropping it...")
-        try:
-            # SQLite doesn't support DROP COLUMN directly in older versions
-            # We need to recreate the table without the column
-            conn.execute(text("BEGIN TRANSACTION"))
+    def _get_expected_embedding_dimension(self) -> int | None:
+        """Get expected embedding dimension from existing embeddings."""
+        return self.db_manager._get_expected_embedding_dimension()
 
-            # Get current columns to determine what to include in new table
-            result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
-            current_columns = [row[1] for row in result.fetchall()]
-
-            # Build column list for new table (excluding the one being dropped)
-            select_columns = []
-
-            # Define the expected schema - used for validation
-            valid_columns = {
-                "id",
-                "parent_id",
-                "left_child_id",
-                "right_child_id",
-                "span_start",
-                "span_end",
-                "text",
-                "token_count",
-                "is_pinned",
-                "last_accessed",
-                "access_count",
-                "created_at",
-                "document_id",
-                "preceding_neighbor_id",
-                "height",
-            }
-
-            # Define the expected schema
-            schema_columns = [
-                ("id", "VARCHAR NOT NULL PRIMARY KEY"),
-                ("parent_id", "VARCHAR"),
-                ("left_child_id", "VARCHAR"),
-                ("right_child_id", "VARCHAR"),
-                ("span_start", "INTEGER NOT NULL"),
-                ("span_end", "INTEGER NOT NULL"),
-                ("text", "TEXT NOT NULL"),
-                ("token_count", "INTEGER"),
-                ("is_pinned", "INTEGER DEFAULT 0"),
-                ("last_accessed", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
-                ("access_count", "INTEGER DEFAULT 0"),
-                ("created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
-                ("document_id", "VARCHAR"),
-            ]
-
-            # Add summary column only if it exists and we're not dropping it
-            if "summary" in current_columns and column_name != "summary":
-                schema_columns.insert(7, ("summary", "TEXT"))
-
-            # Build CREATE TABLE statement
-            column_defs = []
-            for col_name, col_def in schema_columns:
-                if col_name != column_name:  # Skip the column being dropped
-                    column_defs.append(f"{col_name} {col_def}")
-                    if col_name in current_columns:
-                        # Validate column name for security
-                        if col_name not in valid_columns:
-                            raise ValueError(f"Invalid column name: {col_name}")
-                        select_columns.append(col_name)
-
-            # Add foreign keys
-            column_defs.append("FOREIGN KEY(parent_id) REFERENCES tree_nodes (id)")
-            column_defs.append("FOREIGN KEY(document_id) REFERENCES documents (id)")
-
-            create_table_sql = f"""
-                CREATE TABLE tree_nodes_new (
-                    {', '.join(column_defs)}
-                )
-            """
-
-            # Create new table
-            conn.execute(text(create_table_sql))
-
-            # Build INSERT statement based on existing columns
-            # When dropping summary, we need to handle the migration specially
-            if column_name == "summary" and "summary" in current_columns:
-                # Migrate data, using text field for both text and what was summary
-                conn.execute(
-                    text(
-                        """
-                        INSERT INTO tree_nodes_new
-                        SELECT id, parent_id, left_child_id, right_child_id,
-                               span_start, span_end, text, token_count,
-                               is_pinned, last_accessed, access_count,
-                               created_at, document_id
-                        FROM tree_nodes
-                        """
-                    )
-                )
-            else:
-                # Normal migration for other columns
-                # select_columns validated against whitelist for security
-                insert_sql = f"""
-                    INSERT INTO tree_nodes_new
-                    SELECT {', '.join(select_columns)}
-                    FROM tree_nodes
-                """  # nosec B608 - columns validated against whitelist above
-                conn.execute(text(insert_sql))
-
-            # Drop old table and rename new one
-            conn.execute(text("DROP TABLE tree_nodes"))
-            conn.execute(text("ALTER TABLE tree_nodes_new RENAME TO tree_nodes"))
-
-            conn.execute(text("COMMIT"))
-            logger.info(
-                f"Successfully dropped {column_name} column from tree_nodes table"
-            )
-
-            # Run cleanup callback if provided
-            if cleanup_callback:
-                cleanup_callback()
-        except Exception as e:
-            conn.execute(text("ROLLBACK"))
-            logger.error(f"Failed to drop {column_name} column: {e}")
-            raise
-
-    def _add_preceding_neighbor_column_migration(self, conn: Any) -> None:
-        """Add preceding_neighbor_id column to tree_nodes table.
-
-        Args:
-            conn: Database connection
-        """
-        logger.info("Adding preceding_neighbor_id column to tree_nodes table...")
-        try:
-            conn.execute(
-                text("ALTER TABLE tree_nodes ADD COLUMN preceding_neighbor_id VARCHAR")
-            )
-            logger.info(
-                "Successfully added preceding_neighbor_id column to tree_nodes table"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to add preceding_neighbor_id column: {e}")
-            # This is okay - the column might already exist
-
-    def _add_height_column_migration(self, conn: Any) -> None:
-        """Add height column to tree_nodes table and backfill with calculated values.
-
-        Args:
-            conn: Database connection
-        """
-        logger.info("Adding height column to tree_nodes table...")
-        try:
-            conn.execute(text("BEGIN TRANSACTION"))
-
-            # Add the height column with default value 0
-            conn.execute(
-                text(
-                    "ALTER TABLE tree_nodes ADD COLUMN height INTEGER NOT NULL DEFAULT 0"
-                )
-            )
-            logger.info("Added height column to tree_nodes table")
-
-            # Backfill height values using breadth-first calculation from leaves up
-            self._backfill_node_heights(conn)
-
-            conn.execute(text("COMMIT"))
-            logger.info("Successfully added height column and backfilled values")
-
-        except Exception as e:
-            conn.execute(text("ROLLBACK"))
-            logger.error(f"Failed to add height column: {e}")
-            raise
-
-    def _backfill_node_heights(self, conn: Any) -> None:
-        """Backfill height values for existing nodes using breadth-first calculation."""
-        logger.info("Backfilling height values for existing nodes...")
-
-        # Start with leaf nodes (height = 0)
-        leaf_result = conn.execute(
-            text(
-                """
-                UPDATE tree_nodes
-                SET height = 0
-                WHERE (left_child_id IS NULL AND right_child_id IS NULL)
-                AND height = 0
-            """
-            )
-        )
-        logger.info(f"Set height=0 for {leaf_result.rowcount} leaf nodes")
-
-        # Process internal nodes level by level, bottom-up
-        current_height = 1
-        while True:
-            # Find nodes whose children all have height < current_height
-            # and update them to height = current_height
-            result = conn.execute(
-                text(
-                    """
-                    UPDATE tree_nodes
-                    SET height = :current_height
-                    WHERE height = 0
-                    AND (left_child_id IS NOT NULL OR right_child_id IS NOT NULL)
-                    AND NOT EXISTS (
-                        SELECT 1 FROM tree_nodes child
-                        WHERE child.id IN (tree_nodes.left_child_id, tree_nodes.right_child_id)
-                        AND (child.height = 0 OR child.height >= :current_height)
-                    )
-                """
-                ),
-                {"current_height": current_height},
-            )
-
-            nodes_updated = result.rowcount
-            logger.debug(f"Set height={current_height} for {nodes_updated} nodes")
-
-            if nodes_updated == 0:
-                break  # No more nodes to update
-
-            current_height += 1
-
-            # Safety check to prevent infinite loops
-            if current_height > 50:  # Reasonable max tree height
-                logger.warning("Reached maximum tree height limit during backfill")
-                break
-
-        logger.info(f"Backfilled heights up to level {current_height - 1}")
-
-    def _add_document_model_columns_migration(self, conn: Any) -> None:
-        """Add embedding_model and summary_model columns to documents table."""
-        logger.info(
-            "Adding embedding_model and summary_model columns to documents table..."
-        )
-        try:
-            conn.execute(text("BEGIN TRANSACTION"))
-
-            # Add the new columns with default values
-            # Use the current default models from config as fallback
-            default_embedding_model = "text-embedding-3-small"
-            default_summary_model = "gpt-5-nano"
-
-            # Check which columns are missing and add them
-            result = conn.execute(text("PRAGMA table_info(documents)"))
-            existing_columns = [row[1] for row in result.fetchall()]
-
-            if "embedding_model" not in existing_columns:
-                conn.execute(
-                    text(
-                        f"ALTER TABLE documents ADD COLUMN embedding_model VARCHAR "
-                        f"NOT NULL DEFAULT '{default_embedding_model}'"
-                    )
-                )
-                logger.info("Added embedding_model column to documents table")
-
-            if "summary_model" not in existing_columns:
-                conn.execute(
-                    text(
-                        f"ALTER TABLE documents ADD COLUMN summary_model VARCHAR "
-                        f"NOT NULL DEFAULT '{default_summary_model}'"
-                    )
-                )
-                logger.info("Added summary_model column to documents table")
-
-            conn.execute(text("COMMIT"))
-            logger.info("Successfully added model columns to documents table")
-
-        except Exception as e:
-            conn.execute(text("ROLLBACK"))
-            logger.error(f"Failed to add model columns to documents table: {e}")
-            raise
-
-    def _clean_chromadb_metadata(self):
-        """Clean up deprecated fields from ChromaDB metadata."""
-        try:
-            logger.info("Cleaning up ChromaDB metadata...")
-
-            # Get all entries from ChromaDB
-            results = self.collection.get(include=["metadatas"])
-
-            if not results or not results.get("ids"):
-                logger.debug("No ChromaDB entries to clean")
-                return
-
-            ids = results["ids"]
-            metadatas = results["metadatas"]
-
-            # Check if any entries have the deprecated 'depth' field
-            needs_update: list[str] = []
-            updated_metadatas: list[Mapping[str, str | int | float | bool | None]] = []
-
-            # Handle case where metadatas might be None
-            if metadatas is None:
-                return
-
-            for i, (node_id, metadata) in enumerate(zip(ids, metadatas)):
-                if metadata and "depth" in metadata:
-                    needs_update.append(node_id)
-                    # Create new metadata without depth field
-                    new_metadata = {k: v for k, v in metadata.items() if k != "depth"}
-                    updated_metadatas.append(new_metadata)
-
-            if needs_update:
-                logger.info(
-                    f"Updating {len(needs_update)} ChromaDB entries to remove depth field"
-                )
-                # Update entries in batches
-                batch_size = 100
-                for i in range(0, len(needs_update), batch_size):
-                    batch_ids = needs_update[i : i + batch_size]
-                    batch_metadatas = updated_metadatas[i : i + batch_size]
-
-                    # ChromaDB update requires updating with the same data but new metadata
-                    self.collection.update(ids=batch_ids, metadatas=batch_metadatas)
-
-                logger.info(
-                    f"Successfully cleaned {len(needs_update)} ChromaDB entries"
-                )
-            else:
-                logger.debug("No ChromaDB entries need cleaning")
-
-        except Exception as e:
-            logger.warning(f"Failed to clean ChromaDB metadata: {e}")
-            # Don't fail the migration if ChromaDB cleanup fails
-            # This is a one-time cleanup that's not critical
-
+    # Lifecycle methods
     def close(self) -> None:
-        """Close database connections and cleanup resources."""
-        if hasattr(self, "engine"):
-            self.engine.dispose()
-        # ChromaDB PersistentClient doesn't have a close method, but we can help GC
-        if hasattr(self, "collection"):
-            del self.collection
-        if hasattr(self, "chroma_client"):
-            del self.chroma_client
+        """Close database connections."""
+        self.db_manager.close()
 
+    # Static utility methods
     @staticmethod
     def compute_content_hash(content: str) -> str:
         """Compute SHA256 hash of content."""
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+        return hashlib.sha256(content.encode()).hexdigest()
 
     @staticmethod
     @contextmanager
     def temporary():
-        """Create a temporary Store instance for testing/benchmarking.
-
-        This creates a Store with temporary SQLite and Chroma databases
-        that are automatically cleaned up when the context exits.
-
-        Usage:
-            with Store.temporary() as store:
-                # Use store for testing
-                pass
-            # Databases are automatically cleaned up
-        """
-        import shutil
-        import tempfile
-
-        temp_dir = tempfile.mkdtemp()
+        """Create a temporary in-memory store for testing."""
+        config = OperationalConfig(
+            sqlite_database_url="sqlite:///:memory:",
+            chroma_persist_directory=":memory:",
+            cache_size=100,
+        )
+        store = Store(config)
         try:
-            config = OperationalConfig(
-                sqlite_database_url=f"sqlite:///{temp_dir}/test.db",
-                chroma_persist_directory=f"{temp_dir}/chroma",
-            )
-            store = Store(config)
             yield store
         finally:
-            # Clean up
             store.close()
-            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    # Deprecated methods - included for backward compatibility but delegate to new components
+    def _run_migrations(self) -> None:
+        """Run database migrations (deprecated - handled by DatabaseManager)."""
+        # This is now handled by DatabaseManager during initialization
+        pass
