@@ -69,10 +69,9 @@ class TestCLI:
             store_instance.get_leaf_nodes.return_value = [
                 Mock(id=f"node-{i}") for i in range(5)
             ]
-            store_instance.get_root_node.return_value = Mock(depth=3)
+            store_instance.get_root_node.return_value = Mock(height=3)
             store_instance.get_pinned_nodes.return_value = []
             store_instance.collection.count.return_value = 10
-            store_instance.get_node_height.return_value = 3
             store_instance.clear_document.return_value = (
                 0  # Default to no nodes cleared
             )

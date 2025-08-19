@@ -183,7 +183,7 @@ async def index_document(
                 .first()
             )
 
-        tree_height = service.store.get_node_height(root.id) if root else 0
+        tree_height = root.height if root else 0
 
         return IndexDocumentResponse(
             document_id=document_id,
@@ -343,7 +343,7 @@ async def get_status(
         return SystemStatusResponse(
             total_nodes=all_nodes,
             leaf_nodes=len(leaf_nodes),
-            tree_depth=service.store.get_node_height(root.id) if root else 0,
+            tree_depth=root.height if root else 0,
             pinned_nodes=len(pinned),
             config={
                 "index": asdict(service.index_config),
