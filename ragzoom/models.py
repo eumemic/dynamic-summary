@@ -1,0 +1,66 @@
+"""SQLAlchemy models for RagZoom."""
+
+from datetime import datetime
+
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class TreeNode(Base):
+    """SQLite model for tree nodes."""
+
+    __tablename__ = "tree_nodes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    parent_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("tree_nodes.id"), nullable=True
+    )
+    left_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    right_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    span_start: Mapped[int] = mapped_column(Integer, nullable=False)
+    span_end: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    token_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )  # Token count of text content (raw text for leaves, summary for internal nodes)
+    is_pinned: Mapped[int] = mapped_column(Integer, default=0)
+    last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    access_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    document_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("documents.id"), nullable=True
+    )
+    preceding_neighbor_id: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # ID of the node that immediately precedes this one at the same tree level
+    height: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )  # Distance to furthest leaf (0 for leaves, incrementing upward)
+
+
+class Document(Base):
+    """SQLite model for documents."""
+
+    __tablename__ = "documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    file_path: Mapped[str | None] = mapped_column(
+        String, nullable=True, unique=True
+    )  # Path to the source file
+    content_hash: Mapped[str] = mapped_column(
+        String, nullable=False
+    )  # SHA256 hash of content
+    indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    embedding_model: Mapped[str] = mapped_column(String, nullable=False)
+    summary_model: Mapped[str] = mapped_column(String, nullable=False)
