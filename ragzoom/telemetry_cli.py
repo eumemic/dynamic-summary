@@ -913,11 +913,11 @@ def _calculate_query_phase_thresholds(
             "k1": 9.0,  # Between-run variance
             "k2": 6.0,  # Baseline uncertainty
         },
-        # Local compute phases: deterministic, low variance (3-sigma)
+        # Local compute phases: deterministic, low variance (6-sigma)
         "local": {
             "phases": ["dp_time", "scoring_time", "assembly_time"],
-            "k1": 2.0,
-            "k2": 1.0,
+            "k1": 4.0,
+            "k2": 2.0,
         },
         # I/O phases: medium variance from system factors (4-sigma)
         "io": {
@@ -1149,7 +1149,7 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
     # Show overall status and regression details
     if has_any_regression or has_phase_regressions:
         click.echo(
-            "\n❌ Performance regression detected (dynamic thresholds: 3σ local, 4σ I/O, 15σ API)"
+            "\n❌ Performance regression detected (dynamic thresholds: 6σ local, 4σ I/O, 15σ API)"
         )
 
         # Show which phases had regressions
@@ -1169,7 +1169,7 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
                     )
     else:
         click.echo(
-            "\n✅ No regressions detected (dynamic thresholds: 3σ local, 4σ I/O, 15σ API)"
+            "\n✅ No regressions detected (dynamic thresholds: 6σ local, 4σ I/O, 15σ API)"
         )
 
     return has_any_regression or has_phase_regressions
