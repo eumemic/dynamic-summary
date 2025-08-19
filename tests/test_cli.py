@@ -25,7 +25,7 @@ class TestCLI:
             patch("ragzoom.cli.IndexConfig") as mock_index_config,
             patch("ragzoom.cli.QueryConfig") as mock_query_config,
             patch("ragzoom.cli.OperationalConfig") as mock_operational_config,
-            patch("ragzoom.cli.Store") as mock_store,
+            patch("ragzoom.cli.create_store_with_docker") as mock_create_store,
             patch("ragzoom.cli.TreeBuilder") as mock_builder,
             patch("ragzoom.cli.Retriever") as mock_retriever,
             patch("ragzoom.cli.Assembler") as mock_assembler,
@@ -116,7 +116,7 @@ class TestCLI:
             mock_context_manager.__exit__ = Mock(return_value=None)
             store_instance.SessionLocal.return_value = mock_context_manager
 
-            mock_store.return_value = store_instance
+            mock_create_store.return_value = store_instance
 
             # Mock tree builder
             builder_instance = Mock()
@@ -148,7 +148,7 @@ class TestCLI:
                 "index_config": mock_index_config,
                 "query_config": mock_query_config,
                 "operational_config": mock_operational_config,
-                "store": mock_store,
+                "create_store": mock_create_store,
                 "builder": mock_builder,
                 "retriever": mock_retriever,
                 "assembler": mock_assembler,

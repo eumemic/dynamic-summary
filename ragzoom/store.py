@@ -98,6 +98,63 @@ class Document(Base):
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
 
 
+def create_store_with_docker(
+    config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
+) -> "Store":
+    """Create a Store instance with automatic Docker PostgreSQL if needed.
+
+    This factory function handles Docker container startup when using
+    the default database URL without explicit configuration.
+
+    Args:
+        config: Operational configuration
+        embedding_model: Name of embedding model
+
+    Returns:
+        Configured Store instance
+
+    Raises:
+        OSError: If Docker PostgreSQL startup fails
+    """
+    database_url = config.database_url
+
+    # Check if we should auto-start Docker PostgreSQL
+    should_auto_start = (
+        database_url == "postgresql+psycopg://localhost/ragzoom"
+        and not os.getenv("RAGZOOM_DATABASE_URL")  # User didn't explicitly set URL
+        and not os.getenv("RAGZOOM_NO_DOCKER")  # User didn't disable Docker
+    )
+
+    if should_auto_start:
+        try:
+            from ragzoom.docker_postgres import DockerPostgres
+
+            docker_pg = DockerPostgres()
+            database_url = docker_pg.ensure_running()
+            logger.info("✅ PostgreSQL ready in Docker container")
+
+            # Update config with Docker database URL
+            config = OperationalConfig(
+                openai_api_key=config.openai_api_key,
+                database_url=database_url,
+                cache_size=config.cache_size,
+            )
+        except ImportError:
+            logger.debug("Docker PostgreSQL management not available")
+        except OSError:
+            # User-friendly errors from DockerPostgres - re-raise as-is
+            raise
+        except Exception as e:
+            logger.debug(f"Auto-start failed: {e}")
+            raise OSError(
+                f"\n❌ Failed to start PostgreSQL automatically.\n\n"
+                f"Run 'ragzoom doctor' to diagnose the issue.\n"
+                f"Error: {str(e)}"
+            )
+
+    return Store(config, embedding_model)
+
+
 class Store:
     """Combined storage for tree structure and embeddings in PostgreSQL."""
 
@@ -160,41 +217,7 @@ class Store:
         """
         self.config = config
         self.embedding_model = embedding_model
-
-        # Auto-start Docker PostgreSQL if using default database URL
-        # and no explicit database URL is set via environment
         database_url = config.database_url
-
-        # Check if we should auto-start Docker PostgreSQL
-        should_auto_start = (
-            database_url == "postgresql+psycopg://localhost/ragzoom"
-            and not os.getenv("RAGZOOM_DATABASE_URL")  # User didn't explicitly set URL
-            and not os.getenv("RAGZOOM_NO_DOCKER")  # User didn't disable Docker
-        )
-
-        if should_auto_start:
-            try:
-                from ragzoom.docker_postgres import DockerPostgres
-
-                docker_pg = DockerPostgres()
-                database_url = docker_pg.ensure_running()
-                logger.info("✅ PostgreSQL ready in Docker container")
-            except ImportError:
-                logger.debug("Docker PostgreSQL management not available")
-            except OSError:
-                # User-friendly errors from DockerPostgres - re-raise as-is
-                # Don't log here since CLI will handle the user-facing message
-                raise
-            except Exception as e:
-                logger.debug(
-                    f"Auto-start failed: {e}"
-                )  # Debug level for technical details
-                # Re-raise with helpful context
-                raise OSError(
-                    f"\n❌ Failed to start PostgreSQL automatically.\n\n"
-                    f"Run 'ragzoom doctor' to diagnose the issue.\n"
-                    f"Error: {str(e)}"
-                )
 
         # Initialize database engine with connection pooling
         # Get pool configuration from environment or use defaults
@@ -228,8 +251,8 @@ class Store:
                     logger.debug(f"pgvector registration note: {e}")
                     # Don't fail the connection - tables can still be created
 
-        # Handle migration before creating tables with new schema
-        self._run_migrations()
+        # Initialize database schema and extensions
+        self._initialize_database()
 
         # Create all tables (will only create missing ones)
         Base.metadata.create_all(self.engine)
@@ -871,13 +894,38 @@ class Store:
                 "node_count": result.node_count or 0,
             }
 
-    def _run_migrations(self) -> None:
-        """Run any necessary database migrations."""
+    def _initialize_database(self) -> None:
+        """Initialize database with required extensions and schema updates.
+
+        This method ensures:
+        1. pgvector extension is available for embedding storage
+        2. Schema migrations are applied for backward compatibility
+        """
         try:
             with self.engine.begin() as conn:
                 # Create vector extension - this is required for pgvector Vector() columns
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                 logger.debug("Vector extension created successfully")
+
+                # Add height column if it doesn't exist (for existing databases)
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'height'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN height INTEGER NOT NULL DEFAULT 0;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+                logger.debug("Height column migration completed")
         except Exception as e:
             # This is a critical error - we can't create Vector columns without the extension
             error_msg = str(e).lower()

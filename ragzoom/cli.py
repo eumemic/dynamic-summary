@@ -17,7 +17,7 @@ from ragzoom.config import (
 )
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store, TreeNode
+from ragzoom.store import TreeNode, create_store_with_docker
 from ragzoom.tree_viz import build_ascii_tree
 
 # Load environment variables
@@ -197,7 +197,9 @@ def index(
         ctx.obj["operational_config"] = operational_config
 
         # Create components for this command
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
         tree_builder = TreeBuilder(
             index_config,
             store,
@@ -344,7 +346,9 @@ def documents(ctx: click.Context) -> None:
         # Create components for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
 
         # Get all unique documents
         with store.SessionLocal() as session:
@@ -442,7 +446,9 @@ def query(
             query_config = query_config.replace(embedding_model=embedding_model)
 
         # Create components for this command
-        store = Store(operational_config, embedding_model=query_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=query_config.embedding_model
+        )
         retriever = Retriever(
             query_config,
             store,
@@ -557,7 +563,9 @@ def pin(ctx: click.Context, node_id: str) -> None:
         # Create components for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
         success = store.pin_node(node_id)
 
         if success:
@@ -580,7 +588,9 @@ def status(ctx: click.Context) -> None:
         index_config = ctx.obj["index_config"]
         query_config = ctx.obj["query_config"]
         operational_config = ctx.obj["operational_config"]
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
         # Gather stats
         with store.SessionLocal() as session:
             from ragzoom.store import TreeNode
@@ -645,7 +655,9 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
         # Create components for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
 
         if document_id:
             # Clear specific document
@@ -700,7 +712,9 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
         # Create components for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
 
         # Get all nodes
         nodes_data = []
@@ -970,7 +984,7 @@ def doctor() -> None:
             operational_config = OperationalConfig()
 
             # Try to create a store (this will auto-start PostgreSQL if needed)
-            store = Store(operational_config)
+            store = create_store_with_docker(operational_config)
 
             # Test basic operation
             with store.SessionLocal() as session:

@@ -130,9 +130,9 @@ class TestAutomaticClearing:
                 mock_instance.add_document.side_effect = mock_add_document_side_effect
 
                 # Mock successful indexing that returns proper stats
-                with patch("ragzoom.cli.Store") as mock_store_class:
+                with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
                     # Use the real store for database operations
-                    mock_store_class.return_value = store
+                    mock_create_store.return_value = store
 
                     with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
                         # Run index (clearing should be automatic)
@@ -226,8 +226,8 @@ class TestAutomaticClearing:
 
                 mock_instance.add_document.side_effect = mock_add_document_side_effect
 
-                with patch("ragzoom.cli.Store") as mock_store_class:
-                    mock_store_class.return_value = store
+                with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
+                    mock_create_store.return_value = store
 
                     with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
                         # Run index (clearing should be automatic)
