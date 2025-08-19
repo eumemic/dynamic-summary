@@ -108,25 +108,15 @@ class Store:
 
             temp_db_name = f"ragzoom_temp_{uuid.uuid4().hex[:8]}"
 
-            # Use the auto-start Docker PostgreSQL feature
-            temp_config = OperationalConfig(
-                openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
-                # Use default database URL which will trigger auto-start
-                database_url=f"postgresql+psycopg://postgres:postgres@localhost:5432/{temp_db_name}",
-            )
-
-            # Create the store (this will auto-start Docker if needed)
-            store = cls(temp_config, embedding_model=embedding_model)
-
             try:
-                # Create the temporary database
+                # First, create the temporary database
                 from sqlalchemy import create_engine, text
 
                 admin_engine = create_engine(
-                    "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+                    "postgresql+psycopg://postgres:postgres@localhost:5432/postgres",
+                    isolation_level="AUTOCOMMIT",
                 )
                 with admin_engine.connect() as conn:
-                    conn.execute(text("COMMIT"))  # End any existing transaction
                     # Safe database name validation - only alphanumeric and underscore
                     import re
 
@@ -138,12 +128,16 @@ class Store:
                         raise ValueError(f"Invalid temp database name: {temp_db_name}")
                 admin_engine.dispose()
 
-                # Create the vector extension in the new database
-                with store.engine.connect() as conn:
-                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                    conn.commit()
+                # Now create the store configuration with the existing database
+                temp_config = OperationalConfig(
+                    openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+                    database_url=f"postgresql+psycopg://postgres:postgres@localhost:5432/{temp_db_name}",
+                )
 
-                # Create tables
+                # Create the store (database now exists, so migrations will work)
+                store = cls(temp_config, embedding_model=embedding_model)
+
+                # Create tables (vector extension already created in _run_migrations)
                 from ragzoom.store import Base
 
                 Base.metadata.create_all(store.engine)
@@ -154,10 +148,10 @@ class Store:
                 try:
                     store.close()
                     admin_engine = create_engine(
-                        "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+                        "postgresql+psycopg://postgres:postgres@localhost:5432/postgres",
+                        isolation_level="AUTOCOMMIT",
                     )
                     with admin_engine.connect() as conn:
-                        conn.execute(text("COMMIT"))  # End any existing transaction
                         # Terminate connections to the database before dropping
                         conn.execute(
                             text(
