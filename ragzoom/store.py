@@ -59,6 +59,9 @@ class TreeNode(Base):
     preceding_neighbor_id: Mapped[str | None] = mapped_column(
         String, nullable=True
     )  # ID of the node that immediately precedes this one at the same tree level
+    height: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )  # Distance to furthest leaf (0 for leaves, incrementing upward)
 
 
 class Document(Base):
@@ -206,6 +209,7 @@ class Store:
         right_child_id: str | None = None,
         document_id: str | None = None,
         token_count: int = 0,
+        height: int = 0,
     ) -> TreeNode:
         """Add a node to both SQLite and Chroma."""
         # Validate embedding dimension
@@ -222,6 +226,7 @@ class Store:
                 text=text,
                 document_id=document_id,
                 token_count=token_count,
+                height=height,
             )
             session.add(node)
             session.commit()
@@ -260,7 +265,7 @@ class Store:
                 - node_id, text, embedding, span_start, span_end,
                 - parent_id (optional), left_child_id (optional),
                 - right_child_id (optional), document_id (optional),
-                - token_count (defaults to 0)
+                - token_count (defaults to 0), height (defaults to 0)
 
         Returns:
             List of created TreeNode objects
@@ -287,6 +292,7 @@ class Store:
                     document_id=data.get("document_id"),
                     token_count=data.get("token_count", 0),
                     preceding_neighbor_id=data.get("preceding_neighbor_id"),
+                    height=data.get("height", 0),
                 )
                 nodes.append(node)
 
@@ -593,32 +599,6 @@ class Store:
 
         return depth
 
-    def get_node_height(self, node_id: str) -> int:
-        """Calculate height of a node (distance to furthest leaf).
-
-        Returns 0 for leaf nodes, incrementing by 1 for each level up.
-        """
-        node = self.get_node(node_id)
-        if not node:
-            raise ValueError(f"Node {node_id} not found")
-
-        # If it's a leaf node (no children), height is 0
-        if not node.left_child_id and not node.right_child_id:
-            return 0
-
-        # Otherwise, height is 1 + max height of children
-        max_child_height = 0
-
-        if node.left_child_id:
-            left_height = self.get_node_height(node.left_child_id)
-            max_child_height = max(max_child_height, left_height)
-
-        if node.right_child_id:
-            right_height = self.get_node_height(node.right_child_id)
-            max_child_height = max(max_child_height, right_height)
-
-        return 1 + max_child_height
-
     def is_leaf_node(self, node_id: str) -> bool:
         """Check if a node is a leaf (has no children)."""
         node = self.get_node(node_id)
@@ -879,6 +859,10 @@ class Store:
                     # Migration: Add preceding_neighbor_id column if not present
                     if "preceding_neighbor_id" not in columns:
                         self._add_preceding_neighbor_column_migration(conn)
+
+                    # Migration: Add height column if not present
+                    if "height" not in columns:
+                        self._add_height_column_migration(conn)
                 else:
                     logger.debug(
                         "tree_nodes table does not exist yet, will be created by SQLAlchemy"
@@ -934,6 +918,25 @@ class Store:
             # Build column list for new table (excluding the one being dropped)
             select_columns = []
 
+            # Define the expected schema - used for validation
+            valid_columns = {
+                "id",
+                "parent_id",
+                "left_child_id",
+                "right_child_id",
+                "span_start",
+                "span_end",
+                "text",
+                "token_count",
+                "is_pinned",
+                "last_accessed",
+                "access_count",
+                "created_at",
+                "document_id",
+                "preceding_neighbor_id",
+                "height",
+            }
+
             # Define the expected schema
             schema_columns = [
                 ("id", "VARCHAR NOT NULL PRIMARY KEY"),
@@ -961,6 +964,9 @@ class Store:
                 if col_name != column_name:  # Skip the column being dropped
                     column_defs.append(f"{col_name} {col_def}")
                     if col_name in current_columns:
+                        # Validate column name for security
+                        if col_name not in valid_columns:
+                            raise ValueError(f"Invalid column name: {col_name}")
                         select_columns.append(col_name)
 
             # Add foreign keys
@@ -994,12 +1000,12 @@ class Store:
                 )
             else:
                 # Normal migration for other columns
-                # select_columns is built from database metadata, not user input
+                # select_columns validated against whitelist for security
                 insert_sql = f"""
                     INSERT INTO tree_nodes_new
                     SELECT {', '.join(select_columns)}
                     FROM tree_nodes
-                """  # nosec B608 - columns from PRAGMA table_info, not user input
+                """  # nosec B608 - columns validated against whitelist above
                 conn.execute(text(insert_sql))
 
             # Drop old table and rename new one
@@ -1036,6 +1042,89 @@ class Store:
         except Exception as e:
             logger.warning(f"Failed to add preceding_neighbor_id column: {e}")
             # This is okay - the column might already exist
+
+    def _add_height_column_migration(self, conn: Any) -> None:
+        """Add height column to tree_nodes table and backfill with calculated values.
+
+        Args:
+            conn: Database connection
+        """
+        logger.info("Adding height column to tree_nodes table...")
+        try:
+            conn.execute(text("BEGIN TRANSACTION"))
+
+            # Add the height column with default value 0
+            conn.execute(
+                text(
+                    "ALTER TABLE tree_nodes ADD COLUMN height INTEGER NOT NULL DEFAULT 0"
+                )
+            )
+            logger.info("Added height column to tree_nodes table")
+
+            # Backfill height values using breadth-first calculation from leaves up
+            self._backfill_node_heights(conn)
+
+            conn.execute(text("COMMIT"))
+            logger.info("Successfully added height column and backfilled values")
+
+        except Exception as e:
+            conn.execute(text("ROLLBACK"))
+            logger.error(f"Failed to add height column: {e}")
+            raise
+
+    def _backfill_node_heights(self, conn: Any) -> None:
+        """Backfill height values for existing nodes using breadth-first calculation."""
+        logger.info("Backfilling height values for existing nodes...")
+
+        # Start with leaf nodes (height = 0)
+        leaf_result = conn.execute(
+            text(
+                """
+                UPDATE tree_nodes
+                SET height = 0
+                WHERE (left_child_id IS NULL AND right_child_id IS NULL)
+                AND height = 0
+            """
+            )
+        )
+        logger.info(f"Set height=0 for {leaf_result.rowcount} leaf nodes")
+
+        # Process internal nodes level by level, bottom-up
+        current_height = 1
+        while True:
+            # Find nodes whose children all have height < current_height
+            # and update them to height = current_height
+            result = conn.execute(
+                text(
+                    """
+                    UPDATE tree_nodes
+                    SET height = :current_height
+                    WHERE height = 0
+                    AND (left_child_id IS NOT NULL OR right_child_id IS NOT NULL)
+                    AND NOT EXISTS (
+                        SELECT 1 FROM tree_nodes child
+                        WHERE child.id IN (tree_nodes.left_child_id, tree_nodes.right_child_id)
+                        AND (child.height = 0 OR child.height >= :current_height)
+                    )
+                """
+                ),
+                {"current_height": current_height},
+            )
+
+            nodes_updated = result.rowcount
+            logger.debug(f"Set height={current_height} for {nodes_updated} nodes")
+
+            if nodes_updated == 0:
+                break  # No more nodes to update
+
+            current_height += 1
+
+            # Safety check to prevent infinite loops
+            if current_height > 50:  # Reasonable max tree height
+                logger.warning("Reached maximum tree height limit during backfill")
+                break
+
+        logger.info(f"Backfilled heights up to level {current_height - 1}")
 
     def _add_document_model_columns_migration(self, conn: Any) -> None:
         """Add embedding_model and summary_model columns to documents table."""

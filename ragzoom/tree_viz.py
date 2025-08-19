@@ -315,7 +315,7 @@ def build_ascii_tree(
     nodes_by_height: dict[int, list[TreeNode]] = {}
     max_height = 0
     for node in all_nodes:
-        height = store.get_node_height(node.id)
+        height = node.height  # Use stored height instead of recursive calculation
         if height not in nodes_by_height:
             nodes_by_height[height] = []
         nodes_by_height[height].append(node)

@@ -263,7 +263,7 @@ def index(
         click.echo("✅ Document indexed successfully!")
         click.echo(f"   Document ID: {doc_id}")
         click.echo(f"   Chunks created: {len(doc_leaves)}")
-        tree_height = store.get_node_height(root.id) if root else 0
+        tree_height = root.height if root else 0
         click.echo(f"   Tree height: {tree_height}")
 
         # Run validation checks
@@ -472,7 +472,7 @@ def query(
                     # Node span is always the full span
                     span_start, span_end = node.span_start, node.span_end
                     span = f"{span_start}-{span_end}"
-                    height = store.get_node_height(node.id)
+                    height = node.height
                     # Add asterisk to index if this is a seed node
                     is_seed = node_id in result.node_ids
                     idx_str = f"{idx}{'*' if is_seed else ' '}"
@@ -577,7 +577,7 @@ def status(ctx: click.Context) -> None:
         click.echo("=" * 40)
         click.echo(f"Total nodes: {all_nodes}")
         click.echo(f"Leaf nodes: {len(leaf_nodes)}")
-        tree_height = store.get_node_height(root.id) if root else 0
+        tree_height = root.height if root else 0
         click.echo(f"Tree height: {tree_height}")
         click.echo(f"Pinned nodes: {len(pinned)}")
         click.echo("\nCONFIGURATION:")
@@ -701,7 +701,7 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
                 node_dict = {
                     "id": node.id,
                     "parent_id": node.parent_id,
-                    "height": store.get_node_height(node.id),
+                    "height": node.height,
                     "span_start": node.span_start,
                     "span_end": node.span_end,
                     "is_leaf": store.is_leaf_node(node.id),
