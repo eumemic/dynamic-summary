@@ -303,7 +303,7 @@ def index(
 
             click.echo(f"\n📁 Saving telemetry to {output_file}...")
 
-            # In v3.0, telemetry data is already flat - just save it directly
+            # Telemetry data is already flat - just save it directly
             # The telemetry data from finalize() already contains all necessary information
             telemetry_data = telemetry
 

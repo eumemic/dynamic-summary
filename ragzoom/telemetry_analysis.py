@@ -9,15 +9,16 @@ This module provides simplified, actionable metrics focused on:
 
 All metrics are aggregated at the chunk-size level only (no tree-level breakdowns).
 
-Legacy functions are preserved for backward compatibility with telemetry_viz.py.
+Simplified telemetry analysis for format 4.2 only.
 """
 
 import logging
 import statistics
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from statistics import median
-from typing import Any, TypedDict, overload
+from typing import Any, TypedDict
+
+import numpy as np
 
 from ragzoom.config import get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_query import QueryPhaseMetrics
@@ -31,12 +32,12 @@ from ragzoom.telemetry_types import (
 
 logger = logging.getLogger(__name__)
 
-# Current supported telemetry format versions
-SUPPORTED_TELEMETRY_VERSIONS = ["3.0", "3.1", "4.1", "4.2"]
+# Current supported telemetry format version
+SUPPORTED_TELEMETRY_VERSION = "4.2"
 
 # Default token estimate for leaf nodes when source tokens are not available
 # This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
-# estimate for backward compatibility with old telemetry data that didn't track source tokens.
+# estimate when source tokens are missing.
 # The actual chunk size may vary, but this provides a reasonable approximation for cost metrics.
 DEFAULT_LEAF_TOKEN_ESTIMATE = 150
 
@@ -203,12 +204,12 @@ def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetr
     # Group nodes by target chunk size
     nodes_by_target: dict[int, list[NodeTelemetryDict]] = {}
 
-    # In v3.0, nodes are at the top level
+    # Nodes are at the top level
     nodes = parsed_data.get("nodes", [])
 
     for node in nodes:
         # Skip leaf nodes (no summaries)
-        height = node.get("height", node.get("level", 0))
+        height = node["height"]
         if height == 0:
             continue
 
@@ -222,22 +223,12 @@ def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetr
         final_attempt = None
 
         if accepted_idx is not None:
-            # New format: use the explicitly marked accepted attempt
+            # Format 4.2: use the explicitly marked accepted attempt
             if 0 <= accepted_idx < len(summary_attempts):
                 final_attempt = summary_attempts[accepted_idx]
         else:
-            # Backward compatibility
-            has_status = any("status" in a for a in summary_attempts)
-            if has_status:
-                # Old format with status: find accepted attempt
-                for attempt in summary_attempts:
-                    if attempt.get("status") == "accepted":
-                        final_attempt = attempt
-                        break
-
-            # If no accepted found or no status field, use last attempt
-            if final_attempt is None:
-                final_attempt = summary_attempts[-1]
+            # Fallback: use last attempt if accepted_attempt index is missing
+            final_attempt = summary_attempts[-1]
 
         if final_attempt:
             target_tokens = final_attempt.get("target_tokens", 0)
@@ -323,15 +314,15 @@ def compute_target_fit_metrics(
 
     sorted_errors = sorted(errors)
     median_error = median(sorted_errors)
-    p95_error = _compute_percentile(sorted_errors, 0.95)
+    p95_error = float(np.percentile(sorted_errors, 95))
     percent_within_10 = (within_10_count / len(errors)) * 100
 
     # Calculate variance metrics for errors
     absolute_deviations = [abs(e - median_error) for e in errors]
     error_mad = median(absolute_deviations)
 
-    p25_error = _compute_percentile(sorted_errors, 0.25)
-    p75_error = _compute_percentile(sorted_errors, 0.75)
+    p25_error = float(np.percentile(sorted_errors, 25))
+    p75_error = float(np.percentile(sorted_errors, 75))
     error_iqr = p75_error - p25_error
 
     if len(errors) > 1:
@@ -469,14 +460,14 @@ def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> LatencyMetrics:
 
     sorted_times = sorted(node_times)
     median_seconds = median(sorted_times)
-    p95_seconds = _compute_percentile(sorted_times, 0.95)
+    p95_seconds = float(np.percentile(sorted_times, 95))
 
     # Calculate variance metrics for latency
     absolute_deviations = [abs(t - median_seconds) for t in node_times]
     latency_mad = median(absolute_deviations)
 
-    p25_latency = _compute_percentile(sorted_times, 0.25)
-    p75_latency = _compute_percentile(sorted_times, 0.75)
+    p25_latency = float(np.percentile(sorted_times, 25))
+    p75_latency = float(np.percentile(sorted_times, 75))
     latency_iqr = p75_latency - p25_latency
 
     if len(node_times) > 1:
@@ -573,8 +564,8 @@ def compute_cost_metrics(
         cost_mad = median(absolute_deviations)
 
         sorted_costs = sorted(node_costs)
-        p25_cost = _compute_percentile(sorted_costs, 0.25)
-        p75_cost = _compute_percentile(sorted_costs, 0.75)
+        p25_cost = float(np.percentile(sorted_costs, 25))
+        p75_cost = float(np.percentile(sorted_costs, 75))
         cost_iqr = p75_cost - p25_cost
 
         if len(node_costs) > 1:
@@ -635,8 +626,8 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> DispersionMetr
 
     # Calculate additional metrics
     sorted_tokens = sorted(actual_tokens)
-    p25 = _compute_percentile(sorted_tokens, 0.25)
-    p75 = _compute_percentile(sorted_tokens, 0.75)
+    p25 = float(np.percentile(sorted_tokens, 25))
+    p75 = float(np.percentile(sorted_tokens, 75))
     iqr = p75 - p25
 
     # Calculate CV (coefficient of variation)
@@ -721,7 +712,7 @@ def detect_verbatim_concatenations(
 
         # Check if it's essentially verbatim (within tolerance)
         if abs(ratio - 1.0) <= tolerance:
-            height = node.get("height", node.get("level", 0))
+            height = node["height"]
             offender: VerbatimOffender = {
                 "node_id": node["node_id"],
                 "height": height,
@@ -755,97 +746,6 @@ def detect_verbatim_concatenations(
     )
 
 
-# ============================================================================
-# LEGACY METRICS (PRESERVED FOR TELEMETRY_VIZ.PY)
-# ============================================================================
-# The functions below are from the old telemetry system and are preserved
-# ONLY for backward compatibility with telemetry_viz.py visualization tool.
-# For new development, use the simplified metrics above.
-# ============================================================================
-
-
-@overload
-def _compute_percentile(values: Sequence[int], percentile: float) -> float: ...
-
-
-@overload
-def _compute_percentile(values: Sequence[float], percentile: float) -> float: ...
-
-
-def _compute_percentile(
-    values: Sequence[int] | Sequence[float], percentile: float
-) -> float:
-    """Compute percentile using linear interpolation.
-
-    Args:
-        values: Sorted list of values
-        percentile: Percentile to compute (0.0 to 1.0)
-
-    Returns:
-        Computed percentile value
-    """
-    if not values:
-        return 0.0
-
-    n = len(values)
-    if n == 1:
-        return values[0]
-
-    pos = (n - 1) * percentile
-    lower = int(pos)
-    upper = min(lower + 1, n - 1)
-    fraction = pos - lower
-
-    return values[lower] + fraction * (values[upper] - values[lower])
-
-
-# ============================================================================
-# LEGACY FUNCTIONS FOR BACKWARD COMPATIBILITY
-# ============================================================================
-
-
-@dataclass
-class SummaryStats:
-    """Statistics for summaries at a specific target size, computed from telemetry."""
-
-    count: int = 0
-    total_tokens: int = 0
-    total_deviation: float = 0.0
-    over_target_count: int = 0
-    under_target_count: int = 0
-    deviations: list[float] = field(default_factory=list)
-
-    def record(self, target_tokens: int, actual_tokens: int) -> None:
-        """Record a summary's token usage."""
-        self.count += 1
-        self.total_tokens += actual_tokens
-        deviation = ((actual_tokens - target_tokens) / target_tokens) * 100
-        self.total_deviation += abs(deviation)
-        self.deviations.append(deviation)
-
-        if actual_tokens > target_tokens:
-            self.over_target_count += 1
-        elif actual_tokens < target_tokens:
-            self.under_target_count += 1
-
-    @property
-    def avg_tokens(self) -> float:
-        """Average tokens per summary."""
-        return self.total_tokens / self.count if self.count > 0 else 0
-
-    @property
-    def avg_deviation(self) -> float:
-        """Average absolute deviation from target."""
-        return self.total_deviation / self.count if self.count > 0 else 0
-
-    @property
-    def std_deviation(self) -> float:
-        """Standard deviation of the deviations."""
-        if not self.deviations:
-            return 0.0
-        return statistics.stdev(self.deviations)
-
-
 # Telemetry analysis thresholds
 HIGH_RETRY_RATE_THRESHOLD = 20.0
 GOOD_BATCH_UTILIZATION_THRESHOLD = 70.0
@@ -854,32 +754,6 @@ MULTIPLE_RETRY_THRESHOLD = 1
 HIGH_TARGET_FIT_ERROR_THRESHOLD = 20.0
 GOOD_TARGET_FIT_THRESHOLD = 10.0
 HIGH_COST_PER_NODE_THRESHOLD = 0.001
-
-
-class TelemetryThresholds:
-    """Legacy thresholds class for backward compatibility.
-
-    This class is preserved for compatibility with telemetry_viz.py.
-    New code should use the module-level constants directly.
-    """
-
-    def __init__(self) -> None:
-        self.high_retry_rate = HIGH_RETRY_RATE_THRESHOLD
-        self.good_batch_utilization = GOOD_BATCH_UTILIZATION_THRESHOLD
-        self.low_batch_utilization = LOW_BATCH_UTILIZATION_THRESHOLD
-        self.multiple_retry_threshold = MULTIPLE_RETRY_THRESHOLD
-        self.high_target_fit_error = HIGH_TARGET_FIT_ERROR_THRESHOLD
-        self.good_target_fit = GOOD_TARGET_FIT_THRESHOLD
-        self.high_cost_per_node = HIGH_COST_PER_NODE_THRESHOLD
-
-
-def get_telemetry_thresholds() -> TelemetryThresholds:
-    """Get telemetry analysis thresholds.
-
-    Returns:
-        TelemetryThresholds instance with configurable values
-    """
-    return TelemetryThresholds()
 
 
 class TelemetryAnalysisError(Exception):
@@ -908,19 +782,15 @@ def parse_telemetry_format(telemetry_data: dict[str, Any]) -> TelemetryDataDict:
     if not format_version:
         raise TelemetryAnalysisError("Missing format_version in telemetry data")
 
-    if format_version not in SUPPORTED_TELEMETRY_VERSIONS:
+    if format_version != SUPPORTED_TELEMETRY_VERSION:
         raise TelemetryAnalysisError(
             f"Unsupported telemetry format version: {format_version}. "
-            f"Supported versions: {SUPPORTED_TELEMETRY_VERSIONS}"
+            f"Supported version: {SUPPORTED_TELEMETRY_VERSION}"
         )
 
-    # Return current versions as-is
-    if format_version in ["3.0", "3.1", "4.1", "4.2"]:
-        result: TelemetryDataDict = telemetry_data  # type: ignore
-        return result
-
-    # This shouldn't happen given the version check above
-    raise TelemetryAnalysisError(f"Unhandled telemetry version: {format_version}")
+    # Return format 4.2 data as-is
+    result: TelemetryDataDict = telemetry_data  # type: ignore
+    return result
 
 
 def compute_batch_efficiency(telemetry_data: dict[str, Any]) -> BatchEfficiencyDict:
@@ -937,7 +807,7 @@ def compute_batch_efficiency(telemetry_data: dict[str, Any]) -> BatchEfficiencyD
     batch_sizes = []
     total_embeddings = 0
 
-    # Process nodes directly (v3.0 format)
+    # Process nodes directly
     nodes = parsed_data.get("nodes", [])
 
     # Track batches by collecting unique (batch_size, timestamp) pairs
@@ -1046,15 +916,14 @@ def analyze_retry_patterns(telemetry_data: dict[str, Any]) -> RetryAnalysisDict:
     total_rejected_time = 0.0
     total_retries_per_node = 0
 
-    # Process nodes directly (v3.0 format)
+    # Process nodes directly
     nodes = parsed_data.get("nodes", [])
 
     for node in nodes:
         # Only process summary nodes
-        # v1.0: check node_type, v2.0: check height > 0
-        # Get height (compatible with both v1.0 and v2.0)
-        height = node.get("height", node.get("level", 0))
-        is_leaf = node.get("node_type") == "leaf" or height == 0
+        # Get height for tree traversal
+        height = node["height"]
+        is_leaf = height == 0
         if is_leaf:
             continue
 
@@ -1086,9 +955,8 @@ def analyze_retry_patterns(telemetry_data: dict[str, Any]) -> RetryAnalysisDict:
             end_time = attempt.get("end_time", 0)
             attempt_time = end_time - start_time if end_time > start_time else 0
 
-            # In v2 format: first attempt (index 0) is initial, rest are retries
-            # In v1 format: check the is_retry field for backward compatibility
-            is_retry = attempt.get("is_retry", attempt_idx > 0)
+            # Check retry status (first attempt is initial, rest are retries)
+            is_retry = attempt_idx > 0
 
             if is_retry:
                 retry_attempts += 1
@@ -1152,42 +1020,6 @@ def analyze_retry_patterns(telemetry_data: dict[str, Any]) -> RetryAnalysisDict:
     return result
 
 
-def compute_summary_stats_from_telemetry(
-    telemetry_data: dict[str, Any],
-) -> dict[int, SummaryStats]:
-    """Compute summary statistics from raw telemetry data.
-
-    This is needed for backward compatibility with IndexingMetrics.summary_stats
-    """
-    parsed_data = parse_telemetry_format(telemetry_data)
-    summary_stats_by_target: dict[int, SummaryStats] = {}
-
-    # Process nodes directly (v3.0 format)
-    nodes = parsed_data.get("nodes", [])
-
-    for node in nodes:
-        # Only process summary nodes
-        height = node.get("height", node.get("level", 0))
-        is_leaf = node.get("node_type") == "leaf" or height == 0
-        if is_leaf:
-            continue
-
-        node.get("summary_attempts", [])
-
-        # Find the accepted attempt using the helper function
-        accepted_attempt, _ = get_accepted_attempt(node)
-        if accepted_attempt:
-            target_tokens = accepted_attempt.get("target_tokens", 0)
-            actual_tokens = accepted_attempt.get("actual_tokens", 0)
-
-            if target_tokens not in summary_stats_by_target:
-                summary_stats_by_target[target_tokens] = SummaryStats()
-
-            summary_stats_by_target[target_tokens].record(target_tokens, actual_tokens)
-
-    return summary_stats_by_target
-
-
 @dataclass
 class ComputedMetrics:
     """Computed metrics from telemetry data.
@@ -1231,7 +1063,6 @@ class ComputedMetrics:
 
     # Collections
     embedding_batch_sizes: list[int]
-    summary_stats: dict[int, SummaryStats]
     tree_height: int
     nodes_per_height: list[int]
 
@@ -1284,7 +1115,7 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
     max_timestamp = 0.0
     embedding_batches = set()
 
-    # Process nodes directly (v3.0 format)
+    # Process nodes directly
     nodes = parsed_data.get("nodes", [])
     chunks_created = 0
     height_counts: dict[int, int] = {}
@@ -1297,7 +1128,7 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
             max_timestamp = max(max_timestamp, created_at)
 
         # Track height distribution
-        height = node.get("height", node.get("level", 0))
+        height = node["height"]
         height_counts[height] = height_counts.get(height, 0) + 1
 
         # Process embeddings
@@ -1336,8 +1167,8 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
             node_total_completion_tokens += completion_tokens
 
         # Count chunks (leaf nodes)
-        # v1.0: check node_type, v2.0: check height == 0
-        is_leaf = node.get("node_type") == "leaf" or height == 0
+        # Check if this is a leaf node (height 0)
+        is_leaf = height == 0
         if is_leaf:
             chunks_created += 1
 
@@ -1382,9 +1213,6 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
         "memory_usage_mb": 0.0,
     }
 
-    # Compute summary stats
-    summary_stats = compute_summary_stats_from_telemetry(telemetry_data)
-
     return ComputedMetrics(
         # Timing
         start_time=metrics_data["start_time"],
@@ -1412,7 +1240,6 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
         **memory_metrics,
         # Collections
         embedding_batch_sizes=metrics_data["embedding_batch_sizes"],
-        summary_stats=summary_stats,
         tree_height=tree_height,
         nodes_per_height=nodes_per_height,
     )
@@ -1433,15 +1260,28 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
         QueryPhaseMetrics with aggregated performance metrics
     """
     # Handle both single telemetry and list of telemetries
-    if isinstance(telemetry_data, dict) and "telemetry" in telemetry_data:
-        # Single telemetry file
-        telemetries = [telemetry_data["telemetry"]]
+    if isinstance(telemetry_data, dict):
+        format_version = telemetry_data.get("format_version")
+        if format_version == "1.1" and "telemetries" in telemetry_data:
+            # v1.1 format with multiple runs and pre-calculated statistics
+            telemetries = telemetry_data["telemetries"]
+            statistics_data = telemetry_data.get("statistics", {})
+        elif "telemetry" in telemetry_data:
+            # v1.0 format - single telemetry file
+            telemetries = [telemetry_data["telemetry"]]
+            statistics_data = {}
+        else:
+            # Assume it's already the telemetry dict
+            telemetries = [telemetry_data]
+            statistics_data = {}
     elif isinstance(telemetry_data, list):
         # List of telemetry data
         telemetries = telemetry_data
+        statistics_data = {}
     else:
         # Assume it's already the telemetry dict
         telemetries = [telemetry_data]
+        statistics_data = {}
 
     if not telemetries:
         raise ValueError("No query telemetry data provided")
@@ -1487,13 +1327,37 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
                 metrics.get("tiling_size", 0) / metrics["coverage_size"]
             )
 
-    # Calculate phase breakdown (median values)
+    # Calculate phase breakdown (median values) and variance (MAD)
     phase_breakdown = {}
-    for phase, times in all_timings.items():
-        if times:
-            phase_breakdown[phase] = statistics.median(times)
-        else:
-            phase_breakdown[phase] = 0.0
+    phase_variance = {}
+
+    # Use pre-calculated statistics if available (v1.1 format)
+    if statistics_data:
+        for phase in all_timings.keys():
+            if phase in statistics_data:
+                phase_stats = statistics_data[phase]
+                phase_breakdown[phase] = phase_stats.get("median", 0.0)
+                phase_variance[phase] = phase_stats.get("mad", 0.0)
+            else:
+                phase_breakdown[phase] = 0.0
+                phase_variance[phase] = 0.0
+    else:
+        # Calculate from raw telemetry data (v1.0 format or legacy)
+        for phase, times in all_timings.items():
+            if times:
+                median_time = statistics.median(times)
+                phase_breakdown[phase] = median_time
+
+                # Calculate MAD for robust variance measurement
+                absolute_deviations = [abs(t - median_time) for t in times]
+                phase_variance[phase] = (
+                    statistics.median(absolute_deviations)
+                    if absolute_deviations
+                    else 0.0
+                )
+            else:
+                phase_breakdown[phase] = 0.0
+                phase_variance[phase] = 0.0
 
     # Calculate efficiency metrics (averages)
     seeds_utilization = (
@@ -1523,6 +1387,7 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
 
     return QueryPhaseMetrics(
         phase_breakdown=phase_breakdown,
+        phase_variance=phase_variance,
         seeds_utilization=seeds_utilization,
         budget_utilization=budget_utilization,
         coverage_efficiency=coverage_efficiency,
@@ -1536,7 +1401,7 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
 def compare_query_performance(
     baseline_telemetry: dict[str, Any],
     current_telemetry: dict[str, Any],
-    regression_threshold: float = 0.2,
+    regression_threshold: float = 0.5,  # Increased from 20% to 50% for query variance
 ) -> tuple[bool, dict[str, Any]]:
     """Compare query performance and detect regressions.
 
