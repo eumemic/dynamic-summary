@@ -26,6 +26,7 @@ class TestTreeVisualization:
             embedding=[0.5] * 1536,
             left_child_id="left",
             right_child_id="right",
+            height=2,
         )
 
         # Left child
@@ -39,6 +40,7 @@ class TestTreeVisualization:
             embedding=[0.5] * 1536,
             left_child_id="leaf1",
             right_child_id="leaf2",
+            height=1,
         )
 
         # Right child
@@ -52,6 +54,7 @@ class TestTreeVisualization:
             embedding=[0.5] * 1536,
             left_child_id="leaf3",
             right_child_id="leaf4",
+            height=1,
         )
 
         # Leaf nodes
@@ -71,6 +74,7 @@ class TestTreeVisualization:
                 parent_id=parent,
                 document_id="doc1",
                 embedding=[0.5] * 1536,
+                height=0,  # Leaf nodes have height 0
             )
 
         # Create tiling (list of node IDs)
@@ -199,6 +203,7 @@ class TestTreeVisualization:
             embedding=[0.5] * 1536,
             left_child_id="l1",
             right_child_id="r1",
+            height=3,
         )
 
         # Height 2
@@ -211,6 +216,7 @@ class TestTreeVisualization:
             embedding=[0.5] * 1536,
             left_child_id="l2",
             right_child_id="r2",
+            height=2,
         )
 
         store.add_node(
@@ -222,6 +228,7 @@ class TestTreeVisualization:
             embedding=[0.5] * 1536,
             left_child_id="l3",
             right_child_id="r3",
+            height=2,
         )
 
         # Height 1
@@ -240,6 +247,7 @@ class TestTreeVisualization:
                 embedding=[0.5] * 1536,
                 left_child_id=f"{node_id}_l",
                 right_child_id=f"{node_id}_r",
+                height=1,
             )
 
         # Height 0 (leaves)
@@ -262,6 +270,7 @@ class TestTreeVisualization:
                 span_end=end,
                 document_id="doc1",
                 embedding=[0.5] * 1536,
+                height=0,
             )
 
         # Mixed height tiling
