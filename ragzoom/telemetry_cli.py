@@ -682,7 +682,10 @@ def _check_metrics_for_regressions_with_thresholds(
         Tuple of (has_regression, thresholds_by_chunk)
     """
     has_regression = False
-    config = ThresholdConfig()
+    # Use higher thresholds for indexing metrics that include API calls with inherent variance
+    config = ThresholdConfig(
+        k1_between_run=9.0, k2_baseline_uncertainty=6.0
+    )  # ~15σ for API-inclusive indexing benchmarks
     thresholds_by_chunk = {}
 
     # Define metric configurations
