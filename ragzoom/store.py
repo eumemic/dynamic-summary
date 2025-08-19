@@ -918,6 +918,25 @@ class Store:
             # Build column list for new table (excluding the one being dropped)
             select_columns = []
 
+            # Define the expected schema - used for validation
+            valid_columns = {
+                "id",
+                "parent_id",
+                "left_child_id",
+                "right_child_id",
+                "span_start",
+                "span_end",
+                "text",
+                "token_count",
+                "is_pinned",
+                "last_accessed",
+                "access_count",
+                "created_at",
+                "document_id",
+                "preceding_neighbor_id",
+                "height",
+            }
+
             # Define the expected schema
             schema_columns = [
                 ("id", "VARCHAR NOT NULL PRIMARY KEY"),
@@ -945,6 +964,9 @@ class Store:
                 if col_name != column_name:  # Skip the column being dropped
                     column_defs.append(f"{col_name} {col_def}")
                     if col_name in current_columns:
+                        # Validate column name for security
+                        if col_name not in valid_columns:
+                            raise ValueError(f"Invalid column name: {col_name}")
                         select_columns.append(col_name)
 
             # Add foreign keys
@@ -978,12 +1000,12 @@ class Store:
                 )
             else:
                 # Normal migration for other columns
-                # select_columns is built from database metadata, not user input
+                # select_columns validated against whitelist for security
                 insert_sql = f"""
                     INSERT INTO tree_nodes_new
                     SELECT {', '.join(select_columns)}
                     FROM tree_nodes
-                """  # nosec B608 - columns from PRAGMA table_info, not user input
+                """  # Columns validated against whitelist above
                 conn.execute(text(insert_sql))
 
             # Drop old table and rename new one
