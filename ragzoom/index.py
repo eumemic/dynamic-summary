@@ -980,11 +980,7 @@ Here's the content to summarize:"""
                 # Update preceding ID for next iteration
                 preceding_leaf_id = cast(str, data["id"])
 
-            # Batch insert all leaf nodes at once
-            if leaf_nodes_data:
-                self.store.add_nodes_batch(leaf_nodes_data)
-
-            # Add document record
+            # Add document record BEFORE creating nodes (foreign key constraint)
             if not existing_doc:
                 self.store.add_document(
                     document_id,
@@ -994,6 +990,10 @@ Here's the content to summarize:"""
                     self.config.embedding_model,
                     self.config.summary_model,
                 )
+
+            # Batch insert all leaf nodes at once
+            if leaf_nodes_data:
+                self.store.add_nodes_batch(leaf_nodes_data)
             else:
                 # Update existing document
                 with self.store.SessionLocal() as session:
@@ -1210,6 +1210,7 @@ Here's the content to summarize:"""
         """Build tree bottom-up from leaf nodes with concurrent processing."""
         current_level_ids = leaf_ids
         current_level_texts = leaf_texts
+        current_level_nodes = None  # Will be populated after first batch insert
 
         # Calculate total tree height (distance from root to furthest leaf)
         # Note: This is used for progress tracking estimation
@@ -1227,9 +1228,14 @@ Here's the content to summarize:"""
             next_level_texts: list[str] = []
             # Note: current_height will be incremented after processing this height
 
-            # Pre-fetch all nodes for this level to avoid individual DB queries in tasks
-            all_nodes = self.store.get_nodes(current_level_ids)
-            nodes_by_id = {node.id: node for node in all_nodes}
+            # Use pre-stored nodes if available, otherwise fetch from database
+            if current_level_nodes is not None:
+                # Use nodes from previous batch insert
+                nodes_by_id = {node.id: node for node in current_level_nodes}
+            else:
+                # Pre-fetch all nodes for this level (first iteration with leaf nodes)
+                all_nodes = self.store.get_nodes(current_level_ids)
+                nodes_by_id = {node.id: node for node in all_nodes}
 
             # Process pairs concurrently
             tasks = []
@@ -1406,7 +1412,9 @@ Here's the content to summarize:"""
 
                 # Batch store all nodes for this level
                 if nodes_to_add:
-                    self.store.add_nodes_batch(nodes_to_add)
+                    current_level_nodes = self.store.add_nodes_batch(nodes_to_add)
+                else:
+                    current_level_nodes = []
 
                 # Batch update all parent references
                 if parent_updates:
@@ -1414,6 +1422,7 @@ Here's the content to summarize:"""
 
             current_level_ids = next_level_ids
             current_level_texts = next_level_texts
+            # current_level_nodes is already set from the batch insert above
 
             # Track tree level completion
             if reporter and current_level_ids:

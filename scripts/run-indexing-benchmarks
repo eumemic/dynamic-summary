@@ -95,7 +95,7 @@ Additional Options:
 Output Structure:
     benchmarks/
     ├── 20250815_163448/          # Timestamped run directory
-    │   ├── ragzoom.db            # SQLite database from indexing
+    │   ├── ragzoom.db            # PostgreSQL database from indexing
     │   ├── telemetry.json        # Telemetry data (becomes next baseline)
     │   ├── log.txt               # Full indexing logs with debug output
     │   ├── comparison.md         # Markdown comparison report

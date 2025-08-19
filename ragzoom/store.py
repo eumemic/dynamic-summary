@@ -1,17 +1,15 @@
-"""Storage layer for RagZoom - SQLite for tree structure, Chroma for vectors."""
+"""Storage layer for RagZoom using PostgreSQL with pgvector for embeddings."""
 
 import hashlib
 import logging
+import os
 from collections import deque
-from collections.abc import Callable, Mapping
-from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
-import chromadb
 import numpy as np
-from chromadb.config import Settings
 from numpy.typing import NDArray
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     DateTime,
     ForeignKey,
@@ -19,16 +17,32 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    event,
+    select,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from ragzoom.config import OperationalConfig
+from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
 from ragzoom.exceptions import (
     InvalidOperationError,
     NodeNotFoundError,
-    StorageError,
 )
+
+# Import pgvector registration function
+try:
+    from pgvector.psycopg import register_vector
+
+    PGVECTOR_AVAILABLE = True
+except ImportError:
+    try:
+        from pgvector.psycopg2 import register_vector
+
+        PGVECTOR_AVAILABLE = True
+    except ImportError:
+        PGVECTOR_AVAILABLE = False
+        register_vector = None
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +52,7 @@ class Base(DeclarativeBase):
 
 
 class TreeNode(Base):
-    """SQLite model for tree nodes."""
+    """Database model for tree nodes with embedded vectors."""
 
     __tablename__ = "tree_nodes"
 
@@ -51,6 +65,7 @@ class TreeNode(Base):
     span_start: Mapped[int] = mapped_column(Integer, nullable=False)
     span_end: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
     token_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # Token count of text content (raw text for leaves, summary for internal nodes)
@@ -70,7 +85,7 @@ class TreeNode(Base):
 
 
 class Document(Base):
-    """SQLite model for documents."""
+    """Database model for documents."""
 
     __tablename__ = "documents"
 
@@ -87,8 +102,65 @@ class Document(Base):
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
 
 
+def create_store_with_docker(
+    config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
+) -> "Store":
+    """Create a Store instance with automatic Docker PostgreSQL if needed.
+
+    This factory function handles Docker container startup when using
+    the default database URL without explicit configuration.
+
+    Args:
+        config: Operational configuration
+        embedding_model: Name of embedding model
+
+    Returns:
+        Configured Store instance
+
+    Raises:
+        OSError: If Docker PostgreSQL startup fails
+    """
+    database_url = config.database_url
+
+    # Check if we should auto-start Docker PostgreSQL
+    should_auto_start = (
+        database_url == "postgresql+psycopg://localhost/ragzoom"
+        and not os.getenv("RAGZOOM_DATABASE_URL")  # User didn't explicitly set URL
+        and not os.getenv("RAGZOOM_NO_DOCKER")  # User didn't disable Docker
+    )
+
+    if should_auto_start:
+        try:
+            from ragzoom.docker_postgres import DockerPostgres
+
+            docker_pg = DockerPostgres()
+            database_url = docker_pg.ensure_running()
+            logger.info("✅ PostgreSQL ready in Docker container")
+
+            # Update config with Docker database URL
+            config = OperationalConfig(
+                openai_api_key=config.openai_api_key,
+                database_url=database_url,
+                cache_size=config.cache_size,
+            )
+        except ImportError:
+            logger.debug("Docker PostgreSQL management not available")
+        except OSError:
+            # User-friendly errors from DockerPostgres - re-raise as-is
+            raise
+        except Exception as e:
+            logger.debug(f"Auto-start failed: {e}")
+            raise OSError(
+                f"\n❌ Failed to start PostgreSQL automatically.\n\n"
+                f"Run 'ragzoom doctor' to diagnose the issue.\n"
+                f"Error: {str(e)}"
+            )
+
+    return Store(config, embedding_model)
+
+
 class Store:
-    """Combined storage for tree structure (SQLite) and embeddings (Chroma).
+    """Combined storage for tree structure and embeddings in PostgreSQL.
 
     Error Handling Contract:
     - Query methods (get_*): Return None for not found, never raise for missing items
@@ -103,8 +175,53 @@ class Store:
     - StorageError: When storage backend encounters internal errors
     """
 
-    # Class constant for pin depth limit (dormant feature)
-    PIN_DEPTH_MAX = 2
+    # Class constants
+    PIN_DEPTH_MAX = 2  # Maximum depth for pinned nodes (dormant feature)
+    DEFAULT_CACHE_SIZE = 1000  # Default LRU cache size for hot nodes
+    DEFAULT_POOL_SIZE = 10  # Default connection pool size
+    DEFAULT_MAX_OVERFLOW = 20  # Default max overflow connections
+
+    @classmethod
+    def temporary(cls, embedding_model: str = "text-embedding-3-small"):
+        """Create a temporary store for testing/benchmarking.
+
+        Returns a context manager that yields a Store instance with a temporary
+        PostgreSQL database that is automatically cleaned up.
+        """
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _temporary_store():
+            # Generate unique database name
+            temp_db_name = get_temp_db_name()
+
+            try:
+                # Create temporary database
+                temp_db_url = create_temp_database(temp_db_name)
+
+                # Create store configuration
+                temp_config = OperationalConfig(
+                    openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+                    database_url=temp_db_url,
+                )
+
+                # Create the store
+                store = cls(temp_config, embedding_model=embedding_model)
+
+                # Create tables
+                Base.metadata.create_all(store.engine)
+
+                yield store
+            finally:
+                # Cleanup
+                try:
+                    if "store" in locals():
+                        store.close()
+                    drop_temp_database(temp_db_name)
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup temporary store: {e}")
+
+        return _temporary_store()
 
     def __init__(
         self, config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
@@ -117,34 +234,55 @@ class Store:
         """
         self.config = config
         self.embedding_model = embedding_model
+        database_url = config.database_url
 
-        # Initialize SQLite
-        self.engine = create_engine(
-            config.sqlite_database_url, connect_args={"check_same_thread": False}
+        # Initialize database engine with connection pooling
+        # Get pool configuration from environment or use defaults
+        pool_size = int(os.getenv("RAGZOOM_DB_POOL_SIZE", str(self.DEFAULT_POOL_SIZE)))
+        max_overflow = int(
+            os.getenv("RAGZOOM_DB_MAX_OVERFLOW", str(self.DEFAULT_MAX_OVERFLOW))
         )
 
-        # Handle migration before creating tables with new schema
-        self._run_migrations()
+        self.engine = create_engine(
+            database_url,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_pre_ping=True,  # Verify connections before using
+        )
+
+        # Register pgvector extension only for PostgreSQL connections
+        if database_url.startswith("postgresql") and PGVECTOR_AVAILABLE:
+
+            @event.listens_for(self.engine, "connect")
+            def register_vector_extension(dbapi_conn, connection_record):
+                try:
+                    # Get the underlying psycopg connection for pgvector registration
+                    raw_conn = (
+                        dbapi_conn.connection
+                        if hasattr(dbapi_conn, "connection")
+                        else dbapi_conn
+                    )
+                    if register_vector:
+                        register_vector(raw_conn)
+                except Exception as e:
+                    logger.debug(f"pgvector registration note: {e}")
+                    # Don't fail the connection - tables can still be created
+
+        # Create vector extension first (required for Vector columns)
+        self._create_vector_extension()
 
         # Create all tables (will only create missing ones)
         Base.metadata.create_all(self.engine)
+
+        # Run migrations for existing databases
+        self._run_migrations()
+
         self.SessionLocal = sessionmaker(bind=self.engine)
 
-        # Initialize Chroma
-        self.chroma_client = chromadb.PersistentClient(
-            path=config.chroma_persist_directory,
-            settings=Settings(anonymized_telemetry=False),
-        )
-
-        # Create or get collection
-        self.collection = self.chroma_client.get_or_create_collection(
-            name="ragzoom_nodes",
-            metadata={"hnsw:space": "cosine"},
-        )
-
         # LRU cache for hot nodes
+        cache_size = config.cache_size if config.cache_size else self.DEFAULT_CACHE_SIZE
         self.node_cache: dict[str, TreeNode] = {}
-        self.cache_order: deque[str] = deque(maxlen=config.cache_size)
+        self.cache_order: deque[str] = deque(maxlen=cache_size)
 
         # Cache expected embedding dimension for validation
         self._expected_embedding_dim = self._get_expected_embedding_dimension()
@@ -180,15 +318,10 @@ class Store:
         """
         # Try to infer from existing data
         try:
-            # Get any existing embedding from collection
-            results = self.collection.peek(limit=1)
-            embeddings = results.get("embeddings")
-            if (
-                embeddings is not None
-                and isinstance(embeddings, list)
-                and len(embeddings) > 0
-            ):
-                return len(embeddings[0])
+            with self.SessionLocal() as session:
+                result = session.execute(select(TreeNode.embedding).limit(1)).first()
+                if result and result[0] is not None:
+                    return len(result[0])
         except Exception as e:
             logger.debug(f"Could not infer embedding dimension: {e}")
 
@@ -229,7 +362,7 @@ class Store:
         token_count: int = 0,
         height: int = 0,
     ) -> TreeNode:
-        """Add a node to both SQLite and Chroma."""
+        """Add a node to the database with its embedding."""
         # Validate embedding dimension
         self._validate_embedding_dimension(embedding)
 
@@ -242,6 +375,7 @@ class Store:
                 span_start=span_start,
                 span_end=span_end,
                 text=text,
+                embedding=list(map(float, embedding)),
                 document_id=document_id,
                 token_count=token_count,
                 height=height,
@@ -252,31 +386,10 @@ class Store:
             # Add to cache
             self._add_to_cache(node)
 
-        # Add to Chroma
-        # Convert to numpy array if needed
-        embedding_array = np.array(embedding, dtype=np.float32)
-        self.collection.add(
-            ids=[node_id],
-            embeddings=cast(Any, [embedding_array]),
-            metadatas=[
-                {
-                    "span_start": span_start,
-                    "span_end": span_end,
-                    "parent_id": parent_id or "",
-                    "is_leaf": (
-                        1 if (left_child_id is None and right_child_id is None) else 0
-                    ),
-                    "document_id": document_id
-                    or "",  # ChromaDB doesn't accept None values
-                }
-            ],
-            documents=[text],
-        )
-
         return node
 
     def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
-        """Add multiple nodes to both SQLite and Chroma in batch.
+        """Add multiple nodes to the database in batch.
 
         Args:
             nodes_data: List of dictionaries containing node data with keys:
@@ -295,9 +408,9 @@ class Store:
         for data in nodes_data:
             self._validate_embedding_dimension(data["embedding"])
 
-        nodes = []
         with self.SessionLocal() as session:
-            # Create TreeNode objects
+            # Create TreeNode objects for regular session.add_all()
+            nodes = []
             for data in nodes_data:
                 node = TreeNode(
                     id=data["node_id"],
@@ -307,6 +420,7 @@ class Store:
                     span_start=data["span_start"],
                     span_end=data["span_end"],
                     text=data["text"],
+                    embedding=list(map(float, data["embedding"])),
                     document_id=data.get("document_id"),
                     token_count=data.get("token_count", 0),
                     preceding_neighbor_id=data.get("preceding_neighbor_id"),
@@ -314,48 +428,13 @@ class Store:
                 )
                 nodes.append(node)
 
-            # Bulk insert all nodes
-            session.bulk_save_objects(nodes)
+            # Use add_all for proper object tracking and session management
+            session.add_all(nodes)
             session.commit()
 
             # Add all to cache
             for node in nodes:
                 self._add_to_cache(node)
-
-        # Batch add to Chroma
-        if nodes:
-            ids = []
-            embeddings = []
-            metadatas = []
-            documents = []
-
-            for data, node in zip(nodes_data, nodes):
-                ids.append(data["node_id"])
-                embeddings.append(np.array(data["embedding"], dtype=np.float32))
-                metadatas.append(
-                    {
-                        "span_start": int(data["span_start"]),
-                        "span_end": int(data["span_end"]),
-                        "parent_id": data.get("parent_id", ""),
-                        "is_leaf": int(
-                            1
-                            if (
-                                data.get("left_child_id") is None
-                                and data.get("right_child_id") is None
-                            )
-                            else 0
-                        ),
-                        "document_id": data.get("document_id", ""),
-                    }
-                )
-                documents.append(data["text"])
-
-            self.collection.add(
-                ids=ids,
-                embeddings=cast(Any, embeddings),
-                metadatas=cast(Any, metadatas),
-                documents=documents,
-            )
 
         return nodes
 
@@ -480,45 +559,42 @@ class Store:
         n_results: int,
         where: dict[str, Any] | None = None,
     ) -> list[tuple[str, float, dict[str, Any]]]:
-        """Search for similar nodes using Chroma.
+        """Search for similar nodes using pgvector cosine distance.
 
         Returns list of (id, similarity, metadata) tuples where similarity is in [0, 1].
         """
-        # Convert to numpy array if needed
-        query_array = np.array(query_embedding, dtype=np.float32)
-        results = self.collection.query(
-            query_embeddings=cast(Any, [query_array]),
-            n_results=n_results,
-            where=where,
-        )
+        query_array = list(map(float, query_embedding))
 
-        # Return list of (id, similarity, metadata) tuples
-        output = []
-        ids = results.get("ids")
-        distances = results.get("distances")
-        metadatas = results.get("metadatas")
-
-        if ids and distances and metadatas and len(ids) > 0:
-            for i in range(len(ids[0])):
-                # Convert cosine distance to similarity
-                # Cosine distance ranges from 0 to 2, where 0 is identical
-                # Similarity = 1 - (distance / 2) to map to [0, 1]
-                distance = float(distances[0][i])
-                similarity = 1.0 - (distance / 2.0)
-                # Ensure similarity is in valid range [0, 1]
-                similarity = max(0.0, min(1.0, similarity))
-
-                output.append(
-                    (
-                        ids[0][i],
-                        similarity,
-                        (
-                            dict(metadatas[0][i])
-                            if isinstance(metadatas[0][i], dict)
-                            else {}
-                        ),
-                    )
+        with self.SessionLocal() as session:
+            stmt = (
+                select(
+                    TreeNode.id,
+                    TreeNode.embedding.cosine_distance(query_array).label("distance"),
+                    TreeNode.span_start,
+                    TreeNode.span_end,
+                    TreeNode.parent_id,
+                    TreeNode.document_id,
                 )
+                .order_by(TreeNode.embedding.cosine_distance(query_array))
+                .limit(n_results)
+            )
+            rows = session.execute(stmt).all()
+
+        output = []
+        for row in rows:
+            distance = float(row.distance)
+            # Convert cosine distance to similarity score
+            # Cosine distance ranges from 0 (identical) to 2 (opposite)
+            # We map this to similarity: 1 (identical) to 0 (opposite)
+            similarity = 1.0 - (distance / 2.0)
+            similarity = max(0.0, min(1.0, similarity))
+            metadata = {
+                "span_start": row.span_start,
+                "span_end": row.span_end,
+                "parent_id": row.parent_id or "",
+                "document_id": row.document_id or "",
+            }
+            output.append((row.id, similarity, metadata))
 
         return output
 
@@ -668,16 +744,16 @@ class Store:
         # Get embeddings for all candidates
         candidate_ids = [c[0] for c in candidates]
 
-        # Batch retrieve embeddings
-        results = self.collection.get(ids=candidate_ids, include=["embeddings"])
+        with self.SessionLocal() as session:
+            rows = session.execute(
+                select(TreeNode.id, TreeNode.embedding).where(
+                    TreeNode.id.in_(candidate_ids)
+                )
+            ).all()
 
-        # Create ID to embedding mapping for O(1) lookup
-        embeddings = results.get("embeddings")
-        ids = results.get("ids")
-        if embeddings is None or ids is None:
-            return []
-
-        id_to_embedding = {ids[i]: np.array(embeddings[i]) for i in range(len(ids))}
+        id_to_embedding = {
+            row.id: np.array(row.embedding, dtype=np.float32) for row in rows
+        }
 
         # Build candidate embeddings array in order
         cand_embs = np.array([id_to_embedding[cid] for cid in candidate_ids])
@@ -797,15 +873,11 @@ class Store:
             nodes = session.query(TreeNode).filter_by(document_id=document_id).all()
             node_ids = [n.id for n in nodes]
 
-            # Delete from SQLite
+            # Delete from database
             deleted_count = (
                 session.query(TreeNode).filter_by(document_id=document_id).delete()
             )
             session.commit()
-
-            # Delete from Chroma
-            if node_ids:
-                self.collection.delete(ids=node_ids)
 
             # Clear from cache
             for node_id in node_ids:
@@ -872,445 +944,78 @@ class Store:
                 "node_count": result.node_count or 0,
             }
 
+    def _create_vector_extension(self) -> None:
+        """Create the pgvector extension required for embedding storage.
+
+        This must be done before creating tables that use Vector columns.
+        """
+        try:
+            with self.engine.begin() as conn:
+                # Create vector extension - this is required for pgvector Vector() columns
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                logger.debug("Vector extension created successfully")
+        except Exception as e:
+            # This is a critical error - we can't create Vector columns without the extension
+            error_msg = str(e).lower()
+            if "permission denied" in error_msg:
+                raise OSError(
+                    f"\n❌ Unable to create vector extension: permission denied.\n\n"
+                    f"This usually happens when the database user lacks superuser privileges.\n"
+                    f"Try running 'ragzoom doctor' to check your setup.\n\n"
+                    f"Technical error: {e}"
+                )
+            elif "could not access file" in error_msg or "no such file" in error_msg:
+                raise OSError(
+                    f"\n❌ Vector extension not available in this PostgreSQL installation.\n\n"
+                    f"Make sure you're using the pgvector/pgvector Docker image.\n"
+                    f"Run 'ragzoom doctor' to check your setup.\n\n"
+                    f"Technical error: {e}"
+                )
+            else:
+                raise OSError(
+                    f"\n❌ Failed to create vector extension.\n\n"
+                    f"This is required for storing embeddings. Run 'ragzoom doctor' to diagnose.\n\n"
+                    f"Technical error: {e}"
+                )
+
     def _run_migrations(self) -> None:
-        """Run any necessary database migrations."""
-        try:
-            with self.engine.connect() as conn:
-                # Check if tree_nodes table exists first
-                result = conn.execute(
-                    text(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name='tree_nodes'"
-                    )
-                )
-                if result.fetchone():
-                    # Table exists, check columns
-                    result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
-                    columns = [row[1] for row in result.fetchall()]
+        """Run database migrations for existing databases.
 
-                    # Migration: Drop is_dirty column if present
-                    if "is_dirty" in columns:
-                        self._drop_column_migration(conn, "is_dirty")
-
-                    # Migration: Drop depth column if present
-                    elif "depth" in columns:
-                        self._drop_column_migration(
-                            conn,
-                            "depth",
-                            cleanup_callback=self._clean_chromadb_metadata,
-                        )
-
-                    # Migration: Drop summary column if present
-                    elif "summary" in columns:
-                        self._drop_column_migration(conn, "summary")
-
-                    # Migration: Add preceding_neighbor_id column if not present
-                    if "preceding_neighbor_id" not in columns:
-                        self._add_preceding_neighbor_column_migration(conn)
-
-                    # Migration: Add height column if not present
-                    if "height" not in columns:
-                        self._add_height_column_migration(conn)
-                else:
-                    logger.debug(
-                        "tree_nodes table does not exist yet, will be created by SQLAlchemy"
-                    )
-
-                # Check if documents table needs model columns migration
-                result = conn.execute(
-                    text(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name='documents'"
-                    )
-                )
-                if result.fetchone():
-                    # Table exists, check if it has the new columns
-                    result = conn.execute(text("PRAGMA table_info(documents)"))
-                    columns = [row[1] for row in result.fetchall()]
-
-                    missing_embedding = "embedding_model" not in columns
-                    missing_summary = "summary_model" not in columns
-                    if missing_embedding or missing_summary:
-                        self._add_document_model_columns_migration(conn)
-                else:
-                    logger.debug(
-                        "documents table does not exist yet, will be created by SQLAlchemy"
-                    )
-        except Exception as e:
-            logger.debug(
-                f"Migration check failed (this is normal for new databases): {e}"
-            )
-
-    def _drop_column_migration(
-        self,
-        conn: Any,
-        column_name: str,
-        cleanup_callback: Callable[[], None] | None = None,
-    ) -> None:
-        """Drop a column from tree_nodes table using SQLite table recreation pattern.
-
-        Args:
-            conn: Database connection
-            column_name: Name of column to drop
-            cleanup_callback: Optional callback to run after successful migration
+        This must be called after tables are created to handle schema updates
+        for existing databases that need migration.
         """
-        logger.info(f"Found deprecated {column_name} column, dropping it...")
         try:
-            # SQLite doesn't support DROP COLUMN directly in older versions
-            # We need to recreate the table without the column
-            conn.execute(text("BEGIN TRANSACTION"))
-
-            # Get current columns to determine what to include in new table
-            result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
-            current_columns = [row[1] for row in result.fetchall()]
-
-            # Build column list for new table (excluding the one being dropped)
-            select_columns = []
-
-            # Define the expected schema - used for validation
-            valid_columns = {
-                "id",
-                "parent_id",
-                "left_child_id",
-                "right_child_id",
-                "span_start",
-                "span_end",
-                "text",
-                "token_count",
-                "is_pinned",
-                "last_accessed",
-                "access_count",
-                "created_at",
-                "document_id",
-                "preceding_neighbor_id",
-                "height",
-            }
-
-            # Define the expected schema
-            schema_columns = [
-                ("id", "VARCHAR NOT NULL PRIMARY KEY"),
-                ("parent_id", "VARCHAR"),
-                ("left_child_id", "VARCHAR"),
-                ("right_child_id", "VARCHAR"),
-                ("span_start", "INTEGER NOT NULL"),
-                ("span_end", "INTEGER NOT NULL"),
-                ("text", "TEXT NOT NULL"),
-                ("token_count", "INTEGER"),
-                ("is_pinned", "INTEGER DEFAULT 0"),
-                ("last_accessed", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
-                ("access_count", "INTEGER DEFAULT 0"),
-                ("created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
-                ("document_id", "VARCHAR"),
-            ]
-
-            # Add summary column only if it exists and we're not dropping it
-            if "summary" in current_columns and column_name != "summary":
-                schema_columns.insert(7, ("summary", "TEXT"))
-
-            # Build CREATE TABLE statement
-            column_defs = []
-            for col_name, col_def in schema_columns:
-                if col_name != column_name:  # Skip the column being dropped
-                    column_defs.append(f"{col_name} {col_def}")
-                    if col_name in current_columns:
-                        # Validate column name for security
-                        if col_name not in valid_columns:
-                            raise StorageError(f"Invalid column name: {col_name}")
-                        select_columns.append(col_name)
-
-            # Add foreign keys
-            column_defs.append("FOREIGN KEY(parent_id) REFERENCES tree_nodes (id)")
-            column_defs.append("FOREIGN KEY(document_id) REFERENCES documents (id)")
-
-            create_table_sql = f"""
-                CREATE TABLE tree_nodes_new (
-                    {', '.join(column_defs)}
-                )
-            """
-
-            # Create new table
-            conn.execute(text(create_table_sql))
-
-            # Build INSERT statement based on existing columns
-            # When dropping summary, we need to handle the migration specially
-            if column_name == "summary" and "summary" in current_columns:
-                # Migrate data, using text field for both text and what was summary
+            with self.engine.begin() as conn:
+                # Add height column if it doesn't exist (for existing databases)
                 conn.execute(
                     text(
                         """
-                        INSERT INTO tree_nodes_new
-                        SELECT id, parent_id, left_child_id, right_child_id,
-                               span_start, span_end, text, token_count,
-                               is_pinned, last_accessed, access_count,
-                               created_at, document_id
-                        FROM tree_nodes
-                        """
-                    )
-                )
-            else:
-                # Normal migration for other columns
-                # select_columns validated against whitelist for security
-                insert_sql = f"""
-                    INSERT INTO tree_nodes_new
-                    SELECT {', '.join(select_columns)}
-                    FROM tree_nodes
-                """  # nosec B608 - columns validated against whitelist above
-                conn.execute(text(insert_sql))
-
-            # Drop old table and rename new one
-            conn.execute(text("DROP TABLE tree_nodes"))
-            conn.execute(text("ALTER TABLE tree_nodes_new RENAME TO tree_nodes"))
-
-            conn.execute(text("COMMIT"))
-            logger.info(
-                f"Successfully dropped {column_name} column from tree_nodes table"
-            )
-
-            # Run cleanup callback if provided
-            if cleanup_callback:
-                cleanup_callback()
-        except Exception as e:
-            conn.execute(text("ROLLBACK"))
-            logger.error(f"Failed to drop {column_name} column: {e}")
-            raise
-
-    def _add_preceding_neighbor_column_migration(self, conn: Any) -> None:
-        """Add preceding_neighbor_id column to tree_nodes table.
-
-        Args:
-            conn: Database connection
-        """
-        logger.info("Adding preceding_neighbor_id column to tree_nodes table...")
-        try:
-            conn.execute(
-                text("ALTER TABLE tree_nodes ADD COLUMN preceding_neighbor_id VARCHAR")
-            )
-            logger.info(
-                "Successfully added preceding_neighbor_id column to tree_nodes table"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to add preceding_neighbor_id column: {e}")
-            # This is okay - the column might already exist
-
-    def _add_height_column_migration(self, conn: Any) -> None:
-        """Add height column to tree_nodes table and backfill with calculated values.
-
-        Args:
-            conn: Database connection
-        """
-        logger.info("Adding height column to tree_nodes table...")
-        try:
-            conn.execute(text("BEGIN TRANSACTION"))
-
-            # Add the height column with default value 0
-            conn.execute(
-                text(
-                    "ALTER TABLE tree_nodes ADD COLUMN height INTEGER NOT NULL DEFAULT 0"
-                )
-            )
-            logger.info("Added height column to tree_nodes table")
-
-            # Backfill height values using breadth-first calculation from leaves up
-            self._backfill_node_heights(conn)
-
-            conn.execute(text("COMMIT"))
-            logger.info("Successfully added height column and backfilled values")
-
-        except Exception as e:
-            conn.execute(text("ROLLBACK"))
-            logger.error(f"Failed to add height column: {e}")
-            raise
-
-    def _backfill_node_heights(self, conn: Any) -> None:
-        """Backfill height values for existing nodes using breadth-first calculation."""
-        logger.info("Backfilling height values for existing nodes...")
-
-        # Start with leaf nodes (height = 0)
-        leaf_result = conn.execute(
-            text(
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'height'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN height INTEGER NOT NULL DEFAULT 0;
+                        END IF;
+                    END $$;
                 """
-                UPDATE tree_nodes
-                SET height = 0
-                WHERE (left_child_id IS NULL AND right_child_id IS NULL)
-                AND height = 0
-            """
-            )
-        )
-        logger.info(f"Set height=0 for {leaf_result.rowcount} leaf nodes")
-
-        # Process internal nodes level by level, bottom-up
-        current_height = 1
-        while True:
-            # Find nodes whose children all have height < current_height
-            # and update them to height = current_height
-            result = conn.execute(
-                text(
-                    """
-                    UPDATE tree_nodes
-                    SET height = :current_height
-                    WHERE height = 0
-                    AND (left_child_id IS NOT NULL OR right_child_id IS NOT NULL)
-                    AND NOT EXISTS (
-                        SELECT 1 FROM tree_nodes child
-                        WHERE child.id IN (tree_nodes.left_child_id, tree_nodes.right_child_id)
-                        AND (child.height = 0 OR child.height >= :current_height)
-                    )
-                """
-                ),
-                {"current_height": current_height},
-            )
-
-            nodes_updated = result.rowcount
-            logger.debug(f"Set height={current_height} for {nodes_updated} nodes")
-
-            if nodes_updated == 0:
-                break  # No more nodes to update
-
-            current_height += 1
-
-            # Safety check to prevent infinite loops
-            if current_height > 50:  # Reasonable max tree height
-                logger.warning("Reached maximum tree height limit during backfill")
-                break
-
-        logger.info(f"Backfilled heights up to level {current_height - 1}")
-
-    def _add_document_model_columns_migration(self, conn: Any) -> None:
-        """Add embedding_model and summary_model columns to documents table."""
-        logger.info(
-            "Adding embedding_model and summary_model columns to documents table..."
-        )
-        try:
-            conn.execute(text("BEGIN TRANSACTION"))
-
-            # Add the new columns with default values
-            # Use the current default models from config as fallback
-            default_embedding_model = "text-embedding-3-small"
-            default_summary_model = "gpt-5-nano"
-
-            # Check which columns are missing and add them
-            result = conn.execute(text("PRAGMA table_info(documents)"))
-            existing_columns = [row[1] for row in result.fetchall()]
-
-            if "embedding_model" not in existing_columns:
-                conn.execute(
-                    text(
-                        f"ALTER TABLE documents ADD COLUMN embedding_model VARCHAR "
-                        f"NOT NULL DEFAULT '{default_embedding_model}'"
                     )
                 )
-                logger.info("Added embedding_model column to documents table")
-
-            if "summary_model" not in existing_columns:
-                conn.execute(
-                    text(
-                        f"ALTER TABLE documents ADD COLUMN summary_model VARCHAR "
-                        f"NOT NULL DEFAULT '{default_summary_model}'"
-                    )
-                )
-                logger.info("Added summary_model column to documents table")
-
-            conn.execute(text("COMMIT"))
-            logger.info("Successfully added model columns to documents table")
-
+                logger.debug("Database migrations completed")
         except Exception as e:
-            conn.execute(text("ROLLBACK"))
-            logger.error(f"Failed to add model columns to documents table: {e}")
-            raise
-
-    def _clean_chromadb_metadata(self):
-        """Clean up deprecated fields from ChromaDB metadata."""
-        try:
-            logger.info("Cleaning up ChromaDB metadata...")
-
-            # Get all entries from ChromaDB
-            results = self.collection.get(include=["metadatas"])
-
-            if not results or not results.get("ids"):
-                logger.debug("No ChromaDB entries to clean")
-                return
-
-            ids = results["ids"]
-            metadatas = results["metadatas"]
-
-            # Check if any entries have the deprecated 'depth' field
-            needs_update: list[str] = []
-            updated_metadatas: list[Mapping[str, str | int | float | bool | None]] = []
-
-            # Handle case where metadatas might be None
-            if metadatas is None:
-                return
-
-            for i, (node_id, metadata) in enumerate(zip(ids, metadatas)):
-                if metadata and "depth" in metadata:
-                    needs_update.append(node_id)
-                    # Create new metadata without depth field
-                    new_metadata = {k: v for k, v in metadata.items() if k != "depth"}
-                    updated_metadatas.append(new_metadata)
-
-            if needs_update:
-                logger.info(
-                    f"Updating {len(needs_update)} ChromaDB entries to remove depth field"
-                )
-                # Update entries in batches
-                batch_size = 100
-                for i in range(0, len(needs_update), batch_size):
-                    batch_ids = needs_update[i : i + batch_size]
-                    batch_metadatas = updated_metadatas[i : i + batch_size]
-
-                    # ChromaDB update requires updating with the same data but new metadata
-                    self.collection.update(ids=batch_ids, metadatas=batch_metadatas)
-
-                logger.info(
-                    f"Successfully cleaned {len(needs_update)} ChromaDB entries"
-                )
-            else:
-                logger.debug("No ChromaDB entries need cleaning")
-
-        except Exception as e:
-            logger.warning(f"Failed to clean ChromaDB metadata: {e}")
-            # Don't fail the migration if ChromaDB cleanup fails
-            # This is a one-time cleanup that's not critical
+            # Migration failures are not critical - the column might already exist
+            # or this might be a new database where tables have the column already
+            logger.debug(f"Migration note: {e}")
 
     def close(self) -> None:
         """Close database connections and cleanup resources."""
         if hasattr(self, "engine"):
             self.engine.dispose()
-        # ChromaDB PersistentClient doesn't have a close method, but we can help GC
-        if hasattr(self, "collection"):
-            del self.collection
-        if hasattr(self, "chroma_client"):
-            del self.chroma_client
 
     @staticmethod
     def compute_content_hash(content: str) -> str:
         """Compute SHA256 hash of content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-    @staticmethod
-    @contextmanager
-    def temporary():
-        """Create a temporary Store instance for testing/benchmarking.
-
-        This creates a Store with temporary SQLite and Chroma databases
-        that are automatically cleaned up when the context exits.
-
-        Usage:
-            with Store.temporary() as store:
-                # Use store for testing
-                pass
-            # Databases are automatically cleaned up
-        """
-        import shutil
-        import tempfile
-
-        temp_dir = tempfile.mkdtemp()
-        try:
-            config = OperationalConfig(
-                sqlite_database_url=f"sqlite:///{temp_dir}/test.db",
-                chroma_persist_directory=f"{temp_dir}/chroma",
-            )
-            store = Store(config)
-            yield store
-        finally:
-            # Clean up
-            store.close()
-            shutil.rmtree(temp_dir, ignore_errors=True)
