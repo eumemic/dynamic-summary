@@ -973,6 +973,7 @@ Here's the content to summarize:"""
                         "document_id": document_id,
                         "token_count": token_count,
                         "preceding_neighbor_id": preceding_leaf_id,
+                        "height": 0,  # Leaf nodes have height 0
                     }
                 )
 
@@ -1113,6 +1114,7 @@ Here's the content to summarize:"""
         right_text: str | None,
         prev_context: str | None,
         document_id: str | None,
+        current_height: int,  # Tree height for this level (children height + 1)
         reporter: TelemetryCollector | None = None,
         left_node: TreeNode | None = None,  # Pre-fetched node data
         right_node: TreeNode | None = None,  # Pre-fetched node data
@@ -1180,6 +1182,7 @@ Here's the content to summarize:"""
                 "right_child_id": right_id,  # Can be None
                 "document_id": document_id,
                 "token_count": token_count,
+                "height": current_height,  # Store pre-calculated height
             },
             "parent_updates": [
                 (left_id, parent_id),
@@ -1276,6 +1279,7 @@ Here's the content to summarize:"""
                     right_text,
                     prev_context,
                     document_id,
+                    current_height,
                     reporter,
                     left_node=left_node,
                     right_node=right_node,

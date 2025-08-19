@@ -345,6 +345,7 @@ class TestStore:
             span_end=100,
             left_child_id="left",
             right_child_id="right",
+            height=2,
         )
 
         temp_store.add_node(
@@ -356,6 +357,7 @@ class TestStore:
             parent_id="root",
             left_child_id="ll",
             right_child_id="lr",
+            height=1,
         )
 
         temp_store.add_node(
@@ -366,6 +368,7 @@ class TestStore:
             span_end=100,
             parent_id="root",
             left_child_id="rc",
+            height=1,
         )
 
         temp_store.add_node(
@@ -375,6 +378,7 @@ class TestStore:
             span_start=0,
             span_end=25,
             parent_id="left",
+            height=0,
         )
 
         temp_store.add_node(
@@ -384,6 +388,7 @@ class TestStore:
             span_start=25,
             span_end=50,
             parent_id="left",
+            height=0,
         )
 
         temp_store.add_node(
@@ -393,18 +398,19 @@ class TestStore:
             span_start=50,
             span_end=75,
             parent_id="right",
+            height=0,
         )
 
-        # Test height calculations
+        # Test height calculations using stored values
         # Leaf nodes have height 0
-        assert temp_store.get_node_height("ll") == 0
-        assert temp_store.get_node_height("lr") == 0
-        assert temp_store.get_node_height("rc") == 0
+        assert temp_store.get_node("ll").height == 0
+        assert temp_store.get_node("lr").height == 0
+        assert temp_store.get_node("rc").height == 0
 
         # Internal nodes have height = 1 + max(child heights)
-        assert temp_store.get_node_height("left") == 1  # max(0, 0) + 1
-        assert temp_store.get_node_height("right") == 1  # has only left child
-        assert temp_store.get_node_height("root") == 2  # max(1, 1) + 1
+        assert temp_store.get_node("left").height == 1  # max(0, 0) + 1
+        assert temp_store.get_node("right").height == 1  # has only left child
+        assert temp_store.get_node("root").height == 2  # max(1, 1) + 1
 
         # Test is_leaf_node
         assert temp_store.is_leaf_node("ll") is True
@@ -414,8 +420,7 @@ class TestStore:
         assert temp_store.is_leaf_node("root") is False
 
         # Test non-existent node
-        with pytest.raises(ValueError, match="Node non-existent not found"):
-            temp_store.get_node_height("non-existent")
+        assert temp_store.get_node("non-existent") is None
 
     def test_depth_height_edge_cases(self, temp_store):
         """Test edge cases for depth/height calculation."""
@@ -426,10 +431,11 @@ class TestStore:
             embedding=[0.1] * 1536,
             span_start=0,
             span_end=10,
+            height=0,
         )
 
         assert temp_store.get_node_depth("single") == 0  # Root has depth 0
-        assert temp_store.get_node_height("single") == 0  # Leaf has height 0
+        assert temp_store.get_node("single").height == 0  # Leaf has height 0
         assert temp_store.is_root_node("single") is True
         assert temp_store.is_leaf_node("single") is True
 
@@ -441,6 +447,7 @@ class TestStore:
             span_start=0,
             span_end=20,
             left_child_id="left_only_child",
+            height=1,
         )
 
         temp_store.add_node(
@@ -450,9 +457,10 @@ class TestStore:
             span_start=0,
             span_end=10,
             parent_id="parent_left_only",
+            height=0,
         )
 
-        assert temp_store.get_node_height("parent_left_only") == 1
+        assert temp_store.get_node("parent_left_only").height == 1
         assert temp_store.is_leaf_node("parent_left_only") is False
 
         # Test node with only right child
@@ -463,6 +471,7 @@ class TestStore:
             span_start=0,
             span_end=20,
             right_child_id="right_only_child",
+            height=1,
         )
 
         temp_store.add_node(
@@ -472,9 +481,10 @@ class TestStore:
             span_start=10,
             span_end=20,
             parent_id="parent_right_only",
+            height=0,
         )
 
-        assert temp_store.get_node_height("parent_right_only") == 1
+        assert temp_store.get_node("parent_right_only").height == 1
         assert temp_store.is_leaf_node("parent_right_only") is False
 
     def test_depth_calculation_performance(self, temp_store):

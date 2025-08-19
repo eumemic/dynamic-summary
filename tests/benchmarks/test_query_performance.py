@@ -54,21 +54,28 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
 
 
 def setup_test_document(store: Store, api_key: str) -> str:
-    """Index a test document for query benchmarking.
+    """Get or reuse the test document for query benchmarking.
 
     Returns the document ID of the indexed document.
     """
-    # Use consistent chunk size for baseline
+    # Use the same document ID as the 200-token indexing benchmark
+    doc_id = "test_200_tokens"
+
+    # Check if document already exists from earlier benchmark
+    with store.SessionLocal() as session:
+        from ragzoom.store import Document
+
+        doc = session.query(Document).filter_by(id=doc_id).first()
+        if doc:
+            print(f"  Using existing index: {doc_id}")
+            return doc_id
+
+    # Only index if not found (shouldn't happen in CI since we index earlier)
+    print(f"  Document {doc_id} not found, indexing...")
     index_config = IndexConfig.load(target_chunk_tokens=200)
-
-    # Get test document
     test_doc, doc_name = get_test_document("narrative")
-
-    # Index the document
     builder = TreeBuilder(index_config, store, api_key)
-    doc_id = builder.add_document(test_doc, document_id="query_benchmark_doc")
-
-    return doc_id
+    return builder.add_document(test_doc, document_id=doc_id)
 
 
 @pytest.mark.parametrize("num_seeds", [5, 10, 20])
