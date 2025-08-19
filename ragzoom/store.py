@@ -599,28 +599,6 @@ class Store:
 
         return depth
 
-    def get_node_height(self, node_id: str) -> int:
-        """Get height of a node from stored value.
-
-        DEPRECATED: This method now uses the stored height value instead of
-        recursive calculation. Use node.height directly for better performance.
-
-        Returns 0 for leaf nodes, incrementing by 1 for each level up.
-        """
-        import warnings
-
-        warnings.warn(
-            "get_node_height() is deprecated. Use node.height directly for better performance.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        node = self.get_node(node_id)
-        if not node:
-            raise ValueError(f"Node {node_id} not found")
-
-        return node.height
-
     def is_leaf_node(self, node_id: str) -> bool:
         """Check if a node is a leaf (has no children)."""
         node = self.get_node(node_id)

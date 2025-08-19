@@ -288,29 +288,6 @@ class SimpleMockStore:
 
         return depth
 
-    def get_node_height(self, node_id: str) -> int:
-        """Calculate height of a node (distance to furthest leaf)."""
-        node = self.get_node(node_id)
-        if not node:
-            raise ValueError(f"Node {node_id} not found")
-
-        # If it's a leaf node (no children), height is 0
-        if not node.left_child_id and not node.right_child_id:
-            return 0
-
-        # Otherwise, height is 1 + max height of children
-        max_child_height = 0
-
-        if node.left_child_id:
-            left_height = self.get_node_height(node.left_child_id)
-            max_child_height = max(max_child_height, left_height)
-
-        if node.right_child_id:
-            right_height = self.get_node_height(node.right_child_id)
-            max_child_height = max(max_child_height, right_height)
-
-        return 1 + max_child_height
-
     def is_leaf_node(self, node_id: str) -> bool:
         """Check if a node is a leaf (has no children)."""
         node = self.get_node(node_id)
