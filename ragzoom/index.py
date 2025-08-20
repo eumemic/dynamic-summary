@@ -15,6 +15,7 @@ from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.splitter import TextSplitter
 from ragzoom.store import Store, TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
+from ragzoom.utils.tokenization import tokenizer
 
 # Token to word conversion factor from experiments (see issue #132):
 # 0.75 (tokens->words conversion) * 0.94 (bias compensation for systematic overshoot)
@@ -103,7 +104,7 @@ class TreeBuilder:
         async with self.semaphore:
             try:
                 # Check token count before embedding
-                tokens = self.splitter.tokenizer.encode(text)
+                tokens = tokenizer.encode(text)
                 token_count = len(tokens)
 
                 # Hard limit at 8000 tokens to leave margin for API overhead
@@ -147,7 +148,7 @@ class TreeBuilder:
 
     def _calculate_target_tokens(self, text: str) -> int:
         """Calculate target tokens as min of leaf_tokens or half the text size."""
-        tokens = self.splitter.tokenizer.encode(text)
+        tokens = tokenizer.encode(text)
         half_size = len(tokens) // 2
         return min(self.config.target_chunk_tokens, half_size)
 
@@ -199,7 +200,7 @@ class TreeBuilder:
             raise ValueError("Empty summary after stripping")
 
         # Measure actual tokens
-        summary_tokens = self.splitter.tokenizer.encode(summary)
+        summary_tokens = tokenizer.encode(summary)
         token_count = len(summary_tokens)
 
         return summary, token_count, response
@@ -355,7 +356,7 @@ class TreeBuilder:
         try:
             # Use provided token count or calculate if not provided
             if current_tokens is None:
-                current_tokens = len(self.splitter.tokenizer.encode(summary))
+                current_tokens = tokenizer.count_tokens(summary)
             # Avoid division by zero
             if target_tokens > 0:
                 deviation_pct = abs((current_tokens - target_tokens) / target_tokens)
@@ -418,7 +419,7 @@ class TreeBuilder:
             tuple: (best_summary, actual_retry_count, best_attempt_index)
         """
         best_summary = initial_summary
-        best_token_count = len(self.splitter.tokenizer.encode(initial_summary))
+        best_token_count = tokenizer.count_tokens(initial_summary)
         best_distance_from_target = abs(best_token_count - target_tokens)
         best_attempt_index = 0
 
@@ -521,7 +522,7 @@ class TreeBuilder:
         """
         # Check if combined text is already under target
         combined_text = f"{left_text} {right_text}".strip()
-        combined_tokens = self.splitter.tokenizer.encode(combined_text)
+        combined_tokens = tokenizer.encode(combined_text)
         current_token_count = len(combined_tokens)
 
         if current_token_count <= target_tokens:
@@ -556,10 +557,10 @@ class TreeBuilder:
 
         if prev_context and self.config.preceding_context_tokens > 0:
             # Trim prev_context to adjacent_context_tokens
-            prev_tokens = self.splitter.tokenizer.encode(prev_context)
+            prev_tokens = tokenizer.encode(prev_context)
             if len(prev_tokens) > self.config.preceding_context_tokens:
                 context_tokens = prev_tokens[-self.config.preceding_context_tokens :]
-                trimmed_prev = self.splitter.tokenizer.decode(context_tokens)
+                trimmed_prev = tokenizer.decode(context_tokens)
             else:
                 trimmed_prev = prev_context
 
@@ -591,9 +592,9 @@ Here's the content to summarize:"""
             input_text_tokens = left_token_count + right_token_count
         else:
             # Fallback if token counts not provided
-            input_text_tokens = len(self.splitter.tokenizer.encode(left_text))
+            input_text_tokens = tokenizer.count_tokens(left_text)
             if right_text:
-                input_text_tokens += len(self.splitter.tokenizer.encode(right_text))
+                input_text_tokens += tokenizer.count_tokens(right_text)
 
         async with self.semaphore:
             try:
@@ -630,7 +631,7 @@ Here's the content to summarize:"""
                         f"{node_info}LLM returned empty response, using original text as fallback"
                     )
                     summary = combined_text
-                    current_tokens = len(self.splitter.tokenizer.encode(summary))
+                    current_tokens = tokenizer.count_tokens(summary)
                     response = None
 
                 # Check if summary needs correction
@@ -674,7 +675,7 @@ Here's the content to summarize:"""
                     accepted_attempt = best_attempt_index
 
                 # Log final summary statistics consistently
-                final_tokens = len(self.splitter.tokenizer.encode(summary))
+                final_tokens = tokenizer.count_tokens(summary)
                 utilization_pct = (final_tokens / target_tokens) * 100
                 deviation = final_tokens - target_tokens
                 deviation_str = f"+{deviation}" if deviation >= 0 else str(deviation)
@@ -871,7 +872,7 @@ Here's the content to summarize:"""
                 # Track chunk creation
                 if reporter:
                     try:
-                        chunk_tokens = len(self.splitter.tokenizer.encode(chunk))
+                        chunk_tokens = tokenizer.count_tokens(chunk)
                         reporter.record_chunk_created(node_id, chunk_tokens)
                     except Exception as e:
                         logger.warning(
@@ -929,9 +930,7 @@ Here's the content to summarize:"""
                         text = chunk_data[j]["text"]
                         # Cache token count to avoid re-tokenization later
                         if "token_count" not in chunk_data[j]:
-                            chunk_data[j]["token_count"] = len(
-                                self.splitter.tokenizer.encode(text)
-                            )
+                            chunk_data[j]["token_count"] = len(tokenizer.encode(text))
                         token_count = chunk_data[j]["token_count"]
                         node_embeddings.append((node_id, token_count))
 
@@ -959,9 +958,7 @@ Here's the content to summarize:"""
             for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
                 text = cast(str, data["text"])
                 # Use cached token count if available, otherwise compute it
-                token_count = data.get(
-                    "token_count", len(self.splitter.tokenizer.encode(text))
-                )
+                token_count = data.get("token_count", tokenizer.count_tokens(text))
 
                 leaf_nodes_data.append(
                     {
@@ -1072,7 +1069,7 @@ Here's the content to summarize:"""
             Tuple of (document_id, telemetry_dict)
         """
         # Create collector internally with config for pricing
-        source_tokens = len(self.splitter.tokenizer.encode(text))
+        source_tokens = tokenizer.count_tokens(text)
         collector = TelemetryCollector(
             document_id or "benchmark",
             source_tokens,
@@ -1365,7 +1362,7 @@ Here's the content to summarize:"""
                         # Use the token count from summarization
                         token_count = result.get(
                             "token_count",
-                            len(self.splitter.tokenizer.encode(result["summary"])),
+                            tokenizer.count_tokens(result["summary"]),
                         )
                         node_embeddings.append((result["parent_id"], token_count))
 

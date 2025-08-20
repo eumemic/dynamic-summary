@@ -32,11 +32,11 @@ class TokenizerUtil:
     @property
     def encoder(self) -> tiktoken.Encoding:
         """Get the tiktoken encoder, initializing if needed."""
-        if self._encoder is None:
-            with self._lock:
-                if self._encoder is None:
-                    self._encoder = tiktoken.get_encoding("cl100k_base")
-        return self._encoder
+        if TokenizerUtil._encoder is None:
+            with TokenizerUtil._lock:
+                if TokenizerUtil._encoder is None:
+                    TokenizerUtil._encoder = tiktoken.get_encoding("cl100k_base")
+        return TokenizerUtil._encoder
 
     def count_tokens(self, text: str) -> int:
         """Count tokens in text.
