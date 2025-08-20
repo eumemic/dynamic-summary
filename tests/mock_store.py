@@ -2,6 +2,7 @@
 
 import hashlib
 from collections import OrderedDict, defaultdict, deque
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -31,6 +32,11 @@ class SimpleMockStore(StoreInterface):
         self.embeddings: dict[str, list[float]] = {}
         self.document_nodes: dict[str, set[str]] = defaultdict(set)
         self.documents: dict[str, SimpleNamespace] = {}
+
+        # Transaction state tracking
+        self._active_transaction = False
+        # Transaction snapshot for rollback simulation
+        self._transaction_snapshot: dict[str, any] | None = None
 
         # State tracking
         self.pinned_nodes: set[str] = set()
@@ -201,8 +207,10 @@ class SimpleMockStore(StoreInterface):
 
         return node
 
-    def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
-        """Add multiple nodes to the database in batch."""
+    def add_nodes_batch(
+        self, nodes_data: list[dict[str, Any]], *, session=None
+    ) -> list[TreeNode]:
+        """Add multiple nodes in batch - mock implementation."""
         nodes = []
         for data in nodes_data:
             node = self.add_node(
@@ -222,11 +230,18 @@ class SimpleMockStore(StoreInterface):
             nodes.append(node)
         return nodes
 
-    def update_parent_references_batch(self, updates: list[tuple[str, str]]) -> None:
-        """Update parent references for multiple nodes in batch."""
+    def update_parent_references_batch(
+        self, updates: list[tuple[str, str]], *, session=None
+    ) -> None:
+        """Update parent references in batch - mock implementation."""
         for node_id, parent_id in updates:
             if node_id in self.nodes:
                 self.nodes[node_id].parent_id = parent_id
+                # Invalidate cache for updated node
+                if node_id in self._node_cache:
+                    del self._node_cache[node_id]
+                    if node_id in self._cache_order:
+                        self._cache_order.remove(node_id)
 
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID."""
@@ -465,8 +480,10 @@ class SimpleMockStore(StoreInterface):
         chunk_count: int,
         embedding_model: str,
         summary_model: str,
+        *,
+        session=None,
     ) -> Document:
-        """Add a document record."""
+        """Mock add document."""
         from datetime import datetime
 
         doc = SimpleNamespace(
@@ -511,8 +528,8 @@ class SimpleMockStore(StoreInterface):
         doc = self.get_document_by_id(document_id)
         return doc.embedding_model if doc else None
 
-    def delete_document_nodes(self, document_id: str) -> int:
-        """Delete all nodes associated with a document."""
+    def delete_document_nodes(self, document_id: str, *, session=None) -> int:
+        """Delete all nodes for a document."""
         if document_id not in self.document_nodes:
             return 0
 
@@ -544,12 +561,55 @@ class SimpleMockStore(StoreInterface):
             "avg_tokens": avg_tokens,
         }
 
-    def clear_document(self, document_id: str) -> int:
+    def clear_document(self, document_id: str, *, session=None) -> int:
         """Clear all data for a document, including orphaned nodes and document record."""
-        deleted_count = self.delete_document_nodes(document_id)
+        deleted_count = self.delete_document_nodes(document_id, session=session)
         if document_id in self.documents:
             del self.documents[document_id]
         return deleted_count
+
+    @contextmanager
+    def transaction(self):
+        """Mock transaction context manager with rollback simulation.
+
+        Simulates transaction behavior by:
+        - Taking a snapshot of current state at transaction start
+        - Restoring snapshot on exception to simulate rollback
+        - Preventing nested transactions like real Store
+        """
+        if self._active_transaction:
+            raise RuntimeError(
+                "Nested transactions are not supported. "
+                "Please use the same session for all operations within a transaction."
+            )
+
+        # Take snapshot of current state
+        self._active_transaction = True
+        self._transaction_snapshot = {
+            "documents": dict(self.documents),
+            "nodes": dict(self.nodes),
+            "embeddings": dict(self.embeddings),
+            "document_nodes": {k: set(v) for k, v in self.document_nodes.items()},
+        }
+
+        # Create a mock session object for compatibility
+        mock_session = MagicMock()
+
+        try:
+            yield mock_session
+            # Transaction successful - clear snapshot
+            self._transaction_snapshot = None
+        except Exception:
+            # Rollback - restore from snapshot
+            if self._transaction_snapshot:
+                self.documents = self._transaction_snapshot["documents"]
+                self.nodes = self._transaction_snapshot["nodes"]
+                self.embeddings = self._transaction_snapshot["embeddings"]
+                self.document_nodes = self._transaction_snapshot["document_nodes"]
+                self._transaction_snapshot = None
+            raise
+        finally:
+            self._active_transaction = False
 
     def close(self) -> None:
         """Close database connections and cleanup resources."""
