@@ -45,8 +45,14 @@ def create_store_with_docker(
     database_url = config.database_url
 
     # Check if we should auto-start Docker PostgreSQL
+    # Note: database_url may already be worktree-specific from OperationalConfig.__post_init__
     should_auto_start = (
-        database_url == "postgresql+psycopg://localhost/ragzoom"
+        (
+            database_url == "postgresql+psycopg://localhost/ragzoom"
+            or database_url.startswith(
+                "postgresql+psycopg://localhost/ragzoom_worktree_"
+            )
+        )
         and not os.getenv("RAGZOOM_DATABASE_URL")  # User didn't explicitly set URL
         and not os.getenv("RAGZOOM_NO_DOCKER")  # User didn't disable Docker
     )
@@ -56,8 +62,15 @@ def create_store_with_docker(
             from ragzoom.docker_postgres import DockerPostgres
 
             docker_pg = DockerPostgres()
-            database_url = docker_pg.ensure_running()
-            logger.info("✅ PostgreSQL ready in Docker container")
+
+            # Extract database name from the potentially worktree-specific URL
+            if "/ragzoom_worktree_" in database_url:
+                db_name = database_url.split("/")[-1]  # Get the part after the last "/"
+                database_url = docker_pg.ensure_database_exists(db_name)
+                logger.info(f"✅ PostgreSQL ready with worktree database: {db_name}")
+            else:
+                database_url = docker_pg.ensure_running()
+                logger.info("✅ PostgreSQL ready in Docker container")
 
             # Update config with Docker database URL
             config = OperationalConfig(

@@ -186,6 +186,11 @@ class OperationalConfig:
         # Allow environment overrides for storage path (for testing)
         if os.environ.get("RAGZOOM_DATABASE_URL"):
             self.database_url = os.environ["RAGZOOM_DATABASE_URL"]
+        else:
+            # Apply worktree-specific database isolation
+            from ragzoom.worktree_utils import get_worktree_database_url
+
+            self.database_url = get_worktree_database_url(self.database_url)
 
     def replace(self, **changes: Any) -> "OperationalConfig":
         """Create a new OperationalConfig with some fields changed."""

@@ -189,9 +189,14 @@ class DockerPostgres:
         logger.warning(f"PostgreSQL not ready after {timeout} seconds")
         return False
 
-    def get_connection_url(self) -> str:
-        """Get the connection URL for the PostgreSQL container."""
-        return f"postgresql+psycopg://{self.USER}:{self.PASSWORD}@localhost:{self.DEFAULT_PORT}/{self.DATABASE}"
+    def get_connection_url(self, database_name: str | None = None) -> str:
+        """Get the connection URL for the PostgreSQL container.
+
+        Args:
+            database_name: Optional database name to use instead of default
+        """
+        db_name = database_name or self.DATABASE
+        return f"postgresql+psycopg://{self.USER}:{self.PASSWORD}@localhost:{self.DEFAULT_PORT}/{db_name}"
 
     def ensure_running(self) -> str:
         """Ensure PostgreSQL container is running and return connection URL.
@@ -309,3 +314,75 @@ class DockerPostgres:
                         status["connection_url"] = self.get_connection_url()
 
         return status
+
+    def create_database(self, database_name: str) -> bool:
+        """Create an additional database in the PostgreSQL container.
+
+        Args:
+            database_name: Name of the database to create
+
+        Returns:
+            True if database was created or already exists, False on error
+        """
+        if not self.container_running():
+            logger.error("PostgreSQL container is not running")
+            return False
+
+        try:
+            # Use docker exec to create the database
+            logger.info(f"Creating database: {database_name}")
+            result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    self.container_name,
+                    "psql",
+                    "-U",
+                    self.USER,
+                    "-d",
+                    self.DATABASE,
+                    "-c",
+                    f'CREATE DATABASE "{database_name}";',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            # Database already exists is not an error
+            if result.returncode == 0 or "already exists" in result.stderr:
+                logger.debug(f"Database {database_name} ready")
+                return True
+            else:
+                logger.error(
+                    f"Failed to create database {database_name}: {result.stderr}"
+                )
+                return False
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout while creating database {database_name}")
+            return False
+        except Exception as e:
+            logger.error(f"Error creating database {database_name}: {e}")
+            return False
+
+    def ensure_database_exists(self, database_name: str) -> str:
+        """Ensure a specific database exists and return its connection URL.
+
+        Args:
+            database_name: Name of the database to ensure exists
+
+        Returns:
+            Connection URL for the specified database
+
+        Raises:
+            RuntimeError: If database cannot be created
+        """
+        # First ensure the PostgreSQL container is running
+        self.ensure_running()
+
+        # Then ensure the specific database exists
+        if not self.create_database(database_name):
+            raise RuntimeError(f"Failed to create database: {database_name}")
+
+        return self.get_connection_url(database_name)
