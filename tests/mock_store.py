@@ -43,8 +43,93 @@ class SimpleMockStore(StoreInterface):
         # Track expected embedding dimension
         self._expected_embedding_dim = None
 
-        # Simple mock for SessionLocal with query support
-        self._setup_session_mock()
+        # SessionLocal mock with filter_by support
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=None)
+
+        def mock_query(model_class):
+            query_mock = MagicMock()
+
+            # Determine model type
+            is_treenode = (
+                hasattr(model_class, "__name__") and "TreeNode" in model_class.__name__
+            )
+            is_document = (
+                hasattr(model_class, "__name__") and "Document" in model_class.__name__
+            )
+
+            # Basic count() method
+            if is_treenode:
+                query_mock.count.return_value = len(self.nodes)
+            elif is_document:
+                query_mock.count.return_value = len(self.documents)
+            else:
+                query_mock.count.return_value = 0
+
+            # Add filter_by support
+            def mock_filter_by(**kwargs):
+                filtered_query = MagicMock()
+
+                if is_treenode:
+                    # Filter nodes based on criteria
+                    filtered_nodes = []
+                    for node in self.nodes.values():
+                        match = True
+                        for key, value in kwargs.items():
+                            node_value = getattr(node, key, None)
+                            if node_value != value:
+                                match = False
+                                break
+                        if match:
+                            filtered_nodes.append(node)
+
+                    filtered_query.count.return_value = len(filtered_nodes)
+                    filtered_query.all.return_value = filtered_nodes
+                    filtered_query.first.return_value = (
+                        filtered_nodes[0] if filtered_nodes else None
+                    )
+                    filtered_query.delete.return_value = len(filtered_nodes)
+
+                elif is_document:
+                    # Filter documents based on criteria
+                    filtered_docs = []
+                    for doc in self.documents.values():
+                        match = True
+                        for key, value in kwargs.items():
+                            doc_value = getattr(doc, key, None)
+                            if doc_value != value:
+                                match = False
+                                break
+                        if match:
+                            filtered_docs.append(doc)
+
+                    filtered_query.count.return_value = len(filtered_docs)
+                    filtered_query.all.return_value = filtered_docs
+                    filtered_query.first.return_value = (
+                        filtered_docs[0] if filtered_docs else None
+                    )
+                    filtered_query.delete.return_value = len(filtered_docs)
+                else:
+                    # Unknown model type
+                    filtered_query.count.return_value = 0
+                    filtered_query.all.return_value = []
+                    filtered_query.first.return_value = None
+                    filtered_query.delete.return_value = 0
+
+                return filtered_query
+
+            query_mock.filter_by = mock_filter_by
+            query_mock.all.return_value = (
+                list(self.nodes.values())
+                if is_treenode
+                else list(self.documents.values())
+            )
+
+            return query_mock
+
+        mock_session.query = mock_query
+        self.SessionLocal = MagicMock(return_value=mock_session)
 
     def add_node(
         self,
@@ -497,81 +582,3 @@ class SimpleMockStore(StoreInterface):
         if node_id in self._cache_order:
             self._cache_order.remove(node_id)
         self._cache_order.append(node_id)
-
-    def _setup_session_mock(self):
-        """Setup minimal SessionLocal mock for query operations."""
-        from ragzoom.models import Document, TreeNode
-
-        mock_session = MagicMock()
-
-        def mock_query(model_class):
-            query_mock = MagicMock()
-
-            if model_class == TreeNode:
-                query_mock.count.return_value = len(self.nodes)
-                query_mock.all.return_value = list(self.nodes.values())
-                query_mock.first.return_value = (
-                    list(self.nodes.values())[0] if self.nodes else None
-                )
-            elif model_class == Document:
-                query_mock.count.return_value = len(self.documents)
-                query_mock.all.return_value = list(self.documents.values())
-                query_mock.first.return_value = (
-                    list(self.documents.values())[0] if self.documents else None
-                )
-            else:
-                query_mock.count.return_value = 0
-                query_mock.all.return_value = []
-                query_mock.first.return_value = None
-
-            # Support filter_by for basic queries
-            def filter_by(**kwargs):
-                filtered_mock = MagicMock()
-                if model_class == TreeNode:
-                    filtered_nodes = []
-                    for node in self.nodes.values():
-                        match = True
-                        for key, value in kwargs.items():
-                            if not hasattr(node, key) or getattr(node, key) != value:
-                                match = False
-                                break
-                        if match:
-                            filtered_nodes.append(node)
-
-                    filtered_mock.count.return_value = len(filtered_nodes)
-                    filtered_mock.all.return_value = filtered_nodes
-                    filtered_mock.first.return_value = (
-                        filtered_nodes[0] if filtered_nodes else None
-                    )
-                elif model_class == Document:
-                    filtered_docs = []
-                    for doc in self.documents.values():
-                        match = True
-                        for key, value in kwargs.items():
-                            if not hasattr(doc, key) or getattr(doc, key) != value:
-                                match = False
-                                break
-                        if match:
-                            filtered_docs.append(doc)
-
-                    filtered_mock.count.return_value = len(filtered_docs)
-                    filtered_mock.all.return_value = filtered_docs
-                    filtered_mock.first.return_value = (
-                        filtered_docs[0] if filtered_docs else None
-                    )
-                else:
-                    filtered_mock.count.return_value = 0
-                    filtered_mock.all.return_value = []
-                    filtered_mock.first.return_value = None
-
-                return filtered_mock
-
-            query_mock.filter_by = filter_by
-            return query_mock
-
-        mock_session.query = mock_query
-        mock_session.commit = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=None)
-
-        self.SessionLocal = MagicMock(return_value=mock_session)

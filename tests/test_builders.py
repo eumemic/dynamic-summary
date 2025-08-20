@@ -73,36 +73,55 @@ class TreeNodeBuilder:
         self._data["height"] = height
         return self
 
-    def build(self) -> TreeNode:
-        """Build a TreeNode instance."""
-        return TreeNode(**self._data)
+    def build(
+        self, target: str = "model"
+    ) -> TreeNode | SimpleNamespace | dict[str, Any]:
+        """Build the node in the specified format.
 
+        Args:
+            target: Format to build - "model" for TreeNode, "namespace" for SimpleNamespace, "dict" for dictionary
+
+        Returns:
+            TreeNode, SimpleNamespace, or dict based on target parameter
+        """
+        if target == "model":
+            return TreeNode(**self._data)
+        elif target == "namespace":
+            node = SimpleNamespace(**self._data)
+            # Add additional attributes that SimpleMockStore expects
+            node.is_pinned = 0
+            node.last_accessed = None
+            node.access_count = 0
+            node.created_at = None
+            node.preceding_neighbor_id = None
+            return node
+        elif target == "dict":
+            return {
+                "node_id": self._data["id"],
+                "text": self._data["text"],
+                "embedding": self._data["embedding"],
+                "span_start": self._data["span_start"],
+                "span_end": self._data["span_end"],
+                "parent_id": self._data["parent_id"],
+                "left_child_id": self._data["left_child_id"],
+                "right_child_id": self._data["right_child_id"],
+                "document_id": self._data["document_id"],
+                "token_count": self._data["token_count"],
+                "height": self._data["height"],
+            }
+        else:
+            raise ValueError(
+                f"Unknown target: {target}. Use 'model', 'namespace', or 'dict'"
+            )
+
+    # Legacy methods for backward compatibility
     def build_simple_namespace(self) -> SimpleNamespace:
-        """Build a SimpleNamespace for mock store compatibility."""
-        node = SimpleNamespace(**self._data)
-        # Add additional attributes that SimpleMockStore expects
-        node.is_pinned = 0
-        node.last_accessed = None
-        node.access_count = 0
-        node.created_at = None
-        node.preceding_neighbor_id = None
-        return node
+        """Build a SimpleNamespace for mock store compatibility. [DEPRECATED: Use build('namespace')]"""
+        return self.build("namespace")
 
     def build_dict(self) -> dict[str, Any]:
-        """Build a dictionary for batch operations."""
-        return {
-            "node_id": self._data["id"],
-            "text": self._data["text"],
-            "embedding": self._data["embedding"],
-            "span_start": self._data["span_start"],
-            "span_end": self._data["span_end"],
-            "parent_id": self._data["parent_id"],
-            "left_child_id": self._data["left_child_id"],
-            "right_child_id": self._data["right_child_id"],
-            "document_id": self._data["document_id"],
-            "token_count": self._data["token_count"],
-            "height": self._data["height"],
-        }
+        """Build a dictionary for batch operations. [DEPRECATED: Use build('dict')]"""
+        return self.build("dict")
 
 
 class DocumentBuilder:
@@ -148,16 +167,29 @@ class DocumentBuilder:
         self._data["summary_model"] = model
         return self
 
-    def build(self) -> Document:
-        """Build a Document instance."""
-        return Document(**self._data)
+    def build(self, target: str = "model") -> Document | SimpleNamespace:
+        """Build the document in the specified format.
 
+        Args:
+            target: Format to build - "model" for Document, "namespace" for SimpleNamespace
+
+        Returns:
+            Document or SimpleNamespace based on target parameter
+        """
+        if target == "model":
+            return Document(**self._data)
+        elif target == "namespace":
+            doc = SimpleNamespace(**self._data)
+            # Add additional attributes that SimpleMockStore expects
+            doc.created_at = None
+            return doc
+        else:
+            raise ValueError(f"Unknown target: {target}. Use 'model' or 'namespace'")
+
+    # Legacy method for backward compatibility
     def build_simple_namespace(self) -> SimpleNamespace:
-        """Build a SimpleNamespace for mock store compatibility."""
-        doc = SimpleNamespace(**self._data)
-        # Add additional attributes that SimpleMockStore expects
-        doc.created_at = None
-        return doc
+        """Build a SimpleNamespace for mock store compatibility. [DEPRECATED: Use build('namespace')]"""
+        return self.build("namespace")
 
 
 def create_test_tree_nodes(
@@ -236,6 +268,6 @@ def create_simple_namespace_tree(
             i * 10, (i + 1) * 10
         )
 
-        nodes.append(builder.build_simple_namespace())
+        nodes.append(builder.build("namespace"))
 
     return nodes

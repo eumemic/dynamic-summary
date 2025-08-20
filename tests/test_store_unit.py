@@ -17,7 +17,7 @@ class TestStoreMock:
         """Test adding a node to the store."""
         # Use builder for cleaner test setup
         node_data = (
-            tree_node_builder.with_id("test-1").with_text("Test text").build_dict()
+            tree_node_builder.with_id("test-1").with_text("Test text").build("dict")
         )
 
         node = mock_store.add_node(**node_data)
@@ -56,21 +56,21 @@ class TestStoreMock:
             .with_text("Parent node")
             .with_span(0, 20)
             .with_children("child1", "child2")
-            .build_dict()
+            .build("dict")
         )
         child1_data = (
             tree_node_builder.with_id("child1")
             .with_text("Child 1")
             .with_span(0, 10)
             .with_parent("parent")
-            .build_dict()
+            .build("dict")
         )
         child2_data = (
             tree_node_builder.with_id("child2")
             .with_text("Child 2")
             .with_span(10, 20)
             .with_parent("parent")
-            .build_dict()
+            .build("dict")
         )
 
         mock_store.add_node(**parent_data)
@@ -163,3 +163,45 @@ class TestStoreMock:
 
         retrieved_by_path = mock_store.get_document_by_path("/test/file.txt")
         assert retrieved_by_path.id == "test-doc"
+
+    def test_interface_compliance(self, mock_store):
+        """Test that SimpleMockStore properly implements StoreInterface."""
+        from ragzoom.interfaces import StoreInterface
+
+        # Verify the mock store implements the interface
+        assert isinstance(mock_store, StoreInterface)
+
+        # Test a few key interface methods to ensure they work
+        assert hasattr(mock_store, "add_node")
+        assert hasattr(mock_store, "get_node")
+        assert hasattr(mock_store, "search_similar")
+        assert hasattr(mock_store, "add_document")
+        assert hasattr(mock_store, "close")
+
+    def test_real_store_interface_compliance(self):
+        """Test that real Store class properly implements StoreInterface."""
+        from ragzoom.interfaces import StoreInterface
+        from ragzoom.store import Store
+
+        # Verify the Store class implements the interface at class level
+        assert issubclass(Store, StoreInterface)
+
+        # Test that Store is runtime checkable
+        # Note: We don't instantiate Store here to avoid database dependencies
+
+    def test_builder_advanced_features(self, mock_store, tree_node_builder):
+        """Test advanced builder features including token_count and height."""
+        # Test that unused builder methods actually work
+        node_data = (
+            tree_node_builder.with_id("advanced-node")
+            .with_text("Advanced test node")
+            .with_token_count(25)  # Demonstrate with_token_count
+            .with_height(3)  # Demonstrate with_height
+            .build("dict")
+        )
+
+        node = mock_store.add_node(**node_data)
+
+        assert node.id == "advanced-node"
+        assert node.token_count == 25
+        assert node.height == 3
