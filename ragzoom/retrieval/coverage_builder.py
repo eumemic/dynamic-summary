@@ -37,6 +37,7 @@ class CoverageBuilder:
 
         return coverage_map
 
+    # jscpd:ignore-start - Similar docstring structure for related methods (false positive)
     def build_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
         """Build a coverage map including selected nodes, their ancestors, and all required siblings.
 
@@ -50,6 +51,7 @@ class CoverageBuilder:
         Returns:
             Coverage map with node IDs as keys
         """
+        # jscpd:ignore-end
         if not selected_ids:
             return {}
 
