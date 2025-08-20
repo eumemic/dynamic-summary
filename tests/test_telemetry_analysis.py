@@ -16,8 +16,12 @@ from ragzoom.telemetry_analysis import (
 class TestTelemetryFormatParsing:
     """Test telemetry format parsing."""
 
-    def test_parse_v3_telemetry_format(self) -> None:
-        """Test parsing v3.0 telemetry format (already flat)."""
+    def test_parse_current_telemetry_format(self) -> None:
+        """Test parsing current telemetry format (v4.2).
+
+        Consolidated test that replaces the three separate format tests which
+        were all testing the same thing (v4.2 format only).
+        """
         telemetry_data = {
             "format_version": "4.2",
             "document_id": "test_doc",
@@ -41,76 +45,14 @@ class TestTelemetryFormatParsing:
         }
 
         result = parse_telemetry_format(telemetry_data)
+
+        # Should parse correctly to current format
         assert result["format_version"] == "4.2"
         assert result["document_id"] == "test_doc"
         assert result["source_document_tokens"] == 5000
         assert result["config"]["target_chunk_tokens"] == 200
         assert result["config"]["summary_model"] == "gpt-4o-mini"
         assert result["config"]["embedding_model"] == "text-embedding-3-small"
-        assert len(result["nodes"]) == 1
-        assert result["nodes"][0]["node_id"] == "node-1"
-
-    def test_parse_v3_1_telemetry_format(self) -> None:
-        """Test parsing v3.1 telemetry format."""
-        telemetry_data = {
-            "format_version": "4.2",
-            "document_id": "test_doc",
-            "source_document_tokens": 5000,
-            "indexed_at": 1234567890.0,
-            "config": {
-                "target_chunk_tokens": 200,
-                "summary_model": "gpt-4o-mini",
-                "embedding_model": "text-embedding-3-small",
-            },
-            "model_metadata": {},
-            "system_prompts": {},
-            "runtime_info": {},
-            "nodes": [
-                {
-                    "node_id": "node-1",
-                    "height": 0,
-                    "created_at": 1234567890.0,
-                }
-            ],
-        }
-
-        result = parse_telemetry_format(telemetry_data)
-        assert result["format_version"] == "4.2"
-        assert result["document_id"] == "test_doc"
-        assert result["source_document_tokens"] == 5000
-        assert result["config"]["target_chunk_tokens"] == 200
-        assert len(result["nodes"]) == 1
-        assert result["nodes"][0]["node_id"] == "node-1"
-
-    def test_parse_v4_1_telemetry_format(self) -> None:
-        """Test parsing v4.1 telemetry format."""
-        telemetry_data = {
-            "format_version": "4.2",
-            "document_id": "test_doc",
-            "source_document_tokens": 5000,
-            "indexed_at": 1234567890.0,
-            "config": {
-                "target_chunk_tokens": 200,
-                "summary_model": "gpt-4o-mini",
-                "embedding_model": "text-embedding-3-small",
-            },
-            "model_metadata": {},
-            "system_prompts": {},
-            "runtime_info": {},
-            "nodes": [
-                {
-                    "node_id": "node-1",
-                    "height": 0,
-                    "created_at": 1234567890.0,
-                }
-            ],
-        }
-
-        result = parse_telemetry_format(telemetry_data)
-        assert result["format_version"] == "4.2"
-        assert result["document_id"] == "test_doc"
-        assert result["source_document_tokens"] == 5000
-        assert result["config"]["target_chunk_tokens"] == 200
         assert len(result["nodes"]) == 1
         assert result["nodes"][0]["node_id"] == "node-1"
 
@@ -338,25 +280,9 @@ class TestSimplifiedMetrics:
             assert hasattr(metrics.retries, "retry_rate")
             assert hasattr(metrics.retries, "max_retries")
 
-    def test_simplified_metrics_empty_data(self) -> None:
+    def test_simplified_metrics_empty_data(self, empty_telemetry_data) -> None:
         """Test simplified metrics with empty telemetry."""
-        empty_telemetry = {
-            "format_version": "4.2",
-            "document_id": "test_doc",
-            "source_document_tokens": 0,
-            "indexed_at": 1234567890.0,
-            "config": {
-                "target_chunk_tokens": 100,
-                "summary_model": "gpt-4o-mini",
-                "embedding_model": "text-embedding-3-small",
-            },
-            "model_metadata": {},
-            "system_prompts": {},
-            "runtime_info": {},
-            "nodes": [],
-        }
-
-        result = compute_simplified_metrics(empty_telemetry)
+        result = compute_simplified_metrics(empty_telemetry_data)
 
         # Should return empty metrics
         assert result.metrics_by_chunk_size == {}
@@ -494,25 +420,9 @@ class TestBatchEfficiency:
         # Total batched: 3, Total embeddings: 3 → 100% efficiency
         assert result["batch_utilization"] == pytest.approx(100.0, rel=0.01)
 
-    def test_batch_efficiency_empty_data(self) -> None:
+    def test_batch_efficiency_empty_data(self, empty_telemetry_data) -> None:
         """Test batch efficiency with empty telemetry."""
-        empty_telemetry = {
-            "format_version": "4.2",
-            "document_id": "test_doc",
-            "source_document_tokens": 0,
-            "indexed_at": 1234567890.0,
-            "config": {
-                "target_chunk_tokens": 100,
-                "summary_model": "gpt-4o-mini",
-                "embedding_model": "text-embedding-3-small",
-            },
-            "model_metadata": {},
-            "system_prompts": {},
-            "runtime_info": {},
-            "nodes": [],
-        }
-
-        result = compute_batch_efficiency(empty_telemetry)
+        result = compute_batch_efficiency(empty_telemetry_data)
 
         assert result["total_batches"] == 0
         assert result["total_embeddings"] == 0
