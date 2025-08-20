@@ -133,9 +133,37 @@ class TreeBuilder:
                 raise
 
     async def _get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
-        """Get embeddings for multiple texts in a single API call."""
+        """Get embeddings for multiple texts in batches to respect API limits."""
         if not texts:
             return []
+
+        # OpenAI embeddings API has a limit of ~2048 inputs per batch
+        # Use a conservative limit to avoid hitting API constraints
+        max_batch_size = 1000
+
+        if len(texts) > max_batch_size:
+            logger.debug(
+                f"Large batch of {len(texts)} texts - splitting into smaller batches of {max_batch_size}"
+            )
+            all_embeddings = []
+            for i in range(0, len(texts), max_batch_size):
+                batch = texts[i : i + max_batch_size]
+                logger.debug(
+                    f"Processing batch {i//max_batch_size + 1}/{(len(texts) + max_batch_size - 1)//max_batch_size} ({len(batch)} texts)"
+                )
+                batch_embeddings = await self._get_embeddings_batch(batch)
+                all_embeddings.extend(batch_embeddings)
+            return all_embeddings
+
+        # Safety net: Check for empty strings that could cause API errors
+        for i, text in enumerate(texts):
+            if not text or not text.strip():
+                logger.error(
+                    f"Empty text at index {i} in embedding batch - this will cause API errors"
+                )
+                raise ValueError(
+                    f"Empty text at index {i} in embedding batch. This should be filtered by the caller."
+                )
 
         async with self.semaphore:
             try:
@@ -1353,7 +1381,20 @@ Here's the content to summarize:"""
 
                 # Batch generate embeddings for all summaries at this level
                 # This avoids individual API calls per node (e.g., 183 calls → 3 batch calls)
-                summaries = [r["summary"] for r in results]
+                # Extract summaries, warning about any empty ones (shouldn't happen due to verbatim fallback)
+                summaries = []
+                for i, result in enumerate(results):
+                    summary = result["summary"]
+                    if not summary or not summary.strip():
+                        # This shouldn't happen as _summarize_text has verbatim fallback
+                        logger.warning(
+                            f"Unexpected empty summary for node {result.get('parent_id', 'unknown')}. "
+                            f"This may indicate a bug in the summarization process."
+                        )
+                        # Use a minimal fallback to avoid embedding API errors
+                        summary = "empty"
+                        result["summary"] = summary  # Update for consistency
+                    summaries.append(summary)
 
                 start_time = time.time()
                 embeddings = await self._get_embeddings_batch(summaries)
@@ -1377,6 +1418,7 @@ Here's the content to summarize:"""
                     )
 
                 # Update results with the generated embeddings
+                # Since we process all results, we can directly zip them
                 for result, embedding in zip(results, embeddings):
                     result["node_data"]["embedding"] = embedding
 
