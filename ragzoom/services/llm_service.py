@@ -159,18 +159,6 @@ class LLMService:
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Make OpenAI API call for summarization with telemetry tracking."""  # jscpd:ignore-end
-        target_words = self._tokens_to_words(target_tokens)
-
-        # Add retry instruction to the last user message
-        if messages and messages[-1].get("role") == "user":
-            last_message = messages[-1]
-            content = last_message.get("content", "")
-            if isinstance(content, str):
-                last_message["content"] = content + (
-                    f" Please provide a concise summary in approximately "
-                    f"{target_words} words (roughly {target_tokens} tokens)."
-                )
-
         async with self.semaphore:
             try:
                 # Build kwargs for the API call
