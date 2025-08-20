@@ -25,7 +25,16 @@ cleanup_benchmark_db() {
     if [ -n "$CREATED_DB_NAME" ]; then
         echo ""
         echo "🧹 Cleaning up benchmark database: $CREATED_DB_NAME"
-        python -c "from ragzoom.db_utils import drop_temp_database; drop_temp_database('$CREATED_DB_NAME')" 2>/dev/null || true
+        # Use environment variable to avoid shell injection
+        CLEANUP_DB_NAME="$CREATED_DB_NAME" python -c "
+from ragzoom.db_utils import drop_temp_database
+import os
+try:
+    drop_temp_database(os.environ['CLEANUP_DB_NAME'])
+    print(f'✅ Cleaned up database: {os.environ[\"CLEANUP_DB_NAME\"]}')
+except Exception as e:
+    print(f'⚠️ Cleanup failed: {e}', file=__import__('sys').stderr)
+" 2>&1
     fi
 }
 
@@ -320,27 +329,34 @@ echo ""
 echo "🗄️ Setting up PostgreSQL benchmark database..."
 
 # Create database and capture the returned URL with credentials
-DATABASE_URL=$(python -c "
+# Use environment variable to avoid shell injection
+BENCHMARK_DB_ENV_NAME="$BENCHMARK_DB_NAME" python -c "
 from ragzoom.docker_postgres import DockerPostgres
 from ragzoom.db_utils import create_temp_database
-import sys
+import os, sys
 try:
     dp = DockerPostgres()
     dp.ensure_running()
-    url = create_temp_database('$BENCHMARK_DB_NAME')
+    db_name = os.environ['BENCHMARK_DB_ENV_NAME']
+    url = create_temp_database(db_name)
     print(url)
 except Exception as e:
     print(f'Error: {e}', file=sys.stderr)
     sys.exit(1)
-" 2>&1)
+" > /tmp/db_setup_$$.out 2> /tmp/db_setup_$$.err
 
-# Check if database creation succeeded
-if [ $? -ne 0 ] || [[ "$DATABASE_URL" == Error* ]]; then
+# Check if database creation succeeded and capture output properly
+if [ $? -eq 0 ]; then
+    DATABASE_URL=$(cat /tmp/db_setup_$$.out)
+    rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
+else
     echo "❌ Failed to set up PostgreSQL database:"
-    echo "$DATABASE_URL"
-    echo "Check $LOG_FILE for details."
+    cat /tmp/db_setup_$$.err >&2
+    rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
     exit 1
 fi
+
+# Database creation check is now handled above
 
 # Track the database for cleanup
 CREATED_DB_NAME="$BENCHMARK_DB_NAME"
@@ -463,7 +479,7 @@ echo ""
 CREATED_DB_NAME=""  # Clear the cleanup variable to prevent auto-cleanup
 
 echo "💡 Database cleanup: The benchmark database '$BENCHMARK_DB_NAME' is left intact for debugging."
-echo "   To clean up manually: python -c \"from ragzoom.db_utils import drop_temp_database; drop_temp_database('$BENCHMARK_DB_NAME')\""
+echo "   To clean up manually: CLEANUP_DB_NAME='$BENCHMARK_DB_NAME' python -c 'from ragzoom.db_utils import drop_temp_database; import os; drop_temp_database(os.environ[\"CLEANUP_DB_NAME\"])'"
 
 if [ "$USE_DEFAULT_OUTPUT" = true ]; then
     echo ""
