@@ -17,6 +17,21 @@ set -o pipefail  # Also exit on pipe failures
 # Generate timestamp for this run
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 
+# Global variable to track created database for cleanup
+CREATED_DB_NAME=""
+
+# Cleanup function for error handling
+cleanup_benchmark_db() {
+    if [ -n "$CREATED_DB_NAME" ]; then
+        echo ""
+        echo "🧹 Cleaning up benchmark database: $CREATED_DB_NAME"
+        python -c "from ragzoom.db_utils import drop_temp_database; drop_temp_database('$CREATED_DB_NAME')" 2>/dev/null || true
+    fi
+}
+
+# Set trap for cleanup on exit
+trap cleanup_benchmark_db EXIT INT TERM
+
 # Check required dependencies
 check_dependencies() {
     local missing_deps=()
@@ -95,7 +110,7 @@ Additional Options:
 Output Structure:
     benchmarks/
     ├── 20250815_163448/          # Timestamped run directory
-    │   ├── ragzoom.db            # PostgreSQL database from indexing
+    │   ├── benchmark_db.txt      # PostgreSQL database name used for indexing
     │   ├── telemetry.json        # Telemetry data (becomes next baseline)
     │   ├── log.txt               # Full indexing logs with debug output
     │   ├── comparison.md         # Markdown comparison report
@@ -286,17 +301,56 @@ validate_path "$DOCUMENT" "document"
 TELEMETRY_FILE="$OUTPUT_DIR/telemetry.json"
 LOG_FILE="$OUTPUT_DIR/log.txt"
 VISUALIZATION_FILE="$OUTPUT_DIR/visualization.png"
-DATABASE_FILE="$OUTPUT_DIR/ragzoom.db"
+
+# Generate unique database name for this benchmark run
+BENCHMARK_DB_NAME="benchmark_${TIMESTAMP}"
+DATABASE_NAME_FILE="$OUTPUT_DIR/benchmark_db.txt"
 
 echo ""
 echo "🚀 Starting indexing benchmark..."
 echo "  Baseline: $BASELINE"
 echo "  Document: $DOCUMENT"
 echo "  Output directory: $OUTPUT_DIR"
-echo "  Database: $DATABASE_FILE"
 if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
     echo "  Additional options: ${EXTRA_ARGS[@]}"
 fi
+echo ""
+
+# Ensure PostgreSQL is running and create benchmark database
+echo "🗄️ Setting up PostgreSQL benchmark database..."
+
+# Create database and capture the returned URL with credentials
+DATABASE_URL=$(python -c "
+from ragzoom.docker_postgres import DockerPostgres
+from ragzoom.db_utils import create_temp_database
+import sys
+try:
+    dp = DockerPostgres()
+    dp.ensure_running()
+    url = create_temp_database('$BENCHMARK_DB_NAME')
+    print(url)
+except Exception as e:
+    print(f'Error: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1)
+
+# Check if database creation succeeded
+if [ $? -ne 0 ] || [[ "$DATABASE_URL" == Error* ]]; then
+    echo "❌ Failed to set up PostgreSQL database:"
+    echo "$DATABASE_URL"
+    echo "Check $LOG_FILE for details."
+    exit 1
+fi
+
+# Track the database for cleanup
+CREATED_DB_NAME="$BENCHMARK_DB_NAME"
+
+# Save database name and URL for reference
+echo "$BENCHMARK_DB_NAME" > "$DATABASE_NAME_FILE"
+echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
+
+echo "✅ Created benchmark database: $BENCHMARK_DB_NAME"
+echo "  Database URL: $DATABASE_URL"
 echo ""
 
 # Run indexing with telemetry
@@ -307,7 +361,7 @@ echo "📝 Running indexing with telemetry..."
 INDEX_ARGS=(
     "$DOCUMENT"
     --telemetry "$TELEMETRY_FILE"
-    --database "$DATABASE_FILE"
+    --database "$DATABASE_URL"
     --validate
     --debug
     --no-progress
@@ -399,11 +453,17 @@ if [ "$USE_DEFAULT_OUTPUT" = true ]; then
 fi
 
 echo "🎉 Benchmark complete! Results:"
-echo "  - Database: $OUTPUT_DIR/ragzoom.db"
+echo "  - Database: $DATABASE_URL (details saved in $DATABASE_NAME_FILE)"
 echo "  - Telemetry: $OUTPUT_DIR/telemetry.json"
 echo "  - Log: $OUTPUT_DIR/log.txt"
 echo "  - Comparison report: $OUTPUT_DIR/comparison.md"
 echo "  - Visualization: $OUTPUT_DIR/visualization.png"
+echo ""
+# On successful completion, don't auto-cleanup - leave database for debugging
+CREATED_DB_NAME=""  # Clear the cleanup variable to prevent auto-cleanup
+
+echo "💡 Database cleanup: The benchmark database '$BENCHMARK_DB_NAME' is left intact for debugging."
+echo "   To clean up manually: python -c \"from ragzoom.db_utils import drop_temp_database; drop_temp_database('$BENCHMARK_DB_NAME')\""
 
 if [ "$USE_DEFAULT_OUTPUT" = true ]; then
     echo ""
