@@ -424,10 +424,7 @@ class LLMService:
                 # Check if this attempt is acceptable (within threshold)
                 if not self._should_retry_summary(retry_tokens, target_tokens):
                     # This attempt is within threshold - accept it immediately
-                    # Mark this retry attempt as accepted (attempt index = actual_retries)
-                    if reporter and node_id:
-                        reporter.mark_accepted_attempt(node_id, actual_retries)
-                    return retry_summary, actual_retries, retry_tokens
+                    return retry_summary, actual_retries, actual_retries
 
                 # This attempt is still outside threshold, but check if it's better
                 retry_distance = abs(retry_tokens - target_tokens)
@@ -469,11 +466,7 @@ class LLMService:
             f"Best result: {best_tokens} tokens (deviation: {best_deviation:.1%})"
         )
 
-        # Mark the best attempt as accepted
-        if reporter and node_id:
-            reporter.mark_accepted_attempt(node_id, best_attempt_index)
-
-        return best_summary, actual_retries, best_tokens
+        return best_summary, actual_retries, best_attempt_index
 
     async def _summarize_text(
         self,
@@ -611,14 +604,15 @@ Here's the content to summarize:"""
 
                 # Check if retry is needed
                 if not self._should_retry_summary(summary_tokens, target_tokens):
-                    # Mark initial attempt as accepted (attempt index 0)
+                    accepted_attempt = 0  # Initial attempt was accepted
+                    # Mark which attempt was accepted
                     if reporter and parent_id:
-                        reporter.mark_accepted_attempt(parent_id, 0)
+                        reporter.mark_accepted_attempt(parent_id, accepted_attempt)
                     return summary, 0, summary_tokens
 
                 # Attempt to correct the summary
                 if self.config.max_retries > 0:
-                    final_summary, retry_count, final_tokens = (
+                    final_summary, retry_count, best_attempt_index = (
                         await self._retry_summary_correction(
                             cast(list[ChatCompletionMessageParam], messages),
                             summary,
@@ -628,12 +622,22 @@ Here's the content to summarize:"""
                             reporter,
                         )
                     )
-                    return final_summary, retry_count, final_tokens
+                    # Track which attempt was accepted (like master does)
+                    accepted_attempt = best_attempt_index
+                    # Mark which attempt was accepted
+                    if reporter and parent_id:
+                        reporter.mark_accepted_attempt(parent_id, accepted_attempt)
+                    return (
+                        final_summary,
+                        retry_count,
+                        tokenizer.count_tokens(final_summary),
+                    )
 
                 # No retries allowed, return initial attempt
-                # Mark initial attempt as accepted (attempt index 0)
+                accepted_attempt = 0  # Initial attempt was accepted
+                # Mark which attempt was accepted
                 if reporter and parent_id:
-                    reporter.mark_accepted_attempt(parent_id, 0)
+                    reporter.mark_accepted_attempt(parent_id, accepted_attempt)
                 return summary, 0, summary_tokens
 
             except Exception as e:
