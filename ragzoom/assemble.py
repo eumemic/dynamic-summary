@@ -2,10 +2,9 @@
 
 import logging
 
-import tiktoken
-
 from ragzoom.retrieve import RetrievalResult
 from ragzoom.store import Store, TreeNode
+from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +15,7 @@ class Assembler:
     def __init__(self, store: Store):
         """Initialize assembler."""
         self.store = store
-        self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        self.tokenizer = tokenizer
 
     def assemble(self, retrieval_result: RetrievalResult) -> str:
         """
@@ -59,4 +58,4 @@ class Assembler:
 
     def get_token_count(self, text: str) -> int:
         """Get token count for text."""
-        return len(self.tokenizer.encode(text))
+        return self.tokenizer.count_tokens(text)
