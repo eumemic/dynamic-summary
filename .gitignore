@@ -36,6 +36,7 @@ env/
 
 # Testing
 .coverage
+.coverage.*
 .pytest_cache/
 htmlcov/
 .tox/
