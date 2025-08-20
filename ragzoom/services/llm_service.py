@@ -8,7 +8,7 @@ from typing import Any, cast
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
-from ragzoom.config import IndexConfig
+from ragzoom.config import IndexConfig, is_gpt5_model
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
@@ -172,14 +172,22 @@ class LLMService:
 
         async with self.semaphore:
             try:
-                response = await self.client.chat.completions.create(
-                    model=self.config.summary_model,
-                    messages=messages,
-                    temperature=0.1,  # Low temperature for consistent summaries
-                    max_tokens=min(
-                        target_tokens * 2, 4000
-                    ),  # Allow some flexibility but cap at reasonable limit
-                )
+                # Build kwargs for the API call
+                api_kwargs: dict[str, Any] = {
+                    "model": self.config.summary_model,
+                    "messages": messages,
+                }
+
+                # GPT-5 models have different parameter requirements
+                if is_gpt5_model(self.config.summary_model):
+                    # GPT-5 models need reasoning_effort="minimal" to output text instead of just reasoning
+                    api_kwargs["reasoning_effort"] = "minimal"
+                else:
+                    # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
+                    # Use a hardcoded reasonable temperature for summaries
+                    api_kwargs["temperature"] = 0.3
+
+                response = await self.client.chat.completions.create(**api_kwargs)
 
                 content = response.choices[0].message.content
                 if not content:
