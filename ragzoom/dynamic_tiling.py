@@ -2,10 +2,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-import tiktoken
-
 from ragzoom.config import QueryConfig
 from ragzoom.tiling import Tiling
+from ragzoom.utils.tokenization import tokenizer
 
 if TYPE_CHECKING:
     from ragzoom.store import TreeNode
@@ -38,7 +37,7 @@ class DynamicTilingGenerator:
 
     def __init__(self, config: QueryConfig):
         self.config = config
-        self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        self.tokenizer = tokenizer
         self._memo_cache: dict[tuple[str | None, int], Tiling] = {}
         self._subtree_relevance_cache: dict[str, float] = {}
         self._nodes: dict[str, TreeNode] = {}  # Will be set per tiling request

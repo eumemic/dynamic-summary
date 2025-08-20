@@ -103,8 +103,9 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store):
         return MockOpenAIResponseWithCache("", 0, 0)
 
     with patch.object(indexer.client.chat.completions, "create", new=mock_create):
-        with patch.object(
-            indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
+        with (
+            patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
+            patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
         ):
             await indexer._summarize_text(
                 left_text="Test content that needs to be long enough to trigger summarization"
@@ -176,8 +177,12 @@ async def test_backward_compatibility_without_cached_tokens(mock_store):
             else:
                 return [0] * 100  # Default
 
-        with patch.object(
-            indexer.splitter.tokenizer, "encode", side_effect=mock_encode
+        with (
+            patch("ragzoom.index.tokenizer.encode", side_effect=mock_encode),
+            patch(
+                "ragzoom.index.tokenizer.count_tokens",
+                side_effect=lambda x: len(mock_encode(x)),
+            ),
         ):
             await indexer._summarize_text(
                 left_text="Test content that needs to be long enough to trigger summarization"
@@ -249,8 +254,9 @@ async def test_cached_tokens_across_multiple_retries(mock_store):
         return MockOpenAIResponseWithCache("", 0, 0)
 
     with patch.object(indexer.client.chat.completions, "create", new=mock_create):
-        with patch.object(
-            indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
+        with (
+            patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
+            patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
         ):
             await indexer._summarize_text(
                 left_text="Test content that needs to be long enough to trigger summarization"
@@ -307,8 +313,13 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store):
         pytest.fail("Should not call API for passthrough")
 
     with patch.object(indexer.client.chat.completions, "create", new=mock_create):
-        with patch.object(
-            indexer.splitter.tokenizer, "encode", return_value=[0] * 50  # Under target
+        with (
+            patch(
+                "ragzoom.index.tokenizer.encode", return_value=[0] * 50  # Under target
+            ),
+            patch(
+                "ragzoom.index.tokenizer.count_tokens", return_value=50  # Under target
+            ),
         ):
             await indexer._summarize_text(
                 left_text="Short",
@@ -367,8 +378,9 @@ async def test_cached_tokens_with_high_cache_rate(mock_store):
             )
 
     with patch.object(indexer.client.chat.completions, "create", new=mock_create):
-        with patch.object(
-            indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
+        with (
+            patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
+            patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
         ):
             await indexer._summarize_text(
                 left_text="Long content " * 50,
