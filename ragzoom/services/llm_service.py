@@ -159,68 +159,66 @@ class LLMService:
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Make OpenAI API call for summarization with telemetry tracking."""  # jscpd:ignore-end
-        async with self.semaphore:
-            try:
-                # Build kwargs for the API call
-                api_kwargs: dict[str, Any] = {
-                    "model": self.config.summary_model,
-                    "messages": messages,
-                }
+        # Note: Semaphore is now handled at the _summarize_text level to control entire summarization process
+        try:
+            # Build kwargs for the API call
+            api_kwargs: dict[str, Any] = {
+                "model": self.config.summary_model,
+                "messages": messages,
+            }
 
-                # GPT-5 models have different parameter requirements
-                if is_gpt5_model(self.config.summary_model):
-                    # GPT-5 models need reasoning_effort="minimal" to output text instead of just reasoning
-                    api_kwargs["reasoning_effort"] = "minimal"
-                else:
-                    # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
-                    # Use a hardcoded reasonable temperature for summaries
-                    api_kwargs["temperature"] = 0.3
+            # GPT-5 models have different parameter requirements
+            if is_gpt5_model(self.config.summary_model):
+                # GPT-5 models need reasoning_effort="minimal" to output text instead of just reasoning
+                api_kwargs["reasoning_effort"] = "minimal"
+            else:
+                # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
+                # Use a hardcoded reasonable temperature for summaries
+                api_kwargs["temperature"] = 0.3
 
-                response = await self.client.chat.completions.create(**api_kwargs)
+            response = await self.client.chat.completions.create(**api_kwargs)
 
-                content = response.choices[0].message.content
-                if not content:
-                    raise ValueError("Empty response from OpenAI")
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("Empty response from OpenAI")
 
-                # Extract usage information for telemetry
-                if not response.usage:
-                    raise ValueError("No usage information in OpenAI response")
+            # Extract usage information for telemetry
+            if not response.usage:
+                raise ValueError("No usage information in OpenAI response")
 
-                usage_info = {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                    "total_tokens": response.usage.total_tokens,
-                    "model": self.config.summary_model,
-                }
+            usage_info = {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+                "model": self.config.summary_model,
+            }
 
-                # Extract cached tokens if available (for prompt caching)
-                if (
-                    hasattr(response.usage, "prompt_tokens_details")
-                    and response.usage.prompt_tokens_details
-                ):
-                    prompt_tokens_details = response.usage.prompt_tokens_details
-                    # Handle both dict and object formats
-                    cached_tokens = 0
-                    if isinstance(prompt_tokens_details, dict):
-                        cached_tokens = (
-                            prompt_tokens_details.get("cached_tokens", 0) or 0
-                        )
-                    elif hasattr(prompt_tokens_details, "cached_tokens"):
-                        cached_tokens = prompt_tokens_details.cached_tokens or 0
+            # Extract cached tokens if available (for prompt caching)
+            if (
+                hasattr(response.usage, "prompt_tokens_details")
+                and response.usage.prompt_tokens_details
+            ):
+                prompt_tokens_details = response.usage.prompt_tokens_details
+                # Handle both dict and object formats
+                cached_tokens = 0
+                if isinstance(prompt_tokens_details, dict):
+                    cached_tokens = prompt_tokens_details.get("cached_tokens", 0) or 0
+                elif hasattr(prompt_tokens_details, "cached_tokens"):
+                    cached_tokens = prompt_tokens_details.cached_tokens or 0
 
-                    # Handle Mock objects in tests - they won't compare properly
-                    try:
-                        if cached_tokens and cached_tokens > 0:
-                            usage_info["cached_tokens"] = cached_tokens
-                    except (TypeError, AttributeError):
-                        # cached_tokens might be a mock object, skip it
-                        pass
+                # Handle Mock objects in tests - they won't compare properly
+                try:
+                    if cached_tokens and cached_tokens > 0:
+                        usage_info["cached_tokens"] = cached_tokens
+                except (TypeError, AttributeError):
+                    # cached_tokens might be a mock object, skip it
+                    pass
 
-                return content, usage_info
+            return content, usage_info
 
-            except Exception as e:
-                logger.error(f"Error in OpenAI API call for node {node_id}: {e}")
-                raise
+        except Exception as e:
+            logger.error(f"Error in OpenAI API call for node {node_id}: {e}")
+            raise
 
     async def _record_summary_telemetry(
         self,
@@ -524,51 +522,53 @@ Here's the content to summarize:"""
             )
 
         # Make initial summary attempt
-        try:
-            start_time = time.time()
-            summary, usage_info = await self._make_summary_call(
-                cast(list[ChatCompletionMessageParam], messages),
-                target_tokens,
-                parent_id or "",
-                reporter,
-            )
-
-            summary_tokens = tokenizer.count_tokens(summary)
-
-            # Record telemetry for initial attempt - create a mock response object
-            if reporter and parent_id:
-                mock_response = _create_mock_response(usage_info)
-                await self._record_summary_telemetry(
-                    reporter=reporter,
-                    parent_id=parent_id,
-                    response=mock_response,
-                    target_tokens=target_tokens,
-                    input_text_tokens=input_text_tokens,
-                    actual_tokens=summary_tokens,
-                    start_time=start_time,
+        # Acquire semaphore for the entire summarization process (including retries)
+        async with self.semaphore:
+            try:
+                start_time = time.time()
+                summary, usage_info = await self._make_summary_call(
+                    cast(list[ChatCompletionMessageParam], messages),
+                    target_tokens,
+                    parent_id or "",
+                    reporter,
                 )
 
-            # Check if retry is needed
-            if not self._should_retry_summary(summary_tokens, target_tokens):
+                summary_tokens = tokenizer.count_tokens(summary)
+
+                # Record telemetry for initial attempt - create a mock response object
+                if reporter and parent_id:
+                    mock_response = _create_mock_response(usage_info)
+                    await self._record_summary_telemetry(
+                        reporter=reporter,
+                        parent_id=parent_id,
+                        response=mock_response,
+                        target_tokens=target_tokens,
+                        input_text_tokens=input_text_tokens,
+                        actual_tokens=summary_tokens,
+                        start_time=start_time,
+                    )
+
+                # Check if retry is needed
+                if not self._should_retry_summary(summary_tokens, target_tokens):
+                    return summary, 0, summary_tokens
+
+                # Attempt to correct the summary
+                if self.config.max_retries > 0:
+                    final_summary, retry_count, final_tokens = (
+                        await self._retry_summary_correction(
+                            cast(list[ChatCompletionMessageParam], messages),
+                            summary,
+                            summary_tokens,
+                            target_tokens,
+                            parent_id or "",
+                            reporter,
+                        )
+                    )
+                    return final_summary, retry_count, final_tokens
+
+                # No retries allowed, return initial attempt
                 return summary, 0, summary_tokens
 
-            # Attempt to correct the summary
-            if self.config.max_retries > 0:
-                final_summary, retry_count, final_tokens = (
-                    await self._retry_summary_correction(
-                        cast(list[ChatCompletionMessageParam], messages),
-                        summary,
-                        summary_tokens,
-                        target_tokens,
-                        parent_id or "",
-                        reporter,
-                    )
-                )
-                return final_summary, retry_count, final_tokens
-
-            # No retries allowed, return initial attempt
-            return summary, 0, summary_tokens
-
-        except Exception as e:
-            logger.error(f"Error summarizing text for node {parent_id}: {e}")
-            raise
+            except Exception as e:
+                logger.error(f"Error summarizing text for node {parent_id}: {e}")
+                raise
