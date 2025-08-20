@@ -1,11 +1,10 @@
 """Tests for document API endpoints."""
 
-from unittest.mock import Mock, patch
-
 import pytest
 from fastapi.testclient import TestClient
 
 from ragzoom.api import app
+from tests.utils import mock_openai_context
 
 
 class TestDocumentAPI:
@@ -13,71 +12,9 @@ class TestDocumentAPI:
 
     @pytest.fixture
     def mock_openai(self):
-        """Mock OpenAI for tests."""
-        with (
-            patch("ragzoom.index.AsyncOpenAI") as mock_index,
-            patch("ragzoom.retrieve.OpenAI") as mock_retrieve,
-        ):
-
-            # Create async mocks for index client
-            async def mock_embeddings_create_async(*args, **kwargs):
-                input_data = kwargs.get("input", args[0] if args else "")
-                if isinstance(input_data, list):
-                    embeddings = []
-                    for text in input_data:
-                        if "dragon" in text.lower():
-                            embeddings.append(Mock(embedding=[0.9] * 1536))
-                        elif "wizard" in text.lower():
-                            embeddings.append(Mock(embedding=[0.8] * 1536))
-                        else:
-                            embeddings.append(Mock(embedding=[0.5] * 1536))
-                    return Mock(data=embeddings)
-                else:
-                    if "dragon" in input_data.lower():
-                        return Mock(data=[Mock(embedding=[0.9] * 1536)])
-                    elif "wizard" in input_data.lower():
-                        return Mock(data=[Mock(embedding=[0.8] * 1536)])
-                    else:
-                        return Mock(data=[Mock(embedding=[0.5] * 1536)])
-
-            async def mock_chat_create_async(*args, **kwargs):
-                return Mock(
-                    choices=[
-                        Mock(message=Mock(content="Summary of left and right content"))
-                    ]
-                )
-
-            # Create sync mocks
-            def mock_embeddings_create_sync(*args, **kwargs):
-                input_data = kwargs.get("input", args[0] if args else "")
-                if "dragon" in input_data.lower():
-                    return Mock(data=[Mock(embedding=[0.9] * 1536)])
-                elif "wizard" in input_data.lower():
-                    return Mock(data=[Mock(embedding=[0.8] * 1536)])
-                else:
-                    return Mock(data=[Mock(embedding=[0.5] * 1536)])
-
-            # Setup async client
-            instance_async = Mock()
-            instance_async.embeddings = Mock()
-            instance_async.embeddings.create = Mock(
-                side_effect=mock_embeddings_create_async
-            )
-            instance_async.chat = Mock()
-            instance_async.chat.completions = Mock()
-            instance_async.chat.completions.create = Mock(
-                side_effect=mock_chat_create_async
-            )
-            mock_index.return_value = instance_async
-
-            # Setup sync clients
-            instance_sync = Mock()
-            instance_sync.embeddings = Mock()
-            instance_sync.embeddings.create = Mock(
-                side_effect=mock_embeddings_create_sync
-            )
-            mock_retrieve.return_value = instance_sync
-
+        """Mock OpenAI for tests with dragon/wizard specialized embeddings."""
+        embedding_rules = {"dragon": [0.9] * 1536, "wizard": [0.8] * 1536}
+        with mock_openai_context(embedding_rules):
             yield
 
     @pytest.fixture

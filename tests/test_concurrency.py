@@ -1,12 +1,12 @@
 """Concurrency tests for thread safety."""
 
 import asyncio
-from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from ragzoom.api import app, get_ragzoom_service
+from tests.utils import mock_openai_context
 
 
 class TestConcurrency:
@@ -14,56 +14,8 @@ class TestConcurrency:
 
     @pytest.fixture
     def mock_openai(self):
-        """Mock OpenAI for tests."""
-        with (
-            patch("ragzoom.index.AsyncOpenAI") as mock_index,
-            patch("ragzoom.retrieve.OpenAI") as mock_retrieve,
-        ):
-
-            # Create async mocks for index client
-            async def mock_embeddings_create_async(*args, **kwargs):
-                input_data = kwargs.get("input", args[0] if args else "")
-                if isinstance(input_data, list):
-                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
-                else:
-                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
-
-            async def mock_chat_create_async(*args, **kwargs):
-                return Mock(choices=[Mock(message=Mock(content="Summary"))])
-
-            # Create sync mocks for retrieve/assemble clients
-            def mock_embeddings_create_sync(*args, **kwargs):
-                return Mock(data=[Mock(embedding=[0.1] * 1536)])
-
-            def mock_chat_create_sync(*args, **kwargs):
-                return Mock(choices=[Mock(message=Mock(content="Summary"))])
-
-            # Setup async client (index)
-            instance_async = Mock()
-            instance_async.embeddings = Mock()
-            instance_async.embeddings.create = Mock(
-                side_effect=mock_embeddings_create_async
-            )
-            instance_async.chat = Mock()
-            instance_async.chat.completions = Mock()
-            instance_async.chat.completions.create = Mock(
-                side_effect=mock_chat_create_async
-            )
-            mock_index.return_value = instance_async
-
-            # Setup sync clients (retrieve only)
-            instance_sync = Mock()
-            instance_sync.embeddings = Mock()
-            instance_sync.embeddings.create = Mock(
-                side_effect=mock_embeddings_create_sync
-            )
-            instance_sync.chat = Mock()
-            instance_sync.chat.completions = Mock()
-            instance_sync.chat.completions.create = Mock(
-                side_effect=mock_chat_create_sync
-            )
-            mock_retrieve.return_value = instance_sync
-
+        """Mock OpenAI for tests using centralized utilities."""
+        with mock_openai_context():
             yield
 
     @pytest.fixture
