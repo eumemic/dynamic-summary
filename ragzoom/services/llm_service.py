@@ -15,7 +15,8 @@ from ragzoom.utils.tokenization import tokenizer
 logger = logging.getLogger(__name__)
 
 # Constants for word-based prompting bias compensation
-WORDS_PER_TOKEN = 0.75  # Conservative estimate for word/token ratio
+# The 0.94 factor compensates for a systematic overshoot bias in GPT models
+WORDS_PER_TOKEN = 0.75 * 0.94  # 0.705 - Bias-compensated word/token ratio
 
 
 def _create_mock_response(usage_info: dict[str, Any]) -> Any:
@@ -274,13 +275,21 @@ class LLMService:
     def _should_retry_summary(self, current_tokens: int, target_tokens: int) -> bool:
         """Determine if a summary should be retried based on deviation from target.
 
-        Returns True if the current summary deviates from target by more than
+        Only retries overshoots (when summary is too long).
+        Undershoots are always accepted as they're already concise.
+
+        Returns True if the current summary overshoots target by more than
         the configured threshold.
         """
         if target_tokens <= 0:
             return False
 
-        deviation = abs(current_tokens - target_tokens) / target_tokens
+        # Only retry overshoots - undershoots are always acceptable
+        if current_tokens <= target_tokens:
+            return False
+
+        # Check if overshoot exceeds threshold
+        deviation = (current_tokens - target_tokens) / target_tokens
         return deviation > self.config.retry_threshold
 
     async def _execute_retry_attempt(
@@ -295,23 +304,27 @@ class LLMService:
     ) -> tuple[str, dict[str, Any]]:
         """Execute a single retry attempt for summary correction."""  # jscpd:ignore-end
         # Calculate deviation details for retry prompt
-        deviation = (
-            abs(previous_tokens - target_tokens) / target_tokens
+        deviation_pct = (
+            (previous_tokens - target_tokens) / target_tokens * 100
             if target_tokens > 0
             else 0
         )
-        direction = "larger" if previous_tokens > target_tokens else "smaller"
+        deviation_pct_rounded = round(abs(deviation_pct))
+        larger = previous_tokens > target_tokens
+        direction = "larger" if larger else "smaller"
         target_words = self._tokens_to_words(target_tokens)
 
         # Append the previous response and correction request to conversation
         messages.append({"role": "assistant", "content": previous_summary})
 
-        retry_prompt = (
-            f"Your previous summary was {previous_tokens} tokens "
-            f"({deviation:.0%} {direction} than target). "
-            f"Please provide a revised summary that is closer to the target of "
-            f"approximately {target_words} words ({target_tokens} tokens)."
+        # Build retry prompt matching original format
+        addendum = (
+            " Use your last attempt as a starting point and aggressively prune details to hit the target words."
+            if larger
+            else ""
         )
+        retry_prompt = f"Your summary was {deviation_pct_rounded}% {direction} than the target length. Try again, making it AT MOST {target_words} words.{addendum}"
+
         messages.append({"role": "user", "content": retry_prompt})
 
         # Make the API call
@@ -333,7 +346,7 @@ class LLMService:
         """Attempt to correct a summary that doesn't meet target token count.
 
         Returns:
-            tuple: (best_summary, retry_count, best_token_count)
+            tuple: (best_summary, actual_retry_count, best_token_count)
         """
         best_summary = initial_summary
         best_tokens = initial_tokens
@@ -342,6 +355,9 @@ class LLMService:
             if target_tokens > 0
             else float("inf")
         )
+
+        # Track actual retries made
+        actual_retries = 0
 
         # Create a copy of messages for retry attempts
         retry_messages = messages.copy()
@@ -361,6 +377,9 @@ class LLMService:
                     reporter,
                 )
 
+                # We made an actual retry attempt
+                actual_retries = attempt
+
                 retry_tokens = tokenizer.count_tokens(retry_summary)
 
                 # Record telemetry for retry attempt
@@ -379,7 +398,7 @@ class LLMService:
                 # Check if this attempt is acceptable (within threshold)
                 if not self._should_retry_summary(retry_tokens, target_tokens):
                     # This attempt is within threshold - accept it immediately
-                    return retry_summary, attempt, retry_tokens
+                    return retry_summary, actual_retries, retry_tokens
 
                 # This attempt is still outside threshold, but check if it's better
                 retry_deviation = (
@@ -401,13 +420,13 @@ class LLMService:
                 logger.error(f"Retry attempt {attempt} failed for node {node_id}: {e}")
                 break
 
-        # Return the best attempt we found
+        # Return the best attempt we found with actual retry count
         logger.debug(
             f"Summary retry complete for node {node_id}. "
             f"Best result: {best_tokens} tokens (deviation: {best_deviation:.1%})"
         )
 
-        return best_summary, self.config.max_retries, best_tokens
+        return best_summary, actual_retries, best_tokens
 
     async def _summarize_text(
         self,
@@ -500,11 +519,7 @@ Here's the content to summarize:"""
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are an expert at creating concise, informative summaries. "
-                    "Your goal is to capture the essential information while staying "
-                    "close to the target length."
-                ),
+                "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
             },
             {"role": "user", "content": full_prompt},
         ]
