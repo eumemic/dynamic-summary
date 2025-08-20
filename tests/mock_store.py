@@ -1,17 +1,26 @@
-"""Mock Store implementation for fast testing."""
+"""Simplified mock Store implementation for fast testing."""
 
 import hashlib
 from collections import OrderedDict, defaultdict, deque
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
+import numpy as np
+from numpy.typing import NDArray
 
-class SimpleMockStore:
+from ragzoom.interfaces import StoreInterface
+from ragzoom.models import Document, TreeNode
+
+
+class SimpleMockStore(StoreInterface):
     """Lightweight mock of Store for unit testing.
 
     This mock provides fast, in-memory implementations of the most commonly
     used Store methods. It maintains consistency for tree operations and
     basic state management without the overhead of real database I/O.
+
+    Implements StoreInterface for type safety and compatibility.
     """
 
     PIN_DEPTH_MAX = 2  # Match Store class constant
@@ -31,151 +40,32 @@ class SimpleMockStore:
         self._node_cache = OrderedDict()
         self._cache_order = deque(maxlen=1000)
 
-        # Mock SessionLocal for tests that use direct DB access
-        self._setup_session_mock()
-
         # Track expected embedding dimension
         self._expected_embedding_dim = None
 
-    def _setup_session_mock(self):
-        """Setup mock session for compatibility with tests using SessionLocal."""
-        mock_session = MagicMock()
-
-        # Create a proper query mock that can handle filter_by and update nodes
-        def create_query_mock(model_class):
-            # Determine the model type
-            model_name = getattr(model_class, "__name__", str(model_class))
-
-            query_mock = MagicMock()
-
-            # Set up model-specific all() and count() methods based on the model type
-            if "TreeNode" in model_name or "Node" in model_name:
-                query_mock.all = MagicMock(return_value=list(self.nodes.values()))
-                query_mock.count = MagicMock(return_value=len(self.nodes))
-                query_mock.first = MagicMock(
-                    return_value=list(self.nodes.values())[0] if self.nodes else None
-                )
-            elif "Document" in model_name:
-                query_mock.all = MagicMock(return_value=list(self.documents.values()))
-                query_mock.count = MagicMock(return_value=len(self.documents))
-                query_mock.first = MagicMock(
-                    return_value=(
-                        list(self.documents.values())[0] if self.documents else None
-                    )
-                )
-            else:
-                # Default fallback
-                query_mock.all = MagicMock(return_value=[])
-                query_mock.count = MagicMock(return_value=0)
-                query_mock.first = MagicMock(return_value=None)
-
-            def filter_by_impl(**kwargs):
-                # Handle TreeNode queries - check for TreeNode or similar patterns
-                if "TreeNode" in model_name or "Node" in model_name:
-                    if "id" in kwargs:
-                        node_id = kwargs["id"]
-                        # Return a mock that will find our node
-                        result_mock = MagicMock()
-
-                        def first_impl():
-                            # Return the actual node from our store
-                            if node_id in self.nodes:
-                                return self.nodes[node_id]
-                            return None
-
-                        result_mock.first = first_impl
-                        return result_mock
-                    elif "document_id" in kwargs:
-                        doc_id = kwargs["document_id"]
-                        parent_id = kwargs.get("parent_id")
-                        result_mock = MagicMock()
-
-                        def all_impl():
-                            nodes = [
-                                node
-                                for node in self.nodes.values()
-                                if node.document_id == doc_id
-                            ]
-                            if parent_id is not None:
-                                nodes = [
-                                    node
-                                    for node in nodes
-                                    if node.parent_id == parent_id
-                                ]
-                            return nodes
-
-                        def count_impl():
-                            nodes = all_impl()
-                            return len(nodes)
-
-                        def first_impl():
-                            nodes = all_impl()
-                            return nodes[0] if nodes else None
-
-                        result_mock.all = all_impl
-                        result_mock.count = count_impl
-                        result_mock.first = first_impl
-                        return result_mock
-                    else:
-                        result_mock = MagicMock()
-                        result_mock.all.return_value = list(self.nodes.values())
-                        result_mock.count.return_value = len(self.nodes)
-                        return result_mock
-
-                # Handle Document queries
-                elif "Document" in model_name:
-                    if "id" in kwargs:
-                        doc_id = kwargs["id"]
-                        result_mock = MagicMock()
-
-                        def first_impl():
-                            return self.documents.get(doc_id)
-
-                        result_mock.first = first_impl
-                        return result_mock
-                    else:
-                        # Handle .all() query for listing all documents
-                        result_mock = MagicMock()
-                        result_mock.all.return_value = list(self.documents.values())
-                        result_mock.count.return_value = len(self.documents)
-                        result_mock.first.return_value = (
-                            list(self.documents.values())[0] if self.documents else None
-                        )
-                        return result_mock
-
-                # Default fallback
-                result_mock = MagicMock()
-                result_mock.all.return_value = []
-                result_mock.count.return_value = 0
-                result_mock.first.return_value = None
-                return result_mock
-
-            query_mock.filter_by = filter_by_impl
-            query_mock.filter = MagicMock(return_value=query_mock)
-
-            return query_mock
-
-        mock_session.query = create_query_mock
-        mock_session.commit = MagicMock()  # No-op for commits
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=None)
-
-        self.SessionLocal = MagicMock(return_value=mock_session)
+        # Simple mock for SessionLocal with query support
+        self._setup_session_mock()
 
     def add_node(
         self,
         node_id: str,
         text: str,
-        embedding: list[float],
+        embedding: list[float] | NDArray[np.float64],
         span_start: int,
         span_end: int,
         parent_id: str | None = None,
-        document_id: str | None = None,
         left_child_id: str | None = None,
         right_child_id: str | None = None,
-        **kwargs,
-    ) -> None:
+        document_id: str | None = None,
+        token_count: int = 0,
+        height: int = 0,
+        preceding_neighbor_id: str | None = None,
+    ) -> TreeNode:
         """Add a node to the mock store."""
+        # Convert embedding to list if needed
+        if isinstance(embedding, np.ndarray):
+            embedding = embedding.tolist()
+
         # Validate embedding dimension
         if self._expected_embedding_dim is None:
             self._expected_embedding_dim = len(embedding)
@@ -185,56 +75,52 @@ class SimpleMockStore:
                 f"got {len(embedding)}"
             )
 
-        # Create node - compute token_count if not provided
-        import tiktoken
+        # Compute token_count if not provided
+        if token_count == 0:
+            try:
+                import tiktoken
 
-        if "token_count" not in kwargs:
-            tokenizer = tiktoken.get_encoding("cl100k_base")
-            token_count = len(tokenizer.encode(text))
-        else:
-            token_count = kwargs.get("token_count")
+                enc = tiktoken.get_encoding("cl100k_base")
+                token_count = len(enc.encode(text))
+            except (ImportError, Exception):
+                # Fallback: approximate tokens as words
+                token_count = len(text.split())
 
         node = SimpleNamespace(
             id=node_id,
-            text=text,
-            span_start=span_start,
-            span_end=span_end,
             parent_id=parent_id,
-            document_id=document_id,
             left_child_id=left_child_id,
             right_child_id=right_child_id,
+            span_start=span_start,
+            span_end=span_end,
+            text=text,
+            document_id=document_id,
             token_count=token_count,
-            preceding_neighbor_id=kwargs.get("preceding_neighbor_id"),
-            is_pinned=kwargs.get("is_pinned", False),
-            access_count=0,
+            height=height,
+            is_pinned=0,
             last_accessed=None,
+            access_count=0,
             created_at=None,
-            embedding=embedding,  # Include embedding in the node
-            height=kwargs.get("height", 0),  # Add height support
+            preceding_neighbor_id=preceding_neighbor_id,
+            embedding=list(embedding),  # Store embedding in node
         )
 
-        # Store node and embedding
         self.nodes[node_id] = node
-        self.embeddings[node_id] = embedding
+        self.embeddings[node_id] = list(embedding)
 
-        # Track document association
         if document_id:
             self.document_nodes[document_id].add(node_id)
 
         # Add to cache
         self._add_to_cache(node)
 
-        # Update mock session results
-        self._update_mock_results()
-
         return node
 
-    def add_nodes_batch(self, nodes_data: list[dict]) -> list[SimpleNamespace]:
-        """Add multiple nodes in batch - mock implementation."""
-        created_nodes = []
+    def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
+        """Add multiple nodes to the database in batch."""
+        nodes = []
         for data in nodes_data:
-            # Create node using add_node for consistency
-            self.add_node(
+            node = self.add_node(
                 node_id=data["node_id"],
                 text=data["text"],
                 embedding=data["embedding"],
@@ -244,256 +130,246 @@ class SimpleMockStore:
                 left_child_id=data.get("left_child_id"),
                 right_child_id=data.get("right_child_id"),
                 document_id=data.get("document_id"),
-                token_count=data.get("token_count"),
+                token_count=data.get("token_count", 0),
+                height=data.get("height", 0),
                 preceding_neighbor_id=data.get("preceding_neighbor_id"),
-                height=data.get("height", 0),  # Pass through height parameter
             )
-            created_nodes.append(self.nodes[data["node_id"]])
-        return created_nodes
+            nodes.append(node)
+        return nodes
 
     def update_parent_references_batch(self, updates: list[tuple[str, str]]) -> None:
-        """Update parent references in batch - mock implementation."""
-        for child_id, parent_id in updates:
-            if child_id in self.nodes:
-                self.nodes[child_id].parent_id = parent_id
-                # Invalidate cache for updated node
-                if child_id in self._node_cache:
-                    del self._node_cache[child_id]
-                    if child_id in self._cache_order:
-                        self._cache_order.remove(child_id)
+        """Update parent references for multiple nodes in batch."""
+        for node_id, parent_id in updates:
+            if node_id in self.nodes:
+                self.nodes[node_id].parent_id = parent_id
 
-    def get_node(self, node_id: str) -> SimpleNamespace | None:
+    def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID."""
-        # Check cache first
-        if node_id in self._node_cache:
-            # Move to end (most recently used)
-            if node_id in self._cache_order:
-                self._cache_order.remove(node_id)
-            self._cache_order.append(node_id)
-            return self._node_cache[node_id]
+        if node_id in self.nodes:
+            node = self.nodes[node_id]
+            # Update access tracking
+            node.access_count = getattr(node, "access_count", 0) + 1
+            # Move to end of cache order (most recently used)
+            if node_id in self._node_cache:
+                self._move_to_cache_end(node_id)
+            return node
+        return None
 
-        # Get from storage
-        node = self.nodes.get(node_id)
-        if node:
-            self._add_to_cache(node)
-        return node
+    def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
+        """Get multiple nodes by their IDs."""
+        return [
+            node for node_id in node_ids if (node := self.get_node(node_id)) is not None
+        ]
 
     def update_node_access(self, node_id: str) -> None:
         """Update access time and count for a node."""
-        node = self.nodes.get(node_id)
-        if node:
+        if node_id in self.nodes:
+            node = self.nodes[node_id]
             node.access_count = getattr(node, "access_count", 0) + 1
-            node.last_accessed = "mock_timestamp"
 
-    def get_children(
-        self, parent_id: str
-    ) -> tuple[SimpleNamespace | None, SimpleNamespace | None]:
-        """Get children of a node."""
-        parent = self.nodes.get(parent_id)
-        if not parent:
+    def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
+        """Get left and right children of a node."""
+        node = self.get_node(node_id)
+        if not node:
             return None, None
 
-        # Find children by parent_id
-        children = [n for n in self.nodes.values() if n.parent_id == parent_id]
-        children.sort(key=lambda x: x.span_start)
-
-        left = children[0] if len(children) > 0 else None
-        right = children[1] if len(children) > 1 else None
-
-        # Alternative: use left_child_id and right_child_id if set
-        if hasattr(parent, "left_child_id") and parent.left_child_id:
-            left = self.nodes.get(parent.left_child_id)
-        if hasattr(parent, "right_child_id") and parent.right_child_id:
-            right = self.nodes.get(parent.right_child_id)
-
+        left = self.get_node(node.left_child_id) if node.left_child_id else None
+        right = self.get_node(node.right_child_id) if node.right_child_id else None
         return left, right
 
-    def get_nodes(self, node_ids: list[str]) -> list[SimpleNamespace]:
-        """Get multiple nodes by their IDs."""
-        return [self.nodes[nid] for nid in node_ids if nid in self.nodes]
-
-    def get_leaf_nodes(self, document_id: str | None = None) -> list[SimpleNamespace]:
-        """Get all leaf nodes (nodes without children)."""
-        leaves = [
-            n
-            for n in self.nodes.values()
-            if n.left_child_id is None and n.right_child_id is None
+    def get_leaf_nodes(self) -> list[TreeNode]:
+        """Get all leaf nodes (nodes with no children)."""
+        return [
+            node
+            for node in self.nodes.values()
+            if not node.left_child_id and not node.right_child_id
         ]
 
-        if document_id:
-            leaves = [n for n in leaves if n.document_id == document_id]
-
-        return sorted(leaves, key=lambda x: x.span_start)
-
-    def get_root_node(self, document_id: str | None = None) -> SimpleNamespace | None:
-        """Get the root node (node without parent)."""
-        candidates = [n for n in self.nodes.values() if n.parent_id is None]
-
-        if document_id:
-            candidates = [n for n in candidates if n.document_id == document_id]
-
-        # Return any root node (there should only be one per document)
-        if candidates:
-            return candidates[0]
+    def get_root_node(self) -> TreeNode | None:
+        """Get the root node (node with no parent)."""
+        for node in self.nodes.values():
+            if not node.parent_id:
+                return node
         return None
 
-    def get_root_node_for_document(
-        self, document_id: str | None = None
-    ) -> SimpleNamespace | None:
-        """Get the root node for a specific document from the mock store."""
-        return self.get_root_node(document_id=document_id)
+    def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
+        """Get the root node for a specific document."""
+        for node in self.nodes.values():
+            if node.document_id == document_id and not node.parent_id:
+                return node
+        return None
 
-    def get_ancestors(self, node_ids: list[str]) -> list[SimpleNamespace]:
+    def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
         """Get all ancestors of given nodes."""
-        ancestor_ids = set()
-        to_process = list(node_ids)
+        all_ancestors = set()
+        current_level = set(node_ids)
 
-        while to_process:
-            node_id = to_process.pop()
-            node = self.nodes.get(node_id)
-            if node and node.parent_id and node.parent_id not in ancestor_ids:
-                ancestor_ids.add(node.parent_id)
-                to_process.append(node.parent_id)
+        while current_level:
+            next_level = set()
+            for node_id in current_level:
+                if node_id in self.nodes:
+                    node = self.nodes[node_id]
+                    if node.parent_id and node.parent_id not in all_ancestors:
+                        all_ancestors.add(node.parent_id)
+                        next_level.add(node.parent_id)
+            current_level = next_level
 
-        # Return node objects, not just IDs
-        return [self.nodes[aid] for aid in ancestor_ids if aid in self.nodes]
+        return [
+            self.nodes[ancestor_id]
+            for ancestor_id in all_ancestors
+            if ancestor_id in self.nodes
+        ]
 
     def get_node_depth(self, node_id: str) -> int:
         """Calculate depth of a node (distance from root)."""
-        node = self.get_node(node_id)
-        if not node:
+        if node_id not in self.nodes:
             raise ValueError(f"Node {node_id} not found")
 
         depth = 0
-        current_id = node.parent_id
+        current_id = node_id
+        visited = set()
 
-        while current_id:
-            depth += 1
-            parent = self.get_node(current_id)
-            if not parent:
+        while current_id and current_id not in visited:
+            visited.add(current_id)
+            node = self.nodes[current_id]
+            if not node.parent_id:
                 break
-            current_id = parent.parent_id
+            current_id = node.parent_id
+            depth += 1
 
         return depth
 
     def is_leaf_node(self, node_id: str) -> bool:
         """Check if a node is a leaf (has no children)."""
-        node = self.get_node(node_id)
-        if not node:
-            raise ValueError(f"Node {node_id} not found")
-
+        if node_id not in self.nodes:
+            return False
+        node = self.nodes[node_id]
         return not node.left_child_id and not node.right_child_id
 
     def is_root_node(self, node_id: str) -> bool:
         """Check if a node is a root (has no parent)."""
-        node = self.get_node(node_id)
-        if not node:
-            raise ValueError(f"Node {node_id} not found")
+        if node_id not in self.nodes:
+            return False
+        return not self.nodes[node_id].parent_id
 
-        return node.parent_id is None
-
-    def get_all_nodes(self) -> list[SimpleNamespace]:
-        """Get all nodes from the mock store."""
-        return list(self.nodes.values())
-
-    def get_all_nodes_for_document(
-        self, document_id: str | None
-    ) -> list[SimpleNamespace]:
-        """Get all nodes for a document from the mock store."""
-        if not document_id:
-            return list(self.nodes.values())
+    def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
+        """Get all nodes for a specific document."""
         return [node for node in self.nodes.values() if node.document_id == document_id]
 
     def search_similar(
         self,
-        query_embedding: list[float],
-        n_results: int = 10,
-        where: dict | None = None,
-        where_document: dict | None = None,
-        **kwargs,
-    ) -> list[tuple[str, float, dict]]:
-        """Simple similarity search implementation."""
-        # Filter nodes based on where conditions
-        eligible_nodes = list(self.nodes.keys())
-
-        if where and "document_id" in where:
-            doc_id_filter = where["document_id"]
-            if isinstance(doc_id_filter, dict) and "$eq" in doc_id_filter:
-                doc_id = doc_id_filter["$eq"]
-                eligible_nodes = [
-                    nid
-                    for nid in eligible_nodes
-                    if self.nodes[nid].document_id == doc_id
-                ]
-            elif isinstance(
-                doc_id_filter, str
-            ):  # Handle simple string filter for robustness
-                eligible_nodes = [
-                    nid
-                    for nid in eligible_nodes
-                    if self.nodes[nid].document_id == doc_id_filter
-                ]
+        query_embedding: list[float] | NDArray[np.float64],
+        n_results: int,
+        where: dict[str, Any] | None = None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Search for similar nodes using cosine similarity."""
+        if isinstance(query_embedding, np.ndarray):
+            query_embedding = query_embedding.tolist()
 
         results = []
-        # If mock_scores is set, use it to determine the candidates and their scores
-        if self.mock_scores:
-            for node_id, score in self.mock_scores.items():
-                if node_id in eligible_nodes:
-                    metadata = {
-                        "depth": self.get_node_depth(node_id),
-                        "span_start": self.nodes[node_id].span_start,
-                        "span_end": self.nodes[node_id].span_end,
-                    }
-                    results.append(
-                        (node_id, 1.0 - score, metadata)
-                    )  # Convert score to distance
-        else:
-            # Calculate similarity based on embeddings
-            for node_id in eligible_nodes:
-                node_embedding = self.embeddings.get(
-                    node_id, [0.5] * len(query_embedding)
-                )
-                # Simple similarity: compare first element
-                similarity = 1.0 - abs(query_embedding[0] - node_embedding[0])
-                distance = 1.0 - similarity
-                metadata = {
-                    "depth": self.get_node_depth(node_id),
-                    "span_start": self.nodes[node_id].span_start,
-                    "span_end": self.nodes[node_id].span_end,
-                }
-                results.append((node_id, distance, metadata))
+        for node_id, node_embedding in self.embeddings.items():
+            # Simple cosine similarity calculation
+            dot_product = sum(a * b for a, b in zip(query_embedding, node_embedding))
+            norm_a = sum(a * a for a in query_embedding) ** 0.5
+            norm_b = sum(b * b for b in node_embedding) ** 0.5
 
-            # Sort by distance (ascending) and take top n_results
-            results.sort(key=lambda x: x[1])
-            results = results[:n_results]
+            if norm_a > 0 and norm_b > 0:
+                similarity = dot_product / (norm_a * norm_b)
+            else:
+                similarity = 0.0
 
-        return results
+            # Check if we have a mock score override
+            if node_id in self.mock_scores:
+                similarity = self.mock_scores[node_id]
+
+            node = self.nodes[node_id]
+            metadata = {
+                "span_start": node.span_start,
+                "span_end": node.span_end,
+                "parent_id": node.parent_id or "",
+                "document_id": node.document_id or "",
+                "is_leaf": 1 if self.is_leaf_node(node_id) else 0,
+            }
+
+            # Apply where filter if provided
+            if where:
+                if "document_id" in where and node.document_id != where["document_id"]:
+                    continue
+
+            results.append((node_id, similarity, metadata))
+
+        # Sort by similarity (descending) and take top n_results
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results[:n_results]
 
     def compute_mmr_diverse_results(
         self,
-        query_embedding: list[float],
-        candidates: list[tuple[str, float, dict]],
+        query_embedding: list[float] | NDArray[np.float64],
+        candidates: list[tuple[str, float, dict[str, Any]]],
         lambda_param: float,
         k: int,
     ) -> list[str]:
-        """Simplified MMR implementation for testing."""
-        # For testing, just return the top k candidate IDs
-        # Real MMR would compute similarity between candidates
-        result_ids = []
-        for candidate in candidates[:k]:
-            result_ids.append(candidate[0])
-        return result_ids
+        """Apply MMR (Maximal Marginal Relevance) to get diverse results."""
+        if not candidates or k <= 0:
+            return []
 
-    def get_document_by_path(self, file_path: str):
-        """Mock get document by path."""
-        # Check documents by file_path
+        if isinstance(query_embedding, np.ndarray):
+            query_embedding = query_embedding.tolist()
+
+        selected = []
+        remaining = candidates.copy()
+
+        for _ in range(min(k, len(candidates))):
+            if not remaining:
+                break
+
+            best_score = -float("inf")
+            best_idx = 0
+
+            for i, (node_id, relevance, _) in enumerate(remaining):
+                # Calculate diversity penalty
+                max_similarity = 0.0
+                if selected:
+                    node_embedding = self.embeddings.get(node_id, [])
+                    for selected_id in selected:
+                        selected_embedding = self.embeddings.get(selected_id, [])
+                        if node_embedding and selected_embedding:
+                            # Simple cosine similarity
+                            dot_product = sum(
+                                a * b
+                                for a, b in zip(node_embedding, selected_embedding)
+                            )
+                            norm_a = sum(a * a for a in node_embedding) ** 0.5
+                            norm_b = sum(b * b for b in selected_embedding) ** 0.5
+                            if norm_a > 0 and norm_b > 0:
+                                similarity = dot_product / (norm_a * norm_b)
+                                max_similarity = max(max_similarity, similarity)
+
+                # MMR score: λ * relevance - (1 - λ) * max_similarity
+                mmr_score = (
+                    lambda_param * relevance - (1 - lambda_param) * max_similarity
+                )
+
+                if mmr_score > best_score:
+                    best_score = mmr_score
+                    best_idx = i
+
+            # Select the best candidate
+            selected_node_id = remaining[best_idx][0]
+            selected.append(selected_node_id)
+            remaining.pop(best_idx)
+
+        return selected
+
+    def get_document_by_path(self, file_path: str) -> Document | None:
+        """Get a document by file path."""
         for doc in self.documents.values():
-            if hasattr(doc, "file_path") and doc.file_path == file_path:
+            if doc.file_path == file_path:
                 return doc
         return None
 
-    def get_document_by_id(self, document_id: str):
-        """Mock get document by ID."""
+    def get_document_by_id(self, document_id: str) -> Document | None:
+        """Get a document by ID."""
         return self.documents.get(document_id)
 
     def add_document(
@@ -504,10 +380,9 @@ class SimpleMockStore:
         chunk_count: int,
         embedding_model: str,
         summary_model: str,
-    ):
-        """Mock add document."""
+    ) -> Document:
+        """Add a document record."""
         from datetime import datetime
-        from types import SimpleNamespace
 
         doc = SimpleNamespace(
             id=document_id,
@@ -516,143 +391,187 @@ class SimpleMockStore:
             chunk_count=chunk_count,
             embedding_model=embedding_model,
             summary_model=summary_model,
-            indexed_at=datetime.utcnow(),
+            created_at=datetime.now(),
+            indexed_at=datetime.now(),  # Add missing attribute
         )
         self.documents[document_id] = doc
         return doc
 
     @staticmethod
     def compute_content_hash(content: str) -> str:
-        """Mock content hash computation."""
-
+        """Compute SHA256 hash of content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     def pin_node(self, node_id: str) -> None:
         """Pin a node."""
-        self.pinned_nodes.add(node_id)
-        node = self.nodes.get(node_id)
-        if node:
-            node.is_pinned = True
+        if node_id in self.nodes:
+            self.pinned_nodes.add(node_id)
+            self.nodes[node_id].is_pinned = 1
 
     def set_mock_scores(self, scores: dict[str, float]):
-        """Set mock scores for testing."""
+        """Set mock similarity scores for testing."""
         self.mock_scores = scores
 
-    def get_pinned_nodes(self, depth_max: int | None = None) -> list[SimpleNamespace]:
-        """Get all pinned nodes."""
-        pinned = [self.nodes[nid] for nid in self.pinned_nodes if nid in self.nodes]
-
-        if depth_max is not None:
-            pinned = [n for n in pinned if self.get_node_depth(n.id) <= depth_max]
-
+    def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
+        """Get all pinned nodes up to optional max depth."""
+        pinned = []
+        for node_id in self.pinned_nodes:
+            if node_id in self.nodes:
+                if depth_max is None or self.get_node_depth(node_id) <= depth_max:
+                    pinned.append(self.nodes[node_id])
         return pinned
-
-    def update_text(
-        self,
-        node_id: str,
-        text: str,
-        embedding: list[float],
-    ) -> None:
-        """Update a node's text content."""
-        node = self.nodes.get(node_id)
-        if node:
-            node.text = text
-            self.embeddings[node_id] = embedding
 
     def get_document_embedding_model(self, document_id: str) -> str | None:
         """Get the embedding model used for a specific document."""
         doc = self.get_document_by_id(document_id)
-        return doc.embedding_model if doc and hasattr(doc, "embedding_model") else None
+        return doc.embedding_model if doc else None
 
-    def delete_document_nodes(self, document_id: str) -> None:
-        """Delete all nodes for a document."""
-        node_ids = list(self.document_nodes.get(document_id, []))
+    def delete_document_nodes(self, document_id: str) -> int:
+        """Delete all nodes associated with a document."""
+        if document_id not in self.document_nodes:
+            return 0
 
+        node_ids = list(self.document_nodes[document_id])
         for node_id in node_ids:
-            self.nodes.pop(node_id, None)
-            self.embeddings.pop(node_id, None)
-            self._node_cache.pop(node_id, None)
-            self.pinned_nodes.discard(node_id)
+            if node_id in self.nodes:
+                del self.nodes[node_id]
+            if node_id in self.embeddings:
+                del self.embeddings[node_id]
+            if node_id in self.pinned_nodes:
+                self.pinned_nodes.remove(node_id)
 
-        self.document_nodes.pop(document_id, None)
-        self.documents.pop(document_id, None)
-
-        self._update_mock_results()
-
-    def find_existing_document(self, content_hash: str) -> str | None:
-        """Find document by content hash."""
-        for doc in self.documents.values():
-            if doc.content_hash == content_hash:
-                return doc.id
-        return None
+        del self.document_nodes[document_id]
+        return len(node_ids)
 
     def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
         """Get token statistics for a document."""
+        nodes = self.get_all_nodes_for_document(document_id)
+        if not nodes:
+            return {"total_tokens": 0, "node_count": 0, "avg_tokens": 0.0}
+
+        total_tokens = sum(node.token_count for node in nodes)
+        node_count = len(nodes)
+        avg_tokens = total_tokens / node_count if node_count > 0 else 0.0
+
         return {
-            "avg_tokens": 100.0,
-            "min_tokens": 50,
-            "max_tokens": 150,
-            "total_tokens": 1000,
-            "node_count": 10,
+            "total_tokens": total_tokens,
+            "node_count": node_count,
+            "avg_tokens": avg_tokens,
         }
 
     def clear_document(self, document_id: str) -> int:
-        """Clear all data for a document."""
-        # Count nodes before deleting
-        node_count = len(
-            [n for n in self.nodes.values() if n.document_id == document_id]
-        )
-        self.delete_document_nodes(document_id)
-        return node_count
+        """Clear all data for a document, including orphaned nodes and document record."""
+        deleted_count = self.delete_document_nodes(document_id)
+        if document_id in self.documents:
+            del self.documents[document_id]
+        return deleted_count
 
     def close(self) -> None:
-        """Close the store (no-op for mock)."""
-        pass
+        """Close database connections and cleanup resources."""
+        pass  # No-op for mock
 
-    # Add cache attributes for CLI compatibility
     @property
     def node_cache(self):
-        """Mock node_cache for CLI compatibility."""
-        return self._node_cache if hasattr(self, "_node_cache") else {}
+        """Access to node cache for backward compatibility."""
+        return self._node_cache
 
     @property
     def cache_order(self):
-        """Mock cache_order for CLI compatibility."""
-        return self._cache_order if hasattr(self, "_cache_order") else []
+        """Access to cache order for backward compatibility."""
+        return self._cache_order
 
     def _add_to_cache(self, node) -> None:
-        """Add node to cache."""
-        if node.id in self._node_cache:
-            if node.id in self._cache_order:
-                self._cache_order.remove(node.id)
-        elif len(self._cache_order) >= self._cache_order.maxlen:
-            # Evict LRU
-            lru_id = self._cache_order.popleft()
-            self._node_cache.pop(lru_id, None)
+        """Add a node to the cache."""
+        if len(self._node_cache) >= 1000:
+            # Remove oldest item
+            oldest_key = next(iter(self._node_cache))
+            del self._node_cache[oldest_key]
 
         self._node_cache[node.id] = node
+        if node.id in self._cache_order:
+            self._cache_order.remove(node.id)
         self._cache_order.append(node.id)
 
-    def _update_mock_results(self):
-        """Update mock query results based on current state."""
-        all_nodes = list(self.nodes.values())
+    def _move_to_cache_end(self, node_id: str) -> None:
+        """Move a node to the end of cache order (most recently used)."""
+        if node_id in self._cache_order:
+            self._cache_order.remove(node_id)
+        self._cache_order.append(node_id)
 
-        # Setup different filter patterns
-        def mock_filter_by(**kwargs):
-            filtered = all_nodes
-            if "document_id" in kwargs:
-                filtered = [
-                    n for n in filtered if n.document_id == kwargs["document_id"]
-                ]
-            if "parent_id" in kwargs and kwargs["parent_id"] is None:
-                filtered = [n for n in filtered if n.parent_id is None]
+    def _setup_session_mock(self):
+        """Setup minimal SessionLocal mock for query operations."""
+        from ragzoom.models import Document, TreeNode
 
-            mock_result = MagicMock()
-            mock_result.all.return_value = filtered
-            mock_result.first.return_value = filtered[0] if filtered else None
-            mock_result.count.return_value = len(filtered)
-            mock_result.filter_by = mock_filter_by  # Make it chainable
-            return mock_result
+        mock_session = MagicMock()
 
-        # No longer needed with the new session mock implementation
-        pass
+        def mock_query(model_class):
+            query_mock = MagicMock()
+
+            if model_class == TreeNode:
+                query_mock.count.return_value = len(self.nodes)
+                query_mock.all.return_value = list(self.nodes.values())
+                query_mock.first.return_value = (
+                    list(self.nodes.values())[0] if self.nodes else None
+                )
+            elif model_class == Document:
+                query_mock.count.return_value = len(self.documents)
+                query_mock.all.return_value = list(self.documents.values())
+                query_mock.first.return_value = (
+                    list(self.documents.values())[0] if self.documents else None
+                )
+            else:
+                query_mock.count.return_value = 0
+                query_mock.all.return_value = []
+                query_mock.first.return_value = None
+
+            # Support filter_by for basic queries
+            def filter_by(**kwargs):
+                filtered_mock = MagicMock()
+                if model_class == TreeNode:
+                    filtered_nodes = []
+                    for node in self.nodes.values():
+                        match = True
+                        for key, value in kwargs.items():
+                            if not hasattr(node, key) or getattr(node, key) != value:
+                                match = False
+                                break
+                        if match:
+                            filtered_nodes.append(node)
+
+                    filtered_mock.count.return_value = len(filtered_nodes)
+                    filtered_mock.all.return_value = filtered_nodes
+                    filtered_mock.first.return_value = (
+                        filtered_nodes[0] if filtered_nodes else None
+                    )
+                elif model_class == Document:
+                    filtered_docs = []
+                    for doc in self.documents.values():
+                        match = True
+                        for key, value in kwargs.items():
+                            if not hasattr(doc, key) or getattr(doc, key) != value:
+                                match = False
+                                break
+                        if match:
+                            filtered_docs.append(doc)
+
+                    filtered_mock.count.return_value = len(filtered_docs)
+                    filtered_mock.all.return_value = filtered_docs
+                    filtered_mock.first.return_value = (
+                        filtered_docs[0] if filtered_docs else None
+                    )
+                else:
+                    filtered_mock.count.return_value = 0
+                    filtered_mock.all.return_value = []
+                    filtered_mock.first.return_value = None
+
+                return filtered_mock
+
+            query_mock.filter_by = filter_by
+            return query_mock
+
+        mock_session.query = mock_query
+        mock_session.commit = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=None)
+
+        self.SessionLocal = MagicMock(return_value=mock_session)
