@@ -3,11 +3,11 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-import tiktoken
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
+from ragzoom.utils.tokenization import tokenizer
 
 
 class TestChunkSizeRegression:
@@ -23,7 +23,7 @@ class TestChunkSizeRegression:
     def test_splitter_creates_correct_chunk_size(self, config):
         """Test that text splitter creates chunks of approximately the configured token size."""
         splitter = TextSplitter(config)
-        tokenizer = tiktoken.get_encoding("cl100k_base")
+        # Use shared tokenizer instead of creating new instance
 
         # Create a test document with known content
         # Moby Dick opening - should be split into multiple chunks
@@ -99,7 +99,7 @@ class TestChunkSizeRegression:
         operational_config = OperationalConfig(
             openai_api_key="test-key",
         )
-        tokenizer = tiktoken.get_encoding("cl100k_base")
+        # Use shared tokenizer instead of creating new instance
 
         # Create test document with more varied content
         test_doc = (
