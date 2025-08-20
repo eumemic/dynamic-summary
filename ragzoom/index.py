@@ -56,6 +56,9 @@ class TreeBuilder:
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.splitter = TextSplitter(config)
 
+        # Backward compatibility: provide access to centralized tokenizer
+        self.tokenizer = tokenizer
+
     def _generate_node_id(self) -> str:
         """Generate unique node ID."""
         return str(uuid.uuid4())

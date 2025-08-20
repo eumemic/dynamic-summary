@@ -101,8 +101,9 @@ async def test_retry_maintains_conversation_history(mock_store):
         reporter = create_test_reporter(config)
 
         # Mock tokenizer to return length as token count
-        with patch.object(
-            indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
+        with (
+            patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
+            patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
         ):
             summary, retry_count, token_count = await indexer._summarize_text(
                 left_text="Left text content that is much longer to ensure we exceed the target"
@@ -192,8 +193,9 @@ async def test_retry_preserves_original_context(mock_store):
         return MockOpenAIResponse("", 0, 0)
 
     with patch.object(indexer.client.chat.completions, "create", new=mock_create):
-        with patch.object(
-            indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
+        with (
+            patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
+            patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
         ):
             summary, _, _ = await indexer._summarize_text(
                 left_text=original_text[: len(original_text) // 2],
@@ -249,8 +251,9 @@ async def test_multiple_retries_build_conversation(mock_store):
         return MockOpenAIResponse("", 0, 0)
 
     with patch.object(indexer.client.chat.completions, "create", new=mock_create):
-        with patch.object(
-            indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
+        with (
+            patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
+            patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
         ):
             summary, retry_count, token_count = await indexer._summarize_text(
                 left_text="Test content that is much longer to trigger summarization"
@@ -290,8 +293,9 @@ async def test_no_retry_when_within_threshold(mock_store):
         return MockOpenAIResponse("A" * 105, 1000, 105, 0)
 
     with patch.object(indexer.client.chat.completions, "create", new=mock_create):
-        with patch.object(
-            indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
+        with (
+            patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
+            patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
         ):
             summary, retry_count, token_count = await indexer._summarize_text(
                 left_text="Test content that is much longer to trigger summarization"
@@ -343,8 +347,9 @@ async def test_accept_retry_within_threshold_immediately(mock_store):
             )
 
     with patch.object(indexer.client.chat.completions, "create", new=mock_create):
-        with patch.object(
-            indexer.splitter.tokenizer, "encode", side_effect=lambda x: [0] * len(x)
+        with (
+            patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
+            patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
         ):
             summary, retry_count, token_count = await indexer._summarize_text(
                 left_text="Test content that is much longer to trigger summarization"
@@ -380,10 +385,15 @@ async def test_passthrough_for_text_under_target(mock_store):
         pytest.fail("Should not call LLM for text under target")
 
     with patch.object(indexer.client.chat.completions, "create", new=mock_create):
-        with patch.object(
-            indexer.splitter.tokenizer,
-            "encode",
-            side_effect=lambda x: [0] * min(len(x), 50),  # Always under 100
+        with (
+            patch(
+                "ragzoom.index.tokenizer.encode",
+                side_effect=lambda x: [0] * min(len(x), 50),  # Always under 100
+            ),
+            patch(
+                "ragzoom.index.tokenizer.count_tokens",
+                side_effect=lambda x: min(len(x), 50),  # Always under 100
+            ),
         ):
             reporter = create_test_reporter(config)
             summary, retry_count, token_count = await indexer._summarize_text(
