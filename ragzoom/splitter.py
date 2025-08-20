@@ -2,10 +2,10 @@
 
 import logging
 
-import tiktoken
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from ragzoom.config import IndexConfig
+from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class TextSplitter:
     def __init__(self, config: IndexConfig):
         """Initialize the splitter with configuration."""
         self.config = config
-        self.tokenizer = tiktoken.get_encoding("cl100k_base")  # GPT-4 encoding
+        self.tokenizer = tokenizer
 
         # Use token counts directly since our length_function returns tokens
         # Set overlap to 0 since RagZoom requires non-overlapping sequential chunks
@@ -37,7 +37,7 @@ class TextSplitter:
 
     def _token_length(self, text: str) -> int:
         """Calculate token length of text."""
-        return len(self.tokenizer.encode(text))
+        return self.tokenizer.count_tokens(text)
 
     def _preprocess_text(self, text: str) -> str:
         """Remove formatting line breaks while preserving semantic breaks.

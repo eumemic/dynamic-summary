@@ -3,9 +3,8 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-import tiktoken
-
 from ragzoom.store import Store, TreeNode
+from ragzoom.utils.tokenization import tokenizer as default_tokenizer
 
 
 class PositionResolver(ABC):
@@ -86,7 +85,7 @@ class TokenPositionResolver(PositionResolver):
         self.store = store
         self.node_infos = node_infos
         self.coverage_map = coverage_map
-        self.tokenizer = tokenizer or tiktoken.get_encoding("cl100k_base")
+        self.tokenizer = tokenizer or default_tokenizer
         self.preloaded_nodes = preloaded_nodes or {}
 
         # Build node lookup for quick access
@@ -288,7 +287,7 @@ def build_ascii_tree(
         pass
     elif use_token_coords:
         # Create token-based resolver
-        tokenizer = tiktoken.get_encoding("cl100k_base")
+        tokenizer = default_tokenizer
 
         # Build node_infos from tiling if not provided
         if not node_infos:
