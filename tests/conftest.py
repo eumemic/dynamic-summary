@@ -10,6 +10,7 @@ from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
 from ragzoom.store import Store
 from tests.mock_store import SimpleMockStore
+from tests.test_builders import DocumentBuilder, TreeNodeBuilder
 
 
 class BackwardCompatibilityConfig:
@@ -270,6 +271,18 @@ def _create_real_store(base_config) -> Store | None:
         # Return None - let individual tests decide how to handle unavailable PostgreSQL
         # Only integration tests should fail hard when PostgreSQL is not available
         return None
+
+
+@pytest.fixture
+def tree_node_builder():
+    """Provide a TreeNodeBuilder for creating test nodes."""
+    return TreeNodeBuilder()
+
+
+@pytest.fixture
+def document_builder():
+    """Provide a DocumentBuilder for creating test documents."""
+    return DocumentBuilder()
 
 
 @pytest.fixture
