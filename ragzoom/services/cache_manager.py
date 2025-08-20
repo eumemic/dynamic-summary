@@ -67,6 +67,27 @@ class CacheManager(Generic[T]):
             if key in self.cache_order:
                 self.cache_order.remove(key)
 
+    def remove_batch(self, keys: list[str]) -> None:
+        """Remove multiple items from cache efficiently.
+
+        Args:
+            keys: List of cache keys to remove
+        """
+        if not keys:
+            return
+
+        # Remove from cache dict (fast)
+        for key in keys:
+            if key in self.cache:
+                del self.cache[key]
+
+        # Rebuild cache_order without removed keys (O(n) instead of O(n²))
+        keys_set = set(keys)
+        self.cache_order = deque(
+            (key for key in self.cache_order if key not in keys_set),
+            maxlen=self.cache_size,
+        )
+
     def clear(self) -> None:
         """Clear all items from cache."""
         self.cache.clear()

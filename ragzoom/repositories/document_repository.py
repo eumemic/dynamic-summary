@@ -141,19 +141,11 @@ class DocumentRepository(BaseRepository):
             deleted_node_ids = [row[0] for row in result]
             deleted_count = len(deleted_node_ids)
 
-            # Clear from cache in batches to avoid overwhelming the cache
-            # Process in chunks for better memory management
-            batch_size = 1000
-            for i in range(0, len(deleted_node_ids), batch_size):
-                batch = deleted_node_ids[i : i + batch_size]
-                for node_id in batch:
-                    self.cache_manager.remove(node_id)
-
-                # Log progress for very large deletions
-                if deleted_count > 10000 and i > 0:
-                    logger.info(
-                        f"Cache clearing progress: {min(i + batch_size, deleted_count)}/{deleted_count} nodes"
-                    )
+            # Clear from cache efficiently using batch removal
+            # This avoids O(n²) performance from individual removals
+            if deleted_count > 1000:
+                logger.debug(f"Batch clearing {deleted_count} nodes from cache...")
+            self.cache_manager.remove_batch(deleted_node_ids)
 
             return deleted_count
 
