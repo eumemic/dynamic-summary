@@ -208,6 +208,24 @@ def create_mock_chat_response(content):
     return Mock(choices=[Mock(message=Mock(content=content))])
 
 
+def _calculate_embedding_from_rules(text, embedding_rules):
+    """Calculate embedding vector based on text patterns and rules.
+
+    Args:
+        text: Input text to analyze
+        embedding_rules: Dict mapping text patterns to embedding values
+
+    Returns:
+        List of float values representing the embedding
+    """
+    embedding = [0.5] * 1536  # default
+    for pattern, values in embedding_rules.items():
+        if pattern.lower() in text.lower():
+            embedding = values
+            break
+    return embedding
+
+
 def create_specialized_openai_mocks(embedding_rules=None):
     """Create OpenAI mocks with specialized embedding behavior.
 
@@ -227,28 +245,16 @@ def create_specialized_openai_mocks(embedding_rules=None):
         if isinstance(input_data, list):
             embeddings = []
             for text in input_data:
-                embedding = [0.5] * 1536  # default
-                for pattern, values in embedding_rules.items():
-                    if pattern.lower() in text.lower():
-                        embedding = values
-                        break
+                embedding = _calculate_embedding_from_rules(text, embedding_rules)
                 embeddings.append(Mock(embedding=embedding))
             return Mock(data=embeddings)
         else:
-            embedding = [0.5] * 1536  # default
-            for pattern, values in embedding_rules.items():
-                if pattern.lower() in input_data.lower():
-                    embedding = values
-                    break
+            embedding = _calculate_embedding_from_rules(input_data, embedding_rules)
             return Mock(data=[Mock(embedding=embedding)])
 
     def specialized_embeddings_create_sync(*args, **kwargs):
         input_data = kwargs.get("input", args[0] if args else "")
-        embedding = [0.5] * 1536  # default
-        for pattern, values in embedding_rules.items():
-            if pattern.lower() in input_data.lower():
-                embedding = values
-                break
+        embedding = _calculate_embedding_from_rules(input_data, embedding_rules)
         return Mock(data=[Mock(embedding=embedding)])
 
     # Standard chat completion

@@ -24,7 +24,7 @@ class TestStoreMock:
 
     # NOTE: Basic CRUD tests (test_add_node, test_get_node, test_node_relationships,
     # test_search_similar) have been removed to eliminate duplication with test_store.py.
-    # The integration tests in test_store.py provide comprehensive end-to-end validation.
+    # See test_store.py for comprehensive integration testing of these operations.
 
     def test_session_local_count(self, mock_store):
         """Test that SessionLocal mock properly returns count."""
