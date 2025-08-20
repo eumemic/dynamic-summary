@@ -341,3 +341,74 @@ def mock_openai_async_client():
     mock_client.chat.completions.create = AsyncMock(return_value=mock_summary_response)
 
     return mock_client
+
+
+@pytest.fixture
+def sample_telemetry_data():
+    """Centralized telemetry data fixture for all telemetry tests.
+
+    This fixture provides consistent test data across all telemetry test files,
+    replacing the duplicate fixtures previously scattered across multiple files.
+    """
+    return {
+        "format_version": "4.2",
+        "document_id": "test_doc",
+        "source_document_tokens": 1000,
+        "indexed_at": 1234567890.0,
+        "config": {
+            "target_chunk_tokens": 200,
+            "summary_model": "gpt-4o-mini",
+            "embedding_model": "text-embedding-3-small",
+        },
+        "model_metadata": {},
+        "system_prompts": {},
+        "runtime_info": {},
+        "nodes": [
+            {
+                "node_id": "leaf-1",
+                "height": 0,
+                "created_at": 1234567890.0,
+                "embedding": {
+                    "create": {
+                        "input_tokens": 50,
+                        "total_tokens": 50,
+                        "cost_usd": 0.001,
+                    }
+                },
+                "summary": None,
+            },
+            {
+                "node_id": "leaf-2",
+                "height": 0,
+                "created_at": 1234567890.1,
+                "embedding": {
+                    "create": {
+                        "input_tokens": 60,
+                        "total_tokens": 60,
+                        "cost_usd": 0.0012,
+                    }
+                },
+                "summary": None,
+            },
+            {
+                "node_id": "internal-1",
+                "height": 1,
+                "created_at": 1234567890.2,
+                "embedding": {
+                    "create": {
+                        "input_tokens": 30,
+                        "total_tokens": 30,
+                        "cost_usd": 0.0006,
+                    }
+                },
+                "summary": {
+                    "create": {
+                        "input_tokens": 100,
+                        "output_tokens": 25,
+                        "total_tokens": 125,
+                        "cost_usd": 0.005,
+                    }
+                },
+            },
+        ],
+    }

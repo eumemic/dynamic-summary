@@ -1,12 +1,11 @@
 """Test whitespace gap reconstruction in text splitter."""
 
-from unittest.mock import Mock, patch
-
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
+from tests.utils import mock_openai_context
 
 
 class TestWhitespaceReconstruction:
@@ -14,31 +13,8 @@ class TestWhitespaceReconstruction:
 
     @pytest.fixture
     def mock_openai(self):
-        """Mock OpenAI API calls."""
-        with patch("ragzoom.index.AsyncOpenAI") as mock_async:
-            # Mock embedding responses
-            async def mock_embeddings_create(*args, **kwargs):
-                input_data = kwargs.get("input", args[0] if args else "")
-                if isinstance(input_data, list):
-                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
-                else:
-                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
-
-            async def mock_chat_create(*args, **kwargs):
-                return Mock(
-                    choices=[
-                        Mock(message=Mock(content="Summary of left and right content"))
-                    ]
-                )
-
-            instance = Mock()
-            instance.embeddings = Mock()
-            instance.embeddings.create = Mock(side_effect=mock_embeddings_create)
-            instance.chat = Mock()
-            instance.chat.completions = Mock()
-            instance.chat.completions.create = Mock(side_effect=mock_chat_create)
-            mock_async.return_value = instance
-
+        """Mock OpenAI API calls using centralized utilities."""
+        with mock_openai_context():
             yield
 
     @pytest.fixture
