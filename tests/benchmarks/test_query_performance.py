@@ -88,7 +88,7 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
     api_key = os.getenv("OPENAI_API_KEY", "test-key")
 
     # Skip if no API key
-    if api_key == "test-key":
+    if api_key == "test-key" or api_key == "test-key-for-tests":
         pytest.skip("OPENAI_API_KEY not set")
 
     # Number of runs to reduce API variance (can be overridden via env var)
