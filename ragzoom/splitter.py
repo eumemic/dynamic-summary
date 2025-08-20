@@ -137,7 +137,31 @@ class TextSplitter:
         raw_chunks = self.splitter.split_text(text)
 
         # Reconstruct chunks with ALL gaps filled
-        return self._reconstruct_chunks_with_whitespace(text, raw_chunks)
+        reconstructed_chunks = self._reconstruct_chunks_with_whitespace(
+            text, raw_chunks
+        )
+
+        # Validate that no chunks are empty (correct-by-construction principle)
+        valid_chunks = []
+        for i, chunk in enumerate(reconstructed_chunks):
+            if chunk and chunk.strip():
+                valid_chunks.append(chunk)
+            else:
+                logger.warning(
+                    f"Filtering out empty chunk at position {i} (chunk_size={self.config.target_chunk_tokens})"
+                )
+
+        if not valid_chunks:
+            raise ValueError(
+                f"Text splitting with chunk_size={self.config.target_chunk_tokens} produced no valid chunks. Try using a larger chunk size."
+            )
+
+        if len(valid_chunks) < len(reconstructed_chunks):
+            logger.warning(
+                f"Filtered out {len(reconstructed_chunks) - len(valid_chunks)} empty chunks. Consider using a larger chunk_size for better results."
+            )
+
+        return valid_chunks
 
     def get_adjacent_context(
         self, chunks: list[str], chunk_index: int
