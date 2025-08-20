@@ -45,8 +45,24 @@ def create_store_with_docker(
     database_url = config.database_url
 
     # Check if we should auto-start Docker PostgreSQL
+    # Note: database_url may already be worktree-specific from OperationalConfig.__post_init__
+    from ragzoom.worktree_utils import (
+        DEFAULT_DATABASE_NAME,
+        DEFAULT_DATABASE_URL_TEMPLATE,
+        get_worktree_database_name,
+    )
+
+    # Check if URL matches expected patterns (base or worktree-specific)
+    expected_base_url = DEFAULT_DATABASE_URL_TEMPLATE.format(
+        database_name=DEFAULT_DATABASE_NAME
+    )
+    expected_worktree_db_name = get_worktree_database_name()
+    expected_worktree_url = DEFAULT_DATABASE_URL_TEMPLATE.format(
+        database_name=expected_worktree_db_name
+    )
+
     should_auto_start = (
-        database_url == "postgresql+psycopg://localhost/ragzoom"
+        (database_url == expected_base_url or database_url == expected_worktree_url)
         and not os.getenv("RAGZOOM_DATABASE_URL")  # User didn't explicitly set URL
         and not os.getenv("RAGZOOM_NO_DOCKER")  # User didn't disable Docker
     )
@@ -56,8 +72,20 @@ def create_store_with_docker(
             from ragzoom.docker_postgres import DockerPostgres
 
             docker_pg = DockerPostgres()
-            database_url = docker_pg.ensure_running()
-            logger.info("✅ PostgreSQL ready in Docker container")
+
+            # Use the expected database name for consistency
+            if database_url == expected_worktree_url:
+                # This is a worktree-specific database
+                database_url = docker_pg.ensure_database_exists(
+                    expected_worktree_db_name
+                )
+                logger.info(
+                    f"✅ PostgreSQL ready with worktree database: {expected_worktree_db_name}"
+                )
+            else:
+                # This is the base ragzoom database
+                database_url = docker_pg.ensure_running()
+                logger.info("✅ PostgreSQL ready in Docker container")
 
             # Update config with Docker database URL
             config = OperationalConfig(
@@ -271,6 +299,26 @@ class Store(StoreInterface):
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
         """Get all nodes for a specific document."""
         return self.node_repo.get_all_nodes_for_document(document_id)
+
+    # jscpd:ignore-start - Delegation wrapper for repository method
+    def get_all_nodes_for_document_paginated(
+        self, document_id: str | None, *, page_size: int = 1000
+    ) -> list[list[TreeNode]]:
+        """Get all nodes for a document in paginated batches for memory efficiency.
+
+        This method is optimized for large documents with tens of thousands of nodes.
+
+        Args:
+            document_id: Document ID to get nodes for
+            page_size: Number of nodes per batch (default 1000)
+
+        Returns:
+            List of batches, where each batch is a list of TreeNode objects
+        """
+        # jscpd:ignore-end
+        return self.node_repo.get_all_nodes_for_document_paginated(
+            document_id, page_size=page_size
+        )
 
     # Document operations - delegate to DocumentRepository
     def get_document_by_path(self, file_path: str) -> Document | None:

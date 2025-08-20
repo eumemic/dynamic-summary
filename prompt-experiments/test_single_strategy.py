@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -14,36 +15,36 @@ load_dotenv()
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from openai import AsyncOpenAI
 import tiktoken
 from experiments.strategies import AbsoluteTokenStrategy
+from openai import AsyncOpenAI
 
 
 async def test_single():
     """Test a single summarization with absolute token strategy."""
-    
+
     # Load one chunk from corpus
-    with open("experiments/results/corpus.json", "r") as f:
+    with open("experiments/results/corpus.json") as f:
         corpus = json.load(f)
-    
+
     chunk = corpus["chunks"][0]
     print(f"Testing with chunk: {chunk['id']}")
     print(f"Input tokens: {chunk['metrics']['tokens']}")
-    
+
     # Create strategy
     strategy = AbsoluteTokenStrategy()
-    
+
     # Set target to 50% of input
     target_tokens = chunk['metrics']['tokens'] // 2
     print(f"Target tokens: {target_tokens}")
-    
+
     # Get prompt
     prompt = strategy.get_prompt(chunk["text"], chunk["metrics"], target_tokens)
     print(f"\nPrompt instruction: {strategy.get_length_instruction(chunk['metrics'], target_tokens)}")
-    
+
     # Initialize client
     client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-    
+
     # Make API call
     print("\nCalling GPT-5-nano...")
     response = await client.chat.completions.create(
@@ -51,18 +52,18 @@ async def test_single():
         messages=[{"role": "user", "content": prompt}],
         reasoning_effort="minimal",
     )
-    
+
     summary = response.choices[0].message.content
-    
+
     # Measure results
     tokenizer = tiktoken.get_encoding("cl100k_base")
     actual_tokens = len(tokenizer.encode(summary))
-    
-    print(f"\nResults:")
+
+    print("\nResults:")
     print(f"  Target: {target_tokens} tokens")
     print(f"  Actual: {actual_tokens} tokens")
     print(f"  Error: {actual_tokens - target_tokens} ({(actual_tokens - target_tokens) / target_tokens * 100:.1f}%)")
-    print(f"\nSummary preview (first 200 chars):")
+    print("\nSummary preview (first 200 chars):")
     print(summary[:200] + "...")
 
 

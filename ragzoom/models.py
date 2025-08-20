@@ -6,6 +6,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -48,6 +49,16 @@ class TreeNode(Base):
     height: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # Distance to furthest leaf (0 for leaves, incrementing upward)
+
+    # Performance indices for frequently queried columns
+    __table_args__ = (
+        # Index on document_id for document-level operations (clearing, validation, etc.)
+        Index("idx_tree_nodes_document_id", "document_id"),
+        # Index on parent_id for tree navigation queries
+        Index("idx_tree_nodes_parent_id", "parent_id"),
+        # Composite index for root node queries (document + no parent)
+        Index("idx_tree_nodes_document_root", "document_id", "parent_id"),
+    )
 
 
 class Document(Base):

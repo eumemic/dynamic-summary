@@ -384,6 +384,68 @@ class NodeRepository(BaseRepository):
 
             return nodes
 
+    def get_all_nodes_for_document_paginated(
+        self, document_id: str | None, *, page_size: int = 1000
+    ) -> list[list[TreeNode]]:
+        """Get all nodes for a document in paginated batches for memory efficiency.
+
+        This method is optimized for large documents with tens of thousands of nodes.
+        It yields batches of nodes rather than loading all at once.
+
+        Args:
+            document_id: Document ID to get nodes for
+            page_size: Number of nodes per batch (default 1000)
+
+        Returns:
+            List of batches, where each batch is a list of TreeNode objects
+
+        Note:
+            For small documents (<5000 nodes), get_all_nodes_for_document() is more efficient.
+            This method is designed for very large documents that would cause memory issues.
+        """
+        if page_size <= 0:
+            raise ValueError("page_size must be positive")
+
+        batches = []
+        offset = 0
+
+        with self.SessionLocal() as session:
+            while True:
+                # Query one batch at a time
+                if document_id:
+                    query = (
+                        session.query(TreeNode)
+                        .filter_by(document_id=document_id)
+                        .offset(offset)
+                        .limit(page_size)
+                    )
+                else:
+                    logger.warning(
+                        "No document_id provided for paginated query. This will process all nodes."
+                    )
+                    query = session.query(TreeNode).offset(offset).limit(page_size)
+
+                batch = query.all()
+
+                if not batch:
+                    break  # No more nodes
+
+                # Force load and detach all nodes in this batch
+                for node in batch:
+                    self._force_load_and_detach(session, node)
+
+                batches.append(batch)
+                offset += page_size
+
+                # Log progress for very large documents
+                if len(batches) % 10 == 0:  # Every 10 batches
+                    total_processed = len(batches) * page_size
+                    logger.debug(
+                        f"Processed {total_processed} nodes in {len(batches)} batches for document {document_id}"
+                    )
+
+        return batches
+
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
         """Get all nodes for a specific document.
 
