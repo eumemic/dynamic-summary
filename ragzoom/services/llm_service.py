@@ -278,6 +278,45 @@ class LLMService:
         deviation = (current_tokens - target_tokens) / target_tokens
         return deviation > self.config.retry_threshold
 
+    def _is_better_summary(
+        self,
+        new_tokens: int,
+        new_distance: float,
+        current_best_tokens: int,
+        current_best_distance: float,
+        target_tokens: int,
+    ) -> bool:
+        """Determine if a new summary is better than the current best.
+
+        Follows the original TreeBuilder logic:
+        - Prefer summaries that are under target and closer to target
+        - When current best is over target, prefer smaller summaries
+
+        Args:
+            new_tokens: Token count of new summary
+            new_distance: Absolute distance from target for new summary
+            current_best_tokens: Token count of current best
+            current_best_distance: Absolute distance from target for current best
+            target_tokens: Target token count
+
+        Returns:
+            True if new summary is better than current best
+        """
+        # If new is under target and current is over, new is better
+        if new_tokens <= target_tokens and current_best_tokens > target_tokens:
+            return True
+
+        # If both are under target, prefer the one closer to target (larger)
+        if new_tokens <= target_tokens and current_best_tokens <= target_tokens:
+            return new_tokens > current_best_tokens
+
+        # If both are over target, prefer the smaller one
+        if new_tokens > target_tokens and current_best_tokens > target_tokens:
+            return new_tokens < current_best_tokens
+
+        # Current is under and new is over - keep current
+        return False
+
     async def _execute_retry_attempt(
         self,
         messages: list[ChatCompletionMessageParam],
@@ -341,6 +380,7 @@ class LLMService:
             if target_tokens > 0
             else float("inf")
         )
+        best_attempt_index = 0  # Track which attempt is best (0 = initial)
 
         # Track actual retries made
         actual_retries = 0
@@ -384,19 +424,36 @@ class LLMService:
                 # Check if this attempt is acceptable (within threshold)
                 if not self._should_retry_summary(retry_tokens, target_tokens):
                     # This attempt is within threshold - accept it immediately
+                    # Mark this retry attempt as accepted (attempt index = actual_retries)
+                    if reporter and node_id:
+                        reporter.mark_accepted_attempt(node_id, actual_retries)
                     return retry_summary, actual_retries, retry_tokens
 
                 # This attempt is still outside threshold, but check if it's better
+                retry_distance = abs(retry_tokens - target_tokens)
+                best_distance = abs(best_tokens - target_tokens)
+
+                if self._is_better_summary(
+                    retry_tokens,
+                    retry_distance,
+                    best_tokens,
+                    best_distance,
+                    target_tokens,
+                ):
+                    best_summary = retry_summary
+                    best_tokens = retry_tokens
+                    best_deviation = (
+                        retry_distance / target_tokens
+                        if target_tokens > 0
+                        else float("inf")
+                    )
+                    best_attempt_index = actual_retries  # Track this is the best
+
                 retry_deviation = (
                     abs(retry_tokens - target_tokens) / target_tokens
                     if target_tokens > 0
                     else float("inf")
                 )
-                if retry_deviation < best_deviation:
-                    best_summary = retry_summary
-                    best_tokens = retry_tokens
-                    best_deviation = retry_deviation
-
                 logger.debug(
                     f"Retry {attempt} for node {node_id}: {retry_tokens} tokens "
                     f"(deviation: {retry_deviation:.1%})"
@@ -411,6 +468,10 @@ class LLMService:
             f"Summary retry complete for node {node_id}. "
             f"Best result: {best_tokens} tokens (deviation: {best_deviation:.1%})"
         )
+
+        # Mark the best attempt as accepted
+        if reporter and node_id:
+            reporter.mark_accepted_attempt(node_id, best_attempt_index)
 
         return best_summary, actual_retries, best_tokens
 
@@ -550,6 +611,9 @@ Here's the content to summarize:"""
 
                 # Check if retry is needed
                 if not self._should_retry_summary(summary_tokens, target_tokens):
+                    # Mark initial attempt as accepted (attempt index 0)
+                    if reporter and parent_id:
+                        reporter.mark_accepted_attempt(parent_id, 0)
                     return summary, 0, summary_tokens
 
                 # Attempt to correct the summary
@@ -567,6 +631,9 @@ Here's the content to summarize:"""
                     return final_summary, retry_count, final_tokens
 
                 # No retries allowed, return initial attempt
+                # Mark initial attempt as accepted (attempt index 0)
+                if reporter and parent_id:
+                    reporter.mark_accepted_attempt(parent_id, 0)
                 return summary, 0, summary_tokens
 
             except Exception as e:
