@@ -1381,29 +1381,25 @@ Here's the content to summarize:"""
 
                 # Batch generate embeddings for all summaries at this level
                 # This avoids individual API calls per node (e.g., 183 calls → 3 batch calls)
-                # Filter out empty summaries to prevent OpenAI API errors
-                valid_summaries = []
-                valid_indices = []
+                # Validate that all summaries are non-empty (correct-by-construction principle)
+                summaries = []
                 for i, result in enumerate(results):
                     summary = result["summary"]
-                    if (
-                        summary and summary.strip()
-                    ):  # Skip empty or whitespace-only summaries
-                        valid_summaries.append(summary)
-                        valid_indices.append(i)
-                    else:
-                        logger.warning(
-                            f"Skipping empty summary for node {result.get('parent_id', 'unknown')}"
+                    if not summary or not summary.strip():
+                        raise ValueError(
+                            f"Empty summary generated for node {result.get('parent_id', 'unknown')}. "
+                            f"This indicates a failure in the summarization process and violates the "
+                            f"correct-by-construction principle."
                         )
+                    summaries.append(summary)
 
                 start_time = time.time()
-                embeddings = await self._get_embeddings_batch(valid_summaries)
+                embeddings = await self._get_embeddings_batch(summaries)
 
                 # Track batch embedding call for telemetry
                 if reporter:
                     node_embeddings = []
-                    for i in valid_indices:
-                        result = results[i]
+                    for result in results:
                         # Use the token count from summarization
                         token_count = result.get(
                             "token_count",
@@ -1413,26 +1409,15 @@ Here's the content to summarize:"""
 
                     reporter.record_embedding_call_v2(
                         node_embeddings=node_embeddings,
-                        batch_size=len(valid_summaries),
+                        batch_size=len(summaries),
                         model=self.config.embedding_model,
                         start_time=start_time,
                     )
 
                 # Update results with the generated embeddings
-                # Only valid summaries have embeddings, so we need to map them back correctly
-                embedding_iter = iter(embeddings)
-                for i, result in enumerate(results):
-                    if i in valid_indices:
-                        result["node_data"]["embedding"] = next(embedding_iter)
-                    else:
-                        # For empty summaries, generate a fallback embedding using the original text
-                        logger.warning(
-                            f"Generating fallback embedding for empty summary node {result.get('parent_id', 'unknown')}"
-                        )
-                        # Use a simple fallback - could be improved to use actual text content
-                        fallback_text = "empty summary"
-                        fallback_embedding = await self._get_embedding(fallback_text)
-                        result["node_data"]["embedding"] = fallback_embedding
+                # Since all summaries are guaranteed to be valid, we can directly zip them
+                for result, embedding in zip(results, embeddings):
+                    result["node_data"]["embedding"] = embedding
 
                 # Extract data for batch processing
                 nodes_to_add = []
