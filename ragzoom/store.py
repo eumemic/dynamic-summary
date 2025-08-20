@@ -281,6 +281,7 @@ class Store:
         """Get the embedding model used for a specific document."""
         return self.doc_repo.get_document_embedding_model(document_id)
 
+    # jscpd:ignore - Delegation method with same signature as repository
     def add_document(
         self,
         document_id: str,

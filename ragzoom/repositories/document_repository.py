@@ -1,19 +1,20 @@
 """Repository for Document CRUD operations."""
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from ragzoom.models import Document, TreeNode
+from ragzoom.repositories.base_repository import BaseRepository
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.storage.database_manager import DatabaseManager
 
 if TYPE_CHECKING:
-    pass
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 
-class DocumentRepository:
+class DocumentRepository(BaseRepository):
     """Repository for Document database operations."""
 
     def __init__(
@@ -28,21 +29,6 @@ class DocumentRepository:
         self.db_manager = database_manager
         self.cache_manager = cache_manager
         self.SessionLocal = database_manager.SessionLocal
-
-    def _get_session(self, session=None):
-        """Get session for database operations.
-
-        Args:
-            session: Optional existing session to use
-
-        Returns:
-            Tuple of (session, should_commit) where should_commit indicates
-            if this method should handle commit/rollback
-        """
-        if session is not None:
-            return session, False  # Don't commit - caller manages lifecycle
-        else:
-            return self.SessionLocal(), True  # We manage lifecycle
 
     def get_document_by_path(self, file_path: str) -> Document | None:
         """Get a document by file path.
@@ -89,7 +75,7 @@ class DocumentRepository:
         embedding_model: str,
         summary_model: str,
         *,
-        session=None,
+        session: Optional["Session"] = None,
     ) -> Document:
         """Add a document record.
 
@@ -126,16 +112,20 @@ class DocumentRepository:
             if should_commit:
                 db_session.close()
 
-    def delete_document_nodes(self, document_id: str, *, session=None) -> int:
+    # jscpd:ignore-start - Similar pattern but different operation from clear_document
+    def delete_document_nodes(
+        self, document_id: str, *, session: Optional["Session"] = None
+    ) -> int:
         """Delete all nodes associated with a document.
 
         Args:
             document_id: Document identifier
-            session: Optional database session for transactional operations
+            session: Optional session for transaction support
 
         Returns:
             Number of nodes deleted
         """
+        # jscpd:ignore-end
         db_session, should_commit = self._get_session(session)
         try:
             # Get all nodes for this document
@@ -158,7 +148,9 @@ class DocumentRepository:
             if should_commit:
                 db_session.close()
 
-    def clear_document(self, document_id: str, *, session=None) -> int:
+    def clear_document(
+        self, document_id: str, *, session: Optional["Session"] = None
+    ) -> int:
         """Clear all data for a document, including orphaned nodes and document record.
 
         This handles both complete documents and orphaned nodes from interrupted indexing.
@@ -166,7 +158,7 @@ class DocumentRepository:
 
         Args:
             document_id: ID of the document to clear
-            session: Optional database session for transactional operations
+            session: Optional session for atomic operations
 
         Returns:
             Number of nodes deleted

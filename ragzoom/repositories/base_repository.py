@@ -1,10 +1,19 @@
 """Base repository class for common database operations."""
 
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session, sessionmaker
+
 
 class BaseRepository:
     """Base class for repository implementations with common session management."""
 
-    def _get_session(self, session=None):
+    SessionLocal: "sessionmaker[Session]"
+
+    def _get_session(
+        self, session: Optional["Session"] = None
+    ) -> tuple["Session", bool]:
         """Get session for database operations.
 
         Args:

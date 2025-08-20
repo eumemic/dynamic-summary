@@ -2,20 +2,24 @@
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import update
 
 from ragzoom.models import TreeNode
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+from ragzoom.repositories.base_repository import BaseRepository
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.storage.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
 
-class NodeRepository:
+class NodeRepository(BaseRepository):
     """Repository for TreeNode database operations."""
 
     def __init__(
@@ -30,21 +34,6 @@ class NodeRepository:
         self.db_manager = database_manager
         self.cache_manager = cache_manager
         self.SessionLocal = database_manager.SessionLocal
-
-    def _get_session(self, session=None):
-        """Get session for database operations.
-
-        Args:
-            session: Optional existing session to use
-
-        Returns:
-            Tuple of (session, should_commit) where should_commit indicates
-            if this method should handle commit/rollback
-        """
-        if session is not None:
-            return session, False  # Don't commit - caller manages lifecycle
-        else:
-            return self.SessionLocal(), True  # We manage lifecycle
 
     def _force_load_and_detach(self, session: Any, node: TreeNode) -> None:
         """Force load all attributes and detach node from session."""
@@ -133,7 +122,7 @@ class NodeRepository:
         return node
 
     def add_nodes_batch(
-        self, nodes_data: list[dict[str, Any]], *, session=None
+        self, nodes_data: list[dict[str, Any]], *, session: Optional["Session"] = None
     ) -> list[TreeNode]:
         """Add multiple nodes to the database in batch.
 
@@ -194,7 +183,7 @@ class NodeRepository:
                 db_session.close()
 
     def update_parent_references_batch(
-        self, updates: list[tuple[str, str]], *, session=None
+        self, updates: list[tuple[str, str]], *, session: Optional["Session"] = None
     ) -> None:
         """Update parent references for multiple nodes in batch.
 
