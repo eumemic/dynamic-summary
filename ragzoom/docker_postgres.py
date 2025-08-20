@@ -318,6 +318,8 @@ class DockerPostgres:
     def create_database(self, database_name: str) -> bool:
         """Create an additional database in the PostgreSQL container.
 
+        Uses IF NOT EXISTS to avoid race conditions and ensure idempotent behavior.
+
         Args:
             database_name: Name of the database to create
 
@@ -329,8 +331,8 @@ class DockerPostgres:
             return False
 
         try:
-            # Use docker exec to create the database
-            logger.info(f"Creating database: {database_name}")
+            # Use docker exec to create the database with IF NOT EXISTS
+            logger.debug(f"Ensuring database exists: {database_name}")
             result = subprocess.run(
                 [
                     "docker",
@@ -342,20 +344,21 @@ class DockerPostgres:
                     "-d",
                     self.DATABASE,
                     "-c",
-                    f'CREATE DATABASE "{database_name}";',
+                    f'CREATE DATABASE IF NOT EXISTS "{database_name}";',
                 ],
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
 
-            # Database already exists is not an error
-            if result.returncode == 0 or "already exists" in result.stderr:
+            # Check only for success return code
+            if result.returncode == 0:
                 logger.debug(f"Database {database_name} ready")
                 return True
             else:
+                # Log the actual error for debugging
                 logger.error(
-                    f"Failed to create database {database_name}: {result.stderr}"
+                    f"Failed to create database {database_name}: {result.stderr.strip()}"
                 )
                 return False
 

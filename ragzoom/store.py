@@ -46,13 +46,17 @@ def create_store_with_docker(
 
     # Check if we should auto-start Docker PostgreSQL
     # Note: database_url may already be worktree-specific from OperationalConfig.__post_init__
+    from ragzoom.worktree_utils import get_worktree_database_name
+
+    # Check if URL matches expected patterns (base or worktree-specific)
+    expected_base_url = "postgresql+psycopg://localhost/ragzoom"
+    expected_worktree_db_name = get_worktree_database_name()
+    expected_worktree_url = (
+        f"postgresql+psycopg://localhost/{expected_worktree_db_name}"
+    )
+
     should_auto_start = (
-        (
-            database_url == "postgresql+psycopg://localhost/ragzoom"
-            or database_url.startswith(
-                "postgresql+psycopg://localhost/ragzoom_worktree_"
-            )
-        )
+        (database_url == expected_base_url or database_url == expected_worktree_url)
         and not os.getenv("RAGZOOM_DATABASE_URL")  # User didn't explicitly set URL
         and not os.getenv("RAGZOOM_NO_DOCKER")  # User didn't disable Docker
     )
@@ -63,12 +67,17 @@ def create_store_with_docker(
 
             docker_pg = DockerPostgres()
 
-            # Extract database name from the potentially worktree-specific URL
-            if "/ragzoom_worktree_" in database_url:
-                db_name = database_url.split("/")[-1]  # Get the part after the last "/"
-                database_url = docker_pg.ensure_database_exists(db_name)
-                logger.info(f"✅ PostgreSQL ready with worktree database: {db_name}")
+            # Use the expected database name for consistency
+            if database_url == expected_worktree_url:
+                # This is a worktree-specific database
+                database_url = docker_pg.ensure_database_exists(
+                    expected_worktree_db_name
+                )
+                logger.info(
+                    f"✅ PostgreSQL ready with worktree database: {expected_worktree_db_name}"
+                )
             else:
+                # This is the base ragzoom database
                 database_url = docker_pg.ensure_running()
                 logger.info("✅ PostgreSQL ready in Docker container")
 

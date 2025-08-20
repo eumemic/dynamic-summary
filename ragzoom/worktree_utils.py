@@ -1,7 +1,11 @@
 """Utilities for worktree detection and isolation."""
 
+import logging
 import re
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
+
+logger = logging.getLogger(__name__)
 
 
 def get_worktree_id() -> str | None:
@@ -18,8 +22,10 @@ def get_worktree_id() -> str | None:
         if parent.name.startswith("worktree-"):
             # Validate it matches the expected pattern
             if re.match(r"^worktree-\d+$", parent.name):
+                logger.debug(f"Detected worktree: {parent.name}")
                 return parent.name
 
+    logger.debug("Not in a worktree environment")
     return None
 
 
@@ -43,6 +49,9 @@ def get_worktree_database_name(base_name: str = "ragzoom") -> str:
 def get_worktree_database_url(base_url: str) -> str:
     """Get the database URL for the current worktree.
 
+    Uses proper URL parsing to safely replace only the database component
+    of the URL, avoiding false matches in other URL components.
+
     Args:
         base_url: Base database URL
 
@@ -53,10 +62,28 @@ def get_worktree_database_url(base_url: str) -> str:
     if not worktree_id:
         return base_url
 
-    # Parse the URL and replace the database name
-    # Handle both postgresql+psycopg://localhost/ragzoom and postgresql://...
-    if "/ragzoom" in base_url:
-        worktree_db_name = get_worktree_database_name()
-        return base_url.replace("/ragzoom", f"/{worktree_db_name}")
+    # Parse the URL to safely modify only the database component
+    parsed = urlparse(base_url)
 
+    # Only transform if the database path is exactly '/ragzoom'
+    if parsed.path == "/ragzoom":
+        worktree_db_name = get_worktree_database_name()
+        # Replace the database name in the path
+        new_parsed = parsed._replace(path=f"/{worktree_db_name}")
+        transformed_url = urlunparse(new_parsed)
+        logger.debug(f"Transformed URL: {base_url} -> {transformed_url}")
+        return transformed_url
+
+    # For paths like '/ragzoom?params', replace database but preserve query params
+    if parsed.path.startswith("/ragzoom") and (
+        parsed.path == "/ragzoom" or parsed.path.startswith("/ragzoom?")
+    ):
+        worktree_db_name = get_worktree_database_name()
+        new_path = parsed.path.replace("/ragzoom", f"/{worktree_db_name}", 1)
+        new_parsed = parsed._replace(path=new_path)
+        transformed_url = urlunparse(new_parsed)
+        logger.debug(f"Transformed URL with params: {base_url} -> {transformed_url}")
+        return transformed_url
+
+    logger.debug(f"URL unchanged (not ragzoom database): {base_url}")
     return base_url
