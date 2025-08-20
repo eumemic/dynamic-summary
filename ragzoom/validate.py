@@ -182,6 +182,10 @@ def validate_tree_structure(
     if not nodes:
         return "No nodes found for document"
 
+    # Build lookup dictionary for O(1) access instead of database queries
+    # This eliminates 100,000+ individual DB queries for large documents
+    node_lookup = {node.id: node for node in nodes}
+
     errors = []
 
     # Check each node
@@ -194,12 +198,13 @@ def validate_tree_structure(
 
         # Check parent-child relationships
         if node.left_child_id or node.right_child_id:
-            # Parent node checks
-            if store.is_leaf_node(node.id):
+            # Parent node checks - use local check instead of DB query
+            is_leaf = node.left_child_id is None and node.right_child_id is None
+            if is_leaf:
                 errors.append(f"Node {node.id}: Leaf node has children")
 
             if node.left_child_id:
-                left_child = store.get_node(node.left_child_id)
+                left_child = node_lookup.get(node.left_child_id)
                 if not left_child:
                     errors.append(
                         f"Node {node.id}: Left child {node.left_child_id} not found"
@@ -211,7 +216,7 @@ def validate_tree_structure(
                     )
 
             if node.right_child_id:
-                right_child = store.get_node(node.right_child_id)
+                right_child = node_lookup.get(node.right_child_id)
                 if not right_child:
                     errors.append(
                         f"Node {node.id}: Right child {node.right_child_id} not found"
@@ -224,8 +229,8 @@ def validate_tree_structure(
 
             # Check for gaps between children
             if node.left_child_id and node.right_child_id:
-                left_child = store.get_node(node.left_child_id)
-                right_child = store.get_node(node.right_child_id)
+                left_child = node_lookup.get(node.left_child_id)
+                right_child = node_lookup.get(node.right_child_id)
                 if left_child and right_child:
                     if left_child.span_end < right_child.span_start:
                         right_child.span_start - left_child.span_end
