@@ -266,6 +266,7 @@ def validate_tiling(
     document_id: str,
     original_text: str | None = None,
     budget_tokens: int | None = None,
+    preloaded_nodes: dict[str, TreeNode] | None = None,
 ) -> str | None:
     """Validate that a tiling has no overlaps, no duplicates, and (optionally) covers the document.
 
@@ -275,6 +276,7 @@ def validate_tiling(
         document_id: Document ID
         original_text: Optional original text for gap validation
         budget_tokens: Optional token budget to validate against
+        preloaded_nodes: Optional preloaded nodes to avoid redundant DB queries
 
     Returns:
         Error message if invalid, None if valid
@@ -308,10 +310,33 @@ def validate_tiling(
             return f"Overlapping nodes: {node_id1} [{start1},{end1}) overlaps with {node_id2} [{start2},{end2})"
 
     # Optionally, check for complete coverage
-    doc_nodes = store.get_all_nodes_for_document(document_id)
-    if doc_nodes:
-        doc_start = min(n.span_start for n in doc_nodes)
-        doc_end = max(n.span_end for n in doc_nodes)
+    # Get document bounds efficiently using preloaded nodes if available
+    doc_start: int | None = None
+    doc_end: int | None = None
+
+    if preloaded_nodes:
+        # Find root node from preloaded nodes (node with no parent in the set)
+        root_node = None
+        for node in preloaded_nodes.values():
+            if node.parent_id is None or node.parent_id not in preloaded_nodes:
+                root_node = node
+                break
+
+        if root_node:
+            doc_start = root_node.span_start  # Always 0 for root
+            doc_end = root_node.span_end  # Document length
+        elif preloaded_nodes:
+            # Fallback if no root found (shouldn't happen)
+            doc_start = min(n.span_start for n in preloaded_nodes.values())
+            doc_end = max(n.span_end for n in preloaded_nodes.values())
+    else:
+        # Only fall back to loading all nodes if no preloaded nodes provided
+        doc_nodes = store.get_all_nodes_for_document(document_id)
+        if doc_nodes:
+            doc_start = min(n.span_start for n in doc_nodes)
+            doc_end = max(n.span_end for n in doc_nodes)
+
+    if doc_start is not None and doc_end is not None:
         if node_spans[0][1] != doc_start:
             return f"Tiling does not start at document start: {node_spans[0][1]} != {doc_start}"
         if node_spans[-1][2] != doc_end:
