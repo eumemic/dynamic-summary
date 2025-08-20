@@ -320,7 +320,7 @@ class DockerPostgres:
     def create_database(self, database_name: str) -> bool:
         """Create an additional database in the PostgreSQL container.
 
-        Uses IF NOT EXISTS to avoid race conditions and ensure idempotent behavior.
+        Checks for database existence first, then creates if needed.
 
         Args:
             database_name: Name of the database to create
@@ -333,8 +333,33 @@ class DockerPostgres:
             return False
 
         try:
-            # Use docker exec to create the database with IF NOT EXISTS
-            logger.debug(f"Ensuring database exists: {database_name}")
+            # First check if database exists
+            logger.debug(f"Checking if database exists: {database_name}")
+            check_result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    self.container_name,
+                    "psql",
+                    "-U",
+                    self.USER,
+                    "-d",
+                    self.DATABASE,
+                    "-tAc",
+                    f"SELECT 1 FROM pg_database WHERE datname='{database_name}';",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            # If database exists, return True
+            if check_result.returncode == 0 and check_result.stdout.strip() == "1":
+                logger.debug(f"Database {database_name} already exists")
+                return True
+
+            # Database doesn't exist, create it
+            logger.debug(f"Creating database: {database_name}")
             result = subprocess.run(
                 [
                     "docker",
@@ -346,7 +371,7 @@ class DockerPostgres:
                     "-d",
                     self.DATABASE,
                     "-c",
-                    f'CREATE DATABASE IF NOT EXISTS "{database_name}";',
+                    f'CREATE DATABASE "{database_name}";',
                 ],
                 capture_output=True,
                 text=True,
@@ -355,7 +380,7 @@ class DockerPostgres:
 
             # Check only for success return code
             if result.returncode == 0:
-                logger.debug(f"Database {database_name} ready")
+                logger.debug(f"Database {database_name} created successfully")
                 return True
             else:
                 # Log the actual error for debugging
