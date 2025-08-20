@@ -15,9 +15,10 @@ from ragzoom.config import (
     OperationalConfig,
     QueryConfig,
 )
+from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store, TreeNode
+from ragzoom.store import TreeNode, create_store_with_docker
 from ragzoom.tree_viz import build_ascii_tree
 
 # Load environment variables
@@ -33,6 +34,8 @@ logger = logging.getLogger(__name__)
 # Suppress noisy HTTP logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
+# Suppress noisy SQLAlchemy logs even in debug mode
+logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
 
 
 def configure_logging_level(debug: bool) -> None:
@@ -110,8 +113,8 @@ def cli(ctx: click.Context) -> None:
 )
 @click.option(
     "--database",
-    type=click.Path(),
-    help="Path to SQLite database file (default: ./ragzoom.db)",
+    type=str,
+    help="PostgreSQL database URL (default: postgresql://localhost/ragzoom)",
 )
 @click.option(
     "--debug",
@@ -179,20 +182,15 @@ def index(
         query_config = QueryConfig()  # Use defaults for indexing command
         operational_config = OperationalConfig()
 
-        # Override data directory if provided
+        # Override database URL if provided
         if data_dir:
             data_path = Path(data_dir)
             operational_config = operational_config.replace(
-                chroma_persist_directory=str(data_path / "chroma_db"),
-                sqlite_database_url=f"sqlite:///{data_path / 'ragzoom.db'}",
+                database_url=f"postgresql:///{data_path / 'ragzoom'}",
             )
 
-        # Override database path if provided (takes precedence over data_dir)
         if database:
-            db_path = Path(database).resolve()
-            operational_config = operational_config.replace(
-                sqlite_database_url=f"sqlite:///{db_path}",
-            )
+            operational_config = operational_config.replace(database_url=database)
 
         # Update context with new configs
         ctx.obj["index_config"] = index_config
@@ -200,7 +198,9 @@ def index(
         ctx.obj["operational_config"] = operational_config
 
         # Create components for this command
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
         tree_builder = TreeBuilder(
             index_config,
             store,
@@ -317,8 +317,25 @@ def index(
 
             click.echo(f"✅ Telemetry saved to {output_file}")
 
+    except OSError as e:
+        # Clean user-friendly errors (no "Error indexing document" prefix)
+        click.echo(str(e), err=True)
+        sys.exit(1)
     except Exception as e:
-        click.echo(f"❌ Error indexing document: {e}", err=True)
+        # Handle database and other unexpected errors
+        error_msg = str(e).lower()
+        if "connection" in error_msg or "postgresql" in error_msg:
+            click.echo(
+                "\n❌ Database connection failed.\n\n"
+                "Try these steps:\n"
+                "  1. Run 'ragzoom doctor' to check your setup\n"
+                "  2. Ensure Docker is running\n"
+                "  3. Check README.md for setup instructions\n\n"
+                f"Technical error: {type(e).__name__}",
+                err=True,
+            )
+        else:
+            click.echo(f"❌ Error indexing document: {e}", err=True)
         sys.exit(1)
 
 
@@ -330,7 +347,9 @@ def documents(ctx: click.Context) -> None:
         # Create components for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
 
         # Get all unique documents
         with store.SessionLocal() as session:
@@ -428,7 +447,9 @@ def query(
             query_config = query_config.replace(embedding_model=embedding_model)
 
         # Create components for this command
-        store = Store(operational_config, embedding_model=query_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=query_config.embedding_model
+        )
         retriever = Retriever(
             query_config,
             store,
@@ -543,14 +564,17 @@ def pin(ctx: click.Context, node_id: str) -> None:
         # Create components for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
-        success = store.pin_node(node_id)
-
-        if success:
-            click.echo(f"✅ Node {node_id} pinned successfully!")
-        else:
-            click.echo(f"❌ Failed to pin node {node_id} (doesn't exist or too deep)")
-            sys.exit(1)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
+        store.pin_node(node_id)
+        click.echo(f"✅ Node {node_id} pinned successfully!")
+    except NodeNotFoundError:
+        click.echo(f"❌ Node {node_id} not found")
+        sys.exit(1)
+    except InvalidOperationError as e:
+        click.echo(f"❌ Failed to pin node {node_id}: {e}")
+        sys.exit(1)
 
     except Exception as e:
         click.echo(f"❌ Error pinning node: {e}", err=True)
@@ -566,9 +590,14 @@ def status(ctx: click.Context) -> None:
         index_config = ctx.obj["index_config"]
         query_config = ctx.obj["query_config"]
         operational_config = ctx.obj["operational_config"]
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
         # Gather stats
-        all_nodes = store.collection.count()
+        with store.SessionLocal() as session:
+            from ragzoom.store import TreeNode
+
+            all_nodes = session.query(TreeNode).count()
         leaf_nodes = store.get_leaf_nodes()
         root = store.get_root_node()
         pinned = store.get_pinned_nodes()
@@ -628,7 +657,9 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
         # Create components for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
 
         if document_id:
             # Clear specific document
@@ -649,7 +680,7 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
             if not confirm:
                 click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
 
-            # Clear SQLite data
+            # Clear database data
             with store.SessionLocal() as session:
                 # Import models
                 from ragzoom.store import Document, TreeNode
@@ -659,12 +690,6 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
                 session.query(TreeNode).delete()
                 session.query(Document).delete()
                 session.commit()
-
-            # Clear Chroma collection - delete all documents
-            # Get all IDs first
-            results = store.collection.get()
-            if results["ids"]:
-                store.collection.delete(ids=results["ids"])
 
             # Clear the cache
             store.node_cache.clear()
@@ -689,7 +714,9 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
         # Create components for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
 
         # Get all nodes
         nodes_data = []
@@ -864,6 +891,142 @@ def config(examples: bool, output_file: str | None) -> None:
         click.echo("  ragzoom config --examples     Show configuration examples")
         click.echo("  ragzoom config --create FILE  Create a sample config file")
         click.echo("\nFor detailed help: ragzoom config --help")
+
+
+@cli.command()
+def doctor() -> None:
+    """Check system setup and diagnose potential issues."""
+    import subprocess
+
+    click.echo("🏥 RagZoom System Check")
+    click.echo("=" * 24)
+
+    issues_found = False
+
+    # Check Python environment
+    click.echo(f"✅ Python: {sys.version.split()[0]} ({sys.executable})")
+
+    # Check for virtual environment
+    if hasattr(sys, "real_prefix") or (
+        hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix
+    ):
+        click.echo("✅ Virtual environment: Active")
+    else:
+        click.echo("⚠️  Virtual environment: None (consider using one)")
+
+    # Check Docker availability
+    try:
+        result = subprocess.run(
+            ["docker", "--version"], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            click.echo(f"✅ Docker: {version}")
+
+            # Check Docker daemon
+            try:
+                subprocess.run(
+                    ["docker", "ps"], capture_output=True, check=True, timeout=5
+                )
+                click.echo("✅ Docker daemon: Running")
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                click.echo("❌ Docker daemon: Not running")
+                click.echo(
+                    "   Start Docker Desktop or run: sudo systemctl start docker"
+                )
+                issues_found = True
+        else:
+            raise subprocess.CalledProcessError(result.returncode, "docker")
+
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+    ):
+        click.echo("❌ Docker: Not found or not working")
+        click.echo("   Install Docker Desktop from https://docker.com")
+        issues_found = True
+
+    # Check PostgreSQL container status
+    if not issues_found:  # Only check if Docker is working
+        try:
+            from ragzoom.docker_postgres import DockerPostgres
+
+            docker_pg = DockerPostgres()
+            status = docker_pg.get_status()
+
+            if status["container_exists"]:
+                if status["container_running"]:
+                    if status["postgres_ready"]:
+                        click.echo("✅ PostgreSQL: Running and ready")
+                        click.echo(f"   Container: {docker_pg.container_name}")
+                        click.echo(f"   Connection: {status['connection_url']}")
+                    else:
+                        click.echo("⚠️  PostgreSQL: Container running but not ready")
+                        click.echo(
+                            "   Container may be starting up, wait a moment and try again"
+                        )
+                else:
+                    click.echo("⚠️  PostgreSQL: Container exists but not running")
+                    click.echo(f"   Run: docker start {docker_pg.container_name}")
+            else:
+                click.echo("⚠️  PostgreSQL: No container found")
+                click.echo("   Will be created automatically on first use")
+
+        except ImportError:
+            click.echo("❌ PostgreSQL management: Not available")
+            issues_found = True
+
+    # Test database connection
+    if not issues_found:
+        try:
+            click.echo("\n🔗 Testing database connection...")
+
+            # Create operational config
+            operational_config = OperationalConfig()
+
+            # Try to create a store (this will auto-start PostgreSQL if needed)
+            store = create_store_with_docker(operational_config)
+
+            # Test basic operation
+            with store.SessionLocal() as session:
+                # Simple query to test connection
+                from sqlalchemy import text
+
+                session.execute(text("SELECT 1"))
+
+            click.echo("✅ Database connection: Working")
+            store.close()
+
+        except Exception as e:
+            click.echo("❌ Database connection: Failed")
+            click.echo(f"   Error: {e}")
+            issues_found = True
+
+    # Check OpenAI API key
+    import os
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if api_key:
+        if api_key.startswith("sk-") and len(api_key) > 20:
+            click.echo("✅ OpenAI API key: Set")
+        else:
+            click.echo("⚠️  OpenAI API key: Set but format looks invalid")
+            click.echo("   Should start with 'sk-' and be longer than 20 characters")
+    else:
+        click.echo("⚠️  OpenAI API key: Not set")
+        click.echo("   Set OPENAI_API_KEY environment variable or add to .env file")
+
+    # Summary
+    click.echo("\n📋 Summary")
+    if not issues_found:
+        click.echo("🎉 System looks good! You're ready to use RagZoom.")
+        click.echo("\nTry: ragzoom index document.txt")
+    else:
+        click.echo("⚠️  Issues found. Please address the problems above.")
+        click.echo(
+            "\nFor help, see: https://github.com/eumemic/dynamic-summary#installation"
+        )
 
 
 # Telemetry commands are available via optional dependencies

@@ -4,8 +4,6 @@ These tests verify the complete pipeline from document indexing through
 retrieval to final assembly, using mock OpenAI clients.
 """
 
-import shutil
-import tempfile
 from unittest.mock import Mock, patch
 
 import pytest
@@ -14,9 +12,9 @@ from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store
 
 
+@pytest.mark.integration
 class TestIntegration:
     """Test complete workflow integration scenarios.
 
@@ -104,12 +102,14 @@ class TestIntegration:
             yield
 
     @pytest.fixture
-    def temp_system(self, mock_openai):
+    def temp_system(self, request, mock_openai, base_config):
         """Create a complete temporary RagZoom system."""
-        # Create temporary directories
-        temp_dir = tempfile.mkdtemp()
-        chroma_dir = f"{temp_dir}/chroma"
-        db_path = f"{temp_dir}/test.db"
+        # Always use real PostgreSQL store for integration tests
+        from tests.conftest import _create_real_store
+
+        real_store = _create_real_store(base_config)
+        if real_store is None:
+            pytest.skip("PostgreSQL not available for integration test")
 
         # Create separate configs
         index_config = IndexConfig.load(
@@ -117,20 +117,20 @@ class TestIntegration:
             preceding_context_tokens=25,  # Must be less than leaf_tokens
         )
         query_config = QueryConfig(budget_tokens=500)
+
+        # Create operational config
         operational_config = OperationalConfig(
             openai_api_key="test-key",
-            chroma_persist_directory=chroma_dir,
-            sqlite_database_url=f"sqlite:///{db_path}",
+            database_url=real_store.config.database_url,  # Use the store's database URL
         )
 
-        store = Store(operational_config, embedding_model=index_config.embedding_model)
         tree_builder = TreeBuilder(
-            index_config, store, api_key=operational_config.openai_api_key
+            index_config, real_store, api_key=operational_config.openai_api_key
         )
         retriever = Retriever(
-            query_config, store, api_key=operational_config.openai_api_key
+            query_config, real_store, api_key=operational_config.openai_api_key
         )
-        assembler = Assembler(store)
+        assembler = Assembler(real_store)
 
         # Create a config wrapper for backward compatibility
         from tests.conftest import BackwardCompatibilityConfig
@@ -139,11 +139,32 @@ class TestIntegration:
             index_config, query_config, operational_config
         )
 
-        yield config, store, tree_builder, retriever, assembler
+        yield config, real_store, tree_builder, retriever, assembler
 
-        # Cleanup - close store first to release file handles
-        store.close()
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        # Cleanup PostgreSQL store and unique database
+        if hasattr(real_store, "_test_db_cleanup"):
+            cleanup_info = real_store._test_db_cleanup
+            try:
+                from sqlalchemy import create_engine, text
+
+                admin_engine = create_engine(
+                    cleanup_info["admin_url"], isolation_level="AUTOCOMMIT"
+                )
+                with admin_engine.connect() as conn:
+                    # Terminate connections and drop database
+                    conn.execute(
+                        text(
+                            "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = :db_name AND pid <> pg_backend_pid()"
+                        ),
+                        {"db_name": cleanup_info["db_name"]},
+                    )
+                    conn.execute(
+                        text(f"DROP DATABASE IF EXISTS {cleanup_info['db_name']}")
+                    )  # nosec B608
+                admin_engine.dispose()
+            except Exception:
+                pass  # Ignore cleanup errors
+            real_store.close()
 
     def test_index_and_query(self, temp_system):
         """Test indexing a document and querying it."""

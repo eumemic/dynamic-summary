@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
@@ -267,13 +268,18 @@ async def pin_node(
 ) -> dict[str, str]:
     """Pin a node."""
     try:
-        success = service.store.pin_node(request.node_id)
-        if not success:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot pin node {request.node_id} (doesn't exist or too deep)",
-            )
+        service.store.pin_node(request.node_id)
         return {"message": "Node pinned successfully", "node_id": request.node_id}
+    except NodeNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Node {request.node_id} not found",
+        )
+    except InvalidOperationError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
     except Exception as e:
         logger.error(f"Error pinning node: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -335,7 +341,10 @@ async def get_status(
     """Get system status."""
     try:
         # Gather stats
-        all_nodes = service.store.collection.count()
+        with service.store.SessionLocal() as session:
+            from ragzoom.store import TreeNode
+
+            all_nodes = session.query(TreeNode).count()
         leaf_nodes = service.store.get_leaf_nodes()
         root = service.store.get_root_node()
         pinned = service.store.get_pinned_nodes()

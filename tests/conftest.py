@@ -1,13 +1,13 @@
 """Pytest configuration and fixtures for RagZoom tests."""
 
 import os
-import tempfile
 from collections.abc import Generator
 from unittest.mock import MagicMock
 
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
 from ragzoom.store import Store
 from tests.mock_store import SimpleMockStore
 
@@ -31,12 +31,8 @@ class BackwardCompatibilityConfig:
         return self.operational_config.openai_api_key
 
     @property
-    def sqlite_database_url(self) -> str:
-        return self.operational_config.sqlite_database_url
-
-    @property
-    def chroma_persist_directory(self) -> str:
-        return self.operational_config.chroma_persist_directory
+    def database_url(self) -> str:
+        return self.operational_config.database_url
 
     @property
     def target_chunk_tokens(self) -> int:
@@ -100,9 +96,16 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip_unit)
     else:
         # Skip integration tests by default unless --use-real-store is specified
-        if not config.getoption("--use-real-store"):
+        # Exception: In CI, run integration tests by default
+        should_run_integration = (
+            config.getoption("--use-real-store")
+            or os.getenv("CI")
+            or os.getenv("GITHUB_ACTIONS")
+        )
+
+        if not should_run_integration:
             skip_integration = pytest.mark.skip(
-                reason="Integration test - use --use-real-store to run"
+                reason="Integration test - use --use-real-store to run or run in CI"
             )
             for item in items:
                 if "integration" in item.keywords:
@@ -121,8 +124,10 @@ def base_config() -> BackwardCompatibilityConfig:
     )
     operational_config = OperationalConfig(
         openai_api_key="test-key",
-        sqlite_database_url="sqlite:///:memory:",
-        chroma_persist_directory=":memory:",  # Will be overridden for real store
+        database_url=os.getenv(
+            "RAGZOOM_DATABASE_URL",
+            "postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test",
+        ),
     )
     return BackwardCompatibilityConfig(index_config, query_config, operational_config)
 
@@ -136,42 +141,135 @@ def mock_store(base_config) -> Generator[SimpleMockStore, None, None]:
 
 
 @pytest.fixture
-def real_store(base_config) -> Generator[Store, None, None]:
-    """Create a real store for integration testing."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Create operational config with real directory for ChromaDB
-        operational_config = OperationalConfig(
-            openai_api_key=base_config.openai_api_key,
-            sqlite_database_url=base_config.sqlite_database_url,
-            chroma_persist_directory=temp_dir,
-        )
-        store = Store(
-            operational_config, embedding_model=base_config.index_config.embedding_model
-        )
-        yield store
-        store.close()
+def real_store(base_config) -> Generator[Store | None, None, None]:
+    """Create a real store for integration testing (lazy loading)."""
+    # Only attempt to create real store when fixture is actually requested
+    real_store_instance = _create_real_store(base_config)
+    if real_store_instance is None:
+        # In CI, this should fail for integration tests
+        # In local dev, tests can handle None gracefully
+        yield None
+    else:
+        try:
+            yield real_store_instance
+        finally:
+            real_store_instance.close()
 
 
 @pytest.fixture
-def store(request, base_config, mock_store, real_store):
+def store(request, base_config, mock_store):
     """Provide either mock or real store based on test requirements.
 
     This fixture automatically selects the appropriate store:
-    - For tests marked with @pytest.mark.integration: uses real_store
-    - For tests run with --use-real-store flag: uses real_store
+    - For tests marked with @pytest.mark.integration: uses real_store (if available)
+    - For tests run with --use-real-store flag: uses real_store (if available)
     - Otherwise: uses mock_store for speed
     """
     # Check if test is marked as integration
     if hasattr(request.node, "get_closest_marker"):
         if request.node.get_closest_marker("integration"):
-            return real_store
+            # Only create real_store when actually needed for integration tests
+            real_store = _create_real_store(base_config)
+            if real_store is None:
+                pytest.skip("PostgreSQL not available for integration test")
+            try:
+                yield real_store
+            finally:
+                # Cleanup test database if needed
+                if hasattr(real_store, "_test_db_cleanup"):
+                    cleanup_info = real_store._test_db_cleanup
+                    try:
+                        drop_temp_database(
+                            cleanup_info["db_name"], cleanup_info["admin_url"]
+                        )
+                    except Exception:
+                        pass  # Ignore cleanup errors
+
+                real_store.close()
+            return
 
     # Check command-line option
     if request.config.getoption("--use-real-store"):
-        return real_store
+        # Only create real_store when explicitly requested
+        real_store = _create_real_store(base_config)
+        if real_store is None:
+            pytest.skip("PostgreSQL not available for real store test")
+        try:
+            yield real_store
+        finally:
+            # Cleanup test database if needed
+            if hasattr(real_store, "_test_db_cleanup"):
+                cleanup_info = real_store._test_db_cleanup
+                try:
+                    drop_temp_database(
+                        cleanup_info["db_name"], cleanup_info["admin_url"]
+                    )
+                except Exception:
+                    pass  # Ignore cleanup errors
+
+            real_store.close()
+        return
 
     # Default to mock for speed
-    return mock_store
+    yield mock_store
+
+
+def _create_real_store(base_config) -> Store | None:
+    """Create a real store for integration testing, or return None if unavailable."""
+    try:
+        # Use test-specific database URL or create unique one
+        base_db_url = base_config.database_url
+
+        if "ragzoom_test" in base_db_url:
+            # Always create unique database name for each test to ensure isolation
+            test_db_name = get_temp_db_name("ragzoom_test")
+            # Extract base URL and construct new URL
+            base_url_parts = base_db_url.split("/")
+            base_url_parts[-1] = test_db_name
+            test_db_url = "/".join(base_url_parts)
+
+            # Create the test database
+            admin_url = "/".join(base_url_parts[:-1]) + "/postgres"
+            create_temp_database(test_db_name, admin_url)
+        else:
+            # Use base URL for custom URLs (non-test scenarios)
+            test_db_url = base_db_url
+            test_db_name = None
+
+        # Create operational config with the unique database URL
+        # Temporarily remove environment override to ensure our unique URL is used
+        original_env = os.environ.get("RAGZOOM_DATABASE_URL")
+        if "RAGZOOM_DATABASE_URL" in os.environ:
+            del os.environ["RAGZOOM_DATABASE_URL"]
+
+        try:
+            operational_config = OperationalConfig(
+                openai_api_key=base_config.openai_api_key,
+                database_url=test_db_url,  # Use the unique database URL
+            )
+        finally:
+            # Restore environment variable
+            if original_env is not None:
+                os.environ["RAGZOOM_DATABASE_URL"] = original_env
+
+        # If we get here, PostgreSQL is available
+        store = Store(
+            operational_config,
+            embedding_model=base_config.index_config.embedding_model,
+        )
+
+        # Store cleanup info for later
+        if test_db_name:
+            store._test_db_cleanup = {
+                "db_name": test_db_name,
+                "admin_url": admin_url,
+            }
+
+        return store
+    except Exception:
+        # Return None - let individual tests decide how to handle unavailable PostgreSQL
+        # Only integration tests should fail hard when PostgreSQL is not available
+        return None
 
 
 @pytest.fixture

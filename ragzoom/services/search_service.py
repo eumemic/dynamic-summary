@@ -1,26 +1,29 @@
-"""Service for vector similarity search and MMR diversity."""
+"""Search service for vector similarity search and MMR using pgvector."""
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from sqlalchemy import select
 
+from ragzoom.models import TreeNode
 from ragzoom.storage.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
 
 class SearchService:
-    """Service for vector search operations and MMR diversity."""
+    """Service for vector search and MMR operations using pgvector."""
 
     def __init__(self, database_manager: DatabaseManager):
         """Initialize search service.
 
         Args:
-            database_manager: Database manager for ChromaDB operations
+            database_manager: Database manager for DB operations
         """
         self.db_manager = database_manager
+        self.SessionLocal = database_manager.SessionLocal
 
     def search_similar(
         self,
@@ -28,51 +31,61 @@ class SearchService:
         n_results: int,
         where: dict[str, Any] | None = None,
     ) -> list[tuple[str, float, dict[str, Any]]]:
-        """Search for similar nodes using Chroma.
+        """Search for similar nodes using pgvector cosine distance.
 
         Args:
             query_embedding: Query embedding vector
             n_results: Number of results to return
-            where: Optional filter conditions
+            where: Optional filter conditions (not used in pgvector implementation)
 
         Returns:
             List of (id, similarity, metadata) tuples where similarity is in [0, 1]
         """
-        # Convert to numpy array if needed
-        query_array = np.array(query_embedding, dtype=np.float32)
-        results = self.db_manager.collection.query(
-            query_embeddings=cast(Any, [query_array]),
-            n_results=n_results,
-            where=where,
-        )
+        query_array = list(map(float, query_embedding))
 
-        # Return list of (id, similarity, metadata) tuples
-        output = []
-        ids = results.get("ids")
-        distances = results.get("distances")
-        metadatas = results.get("metadatas")
-
-        if ids and distances and metadatas and len(ids) > 0:
-            for i in range(len(ids[0])):
-                # Convert cosine distance to similarity
-                # Cosine distance ranges from 0 to 2, where 0 is identical
-                # Similarity = 1 - (distance / 2) to map to [0, 1]
-                distance = float(distances[0][i])
-                similarity = 1.0 - (distance / 2.0)
-                # Ensure similarity is in valid range [0, 1]
-                similarity = max(0.0, min(1.0, similarity))
-
-                output.append(
-                    (
-                        ids[0][i],
-                        similarity,
-                        (
-                            dict(metadatas[0][i])
-                            if isinstance(metadatas[0][i], dict)
-                            else {}
-                        ),
-                    )
+        with self.SessionLocal() as session:
+            stmt = (
+                select(
+                    TreeNode.id,
+                    TreeNode.embedding.cosine_distance(query_array).label("distance"),
+                    TreeNode.span_start,
+                    TreeNode.span_end,
+                    TreeNode.parent_id,
+                    TreeNode.document_id,
+                    TreeNode.left_child_id,
+                    TreeNode.right_child_id,
                 )
+                .order_by(TreeNode.embedding.cosine_distance(query_array))
+                .limit(n_results)
+            )
+
+            # Apply document filter if specified
+            if where and "document_id" in where:
+                stmt = stmt.where(TreeNode.document_id == where["document_id"])
+
+            rows = session.execute(stmt).all()
+
+        output = []
+        for row in rows:
+            distance = float(row.distance)
+            # Convert cosine distance to similarity score
+            # Cosine distance ranges from 0 (identical) to 2 (opposite)
+            # We map this to similarity: 1 (identical) to 0 (opposite)
+            similarity = 1.0 - (distance / 2.0)
+            similarity = max(0.0, min(1.0, similarity))
+
+            metadata = {
+                "span_start": row.span_start,
+                "span_end": row.span_end,
+                "parent_id": row.parent_id or "",
+                "document_id": row.document_id or "",
+                "is_leaf": (
+                    1
+                    if (row.left_child_id is None and row.right_child_id is None)
+                    else 0
+                ),
+            }
+            output.append((row.id, similarity, metadata))
 
         return output
 
@@ -87,12 +100,12 @@ class SearchService:
 
         Args:
             query_embedding: Query embedding vector
-            candidates: List of (id, similarity, metadata) tuples
+            candidates: List of (id, similarity, metadata) candidate tuples
             lambda_param: Balance between relevance and diversity (0-1)
             k: Number of results to select
 
         Returns:
-            List of selected node IDs in MMR order
+            List of selected node IDs
         """
         if not candidates or k <= 0:
             return []
@@ -100,18 +113,16 @@ class SearchService:
         # Get embeddings for all candidates
         candidate_ids = [c[0] for c in candidates]
 
-        # Batch retrieve embeddings
-        results = self.db_manager.collection.get(
-            ids=candidate_ids, include=["embeddings"]
-        )
+        with self.SessionLocal() as session:
+            rows = session.execute(
+                select(TreeNode.id, TreeNode.embedding).where(
+                    TreeNode.id.in_(candidate_ids)
+                )
+            ).all()
 
-        # Create ID to embedding mapping for O(1) lookup
-        embeddings = results.get("embeddings")
-        ids = results.get("ids")
-        if embeddings is None or ids is None:
-            return []
-
-        id_to_embedding = {ids[i]: np.array(embeddings[i]) for i in range(len(ids))}
+        id_to_embedding = {
+            row.id: np.array(row.embedding, dtype=np.float32) for row in rows
+        }
 
         # Build candidate embeddings array in order
         cand_embs = np.array([id_to_embedding[cid] for cid in candidate_ids])

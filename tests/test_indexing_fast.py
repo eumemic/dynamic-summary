@@ -7,7 +7,7 @@ from ragzoom.index import TreeBuilder
 
 
 class TestIndexingFast:
-    """Fast indexing tests using mock store instead of real DB/ChromaDB."""
+    """Fast indexing tests using mock store instead of real database."""
 
     def test_full_document_gets_indexed(
         self, base_config, store, mock_openai_async_client

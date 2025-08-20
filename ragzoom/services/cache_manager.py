@@ -85,3 +85,11 @@ class CacheManager(Generic[T]):
     def contains(self, key: str) -> bool:
         """Check if key is in cache."""
         return key in self.cache
+
+    def invalidate(self, key: str) -> None:
+        """Invalidate (remove) item from cache.
+
+        Args:
+            key: Cache key to invalidate
+        """
+        self.remove(key)
