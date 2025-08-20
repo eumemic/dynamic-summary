@@ -45,8 +45,24 @@ def create_store_with_docker(
     database_url = config.database_url
 
     # Check if we should auto-start Docker PostgreSQL
+    # Note: database_url may already be worktree-specific from OperationalConfig.__post_init__
+    from ragzoom.worktree_utils import (
+        DEFAULT_DATABASE_NAME,
+        DEFAULT_DATABASE_URL_TEMPLATE,
+        get_worktree_database_name,
+    )
+
+    # Check if URL matches expected patterns (base or worktree-specific)
+    expected_base_url = DEFAULT_DATABASE_URL_TEMPLATE.format(
+        database_name=DEFAULT_DATABASE_NAME
+    )
+    expected_worktree_db_name = get_worktree_database_name()
+    expected_worktree_url = DEFAULT_DATABASE_URL_TEMPLATE.format(
+        database_name=expected_worktree_db_name
+    )
+
     should_auto_start = (
-        database_url == "postgresql+psycopg://localhost/ragzoom"
+        (database_url == expected_base_url or database_url == expected_worktree_url)
         and not os.getenv("RAGZOOM_DATABASE_URL")  # User didn't explicitly set URL
         and not os.getenv("RAGZOOM_NO_DOCKER")  # User didn't disable Docker
     )
@@ -56,8 +72,20 @@ def create_store_with_docker(
             from ragzoom.docker_postgres import DockerPostgres
 
             docker_pg = DockerPostgres()
-            database_url = docker_pg.ensure_running()
-            logger.info("✅ PostgreSQL ready in Docker container")
+
+            # Use the expected database name for consistency
+            if database_url == expected_worktree_url:
+                # This is a worktree-specific database
+                database_url = docker_pg.ensure_database_exists(
+                    expected_worktree_db_name
+                )
+                logger.info(
+                    f"✅ PostgreSQL ready with worktree database: {expected_worktree_db_name}"
+                )
+            else:
+                # This is the base ragzoom database
+                database_url = docker_pg.ensure_running()
+                logger.info("✅ PostgreSQL ready in Docker container")
 
             # Update config with Docker database URL
             config = OperationalConfig(
