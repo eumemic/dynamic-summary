@@ -2,6 +2,7 @@
 
 import hashlib
 from collections import OrderedDict, defaultdict, deque
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -229,7 +230,9 @@ class SimpleMockStore:
 
         return node
 
-    def add_nodes_batch(self, nodes_data: list[dict]) -> list[SimpleNamespace]:
+    def add_nodes_batch(
+        self, nodes_data: list[dict], *, session=None
+    ) -> list[SimpleNamespace]:
         """Add multiple nodes in batch - mock implementation."""
         created_nodes = []
         for data in nodes_data:
@@ -251,7 +254,9 @@ class SimpleMockStore:
             created_nodes.append(self.nodes[data["node_id"]])
         return created_nodes
 
-    def update_parent_references_batch(self, updates: list[tuple[str, str]]) -> None:
+    def update_parent_references_batch(
+        self, updates: list[tuple[str, str]], *, session=None
+    ) -> None:
         """Update parent references in batch - mock implementation."""
         for child_id, parent_id in updates:
             if child_id in self.nodes:
@@ -504,6 +509,8 @@ class SimpleMockStore:
         chunk_count: int,
         embedding_model: str,
         summary_model: str,
+        *,
+        session=None,
     ):
         """Mock add document."""
         from datetime import datetime
@@ -564,9 +571,10 @@ class SimpleMockStore:
         doc = self.get_document_by_id(document_id)
         return doc.embedding_model if doc and hasattr(doc, "embedding_model") else None
 
-    def delete_document_nodes(self, document_id: str) -> None:
+    def delete_document_nodes(self, document_id: str, *, session=None) -> int:
         """Delete all nodes for a document."""
         node_ids = list(self.document_nodes.get(document_id, []))
+        deleted_count = len(node_ids)
 
         for node_id in node_ids:
             self.nodes.pop(node_id, None)
@@ -578,6 +586,7 @@ class SimpleMockStore:
         self.documents.pop(document_id, None)
 
         self._update_mock_results()
+        return deleted_count
 
     def find_existing_document(self, content_hash: str) -> str | None:
         """Find document by content hash."""
@@ -596,14 +605,25 @@ class SimpleMockStore:
             "node_count": 10,
         }
 
-    def clear_document(self, document_id: str) -> int:
+    def clear_document(self, document_id: str, *, session=None) -> int:
         """Clear all data for a document."""
         # Count nodes before deleting
         node_count = len(
             [n for n in self.nodes.values() if n.document_id == document_id]
         )
-        self.delete_document_nodes(document_id)
+        self.delete_document_nodes(document_id, session=session)
         return node_count
+
+    @contextmanager
+    def transaction(self):
+        """Mock transaction context manager.
+
+        For the mock store, this doesn't provide true transactional behavior
+        but allows testing transaction-aware code paths.
+        """
+        # Create a mock session object for compatibility
+        mock_session = MagicMock()
+        yield mock_session
 
     def close(self) -> None:
         """Close the store (no-op for mock)."""

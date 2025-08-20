@@ -209,13 +209,17 @@ class Store:
 
     # jscpd:ignore-end
 
-    def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
+    def add_nodes_batch(
+        self, nodes_data: list[dict[str, Any]], *, session=None
+    ) -> list[TreeNode]:
         """Add multiple nodes to the database in batch."""
-        return self.node_repo.add_nodes_batch(nodes_data)
+        return self.node_repo.add_nodes_batch(nodes_data, session=session)
 
-    def update_parent_references_batch(self, updates: list[tuple[str, str]]) -> None:
+    def update_parent_references_batch(
+        self, updates: list[tuple[str, str]], *, session=None
+    ) -> None:
         """Update parent references for multiple nodes in batch."""
-        self.node_repo.update_parent_references_batch(updates)
+        self.node_repo.update_parent_references_batch(updates, session=session)
 
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID."""
@@ -285,6 +289,8 @@ class Store:
         chunk_count: int,
         embedding_model: str,
         summary_model: str,
+        *,
+        session=None,
     ) -> Document:
         """Add a document record."""
         return self.doc_repo.add_document(
@@ -294,15 +300,16 @@ class Store:
             chunk_count,
             embedding_model,
             summary_model,
+            session=session,
         )
 
-    def delete_document_nodes(self, document_id: str) -> int:
+    def delete_document_nodes(self, document_id: str, *, session=None) -> int:
         """Delete all nodes associated with a document."""
-        return self.doc_repo.delete_document_nodes(document_id)
+        return self.doc_repo.delete_document_nodes(document_id, session=session)
 
-    def clear_document(self, document_id: str) -> int:
+    def clear_document(self, document_id: str, *, session=None) -> int:
         """Clear all data for a document, including orphaned nodes and document record."""
-        return self.doc_repo.clear_document(document_id)
+        return self.doc_repo.clear_document(document_id, session=session)
 
     def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
         """Get token statistics for a document using efficient SQL aggregation."""
@@ -380,6 +387,32 @@ class Store:
         return self.db_manager._get_expected_embedding_dimension()
 
     # Lifecycle methods
+    @contextmanager
+    def transaction(self):
+        """Context manager for transactional operations.
+
+        Usage:
+            with store.transaction() as session:
+                store.add_document(..., session=session)
+                store.add_nodes_batch(..., session=session)
+                # All operations commit together or all rollback
+
+        Yields:
+            SQLAlchemy session for the transaction
+
+        Raises:
+            Any exception from the transactional operations (after rollback)
+        """
+        session = self.SessionLocal()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def close(self) -> None:
         """Close database connections and cleanup resources."""
         self.db_manager.close()

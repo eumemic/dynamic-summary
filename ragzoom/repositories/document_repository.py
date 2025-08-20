@@ -29,6 +29,21 @@ class DocumentRepository:
         self.cache_manager = cache_manager
         self.SessionLocal = database_manager.SessionLocal
 
+    def _get_session(self, session=None):
+        """Get session for database operations.
+
+        Args:
+            session: Optional existing session to use
+
+        Returns:
+            Tuple of (session, should_commit) where should_commit indicates
+            if this method should handle commit/rollback
+        """
+        if session is not None:
+            return session, False  # Don't commit - caller manages lifecycle
+        else:
+            return self.SessionLocal(), True  # We manage lifecycle
+
     def get_document_by_path(self, file_path: str) -> Document | None:
         """Get a document by file path.
 
@@ -73,6 +88,8 @@ class DocumentRepository:
         chunk_count: int,
         embedding_model: str,
         summary_model: str,
+        *,
+        session=None,
     ) -> Document:
         """Add a document record.
 
@@ -83,6 +100,7 @@ class DocumentRepository:
             chunk_count: Number of chunks in the document
             embedding_model: Name of the embedding model used for indexing
             summary_model: Name of the summarization model used
+            session: Optional database session for transactional operations
 
         Returns:
             Created Document
@@ -90,7 +108,8 @@ class DocumentRepository:
         Note: Model name validation is performed by the indexing layer
         to ensure they're valid OpenAI models before storage.
         """
-        with self.SessionLocal() as session:
+        db_session, should_commit = self._get_session(session)
+        try:
             doc = Document(
                 id=document_id,
                 file_path=file_path,
@@ -99,37 +118,47 @@ class DocumentRepository:
                 embedding_model=embedding_model,
                 summary_model=summary_model,
             )
-            session.add(doc)
-            session.commit()
+            db_session.add(doc)
+            if should_commit:
+                db_session.commit()
             return doc
+        finally:
+            if should_commit:
+                db_session.close()
 
-    def delete_document_nodes(self, document_id: str) -> int:
+    def delete_document_nodes(self, document_id: str, *, session=None) -> int:
         """Delete all nodes associated with a document.
 
         Args:
             document_id: Document identifier
+            session: Optional database session for transactional operations
 
         Returns:
             Number of nodes deleted
         """
-        with self.SessionLocal() as session:
+        db_session, should_commit = self._get_session(session)
+        try:
             # Get all nodes for this document
-            nodes = session.query(TreeNode).filter_by(document_id=document_id).all()
+            nodes = db_session.query(TreeNode).filter_by(document_id=document_id).all()
             node_ids = [n.id for n in nodes]
 
             # Delete from PostgreSQL (embeddings are stored in the same table now)
             deleted_count = (
-                session.query(TreeNode).filter_by(document_id=document_id).delete()
+                db_session.query(TreeNode).filter_by(document_id=document_id).delete()
             )
-            session.commit()
+            if should_commit:
+                db_session.commit()
 
             # Clear from cache
             for node_id in node_ids:
                 self.cache_manager.remove(node_id)
 
             return deleted_count
+        finally:
+            if should_commit:
+                db_session.close()
 
-    def clear_document(self, document_id: str) -> int:
+    def clear_document(self, document_id: str, *, session=None) -> int:
         """Clear all data for a document, including orphaned nodes and document record.
 
         This handles both complete documents and orphaned nodes from interrupted indexing.
@@ -137,19 +166,25 @@ class DocumentRepository:
 
         Args:
             document_id: ID of the document to clear
+            session: Optional database session for transactional operations
 
         Returns:
             Number of nodes deleted
         """
-        # Delete all nodes with this document_id (handles orphaned nodes from interrupted runs)
-        deleted_count = self.delete_document_nodes(document_id)
+        db_session, should_commit = self._get_session(session)
+        try:
+            # Delete all nodes with this document_id (handles orphaned nodes from interrupted runs)
+            deleted_count = self.delete_document_nodes(document_id, session=db_session)
 
-        # Also delete document record if it exists
-        with self.SessionLocal() as session:
-            session.query(Document).filter_by(id=document_id).delete()
-            session.commit()
+            # Also delete document record if it exists
+            db_session.query(Document).filter_by(id=document_id).delete()
+            if should_commit:
+                db_session.commit()
 
-        return deleted_count
+            return deleted_count
+        finally:
+            if should_commit:
+                db_session.close()
 
     def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
         """Get token statistics for a document using efficient SQL aggregation.
