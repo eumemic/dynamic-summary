@@ -24,6 +24,11 @@ class SimpleMockStore:
         self.document_nodes: dict[str, set[str]] = defaultdict(set)
         self.documents: dict[str, SimpleNamespace] = {}
 
+        # Transaction state tracking
+        self._active_transaction = False
+        # Transaction snapshot for rollback simulation
+        self._transaction_snapshot: dict[str, any] | None = None
+
         # State tracking
         self.pinned_nodes: set[str] = set()
         self.mock_scores: dict[str, float] = {}
@@ -616,14 +621,46 @@ class SimpleMockStore:
 
     @contextmanager
     def transaction(self):
-        """Mock transaction context manager.
+        """Mock transaction context manager with rollback simulation.
 
-        For the mock store, this doesn't provide true transactional behavior
-        but allows testing transaction-aware code paths.
+        Simulates transaction behavior by:
+        - Taking a snapshot of current state at transaction start
+        - Restoring snapshot on exception to simulate rollback
+        - Preventing nested transactions like real Store
         """
+        if self._active_transaction:
+            raise RuntimeError(
+                "Nested transactions are not supported. "
+                "Please use the same session for all operations within a transaction."
+            )
+
+        # Take snapshot of current state
+        self._active_transaction = True
+        self._transaction_snapshot = {
+            "documents": dict(self.documents),
+            "nodes": dict(self.nodes),
+            "embeddings": dict(self.embeddings),
+            "document_nodes": {k: set(v) for k, v in self.document_nodes.items()},
+        }
+
         # Create a mock session object for compatibility
         mock_session = MagicMock()
-        yield mock_session
+
+        try:
+            yield mock_session
+            # Transaction successful - clear snapshot
+            self._transaction_snapshot = None
+        except Exception:
+            # Rollback - restore from snapshot
+            if self._transaction_snapshot:
+                self.documents = self._transaction_snapshot["documents"]
+                self.nodes = self._transaction_snapshot["nodes"]
+                self.embeddings = self._transaction_snapshot["embeddings"]
+                self.document_nodes = self._transaction_snapshot["document_nodes"]
+                self._transaction_snapshot = None
+            raise
+        finally:
+            self._active_transaction = False
 
     def close(self) -> None:
         """Close the store (no-op for mock)."""

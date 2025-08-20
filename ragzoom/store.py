@@ -155,6 +155,9 @@ class Store:
         self.config = config
         self.embedding_model = embedding_model
 
+        # Transaction state tracking
+        self._active_transaction = False
+
         # Initialize components using dependency injection
         self.db_manager = DatabaseManager(config, embedding_model)
         self.cache_manager = CacheManager[TreeNode](
@@ -402,8 +405,16 @@ class Store:
             SQLAlchemy session for the transaction
 
         Raises:
+            RuntimeError: If nested transaction is attempted
             Any exception from the transactional operations (after rollback)
         """
+        if self._active_transaction:
+            raise RuntimeError(
+                "Nested transactions are not supported. "
+                "Please use the same session for all operations within a transaction."
+            )
+
+        self._active_transaction = True
         session = self.SessionLocal()
         try:
             yield session
@@ -412,6 +423,7 @@ class Store:
             session.rollback()
             raise
         finally:
+            self._active_transaction = False
             session.close()
 
     def close(self) -> None:

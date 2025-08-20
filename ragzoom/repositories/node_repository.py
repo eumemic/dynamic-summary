@@ -178,6 +178,10 @@ class NodeRepository(BaseRepository):
                 self.cache_manager.put(node.id, node)
 
             return nodes
+        except Exception:
+            if should_commit:
+                db_session.rollback()
+            raise
         finally:
             if should_commit:
                 db_session.close()
@@ -194,8 +198,7 @@ class NodeRepository(BaseRepository):
         if not updates:
             return
 
-        db_session, should_commit = self._get_session(session)
-        try:
+        with self._session_scope(session) as db_session:
             # Update parent references
             for node_id, parent_id in updates:
                 db_session.execute(
@@ -204,15 +207,9 @@ class NodeRepository(BaseRepository):
                     .values(parent_id=parent_id)
                 )
 
-            if should_commit:
-                db_session.commit()
-
             # Invalidate cache for updated nodes
             for node_id, _ in updates:
                 self.cache_manager.invalidate(node_id)
-        finally:
-            if should_commit:
-                db_session.close()
 
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID.

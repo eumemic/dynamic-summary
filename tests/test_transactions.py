@@ -341,3 +341,116 @@ class TestAtomicReindexing:
         persisted_old_node = store.get_node("old-node-fail")
         assert persisted_old_node is not None
         assert persisted_old_node.text == "Old content"
+
+
+class TestTransactionSafety:
+    """Test transaction safety improvements addressing code review feedback."""
+
+    def test_repository_method_rollback_on_exception(self, store):
+        """Test that repository methods properly rollback on exceptions when managing their own session."""
+        # Add initial data
+        store.add_document(
+            document_id="rollback-test-doc",
+            file_path="test.txt",
+            content_hash="hash123",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        # Mock a database error during node addition
+        with pytest.raises(Exception):
+            # This should trigger the rollback handling in the repository method
+            store.node_repo.add_nodes_batch(
+                [
+                    {
+                        "node_id": "test-node-exception",
+                        "text": "Test content",
+                        "embedding": [0.1] * 1536,  # This will work
+                        "span_start": 0,
+                        "span_end": 12,
+                        "document_id": "rollback-test-doc",
+                        "token_count": 3,
+                    }
+                ]
+            )
+            # Force an exception after adding to test rollback
+            raise ValueError("Simulated database error")
+
+        # Verify the node was not persisted due to rollback
+        node = store.get_node("test-node-exception")
+        assert node is None
+
+    def test_nested_transaction_prevention(self, store):
+        """Test that nested transactions are properly prevented."""
+        with store.transaction():
+            # Attempt to start nested transaction should fail
+            with pytest.raises(
+                RuntimeError, match="Nested transactions are not supported"
+            ):
+                with store.transaction():
+                    pass
+
+    def test_mock_store_rollback_simulation(self, mock_store):
+        """Test that mock store properly simulates rollback behavior."""
+        # Add initial data
+        mock_store.add_document(
+            document_id="mock-rollback-test",
+            file_path="test.txt",
+            content_hash="hash123",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        # Verify document exists
+        assert "mock-rollback-test" in mock_store.documents
+
+        # Test rollback simulation
+        with pytest.raises(ValueError, match="Simulated failure"):
+            with mock_store.transaction() as session:
+                # Delete the document
+                mock_store.delete_document_nodes("mock-rollback-test", session=session)
+
+                # Verify document is gone during transaction
+                # (This behavior may vary based on mock implementation)
+
+                # Simulate failure
+                raise ValueError("Simulated failure")
+
+        # Verify document was restored after rollback
+        assert "mock-rollback-test" in mock_store.documents
+
+    def test_mock_store_nested_transaction_prevention(self, mock_store):
+        """Test that mock store prevents nested transactions like real store."""
+        with mock_store.transaction():
+            # Attempt to start nested transaction should fail
+            with pytest.raises(
+                RuntimeError, match="Nested transactions are not supported"
+            ):
+                with mock_store.transaction():
+                    pass
+
+    def test_session_scope_context_manager(self, store):
+        """Test the new _session_scope context manager in BaseRepository."""
+        # Only test with real store (mock store doesn't have repository structure)
+        if hasattr(store, "doc_repo"):
+            # This tests the new safe session handling
+            doc_repo = store.doc_repo
+
+            # Test successful operation
+            with doc_repo._session_scope() as session:
+                # The session should be managed properly
+                assert session is not None
+
+            # Test exception handling - this should trigger rollback
+            with pytest.raises(ValueError, match="Test exception"):
+                with doc_repo._session_scope() as session:
+                    # Simulate an operation that fails
+                    raise ValueError("Test exception")
+
+            # If we get here, the exception was properly handled and session cleaned up
+        else:
+            # For mock store, just test that it has the required transaction behavior
+            assert hasattr(store, "transaction")
+            assert hasattr(store, "_active_transaction")

@@ -94,8 +94,7 @@ class DocumentRepository(BaseRepository):
         Note: Model name validation is performed by the indexing layer
         to ensure they're valid OpenAI models before storage.
         """
-        db_session, should_commit = self._get_session(session)
-        try:
+        with self._session_scope(session) as db_session:
             doc = Document(
                 id=document_id,
                 file_path=file_path,
@@ -105,12 +104,7 @@ class DocumentRepository(BaseRepository):
                 summary_model=summary_model,
             )
             db_session.add(doc)
-            if should_commit:
-                db_session.commit()
             return doc
-        finally:
-            if should_commit:
-                db_session.close()
 
     # jscpd:ignore-start - Similar pattern but different operation from clear_document
     def delete_document_nodes(
@@ -126,8 +120,7 @@ class DocumentRepository(BaseRepository):
             Number of nodes deleted
         """
         # jscpd:ignore-end
-        db_session, should_commit = self._get_session(session)
-        try:
+        with self._session_scope(session) as db_session:
             # Get all nodes for this document
             nodes = db_session.query(TreeNode).filter_by(document_id=document_id).all()
             node_ids = [n.id for n in nodes]
@@ -136,17 +129,12 @@ class DocumentRepository(BaseRepository):
             deleted_count = (
                 db_session.query(TreeNode).filter_by(document_id=document_id).delete()
             )
-            if should_commit:
-                db_session.commit()
 
             # Clear from cache
             for node_id in node_ids:
                 self.cache_manager.remove(node_id)
 
             return deleted_count
-        finally:
-            if should_commit:
-                db_session.close()
 
     def clear_document(
         self, document_id: str, *, session: Optional["Session"] = None
@@ -163,20 +151,14 @@ class DocumentRepository(BaseRepository):
         Returns:
             Number of nodes deleted
         """
-        db_session, should_commit = self._get_session(session)
-        try:
+        with self._session_scope(session) as db_session:
             # Delete all nodes with this document_id (handles orphaned nodes from interrupted runs)
             deleted_count = self.delete_document_nodes(document_id, session=db_session)
 
             # Also delete document record if it exists
             db_session.query(Document).filter_by(id=document_id).delete()
-            if should_commit:
-                db_session.commit()
 
             return deleted_count
-        finally:
-            if should_commit:
-                db_session.close()
 
     def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
         """Get token statistics for a document using efficient SQL aggregation.
