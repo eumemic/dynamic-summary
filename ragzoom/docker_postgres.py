@@ -346,7 +346,7 @@ class DockerPostgres:
                     "-d",
                     self.DATABASE,
                     "-tAc",
-                    f"SELECT 1 FROM pg_database WHERE datname='{database_name}';",
+                    f"SELECT 1 FROM pg_database WHERE datname='{database_name}';",  # nosec B608 - database_name validated by create_temp_database regex
                 ],
                 capture_output=True,
                 text=True,
