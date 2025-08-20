@@ -4,20 +4,21 @@
 import json
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 # Load results
-with open("experiments/results/raw_results.json", "r") as f:
+with open("experiments/results/raw_results.json") as f:
     data = json.load(f)
 
 # Convert to DataFrame
 df = pd.DataFrame([r for r in data["results"] if r.get("success", False)])
 
 # Load corpus to get chunk size info
-with open("experiments/results/corpus.json", "r") as f:
+with open("experiments/results/corpus.json") as f:
     corpus = json.load(f)
 
 # Create mapping of chunk_id to target_chunk_size
@@ -35,14 +36,14 @@ strategies = df["strategy"].unique()
 for strategy in sorted(strategies):
     print(f"\n{strategy.upper()}")
     print("-" * 80)
-    
+
     strategy_df = df[df["strategy"] == strategy]
-    
+
     for chunk_size in sorted(strategy_df["chunk_size"].unique()):
         size_df = strategy_df[strategy_df["chunk_size"] == chunk_size]
-        
+
         abs_errors = size_df["token_error_pct"].abs()
-        
+
         print(f"\nChunk size: {chunk_size} tokens")
         print(f"  Samples: {len(size_df)}")
         print(f"  Mean error: {size_df['token_error_pct'].mean():.1f}%")
@@ -75,20 +76,20 @@ print("-" * 80)
 
 for chunk_size in sorted(df["chunk_size"].unique()):
     size_df = df[df["chunk_size"] == chunk_size]
-    
+
     # Calculate mean absolute error for each strategy
     strategy_performance = {}
     for strategy in strategies:
         strat_df = size_df[size_df["strategy"] == strategy]
         if len(strat_df) > 0:
             strategy_performance[strategy] = strat_df["token_error_pct"].abs().mean()
-    
+
     # Find best
     best_strategy = min(strategy_performance, key=strategy_performance.get)
     best_error = strategy_performance[best_strategy]
-    
+
     print(f"\n{chunk_size} tokens: {best_strategy} (error: {best_error:.1f}%)")
-    
+
     # Show top 3
     sorted_strategies = sorted(strategy_performance.items(), key=lambda x: x[1])
     print("  Top 3:")
@@ -103,17 +104,17 @@ print("-" * 80)
 # Focus on word_count vs absolute_token for different scenarios
 for chunk_size in [200, 500, 1000]:
     print(f"\nChunk size: {chunk_size} tokens")
-    
+
     size_df = df[df["chunk_size"] == chunk_size]
     if len(size_df) == 0:
         continue
-    
+
     # Group by compression ratio bins
-    size_df["compression_bin"] = pd.cut(size_df["compression_ratio"], 
+    size_df["compression_bin"] = pd.cut(size_df["compression_ratio"],
                                         bins=[0, 0.3, 0.5, 0.7, 1.0],
-                                        labels=["Heavy (10-30%)", "Medium (30-50%)", 
+                                        labels=["Heavy (10-30%)", "Medium (30-50%)",
                                                "Light (50-70%)", "Minimal (70-90%)"])
-    
+
     for strategy in ["word_count", "absolute_token", "absolute_char"]:
         strat_df = size_df[size_df["strategy"] == strategy]
         if len(strat_df) > 0:
