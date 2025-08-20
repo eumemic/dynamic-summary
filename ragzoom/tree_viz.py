@@ -1,10 +1,13 @@
 """ASCII tree visualization for tiling display."""
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
 from ragzoom.store import Store, TreeNode
 from ragzoom.utils.tokenization import tokenizer as default_tokenizer
+
+logger = logging.getLogger(__name__)
 
 
 class PositionResolver(ABC):
@@ -280,6 +283,13 @@ def build_ascii_tree(
         all_nodes = store.get_all_nodes_for_document(document_id)
         if not all_nodes:
             return "No nodes found for document"
+
+        # Warn about potential memory issues with very large documents
+        if len(all_nodes) > 20000:
+            logger.warning(
+                f"Rendering visualization for {len(all_nodes)} nodes may use significant memory. "
+                f"Consider using coverage_map parameter to limit the scope of visualization."
+            )
 
     # Handle backward compatibility with position_resolver parameter
     if position_resolver is not None:

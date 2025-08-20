@@ -1,15 +1,15 @@
 """Length targeting strategies for summarization experiments."""
 
-from .library.absolute_token import AbsoluteTokenStrategy
-from .library.relative_token import RelativeTokenStrategy
 from .library.absolute_char import AbsoluteCharStrategy
-from .library.relative_char import RelativeCharStrategy
-from .library.percentage import PercentageStrategy
-from .library.word_count import WordCountStrategy
-from .library.shorten_percentage import ShortenPercentageStrategy
-from .library.reduce_percentage import ReducePercentageStrategy
-from .library.word_count_compensated import WordCountCompensatedStrategy
+from .library.absolute_token import AbsoluteTokenStrategy
 from .library.cut_percentage import CutPercentageStrategy
+from .library.percentage import PercentageStrategy
+from .library.reduce_percentage import ReducePercentageStrategy
+from .library.relative_char import RelativeCharStrategy
+from .library.relative_token import RelativeTokenStrategy
+from .library.shorten_percentage import ShortenPercentageStrategy
+from .library.word_count import WordCountStrategy
+from .library.word_count_compensated import WordCountCompensatedStrategy
 
 # List of all available strategies
 ALL_STRATEGIES = [
@@ -20,7 +20,7 @@ ALL_STRATEGIES = [
     RelativeCharStrategy(),
     PercentageStrategy(),  # Known to be broken but kept for comparison
     WordCountStrategy(),
-    
+
     # New generation 1 strategies based on discoveries
     ShortenPercentageStrategy(),  # Best performer in testing
     ReducePercentageStrategy(),

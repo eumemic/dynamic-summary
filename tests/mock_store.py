@@ -355,6 +355,28 @@ class SimpleMockStore(StoreInterface):
         """Get all nodes for a specific document."""
         return [node for node in self.nodes.values() if node.document_id == document_id]
 
+    def get_all_nodes_for_document_paginated(
+        self, document_id: str | None, *, page_size: int = 1000
+    ) -> list[list[TreeNode]]:
+        """Get all nodes for a document in paginated batches for memory efficiency.
+
+        Mock implementation that simulates the paginated behavior.
+        """
+        if page_size <= 0:
+            raise ValueError("page_size must be positive")
+
+        all_nodes = self.get_all_nodes_for_document(document_id)
+        if not all_nodes:
+            return []
+
+        # Split into batches
+        batches = []
+        for i in range(0, len(all_nodes), page_size):
+            batch = all_nodes[i : i + page_size]
+            batches.append(batch)
+
+        return batches
+
     def search_similar(
         self,
         query_embedding: list[float] | NDArray[np.float64],

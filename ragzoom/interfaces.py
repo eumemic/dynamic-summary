@@ -71,6 +71,12 @@ class StoreInterface(Protocol):
         """Get all nodes for a specific document."""
         ...
 
+    def get_all_nodes_for_document_paginated(
+        self, document_id: str | None, *, page_size: int = 1000
+    ) -> list[list[TreeNode]]:
+        """Get all nodes for a document in paginated batches for memory efficiency."""
+        ...
+
     # Document operations
     def get_document_by_path(self, file_path: str) -> Document | None:
         """Get a document by file path."""
@@ -96,7 +102,7 @@ class StoreInterface(Protocol):
         """Add a document record."""
         ...
 
-    def delete_document_nodes(self, document_id: str) -> int:
+    def delete_document_nodes(self, document_id: str, *, session: None = None) -> int:
         """Delete all nodes associated with a document."""
         ...
 

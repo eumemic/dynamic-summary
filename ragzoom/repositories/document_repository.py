@@ -112,6 +112,9 @@ class DocumentRepository(BaseRepository):
     ) -> int:
         """Delete all nodes associated with a document.
 
+        This optimized version avoids loading all nodes into memory by using
+        SQL RETURNING to get node IDs only for cache invalidation.
+
         Args:
             document_id: Document identifier
             session: Optional session for transaction support
@@ -121,18 +124,28 @@ class DocumentRepository(BaseRepository):
         """
         # jscpd:ignore-end
         with self._session_scope(session) as db_session:
-            # Get all nodes for this document
-            nodes = db_session.query(TreeNode).filter_by(document_id=document_id).all()
-            node_ids = [n.id for n in nodes]
+            # Use a subquery to get node IDs for cache clearing without loading full objects
+            # This is much more memory-efficient for large node counts
+            from sqlalchemy import text
 
-            # Delete from PostgreSQL (embeddings are stored in the same table now)
-            deleted_count = (
-                db_session.query(TreeNode).filter_by(document_id=document_id).delete()
+            # Delete with RETURNING to get node IDs for cache invalidation
+            # This avoids loading all nodes into memory first
+            result = db_session.execute(
+                text(
+                    "DELETE FROM tree_nodes WHERE document_id = :document_id RETURNING id"
+                ),
+                {"document_id": document_id},
             )
 
-            # Clear from cache
-            for node_id in node_ids:
-                self.cache_manager.remove(node_id)
+            # Get deleted node IDs for cache clearing
+            deleted_node_ids = [row[0] for row in result]
+            deleted_count = len(deleted_node_ids)
+
+            # Clear from cache efficiently using batch removal
+            # This avoids O(n²) performance from individual removals
+            if deleted_count > 1000:
+                logger.debug(f"Batch clearing {deleted_count} nodes from cache...")
+            self.cache_manager.remove_batch(deleted_node_ids)
 
             return deleted_count
 
