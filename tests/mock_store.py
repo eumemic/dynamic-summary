@@ -163,10 +163,9 @@ class SimpleMockStore(StoreInterface):
         # Compute token_count if not provided
         if token_count == 0:
             try:
-                import tiktoken
+                from ragzoom.utils.tokenization import count_tokens
 
-                enc = tiktoken.get_encoding("cl100k_base")
-                token_count = len(enc.encode(text))
+                token_count = count_tokens(text)
             except (ImportError, Exception):
                 # Fallback: approximate tokens as words
                 token_count = len(text.split())
