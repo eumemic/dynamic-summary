@@ -3,6 +3,7 @@
 import logging
 from typing import TYPE_CHECKING
 
+from ragzoom.exceptions import NodeNotFoundError
 from ragzoom.models import TreeNode
 from ragzoom.repositories.node_repository import NodeRepository
 
@@ -118,11 +119,11 @@ class TreeNavigator:
             Depth value (0 for root nodes, incrementing by 1 for each level down)
 
         Raises:
-            ValueError: If node not found
+            NodeNotFoundError: If node not found
         """
         node = self.node_repo.get_node(node_id)
         if not node:
-            raise ValueError(f"Node {node_id} not found")
+            raise NodeNotFoundError(node_id)
 
         depth = 0
         current_id = node.parent_id
@@ -143,14 +144,11 @@ class TreeNavigator:
             node_id: Node identifier
 
         Returns:
-            True if node is a leaf, False otherwise
-
-        Raises:
-            ValueError: If node not found
+            False if the node does not exist, True if it's a leaf, False if it has children
         """
         node = self.node_repo.get_node(node_id)
         if not node:
-            raise ValueError(f"Node {node_id} not found")
+            return False
 
         return not node.left_child_id and not node.right_child_id
 
@@ -161,13 +159,10 @@ class TreeNavigator:
             node_id: Node identifier
 
         Returns:
-            True if node is a root, False otherwise
-
-        Raises:
-            ValueError: If node not found
+            False if the node does not exist, True if it's a root, False if it has a parent
         """
         node = self.node_repo.get_node(node_id)
         if not node:
-            raise ValueError(f"Node {node_id} not found")
+            return False
 
         return node.parent_id is None
