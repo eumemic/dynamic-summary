@@ -272,6 +272,26 @@ class Store(StoreInterface):
         """Get all nodes for a specific document."""
         return self.node_repo.get_all_nodes_for_document(document_id)
 
+    # jscpd:ignore-start - Delegation wrapper for repository method
+    def get_all_nodes_for_document_paginated(
+        self, document_id: str | None, *, page_size: int = 1000
+    ) -> list[list[TreeNode]]:
+        """Get all nodes for a document in paginated batches for memory efficiency.
+
+        This method is optimized for large documents with tens of thousands of nodes.
+
+        Args:
+            document_id: Document ID to get nodes for
+            page_size: Number of nodes per batch (default 1000)
+
+        Returns:
+            List of batches, where each batch is a list of TreeNode objects
+        """
+        # jscpd:ignore-end
+        return self.node_repo.get_all_nodes_for_document_paginated(
+            document_id, page_size=page_size
+        )
+
     # Document operations - delegate to DocumentRepository
     def get_document_by_path(self, file_path: str) -> Document | None:
         """Get a document by file path."""
