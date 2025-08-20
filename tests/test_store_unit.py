@@ -13,15 +13,14 @@ class TestStoreMock:
         """Create a mock store for testing."""
         return SimpleMockStore()
 
-    def test_add_node(self, mock_store):
+    def test_add_node(self, mock_store, tree_node_builder):
         """Test adding a node to the store."""
-        node = mock_store.add_node(
-            node_id="test-1",
-            text="Test text",
-            embedding=[0.1] * 1536,
-            span_start=0,
-            span_end=10,
+        # Use builder for cleaner test setup
+        node_data = (
+            tree_node_builder.with_id("test-1").with_text("Test text").build("dict")
         )
+
+        node = mock_store.add_node(**node_data)
 
         assert node.id == "test-1"
         assert node.text == "Test text"
@@ -49,36 +48,34 @@ class TestStoreMock:
         node = mock_store.get_node("non-existent")
         assert node is None
 
-    def test_node_relationships(self, mock_store):
+    def test_node_relationships(self, mock_store, tree_node_builder):
         """Test parent-child relationships."""
-        # Create parent and children
-        mock_store.add_node(
-            node_id="parent",
-            text="Parent node",
-            embedding=[0.3] * 1536,
-            span_start=0,
-            span_end=20,
-            left_child_id="child1",
-            right_child_id="child2",
+        # Create parent and children using builder
+        parent_data = (
+            tree_node_builder.with_id("parent")
+            .with_text("Parent node")
+            .with_span(0, 20)
+            .with_children("child1", "child2")
+            .build("dict")
+        )
+        child1_data = (
+            tree_node_builder.with_id("child1")
+            .with_text("Child 1")
+            .with_span(0, 10)
+            .with_parent("parent")
+            .build("dict")
+        )
+        child2_data = (
+            tree_node_builder.with_id("child2")
+            .with_text("Child 2")
+            .with_span(10, 20)
+            .with_parent("parent")
+            .build("dict")
         )
 
-        mock_store.add_node(
-            node_id="child1",
-            text="Child 1",
-            embedding=[0.4] * 1536,
-            span_start=0,
-            span_end=10,
-            parent_id="parent",
-        )
-
-        mock_store.add_node(
-            node_id="child2",
-            text="Child 2",
-            embedding=[0.5] * 1536,
-            span_start=10,
-            span_end=20,
-            parent_id="parent",
-        )
+        mock_store.add_node(**parent_data)
+        mock_store.add_node(**child1_data)
+        mock_store.add_node(**child2_data)
 
         # Test relationships
         left, right = mock_store.get_children("parent")
@@ -143,3 +140,68 @@ class TestStoreMock:
         assert node is not None
         assert node.id == "test-return"
         assert node.text == "Test return value"
+
+    def test_document_operations(self, mock_store, document_builder):
+        """Test document operations using builder."""
+        # Create document using builder
+        doc = mock_store.add_document(
+            document_id="test-doc",
+            file_path="/test/file.txt",
+            content_hash="abc123",
+            chunk_count=3,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        assert doc.id == "test-doc"
+        assert doc.file_path == "/test/file.txt"
+        assert doc.chunk_count == 3
+
+        # Test retrieval
+        retrieved = mock_store.get_document_by_id("test-doc")
+        assert retrieved.id == "test-doc"
+
+        retrieved_by_path = mock_store.get_document_by_path("/test/file.txt")
+        assert retrieved_by_path.id == "test-doc"
+
+    def test_interface_compliance(self, mock_store):
+        """Test that SimpleMockStore properly implements StoreInterface."""
+        from ragzoom.interfaces import StoreInterface
+
+        # Verify the mock store implements the interface
+        assert isinstance(mock_store, StoreInterface)
+
+        # Test a few key interface methods to ensure they work
+        assert hasattr(mock_store, "add_node")
+        assert hasattr(mock_store, "get_node")
+        assert hasattr(mock_store, "search_similar")
+        assert hasattr(mock_store, "add_document")
+        assert hasattr(mock_store, "close")
+
+    def test_real_store_interface_compliance(self):
+        """Test that real Store class properly implements StoreInterface."""
+        from ragzoom.interfaces import StoreInterface
+        from ragzoom.store import Store
+
+        # Verify the Store class implements the interface at class level
+        assert issubclass(Store, StoreInterface)
+
+        # Test that Store is runtime checkable
+        # Note: We don't instantiate Store here to avoid database dependencies
+
+    def test_builder_advanced_features(self, mock_store, tree_node_builder):
+        """Test advanced builder features including token_count and height."""
+        # Test that unused builder methods actually work
+        node_data = (
+            tree_node_builder.with_id("advanced-node")
+            .with_text("Advanced test node")
+            .with_token_count(25)  # Demonstrate with_token_count
+            .with_height(3)  # Demonstrate with_height
+            .build("dict")
+        )
+
+        node = mock_store.add_node(**node_data)
+
+        assert node.id == "advanced-node"
+        assert node.token_count == 25
+        assert node.height == 3

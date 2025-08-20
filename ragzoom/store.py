@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 from ragzoom.config import OperationalConfig
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
 from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
+from ragzoom.interfaces import StoreInterface
 from ragzoom.models import Base, Document, TreeNode
 from ragzoom.repositories.document_repository import DocumentRepository
 from ragzoom.repositories.node_repository import NodeRepository
@@ -80,7 +81,7 @@ def create_store_with_docker(
     return Store(config, embedding_model)
 
 
-class Store:
+class Store(StoreInterface):
     """Combined storage for tree structure and embeddings in PostgreSQL.
 
     Error Handling Contract:
