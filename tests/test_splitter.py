@@ -2,6 +2,8 @@
 
 import os
 
+import pytest
+
 from ragzoom.config import IndexConfig
 from ragzoom.splitter import TextSplitter
 
@@ -86,9 +88,9 @@ class TestTextSplitter:
         )
         splitter = TextSplitter(index_config)
 
-        chunks = splitter.split_text("")
-        # LangChain returns empty list for empty text
-        assert chunks == []
+        # Our splitter now raises an error for empty text (correct-by-construction)
+        with pytest.raises(ValueError, match="produced no valid chunks"):
+            splitter.split_text("")
 
     def test_sequential_chunks(self):
         """Test that chunks are sequential without overlap."""

@@ -129,9 +129,27 @@ class TreeBuilder:
                 raise
 
     async def _get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
-        """Get embeddings for multiple texts in a single API call."""
+        """Get embeddings for multiple texts in batches to respect API limits."""
         if not texts:
             return []
+
+        # OpenAI embeddings API has a limit of ~2048 inputs per batch
+        # Use a conservative limit to avoid hitting API constraints
+        max_batch_size = 1000
+
+        if len(texts) > max_batch_size:
+            logger.debug(
+                f"Large batch of {len(texts)} texts - splitting into smaller batches of {max_batch_size}"
+            )
+            all_embeddings = []
+            for i in range(0, len(texts), max_batch_size):
+                batch = texts[i : i + max_batch_size]
+                logger.debug(
+                    f"Processing batch {i//max_batch_size + 1}/{(len(texts) + max_batch_size - 1)//max_batch_size} ({len(batch)} texts)"
+                )
+                batch_embeddings = await self._get_embeddings_batch(batch)
+                all_embeddings.extend(batch_embeddings)
+            return all_embeddings
 
         # Safety net: Check for empty strings that could cause API errors
         for i, text in enumerate(texts):
