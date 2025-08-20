@@ -140,8 +140,8 @@ class TreeBuilder:
         document_id: str | None = None,
         file_path: str | None = None,
         show_progress: bool = True,
-        reporter: TelemetryCollector = ...,
-    ) -> tuple[str, dict[str, Any]]: ...
+        reporter: TelemetryCollector = ...,  # jscpd:ignore-start
+    ) -> tuple[str, dict[str, Any]]: ...  # jscpd:ignore-end
 
     async def _add_document_impl(
         self,
@@ -754,7 +754,20 @@ class TreeBuilder:
 
                 # Batch generate embeddings for all summaries at this level
                 # This avoids individual API calls per node (e.g., 183 calls → 3 batch calls)
-                summaries = [r["summary"] for r in results]
+                # Extract summaries, warning about any empty ones (shouldn't happen due to verbatim fallback)
+                summaries = []
+                for i, result in enumerate(results):
+                    summary = result["summary"]
+                    if not summary or not summary.strip():
+                        # This shouldn't happen as _summarize_text has verbatim fallback
+                        logger.warning(
+                            f"Unexpected empty summary for node {result.get('parent_id', 'unknown')}. "
+                            f"This may indicate a bug in the summarization process."
+                        )
+                        # Use a minimal fallback to avoid embedding API errors
+                        summary = "empty"
+                        result["summary"] = summary  # Update for consistency
+                    summaries.append(summary)
 
                 start_time = time.time()
                 embeddings = await self.llm_service._get_embeddings_batch(summaries)
@@ -778,6 +791,7 @@ class TreeBuilder:
                     )
 
                 # Update results with the generated embeddings
+                # Since we process all results, we can directly zip them
                 for result, embedding in zip(results, embeddings):
                     result["node_data"]["embedding"] = embedding
 
