@@ -18,7 +18,7 @@ class TestDocumentIsolation:
     def mock_openai(self):
         """Mock OpenAI API calls."""
         with (
-            patch("ragzoom.index.AsyncOpenAI") as mock_index_client,
+            patch("ragzoom.services.llm_service.AsyncOpenAI") as mock_index_client,
             patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
         ):
 
