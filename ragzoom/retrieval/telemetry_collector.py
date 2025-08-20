@@ -1,14 +1,9 @@
-"""Telemetry decorator for retrieval operations."""
+"""Telemetry collector for retrieval operations."""
 
 import time
-from collections.abc import Awaitable, Callable
-from functools import wraps
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ragzoom.telemetry_query import QueryTelemetry
-
-if TYPE_CHECKING:
-    from ragzoom.retrieve import RetrievalResult
 
 
 class TelemetryCollector:
@@ -78,42 +73,3 @@ class TelemetryCollector:
         if self.telemetry:
             self.telemetry.end_time = time.perf_counter()
         return self.telemetry
-
-
-def with_telemetry(
-    func: Callable[..., Awaitable["RetrievalResult"]],
-) -> Callable[..., Awaitable[tuple["RetrievalResult", QueryTelemetry]]]:
-    """Decorator to add telemetry collection to retrieval methods.
-
-    Args:
-        func: Async retrieval function to wrap
-
-    Returns:
-        Wrapped function that returns (result, telemetry) tuple
-    """
-
-    @wraps(func)
-    async def wrapper(
-        self: Any,
-        query: str,
-        num_seeds: int | None = None,
-        budget_tokens: int | None = None,
-        document_id: str | None = None,
-    ) -> tuple["RetrievalResult", QueryTelemetry]:
-        """Wrapper that collects telemetry during retrieval."""
-        collector = TelemetryCollector()
-        self._telemetry_collector = collector
-
-        collector.start_query(query, num_seeds, budget_tokens, document_id)
-
-        try:
-            result = await func(self, query, num_seeds, budget_tokens, document_id)
-            telemetry = collector.finalize()
-            if telemetry is None:
-                raise RuntimeError("Telemetry collection failed")
-            return result, telemetry
-        finally:
-            if hasattr(self, "_telemetry_collector"):
-                delattr(self, "_telemetry_collector")
-
-    return wrapper

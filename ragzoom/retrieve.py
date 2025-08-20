@@ -15,7 +15,7 @@ from ragzoom.retrieval import (
     EmbeddingService,
     ScoringService,
 )
-from ragzoom.retrieval.telemetry_decorator import TelemetryCollector
+from ragzoom.retrieval.telemetry_collector import TelemetryCollector
 from ragzoom.store import Store, TreeNode
 from ragzoom.telemetry_query import QueryTelemetry
 
@@ -77,23 +77,13 @@ class Retriever:
         index_config = IndexConfig.load()
         self.budget_planner = BudgetPlanner(store, index_config.target_chunk_tokens)
 
-    def _record_telemetry_phase(self, phase_name: str) -> None:
-        """Record telemetry phase timing if collector is available."""
-        if hasattr(self, "_telemetry_collector"):
-            self._telemetry_collector.end_phase(phase_name)
-            self._telemetry_collector.start_phase()
-
-    def _record_telemetry_metric(self, metric_name: str, value) -> None:
-        """Record telemetry metric if collector is available."""
-        if hasattr(self, "_telemetry_collector"):
-            self._telemetry_collector.record_metric(metric_name, value)
-
     async def retrieve_async(
         self,
         query: str,
         num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
+        telemetry_collector: TelemetryCollector | None = None,
     ) -> RetrievalResult:
         """Async retrieval method with MMR diversity.
 
@@ -108,9 +98,9 @@ class Retriever:
         2. Budget + num_seeds: Use num_seeds but drop nodes if needed for budget
         3. num_seeds only: Just use num_seeds, no budget enforcement
         """
-        # Start telemetry if collector is available
-        if hasattr(self, "_telemetry_collector"):
-            self._telemetry_collector.start_phase()
+        # Start telemetry if collector is provided
+        if telemetry_collector:
+            telemetry_collector.start_phase()
 
         # Determine which mode we're in
         if budget_tokens is not None and num_seeds is None:
@@ -130,14 +120,17 @@ class Retriever:
                 f"Default mode: calculated conservative num_seeds={num_seeds} from budget={self.query_config.budget_tokens}"
             )
 
-        self._record_telemetry_metric("seeds_requested", num_seeds)
+        if telemetry_collector:
+            telemetry_collector.record_metric("seeds_requested", num_seeds)
 
         # Phase 1: Get query embedding
         query_embedding = self.embedding_service.get_query_embedding(query, document_id)
-        self._record_telemetry_phase("embedding")
-        self._record_telemetry_metric(
-            "embedding_model", self.query_config.embedding_model
-        )
+        if telemetry_collector:
+            telemetry_collector.end_phase("embedding")
+            telemetry_collector.start_phase()
+            telemetry_collector.record_metric(
+                "embedding_model", self.query_config.embedding_model
+            )
 
         # Phase 2: Initial retrieval
         k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
@@ -145,26 +138,34 @@ class Retriever:
         candidates = self.store.search_similar(
             query_embedding, k_candidates, where=where_filter
         )
-        self._record_telemetry_phase("search")
-        self._record_telemetry_metric("candidates_retrieved", len(candidates))
+        if telemetry_collector:
+            telemetry_collector.end_phase("search")
+            telemetry_collector.start_phase()
+            telemetry_collector.record_metric("candidates_retrieved", len(candidates))
 
         # Phase 3: Apply MMR
         selected_ids = self.store.compute_mmr_diverse_results(
             query_embedding, candidates, self.query_config.mmr_lambda, num_seeds
         )
-        self._record_telemetry_phase("mmr")
-        self._record_telemetry_metric("seeds_found", len(selected_ids))
+        if telemetry_collector:
+            telemetry_collector.end_phase("mmr")
+            telemetry_collector.start_phase()
+            telemetry_collector.record_metric("seeds_found", len(selected_ids))
 
         # Phase 4: Build coverage map
         coverage_map = self.coverage_builder.build_complete_coverage_map(selected_ids)
-        self._record_telemetry_phase("coverage_map")
-        self._record_telemetry_metric("coverage_size", len(coverage_map))
+        if telemetry_collector:
+            telemetry_collector.end_phase("coverage_map")
+            telemetry_collector.start_phase()
+            telemetry_collector.record_metric("coverage_size", len(coverage_map))
 
         # Phase 5: Build scores map
         scores = self.scoring_service.compute_scores(
             query_embedding, coverage_map, candidates
         )
-        self._record_telemetry_phase("scoring")
+        if telemetry_collector:
+            telemetry_collector.end_phase("scoring")
+            telemetry_collector.start_phase()
 
         # Handle empty coverage map case
         if not coverage_map:
@@ -193,7 +194,9 @@ class Retriever:
 
         if not root_id:
             raise ValueError(
-                f"No root node found in coverage map. Coverage map has {len(nodes)} nodes but none have no parent in the map."
+                f"Failed to find root node in coverage map with {len(nodes)} nodes. "
+                f"This indicates the coverage tree is incomplete - all ancestors should be included "
+                f"up to the document root. Selected node IDs: {selected_ids[:5]}{'...' if len(selected_ids) > 5 else ''}"
             )
 
         # Phase 6: Extract tiling using DP algorithm
@@ -205,8 +208,12 @@ class Retriever:
         dp_result = self.dp_generator.find_optimal_tiling(
             final_budget, scores, nodes, root_id
         )
-        self._record_telemetry_phase("dp")
-        self._record_telemetry_metric("tiling_size", len(dp_result.tiling.node_ids))
+        if telemetry_collector:
+            telemetry_collector.end_phase("dp")
+            telemetry_collector.start_phase()
+            telemetry_collector.record_metric(
+                "tiling_size", len(dp_result.tiling.node_ids)
+            )
 
         # Calculate output tokens
         output_tokens = sum(
@@ -214,7 +221,8 @@ class Retriever:
             for node_id in dp_result.tiling.node_ids
             if node_id in nodes
         )
-        self._record_telemetry_metric("output_tokens", output_tokens)
+        if telemetry_collector:
+            telemetry_collector.record_metric("output_tokens", output_tokens)
 
         return RetrievalResult(
             node_ids=selected_ids,
@@ -267,18 +275,12 @@ class Retriever:
             Tuple of (RetrievalResult, QueryTelemetry) with detailed timing info
         """
         collector = TelemetryCollector()
-        self._telemetry_collector = collector
-
         collector.start_query(query, num_seeds, budget_tokens, document_id)
 
-        try:
-            result = await self.retrieve_async(
-                query, num_seeds, budget_tokens, document_id
-            )
-            telemetry = collector.finalize()
-            if telemetry is None:
-                raise RuntimeError("Telemetry collection failed")
-            return result, telemetry
-        finally:
-            if hasattr(self, "_telemetry_collector"):
-                delattr(self, "_telemetry_collector")
+        result = await self.retrieve_async(
+            query, num_seeds, budget_tokens, document_id, collector
+        )
+        telemetry = collector.finalize()
+        if telemetry is None:
+            raise RuntimeError("Telemetry collection failed")
+        return result, telemetry
