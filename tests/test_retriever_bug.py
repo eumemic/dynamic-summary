@@ -130,7 +130,9 @@ class TestRetrieverBug:
         store.search_similar = mock_search_similar
 
         # Mock the query embedding generation
-        retriever._get_query_embedding = lambda query, document_id=None: [0.3] * 1536
+        retriever.embedding_service.get_query_embedding = (
+            lambda query, document_id=None: [0.3] * 1536
+        )
 
         # This SHOULD work without errors if the retriever built complete coverage trees
         # But it currently raises an error because of the bug
@@ -158,7 +160,9 @@ class TestRetrieverBug:
         store.search_similar = mock_search_similar
 
         # Mock the query embedding generation
-        retriever._get_query_embedding = lambda query, document_id=None: [0.3] * 1536
+        retriever.embedding_service.get_query_embedding = (
+            lambda query, document_id=None: [0.3] * 1536
+        )
 
         # Patch to capture what nodes the DP algorithm receives
         captured_nodes = {}

@@ -254,8 +254,10 @@ class TestBudgetGuarantee:
 
         for budget in test_budgets:
             # Calculate conservative num_seeds using the retriever's method
-            conservative_num_seeds = retriever._calculate_conservative_num_seeds(
-                budget, "doc-budget-test"
+            conservative_num_seeds = (
+                retriever.budget_planner.calculate_conservative_num_seeds(
+                    budget, "doc-budget-test"
+                )
             )
 
             # Verify the calculation is at least 1
