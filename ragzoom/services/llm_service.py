@@ -26,10 +26,17 @@ def _create_mock_response(usage_info: dict[str, Any]) -> Any:
             for key, value in usage_info.items():
                 setattr(self.usage, key, value)
             # Handle prompt_tokens_details specially
-            if "cached_tokens" in usage_info and usage_info["cached_tokens"] > 0:
-                self.usage.prompt_tokens_details = {
-                    "cached_tokens": usage_info["cached_tokens"]
-                }
+            # Check if cached_tokens exists and is a real number (not a mock)
+            try:
+                cached_tokens = usage_info.get("cached_tokens", 0)
+                has_cached_tokens = cached_tokens and cached_tokens > 0
+            except (TypeError, AttributeError):
+                # cached_tokens might be a mock object, treat as no caching
+                has_cached_tokens = False
+                cached_tokens = 0
+
+            if has_cached_tokens:
+                self.usage.prompt_tokens_details = {"cached_tokens": cached_tokens}
             else:
                 self.usage.prompt_tokens_details = None
 
