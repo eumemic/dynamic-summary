@@ -3,6 +3,8 @@
 import asyncio
 from unittest.mock import Mock
 
+import pytest
+
 from ragzoom.index import TreeBuilder
 
 
@@ -127,6 +129,7 @@ class TestIndexingFast:
                 last_span_end >= doc_length - 10
             ), f"Document not fully indexed: {last_span_end} < {doc_length}"
 
+    @pytest.mark.slow
     def test_check_api_batch_limits(self, base_config, store, mock_openai_async_client):
         """Test if there's a limit on API batching causing truncation."""
         config = base_config.index_config

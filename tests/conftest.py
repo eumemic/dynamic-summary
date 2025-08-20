@@ -412,3 +412,27 @@ def sample_telemetry_data():
             },
         ],
     }
+
+
+@pytest.fixture
+def empty_telemetry_data():
+    """Shared empty telemetry data fixture for testing edge cases.
+
+    Provides consistent empty telemetry structure for testing how analysis
+    functions handle empty data scenarios.
+    """
+    return {
+        "format_version": "4.2",
+        "document_id": "test_doc",
+        "source_document_tokens": 0,
+        "indexed_at": 1234567890.0,
+        "config": {
+            "target_chunk_tokens": 100,
+            "summary_model": "gpt-4o-mini",
+            "embedding_model": "text-embedding-3-small",
+        },
+        "model_metadata": {},
+        "system_prompts": {},
+        "runtime_info": {},
+        "nodes": [],
+    }
