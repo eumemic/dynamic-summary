@@ -117,15 +117,11 @@ class DocumentRepository:
             nodes = session.query(TreeNode).filter_by(document_id=document_id).all()
             node_ids = [n.id for n in nodes]
 
-            # Delete from SQLite
+            # Delete from PostgreSQL (embeddings are stored in the same table now)
             deleted_count = (
                 session.query(TreeNode).filter_by(document_id=document_id).delete()
             )
             session.commit()
-
-            # Delete from Chroma
-            if node_ids:
-                self.db_manager.collection.delete(ids=node_ids)
 
             # Clear from cache
             for node_id in node_ids:

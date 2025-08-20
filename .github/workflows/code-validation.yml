@@ -179,6 +179,21 @@ jobs:
     runs-on: ubuntu-latest
     # Skip on draft PRs to save compute
     if: github.event.pull_request.draft != true
+    
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ragzoom_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
     steps:
       - uses: actions/checkout@v4
         with:
@@ -203,17 +218,24 @@ jobs:
           pip install -e .
           pip install -r requirements-dev.txt
           
+      - name: Initialize PostgreSQL vector extension
+        run: |
+          # Wait for PostgreSQL to be ready
+          until pg_isready -h localhost -p 5432 -U postgres; do
+            echo "Waiting for PostgreSQL..."
+            sleep 1
+          done
+          
+          # Create vector extension
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d ragzoom_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          
       - name: Run integration tests
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
+          RAGZOOM_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test
         run: |
-          # Run integration tests if any exist, otherwise skip gracefully
-          if pytest --collect-only -m "integration" tests/ 2>/dev/null | grep -q "0 selected"; then
-            echo "No integration tests found - skipping"
-            exit 0
-          else
-            pytest tests/ -m "integration" -n 2 --no-header -v
-          fi
+          # Run integration tests with real PostgreSQL - should not skip any
+          pytest tests/ -m "integration" --use-real-store -v --tb=short
 
   # Test coverage report (only on push to master)
   coverage:

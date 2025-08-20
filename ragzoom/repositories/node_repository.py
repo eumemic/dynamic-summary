@@ -1,8 +1,8 @@
-"""Repository for TreeNode CRUD operations."""
+"""Repository for TreeNode CRUD operations using PostgreSQL with pgvector."""
 
 import logging
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -42,6 +42,7 @@ class NodeRepository:
             node.span_start,
             node.span_end,
             node.text,
+            node.embedding,  # Load embedding too
             node.token_count,
             node.is_pinned,
             node.last_accessed,
@@ -67,7 +68,7 @@ class NodeRepository:
         token_count: int = 0,
         height: int = 0,
     ) -> TreeNode:
-        """Add a node to both SQLite and Chroma.
+        """Add a node to the database with its embedding.
 
         Args:
             node_id: Unique identifier for the node
@@ -97,6 +98,7 @@ class NodeRepository:
                 span_start=span_start,
                 span_end=span_end,
                 text=text,
+                embedding=list(map(float, embedding)),  # Store embedding in DB
                 document_id=document_id,
                 token_count=token_count,
                 height=height,
@@ -113,29 +115,10 @@ class NodeRepository:
             # Add to cache
             self.cache_manager.put(node_id, node)
 
-        # Add to Chroma
-        embedding_array = np.array(embedding, dtype=np.float32)
-        self.db_manager.collection.add(
-            ids=[node_id],
-            embeddings=cast(Any, [embedding_array]),
-            metadatas=[
-                {
-                    "span_start": span_start,
-                    "span_end": span_end,
-                    "parent_id": parent_id or "",
-                    "is_leaf": (
-                        1 if (left_child_id is None and right_child_id is None) else 0
-                    ),
-                    "document_id": document_id or "",
-                }
-            ],
-            documents=[text],
-        )
-
         return node
 
     def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
-        """Add multiple nodes to both SQLite and Chroma in batch.
+        """Add multiple nodes to the database in batch.
 
         Args:
             nodes_data: List of dictionaries containing node data
@@ -150,9 +133,9 @@ class NodeRepository:
         for data in nodes_data:
             self.db_manager.validate_embedding_dimension(data["embedding"])
 
-        nodes = []
         with self.SessionLocal() as session:
-            # Create TreeNode objects
+            # Create TreeNode objects for regular session.add_all()
+            nodes = []
             for data in nodes_data:
                 node = TreeNode(
                     id=data["node_id"],
@@ -162,6 +145,9 @@ class NodeRepository:
                     span_start=data["span_start"],
                     span_end=data["span_end"],
                     text=data["text"],
+                    embedding=list(
+                        map(float, data["embedding"])
+                    ),  # Store embedding in DB
                     document_id=data.get("document_id"),
                     token_count=data.get("token_count", 0),
                     preceding_neighbor_id=data.get("preceding_neighbor_id"),
@@ -169,53 +155,18 @@ class NodeRepository:
                 )
                 nodes.append(node)
 
-            # Add all nodes to session
-            for node in nodes:
-                session.add(node)
+            # Use add_all for proper object tracking and session management
+            session.add_all(nodes)
             session.commit()
 
-            # Force load attributes and detach all nodes
+            # Force load and detach all nodes
             for node in nodes:
+                session.refresh(node)
                 self._force_load_and_detach(session, node)
 
             # Add all to cache
             for node in nodes:
                 self.cache_manager.put(node.id, node)
-
-        # Batch add to Chroma
-        if nodes:
-            ids = []
-            embeddings = []
-            metadatas = []
-            documents = []
-
-            for data, node in zip(nodes_data, nodes):
-                ids.append(data["node_id"])
-                embeddings.append(np.array(data["embedding"], dtype=np.float32))
-                metadatas.append(
-                    {
-                        "span_start": int(data["span_start"]),
-                        "span_end": int(data["span_end"]),
-                        "parent_id": data.get("parent_id", ""),
-                        "is_leaf": int(
-                            1
-                            if (
-                                data.get("left_child_id") is None
-                                and data.get("right_child_id") is None
-                            )
-                            else 0
-                        ),
-                        "document_id": data.get("document_id", ""),
-                    }
-                )
-                documents.append(data["text"])
-
-            self.db_manager.collection.add(
-                ids=ids,
-                embeddings=cast(Any, embeddings),
-                metadatas=cast(Any, metadatas),
-                documents=documents,
-            )
 
         return nodes
 
@@ -223,37 +174,31 @@ class NodeRepository:
         """Update parent references for multiple nodes in batch.
 
         Args:
-            updates: List of (child_id, parent_id) tuples
+            updates: List of (node_id, parent_id) tuples
         """
         if not updates:
             return
 
         with self.SessionLocal() as session:
-            # Build update mappings
-            update_mappings = [
-                {"id": child_id, "parent_id": parent_id}
-                for child_id, parent_id in updates
-            ]
-
-            # Bulk update
-            for mapping in update_mappings:
-                stmt = (
+            # Update parent references
+            for node_id, parent_id in updates:
+                session.execute(
                     update(TreeNode)
-                    .where(TreeNode.id == mapping["id"])
-                    .values(parent_id=mapping["parent_id"])
+                    .where(TreeNode.id == node_id)
+                    .values(parent_id=parent_id)
                 )
-                session.execute(stmt)
+
             session.commit()
 
             # Invalidate cache for updated nodes
-            for child_id, _ in updates:
-                self.cache_manager.remove(child_id)
+            for node_id, _ in updates:
+                self.cache_manager.invalidate(node_id)
 
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID.
 
         Args:
-            node_id: Node identifier
+            node_id: Node ID to retrieve
 
         Returns:
             TreeNode if found, None otherwise
@@ -263,54 +208,61 @@ class NodeRepository:
         if cached:
             return cached
 
+        # Load from database
         with self.SessionLocal() as session:
             node = session.query(TreeNode).filter_by(id=node_id).first()
             if node:
-                # Force load all attributes and detach from session
+                # Force load and detach
                 self._force_load_and_detach(session, node)
+                # Add to cache
                 self.cache_manager.put(node_id, node)
-            return node
+                return node
+
+        return None
 
     def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes by their IDs.
 
         Args:
-            node_ids: List of node identifiers
+            node_ids: List of node IDs to retrieve
 
         Returns:
-            List of TreeNodes found
+            List of TreeNode objects found
         """
-        # First, try to get as many as possible from the cache
-        cached_nodes: list[TreeNode] = []
-        cached_ids = set()
+        if not node_ids:
+            return []
 
+        nodes = []
+        uncached_ids = []
+
+        # Check cache first
         for node_id in node_ids:
-            cached_node = self.cache_manager.get(node_id)
-            if cached_node is not None:
-                cached_nodes.append(cached_node)
-                cached_ids.add(node_id)
+            cached = self.cache_manager.get(node_id)
+            if cached:
+                nodes.append(cached)
+            else:
+                uncached_ids.append(node_id)
 
-        # Then, get the rest from the database
-        ids_to_fetch = [nid for nid in node_ids if nid not in cached_ids]
-
-        db_nodes = []
-        if ids_to_fetch:
+        # Load uncached nodes from database
+        if uncached_ids:
             with self.SessionLocal() as session:
                 db_nodes = (
-                    session.query(TreeNode).filter(TreeNode.id.in_(ids_to_fetch)).all()
+                    session.query(TreeNode).filter(TreeNode.id.in_(uncached_ids)).all()
                 )
                 for node in db_nodes:
-                    # Force load all attributes and detach from session
+                    # Force load and detach
                     self._force_load_and_detach(session, node)
+                    # Add to cache
                     self.cache_manager.put(node.id, node)
+                    nodes.append(node)
 
-        return cached_nodes + db_nodes
+        return nodes
 
     def update_node_access(self, node_id: str) -> None:
         """Update access time and count for a node.
 
         Args:
-            node_id: Node identifier
+            node_id: Node ID to update access info
         """
         with self.SessionLocal() as session:
             node = session.query(TreeNode).filter_by(id=node_id).first()
@@ -319,50 +271,85 @@ class NodeRepository:
                 node.access_count += 1
                 session.commit()
 
+                # Update cache if present
+                cached = self.cache_manager.get(node_id)
+                if cached:
+                    cached.last_accessed = node.last_accessed
+                    cached.access_count = node.access_count
+
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         """Get all pinned nodes up to optional max depth.
 
         Args:
-            depth_max: Maximum depth to search (optional)
+            depth_max: Maximum depth for pinned nodes (optional)
 
         Returns:
-            List of pinned TreeNodes
+            List of pinned TreeNode objects
         """
         with self.SessionLocal() as session:
             query = session.query(TreeNode).filter(TreeNode.is_pinned == 1)
             nodes = query.all()
+
+            # Force load and detach all
             for node in nodes:
-                session.expunge(node)
+                self._force_load_and_detach(session, node)
+
+            # Filter by depth if specified
+            if depth_max is not None:
+                # Calculate depth for each node and filter
+                # This is done post-query for simplicity
+                filtered_nodes = []
+                for node in nodes:
+                    depth = self._calculate_depth(node.id)
+                    if depth <= depth_max:
+                        filtered_nodes.append(node)
+                return filtered_nodes
+
             return nodes
 
-    def pin_node(self, node_id: str) -> bool:
+    def _calculate_depth(self, node_id: str) -> int:
+        """Calculate depth of a node from root.
+
+        Args:
+            node_id: Node ID to calculate depth for
+
+        Returns:
+            Depth from root (0 for root nodes)
+        """
+        depth = 0
+        current_id = node_id
+
+        while current_id:
+            node = self.get_node(current_id)
+            if not node or not node.parent_id:
+                break
+            depth += 1
+            current_id = node.parent_id
+
+        return depth
+
+    def pin_node(self, node_id: str) -> None:
         """Pin a node (mark as important).
 
         Args:
-            node_id: Node identifier
-
-        Returns:
-            True if node was pinned, False if not found
+            node_id: Node ID to pin
         """
         with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
-            if not node:
-                return False
-
-            node.is_pinned = 1
+            session.execute(
+                update(TreeNode).where(TreeNode.id == node_id).values(is_pinned=1)
+            )
             session.commit()
 
-            # Update cache if node is cached
-            if self.cache_manager.contains(node_id):
-                self.cache_manager.put(node_id, node)
-
-            return True
+            # Update cache if present
+            cached = self.cache_manager.get(node_id)
+            if cached:
+                cached.is_pinned = 1
 
     def get_leaf_nodes(self) -> list[TreeNode]:
         """Get all leaf nodes (nodes with no children).
 
         Returns:
-            List of leaf TreeNodes
+            List of leaf TreeNode objects
         """
         with self.SessionLocal() as session:
             nodes = (
@@ -373,30 +360,32 @@ class NodeRepository:
                 )
                 .all()
             )
+
+            # Force load and detach all
             for node in nodes:
-                session.expunge(node)
+                self._force_load_and_detach(session, node)
+
             return nodes
 
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
-        """Get all nodes for a document.
+        """Get all nodes for a specific document.
 
         Args:
-            document_id: Document identifier (None for global nodes)
+            document_id: Document ID to get nodes for
 
         Returns:
-            List of TreeNodes for the document
+            List of TreeNode objects for the document
         """
         with self.SessionLocal() as session:
-            if document_id is None:
-                nodes = (
-                    session.query(TreeNode).filter(TreeNode.document_id.is_(None)).all()
-                )
+            if document_id:
+                nodes = session.query(TreeNode).filter_by(document_id=document_id).all()
             else:
-                nodes = (
-                    session.query(TreeNode)
-                    .filter(TreeNode.document_id == document_id)
-                    .all()
-                )
+                # If no document_id, return all nodes (but this could be memory intensive)
+                logger.warning("No document_id provided, returning all nodes in store.")
+                nodes = session.query(TreeNode).all()
+
+            # Force load and detach all
             for node in nodes:
-                session.expunge(node)
+                self._force_load_and_detach(session, node)
+
             return nodes

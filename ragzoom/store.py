@@ -1,7 +1,8 @@
-"""Storage layer for RagZoom - SQLite for tree structure, Chroma for vectors."""
+"""Storage layer for RagZoom using PostgreSQL with pgvector for embeddings."""
 
 import hashlib
 import logging
+import os
 from contextlib import contextmanager
 from typing import Any
 
@@ -9,7 +10,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.config import OperationalConfig
-from ragzoom.models import Document, TreeNode
+from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
+from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
+from ragzoom.models import Base, Document, TreeNode
 from ragzoom.repositories.document_repository import DocumentRepository
 from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.cache_manager import CacheManager
@@ -20,11 +23,125 @@ from ragzoom.storage.database_manager import DatabaseManager
 logger = logging.getLogger(__name__)
 
 
-class Store:
-    """Combined storage for tree structure (SQLite) and embeddings (Chroma)."""
+def create_store_with_docker(
+    config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
+) -> "Store":
+    """Create a Store instance with automatic Docker PostgreSQL if needed.
 
-    # Class constant for pin depth limit (dormant feature)
-    PIN_DEPTH_MAX = 2
+    This factory function handles Docker container startup when using
+    the default database URL without explicit configuration.
+
+    Args:
+        config: Operational configuration
+        embedding_model: Name of embedding model
+
+    Returns:
+        Configured Store instance
+
+    Raises:
+        OSError: If Docker PostgreSQL startup fails
+    """
+    database_url = config.database_url
+
+    # Check if we should auto-start Docker PostgreSQL
+    should_auto_start = (
+        database_url == "postgresql+psycopg://localhost/ragzoom"
+        and not os.getenv("RAGZOOM_DATABASE_URL")  # User didn't explicitly set URL
+        and not os.getenv("RAGZOOM_NO_DOCKER")  # User didn't disable Docker
+    )
+
+    if should_auto_start:
+        try:
+            from ragzoom.docker_postgres import DockerPostgres
+
+            docker_pg = DockerPostgres()
+            database_url = docker_pg.ensure_running()
+            logger.info("✅ PostgreSQL ready in Docker container")
+
+            # Update config with Docker database URL
+            config = OperationalConfig(
+                openai_api_key=config.openai_api_key,
+                database_url=database_url,
+                cache_size=config.cache_size,
+            )
+        except ImportError:
+            logger.debug("Docker PostgreSQL management not available")
+        except OSError:
+            # User-friendly errors from DockerPostgres - re-raise as-is
+            raise
+        except Exception as e:
+            logger.debug(f"Auto-start failed: {e}")
+            raise OSError(
+                f"\n❌ Failed to start PostgreSQL automatically.\n\n"
+                f"Run 'ragzoom doctor' to diagnose the issue.\n"
+                f"Error: {str(e)}"
+            )
+
+    return Store(config, embedding_model)
+
+
+class Store:
+    """Combined storage for tree structure and embeddings in PostgreSQL.
+
+    Error Handling Contract:
+    - Query methods (get_*): Return None for not found, never raise for missing items
+    - Predicate methods (is_*): Return False for missing items, never raise
+    - Command methods (add_*, pin_*, delete_*): Raise specific exceptions for failures
+    - Calculation methods (get_node_depth): Raise NodeNotFoundError for missing nodes
+
+    Exceptions:
+    - NodeNotFoundError: When a requested node cannot be found
+    - DocumentNotFoundError: When a requested document cannot be found
+    - InvalidOperationError: When operation cannot be performed (validation, already exists, etc.)
+    - StorageError: When storage backend encounters internal errors
+    """
+
+    # Class constants
+    PIN_DEPTH_MAX = 2  # Maximum depth for pinned nodes (dormant feature)
+    DEFAULT_CACHE_SIZE = 1000  # Default LRU cache size for hot nodes
+    DEFAULT_POOL_SIZE = 10  # Default connection pool size
+    DEFAULT_MAX_OVERFLOW = 20  # Default max overflow connections
+
+    @classmethod
+    def temporary(cls, embedding_model: str = "text-embedding-3-small"):
+        """Create a temporary store for testing/benchmarking.
+
+        Returns a context manager that yields a Store instance with a temporary
+        PostgreSQL database that is automatically cleaned up.
+        """
+
+        @contextmanager
+        def _temporary_store():
+            # Generate unique database name
+            temp_db_name = get_temp_db_name()
+
+            try:
+                # Create temporary database
+                temp_db_url = create_temp_database(temp_db_name)
+
+                # Create store configuration
+                temp_config = OperationalConfig(
+                    openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+                    database_url=temp_db_url,
+                )
+
+                # Create the store
+                store = cls(temp_config, embedding_model=embedding_model)
+
+                # Create tables
+                Base.metadata.create_all(store.engine)
+
+                yield store
+            finally:
+                # Cleanup
+                try:
+                    if "store" in locals():
+                        store.close()
+                    drop_temp_database(temp_db_name)
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup temporary store: {e}")
+
+        return _temporary_store()
 
     def __init__(
         self, config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
@@ -40,7 +157,9 @@ class Store:
 
         # Initialize components using dependency injection
         self.db_manager = DatabaseManager(config, embedding_model)
-        self.cache_manager = CacheManager[TreeNode](config.cache_size)
+        self.cache_manager = CacheManager[TreeNode](
+            config.cache_size or self.DEFAULT_CACHE_SIZE
+        )
         self.node_repo = NodeRepository(self.db_manager, self.cache_manager)
         self.doc_repo = DocumentRepository(self.db_manager, self.cache_manager)
         self.search_service = SearchService(self.db_manager)
@@ -48,13 +167,14 @@ class Store:
 
         # Expose properties for backward compatibility
         self.SessionLocal = self.db_manager.SessionLocal
-        self.collection = self.db_manager.collection
         self.engine = self.db_manager.engine
-        self.chroma_client = self.db_manager.chroma_client
 
         # Cache properties for backward compatibility
         self.node_cache = self.cache_manager.cache
         self.cache_order = self.cache_manager.cache_order
+
+        # Store expected embedding dimension
+        self._expected_embedding_dim = self.db_manager._expected_embedding_dim
 
     # Node operations - delegate to NodeRepository
     # jscpd:ignore-start
@@ -72,7 +192,7 @@ class Store:
         token_count: int = 0,
         height: int = 0,
     ) -> TreeNode:
-        """Add a node to both SQLite and Chroma."""
+        """Add a node to the database with its embedding."""
         return self.node_repo.add_node(
             node_id,
             text,
@@ -86,10 +206,11 @@ class Store:
             token_count,
             height,
         )
+
     # jscpd:ignore-end
 
     def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
-        """Add multiple nodes to both SQLite and Chroma in batch."""
+        """Add multiple nodes to the database in batch."""
         return self.node_repo.add_nodes_batch(nodes_data)
 
     def update_parent_references_batch(self, updates: list[tuple[str, str]]) -> None:
@@ -112,29 +233,35 @@ class Store:
         """Get all pinned nodes up to optional max depth."""
         return self.node_repo.get_pinned_nodes(depth_max)
 
-    def pin_node(self, node_id: str) -> bool:
-        """Pin a node (mark as important)."""
+    def pin_node(self, node_id: str) -> None:
+        """Pin a node if it's within allowed depth.
+
+        Raises:
+            NodeNotFoundError: If the node does not exist
+            InvalidOperationError: If the node is too deep or already pinned
+        """
         node = self.get_node(node_id)
         if not node:
-            return False
+            raise NodeNotFoundError(node_id)
 
         node_depth = self.get_node_depth(node_id)
         if node_depth > self.PIN_DEPTH_MAX:
-            return False
+            raise InvalidOperationError(
+                f"Node {node_id} is at depth {node_depth}, which exceeds maximum pin depth {self.PIN_DEPTH_MAX}"
+            )
 
         # Check if already pinned
         if node.is_pinned == 1:
-            logger.info(f"Node {node_id} is already pinned")
-            return False
+            raise InvalidOperationError(f"Node {node_id} is already pinned")
 
-        return self.node_repo.pin_node(node_id)
+        self.node_repo.pin_node(node_id)
 
     def get_leaf_nodes(self) -> list[TreeNode]:
         """Get all leaf nodes (nodes with no children)."""
         return self.node_repo.get_leaf_nodes()
 
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
-        """Get all nodes for a document."""
+        """Get all nodes for a specific document."""
         return self.node_repo.get_all_nodes_for_document(document_id)
 
     # Document operations - delegate to DocumentRepository
@@ -188,7 +315,7 @@ class Store:
         n_results: int,
         where: dict[str, Any] | None = None,
     ) -> list[tuple[str, float, dict[str, Any]]]:
-        """Search for similar nodes using Chroma."""
+        """Search for similar nodes using pgvector cosine distance."""
         return self.search_service.search_similar(query_embedding, n_results, where)
 
     def compute_mmr_diverse_results(
@@ -254,29 +381,14 @@ class Store:
 
     # Lifecycle methods
     def close(self) -> None:
-        """Close database connections."""
+        """Close database connections and cleanup resources."""
         self.db_manager.close()
 
     # Static utility methods
     @staticmethod
     def compute_content_hash(content: str) -> str:
         """Compute SHA256 hash of content."""
-        return hashlib.sha256(content.encode()).hexdigest()
-
-    @staticmethod
-    @contextmanager
-    def temporary():
-        """Create a temporary in-memory store for testing."""
-        config = OperationalConfig(
-            sqlite_database_url="sqlite:///:memory:",
-            chroma_persist_directory=":memory:",
-            cache_size=100,
-        )
-        store = Store(config)
-        try:
-            yield store
-        finally:
-            store.close()
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     # Deprecated methods - included for backward compatibility but delegate to new components
     def _run_migrations(self) -> None:

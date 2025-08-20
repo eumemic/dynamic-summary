@@ -1,23 +1,40 @@
-"""Database management for SQLite and ChromaDB operations."""
+"""Database management for PostgreSQL with pgvector operations."""
 
 import logging
-from typing import Any, cast
+import os
+from typing import Any
 
-import chromadb
 import numpy as np
-from chromadb.config import Settings
 from numpy.typing import NDArray
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import sessionmaker
 
 from ragzoom.config import OperationalConfig
-from ragzoom.models import Base
+from ragzoom.exceptions import InvalidOperationError
+from ragzoom.models import Base, TreeNode
 
 logger = logging.getLogger(__name__)
 
+# Import pgvector registration function
+try:
+    from pgvector.psycopg import register_vector
+
+    PGVECTOR_AVAILABLE = True
+except ImportError:
+    try:
+        from pgvector.psycopg2 import register_vector
+
+        PGVECTOR_AVAILABLE = True
+    except ImportError:
+        PGVECTOR_AVAILABLE = False
+        register_vector = None
+
 
 class DatabaseManager:
-    """Manages database connections and migrations for SQLite and ChromaDB."""
+    """Manages database connections and migrations for PostgreSQL with pgvector."""
+
+    DEFAULT_POOL_SIZE = 10  # Default connection pool size
+    DEFAULT_MAX_OVERFLOW = 20  # Default max overflow connections
 
     def __init__(
         self, config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
@@ -25,51 +42,78 @@ class DatabaseManager:
         """Initialize database connections and run migrations.
 
         Args:
-            config: Operational configuration with storage paths
+            config: Operational configuration with database URL
             embedding_model: Name of embedding model (for dimension validation)
         """
         self.config = config
         self.embedding_model = embedding_model
+        database_url = config.database_url
 
-        # Initialize SQLite
-        self.engine = create_engine(
-            config.sqlite_database_url, connect_args={"check_same_thread": False}
+        # Initialize PostgreSQL with connection pooling
+        # Get pool configuration from environment or use defaults
+        pool_size = int(os.getenv("RAGZOOM_DB_POOL_SIZE", str(self.DEFAULT_POOL_SIZE)))
+        max_overflow = int(
+            os.getenv("RAGZOOM_DB_MAX_OVERFLOW", str(self.DEFAULT_MAX_OVERFLOW))
         )
 
-        # Handle migration before creating tables with new schema
-        self._run_migrations()
+        self.engine = create_engine(
+            database_url,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_pre_ping=True,  # Verify connections before using
+        )
+
+        # Register pgvector extension only for PostgreSQL connections
+        if database_url.startswith("postgresql") and PGVECTOR_AVAILABLE:
+
+            @event.listens_for(self.engine, "connect")
+            def register_vector_extension(
+                dbapi_conn: Any, connection_record: Any
+            ) -> None:
+                try:
+                    # Get the underlying psycopg connection for pgvector registration
+                    raw_conn = (
+                        dbapi_conn.connection
+                        if hasattr(dbapi_conn, "connection")
+                        else dbapi_conn
+                    )
+                    if register_vector:
+                        register_vector(raw_conn)
+                except Exception as e:
+                    logger.debug(f"pgvector registration note: {e}")
+                    # Don't fail the connection - tables can still be created
+
+        # Create vector extension first (required for Vector columns)
+        self._create_vector_extension()
 
         # Create all tables (will only create missing ones)
         Base.metadata.create_all(self.engine)
+
+        # Run migrations for existing databases
+        self._run_migrations()
+
         self.SessionLocal = sessionmaker(bind=self.engine)
-
-        # Initialize Chroma
-        self.chroma_client = chromadb.PersistentClient(
-            path=config.chroma_persist_directory,
-            settings=Settings(anonymized_telemetry=False),
-        )
-
-        # Create or get collection
-        self.collection = self.chroma_client.get_or_create_collection(
-            name="ragzoom_nodes",
-            metadata={"hnsw:space": "cosine"},
-        )
 
         # Cache expected embedding dimension for validation
         self._expected_embedding_dim = self._get_expected_embedding_dimension()
 
     def _get_expected_embedding_dimension(self) -> int | None:
-        """Get expected embedding dimension from existing embeddings."""
-        # Query ChromaDB for any existing embedding to determine dimension
-        try:
-            result = self.collection.peek(limit=1)
-            embeddings = result.get("embeddings")
-            if embeddings is not None and len(embeddings) > 0:
-                return len(embeddings[0])
-        except Exception as e:
-            logger.debug(f"Could not determine embedding dimension from ChromaDB: {e}")
+        """Get expected embedding dimension from existing data.
 
-        # If no embeddings exist, we can't determine dimension yet
+        We no longer maintain hardcoded dimension info since OpenAI API
+        is the source of truth. This method tries to infer from existing data.
+        """
+        # Try to infer from existing data
+        try:
+            with self.SessionLocal() as session:
+                result = session.execute(select(TreeNode.embedding).limit(1)).first()
+                if result and result[0] is not None:
+                    return len(result[0])
+        except Exception as e:
+            logger.debug(f"Could not infer embedding dimension: {e}")
+
+        # If no existing data, don't enforce validation
+        # This allows tests and first-time setups to work with any dimension
         return None
 
     def validate_embedding_dimension(
@@ -81,8 +125,11 @@ class DatabaseManager:
             embedding: Embedding vector to validate
 
         Raises:
-            ValueError: If embedding dimension doesn't match expected
+            InvalidOperationError: If embedding dimension doesn't match expected
         """
+        if not embedding:
+            raise InvalidOperationError("Embedding cannot be empty")
+
         if isinstance(embedding, list):
             current_dim = len(embedding)
         else:
@@ -95,253 +142,96 @@ class DatabaseManager:
             return
 
         if current_dim != self._expected_embedding_dim:
-            raise ValueError(
+            raise InvalidOperationError(
                 f"Embedding dimension mismatch: expected {self._expected_embedding_dim}, "
                 f"got {current_dim}. This suggests you're using a different embedding model "
-                f"than was used to create this database. Expected model: {self.embedding_model}"
+                f"than the one used for existing data."
             )
+
+    def _create_vector_extension(self) -> None:
+        """Create the pgvector extension required for embedding storage.
+
+        This must be done before creating tables that use Vector columns.
+        """
+        try:
+            with self.engine.begin() as conn:
+                # Create vector extension - this is required for pgvector Vector() columns
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                logger.debug("Vector extension created successfully")
+        except Exception as e:
+            # This is a critical error - we can't create Vector columns without the extension
+            error_msg = str(e).lower()
+            if "permission denied" in error_msg:
+                raise OSError(
+                    f"\n❌ Unable to create vector extension: permission denied.\n\n"
+                    f"This usually happens when the database user lacks superuser privileges.\n"
+                    f"Try running 'ragzoom doctor' to check your setup.\n\n"
+                    f"Technical error: {e}"
+                )
+            elif "could not access file" in error_msg or "no such file" in error_msg:
+                raise OSError(
+                    f"\n❌ Vector extension not available in this PostgreSQL installation.\n\n"
+                    f"Make sure you're using the pgvector/pgvector Docker image.\n"
+                    f"Run 'ragzoom doctor' to check your setup.\n\n"
+                    f"Technical error: {e}"
+                )
+            else:
+                # Extension might already exist, which is fine
+                logger.debug(f"Vector extension note: {e}")
 
     def _run_migrations(self) -> None:
-        """Run database migrations to update schema."""
-        with self.engine.connect() as conn:
-            # Check if documents table exists
-            result = conn.execute(
-                text(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='documents'"
-                )
-            )
-            documents_table_exists = result.fetchone() is not None
+        """Run database migrations for existing databases.
 
-            if not documents_table_exists:
-                logger.info("Documents table does not exist, creating fresh schema")
-                # Fresh database, no migrations needed
-                return
-
-            # Check and apply migrations for TreeNode table
-            self._drop_column_migration(conn, "tree_nodes", "similarity_threshold")
-            self._add_preceding_neighbor_column_migration(conn)
-            self._add_height_column_migration(conn)
-            self._backfill_node_heights(conn)
-            self._add_document_model_columns_migration(conn)
-
-            # Clean ChromaDB metadata
-            self._clean_chromadb_metadata()
-
-            # Commit all changes
-            conn.commit()
-
-    def _drop_column_migration(
-        self, conn: Any, table_name: str, column_name: str
-    ) -> None:
-        """Drop a column from a table if it exists."""
-        # Check if column exists
-        result = conn.execute(text(f"PRAGMA table_info({table_name})"))
-        columns = [row[1] for row in result.fetchall()]
-
-        if column_name not in columns:
-            return
-
-        logger.info(f"Dropping column {column_name} from {table_name}")
-
-        # Get all columns except the one to drop
-        remaining_columns = [col for col in columns if col != column_name]
-
-        # Create the column list for the new table
-        if table_name == "tree_nodes":
-            # Define the new schema for tree_nodes without similarity_threshold
-            new_schema = """
-                id TEXT PRIMARY KEY,
-                parent_id TEXT,
-                left_child_id TEXT,
-                right_child_id TEXT,
-                span_start INTEGER NOT NULL,
-                span_end INTEGER NOT NULL,
-                text TEXT NOT NULL,
-                token_count INTEGER DEFAULT 0 NOT NULL,
-                is_pinned INTEGER DEFAULT 0,
-                last_accessed DATETIME,
-                access_count INTEGER DEFAULT 0,
-                created_at DATETIME,
-                document_id TEXT,
-                FOREIGN KEY(parent_id) REFERENCES tree_nodes(id),
-                FOREIGN KEY(document_id) REFERENCES documents(id)
-            """
-        else:
-            # For other tables, we'd need to define their schema
-            logger.warning(f"Unknown table {table_name} for migration")
-            return
-
-        # Step 1: Create new table with correct schema
-        conn.execute(text(f"CREATE TABLE {table_name}_new ({new_schema})"))
-
-        # Step 2: Copy data from old table to new table
-        select_columns = ", ".join(remaining_columns)
-        conn.execute(
-            text(
-                f"INSERT INTO {table_name}_new ({select_columns}) "
-                f"SELECT {select_columns} FROM {table_name}"
-            )
-        )
-
-        # Step 3: Drop old table and rename new table
-        conn.execute(text(f"DROP TABLE {table_name}"))
-        conn.execute(text(f"ALTER TABLE {table_name}_new RENAME TO {table_name}"))
-
-        logger.info(f"Successfully dropped column {column_name} from {table_name}")
-
-    def _add_preceding_neighbor_column_migration(self, conn: Any) -> None:
-        """Add preceding_neighbor_id column to tree_nodes table if it doesn't exist."""
-        # Check if column exists
-        result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
-        columns = [row[1] for row in result.fetchall()]
-
-        if "preceding_neighbor_id" not in columns:
-            logger.info("Adding preceding_neighbor_id column to tree_nodes")
-            conn.execute(
-                text("ALTER TABLE tree_nodes ADD COLUMN preceding_neighbor_id TEXT")
-            )
-
-    def _add_height_column_migration(self, conn: Any) -> None:
-        """Add height column to tree_nodes table if it doesn't exist."""
-        # Check if column exists
-        result = conn.execute(text("PRAGMA table_info(tree_nodes)"))
-        columns = [row[1] for row in result.fetchall()]
-
-        if "height" not in columns:
-            logger.info("Adding height column to tree_nodes")
-            conn.execute(
-                text(
-                    "ALTER TABLE tree_nodes ADD COLUMN height INTEGER NOT NULL DEFAULT 0"
-                )
-            )
-
-    def _backfill_node_heights(self, conn: Any) -> None:
-        """Backfill height values for existing nodes."""
-        # Check if we need to backfill (any nodes with height = 0 that should have height > 0)
-        result = conn.execute(
-            text(
-                "SELECT COUNT(*) FROM tree_nodes WHERE height = 0 AND (left_child_id IS NOT NULL OR right_child_id IS NOT NULL)"
-            )
-        )
-        nodes_to_backfill = result.fetchone()[0]
-
-        if nodes_to_backfill == 0:
-            return
-
-        logger.info(f"Backfilling height for {nodes_to_backfill} nodes")
-
-        # Algorithm: repeatedly update parent heights based on child heights
-        # until no more updates are needed
-        max_iterations = 100
-        for iteration in range(max_iterations):
-            # Update heights of internal nodes based on their children
-            result = conn.execute(
-                text(
-                    """
-                    UPDATE tree_nodes
-                    SET height = (
-                        SELECT MAX(COALESCE(c.height, 0)) + 1
-                        FROM tree_nodes c
-                        WHERE c.parent_id = tree_nodes.id
-                    )
-                    WHERE (left_child_id IS NOT NULL OR right_child_id IS NOT NULL)
-                    AND height < (
-                        SELECT MAX(COALESCE(c.height, 0)) + 1
-                        FROM tree_nodes c
-                        WHERE c.parent_id = tree_nodes.id
-                    )
-                """
-                )
-            )
-
-            rows_updated = result.rowcount
-            logger.debug(f"Iteration {iteration + 1}: Updated {rows_updated} nodes")
-
-            if rows_updated == 0:
-                break
-
-        logger.info("Height backfill completed")
-
-    def _add_document_model_columns_migration(self, conn: Any) -> None:
-        """Add embedding_model and summary_model columns to documents table if they don't exist."""
-        # Check if columns exist
-        result = conn.execute(text("PRAGMA table_info(documents)"))
-        columns = [row[1] for row in result.fetchall()]
-
-        if "embedding_model" not in columns:
-            logger.info("Adding embedding_model column to documents")
-            conn.execute(
-                text(
-                    f"ALTER TABLE documents ADD COLUMN embedding_model TEXT DEFAULT '{self.embedding_model}'"
-                )
-            )
-            # Update existing rows
-            conn.execute(
-                text(
-                    f"UPDATE documents SET embedding_model = '{self.embedding_model}' WHERE embedding_model IS NULL"
-                )
-            )
-
-        if "summary_model" not in columns:
-            logger.info("Adding summary_model column to documents")
-            conn.execute(
-                text(
-                    "ALTER TABLE documents ADD COLUMN summary_model TEXT DEFAULT 'gpt-4o-mini'"
-                )
-            )
-            # Update existing rows with a reasonable default
-            conn.execute(
-                text(
-                    "UPDATE documents SET summary_model = 'gpt-4o-mini' WHERE summary_model IS NULL"
-                )
-            )
-
-    def _clean_chromadb_metadata(self) -> None:
-        """Clean up ChromaDB metadata to remove None values."""
+        This must be called after tables are created to handle schema updates
+        for existing databases that need migration.
+        """
         try:
-            # Get all embeddings
-            all_data = self.collection.get()
-            if not all_data.get("ids"):
-                return
-
-            ids = all_data["ids"]
-            metadatas = all_data.get("metadatas", [])
-
-            # Guard against None metadatas
-            if metadatas is None:
-                return
-
-            # Clean metadata - replace None with empty string
-            cleaned_metadatas = []
-            for metadata in metadatas:
-                if metadata is None:
-                    metadata = {}
-                cleaned_metadata = {}
-                for key, value in metadata.items():
-                    cleaned_metadata[key] = value if value is not None else ""
-                cleaned_metadatas.append(cleaned_metadata)
-
-            # Update all at once if we have any changes
-            if cleaned_metadatas != metadatas:
-                logger.info("Cleaning ChromaDB metadata...")
-                # Delete and re-add with clean metadata
-                embeddings = all_data.get("embeddings", [])
-                documents = all_data.get("documents", [])
-
-                # ChromaDB doesn't have bulk update, so we need to delete and re-add
-                self.collection.delete(ids=ids)
-                if embeddings and documents:
-                    self.collection.add(
-                        ids=ids,
-                        embeddings=embeddings,
-                        metadatas=cast(Any, cleaned_metadatas),
-                        documents=documents,
+            with self.engine.begin() as conn:
+                # Add height column if it doesn't exist (for existing databases)
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'height'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN height INTEGER NOT NULL DEFAULT 0;
+                        END IF;
+                    END $$;
+                """
                     )
+                )
 
+                # Add embedding column if it doesn't exist (for migration from old SQLite)
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'embedding'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN embedding vector;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+
+                logger.debug("Database migrations completed")
         except Exception as e:
-            logger.warning(f"Could not clean ChromaDB metadata: {e}")
+            # Migration failures are not critical - the column might already exist
+            # or this might be a new database where tables have the column already
+            logger.debug(f"Migration note: {e}")
 
     def close(self) -> None:
-        """Close database connections."""
+        """Close database connections and cleanup resources."""
         if hasattr(self, "engine"):
             self.engine.dispose()
