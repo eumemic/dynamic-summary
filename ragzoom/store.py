@@ -3,103 +3,24 @@
 import hashlib
 import logging
 import os
-from collections import deque
-from datetime import datetime
+from contextlib import contextmanager
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import (
-    DateTime,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    create_engine,
-    event,
-    select,
-    text,
-)
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from ragzoom.config import OperationalConfig
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
-from ragzoom.exceptions import (
-    InvalidOperationError,
-    NodeNotFoundError,
-)
-
-# Import pgvector registration function
-try:
-    from pgvector.psycopg import register_vector
-
-    PGVECTOR_AVAILABLE = True
-except ImportError:
-    try:
-        from pgvector.psycopg2 import register_vector
-
-        PGVECTOR_AVAILABLE = True
-    except ImportError:
-        PGVECTOR_AVAILABLE = False
-        register_vector = None
+from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
+from ragzoom.models import Base, Document, TreeNode
+from ragzoom.repositories.document_repository import DocumentRepository
+from ragzoom.repositories.node_repository import NodeRepository
+from ragzoom.services.cache_manager import CacheManager
+from ragzoom.services.search_service import SearchService
+from ragzoom.services.tree_navigator import TreeNavigator
+from ragzoom.storage.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class TreeNode(Base):
-    """Database model for tree nodes with embedded vectors."""
-
-    __tablename__ = "tree_nodes"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    parent_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("tree_nodes.id"), nullable=True
-    )
-    left_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    right_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    span_start: Mapped[int] = mapped_column(Integer, nullable=False)
-    span_end: Mapped[int] = mapped_column(Integer, nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
-    token_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )  # Token count of text content (raw text for leaves, summary for internal nodes)
-    is_pinned: Mapped[int] = mapped_column(Integer, default=0)
-    last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    access_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    document_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("documents.id"), nullable=True
-    )
-    preceding_neighbor_id: Mapped[str | None] = mapped_column(
-        String, nullable=True
-    )  # ID of the node that immediately precedes this one at the same tree level
-    height: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )  # Distance to furthest leaf (0 for leaves, incrementing upward)
-
-
-class Document(Base):
-    """Database model for documents."""
-
-    __tablename__ = "documents"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    file_path: Mapped[str | None] = mapped_column(
-        String, nullable=True, unique=True
-    )  # Path to the source file
-    content_hash: Mapped[str] = mapped_column(
-        String, nullable=False
-    )  # SHA256 hash of content
-    indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
-    embedding_model: Mapped[str] = mapped_column(String, nullable=False)
-    summary_model: Mapped[str] = mapped_column(String, nullable=False)
 
 
 def create_store_with_docker(
@@ -188,7 +109,6 @@ class Store:
         Returns a context manager that yields a Store instance with a temporary
         PostgreSQL database that is automatically cleaned up.
         """
-        from contextlib import contextmanager
 
         @contextmanager
         def _temporary_store():
@@ -234,120 +154,30 @@ class Store:
         """
         self.config = config
         self.embedding_model = embedding_model
-        database_url = config.database_url
 
-        # Initialize database engine with connection pooling
-        # Get pool configuration from environment or use defaults
-        pool_size = int(os.getenv("RAGZOOM_DB_POOL_SIZE", str(self.DEFAULT_POOL_SIZE)))
-        max_overflow = int(
-            os.getenv("RAGZOOM_DB_MAX_OVERFLOW", str(self.DEFAULT_MAX_OVERFLOW))
+        # Initialize components using dependency injection
+        self.db_manager = DatabaseManager(config, embedding_model)
+        self.cache_manager = CacheManager[TreeNode](
+            config.cache_size or self.DEFAULT_CACHE_SIZE
         )
+        self.node_repo = NodeRepository(self.db_manager, self.cache_manager)
+        self.doc_repo = DocumentRepository(self.db_manager, self.cache_manager)
+        self.search_service = SearchService(self.db_manager)
+        self.tree_navigator = TreeNavigator(self.node_repo)
 
-        self.engine = create_engine(
-            database_url,
-            pool_size=pool_size,
-            max_overflow=max_overflow,
-            pool_pre_ping=True,  # Verify connections before using
-        )
+        # Expose properties for backward compatibility
+        self.SessionLocal = self.db_manager.SessionLocal
+        self.engine = self.db_manager.engine
 
-        # Register pgvector extension only for PostgreSQL connections
-        if database_url.startswith("postgresql") and PGVECTOR_AVAILABLE:
+        # Cache properties for backward compatibility
+        self.node_cache = self.cache_manager.cache
+        self.cache_order = self.cache_manager.cache_order
 
-            @event.listens_for(self.engine, "connect")
-            def register_vector_extension(dbapi_conn, connection_record):
-                try:
-                    # Get the underlying psycopg connection for pgvector registration
-                    raw_conn = (
-                        dbapi_conn.connection
-                        if hasattr(dbapi_conn, "connection")
-                        else dbapi_conn
-                    )
-                    if register_vector:
-                        register_vector(raw_conn)
-                except Exception as e:
-                    logger.debug(f"pgvector registration note: {e}")
-                    # Don't fail the connection - tables can still be created
+        # Store expected embedding dimension
+        self._expected_embedding_dim = self.db_manager._expected_embedding_dim
 
-        # Create vector extension first (required for Vector columns)
-        self._create_vector_extension()
-
-        # Create all tables (will only create missing ones)
-        Base.metadata.create_all(self.engine)
-
-        # Run migrations for existing databases
-        self._run_migrations()
-
-        self.SessionLocal = sessionmaker(bind=self.engine)
-
-        # LRU cache for hot nodes
-        cache_size = config.cache_size if config.cache_size else self.DEFAULT_CACHE_SIZE
-        self.node_cache: dict[str, TreeNode] = {}
-        self.cache_order: deque[str] = deque(maxlen=cache_size)
-
-        # Cache expected embedding dimension for validation
-        self._expected_embedding_dim = self._get_expected_embedding_dimension()
-
-    def _get_from_cache(self, node_id: str) -> TreeNode | None:
-        """Get node from cache if available."""
-        if node_id in self.node_cache:
-            # Move to end (most recently used)
-            self.cache_order.remove(node_id)
-            self.cache_order.append(node_id)
-            return self.node_cache[node_id]
-        return None
-
-    def _add_to_cache(self, node: TreeNode) -> None:
-        """Add node to cache, evicting LRU if necessary."""
-        if node.id in self.node_cache:
-            self.cache_order.remove(node.id)
-        elif (
-            self.cache_order.maxlen and len(self.cache_order) >= self.cache_order.maxlen
-        ):
-            # Evict LRU
-            lru_id = self.cache_order.popleft()
-            del self.node_cache[lru_id]
-
-        self.node_cache[node.id] = node
-        self.cache_order.append(node.id)
-
-    def _get_expected_embedding_dimension(self) -> int | None:
-        """Get expected embedding dimension from existing data.
-
-        We no longer maintain hardcoded dimension info since OpenAI API
-        is the source of truth. This method tries to infer from existing data.
-        """
-        # Try to infer from existing data
-        try:
-            with self.SessionLocal() as session:
-                result = session.execute(select(TreeNode.embedding).limit(1)).first()
-                if result and result[0] is not None:
-                    return len(result[0])
-        except Exception as e:
-            logger.debug(f"Could not infer embedding dimension: {e}")
-
-        # If no existing data, don't enforce validation
-        # This allows tests and first-time setups to work with any dimension
-        return None
-
-    def _validate_embedding_dimension(
-        self, embedding: list[float] | NDArray[np.float64]
-    ) -> None:
-        """Validate embedding dimension matches expected."""
-        if not embedding:
-            raise InvalidOperationError("Embedding cannot be empty")
-
-        actual_dim = len(embedding)
-
-        # If we don't have an expected dimension yet, use this as the reference
-        if self._expected_embedding_dim is None:
-            self._expected_embedding_dim = actual_dim
-            logger.debug(f"Setting embedding dimension reference to {actual_dim}")
-        elif actual_dim != self._expected_embedding_dim:
-            raise InvalidOperationError(
-                f"Embedding dimension mismatch: expected {self._expected_embedding_dim}, "
-                f"got {actual_dim}. Check embedding_model configuration."
-            )
-
+    # Node operations - delegate to NodeRepository
+    # jscpd:ignore-start
     def add_node(
         self,
         node_id: str,
@@ -363,255 +193,45 @@ class Store:
         height: int = 0,
     ) -> TreeNode:
         """Add a node to the database with its embedding."""
-        # Validate embedding dimension
-        self._validate_embedding_dimension(embedding)
+        return self.node_repo.add_node(
+            node_id,
+            text,
+            embedding,
+            span_start,
+            span_end,
+            parent_id,
+            left_child_id,
+            right_child_id,
+            document_id,
+            token_count,
+            height,
+        )
 
-        with self.SessionLocal() as session:
-            node = TreeNode(
-                id=node_id,
-                parent_id=parent_id,
-                left_child_id=left_child_id,
-                right_child_id=right_child_id,
-                span_start=span_start,
-                span_end=span_end,
-                text=text,
-                embedding=list(map(float, embedding)),
-                document_id=document_id,
-                token_count=token_count,
-                height=height,
-            )
-            session.add(node)
-            session.commit()
-
-            # Add to cache
-            self._add_to_cache(node)
-
-        return node
+    # jscpd:ignore-end
 
     def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
-        """Add multiple nodes to the database in batch.
-
-        Args:
-            nodes_data: List of dictionaries containing node data with keys:
-                - node_id, text, embedding, span_start, span_end,
-                - parent_id (optional), left_child_id (optional),
-                - right_child_id (optional), document_id (optional),
-                - token_count (defaults to 0), height (defaults to 0)
-
-        Returns:
-            List of created TreeNode objects
-        """
-        if not nodes_data:
-            return []
-
-        # Validate all embeddings first
-        for data in nodes_data:
-            self._validate_embedding_dimension(data["embedding"])
-
-        with self.SessionLocal() as session:
-            # Create TreeNode objects for regular session.add_all()
-            nodes = []
-            for data in nodes_data:
-                node = TreeNode(
-                    id=data["node_id"],
-                    parent_id=data.get("parent_id"),
-                    left_child_id=data.get("left_child_id"),
-                    right_child_id=data.get("right_child_id"),
-                    span_start=data["span_start"],
-                    span_end=data["span_end"],
-                    text=data["text"],
-                    embedding=list(map(float, data["embedding"])),
-                    document_id=data.get("document_id"),
-                    token_count=data.get("token_count", 0),
-                    preceding_neighbor_id=data.get("preceding_neighbor_id"),
-                    height=data.get("height", 0),
-                )
-                nodes.append(node)
-
-            # Use add_all for proper object tracking and session management
-            session.add_all(nodes)
-            session.commit()
-
-            # Add all to cache
-            for node in nodes:
-                self._add_to_cache(node)
-
-        return nodes
+        """Add multiple nodes to the database in batch."""
+        return self.node_repo.add_nodes_batch(nodes_data)
 
     def update_parent_references_batch(self, updates: list[tuple[str, str]]) -> None:
-        """Update parent references for multiple nodes in batch.
-
-        Args:
-            updates: List of (child_id, parent_id) tuples
-        """
-        if not updates:
-            return
-
-        with self.SessionLocal() as session:
-            # Build update mappings
-            update_mappings = [
-                {"id": child_id, "parent_id": parent_id}
-                for child_id, parent_id in updates
-            ]
-
-            # Bulk update - use execute with update statement for better compatibility
-            from sqlalchemy import update
-
-            for mapping in update_mappings:
-                stmt = (
-                    update(TreeNode)
-                    .where(TreeNode.id == mapping["id"])
-                    .values(parent_id=mapping["parent_id"])
-                )
-                session.execute(stmt)
-            session.commit()
-
-            # Invalidate cache for updated nodes
-            for child_id, _ in updates:
-                if child_id in self.node_cache:
-                    del self.node_cache[child_id]
-                    # Also remove from cache order
-                    if child_id in self.cache_order:
-                        self.cache_order.remove(child_id)
+        """Update parent references for multiple nodes in batch."""
+        self.node_repo.update_parent_references_batch(updates)
 
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID."""
-        # Check cache first
-        cached = self._get_from_cache(node_id)
-        if cached:
-            return cached
-
-        with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
-            if node:
-                self._add_to_cache(node)
-            return node
+        return self.node_repo.get_node(node_id)
 
     def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes by their IDs."""
-        # First, try to get as many as possible from the cache
-        cached_nodes: list[TreeNode] = [
-            node for nid in node_ids if (node := self._get_from_cache(nid)) is not None
-        ]
-        cached_ids = {node.id for node in cached_nodes}
-
-        # Then, get the rest from the database
-        ids_to_fetch = [nid for nid in node_ids if nid not in cached_ids]
-
-        db_nodes = []
-        if ids_to_fetch:
-            with self.SessionLocal() as session:
-                db_nodes = (
-                    session.query(TreeNode).filter(TreeNode.id.in_(ids_to_fetch)).all()
-                )
-                for node in db_nodes:
-                    self._add_to_cache(node)
-
-        return cached_nodes + db_nodes
+        return self.node_repo.get_nodes(node_ids)
 
     def update_node_access(self, node_id: str) -> None:
         """Update access time and count for a node."""
-        with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
-            if node:
-                node.last_accessed = datetime.utcnow()
-                node.access_count += 1
-                session.commit()
-
-    def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
-        """Get left and right children of a node."""
-        node = self.get_node(node_id)
-        if not node:
-            return None, None
-
-        left = self.get_node(node.left_child_id) if node.left_child_id else None
-        right = self.get_node(node.right_child_id) if node.right_child_id else None
-        return left, right
-
-    def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
-        """Get all ancestors of given nodes using batch loading for efficiency."""
-        all_ancestors = set()
-        current_level = set(node_ids)
-
-        # Keep going until we've reached all roots
-        while current_level:
-            # Batch load all nodes at current level
-            nodes_at_level = self.get_nodes(list(current_level))
-
-            # Collect parent IDs for next level
-            next_level = set()
-            for node in nodes_at_level:
-                if node.parent_id and node.parent_id not in all_ancestors:
-                    all_ancestors.add(node.parent_id)
-                    next_level.add(node.parent_id)
-
-            # Move up to next level
-            current_level = next_level
-
-        # Batch load all ancestors and return
-        if all_ancestors:
-            return self.get_nodes(list(all_ancestors))
-        return []
-
-    def search_similar(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        n_results: int,
-        where: dict[str, Any] | None = None,
-    ) -> list[tuple[str, float, dict[str, Any]]]:
-        """Search for similar nodes using pgvector cosine distance.
-
-        Returns list of (id, similarity, metadata) tuples where similarity is in [0, 1].
-        """
-        query_array = list(map(float, query_embedding))
-
-        with self.SessionLocal() as session:
-            stmt = (
-                select(
-                    TreeNode.id,
-                    TreeNode.embedding.cosine_distance(query_array).label("distance"),
-                    TreeNode.span_start,
-                    TreeNode.span_end,
-                    TreeNode.parent_id,
-                    TreeNode.document_id,
-                )
-                .order_by(TreeNode.embedding.cosine_distance(query_array))
-                .limit(n_results)
-            )
-            rows = session.execute(stmt).all()
-
-        output = []
-        for row in rows:
-            distance = float(row.distance)
-            # Convert cosine distance to similarity score
-            # Cosine distance ranges from 0 (identical) to 2 (opposite)
-            # We map this to similarity: 1 (identical) to 0 (opposite)
-            similarity = 1.0 - (distance / 2.0)
-            similarity = max(0.0, min(1.0, similarity))
-            metadata = {
-                "span_start": row.span_start,
-                "span_end": row.span_end,
-                "parent_id": row.parent_id or "",
-                "document_id": row.document_id or "",
-            }
-            output.append((row.id, similarity, metadata))
-
-        return output
+        self.node_repo.update_node_access(node_id)
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
-        """Get nodes that are pinned (always included in coverage)."""
-        with self.SessionLocal() as session:
-            pinned_nodes = session.query(TreeNode).filter_by(is_pinned=1).all()
-
-            if depth_max is not None:
-                # Filter by calculated depth
-                filtered_nodes = []
-                for node in pinned_nodes:
-                    if self.get_node_depth(node.id) <= depth_max:
-                        filtered_nodes.append(node)
-                return filtered_nodes
-
-            return pinned_nodes
+        """Get all pinned nodes up to optional max depth."""
+        return self.node_repo.get_pinned_nodes(depth_max)
 
     def pin_node(self, node_id: str) -> None:
         """Pin a node if it's within allowed depth.
@@ -634,202 +254,28 @@ class Store:
         if node.is_pinned == 1:
             raise InvalidOperationError(f"Node {node_id} is already pinned")
 
-        with self.SessionLocal() as session:
-            db_node = session.query(TreeNode).filter_by(id=node_id).first()
-            if db_node:
-                db_node.is_pinned = 1
-                session.commit()
-                # Update cached node as well
-                if node_id in self.node_cache:
-                    self.node_cache[node_id].is_pinned = 1
-            else:
-                # This shouldn't happen since we checked above, but handle it
-                raise NodeNotFoundError(node_id)
+        self.node_repo.pin_node(node_id)
 
     def get_leaf_nodes(self) -> list[TreeNode]:
-        """Get all leaf nodes (nodes without children)."""
-        with self.SessionLocal() as session:
-            return (
-                session.query(TreeNode)
-                .filter(
-                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
-                )
-                .all()
-            )
-
-    def get_root_node(self) -> TreeNode | None:
-        """Get the root node (node with no parent)."""
-        with self.SessionLocal() as session:
-            return session.query(TreeNode).filter_by(parent_id=None).first()
-
-    def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
-        """Get the root node for a specific document."""
-        with self.SessionLocal() as session:
-            query = session.query(TreeNode).filter_by(parent_id=None)
-            if document_id:
-                query = query.filter_by(document_id=document_id)
-            return query.first()
+        """Get all leaf nodes (nodes with no children)."""
+        return self.node_repo.get_leaf_nodes()
 
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
         """Get all nodes for a specific document."""
-        with self.SessionLocal() as session:
-            if document_id:
-                return session.query(TreeNode).filter_by(document_id=document_id).all()
-            else:
-                # If no document_id, maybe return all nodes? Or raise error?
-                # For now, let's return all nodes, but this could be memory intensive
-                logger.warning("No document_id provided, returning all nodes in store.")
-                return session.query(TreeNode).all()
+        return self.node_repo.get_all_nodes_for_document(document_id)
 
-    def get_node_depth(self, node_id: str) -> int:
-        """Calculate depth of a node (distance from root).
-
-        Returns 0 for root nodes, incrementing by 1 for each level down.
-        This follows the standard tree convention where root is at depth 0.
-
-        Raises:
-            NodeNotFoundError: If the node does not exist
-        """
-        node = self.get_node(node_id)
-        if not node:
-            raise NodeNotFoundError(node_id)
-
-        depth = 0
-        current_id = node.parent_id
-
-        while current_id:
-            depth += 1
-            parent = self.get_node(current_id)
-            if not parent:
-                break
-            current_id = parent.parent_id
-
-        return depth
-
-    def is_leaf_node(self, node_id: str) -> bool:
-        """Check if a node is a leaf (has no children).
-
-        Returns:
-            False if the node does not exist, True if it's a leaf, False if it has children
-        """
-        node = self.get_node(node_id)
-        if not node:
-            return False
-
-        return not node.left_child_id and not node.right_child_id
-
-    def is_root_node(self, node_id: str) -> bool:
-        """Check if a node is a root (has no parent).
-
-        Returns:
-            False if the node does not exist, True if it's a root, False if it has a parent
-        """
-        node = self.get_node(node_id)
-        if not node:
-            return False
-
-        return node.parent_id is None
-
-    def compute_mmr_diverse_results(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, Any]]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        """Apply MMR (Maximal Marginal Relevance) to get diverse results."""
-        if not candidates or k <= 0:
-            return []
-
-        # Get embeddings for all candidates
-        candidate_ids = [c[0] for c in candidates]
-
-        with self.SessionLocal() as session:
-            rows = session.execute(
-                select(TreeNode.id, TreeNode.embedding).where(
-                    TreeNode.id.in_(candidate_ids)
-                )
-            ).all()
-
-        id_to_embedding = {
-            row.id: np.array(row.embedding, dtype=np.float32) for row in rows
-        }
-
-        # Build candidate embeddings array in order
-        cand_embs = np.array([id_to_embedding[cid] for cid in candidate_ids])
-        query_emb = np.array(query_embedding)
-
-        # Vectorized similarity computation
-        query_sims = np.dot(cand_embs, query_emb)
-
-        # MMR iterative selection with optimized operations
-        selected_mask = np.zeros(len(candidates), dtype="bool")
-        selected_indices = []
-
-        # Select first item (highest relevance)
-        first_idx = np.argmax(query_sims)
-        selected_indices.append(first_idx)
-        selected_mask[first_idx] = True
-
-        # Pre-compute pairwise similarities for efficiency
-        if len(candidates) > 1:
-            pairwise_sims = np.dot(cand_embs, cand_embs.T)
-
-        # Select remaining items
-        for _ in range(1, min(k, len(candidates))):
-            # Vectorized MMR computation for all unselected
-            unselected_mask = ~selected_mask
-            if not np.any(unselected_mask):
-                break
-
-            # Relevance scores for unselected
-            relevances = query_sims[unselected_mask]
-
-            # Max similarity to any selected item (vectorized)
-            max_sims = (
-                np.max(pairwise_sims[np.ix_(unselected_mask, selected_mask)], axis=1)
-                if np.any(selected_mask)
-                else np.zeros(int(np.sum(unselected_mask)))
-            )
-
-            # MMR scores
-            mmr_scores = lambda_param * relevances - (1 - lambda_param) * max_sims
-
-            # Get index in unselected subset
-            best_unselected_idx = np.argmax(mmr_scores)
-
-            # Convert to original index
-            unselected_indices = np.where(unselected_mask)[0]
-            best_idx = unselected_indices[best_unselected_idx]
-
-            selected_indices.append(best_idx)
-            selected_mask[best_idx] = True
-
-        # Return selected node IDs
-        return [candidates[i][0] for i in selected_indices]
-
+    # Document operations - delegate to DocumentRepository
     def get_document_by_path(self, file_path: str) -> Document | None:
         """Get a document by file path."""
-        with self.SessionLocal() as session:
-            return session.query(Document).filter_by(file_path=file_path).first()
+        return self.doc_repo.get_document_by_path(file_path)
 
     def get_document_by_id(self, document_id: str) -> Document | None:
-        """Get a document by ID.
-
-        Returns:
-            Document if found, None otherwise
-        """
-        with self.SessionLocal() as session:
-            return session.query(Document).filter_by(id=document_id).first()
+        """Get a document by ID."""
+        return self.doc_repo.get_document_by_id(document_id)
 
     def get_document_embedding_model(self, document_id: str) -> str | None:
-        """Get the embedding model used for a specific document.
-
-        Returns:
-            Embedding model name if document found, None otherwise
-        """
-        doc = self.get_document_by_id(document_id)
-        return doc.embedding_model if doc else None
+        """Get the embedding model used for a specific document."""
+        return self.doc_repo.get_document_embedding_model(document_id)
 
     def add_document(
         self,
@@ -840,182 +286,112 @@ class Store:
         embedding_model: str,
         summary_model: str,
     ) -> Document:
-        """Add a document record.
-
-        Args:
-            document_id: Unique identifier for the document
-            file_path: Optional path to the source file
-            content_hash: SHA256 hash of the document content
-            chunk_count: Number of chunks in the document
-            embedding_model: Name of the embedding model used for indexing
-            summary_model: Name of the summarization model used
-
-        Note: Model name validation is performed by the indexing layer
-        to ensure they're valid OpenAI models before storage.
-        """
-        with self.SessionLocal() as session:
-            doc = Document(
-                id=document_id,
-                file_path=file_path,
-                content_hash=content_hash,
-                chunk_count=chunk_count,
-                embedding_model=embedding_model,
-                summary_model=summary_model,
-            )
-            session.add(doc)
-            session.commit()
-            return doc
+        """Add a document record."""
+        return self.doc_repo.add_document(
+            document_id,
+            file_path,
+            content_hash,
+            chunk_count,
+            embedding_model,
+            summary_model,
+        )
 
     def delete_document_nodes(self, document_id: str) -> int:
         """Delete all nodes associated with a document."""
-        with self.SessionLocal() as session:
-            # Get all nodes for this document
-            nodes = session.query(TreeNode).filter_by(document_id=document_id).all()
-            node_ids = [n.id for n in nodes]
-
-            # Delete from database
-            deleted_count = (
-                session.query(TreeNode).filter_by(document_id=document_id).delete()
-            )
-            session.commit()
-
-            # Clear from cache
-            for node_id in node_ids:
-                if node_id in self.node_cache:
-                    del self.node_cache[node_id]
-                    try:
-                        self.cache_order.remove(node_id)
-                    except ValueError:
-                        pass
-
-            return deleted_count
+        return self.doc_repo.delete_document_nodes(document_id)
 
     def clear_document(self, document_id: str) -> int:
-        """Clear all data for a document, including orphaned nodes and document record.
-
-        This handles both complete documents and orphaned nodes from interrupted indexing.
-        Unlike delete_document_nodes, this also removes the Document record.
-
-        Args:
-            document_id: ID of the document to clear
-
-        Returns:
-            Number of nodes deleted
-        """
-        # Delete all nodes with this document_id (handles orphaned nodes from interrupted runs)
-        deleted_count = self.delete_document_nodes(document_id)
-
-        # Also delete document record if it exists
-        with self.SessionLocal() as session:
-            session.query(Document).filter_by(id=document_id).delete()
-            session.commit()
-
-        return deleted_count
+        """Clear all data for a document, including orphaned nodes and document record."""
+        return self.doc_repo.clear_document(document_id)
 
     def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
-        """Get token statistics for a document using efficient SQL aggregation.
+        """Get token statistics for a document using efficient SQL aggregation."""
+        return self.doc_repo.get_document_token_stats(document_id)
 
-        Returns:
-            Dict with keys: avg_tokens, min_tokens, max_tokens, total_tokens, node_count
-        """
-        with self.SessionLocal() as session:
-            from sqlalchemy import func
+    # Search operations - delegate to SearchService
+    def search_similar(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        n_results: int,
+        where: dict[str, Any] | None = None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Search for similar nodes using pgvector cosine distance."""
+        return self.search_service.search_similar(query_embedding, n_results, where)
 
-            result = (
-                session.query(
-                    func.avg(TreeNode.token_count).label("avg_tokens"),
-                    func.min(TreeNode.token_count).label("min_tokens"),
-                    func.max(TreeNode.token_count).label("max_tokens"),
-                    func.sum(TreeNode.token_count).label("total_tokens"),
-                    func.count(TreeNode.id).label("node_count"),
-                )
-                .filter(
-                    TreeNode.document_id == document_id,
-                    TreeNode.token_count.isnot(None),
-                )
-                .one()
-            )
+    def compute_mmr_diverse_results(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        candidates: list[tuple[str, float, dict[str, Any]]],
+        lambda_param: float,
+        k: int,
+    ) -> list[str]:
+        """Apply MMR (Maximal Marginal Relevance) to get diverse results."""
+        return self.search_service.compute_mmr_diverse_results(
+            query_embedding, candidates, lambda_param, k
+        )
 
-            return {
-                "avg_tokens": float(result.avg_tokens) if result.avg_tokens else 0.0,
-                "min_tokens": result.min_tokens or 0,
-                "max_tokens": result.max_tokens or 0,
-                "total_tokens": result.total_tokens or 0,
-                "node_count": result.node_count or 0,
-            }
+    # Tree navigation operations - delegate to TreeNavigator
+    def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
+        """Get left and right children of a node."""
+        return self.tree_navigator.get_children(node_id)
 
-    def _create_vector_extension(self) -> None:
-        """Create the pgvector extension required for embedding storage.
+    def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
+        """Get all ancestors of given nodes using batch loading for efficiency."""
+        return self.tree_navigator.get_ancestors(node_ids)
 
-        This must be done before creating tables that use Vector columns.
-        """
-        try:
-            with self.engine.begin() as conn:
-                # Create vector extension - this is required for pgvector Vector() columns
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                logger.debug("Vector extension created successfully")
-        except Exception as e:
-            # This is a critical error - we can't create Vector columns without the extension
-            error_msg = str(e).lower()
-            if "permission denied" in error_msg:
-                raise OSError(
-                    f"\n❌ Unable to create vector extension: permission denied.\n\n"
-                    f"This usually happens when the database user lacks superuser privileges.\n"
-                    f"Try running 'ragzoom doctor' to check your setup.\n\n"
-                    f"Technical error: {e}"
-                )
-            elif "could not access file" in error_msg or "no such file" in error_msg:
-                raise OSError(
-                    f"\n❌ Vector extension not available in this PostgreSQL installation.\n\n"
-                    f"Make sure you're using the pgvector/pgvector Docker image.\n"
-                    f"Run 'ragzoom doctor' to check your setup.\n\n"
-                    f"Technical error: {e}"
-                )
-            else:
-                raise OSError(
-                    f"\n❌ Failed to create vector extension.\n\n"
-                    f"This is required for storing embeddings. Run 'ragzoom doctor' to diagnose.\n\n"
-                    f"Technical error: {e}"
-                )
+    def get_root_node(self) -> TreeNode | None:
+        """Get the root node (node with no parent)."""
+        return self.tree_navigator.get_root_node()
 
-    def _run_migrations(self) -> None:
-        """Run database migrations for existing databases.
+    def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
+        """Get the root node for a specific document."""
+        return self.tree_navigator.get_root_node_for_document(document_id)
 
-        This must be called after tables are created to handle schema updates
-        for existing databases that need migration.
-        """
-        try:
-            with self.engine.begin() as conn:
-                # Add height column if it doesn't exist (for existing databases)
-                conn.execute(
-                    text(
-                        """
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name = 'tree_nodes'
-                            AND column_name = 'height'
-                        ) THEN
-                            ALTER TABLE tree_nodes
-                            ADD COLUMN height INTEGER NOT NULL DEFAULT 0;
-                        END IF;
-                    END $$;
-                """
-                    )
-                )
-                logger.debug("Database migrations completed")
-        except Exception as e:
-            # Migration failures are not critical - the column might already exist
-            # or this might be a new database where tables have the column already
-            logger.debug(f"Migration note: {e}")
+    def get_node_depth(self, node_id: str) -> int:
+        """Calculate depth of a node (distance from root)."""
+        return self.tree_navigator.get_node_depth(node_id)
 
+    def is_leaf_node(self, node_id: str) -> bool:
+        """Check if a node is a leaf (has no children)."""
+        return self.tree_navigator.is_leaf_node(node_id)
+
+    def is_root_node(self, node_id: str) -> bool:
+        """Check if a node is a root (has no parent)."""
+        return self.tree_navigator.is_root_node(node_id)
+
+    # Cache operations - delegate to CacheManager
+    def _get_from_cache(self, node_id: str) -> TreeNode | None:
+        """Get item from cache (for backward compatibility)."""
+        return self.cache_manager.get(node_id)
+
+    def _add_to_cache(self, node: TreeNode) -> None:
+        """Add item to cache (for backward compatibility)."""
+        self.cache_manager.put(node.id, node)
+
+    # Database validation - delegate to DatabaseManager
+    def _validate_embedding_dimension(
+        self, embedding: list[float] | NDArray[np.float64]
+    ) -> None:
+        """Validate that embedding has correct dimension."""
+        self.db_manager.validate_embedding_dimension(embedding)
+
+    def _get_expected_embedding_dimension(self) -> int | None:
+        """Get expected embedding dimension from existing embeddings."""
+        return self.db_manager._get_expected_embedding_dimension()
+
+    # Lifecycle methods
     def close(self) -> None:
         """Close database connections and cleanup resources."""
-        if hasattr(self, "engine"):
-            self.engine.dispose()
+        self.db_manager.close()
 
+    # Static utility methods
     @staticmethod
     def compute_content_hash(content: str) -> str:
         """Compute SHA256 hash of content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    # Deprecated methods - included for backward compatibility but delegate to new components
+    def _run_migrations(self) -> None:
+        """Run database migrations (deprecated - handled by DatabaseManager)."""
+        # This is now handled by DatabaseManager during initialization
+        pass
