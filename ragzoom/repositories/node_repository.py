@@ -2,20 +2,24 @@
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import update
 
 from ragzoom.models import TreeNode
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+from ragzoom.repositories.base_repository import BaseRepository
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.storage.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
 
-class NodeRepository:
+class NodeRepository(BaseRepository):
     """Repository for TreeNode database operations."""
 
     def __init__(
@@ -117,11 +121,14 @@ class NodeRepository:
 
         return node
 
-    def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
+    def add_nodes_batch(
+        self, nodes_data: list[dict[str, Any]], *, session: Optional["Session"] = None
+    ) -> list[TreeNode]:
         """Add multiple nodes to the database in batch.
 
         Args:
             nodes_data: List of dictionaries containing node data
+            session: Optional database session for transactional operations
 
         Returns:
             List of created TreeNode objects
@@ -133,7 +140,8 @@ class NodeRepository:
         for data in nodes_data:
             self.db_manager.validate_embedding_dimension(data["embedding"])
 
-        with self.SessionLocal() as session:
+        db_session, should_commit = self._get_session(session)
+        try:
             # Create TreeNode objects for regular session.add_all()
             nodes = []
             for data in nodes_data:
@@ -156,39 +164,48 @@ class NodeRepository:
                 nodes.append(node)
 
             # Use add_all for proper object tracking and session management
-            session.add_all(nodes)
-            session.commit()
+            db_session.add_all(nodes)
+            if should_commit:
+                db_session.commit()
 
             # Force load and detach all nodes
             for node in nodes:
-                session.refresh(node)
-                self._force_load_and_detach(session, node)
+                db_session.refresh(node)
+                self._force_load_and_detach(db_session, node)
 
             # Add all to cache
             for node in nodes:
                 self.cache_manager.put(node.id, node)
 
-        return nodes
+            return nodes
+        except Exception:
+            if should_commit:
+                db_session.rollback()
+            raise
+        finally:
+            if should_commit:
+                db_session.close()
 
-    def update_parent_references_batch(self, updates: list[tuple[str, str]]) -> None:
+    def update_parent_references_batch(
+        self, updates: list[tuple[str, str]], *, session: Optional["Session"] = None
+    ) -> None:
         """Update parent references for multiple nodes in batch.
 
         Args:
             updates: List of (node_id, parent_id) tuples
+            session: Optional database session for transactional operations
         """
         if not updates:
             return
 
-        with self.SessionLocal() as session:
+        with self._session_scope(session) as db_session:
             # Update parent references
             for node_id, parent_id in updates:
-                session.execute(
+                db_session.execute(
                     update(TreeNode)
                     .where(TreeNode.id == node_id)
                     .values(parent_id=parent_id)
                 )
-
-            session.commit()
 
             # Invalidate cache for updated nodes
             for node_id, _ in updates:
