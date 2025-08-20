@@ -50,6 +50,7 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
         pytest.skip(f"Could not load test document {file_path}: {e}")
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("leaf_tokens", [100, 200, 400])
 @pytest.mark.parametrize("document_type", ["narrative"])
 def test_indexing_performance(leaf_tokens, document_type):
@@ -153,6 +154,7 @@ def test_indexing_performance(leaf_tokens, document_type):
                 print(f"  Under target: {stats.under_target_count}")
 
 
+@pytest.mark.slow
 def test_performance_comparison():
     """Compare benchmark results if available."""
     output_dir = Path("benchmark_results")
