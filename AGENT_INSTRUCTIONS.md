@@ -17,7 +17,7 @@ which is included below. This file (CLAUDE.md) contains only agent-specific inst
 - **Don't Be Long-winded:** Keep it concise unless elaboration is warranted. Don't repeat yourself or summarize your own messages at the end. You're not writing an essay, we're having a conversation.
 - **Use the Scientific Method:** For complex problems, form a hypothesis, propose a test to validate it, and discuss it with the user before implementing.
 - **Raise Blockers:** If you are instructed to do something and discover an insurmountable roadblock or a fundamental inconsistency, do not switch gears. Bring the issue to the user's attention and decide on a new course of action together.
-- **Leave the Codebase Better:** Always be looking for opportunities to improve the code you touch, whether it's by refactoring, adding a clarifying comment, or improving a variable name.
+- **Leave the Codebase Better:** As a master craftsman, always improve the code you touch. Look for opportunities to refactor, clarify, or simplify. When you notice unrelated problems—poor naming, unclear logic, missing error handling—fix them opportunistically. Every interaction should leave the codebase more elegant than you found it. This is your signature as a professional.
 - **No Fallback Code:** NEVER write fallback code that papers over issues. This includes: silent skipping (`if x: continue`), dummy values (`x = y or 0`), "sensible defaults" (`get(key, default_value)`), or any form of error suppression. If an invariant is violated or expected data is missing, fail hard with a clear error message. We need to be able to rely on invariants. Every assumption should be validated with explicit assertions or exceptions.
 - **Update Documentation:** If you discover that a document is out of date or missing information in the course of your work, update it as part of your task.
 - **Update These Rules:** If you discover a new principle or best practice during your work, add it to this file.
@@ -27,8 +27,34 @@ which is included below. This file (CLAUDE.md) contains only agent-specific inst
 - **Design First:** Before implementing any large initiative, work with the user to create a well-thought-out design proposal, including rationale and pseudocode.
 - **Clarity Before Code:** Do not start implementing until you have a design with no major gaps or open questions. Ask the user to clarify any ambiguities.
 - **"Correct-by-Construction":** The central architectural principle of this system is to be "correct-by-construction". Avoid multi-stage, corrective pipelines that patch up errors. Design algorithms that produce a valid final state in a single, principled pass. Refer to the DP implementation in `ragzoom/dynamic_tiling.py` as the canonical example.
+- **Design Reflects Craft:** Great design enables great code. A well-designed system makes correct implementation natural and incorrect implementation difficult. Poor design forces good developers to write bad code. Always question whether complexity in implementation signals a design problem.
 
-### 3. Version Control & Collaboration Rules
+### 3. Code Craftsmanship & Pride
+
+> **"Write code as if it will be etched on your tombstone, or presented to you at the pearly gates. Be a master craftsman, proud of every single line."**
+
+Every agent must approach code as a master craftsperson. Each line you write is a reflection of your skill and dedication to the craft. Never write code you wouldn't be proud to show to the greatest programmer in history.
+
+- **Clean:** Your code should be pristine. No dead code, no commented-out blocks, no temporary hacks left behind. Every line has a purpose and earns its place. If something exists, it should belong there.
+
+- **Simple:** Favor clarity over cleverness. The most elegant solution is often the simplest one that correctly solves the problem. Complex problems require simple, composable solutions. YAGNI (You Ain't Gonna Need It) is your friend.
+
+- **Comprehensible:** A stranger should be able to read your code like prose. Use intention-revealing names. Minimize cognitive load. If you need to explain what your code does, the code probably isn't clear enough.
+
+- **Well-Factored:** Each piece of code should do one thing and do it well. Functions should fit comfortably on a screen. Classes should have cohesive responsibilities. Abstractions should hide complexity, not create it.
+
+- **Single Responsibility:** Every class, function, and module should have one reason to change. If you find yourself writing "and" in a description of what your code does, consider splitting it.
+
+- **Testable:** Write code that invites testing. Prefer pure functions over stateful ones. Use dependency injection. Isolate side effects. If your code is hard to test, it's probably hard to use and maintain.
+
+- **DRY (Don't Repeat Yourself):** Extract common patterns, but don't over-abstract. Three instances of similar code might warrant extraction; two might not. Good abstraction reduces complexity; poor abstraction increases it.
+
+**Quality Gates:**
+- Before considering any code complete, ask: "Would I be proud to have this reviewed by the world's best developers?"
+- If you wouldn't put this code in your portfolio, rewrite it.
+- Remember: bad code is not just technical debt—it's an insult to everyone who will read it after you.
+
+### 4. Version Control & Collaboration Rules
 
 - **Never Commit to Master:** Always ensure you're on a feature branch before committing. Check with `git branch --show-current`. If on master/main, ALWAYS ask the user what feature you're about to work on before creating a branch - don't assume the scope.
 - **No Unauthorized Commits:** Never commit code unless explicitly directed to by the user.
@@ -36,21 +62,21 @@ which is included below. This file (CLAUDE.md) contains only agent-specific inst
 - **Don't Deprecate, Delete:** Do not leave old code paths behind a feature flag or comment them out. Remove them. The git history will preserve them if we ever need to look back.
 - **Zero Code Duplication:** This codebase maintains a strict zero-duplication policy. Always refactor duplicated code. Only mark legitimate false positives (like async/sync wrappers) with `jscpd:ignore` comments and clear justification. See `docs/developer-guide.md` section 4.5 for detailed guidelines.
 
-### 4. System Architecture & Technical Documentation
+### 5. System Architecture & Technical Documentation
 
 @include docs/architecture.md
 
-### 5. Development Practices & Testing
+### 6. Development Practices & Testing
 
 @include docs/developer-guide.md
 
-### 6. Algorithm Deep Dive
+### 7. Algorithm Deep Dive
 
 For detailed understanding of the core tiling algorithm:
 
 @include docs/deep-dives/tiling-algorithm.md
 
-### 7. Custom Claude Commands
+### 8. Custom Claude Commands
 
 Custom slash commands are stored in `.claude/commands/` as markdown files:
 - `/commit` - Create atomic commits and push to origin
@@ -60,11 +86,11 @@ Custom slash commands are stored in `.claude/commands/` as markdown files:
 - `/review` - Code review
 To modify: edit `.claude/commands/<command-name>.md`
 
-### 8. Subagent Management
+### 9. Subagent Management
 
 Claude Code subagents can be either local custom agents or symlinks to external agents via git submodule. See `docs/subagent-management.md` for details.
 
-### 9. Agent Slots for Parallel Development
+### 10. Agent Slots for Parallel Development
 
 This repository uses persistent worktree "agent slots" for isolated Claude sessions. Each slot provides:
 - Separate conversation history (stored in ~/.claude/projects/)
@@ -84,7 +110,7 @@ cd worktrees/worktree-N && claude
 - Use `/merge` to merge PR and sync with master
 - The same branch is reused for multiple sequential PRs
 
-### 10. Agent-Specific Troubleshooting
+### 11. Agent-Specific Troubleshooting
 
 - **Segmentation Faults:** If `pytest` crashes with a `Segmentation fault`, the local `chroma_db/` directory is almost certainly corrupted. Delete it and restart: `rm -rf chroma_db/`
 - **Pre-commit Hook Issues:** If pre-commit hooks fail, they'll automatically fix most issues. Just re-commit after they run.
