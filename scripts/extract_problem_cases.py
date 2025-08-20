@@ -5,14 +5,14 @@ import argparse
 import json
 import sqlite3
 import sys
-from pathlib import Path
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from ragzoom.config import IndexConfig
+
 
 @dataclass
 class ProblemCase:
@@ -26,8 +26,8 @@ class ProblemCase:
     target_tokens: int
     divergence: int
     divergence_pct: float
-    document_id: Optional[str] = None
-    preceding_context: Optional[str] = None
+    document_id: str | None = None
+    preceding_context: str | None = None
 
 def extract_problem_cases(
     telemetry_path: Path,
@@ -41,29 +41,29 @@ def extract_problem_cases(
         db_path: Path to ragzoom.db
         max_cases: Maximum cases to include
     """
-    
+
     # Step 1: Get config and nodes from telemetry
     with open(telemetry_path) as f:
         telemetry = json.load(f)
-    
+
     config_dict = telemetry.get("config", {})
     config = IndexConfig.from_dict(config_dict)
     target_tokens = config.target_chunk_tokens
-    
+
     # Get document ID from telemetry
     document_id = telemetry.get("document_id")
     if not document_id:
         raise ValueError(f"No document_id found in telemetry file {telemetry_path}")
-    
+
     # Extract all node IDs from telemetry for validation
     # Even with same document, database could have nodes from a different indexing run
     telemetry_nodes = telemetry.get("nodes", [])
     telemetry_node_ids = {node.get("node_id") for node in telemetry_nodes if node.get("node_id")}
-    
+
     # Step 2: Query database for worst divergences
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    
+
     query = """
     SELECT 
         n.*,
@@ -77,30 +77,30 @@ def extract_problem_cases(
     LIMIT 500  -- Get more than we need for sampling
     """
     # Note: The * selector will automatically include preceding_neighbor_id if it exists
-    
+
     cursor = conn.execute(query, (target_tokens, target_tokens, target_tokens, document_id, target_tokens))
     problem_nodes = cursor.fetchall()
-    
+
     # Build cases with full context
     cases = []
     skipped_not_in_telemetry = 0
-    
+
     for node in problem_nodes:
         # Skip nodes not in telemetry (from different indexing run)
         if node["id"] not in telemetry_node_ids:
             skipped_not_in_telemetry += 1
             continue
-            
+
         # Get children for input texts
         left_child = get_node(conn, node["left_child_id"])
         right_child = get_node(conn, node["right_child_id"])
-        
+
         if not left_child or not right_child:
             continue
-        
+
         # Calculate height
         height = calculate_height(conn, node["id"])
-        
+
         # Get preceding context from the preceding neighbor node
         preceding_context = None
         try:
@@ -115,7 +115,7 @@ def extract_problem_cases(
                 "Database does not have preceding_neighbor_id column. "
                 "Please re-index the document to populate this field."
             ) from e
-        
+
         case = ProblemCase(
             node_id=node["id"],
             height=height,
@@ -130,19 +130,19 @@ def extract_problem_cases(
             preceding_context=preceding_context
         )
         cases.append(case)
-    
+
     if skipped_not_in_telemetry > 0:
         print(f"Warning: Skipped {skipped_not_in_telemetry} nodes not found in telemetry (likely from different run)")
-    
+
     # Just take the top N most divergent cases
     # They're already sorted by divergence from the SQL query
     selected_cases = cases[:max_cases]
-    
+
     # Prepare output filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path("tests/summarization_problem_cases")
     output_path = output_dir / f"problem_cases_{timestamp}.json"
-    
+
     # Save output
     output = {
         "metadata": {
@@ -155,11 +155,11 @@ def extract_problem_cases(
         },
         "cases": [asdict(c) for c in selected_cases]
     }
-    
+
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2)
-    
+
     # Print summary
     print(f"Extracted {len(selected_cases)} problem cases (from {len(cases)} total):")
     print(f"  Verbatim (>150%): {sum(1 for c in selected_cases if c.divergence_pct > 150)}")
@@ -167,7 +167,7 @@ def extract_problem_cases(
     print(f"  Severe undershoot (<-30%): {sum(1 for c in selected_cases if c.divergence_pct < -30)}")
     print(f"  Moderate (other): {sum(1 for c in selected_cases if -30 <= c.divergence_pct <= 50)}")
     print(f"  Output: {output_path}")
-    
+
     return selected_cases
 
 def get_node(conn, node_id):
@@ -182,10 +182,10 @@ def calculate_height(conn, node_id):
     node = get_node(conn, node_id)
     if not node or (not node["left_child_id"] and not node["right_child_id"]):
         return 0
-    
+
     left_height = calculate_height(conn, node["left_child_id"]) if node["left_child_id"] else 0
     right_height = calculate_height(conn, node["right_child_id"]) if node["right_child_id"] else 0
-    
+
     return 1 + max(left_height, right_height)
 
 
@@ -194,9 +194,9 @@ def main():
     parser.add_argument("telemetry", type=Path, help="Telemetry JSON file")
     parser.add_argument("--db", type=Path, default=Path("ragzoom.db"))
     parser.add_argument("--max-cases", type=int, default=50)
-    
+
     args = parser.parse_args()
-    
+
     extract_problem_cases(
         telemetry_path=args.telemetry,
         db_path=args.db,

@@ -469,8 +469,8 @@ def query(
         summary = assembler.assemble(result)
         token_count = assembler.get_token_count(summary)
 
-        # Tiling validation (validation now simplified - always off unless debug)
-        if debug and getattr(result, "tiling", None) and result.tiling:
+        # Tiling validation
+        if validate and getattr(result, "tiling", None) and result.tiling:
             from ragzoom.validate import validate_tiling
 
             error = validate_tiling(
@@ -478,6 +478,7 @@ def query(
                 store,
                 document_id,
                 budget_tokens=query_config.budget_tokens,
+                preloaded_nodes=result.nodes,
             )
             if error:
                 click.echo(f"⚠️ Tiling validation warning: {error}", err=True)
