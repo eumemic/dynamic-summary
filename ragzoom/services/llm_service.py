@@ -416,6 +416,9 @@ class LLMService:
         target_tokens: int,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
+        prev_context: str | None = None,
+        left_token_count: int | None = None,
+        right_token_count: int | None = None,
     ) -> tuple[str, int, int]:
         """Summarize combined text to approximately target token count.
 
@@ -423,12 +426,18 @@ class LLMService:
             tuple: (summary, retry_count, actual_token_count)
         """
         # Combine texts
-        combined_text = f"{left_text} {right_text}"
+        combined_text = f"{left_text} {right_text}".strip()
 
         # Check if we need to summarize at all
         combined_tokens = tokenizer.count_tokens(combined_text)
         if combined_tokens <= target_tokens:
-            # Text is already under target - return as-is with passthrough telemetry
+            node_info = f"[{parent_id}] " if parent_id else ""
+            logger.debug(
+                f"{node_info}Combined text already under target: {combined_tokens} tokens "
+                f"(target: {target_tokens}). Skipping summarization."
+            )
+
+            # Record passthrough as a summary attempt for telemetry visualization
             if reporter and parent_id:
                 start_time = time.time()
                 reporter.record_summary_attempt_v2(
@@ -443,10 +452,51 @@ class LLMService:
                 )
             return combined_text, 0, combined_tokens
 
-        # Build the initial conversation
+        # Handle preceding context if provided
+        trimmed_prev = None
+        if prev_context and self.config.preceding_context_tokens > 0:
+            # Trim prev_context to adjacent_context_tokens
+            prev_tokens = tokenizer.encode(prev_context)
+            if len(prev_tokens) > self.config.preceding_context_tokens:
+                context_tokens = prev_tokens[-self.config.preceding_context_tokens :]
+                trimmed_prev = tokenizer.decode(context_tokens)
+            else:
+                trimmed_prev = prev_context
+
+        # Build the summarization prompt inline
         target_words = self._tokens_to_words(target_tokens)
 
-        # Vaccine pattern: Start with a practice round
+        instruction = f"""You will be given a piece of content to summarize. You are to summarize ONLY the content between the <SUMMARIZE_TEXT> tags in AT MOST {target_words} words. Use the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
+
+Make your summary information-dense, covering the full temporal scope of the source material. Match the voice, tense, and tone of the original text insofar as possible. Abstract over details as necessary to fit within the word limit while preserving key events and themes.
+
+Here's the content to summarize:"""
+
+        prompt_parts = [instruction]
+
+        # Add preceding context if available
+        if prev_context and self.config.preceding_context_tokens > 0 and trimmed_prev:
+            prompt_parts.append(
+                f"\n<PRECEDING_TEXT>\n...{trimmed_prev.strip()}\n</PRECEDING_TEXT>"
+            )
+
+        # Add the content to summarize (concatenated)
+        prompt_parts.append(f"\n<SUMMARIZE_TEXT>\n{combined_text}\n</SUMMARIZE_TEXT>")
+
+        full_prompt = "\n\n".join(prompt_parts)
+
+        # Calculate input text tokens for metrics tracking
+        if left_token_count is not None and right_token_count is not None:
+            input_text_tokens = left_token_count + right_token_count
+        else:
+            # Fallback if token counts not provided
+            input_text_tokens = tokenizer.count_tokens(left_text)
+            if right_text:
+                input_text_tokens += tokenizer.count_tokens(right_text)
+
+        node_info = f"[{parent_id}] " if parent_id else ""
+
+        # Build messages in conversational format to match test expectations
         messages = [
             {
                 "role": "system",
@@ -456,22 +506,19 @@ class LLMService:
                     "close to the target length."
                 ),
             },
-            {
-                "role": "user",
-                "content": f"Please summarize the following text in approximately {target_words} words:\n\n{combined_text}",
-            },
-            {
-                "role": "assistant",
-                "content": f"I'll provide a {target_words}-word summary of the text.",
-            },
-            {
-                "role": "user",
-                "content": (
-                    "UNACCEPTABLE. I need the actual summary, not a promise to provide one. "
-                    f"Please provide the actual {target_words}-word summary now."
-                ),
-            },
+            {"role": "user", "content": full_prompt},
         ]
+
+        # Anti-verbatim vaccine: Insert fake conversation showing verbatim copy being rejected
+        # This prevents the most common failure mode and improves consistency
+        if self.config.use_anti_verbatim_vaccine:
+            messages.append({"role": "assistant", "content": combined_text})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"UNACCEPTABLE. You just returned the input text verbatim! I need you to CREATE A SUMMARY - extract and compress the key information to AT MOST {target_words} words. Do not copy passages directly. Try again.",
+                }
+            )
 
         # Make initial summary attempt
         try:
@@ -493,7 +540,7 @@ class LLMService:
                     parent_id=parent_id,
                     response=mock_response,
                     target_tokens=target_tokens,
-                    input_text_tokens=combined_tokens,
+                    input_text_tokens=input_text_tokens,
                     actual_tokens=summary_tokens,
                     start_time=start_time,
                 )

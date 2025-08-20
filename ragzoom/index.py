@@ -101,10 +101,15 @@ class TreeBuilder:
         right_token_count: int | None = None,
     ) -> tuple[str, int, int]:
         """Delegate to LLMService for text summarization."""
-        # Note: prev_context, left_token_count, right_token_count are ignored in new implementation
-        # as they were not used in the core summarization logic
         return await self.llm_service._summarize_text(
-            left_text, right_text, target_tokens, parent_id, reporter
+            left_text,
+            right_text,
+            target_tokens,
+            parent_id,
+            reporter,
+            prev_context,
+            left_token_count,
+            right_token_count,
         )
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
