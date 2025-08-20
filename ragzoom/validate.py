@@ -182,6 +182,10 @@ def validate_tree_structure(
     if not nodes:
         return "No nodes found for document"
 
+    # Build lookup dictionary for O(1) access instead of database queries
+    # This eliminates 100,000+ individual DB queries for large documents
+    node_lookup = {node.id: node for node in nodes}
+
     errors = []
 
     # Check each node
@@ -194,12 +198,13 @@ def validate_tree_structure(
 
         # Check parent-child relationships
         if node.left_child_id or node.right_child_id:
-            # Parent node checks
-            if store.is_leaf_node(node.id):
+            # Parent node checks - use local check instead of DB query
+            is_leaf = node.left_child_id is None and node.right_child_id is None
+            if is_leaf:
                 errors.append(f"Node {node.id}: Leaf node has children")
 
             if node.left_child_id:
-                left_child = store.get_node(node.left_child_id)
+                left_child = node_lookup.get(node.left_child_id)
                 if not left_child:
                     errors.append(
                         f"Node {node.id}: Left child {node.left_child_id} not found"
@@ -211,7 +216,7 @@ def validate_tree_structure(
                     )
 
             if node.right_child_id:
-                right_child = store.get_node(node.right_child_id)
+                right_child = node_lookup.get(node.right_child_id)
                 if not right_child:
                     errors.append(
                         f"Node {node.id}: Right child {node.right_child_id} not found"
@@ -224,8 +229,8 @@ def validate_tree_structure(
 
             # Check for gaps between children
             if node.left_child_id and node.right_child_id:
-                left_child = store.get_node(node.left_child_id)
-                right_child = store.get_node(node.right_child_id)
+                left_child = node_lookup.get(node.left_child_id)
+                right_child = node_lookup.get(node.right_child_id)
                 if left_child and right_child:
                     if left_child.span_end < right_child.span_start:
                         right_child.span_start - left_child.span_end
@@ -266,6 +271,7 @@ def validate_tiling(
     document_id: str,
     original_text: str | None = None,
     budget_tokens: int | None = None,
+    preloaded_nodes: dict[str, TreeNode] | None = None,
 ) -> str | None:
     """Validate that a tiling has no overlaps, no duplicates, and (optionally) covers the document.
 
@@ -275,6 +281,7 @@ def validate_tiling(
         document_id: Document ID
         original_text: Optional original text for gap validation
         budget_tokens: Optional token budget to validate against
+        preloaded_nodes: Optional preloaded nodes to avoid redundant DB queries
 
     Returns:
         Error message if invalid, None if valid
@@ -308,10 +315,33 @@ def validate_tiling(
             return f"Overlapping nodes: {node_id1} [{start1},{end1}) overlaps with {node_id2} [{start2},{end2})"
 
     # Optionally, check for complete coverage
-    doc_nodes = store.get_all_nodes_for_document(document_id)
-    if doc_nodes:
-        doc_start = min(n.span_start for n in doc_nodes)
-        doc_end = max(n.span_end for n in doc_nodes)
+    # Get document bounds efficiently using preloaded nodes if available
+    doc_start: int | None = None
+    doc_end: int | None = None
+
+    if preloaded_nodes:
+        # Find root node from preloaded nodes (node with no parent in the set)
+        root_node = None
+        for node in preloaded_nodes.values():
+            if node.parent_id is None or node.parent_id not in preloaded_nodes:
+                root_node = node
+                break
+
+        if root_node:
+            doc_start = root_node.span_start  # Always 0 for root
+            doc_end = root_node.span_end  # Document length
+        elif preloaded_nodes:
+            # Fallback if no root found (shouldn't happen)
+            doc_start = min(n.span_start for n in preloaded_nodes.values())
+            doc_end = max(n.span_end for n in preloaded_nodes.values())
+    else:
+        # Only fall back to loading all nodes if no preloaded nodes provided
+        doc_nodes = store.get_all_nodes_for_document(document_id)
+        if doc_nodes:
+            doc_start = min(n.span_start for n in doc_nodes)
+            doc_end = max(n.span_end for n in doc_nodes)
+
+    if doc_start is not None and doc_end is not None:
         if node_spans[0][1] != doc_start:
             return f"Tiling does not start at document start: {node_spans[0][1]} != {doc_start}"
         if node_spans[-1][2] != doc_end:
