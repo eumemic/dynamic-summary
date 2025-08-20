@@ -4,16 +4,18 @@ import logging
 import subprocess
 import time
 
+from ragzoom.worktree_utils import DEFAULT_CONTAINER_NAME, DEFAULT_DATABASE_NAME
+
 logger = logging.getLogger(__name__)
 
 
 class DockerPostgres:
     """Automatically manage PostgreSQL container for development."""
 
-    CONTAINER_NAME = "ragzoom-postgres"
+    CONTAINER_NAME = DEFAULT_CONTAINER_NAME
     IMAGE = "pgvector/pgvector:pg16"
     DEFAULT_PORT = 5432
-    DATABASE = "ragzoom"
+    DATABASE = DEFAULT_DATABASE_NAME
     USER = "postgres"
     PASSWORD = "postgres"
 
@@ -189,9 +191,14 @@ class DockerPostgres:
         logger.warning(f"PostgreSQL not ready after {timeout} seconds")
         return False
 
-    def get_connection_url(self) -> str:
-        """Get the connection URL for the PostgreSQL container."""
-        return f"postgresql+psycopg://{self.USER}:{self.PASSWORD}@localhost:{self.DEFAULT_PORT}/{self.DATABASE}"
+    def get_connection_url(self, database_name: str | None = None) -> str:
+        """Get the connection URL for the PostgreSQL container.
+
+        Args:
+            database_name: Optional database name to use instead of default
+        """
+        db_name = database_name or self.DATABASE
+        return f"postgresql+psycopg://{self.USER}:{self.PASSWORD}@localhost:{self.DEFAULT_PORT}/{db_name}"
 
     def ensure_running(self) -> str:
         """Ensure PostgreSQL container is running and return connection URL.
@@ -309,3 +316,78 @@ class DockerPostgres:
                         status["connection_url"] = self.get_connection_url()
 
         return status
+
+    def create_database(self, database_name: str) -> bool:
+        """Create an additional database in the PostgreSQL container.
+
+        Uses IF NOT EXISTS to avoid race conditions and ensure idempotent behavior.
+
+        Args:
+            database_name: Name of the database to create
+
+        Returns:
+            True if database was created or already exists, False on error
+        """
+        if not self.container_running():
+            logger.error("PostgreSQL container is not running")
+            return False
+
+        try:
+            # Use docker exec to create the database with IF NOT EXISTS
+            logger.debug(f"Ensuring database exists: {database_name}")
+            result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    self.container_name,
+                    "psql",
+                    "-U",
+                    self.USER,
+                    "-d",
+                    self.DATABASE,
+                    "-c",
+                    f'CREATE DATABASE IF NOT EXISTS "{database_name}";',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            # Check only for success return code
+            if result.returncode == 0:
+                logger.debug(f"Database {database_name} ready")
+                return True
+            else:
+                # Log the actual error for debugging
+                logger.error(
+                    f"Failed to create database {database_name}: {result.stderr.strip()}"
+                )
+                return False
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout while creating database {database_name}")
+            return False
+        except Exception as e:
+            logger.error(f"Error creating database {database_name}: {e}")
+            return False
+
+    def ensure_database_exists(self, database_name: str) -> str:
+        """Ensure a specific database exists and return its connection URL.
+
+        Args:
+            database_name: Name of the database to ensure exists
+
+        Returns:
+            Connection URL for the specified database
+
+        Raises:
+            RuntimeError: If database cannot be created
+        """
+        # First ensure the PostgreSQL container is running
+        self.ensure_running()
+
+        # Then ensure the specific database exists
+        if not self.create_database(database_name):
+            raise RuntimeError(f"Failed to create database: {database_name}")
+
+        return self.get_connection_url(database_name)
