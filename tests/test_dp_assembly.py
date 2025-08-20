@@ -1,13 +1,23 @@
-"""Tests for DP assembly path."""
+"""Tests for DP assembly path and DP algorithm.
+
+This file contains both assembly tests and core DP algorithm tests.
+The DP algorithm test was moved here from test_dp_tiling.py to consolidate
+all DP-related testing in one place.
+"""
 
 import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import OperationalConfig, QueryConfig
+from ragzoom.retrieve import Retriever
 
 
 class TestDPAssembly:
-    """Test the DP assembly path that uses node IDs."""
+    """Test the DP assembly path and core DP algorithm.
+
+    This class contains both assembly tests (using node IDs) and
+    core DP algorithm tests (moved from test_dp_tiling.py).
+    """
 
     @pytest.fixture
     def query_config(self):
@@ -227,3 +237,61 @@ class TestDPAssembly:
             "Second chunk of text."
         )
         assert result == expected
+
+    def test_dp_single_node_tree(self, store):
+        """Test the DP algorithm on a tree with only a single node.
+
+        This test was moved from test_dp_tiling.py to consolidate DP tests.
+        It focuses on the DP algorithm itself rather than assembly.
+        """
+        # Set up configuration similar to the original test
+        query_config = QueryConfig(budget_tokens=1000)
+        operational_config = OperationalConfig(
+            openai_api_key="test-key",
+            database_url="postgresql:///:memory:",
+        )
+
+        # Use the store fixture instead of SimpleMockStore for consistency
+        retriever = Retriever(
+            query_config=query_config,
+            store=store,
+            api_key=operational_config.openai_api_key,
+        )
+        dp_generator = retriever.dp_generator
+
+        # Manually create a single-node tree
+        store.add_node(
+            node_id="root",
+            text="single node",
+            embedding=[0.1] * 1536,
+            span_start=0,
+            span_end=100,
+            document_id="test-doc-single",
+        )
+
+        # Set up mock scores for the SimpleMockStore if available
+        if hasattr(store, "set_mock_scores"):
+            store.set_mock_scores({"root": 1.0})
+
+        # Create coverage map
+        coverage_map = {"root": True}
+
+        # Load nodes from coverage map
+        nodes = {}
+        for node_id in coverage_map:
+            node = store.get_node(node_id)
+            if node:
+                nodes[node_id] = node
+
+        # Find root node
+        root_id = "root"
+
+        # Test the DP algorithm
+        dp_result = dp_generator.find_optimal_tiling(
+            1000, {"root": 1.0}, nodes, root_id
+        )
+        tiling = dp_result.tiling
+
+        assert tiling, "DP tiling should not be empty for single node tree"
+        assert len(tiling.node_ids) == 1
+        assert tiling.node_ids[0] == "root"

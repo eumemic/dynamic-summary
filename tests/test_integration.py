@@ -4,14 +4,13 @@ These tests verify the complete pipeline from document indexing through
 retrieval to final assembly, using mock OpenAI clients.
 """
 
-from unittest.mock import Mock, patch
-
 import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
+from tests.utils import mock_openai_context
 
 
 @pytest.mark.integration
@@ -24,81 +23,8 @@ class TestIntegration:
 
     @pytest.fixture
     def mock_openai(self):
-        """Mock OpenAI API calls."""
-        with (
-            patch("ragzoom.index.AsyncOpenAI") as mock_index_client,
-            patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
-        ):
-
-            # Create async mock functions
-            async def mock_embeddings_create(*args, **kwargs):
-                # Handle both single and batch embedding requests
-                input_data = kwargs.get("input", args[0] if args else "")
-                if isinstance(input_data, list):
-                    # Batch request - return multiple embeddings
-                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
-                else:
-                    # Single request
-                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
-
-            async def mock_chat_create(*args, **kwargs):
-                return Mock(
-                    choices=[
-                        Mock(
-                            message=Mock(content="Summary of left half and right half.")
-                        )
-                    ]
-                )
-
-            # Create sync mock functions for retriever and assembler
-            def mock_embeddings_create_sync(*args, **kwargs):
-                # Handle both single and batch embedding requests
-                input_data = kwargs.get("input", args[0] if args else "")
-                if isinstance(input_data, list):
-                    # Batch request - return multiple embeddings
-                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
-                else:
-                    # Single request
-                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
-
-            def mock_chat_create_sync(*args, **kwargs):
-                return Mock(
-                    choices=[
-                        Mock(
-                            message=Mock(content="Summary of left half and right half.")
-                        )
-                    ]
-                )
-
-            # Mock embeddings for async client (index)
-            mock_embeddings_async = Mock()
-            mock_embeddings_async.create = Mock(side_effect=mock_embeddings_create)
-
-            # Mock embeddings for sync clients (retrieve, assemble)
-            mock_embeddings_sync = Mock()
-            mock_embeddings_sync.create = Mock(side_effect=mock_embeddings_create_sync)
-
-            # Mock chat completions
-            mock_chat_async = Mock()
-            mock_chat_async.completions = Mock()
-            mock_chat_async.completions.create = Mock(side_effect=mock_chat_create)
-
-            mock_chat_sync = Mock()
-            mock_chat_sync.completions = Mock()
-            mock_chat_sync.completions.create = Mock(side_effect=mock_chat_create_sync)
-
-            # Set up async client for index
-            instance_async = Mock()
-            instance_async.embeddings = mock_embeddings_async
-            instance_async.chat = mock_chat_async
-            mock_index_client.return_value = instance_async
-
-            # Set up sync client for retrieve
-            instance_sync = Mock()
-            instance_sync.embeddings = mock_embeddings_sync
-            instance_sync.chat = mock_chat_sync
-            mock_retrieve_client.return_value = instance_sync
-
+        """Mock OpenAI API calls using centralized utilities."""
+        with mock_openai_context():
             yield
 
     @pytest.fixture
