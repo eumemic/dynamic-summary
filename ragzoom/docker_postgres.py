@@ -4,7 +4,7 @@ import logging
 import subprocess
 import time
 
-from ragzoom.worktree_utils import DEFAULT_DATABASE_NAME
+from ragzoom.worktree_utils import DEFAULT_CONTAINER_NAME, DEFAULT_DATABASE_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class DockerPostgres:
     """Automatically manage PostgreSQL container for development."""
 
-    CONTAINER_NAME = "ragzoom-postgres"
+    CONTAINER_NAME = DEFAULT_CONTAINER_NAME
     IMAGE = "pgvector/pgvector:pg16"
     DEFAULT_PORT = 5432
     DATABASE = DEFAULT_DATABASE_NAME

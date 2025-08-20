@@ -7,9 +7,10 @@ from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
-# Default database configuration - can be overridden for different projects
+# Default configuration - can be overridden for different projects
 DEFAULT_DATABASE_NAME = "ragzoom"
 DEFAULT_DATABASE_URL_TEMPLATE = "postgresql+psycopg://localhost/{database_name}"
+DEFAULT_CONTAINER_NAME = "ragzoom-postgres"
 
 
 def get_worktree_id() -> str | None:
