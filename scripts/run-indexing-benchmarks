@@ -259,32 +259,42 @@ fi
 # Validate baseline path
 validate_path "$BASELINE" "baseline"
 
+# Check if baseline exists - warn if not but don't exit (allows first run without baseline)
+BASELINE_EXISTS=true
 if [ ! -f "$BASELINE" ]; then
-    echo "Error: Baseline file '$BASELINE' does not exist"
-    exit 1
+    echo "⚠️ Warning: Baseline file '$BASELINE' does not exist"
+    echo "   This will be a baseline-generation run (no comparison possible)"
+    BASELINE_EXISTS=false
 fi
 
 # Create output directory early if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Extract metadata from baseline
-echo "Extracting configuration from baseline..."
-DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
-DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
-
-# Extract ONLY target_chunk_tokens from baseline for fair comparison
-# All other settings should use current defaults from default_config.json
-CONFIG=$(jq -r '.config // empty' "$BASELINE")
+# Extract metadata from baseline (if it exists)
+DOCUMENT_ID=""
+DOCUMENT_PATH=""
 TARGET_CHUNK_TOKENS=""
-if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
-    TARGET_CHUNK_TOKENS=$(echo "$CONFIG" | jq -r '.target_chunk_tokens // empty')
-    if [ -n "$TARGET_CHUNK_TOKENS" ]; then
-        echo "  Extracted target_chunk_tokens from baseline: $TARGET_CHUNK_TOKENS"
-        echo "  All other settings will use current defaults from default_config.json"
+
+if [ "$BASELINE_EXISTS" = true ]; then
+    echo "Extracting configuration from baseline..."
+    DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
+    DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
+
+    # Extract ONLY target_chunk_tokens from baseline for fair comparison
+    # All other settings should use current defaults from default_config.json
+    CONFIG=$(jq -r '.config // empty' "$BASELINE")
+    if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
+        TARGET_CHUNK_TOKENS=$(echo "$CONFIG" | jq -r '.target_chunk_tokens // empty')
+        if [ -n "$TARGET_CHUNK_TOKENS" ]; then
+            echo "  Extracted target_chunk_tokens from baseline: $TARGET_CHUNK_TOKENS"
+            echo "  All other settings will use current defaults from default_config.json"
+        fi
+    else
+        echo "Warning: Could not extract config from baseline telemetry"
+        echo "  The indexer will use default configuration"
     fi
 else
-    echo "Warning: Could not extract config from baseline telemetry"
-    echo "  The indexer will use default configuration"
+    echo "No baseline available - will use current default configuration"
 fi
 
 # Auto-detect document if not provided
@@ -428,24 +438,49 @@ echo ""
 # Generate comparison report and visualization
 echo "📊 Generating comparison report and visualization..."
 
-# Generate markdown comparison report
-echo "  Generating comparison report..."
-# Note: compare command returns exit code 1 when regression detected, but still generates report
-# Temporarily disable exit on error for this command
-set +e
-python -m ragzoom.telemetry_cli compare \
-    "$BASELINE" \
-    "$TELEMETRY_FILE" \
-    > "$OUTPUT_DIR/comparison.md" 2>&1
-COMPARE_EXIT_CODE=$?
-set -e
+COMPARE_EXIT_CODE=0  # Default to success
 
-if [ $COMPARE_EXIT_CODE -eq 0 ]; then
-    echo "  ✅ Comparison report saved to $OUTPUT_DIR/comparison.md"
-elif [ $COMPARE_EXIT_CODE -eq 1 ]; then
-    echo "  ⚠️ Comparison report saved to $OUTPUT_DIR/comparison.md (regression detected)"
+if [ "$BASELINE_EXISTS" = true ]; then
+    # Generate markdown comparison report
+    echo "  Generating comparison report..."
+    # Note: compare command returns exit code 1 when regression detected, but still generates report
+    # Temporarily disable exit on error for this command
+    set +e
+    python -m ragzoom.telemetry_cli compare \
+        "$BASELINE" \
+        "$TELEMETRY_FILE" \
+        > "$OUTPUT_DIR/comparison.md" 2>&1
+    COMPARE_EXIT_CODE=$?
+    set -e
+
+    if [ $COMPARE_EXIT_CODE -eq 0 ]; then
+        echo "  ✅ Comparison report saved to $OUTPUT_DIR/comparison.md"
+    elif [ $COMPARE_EXIT_CODE -eq 1 ]; then
+        echo "  ⚠️ Comparison report saved to $OUTPUT_DIR/comparison.md (regression detected)"
+    else
+        echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
+    fi
 else
-    echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
+    # Generate a baseline-establishment report
+    echo "  Generating baseline establishment report..."
+    cat > "$OUTPUT_DIR/comparison.md" <<EOF
+# Baseline Establishment Report
+
+This run establishes a new performance baseline since no compatible baseline was available.
+
+## Telemetry Summary
+- **Document:** $(basename "$DOCUMENT")
+- **Telemetry file:** $TELEMETRY_FILE
+- **Configuration:** Current defaults
+
+This telemetry will be used as the baseline for future comparisons.
+
+To compare against this baseline in future runs:
+\`\`\`bash
+$0 --baseline "$TELEMETRY_FILE" "$DOCUMENT"
+\`\`\`
+EOF
+    echo "  ✅ Baseline establishment report saved to $OUTPUT_DIR/comparison.md"
 fi
 
 # Generate CI-friendly summary
