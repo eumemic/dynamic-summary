@@ -14,6 +14,7 @@ set -uo pipefail  # Don't use -e, we handle errors explicitly
 SKIP_CHECKS=""
 TARGETS=""
 FAIL_FAST=false
+INCLUDE_SLOW_TESTS=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -25,6 +26,10 @@ while [[ $# -gt 0 ]]; do
             FAIL_FAST=true
             shift
             ;;
+        --include-slow-tests)
+            INCLUDE_SLOW_TESTS=true
+            shift
+            ;;
         *)
             TARGETS="$TARGETS $1"
             shift
@@ -32,11 +37,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Check for incoherent options
+if [ "$INCLUDE_SLOW_TESTS" = true ] && [[ "$SKIP_CHECKS" == *"tests"* ]]; then
+    echo "Error: Cannot use --include-slow-tests with --skip tests (incoherent)" >&2
+    exit 1
+fi
+
 # Get repository root (works in main repo and worktrees)
 GIT_ROOT="$(git rev-parse --show-toplevel)"
-
-# Source common Python check functions
-source "$GIT_ROOT/scripts/python-checks-common.sh"
 
 # Convert comma-separated skip list to array
 if [[ -n "$SKIP_CHECKS" ]]; then
@@ -153,7 +161,18 @@ run_check_background() {
 # Tests
 if ! should_skip "tests"; then
     if command -v pytest &> /dev/null; then
-        run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not slow and not integration and not benchmark' -n 8 --no-header"
+        if [ "$INCLUDE_SLOW_TESTS" = true ]; then
+            # Ensure PostgreSQL is running for integration tests
+            echo "[PostgreSQL] Ensuring PostgreSQL is running for integration tests..."
+            python -c "from ragzoom.docker_postgres import DockerPostgres; dp = DockerPostgres(); dp.ensure_running()" 2>/dev/null || {
+                echo "[PostgreSQL] Warning: Could not start PostgreSQL, integration tests may fail"
+            }
+            # Run all tests including slow and integration
+            run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark' -n 8 --no-header"
+        else
+            # Run only fast tests (default)
+            run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not slow and not integration and not benchmark' -n 8 --no-header"
+        fi
     else
         echo "[Tests] Skipped (pytest not installed)"
     fi
@@ -204,6 +223,15 @@ if ! should_skip "jscpd"; then
     fi
 fi
 
+# bandit (security check)
+if ! should_skip "bandit"; then
+    if command -v bandit &> /dev/null; then
+        run_check_background "Bandit" "bandit -r ragzoom/ -ll --quiet"
+    else
+        echo "[Bandit] Skipped (not installed)"
+    fi
+fi
+
 # Wait for all processes or fail-fast
 if [ "$FAIL_FAST" = true ]; then
     # Monitor processes and exit on first failure
@@ -212,7 +240,7 @@ if [ "$FAIL_FAST" = true ]; then
         for pid in "${pids[@]}"; do
             if ! kill -0 "$pid" 2>/dev/null; then
                 # Process finished, check result
-                for check in Tests Mypy Ruff Black JSCPD; do
+                for check in Tests Mypy Ruff Black JSCPD Bandit; do
                     result_file="$tmpdir/${check}.result"
                     if [ -f "$result_file" ] && [ "$(cat "$result_file")" = "1" ]; then
                         # Found a failure, kill all other processes
@@ -242,7 +270,7 @@ else
 fi
 
 # Display results in order
-for check in Tests Mypy Ruff Black JSCPD; do
+for check in Tests Mypy Ruff Black JSCPD Bandit; do
     output_file="$tmpdir/${check}.output"
     result_file="$tmpdir/${check}.result"
     if [ -f "$output_file" ]; then
