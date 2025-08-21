@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast, overload
 
@@ -16,6 +17,35 @@ from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DocumentPreparationResult:
+    """Result from document preparation phase.
+
+    Replaces the confusing 3-tuple return from _prepare_document with clear semantics.
+    """
+
+    document_id: str
+    content_hash: str
+    skip_indexing: bool
+    existing_doc_id: str | None = None
+
+
+@dataclass
+class IndexingContext:
+    """Context for document indexing operations.
+
+    Groups related parameters to reduce parameter list complexity.
+    """
+
+    document_id: str
+    content_hash: str
+    file_path: str | None
+    async_progress: AsyncProgressWrapper | None
+    overall_start_time: float
+    show_progress: bool
+    reporter: TelemetryCollector | None
 
 
 class TreeBuilder:
@@ -134,12 +164,11 @@ class TreeBuilder:
         text: str,
         document_id: str | None = None,
         file_path: str | None = None,
-    ) -> tuple[str, str | None, str]:
+    ) -> DocumentPreparationResult:
         """Prepare document for indexing: validate models, check existence, determine ID.
 
         Returns:
-            tuple: (final_document_id, existing_doc_id_if_unchanged, content_hash)
-            - If existing_doc_id_if_unchanged is not None, skip indexing (document unchanged)
+            DocumentPreparationResult with clear semantics for next steps
         """
         # Validate model names to warn about potential issues
         self._validate_model_names()
@@ -157,7 +186,12 @@ class TreeBuilder:
                     logger.info(
                         f"Document at {file_path} unchanged, skipping re-indexing"
                     )
-                    return existing_doc.id, existing_doc.id, content_hash
+                    return DocumentPreparationResult(
+                        document_id=existing_doc.id,
+                        content_hash=content_hash,
+                        skip_indexing=True,
+                        existing_doc_id=existing_doc.id,
+                    )
                 else:
                     logger.info(f"Document at {file_path} has changed, re-indexing...")
                     # Delete old nodes
@@ -175,7 +209,12 @@ class TreeBuilder:
             else:
                 document_id = self._generate_node_id()
 
-        return document_id, None, content_hash
+        return DocumentPreparationResult(
+            document_id=document_id,
+            content_hash=content_hash,
+            skip_indexing=False,
+            existing_doc_id=None,
+        )
 
     def _create_and_validate_chunks(
         self, text: str, show_progress: bool = True
@@ -238,27 +277,22 @@ class TreeBuilder:
 
         return progress, async_progress
 
-    async def _index_chunks(
+    def _prepare_chunk_positions(
         self,
         chunks: list[str],
         text: str,
-        document_id: str,
-        content_hash: str,
-        file_path: str | None,
-        async_progress: AsyncProgressWrapper | None,
-        overall_start_time: float,
-        show_progress: bool,
         reporter: TelemetryCollector | None,
-    ) -> tuple[list[str], bool]:
-        """Index chunks: create embeddings, prepare leaf nodes, and store in database.
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """Prepare chunk data with positions and validate document coverage.
+
+        Args:
+            chunks: List of text chunks to process
+            text: Original document text
+            reporter: Optional telemetry collector
 
         Returns:
-            tuple: (leaf_ids, existing_doc_found)
+            tuple: (leaf_ids, chunk_data_with_positions)
         """
-        # Create leaf nodes with batch embeddings
-        if not show_progress and len(chunks) > 100:
-            logger.info("Preparing chunk data...")
-
         leaf_ids: list[str] = []
         chunk_data: list[dict[str, Any]] = []
 
@@ -335,6 +369,30 @@ class TreeBuilder:
             "early document coverage check",
         )
 
+        return leaf_ids, chunk_data
+
+    async def _generate_embeddings_batch(
+        self,
+        chunks: list[str],
+        chunk_data: list[dict[str, Any]],
+        overall_start_time: float,
+        show_progress: bool,
+        async_progress: AsyncProgressWrapper | None,
+        reporter: TelemetryCollector | None,
+    ) -> list[Any]:
+        """Generate embeddings for chunks in batches.
+
+        Args:
+            chunks: List of text chunks
+            chunk_data: Chunk data with positions
+            overall_start_time: Start time for elapsed tracking
+            show_progress: Whether to show progress logs
+            async_progress: Progress tracker
+            reporter: Optional telemetry collector
+
+        Returns:
+            List of embeddings for all chunks
+        """
         # Get embeddings in batches
         batch_size = self.config.embedding_batch_size
         all_embeddings = []
@@ -380,7 +438,24 @@ class TreeBuilder:
             if async_progress:
                 await async_progress.update(len(batch_texts))
 
-        # Prepare all leaf nodes for batch insertion
+        return all_embeddings
+
+    def _prepare_leaf_nodes_data(
+        self,
+        chunk_data: list[dict[str, Any]],
+        all_embeddings: list[Any],
+        document_id: str,
+    ) -> list[dict[str, Any]]:
+        """Prepare leaf node data for batch insertion.
+
+        Args:
+            chunk_data: Chunk data with positions
+            all_embeddings: Embeddings for all chunks
+            document_id: Document ID for the nodes
+
+        Returns:
+            List of leaf node data ready for database insertion
+        """
         leaf_nodes_data = []
         preceding_leaf_id = None  # Track preceding leaf for document order
 
@@ -406,15 +481,54 @@ class TreeBuilder:
             # Update preceding ID for next iteration
             preceding_leaf_id = cast(str, data["id"])
 
+        return leaf_nodes_data
+
+    async def _index_chunks(
+        self,
+        chunks: list[str],
+        text: str,
+        context: IndexingContext,
+    ) -> tuple[list[str], bool]:
+        """Index chunks: create embeddings, prepare leaf nodes, and store in database.
+
+        Returns:
+            tuple: (leaf_ids, existing_doc_found)
+        """
+        # Create leaf nodes with batch embeddings
+        if not context.show_progress and len(chunks) > 100:
+            logger.info("Preparing chunk data...")
+
+        # Prepare chunk positions and validate coverage
+        leaf_ids, chunk_data = self._prepare_chunk_positions(
+            chunks, text, context.reporter
+        )
+
+        # Generate embeddings for all chunks
+        all_embeddings = await self._generate_embeddings_batch(
+            chunks,
+            chunk_data,
+            context.overall_start_time,
+            context.show_progress,
+            context.async_progress,
+            context.reporter,
+        )
+
+        # Prepare all leaf nodes for batch insertion
+        leaf_nodes_data = self._prepare_leaf_nodes_data(
+            chunk_data, all_embeddings, context.document_id
+        )
+
         # Check if this is updating an existing document
-        existing_doc = file_path and self.store.get_document_by_path(file_path)
+        existing_doc = context.file_path and self.store.get_document_by_path(
+            context.file_path
+        )
 
         # Add document record BEFORE creating nodes (foreign key constraint)
         if not existing_doc:
             self.store.add_document(
-                document_id,
-                file_path,
-                content_hash,
+                context.document_id,
+                context.file_path,
+                context.content_hash,
                 len(chunks),
                 self.config.embedding_model,
                 self.config.summary_model,
@@ -428,9 +542,9 @@ class TreeBuilder:
             with self.store.SessionLocal() as session:
                 from ragzoom.store import Document
 
-                doc = session.query(Document).filter_by(id=document_id).first()
+                doc = session.query(Document).filter_by(id=context.document_id).first()
                 if doc:
-                    doc.content_hash = content_hash
+                    doc.content_hash = context.content_hash
                     doc.chunk_count = len(chunks)
                     doc.indexed_at = datetime.utcnow()
                     doc.embedding_model = self.config.embedding_model
@@ -474,13 +588,11 @@ class TreeBuilder:
             If reporter is provided: (document_id, metrics)
         """
         # Step 1: Prepare document (validation, hashing, existence check)
-        document_id, existing_unchanged_id, content_hash = self._prepare_document(
-            text, document_id, file_path
-        )
+        prep_result = self._prepare_document(text, document_id, file_path)
 
         # Early return if document is unchanged
-        if existing_unchanged_id:
-            return existing_unchanged_id
+        if prep_result.skip_indexing:
+            return prep_result.document_id
 
         # Step 2: Create and validate chunks
         chunks = self._create_and_validate_chunks(text, show_progress)
@@ -495,23 +607,26 @@ class TreeBuilder:
 
         try:
             # Step 4: Index chunks (embeddings + leaf nodes)
-            leaf_ids, existing_doc_updated = await self._index_chunks(
-                chunks=chunks,
-                text=text,
-                document_id=document_id,
-                content_hash=content_hash,
+            indexing_context = IndexingContext(
+                document_id=prep_result.document_id,
+                content_hash=prep_result.content_hash,
                 file_path=file_path,
                 async_progress=async_progress,
                 overall_start_time=overall_start_time,
                 show_progress=show_progress,
                 reporter=reporter,
             )
+            leaf_ids, existing_doc_updated = await self._index_chunks(
+                chunks=chunks,
+                text=text,
+                context=indexing_context,
+            )
 
             # Build tree from leaves
             root_id = await self._build_tree_from_leaves(
                 leaf_ids,
                 chunks,
-                document_id,
+                prep_result.document_id,
                 async_progress,
                 overall_start_time,
                 reporter,
@@ -523,15 +638,15 @@ class TreeBuilder:
                 mins, secs = divmod(int(total_elapsed), 60)
                 if not show_progress:
                     logger.info(
-                        f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
+                        f"Document indexed successfully: {prep_result.document_id} [{mins}m {secs}s total elapsed]"
                     )
 
             # Finalize telemetry if collector was used
             if reporter:
                 telemetry = reporter.finalize()
-                return document_id, telemetry
+                return prep_result.document_id, telemetry
 
-            return document_id
+            return prep_result.document_id
         finally:
             # Always close progress
             if progress:
