@@ -298,12 +298,13 @@ class StoreManager:
         node_depth = self.tree_navigator.get_node_depth(node_id)
         if node_depth > self.PIN_DEPTH_MAX:
             raise InvalidOperationError(
-                f"Node {node_id} is at depth {node_depth}, which exceeds maximum pin depth {self.PIN_DEPTH_MAX}"
+                "pin_node",
+                f"Node {node_id} is at depth {node_depth}, which exceeds maximum pin depth {self.PIN_DEPTH_MAX}",
             )
 
         # Check if already pinned
         if node.is_pinned == 1:
-            raise InvalidOperationError(f"Node {node_id} is already pinned")
+            raise InvalidOperationError("pin_node", f"Node {node_id} is already pinned")
 
         self.node_repo.pin_node(node_id)
 

@@ -649,8 +649,9 @@ class TelemetryCollector:
                 models_data = model_info._data
                 if "last_updated" in models_data:
                     metadata["models_last_updated"] = models_data["last_updated"]
-            except Exception:
-                pass  # Optional metadata, ignore errors
+            except Exception as e:
+                logger.debug(f"Failed to parse model metadata response: {e}")
+                # Optional metadata, continue without it
 
             return metadata
 
@@ -726,7 +727,8 @@ class TelemetryCollector:
                         data = tomllib.load(f)
                         version = data.get("project", {}).get("version", "unknown")
                         return str(version) if version else "unknown"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to read version from {pyproject_path}: {e}")
+                # Version detection failed, continue with unknown
 
         return "unknown"
