@@ -94,6 +94,7 @@ class TreeBuilder:
         left_text: str,
         right_text: str,
         target_tokens: int,
+        *,
         prev_context: str | None = None,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
@@ -105,11 +106,11 @@ class TreeBuilder:
             left_text,
             right_text,
             target_tokens,
-            parent_id,
-            reporter,
-            prev_context,
-            left_token_count,
-            right_token_count,
+            parent_id=parent_id,
+            reporter=reporter,
+            prev_context=prev_context,
+            left_token_count=left_token_count,
+            right_token_count=right_token_count,
         )
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
@@ -569,8 +570,8 @@ class TreeBuilder:
             left_text,
             right_text or "",  # Pass empty string if no right text
             target_tokens,
-            parent_id,
-            reporter,
+            parent_id=parent_id,
+            reporter=reporter,
         )
 
         # Embedding will be generated in batch after all summaries are collected

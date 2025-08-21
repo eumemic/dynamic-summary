@@ -473,6 +473,7 @@ class LLMService:
         left_text: str,
         right_text: str,
         target_tokens: int,
+        *,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
         prev_context: str | None = None,
