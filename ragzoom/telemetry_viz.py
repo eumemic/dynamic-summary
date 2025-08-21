@@ -1146,10 +1146,39 @@ class TelemetryVisualizer:
         ax.set_title("Summary Compression Patterns")
         ax.grid(True, alpha=0.3)
 
-        avg_attempts = np.mean(attempt_numbers)
+        # Calculate retry rate: percentage of nodes that needed more than 1 attempt
+        # Group attempts by node to count nodes with retries
+        node_attempt_counts = {}
+        node_index = 0
+        for node in nodes:
+            height = node["height"]
+            if height > 0:  # Summary nodes only
+                input_text_tokens = node.get("input_text_tokens")
+                if input_text_tokens is None or input_text_tokens <= 0:
+                    continue
+
+                attempts = node.get("summary_attempts", [])
+                if attempts:
+                    # Count attempts with actual tokens for this node
+                    valid_attempts = sum(
+                        1 for attempt in attempts if attempt.get("actual_tokens", 0) > 0
+                    )
+                    if valid_attempts > 0:
+                        node_attempt_counts[node_index] = valid_attempts
+                        node_index += 1
+
+        # Calculate retry rate
+        nodes_with_retries = sum(
+            1 for count in node_attempt_counts.values() if count > 1
+        )
+        retry_rate_pct = (
+            (nodes_with_retries / len(node_attempt_counts) * 100)
+            if node_attempt_counts
+            else 0
+        )
 
         stats_text = (
-            f"Avg attempts per node: {avg_attempts:.2f}\n"
+            f"Retry rate: {retry_rate_pct:.0f}%\n"
             f"Total attempts: {len(input_tokens)} ({node_count} nodes)"
         )
         ax.text(
