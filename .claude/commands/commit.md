@@ -29,6 +29,7 @@ Clean up debug code, update docs, and create well-organized commits.
 1. **Safety Check**: Never commit to master.
    - If on master: STOP and ask user to switch to a worktree or feature branch
    - If on worktree-N: This is expected - proceed with commits
+   - **NEVER use `--no-verify`** unless given EXPLICIT permission by user
 
 2. **Cleanup**:
    - Remove debug prints/console.logs

@@ -295,17 +295,6 @@ The hook runs in this order:
 
 **Timing**: ~8 seconds total
 
-### 8.2. Bypassing Hooks (Emergency Only)
-
-```bash
-# Skip pre-commit hook
-git commit --no-verify
-
-# Disable Claude Code hooks
-# Edit .claude/project_settings.json and remove hooks
-```
-
-**Warning**: Only bypass with explicit permission. The hooks prevent broken code from entering the repository.
 
 ## 8. Common Issues and Solutions
 
