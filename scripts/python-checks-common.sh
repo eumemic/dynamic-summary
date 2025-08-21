@@ -46,7 +46,7 @@ run_ruff() {
             # Run with quiet flag, capture output
             local tmpfile=$(mktemp)
             # Use eval to properly expand space-separated targets
-            eval "ruff check $targets --fix --quiet" > "$tmpfile" 2>&1
+            eval "ruff check $targets --fix --quiet --output-format concise" > "$tmpfile" 2>&1
             local result=$?
             if [ $result -ne 0 ]; then
                 echo "[Ruff] ❌ Found issues that could not be auto-fixed."
