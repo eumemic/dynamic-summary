@@ -15,7 +15,15 @@ from ragzoom.config import (
     OperationalConfig,
     QueryConfig,
 )
-from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
+from ragzoom.exceptions import (
+    ConfigurationError,
+    DatabaseError,
+    InvalidOperationError,
+    LLMError,
+    NodeNotFoundError,
+    ResourceError,
+    ValidationError,
+)
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import TreeNode, create_store_with_docker
@@ -36,6 +44,33 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
 # Suppress noisy SQLAlchemy logs even in debug mode
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
+
+
+def handle_cli_error(e: Exception, operation: str) -> None:
+    """Handle CLI errors with appropriate user-friendly messages."""
+    if isinstance(e, DatabaseError):
+        click.echo(
+            f"\n❌ Database error during {operation}.\n\n"
+            "Try these steps:\n"
+            "  1. Run 'ragzoom doctor' to check your setup\n"
+            "  2. Ensure Docker is running\n"
+            "  3. Check README.md for setup instructions\n\n"
+            f"Technical error: {e}",
+            err=True,
+        )
+    elif isinstance(e, LLMError):
+        click.echo(f"❌ AI service error during {operation}: {e}", err=True)
+    elif isinstance(e, ValidationError):
+        click.echo(f"❌ Validation error during {operation}: {e}", err=True)
+    elif isinstance(e, ConfigurationError):
+        click.echo(f"❌ Configuration error during {operation}: {e}", err=True)
+    elif isinstance(e, ResourceError):
+        click.echo(f"❌ Resource error during {operation}: {e}", err=True)
+    elif isinstance(e, NodeNotFoundError):
+        click.echo(f"❌ Node not found during {operation}: {e}", err=True)
+    else:
+        click.echo(f"❌ Error during {operation}: {e}", err=True)
+    sys.exit(1)
 
 
 def configure_logging_level(debug: bool) -> None:
@@ -322,21 +357,7 @@ def index(
         click.echo(str(e), err=True)
         sys.exit(1)
     except Exception as e:
-        # Handle database and other unexpected errors
-        error_msg = str(e).lower()
-        if "connection" in error_msg or "postgresql" in error_msg:
-            click.echo(
-                "\n❌ Database connection failed.\n\n"
-                "Try these steps:\n"
-                "  1. Run 'ragzoom doctor' to check your setup\n"
-                "  2. Ensure Docker is running\n"
-                "  3. Check README.md for setup instructions\n\n"
-                f"Technical error: {type(e).__name__}",
-                err=True,
-            )
-        else:
-            click.echo(f"❌ Error indexing document: {e}", err=True)
-        sys.exit(1)
+        handle_cli_error(e, "indexing document")
 
 
 @cli.command()
@@ -382,8 +403,7 @@ def documents(ctx: click.Context) -> None:
             click.echo(f"Leaf nodes: {leaf_count}")
 
     except Exception as e:
-        click.echo(f"❌ Error listing documents: {e}", err=True)
-        sys.exit(1)
+        handle_cli_error(e, "listing documents")
 
 
 @cli.command()
@@ -544,8 +564,7 @@ def query(
             click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
 
     except Exception as e:
-        click.echo(f"❌ Error processing query: {e}", err=True)
-        sys.exit(1)
+        handle_cli_error(e, "processing query")
 
 
 @cli.command()
@@ -570,8 +589,7 @@ def pin(ctx: click.Context, node_id: str) -> None:
         sys.exit(1)
 
     except Exception as e:
-        click.echo(f"❌ Error pinning node: {e}", err=True)
-        sys.exit(1)
+        handle_cli_error(e, "pinning node")
 
 
 @cli.command()
@@ -611,8 +629,7 @@ def status(ctx: click.Context) -> None:
         click.echo(f"MMR lambda: {query_config.mmr_lambda}")
 
     except Exception as e:
-        click.echo(f"❌ Error getting status: {e}", err=True)
-        sys.exit(1)
+        handle_cli_error(e, "getting status")
 
 
 @cli.command()
@@ -634,8 +651,7 @@ def serve(host: str, port: int, reload: bool) -> None:
             reload=reload,
         )
     except Exception as e:
-        click.echo(f"❌ Error starting server: {e}", err=True)
-        sys.exit(1)
+        handle_cli_error(e, "starting server")
 
 
 @cli.command()
@@ -695,8 +711,7 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
     except click.Abort:
         click.echo("❌ Clear operation cancelled")
     except Exception as e:
-        click.echo(f"❌ Error clearing database: {e}", err=True)
-        sys.exit(1)
+        handle_cli_error(e, "clearing database")
 
 
 @cli.command()
@@ -765,8 +780,7 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
         click.echo(f"✅ Exported {len(nodes_data)} nodes to {output_file}")
 
     except Exception as e:
-        click.echo(f"❌ Error exporting: {e}", err=True)
-        sys.exit(1)
+        handle_cli_error(e, "exporting data")
 
 
 @cli.command()

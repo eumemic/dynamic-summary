@@ -63,19 +63,19 @@ class TestInvalidOperationError:
 
     def test_inheritance(self):
         """Test that InvalidOperationError inherits from Exception."""
-        error = InvalidOperationError("test message")
+        error = InvalidOperationError("test_operation", "test message")
         assert isinstance(error, Exception)
 
     def test_custom_message(self):
         """Test that custom error messages work correctly."""
         message = "Cannot perform operation: invalid state"
-        error = InvalidOperationError(message)
-        assert str(error) == message
+        error = InvalidOperationError("test_operation", message)
+        assert message in str(error)  # Message is included but formatted with operation
 
     def test_can_be_raised_and_caught(self):
         """Test that exception can be raised and caught properly."""
         with pytest.raises(InvalidOperationError):
-            raise InvalidOperationError("Invalid operation attempted")
+            raise InvalidOperationError("test_operation", "Invalid operation attempted")
 
 
 class TestStorageError:
@@ -83,19 +83,19 @@ class TestStorageError:
 
     def test_inheritance(self):
         """Test that StorageError inherits from Exception."""
-        error = StorageError("test message")
+        error = StorageError("test_operation", "test message")
         assert isinstance(error, Exception)
 
     def test_custom_message(self):
         """Test that custom error messages work correctly."""
         message = "Database connection failed"
-        error = StorageError(message)
-        assert str(error) == message
+        error = StorageError("test_operation", message)
+        assert message in str(error)  # Message is included but formatted with operation
 
     def test_can_be_raised_and_caught(self):
         """Test that exception can be raised and caught properly."""
         with pytest.raises(StorageError):
-            raise StorageError("Storage operation failed")
+            raise StorageError("test_operation", "Storage operation failed")
 
 
 class TestExceptionInteraction:
@@ -115,8 +115,8 @@ class TestExceptionInteraction:
         exceptions = [
             NodeNotFoundError("node"),
             DocumentNotFoundError("doc"),
-            InvalidOperationError("invalid"),
-            StorageError("storage"),
+            InvalidOperationError("test_op", "invalid"),
+            StorageError("test_op", "storage"),
         ]
 
         for exc in exceptions:
