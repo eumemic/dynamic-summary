@@ -9,10 +9,11 @@ from datetime import datetime
 from typing import Any, cast, overload
 
 from ragzoom.config import IndexConfig
+from ragzoom.document_store import DocumentStore
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.services.llm_service import LLMService
 from ragzoom.splitter import TextSplitter
-from ragzoom.store import Store, TreeNode
+from ragzoom.store import StoreManager, TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
@@ -54,7 +55,7 @@ class TreeBuilder:
     def __init__(
         self,
         config: IndexConfig,
-        store: Store,
+        store: StoreManager,
         api_key: str = "",
         max_concurrent: int = 30,
     ):
@@ -62,7 +63,7 @@ class TreeBuilder:
 
         Args:
             config: Index configuration
-            store: Store instance for persistence
+            store: StoreManager instance for persistence
             api_key: OpenAI API key (if not provided, reads from OPENAI_API_KEY env)
             max_concurrent: Maximum concurrent API requests
         """
@@ -195,7 +196,7 @@ class TreeBuilder:
                 else:
                     logger.info(f"Document at {file_path} has changed, re-indexing...")
                     # Delete old nodes
-                    deleted = self.store.delete_document_nodes(existing_doc.id)
+                    deleted = self.store.clear_document(existing_doc.id)
                     logger.info(f"Deleted {deleted} old nodes")
                     document_id = existing_doc.id
 
@@ -534,9 +535,10 @@ class TreeBuilder:
                 self.config.summary_model,
             )
 
-        # Batch insert all leaf nodes at once
+        # Batch insert all leaf nodes at once using document-scoped store
         if leaf_nodes_data:
-            self.store.add_nodes_batch(leaf_nodes_data)
+            doc_store = self.store.for_document(context.document_id)
+            doc_store.nodes.add_batch(leaf_nodes_data)
         else:
             # Update existing document
             with self.store.SessionLocal() as session:
@@ -622,7 +624,8 @@ class TreeBuilder:
                 context=indexing_context,
             )
 
-            # Build tree from leaves
+            # Build tree from leaves using document-scoped store
+            doc_store = self.store.for_document(prep_result.document_id)
             root_id = await self._build_tree_from_leaves(
                 leaf_ids,
                 chunks,
@@ -630,6 +633,7 @@ class TreeBuilder:
                 async_progress,
                 overall_start_time,
                 reporter,
+                doc_store,
             )
 
             # Final completion logging with total elapsed time
@@ -648,7 +652,7 @@ class TreeBuilder:
 
             return prep_result.document_id
         finally:
-            # Always close progress
+            # Always close progress if it exists
             if progress:
                 progress.close()
 
@@ -732,19 +736,23 @@ class TreeBuilder:
         reporter: TelemetryCollector | None = None,
         left_node: TreeNode | None = None,  # Pre-fetched node data
         right_node: TreeNode | None = None,  # Pre-fetched node data
+        doc_store: DocumentStore | None = None,
     ) -> dict[str, Any]:
         """Process a single node pair - generate summary and embedding.
 
         Returns:
             Dictionary containing node data and parent updates to be applied later
         """
+        if doc_store is None:
+            doc_store = self.store.for_document(document_id)
+
         parent_id = self._generate_node_id()
 
         # Use pre-fetched nodes if provided, otherwise fetch them
         if left_node is None:
-            left_node = self.store.get_node(left_id)
+            left_node = doc_store.nodes.get(left_id)
         if right_id and right_node is None:
-            right_node = self.store.get_node(right_id)
+            right_node = doc_store.nodes.get(right_id)
 
         if not left_node:
             logger.error(f"Failed to retrieve left child node: {left_id}")
@@ -820,8 +828,12 @@ class TreeBuilder:
         progress: AsyncProgressWrapper | None = None,
         overall_start_time: float | None = None,
         reporter: TelemetryCollector | None = None,
+        doc_store: DocumentStore | None = None,
     ) -> str:
         """Build tree bottom-up from leaf nodes with concurrent processing."""
+        if doc_store is None:
+            doc_store = self.store.for_document(document_id)
+
         current_level_ids = leaf_ids
         current_level_texts = leaf_texts
         current_level_nodes = None  # Will be populated after first batch insert
@@ -848,7 +860,7 @@ class TreeBuilder:
                 nodes_by_id = {node.id: node for node in current_level_nodes}
             else:
                 # Pre-fetch all nodes for this level (first iteration with leaf nodes)
-                all_nodes = self.store.get_nodes(current_level_ids)
+                all_nodes = doc_store.nodes.get_many(current_level_ids)
                 nodes_by_id = {node.id: node for node in all_nodes}
 
             # Process pairs concurrently
@@ -897,6 +909,7 @@ class TreeBuilder:
                     reporter,
                     left_node=left_node,
                     right_node=right_node,
+                    doc_store=doc_store,
                 )
                 tasks.append(task)
 
@@ -1040,13 +1053,13 @@ class TreeBuilder:
 
                 # Batch store all nodes for this level
                 if nodes_to_add:
-                    current_level_nodes = self.store.add_nodes_batch(nodes_to_add)
+                    current_level_nodes = doc_store.nodes.add_batch(nodes_to_add)
                 else:
                     current_level_nodes = []
 
                 # Batch update all parent references
                 if parent_updates:
-                    self.store.update_parent_references_batch(parent_updates)
+                    doc_store.nodes.update_parent_references_batch(parent_updates)
 
             current_level_ids = next_level_ids
             current_level_texts = next_level_texts

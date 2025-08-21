@@ -56,7 +56,7 @@ class TestDocumentIsolation:
 
         # Check that all returned nodes are from dragons.txt
         for node_id in result1.node_ids:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             assert (
                 node.document_id == "dragons.txt"
             ), f"Node {node_id} is from wrong document: {node.document_id}"
@@ -66,7 +66,7 @@ class TestDocumentIsolation:
 
         # Check that all returned nodes are from wizards.txt
         for node_id in result2.node_ids:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             assert (
                 node.document_id == "wizards.txt"
             ), f"Node {node_id} is from wrong document: {node.document_id}"
@@ -76,7 +76,7 @@ class TestDocumentIsolation:
         result3 = retriever.retrieve("tell me about dragons", document_id="wizards.txt")
 
         for node_id in result3.node_ids:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             assert (
                 node.document_id == "wizards.txt"
             ), f"Cross-query failed: got node from {node.document_id}"
@@ -107,7 +107,7 @@ class TestDocumentIsolation:
 
         # Check all nodes have correct document_id
         for node_id in result.node_ids:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             assert node.document_id == "test_file.txt"
 
     def test_query_without_document_filter(self, setup):
@@ -124,7 +124,7 @@ class TestDocumentIsolation:
         # Should potentially get results from multiple documents
         doc_ids = set()
         for node_id in result.node_ids:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             doc_ids.add(node.document_id)
 
         # Could have nodes from either or both documents

@@ -22,7 +22,7 @@ class TestBatchSizeLimits:
     @pytest.fixture
     def tree_builder(self, config):
         """Create tree builder with mocked dependencies."""
-        with patch("ragzoom.index.Store"):
+        with patch("ragzoom.index.StoreManager"):
             mock_store = Mock()
             builder = TreeBuilder(config, mock_store, api_key="test-key")
 

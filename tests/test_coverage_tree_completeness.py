@@ -133,9 +133,9 @@ class TestCoverageTreeCompleteness:
 
         # Add ancestors (this is what current retriever does)
         current_id = "L3"
-        node = store.get_node(current_id)
+        node = store.nodes.get_node(current_id)
         while node and node.parent_id:
-            parent = store.get_node(node.parent_id)
+            parent = store.nodes.get_node(node.parent_id)
             if parent:
                 coverage_map[parent.id] = True
                 current_id = parent.id
@@ -146,7 +146,7 @@ class TestCoverageTreeCompleteness:
         # Load nodes from coverage map
         nodes = {}
         for node_id in coverage_map:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 
@@ -186,7 +186,7 @@ class TestCoverageTreeCompleteness:
         # Create a complete coverage tree by including all nodes
         nodes = {}
         for node_id in ["root", "P1", "P2", "L1", "L2", "L3", "L4"]:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 
@@ -216,7 +216,7 @@ class TestCoverageTreeCompleteness:
             current_id = node_id
             while current_id:
                 coverage_nodes.add(current_id)
-                node = store.get_node(current_id)
+                node = store.nodes.get_node(current_id)
                 if node and node.parent_id:
                     current_id = node.parent_id
                 else:
@@ -227,7 +227,7 @@ class TestCoverageTreeCompleteness:
         nodes_to_check = list(coverage_nodes)
         while nodes_to_check:
             node_id = nodes_to_check.pop(0)
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             if node:
                 # If this node has children, both must be in coverage
                 if node.left_child_id:
@@ -242,7 +242,7 @@ class TestCoverageTreeCompleteness:
         # Load all nodes
         nodes = {}
         for node_id in coverage_nodes:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 

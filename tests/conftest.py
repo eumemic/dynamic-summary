@@ -8,7 +8,7 @@ import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
-from ragzoom.store import Store
+from ragzoom.store import StoreManager
 from tests.mock_store import SimpleMockStore
 from tests.test_builders import DocumentBuilder, TreeNodeBuilder
 
@@ -184,7 +184,7 @@ def mock_store(base_config) -> Generator[SimpleMockStore, None, None]:
 
 
 @pytest.fixture
-def real_store(base_config) -> Generator[Store | None, None, None]:
+def real_store(base_config) -> Generator[StoreManager | None, None, None]:
     """Create a real store for integration testing (lazy loading)."""
     # Only attempt to create real store when fixture is actually requested
     real_store_instance = _create_real_store(base_config)
@@ -257,7 +257,7 @@ def store(request, base_config, mock_store):
     yield mock_store
 
 
-def _create_real_store(base_config) -> Store | None:
+def _create_real_store(base_config) -> StoreManager | None:
     """Create a real store for integration testing, or return None if unavailable."""
     try:
         # Use test-specific database URL or create unique one
@@ -296,7 +296,7 @@ def _create_real_store(base_config) -> Store | None:
                 os.environ["RAGZOOM_DATABASE_URL"] = original_env
 
         # If we get here, PostgreSQL is available
-        store = Store(
+        store = StoreManager(
             operational_config,
             embedding_model=base_config.index_config.embedding_model,
         )

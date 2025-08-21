@@ -4,15 +4,14 @@ import hashlib
 import logging
 import os
 from contextlib import contextmanager
-from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.config import OperationalConfig
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
+from ragzoom.document_store import DocumentStore
 from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
-from ragzoom.interfaces import StoreInterface
 from ragzoom.models import Base, Document, TreeNode
 from ragzoom.repositories.document_repository import DocumentRepository
 from ragzoom.repositories.node_repository import NodeRepository
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 def create_store_with_docker(
     config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
-) -> "Store":
+) -> "StoreManager":
     """Create a Store instance with automatic Docker PostgreSQL if needed.
 
     This factory function handles Docker container startup when using
@@ -37,7 +36,7 @@ def create_store_with_docker(
         embedding_model: Name of embedding model
 
     Returns:
-        Configured Store instance
+        Configured StoreManager instance
 
     Raises:
         OSError: If Docker PostgreSQL startup fails
@@ -106,23 +105,21 @@ def create_store_with_docker(
                 f"Error: {str(e)}"
             )
 
-    return Store(config, embedding_model)
+    return StoreManager(config, embedding_model)
 
 
-class Store(StoreInterface):
-    """Combined storage for tree structure and embeddings in PostgreSQL.
+class StoreManager:
+    """System-wide store manager that creates document-scoped stores and manages repositories.
 
-    Error Handling Contract:
-    - Query methods (get_*): Return None for not found, never raise for missing items
-    - Predicate methods (is_*): Return False for missing items, never raise
-    - Command methods (add_*, pin_*, delete_*): Raise specific exceptions for failures
-    - Calculation methods (get_node_depth): Raise NodeNotFoundError for missing nodes
+    This class is responsible for:
+    - Creating document-scoped stores via for_document()
+    - Managing system-wide operations (multi-document)
+    - Providing direct repository access for advanced usage
+    - Database lifecycle management
 
-    Exceptions:
-    - NodeNotFoundError: When a requested node cannot be found
-    - DocumentNotFoundError: When a requested document cannot be found
-    - InvalidOperationError: When operation cannot be performed (validation, already exists, etc.)
-    - StorageError: When storage backend encounters internal errors
+    For document-specific operations, use store_manager.for_document(doc_id)
+    For system-wide operations, use store_manager methods directly
+    For advanced usage, access repositories via store_manager.nodes, etc.
     """
 
     # Class constants
@@ -154,7 +151,7 @@ class Store(StoreInterface):
                     database_url=temp_db_url,
                 )
 
-                # Create the store
+                # Create the store manager
                 store = cls(temp_config, embedding_model=embedding_model)
 
                 # Create tables
@@ -208,119 +205,32 @@ class Store(StoreInterface):
         # Store expected embedding dimension
         self._expected_embedding_dim = self.db_manager._expected_embedding_dim
 
-    # Node operations - delegate to NodeRepository
-    # jscpd:ignore-start
-    def add_node(
-        self,
-        node_id: str,
-        text: str,
-        embedding: list[float] | NDArray[np.float64],
-        span_start: int,
-        span_end: int,
-        parent_id: str | None = None,
-        left_child_id: str | None = None,
-        right_child_id: str | None = None,
-        document_id: str | None = None,
-        token_count: int = 0,
-        height: int = 0,
-    ) -> TreeNode:
-        """Add a node to the database with its embedding."""
-        return self.node_repo.add_node(
-            node_id,
-            text,
-            embedding,
-            span_start,
-            span_end,
-            parent_id,
-            left_child_id,
-            right_child_id,
-            document_id,
-            token_count,
-            height,
-        )
+    # Document-scoped store factory - primary API
+    def for_document(self, document_id: str | None) -> DocumentStore:
+        """Get a document-scoped store that prevents cross-document contamination.
 
-    # jscpd:ignore-end
-
-    def add_nodes_batch(
-        self, nodes_data: list[dict[str, Any]], *, session=None
-    ) -> list[TreeNode]:
-        """Add multiple nodes to the database in batch."""
-        return self.node_repo.add_nodes_batch(nodes_data, session=session)
-
-    def update_parent_references_batch(
-        self, updates: list[tuple[str, str]], *, session=None
-    ) -> None:
-        """Update parent references for multiple nodes in batch."""
-        self.node_repo.update_parent_references_batch(updates, session=session)
-
-    def get_node(self, node_id: str) -> TreeNode | None:
-        """Get a node by ID."""
-        return self.node_repo.get_node(node_id)
-
-    def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
-        """Get multiple nodes by their IDs."""
-        return self.node_repo.get_nodes(node_ids)
-
-    def update_node_access(self, node_id: str) -> None:
-        """Update access time and count for a node."""
-        self.node_repo.update_node_access(node_id)
-
-    def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
-        """Get all pinned nodes up to optional max depth."""
-        return self.node_repo.get_pinned_nodes(depth_max)
-
-    def pin_node(self, node_id: str) -> None:
-        """Pin a node if it's within allowed depth.
-
-        Raises:
-            NodeNotFoundError: If the node does not exist
-            InvalidOperationError: If the node is too deep or already pinned
-        """
-        node = self.get_node(node_id)
-        if not node:
-            raise NodeNotFoundError(node_id)
-
-        node_depth = self.get_node_depth(node_id)
-        if node_depth > self.PIN_DEPTH_MAX:
-            raise InvalidOperationError(
-                f"Node {node_id} is at depth {node_depth}, which exceeds maximum pin depth {self.PIN_DEPTH_MAX}"
-            )
-
-        # Check if already pinned
-        if node.is_pinned == 1:
-            raise InvalidOperationError(f"Node {node_id} is already pinned")
-
-        self.node_repo.pin_node(node_id)
-
-    def get_leaf_nodes(self) -> list[TreeNode]:
-        """Get all leaf nodes (nodes with no children)."""
-        return self.node_repo.get_leaf_nodes()
-
-    def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
-        """Get all nodes for a specific document."""
-        return self.node_repo.get_all_nodes_for_document(document_id)
-
-    # jscpd:ignore-start - Delegation wrapper for repository method
-    def get_all_nodes_for_document_paginated(
-        self, document_id: str | None, *, page_size: int = 1000
-    ) -> list[list[TreeNode]]:
-        """Get all nodes for a document in paginated batches for memory efficiency.
-
-        This method is optimized for large documents with tens of thousands of nodes.
+        This is the primary API for all document-specific operations.
+        All queries are automatically filtered to the specified document.
 
         Args:
-            document_id: Document ID to get nodes for
-            page_size: Number of nodes per batch (default 1000)
+            document_id: Document ID to scope operations to
 
         Returns:
-            List of batches, where each batch is a list of TreeNode objects
+            DocumentStore with automatic document filtering
         """
-        # jscpd:ignore-end
-        return self.node_repo.get_all_nodes_for_document_paginated(
-            document_id, page_size=page_size
+        return DocumentStore(
+            document_id=document_id,
+            node_repo=self.node_repo,
+            search_service=self.search_service,
+            tree_navigator=self.tree_navigator,
         )
 
-    # Document operations - delegate to DocumentRepository
+    # Multi-document management operations
+    def list_documents(self) -> list[Document]:
+        """List all documents in the system."""
+        with self.SessionLocal() as session:
+            return session.query(Document).all()
+
     def get_document_by_path(self, file_path: str) -> Document | None:
         """Get a document by file path."""
         return self.doc_repo.get_document_by_path(file_path)
@@ -329,11 +239,6 @@ class Store(StoreInterface):
         """Get a document by ID."""
         return self.doc_repo.get_document_by_id(document_id)
 
-    def get_document_embedding_model(self, document_id: str) -> str | None:
-        """Get the embedding model used for a specific document."""
-        return self.doc_repo.get_document_embedding_model(document_id)
-
-    # jscpd:ignore - Delegation method with same signature as repository
     def add_document(
         self,
         document_id: str,
@@ -356,88 +261,72 @@ class Store(StoreInterface):
             session=session,
         )
 
-    def delete_document_nodes(self, document_id: str, *, session=None) -> int:
-        """Delete all nodes associated with a document."""
-        return self.doc_repo.delete_document_nodes(document_id, session=session)
-
     def clear_document(self, document_id: str, *, session=None) -> int:
         """Clear all data for a document, including orphaned nodes and document record."""
         return self.doc_repo.clear_document(document_id, session=session)
 
-    def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
-        """Get token statistics for a document using efficient SQL aggregation."""
-        return self.doc_repo.get_document_token_stats(document_id)
+    def clear_all_documents(self) -> int:
+        """Clear all documents and nodes from the system."""
+        total_cleared = 0
+        with self.SessionLocal() as session:
+            documents = session.query(Document).all()
+            for doc in documents:
+                total_cleared += self.clear_document(doc.id, session=session)
+        return total_cleared
 
-    # Search operations - delegate to SearchService
-    def search_similar(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        n_results: int,
-        where: dict[str, Any] | None = None,
-    ) -> list[tuple[str, float, dict[str, Any]]]:
-        """Search for similar nodes using pgvector cosine distance."""
-        return self.search_service.search_similar(query_embedding, n_results, where)
+    # System-wide statistics and operations
+    def get_total_node_count(self) -> int:
+        """Get total number of nodes across all documents."""
+        with self.SessionLocal() as session:
+            return session.query(TreeNode).count()
 
-    def compute_mmr_diverse_results(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, Any]]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        """Apply MMR (Maximal Marginal Relevance) to get diverse results."""
-        return self.search_service.compute_mmr_diverse_results(
-            query_embedding, candidates, lambda_param, k
-        )
+    def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
+        """Get all pinned nodes across all documents."""
+        return self.node_repo.get_pinned_nodes(depth_max)
 
-    # Tree navigation operations - delegate to TreeNavigator
-    def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
-        """Get left and right children of a node."""
-        return self.tree_navigator.get_children(node_id)
+    def pin_node(self, node_id: str) -> None:
+        """Pin a node if it's within allowed depth.
 
-    def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
-        """Get all ancestors of given nodes using batch loading for efficiency."""
-        return self.tree_navigator.get_ancestors(node_ids)
+        Raises:
+            NodeNotFoundError: If the node does not exist
+            InvalidOperationError: If the node is too deep or already pinned
+        """
+        node = self.node_repo.get_node(node_id)
+        if not node:
+            raise NodeNotFoundError(node_id)
 
-    def get_root_node(self) -> TreeNode | None:
-        """Get the root node (node with no parent)."""
-        return self.tree_navigator.get_root_node()
+        node_depth = self.tree_navigator.get_node_depth(node_id)
+        if node_depth > self.PIN_DEPTH_MAX:
+            raise InvalidOperationError(
+                f"Node {node_id} is at depth {node_depth}, which exceeds maximum pin depth {self.PIN_DEPTH_MAX}"
+            )
 
-    def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
-        """Get the root node for a specific document."""
-        return self.tree_navigator.get_root_node_for_document(document_id)
+        # Check if already pinned
+        if node.is_pinned == 1:
+            raise InvalidOperationError(f"Node {node_id} is already pinned")
 
-    def get_node_depth(self, node_id: str) -> int:
-        """Calculate depth of a node (distance from root)."""
-        return self.tree_navigator.get_node_depth(node_id)
+        self.node_repo.pin_node(node_id)
 
-    def is_leaf_node(self, node_id: str) -> bool:
-        """Check if a node is a leaf (has no children)."""
-        return self.tree_navigator.is_leaf_node(node_id)
+    # Legacy compatibility - expose repositories for advanced usage
+    @property
+    def nodes(self) -> NodeRepository:
+        """Access to node repository for advanced operations."""
+        return self.node_repo
 
-    def is_root_node(self, node_id: str) -> bool:
-        """Check if a node is a root (has no parent)."""
-        return self.tree_navigator.is_root_node(node_id)
+    @property
+    def documents(self) -> DocumentRepository:
+        """Access to document repository for advanced operations."""
+        return self.doc_repo
 
-    # Cache operations - delegate to CacheManager
-    def _get_from_cache(self, node_id: str) -> TreeNode | None:
-        """Get item from cache (for backward compatibility)."""
-        return self.cache_manager.get(node_id)
+    @property
+    def search(self) -> SearchService:
+        """Access to search service for advanced operations."""
+        return self.search_service
 
-    def _add_to_cache(self, node: TreeNode) -> None:
-        """Add item to cache (for backward compatibility)."""
-        self.cache_manager.put(node.id, node)
-
-    # Database validation - delegate to DatabaseManager
-    def _validate_embedding_dimension(
-        self, embedding: list[float] | NDArray[np.float64]
-    ) -> None:
-        """Validate that embedding has correct dimension."""
-        self.db_manager.validate_embedding_dimension(embedding)
-
-    def _get_expected_embedding_dimension(self) -> int | None:
-        """Get expected embedding dimension from existing embeddings."""
-        return self.db_manager._get_expected_embedding_dimension()
+    @property
+    def tree(self) -> TreeNavigator:
+        """Access to tree navigator for advanced operations."""
+        return self.tree_navigator
 
     # Lifecycle methods
     @contextmanager
@@ -478,6 +367,17 @@ class Store(StoreInterface):
     def close(self) -> None:
         """Close database connections and cleanup resources."""
         self.db_manager.close()
+
+    # Database validation methods
+    def _validate_embedding_dimension(
+        self, embedding: list[float] | NDArray[np.float64]
+    ) -> None:
+        """Validate that embedding has correct dimension."""
+        self.db_manager.validate_embedding_dimension(embedding)
+
+    def _get_expected_embedding_dimension(self) -> int | None:
+        """Get expected embedding dimension from existing embeddings."""
+        return self.db_manager._get_expected_embedding_dimension()
 
     # Static utility methods
     @staticmethod

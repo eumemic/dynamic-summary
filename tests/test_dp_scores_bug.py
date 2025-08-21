@@ -94,7 +94,7 @@ class TestDPScoresBug:
         }
 
         # Load nodes from coverage map
-        nodes = {nid: store.get_node(nid) for nid in coverage_tree}
+        nodes = {nid: store.nodes.get_node(nid) for nid in coverage_tree}
 
         # Find root node
         root_id = "root"
@@ -109,7 +109,7 @@ class TestDPScoresBug:
 
         # Check results
         leaf_node_ids = {
-            node_id for node_id in tiling.node_ids if store.is_leaf_node(node_id)
+            node_id for node_id in tiling.node_ids if store.tree.is_leaf_node(node_id)
         }
 
         # With our fix, all leaf nodes in tiling must be in the coverage tree
@@ -152,8 +152,8 @@ class TestDPScoresBug:
             document_id="doc1",
             embedding=[0.5] * 1536,
         )
-        store.nodes["root"].left_child_id = "leaf1"
-        store.nodes["root"].right_child_id = "leaf2"
+        store._nodes["root"].left_child_id = "leaf1"
+        store._nodes["root"].right_child_id = "leaf2"
 
         query_config = QueryConfig(budget_tokens=10000)
         dp_generator = DynamicTilingGenerator(query_config)
@@ -173,7 +173,7 @@ class TestDPScoresBug:
         # Load nodes from coverage map
         nodes = {}
         for node_id in result.coverage_map:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 
@@ -190,7 +190,7 @@ class TestDPScoresBug:
 
         # Check results
         leaf_node_ids = {
-            node_id for node_id in tiling.node_ids if store.is_leaf_node(node_id)
+            node_id for node_id in tiling.node_ids if store.tree.is_leaf_node(node_id)
         }
 
         # With our fix: leaf2 should NOT appear in tiling unless it is in the coverage map
