@@ -1,6 +1,6 @@
 """Shared test utilities and mock setups."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -143,8 +143,11 @@ def mock_openai_context(embedding_rules=None):
     return MockOpenAIContext(embedding_rules)
 
 
-def mock_openai_fixture():
+def mock_openai_fixture(embedding_rules=None):
     """Pytest fixture that mocks all OpenAI clients.
+
+    Args:
+        embedding_rules: Optional dict for specialized embedding behavior
 
     Usage:
         @pytest.fixture
@@ -155,9 +158,14 @@ def mock_openai_fixture():
         patch("ragzoom.services.llm_service.AsyncOpenAI") as mock_index,
         patch("ragzoom.retrieve.OpenAI") as mock_retrieve,
     ):
-        mock_index_client, mock_retrieve_client, mock_assemble_client = (
-            create_mock_openai_clients()
-        )
+        if embedding_rules:
+            mock_index_client, mock_retrieve_client, mock_assemble_client = (
+                create_specialized_openai_mocks(embedding_rules)
+            )
+        else:
+            mock_index_client, mock_retrieve_client, mock_assemble_client = (
+                create_mock_openai_clients()
+            )
 
         mock_index.return_value = mock_index_client
         mock_retrieve.return_value = mock_retrieve_client
@@ -206,6 +214,142 @@ def create_mock_chat_response(content):
         Mock response object
     """
     return Mock(choices=[Mock(message=Mock(content=content))])
+
+
+def create_predictable_summary_mock():
+    """Create a mock that returns predictable summaries based on content.
+
+    This is useful for tests that need consistent, deterministic summaries
+    based on the input content patterns.
+    """
+
+    def mock_chat_create(*args, **kwargs):
+        messages = kwargs.get("messages", [])
+        content = messages[-1]["content"] if messages else ""
+
+        # Return shorter summary if prompt asks for specific token count
+        if "approximately 50 tokens" in content:
+            return Mock(
+                choices=[Mock(message=Mock(content="Short summary of both children."))]
+            )
+        elif "First chunk" in content and "Second chunk" in content:
+            return Mock(
+                choices=[
+                    Mock(
+                        message=Mock(
+                            content="Summary of first two chunks. Combined content of chunks 1 and 2."
+                        )
+                    )
+                ]
+            )
+        elif "Third chunk" in content and "Fourth chunk" in content:
+            return Mock(
+                choices=[
+                    Mock(
+                        message=Mock(
+                            content="Summary of last two chunks. Combined content of chunks 3 and 4."
+                        )
+                    )
+                ]
+            )
+        elif "Summary of first" in content and "Summary of last" in content:
+            return Mock(
+                choices=[
+                    Mock(
+                        message=Mock(
+                            content="Overall document summary. Complete document overview."
+                        )
+                    )
+                ]
+            )
+        else:
+            return Mock(
+                choices=[
+                    Mock(
+                        message=Mock(
+                            content="This is the combined summary text for both children."
+                        )
+                    )
+                ]
+            )
+
+    async def mock_chat_create_async(*args, **kwargs):
+        return mock_chat_create(*args, **kwargs)
+
+    return mock_chat_create, mock_chat_create_async
+
+
+def create_hash_based_embedding_mock():
+    """Create an embedding mock that returns deterministic hash-based embeddings.
+
+    This is useful for tests that need consistent, deterministic embeddings
+    based on text content.
+    """
+
+    def calculate_hash_embedding(text):
+        hash_val = sum(ord(c) for c in text) % 100
+        return [hash_val / 100.0] * 1536
+
+    async def hash_embeddings_create_async(*args, **kwargs):
+        texts = kwargs.get("input")
+        if texts is None and len(args) > 0:
+            texts = args[0]
+        if not isinstance(texts, list):
+            texts = [texts]
+        embeddings = []
+        for text in texts:
+            embedding = calculate_hash_embedding(text)
+            embeddings.append(Mock(embedding=embedding))
+        return Mock(data=embeddings)
+
+    def hash_embeddings_create_sync(*args, **kwargs):
+        texts = kwargs.get("input")
+        if texts is None and len(args) > 0:
+            texts = args[0]
+        if not isinstance(texts, list):
+            texts = [texts]
+        embeddings = []
+        for text in texts:
+            embedding = calculate_hash_embedding(text)
+            embeddings.append(Mock(embedding=embedding))
+        return Mock(data=embeddings)
+
+    return hash_embeddings_create_sync, hash_embeddings_create_async
+
+
+def create_telemetry_summary_mock():
+    """Create a mock for telemetry tests that includes usage data.
+
+    This mock returns summaries with token usage information needed for telemetry collection.
+    """
+
+    async def mock_chat_completion_with_usage(*args, **kwargs):
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message = MagicMock()
+        # Return a summary that's close to the target token count to avoid retries
+        response.choices[0].message.content = " ".join(
+            ["Summary", "word"] * 50
+        )  # ~100 tokens
+        # Add usage data for telemetry
+        response.usage = MagicMock()
+        response.usage.prompt_tokens = 250
+        response.usage.completion_tokens = 50
+        return response
+
+    def mock_chat_completion_with_usage_sync(*args, **kwargs):
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message = MagicMock()
+        response.choices[0].message.content = " ".join(
+            ["Summary", "word"] * 50
+        )  # ~100 tokens
+        response.usage = MagicMock()
+        response.usage.prompt_tokens = 250
+        response.usage.completion_tokens = 50
+        return response
+
+    return mock_chat_completion_with_usage_sync, mock_chat_completion_with_usage
 
 
 def _calculate_embedding_from_rules(text, embedding_rules):
