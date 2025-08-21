@@ -388,7 +388,7 @@ class TestIndexingCreatesValidTrees:
         assert result is None
 
         # Check we have multiple leaf nodes (exact count depends on tokenization)
-        nodes = store.get_all_nodes_for_document(doc_id)
+        nodes = store.for_document(doc_id).nodes.get_all()
         leaf_nodes = [
             n for n in nodes if n.left_child_id is None and n.right_child_id is None
         ]
@@ -444,7 +444,7 @@ class TestIndexingCreatesValidTrees:
         assert result is None
 
         # Verify we have exactly 5 leaf nodes
-        nodes = store.get_all_nodes_for_document(doc_id)
+        nodes = store.for_document(doc_id).nodes.get_all()
         leaf_nodes = [
             n for n in nodes if n.left_child_id is None and n.right_child_id is None
         ]

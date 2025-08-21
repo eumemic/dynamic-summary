@@ -214,6 +214,11 @@ class SimpleMockStore(StoreInterface):
             for n in self._nodes.values()
             if getattr(n, "document_id", None) == document_id
         ]
+        mock_nodes.get_all_paginated = (
+            lambda *, page_size=1000: self.get_all_nodes_for_document_paginated(
+                document_id, page_size=page_size
+            )
+        )
         mock_nodes.get_leaves = lambda: [
             n
             for n in self.get_leaf_nodes()
