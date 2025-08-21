@@ -46,11 +46,6 @@ Contains the actual git hook scripts that are symlinked into `.git/hooks/`:
 - **pre-commit**: Runs only the tests relevant to changed files (fast feedback)
 - **pre-push**: Runs the complete test suite before pushing to remote
 
-These hooks can be skipped with the `--no-verify` flag:
-```bash
-git commit --no-verify -m "Skip pre-commit hook"
-git push --no-verify
-```
 
 ## Adding New Scripts
 
