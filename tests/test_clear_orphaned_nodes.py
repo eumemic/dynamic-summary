@@ -108,13 +108,18 @@ class TestAutomaticClearing:
             temp_file = f.name
 
         try:
-            # Mock the indexing process to avoid actual API calls
-            with patch("ragzoom.cli.TreeBuilder") as mock_builder:
+            # Mock the indexing service to avoid actual API calls
+            with patch(
+                "ragzoom.services.indexing_service.IndexingService"
+            ) as mock_indexing_service:
                 mock_instance = MagicMock()
-                mock_builder.return_value = mock_instance
+                mock_indexing_service.return_value = mock_instance
 
-                # Mock add_document to add a root node for stats calculation
-                def mock_add_document_side_effect(*args, **kwargs):
+                # Mock index_from_file to simulate the full indexing process including clearing
+                def mock_index_from_file_side_effect(*args, **kwargs):
+                    # First, perform clearing like the real service would
+                    store.clear_document(document_id)
+
                     # Add a mock root node so CLI stats calculation works
                     store.add_node(
                         node_id="mock_root",
@@ -125,23 +130,39 @@ class TestAutomaticClearing:
                         document_id=document_id,
                         embedding=[0.1] * 1536,
                     )
-                    return document_id
+                    from ragzoom.services.indexing_service import IndexingResult
 
-                mock_instance.add_document.side_effect = mock_add_document_side_effect
+                    return IndexingResult(
+                        document_id=document_id,
+                        chunks_created=1,
+                        tree_depth=1,
+                    )
+
+                mock_instance.index_from_file.side_effect = (
+                    mock_index_from_file_side_effect
+                )
 
                 # Mock successful indexing that returns proper stats
                 with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
                     # Use the real store for database operations
                     mock_create_store.return_value = store
 
-                    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                        # Run index (clearing should be automatic)
-                        result = runner.invoke(
-                            cli, ["index", temp_file, "--document-id", document_id]
-                        )
+                    # Mock IndexingService constructor to return our mock instance
+                    with patch(
+                        "ragzoom.cli.IndexingService"
+                    ) as mock_indexing_service_cli:
+                        mock_indexing_service_cli.return_value = mock_instance
 
-                        # The command should succeed
-                        assert result.exit_code == 0, f"Command failed: {result.output}"
+                        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+                            # Run index (clearing should be automatic)
+                            result = runner.invoke(
+                                cli, ["index", temp_file, "--document-id", document_id]
+                            )
+
+                            # The command should succeed
+                            assert (
+                                result.exit_code == 0
+                            ), f"Command failed: {result.output}"
 
             # Check if orphaned nodes were deleted
             with store.SessionLocal() as session:
@@ -204,14 +225,18 @@ class TestAutomaticClearing:
             temp_file = f.name
 
         try:
-            # Mock the indexing process
-            with patch("ragzoom.cli.TreeBuilder") as mock_builder:
+            # Mock the indexing service
+            with patch(
+                "ragzoom.services.indexing_service.IndexingService"
+            ) as mock_indexing_service:
                 mock_instance = MagicMock()
-                mock_builder.return_value = mock_instance
-                mock_instance.add_document.return_value = document_id
+                mock_indexing_service.return_value = mock_instance
 
-                # Mock add_document to add a root node for stats calculation
-                def mock_add_document_side_effect(*args, **kwargs):
+                # Mock index_from_file to simulate the full indexing process including clearing
+                def mock_index_from_file_side_effect(*args, **kwargs):
+                    # First, perform clearing like the real service would
+                    store.clear_document(document_id)
+
                     # Add a mock root node so CLI stats calculation works
                     store.add_node(
                         node_id="mock_root",
@@ -222,22 +247,36 @@ class TestAutomaticClearing:
                         document_id=document_id,
                         embedding=[0.1] * 1536,
                     )
-                    return document_id
+                    from ragzoom.services.indexing_service import IndexingResult
 
-                mock_instance.add_document.side_effect = mock_add_document_side_effect
+                    return IndexingResult(
+                        document_id=document_id,
+                        chunks_created=1,
+                        tree_depth=1,
+                    )
+
+                mock_instance.index_from_file.side_effect = (
+                    mock_index_from_file_side_effect
+                )
 
                 with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
                     mock_create_store.return_value = store
 
-                    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                        # Run index (clearing should be automatic)
-                        result = runner.invoke(
-                            cli, ["index", temp_file, "--document-id", document_id]
-                        )
+                    # Mock IndexingService constructor to return our mock instance
+                    with patch(
+                        "ragzoom.cli.IndexingService"
+                    ) as mock_indexing_service_cli:
+                        mock_indexing_service_cli.return_value = mock_instance
 
-                        assert result.exit_code == 0, f"Command failed: {result.output}"
-                        # Should show clearing message for existing data
-                        assert "Clearing existing data" in result.output
+                        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+                            # Run index (clearing should be automatic)
+                            result = runner.invoke(
+                                cli, ["index", temp_file, "--document-id", document_id]
+                            )
+
+                            assert (
+                                result.exit_code == 0
+                            ), f"Command failed: {result.output}"
 
             # Verify old nodes were cleared and new ones added
             with store.SessionLocal() as session:

@@ -145,7 +145,7 @@ class QueryService:
             mmr_lambda: New MMR lambda parameter
         """
         # Build update dictionary
-        updates = {}
+        updates: dict[str, int | float] = {}
         if budget_tokens is not None:
             updates["budget_tokens"] = budget_tokens
         if mmr_lambda is not None:
