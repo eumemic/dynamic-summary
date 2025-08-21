@@ -13,12 +13,17 @@ set -uo pipefail  # Don't use -e, we handle errors explicitly
 # Parse command line arguments
 SKIP_CHECKS=""
 TARGETS=""
+FAIL_FAST=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --skip)
             SKIP_CHECKS="$2"
             shift 2
+            ;;
+        --fail-fast)
+            FAIL_FAST=true
+            shift
             ;;
         *)
             TARGETS="$TARGETS $1"
@@ -67,7 +72,19 @@ OVERALL_FAILED=0
 
 # Create temporary directory for storing results
 tmpdir=$(mktemp -d)
-trap "rm -rf $tmpdir" EXIT
+
+# Store process IDs for parallel execution
+declare -a pids=()
+
+# Cleanup function
+cleanup() {
+    # Kill any remaining background processes
+    for pid in "${pids[@]}"; do
+        kill "$pid" 2>/dev/null || true
+    done
+    rm -rf "$tmpdir"
+}
+trap cleanup EXIT
 
 # Function to run a check and handle output
 run_check() {
@@ -110,75 +127,134 @@ run_check() {
     return $result
 }
 
-# Run tests
-if ! should_skip "tests"; then
-    echo "[Tests] Starting..."
-    if command -v pytest &> /dev/null; then
-        tmpfile=$(mktemp)
-        pytest tests/ -q --tb=short -m "not slow and not integration and not benchmark" -n 8 --no-header > "$tmpfile" 2>&1
-        result=$?
-        if [ $result -ne 0 ]; then
-            echo "[Tests] ❌ Failed!" >&2
-            cat "$tmpfile" >&2
-            OVERALL_FAILED=1
+# Function to run a check in background
+run_check_background() {
+    local check_name="$1"
+    local check_cmd="$2"
+    local output_file="$tmpdir/${check_name}.output"
+    local result_file="$tmpdir/${check_name}.result"
+    
+    (
+        echo "[$check_name] Starting..." > "$output_file"
+        if eval "$check_cmd" >> "$output_file" 2>&1; then
+            echo 0 > "$result_file"
+            echo "[$check_name] ✅ Passed!" >> "$output_file"
         else
-            echo "[Tests] ✅ Passed!"
+            echo 1 > "$result_file"
+            echo "[$check_name] ❌ Failed!" >> "$output_file"
         fi
-        rm -f "$tmpfile"
+    ) &
+    local pid=$!
+    pids+=("$pid")
+}
+
+# Start all checks in parallel
+echo "Running checks in parallel..."
+
+# Tests
+if ! should_skip "tests"; then
+    if command -v pytest &> /dev/null; then
+        run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not slow and not integration and not benchmark' -n 8 --no-header"
     else
         echo "[Tests] Skipped (pytest not installed)"
     fi
 fi
 
-# Run dmypy (no arguments - let it figure out what changed)
+# dmypy
 if ! should_skip "dmypy"; then
-    echo "[Mypy] Starting..."
     if command -v dmypy &> /dev/null; then
-        # Don't pass file arguments to dmypy - it's more efficient without them
-        dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs > "$tmpdir/dmypy.output" 2>&1
-        result=$?
-        if [ $result -ne 0 ]; then
-            echo "[Mypy] ❌ Failed! Type errors found" >&2
-            cat "$tmpdir/dmypy.output" >&2
-            OVERALL_FAILED=1
-        else
-            echo "[Mypy] ✅ Passed!"
-        fi
+        run_check_background "Mypy" "dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs"
     else
         echo "[Mypy] ❌ dmypy not installed - cannot run type checks" >&2
         exit 2
     fi
 fi
 
-# Run ruff
+# ruff
 if ! should_skip "ruff"; then
-    run_check "ruff" "run_ruff" "$TARGETS \"$modified_files\""
+    if command -v ruff &> /dev/null; then
+        if [ -z "$modified_files" ] || [ -n "$modified_files" ]; then
+            run_check_background "Ruff" "ruff check $TARGETS --fix --quiet --output-format concise"
+        else
+            echo "[Ruff] Skipped (no Python files)"
+        fi
+    else
+        echo "[Ruff] Skipped (not installed)"
+    fi
 fi
 
-# Run black
+# black
 if ! should_skip "black"; then
-    run_check "black" "run_black" "$TARGETS \"$modified_files\""
+    if command -v black &> /dev/null; then
+        if [ -z "$modified_files" ] || [ -n "$modified_files" ]; then
+            run_check_background "Black" "black $TARGETS --quiet"
+        else
+            echo "[Black] Skipped (no Python files)"
+        fi
+    else
+        echo "[Black] Skipped (not installed)"
+    fi
 fi
 
-# Run jscpd
+# jscpd
 if ! should_skip "jscpd"; then
     if command -v npx &> /dev/null && [[ -n "$modified_files" ]]; then
-        echo "[JSCPD] Starting..."
-        tmpfile=$(mktemp)
-        npx jscpd@latest ragzoom/ --config "$GIT_ROOT/.jscpd.json" > "$tmpfile" 2>&1
-        result=$?
-        if [ $result -ne 0 ]; then
-            echo "[JSCPD] ❌ Code duplication found!" >&2
-            cat "$tmpfile" >&2
-            OVERALL_FAILED=1
-        else
-            echo "[JSCPD] ✅ Passed!"
-        fi
-        rm -f "$tmpfile"
+        run_check_background "JSCPD" "npx jscpd@latest ragzoom/ --config $GIT_ROOT/.jscpd.json"
     else
         echo "[JSCPD] Skipped (no Python files or npx not available)"
     fi
 fi
+
+# Wait for all processes or fail-fast
+if [ "$FAIL_FAST" = true ]; then
+    # Monitor processes and exit on first failure
+    while [ ${#pids[@]} -gt 0 ]; do
+        new_pids=()
+        for pid in "${pids[@]}"; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+                # Process finished, check result
+                for check in Tests Mypy Ruff Black JSCPD; do
+                    result_file="$tmpdir/${check}.result"
+                    if [ -f "$result_file" ] && [ "$(cat "$result_file")" = "1" ]; then
+                        # Found a failure, kill all other processes
+                        {
+                            for other_pid in "${pids[@]}"; do
+                                kill "$other_pid" || true
+                            done
+                            wait  # Wait for processes to die to avoid "Terminated" messages
+                        } 2>/dev/null
+                        # Output the failure
+                        cat "$tmpdir/${check}.output" >&2
+                        exit 2
+                    fi
+                done
+            else
+                new_pids+=("$pid")
+            fi
+        done
+        pids=("${new_pids[@]}")
+        [ ${#pids[@]} -gt 0 ] && sleep 0.05
+    done
+else
+    # Wait for all processes to complete
+    for pid in "${pids[@]}"; do
+        wait "$pid"
+    done
+fi
+
+# Display results in order
+for check in Tests Mypy Ruff Black JSCPD; do
+    output_file="$tmpdir/${check}.output"
+    result_file="$tmpdir/${check}.result"
+    if [ -f "$output_file" ]; then
+        if [ -f "$result_file" ] && [ "$(cat "$result_file")" = "1" ]; then
+            cat "$output_file" >&2
+            OVERALL_FAILED=1
+        else
+            cat "$output_file"
+        fi
+    fi
+done
 
 # Exit with code 2 if any check failed (Claude-compatible)
 if [ $OVERALL_FAILED -ne 0 ]; then

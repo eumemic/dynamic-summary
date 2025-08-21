@@ -22,8 +22,9 @@ if [[ "$FILE_PATH" == *.py ]]; then
     GIT_ROOT="$(git rev-parse --show-toplevel)"
     
     # Run checks, skipping tests and jscpd for speed
+    # Use --fail-fast to stop at first error (saves tokens)
     # Pass the specific file that was edited
-    "$GIT_ROOT/scripts/run-checks.sh" --skip tests,jscpd "$FILE_PATH"
+    "$GIT_ROOT/scripts/run-checks.sh" --skip tests,jscpd --fail-fast "$FILE_PATH"
     RESULT=$?
     
     # Calculate elapsed time in milliseconds
