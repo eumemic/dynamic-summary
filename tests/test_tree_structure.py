@@ -219,8 +219,12 @@ class TestIndexingCreatesValidTrees:
             left,
             right,
             target,
+            *,
             parent_id=None,
             reporter=None,
+            prev_context=None,
+            left_token_count=None,
+            right_token_count=None,
         ):
             if right:  # Two children
                 return f"Summary of: {left[:20]}... and {right[:20]}...", 0, 100

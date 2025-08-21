@@ -572,6 +572,9 @@ class TreeBuilder:
             target_tokens,
             parent_id=parent_id,
             reporter=reporter,
+            prev_context=prev_context,
+            left_token_count=left_node.token_count,
+            right_token_count=right_node.token_count if right_node else 0,
         )
 
         # Embedding will be generated in batch after all summaries are collected
