@@ -259,7 +259,7 @@ if [ "$FAIL_FAST" = true ]; then
                 new_pids+=("$pid")
             fi
         done
-        pids=("${new_pids[@]}")
+        pids=("${new_pids[@]+"${new_pids[@]}"}")
         [ ${#pids[@]} -gt 0 ] && sleep 0.05
     done
 else
