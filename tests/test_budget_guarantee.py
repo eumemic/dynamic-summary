@@ -1,6 +1,6 @@
 """Test budget guarantees in retrieval and assembly."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -248,6 +248,8 @@ class TestBudgetGuarantee:
 
     def test_num_seeds_only_mode(self):
         """Test num_seeds only mode (no budget enforcement)."""
+
+        from unittest.mock import patch
 
         from tests.mock_store import SimpleMockStore
 

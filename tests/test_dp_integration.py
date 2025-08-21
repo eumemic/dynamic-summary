@@ -10,7 +10,6 @@ These tests verify the DP tiling algorithm's correctness, including:
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from tests.utils import (
@@ -18,37 +17,6 @@ from tests.utils import (
     create_predictable_summary_mock,
     mock_openai_context,
 )
-
-
-class ConfigWrapper:
-    """Test configuration that combines the three config types for compatibility."""
-
-    def __init__(
-        self,
-        index_config: IndexConfig,
-        query_config: QueryConfig,
-        operational_config: OperationalConfig,
-    ):
-        self.index_config = index_config
-        self.query_config = query_config
-        self.operational_config = operational_config
-
-    # Backward compatibility properties
-    @property
-    def openai_api_key(self) -> str:
-        return self.operational_config.openai_api_key
-
-    @property
-    def target_chunk_tokens(self) -> int:
-        return self.index_config.target_chunk_tokens
-
-    @property
-    def prev_context_tokens(self) -> int:
-        return self.index_config.preceding_context_tokens
-
-    @property
-    def budget_tokens(self) -> int:
-        return self.query_config.budget_tokens
 
 
 class TestDPIntegration:
@@ -61,12 +29,10 @@ class TestDPIntegration:
     @pytest.fixture
     def config(self, config_factory):
         """Create test configuration."""
-        return ConfigWrapper(
-            **config_factory(
-                target_chunk_tokens=50,
-                preceding_context_tokens=0,
-                budget_tokens=500,
-            ).__dict__
+        return config_factory(
+            target_chunk_tokens=50,
+            preceding_context_tokens=0,
+            budget_tokens=500,
         )
 
     @pytest.fixture
