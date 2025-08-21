@@ -325,8 +325,7 @@ async def get_status(
                     if k != "openai_api_key"  # Don't expose API key
                 },
             },
-        },
-    )
+        )
     # Error handling is now done by middleware
 
 
