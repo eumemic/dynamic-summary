@@ -284,7 +284,7 @@ class TestCLI:
     def test_pin_command_failure(self, runner, mock_ragzoom):
         """Test pin command when pinning fails."""
         mock_ragzoom["store_instance"].pin_node.side_effect = InvalidOperationError(
-            "Node is too deep or already pinned"
+            "pin_node", "Node is too deep or already pinned"
         )
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
