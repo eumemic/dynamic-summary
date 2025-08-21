@@ -9,7 +9,6 @@
 - Runs fast tests only (excludes @slow and @integration)
 - Also runs linting (ruff + black) and type checking (mypy)
 - Execution time: ~7-8 seconds with 8 parallel workers
-- Can be skipped with `git commit --no-verify`
 
 ### 2. Claude Code Hooks
 
