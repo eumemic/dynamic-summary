@@ -4,12 +4,11 @@ import logging
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 
 from ragzoom.api_middleware import ErrorHandlingMiddleware
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
-from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
 from ragzoom.services.document_service import DocumentInfo, DocumentService
 from ragzoom.services.indexing_service import IndexingService
 from ragzoom.services.query_service import QueryService
@@ -28,7 +27,7 @@ class ServiceContainer:
         self.query_config = QueryConfig()
         self.operational_config = OperationalConfig()
 
-        # Initialize store  
+        # Initialize store
         self.store = Store(
             self.operational_config, embedding_model=self.index_config.embedding_model
         )
