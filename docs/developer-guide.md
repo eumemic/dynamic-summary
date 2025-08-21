@@ -188,6 +188,152 @@ def retrieve(self, ...):  # Intentional: async/sync wrapper pattern
 - "Almost identical" logic (parameterize the differences)
 - Copy-pasted implementations (extract shared code)
 
+### 4.6. Error Handling Standards
+
+The project follows strict error handling principles aligned with our "No Fallback Code" craftsmanship rule.
+
+#### Exception Hierarchy
+
+Use specific exception types from `ragzoom.exceptions`:
+
+```python
+from ragzoom.exceptions import (
+    ValidationError,      # Data validation failures
+    DatabaseError,        # Database operation failures  
+    LLMError,            # AI service failures
+    ConfigurationError,   # Configuration issues
+    ResourceError,       # Resource allocation failures
+    NodeNotFoundError,    # Specific domain errors
+    DocumentNotFoundError
+)
+```
+
+#### Error Handling Patterns
+
+**✅ DO: Use specific exceptions**
+```python
+if not validate_email(email):
+    raise ValidationError(
+        field="email",
+        value=email,
+        reason="invalid format"
+    )
+```
+
+**✅ DO: Preserve exception chains**
+```python
+try:
+    result = external_service.call()
+except Exception as e:
+    service_error = LLMError(
+        operation="summarize",
+        model="gpt-4o", 
+        message=f"Service failed: {e}"
+    )
+    raise preserve_exception_chain(service_error, e)
+```
+
+**❌ DON'T: Silent failures**
+```python
+# BAD - swallows errors
+try:
+    validate_data()
+except Exception:
+    pass  # Silent failure!
+```
+
+**❌ DON'T: String-based error categorization**
+```python
+# BAD - brittle string parsing
+if "connection" in str(e).lower():
+    handle_database_error()
+```
+
+**❌ DON'T: Generic Exception catches without re-raising**
+```python
+# BAD - loses error context
+try:
+    operation()
+except Exception as e:
+    logger.error(f"Error: {e}")
+    return None  # Should raise instead!
+```
+
+#### API Error Handling
+
+The API uses centralized error handling middleware (`ErrorHandlingMiddleware`). Endpoints should:
+
+1. **Let exceptions propagate** - don't catch them
+2. **Use domain-specific exceptions** - middleware converts to HTTP codes
+3. **Include rich context** - middleware creates structured responses
+
+```python
+@app.post("/endpoint")
+async def my_endpoint(request: Request):
+    # DON'T do this:
+    # try:
+    #     result = process(request)
+    #     return result
+    # except Exception as e:
+    #     raise HTTPException(500, str(e))
+    
+    # DO this instead - let middleware handle errors:
+    result = process(request)  # May raise domain exceptions
+    return result
+```
+
+#### CLI Error Handling
+
+Use the `handle_cli_error()` helper for consistent user-friendly error messages:
+
+```python
+try:
+    operation()
+except Exception as e:
+    handle_cli_error(e, "performing operation")
+```
+
+#### Testing Error Paths
+
+Always test error conditions:
+
+```python
+def test_validation_error():
+    with pytest.raises(ValidationError) as exc_info:
+        validate_data("invalid")
+    
+    assert exc_info.value.field == "data"
+    assert exc_info.value.reason == "invalid format"
+```
+
+#### Logging Errors
+
+Use structured logging with context:
+
+```python
+from ragzoom.error_utils import log_error_with_context
+
+try:
+    operation()
+except Exception as e:
+    log_error_with_context(
+        logger, e, "user_operation",
+        user_id=user_id,
+        request_id=request_id
+    )
+    raise  # Always re-raise
+```
+
+#### Success Criteria
+
+Valid error handling ensures:
+- ✅ Zero silent failures
+- ✅ Zero string-based error categorization  
+- ✅ No generic Exception catches without justification
+- ✅ Rich error context for debugging
+- ✅ Consistent user-facing error messages
+- ✅ Complete test coverage for error paths
+
 ## 5. Test Markers and Categories
 
 ### Test Markers

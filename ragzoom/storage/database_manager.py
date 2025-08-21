@@ -128,7 +128,9 @@ class DatabaseManager:
             InvalidOperationError: If embedding dimension doesn't match expected
         """
         if not embedding:
-            raise InvalidOperationError("Embedding cannot be empty")
+            raise InvalidOperationError(
+                "validate_embedding", "Embedding cannot be empty"
+            )
 
         if isinstance(embedding, list):
             current_dim = len(embedding)
@@ -143,9 +145,10 @@ class DatabaseManager:
 
         if current_dim != self._expected_embedding_dim:
             raise InvalidOperationError(
+                "validate_embedding",
                 f"Embedding dimension mismatch: expected {self._expected_embedding_dim}, "
                 f"got {current_dim}. This suggests you're using a different embedding model "
-                f"than the one used for existing data."
+                f"than the one used for existing data.",
             )
 
     def _create_vector_extension(self) -> None:
