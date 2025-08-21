@@ -35,7 +35,7 @@ class TestTransactionContext:
             )
 
             # Add nodes
-            nodes = store.add_nodes_batch(nodes_data, session=session)
+            nodes = store.nodes.add_nodes_batch(nodes_data, session=session)
 
             # Both should be available within the transaction
             assert doc.id == doc_id
@@ -133,7 +133,7 @@ class TestTransactionContext:
             )
 
             # Add nodes
-            store.add_nodes_batch(nodes_data, session=session)
+            store.nodes.add_nodes_batch(nodes_data, session=session)
 
             # Update parent references
             parent_updates = [
@@ -190,7 +190,7 @@ class TestBackwardCompatibility:
             }
         ]
 
-        nodes = store.add_nodes_batch(nodes_data)
+        nodes = store.nodes.add_nodes_batch(nodes_data)
 
         assert len(nodes) == 1
         assert nodes[0].id == "node-no-session"
@@ -200,7 +200,7 @@ class TestBackwardCompatibility:
         assert persisted_node is not None
 
     def test_delete_document_nodes_without_session(self, store):
-        """Test delete_document_nodes works without session parameter."""
+        """Test clear_document works without session parameter."""
         # First add a document with nodes
         doc_id = "test-doc-delete"
         store.add_document(
@@ -223,10 +223,10 @@ class TestBackwardCompatibility:
                 "token_count": 3,
             }
         ]
-        store.add_nodes_batch(nodes_data)
+        store.nodes.add_nodes_batch(nodes_data)
 
         # Delete nodes without session
-        deleted_count = store.delete_document_nodes(doc_id)
+        deleted_count = store.clear_document(doc_id)
 
         assert deleted_count == 1
 
@@ -263,7 +263,7 @@ class TestAtomicReindexing:
                 "token_count": 2,
             }
         ]
-        store.add_nodes_batch(old_nodes_data)
+        store.nodes.add_nodes_batch(old_nodes_data)
 
         # Verify old content exists
         assert store.get_node("old-node-1") is not None
@@ -283,11 +283,11 @@ class TestAtomicReindexing:
 
         with store.transaction() as session:
             # Delete old nodes
-            deleted_count = store.delete_document_nodes(doc_id, session=session)
+            deleted_count = store.clear_document(doc_id, session=session)
             assert deleted_count == 1
 
             # Add new nodes
-            new_nodes = store.add_nodes_batch(new_nodes_data, session=session)
+            new_nodes = store.nodes.add_nodes_batch(new_nodes_data, session=session)
             assert len(new_nodes) == 1
 
         # Verify atomic operation: old gone, new present
@@ -322,7 +322,7 @@ class TestAtomicReindexing:
                 "token_count": 2,
             }
         ]
-        store.add_nodes_batch(old_nodes_data)
+        store.nodes.add_nodes_batch(old_nodes_data)
 
         # Verify old content exists
         old_node = store.get_node("old-node-fail")
@@ -332,7 +332,7 @@ class TestAtomicReindexing:
         with pytest.raises(ValueError, match="Simulated reindex failure"):
             with store.transaction() as session:
                 # Delete old nodes
-                store.delete_document_nodes(doc_id, session=session)
+                store.clear_document(doc_id, session=session)
 
                 # Simulate failure before adding new nodes
                 raise ValueError("Simulated reindex failure")
@@ -410,7 +410,7 @@ class TestTransactionSafety:
         with pytest.raises(ValueError, match="Simulated failure"):
             with mock_store.transaction() as session:
                 # Delete the document
-                mock_store.delete_document_nodes("mock-rollback-test", session=session)
+                mock_store.clear_document("mock-rollback-test", session=session)
 
                 # Verify document is gone during transaction
                 # (This behavior may vary based on mock implementation)

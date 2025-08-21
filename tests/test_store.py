@@ -18,6 +18,16 @@ class TestStore:
 
     def test_add_node(self, temp_store):
         """Test adding a node to the store."""
+        # Create document first to satisfy foreign key constraint
+        temp_store.add_document(
+            document_id="test-doc",
+            file_path="test.txt",
+            content_hash="test-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
         # Use document-scoped store for node operations
         doc_store = temp_store.for_document("test-doc")
         node = doc_store.nodes.add_node(
@@ -86,7 +96,7 @@ class TestStore:
         )
 
         # Test relationships
-        left, right = temp_store.get_children("parent")
+        left, right = temp_store.tree.get_children("parent")
         assert left.id == "child1"
         assert right.id == "child2"
 
@@ -148,7 +158,7 @@ class TestStore:
 
         # Test MMR selection
         query_embedding = [1.0, 0.0, 0.0] + [0.0] * 1533  # Similar to node-1
-        selected = temp_store.compute_mmr_diverse_results(
+        selected = temp_store.search.compute_mmr_diverse_results(
             query_embedding, candidates, lambda_param=0.7, k=3
         )
 
@@ -327,12 +337,12 @@ class TestStore:
         assert temp_store.tree.get_node_depth("rc") == 2
 
         # Test is_root_node
-        assert temp_store.is_root_node("root") is True
-        assert temp_store.is_root_node("left") is False
-        assert temp_store.is_root_node("ll") is False
+        assert temp_store.tree.is_root_node("root") is True
+        assert temp_store.tree.is_root_node("left") is False
+        assert temp_store.tree.is_root_node("ll") is False
 
         # Test with non-existent node
-        assert temp_store.is_root_node("non-existent") is False
+        assert temp_store.tree.is_root_node("non-existent") is False
 
         # Test non-existent node
         with pytest.raises(NodeNotFoundError):
@@ -417,14 +427,14 @@ class TestStore:
         assert temp_store.nodes.get_node("root").height == 2  # max(1, 1) + 1
 
         # Test is_leaf_node
-        assert temp_store.is_leaf_node("ll") is True
-        assert temp_store.is_leaf_node("lr") is True
-        assert temp_store.is_leaf_node("rc") is True
-        assert temp_store.is_leaf_node("left") is False
-        assert temp_store.is_leaf_node("root") is False
+        assert temp_store.tree.is_leaf_node("ll") is True
+        assert temp_store.tree.is_leaf_node("lr") is True
+        assert temp_store.tree.is_leaf_node("rc") is True
+        assert temp_store.tree.is_leaf_node("left") is False
+        assert temp_store.tree.is_leaf_node("root") is False
 
         # Test with non-existent node
-        assert temp_store.is_leaf_node("non-existent") is False
+        assert temp_store.tree.is_leaf_node("non-existent") is False
 
         # Test non-existent node
         assert temp_store.nodes.get_node("non-existent") is None
@@ -443,8 +453,8 @@ class TestStore:
 
         assert temp_store.tree.get_node_depth("single") == 0  # Root has depth 0
         assert temp_store.nodes.get_node("single").height == 0  # Leaf has height 0
-        assert temp_store.is_root_node("single") is True
-        assert temp_store.is_leaf_node("single") is True
+        assert temp_store.tree.is_root_node("single") is True
+        assert temp_store.tree.is_leaf_node("single") is True
 
         # Test node with only left child
         temp_store.nodes.add_node(
@@ -468,7 +478,7 @@ class TestStore:
         )
 
         assert temp_store.nodes.get_node("parent_left_only").height == 1
-        assert temp_store.is_leaf_node("parent_left_only") is False
+        assert temp_store.tree.is_leaf_node("parent_left_only") is False
 
         # Test node with only right child
         temp_store.nodes.add_node(
@@ -492,7 +502,7 @@ class TestStore:
         )
 
         assert temp_store.nodes.get_node("parent_right_only").height == 1
-        assert temp_store.is_leaf_node("parent_right_only") is False
+        assert temp_store.tree.is_leaf_node("parent_right_only") is False
 
     def test_depth_calculation_performance(self, temp_store):
         """Test that depth calculation is O(log n) by creating a deep tree."""
@@ -555,8 +565,8 @@ class TestStore:
             )
 
         # Test predicate methods return False for missing nodes (don't raise)
-        assert temp_store.is_leaf_node("missing") is False
-        assert temp_store.is_root_node("missing") is False
+        assert temp_store.tree.is_leaf_node("missing") is False
+        assert temp_store.tree.is_root_node("missing") is False
 
         # Test query methods return None for missing items (don't raise)
         assert temp_store.nodes.get_node("missing") is None
