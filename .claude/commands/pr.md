@@ -10,7 +10,7 @@ argument-hint: [PR title]
 
 ## Context
 - Current branch: !`git branch --show-current`
-- Existing PR: !`gh pr view --json number,state 2>/dev/null | jq -r '"#" + (.number|tostring) + " (" + .state + ")"' || echo "No PR"`
+- Existing PR: !`gh pr list --head $(git branch --show-current) --state open --json number,state -q 'if length > 0 then "#" + (.[0].number|tostring) + " (OPEN)" else "No PR" end'`
 
 Arguments: "$ARGUMENTS"
 
