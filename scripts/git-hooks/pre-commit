@@ -23,9 +23,8 @@ fi
 echo ""
 if [ $RESULT -eq 0 ]; then
     echo "✅ All pre-commit checks passed!"
-    exit 0
 else
     echo "❌ Pre-commit checks failed! See above for details."
-    # Exit with 1 for git (not 2)
-    exit 1
 fi
+
+exit $RESULT
