@@ -73,7 +73,7 @@ class TestNumSeedsFix:
 
         # Mock the search_similar to return all leaves as candidates
         # Note: search_similar now returns (id, similarity, metadata) tuples
-        store.search_similar = Mock(
+        store.search.search_similar = Mock(
             return_value=[
                 ("leaf1", 0.9, {}),  # High similarity, empty metadata
                 ("leaf2", 0.9, {}),
@@ -83,7 +83,7 @@ class TestNumSeedsFix:
         )
 
         # Mock compute_mmr_diverse_results to select only leaf1
-        store.compute_mmr_diverse_results = Mock(return_value=["leaf1"])
+        store.search.compute_mmr_diverse_results = Mock(return_value=["leaf1"])
 
         # Mock get_ancestors to return proper ancestors
         def mock_get_ancestors(node_ids):
@@ -93,7 +93,7 @@ class TestNumSeedsFix:
                     ancestors.extend([Mock(id="nodeA"), Mock(id="root")])
             return ancestors
 
-        store.get_ancestors = Mock(side_effect=mock_get_ancestors)
+        store.tree.get_ancestors = Mock(side_effect=mock_get_ancestors)
 
         # Create config and retriever
         query_config = QueryConfig(budget_tokens=10000)

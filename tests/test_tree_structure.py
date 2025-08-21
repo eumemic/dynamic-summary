@@ -41,6 +41,17 @@ class TestTreeValidation:
             def get_all_nodes_for_document(self, doc_id):
                 return list(self.nodes.values())
 
+            def for_document(self, document_id):
+                """Return a mock document store that delegates to this store."""
+                from types import SimpleNamespace
+
+                doc_store = SimpleNamespace()
+                doc_store.nodes = SimpleNamespace()
+                doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
+                    document_id
+                )
+                return doc_store
+
         store = MockStore()
 
         # Create a valid left-balanced tree (happens to be full):
@@ -79,6 +90,17 @@ class TestTreeValidation:
 
             def get_all_nodes_for_document(self, doc_id):
                 return list(self.nodes.values())
+
+            def for_document(self, document_id):
+                """Return a mock document store that delegates to this store."""
+                from types import SimpleNamespace
+
+                doc_store = SimpleNamespace()
+                doc_store.nodes = SimpleNamespace()
+                doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
+                    document_id
+                )
+                return doc_store
 
         store = MockStore()
 
@@ -125,6 +147,17 @@ class TestTreeValidation:
             def get_all_nodes_for_document(self, doc_id):
                 return [MockNode("root")]
 
+            def for_document(self, document_id):
+                """Return a mock document store that delegates to this store."""
+                from types import SimpleNamespace
+
+                doc_store = SimpleNamespace()
+                doc_store.nodes = SimpleNamespace()
+                doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
+                    document_id
+                )
+                return doc_store
+
         store = MockStore()
         result = validate_tree_is_left_balanced(store, "test-doc")
         assert result is None  # Single node tree is valid
@@ -142,6 +175,17 @@ class TestTreeValidation:
             def get_all_nodes_for_document(self, doc_id):
                 # Node references children that don't exist
                 return [MockNode("root", "missing-left", "missing-right")]
+
+            def for_document(self, document_id):
+                """Return a mock document store that delegates to this store."""
+                from types import SimpleNamespace
+
+                doc_store = SimpleNamespace()
+                doc_store.nodes = SimpleNamespace()
+                doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
+                    document_id
+                )
+                return doc_store
 
         store = MockStore()
         result = validate_tree_is_left_balanced(store, "test-doc")
@@ -167,6 +211,17 @@ class TestTreeValidation:
 
             def get_all_nodes_for_document(self, doc_id):
                 return list(self.nodes.values())
+
+            def for_document(self, document_id):
+                """Return a mock document store that delegates to this store."""
+                from types import SimpleNamespace
+
+                doc_store = SimpleNamespace()
+                doc_store.nodes = SimpleNamespace()
+                doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
+                    document_id
+                )
+                return doc_store
 
         store = MockStore()
 

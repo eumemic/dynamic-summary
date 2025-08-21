@@ -152,8 +152,8 @@ class TestDPScoresBug:
             document_id="doc1",
             embedding=[0.5] * 1536,
         )
-        store.nodes["root"].left_child_id = "leaf1"
-        store.nodes["root"].right_child_id = "leaf2"
+        store._nodes["root"].left_child_id = "leaf1"
+        store._nodes["root"].right_child_id = "leaf2"
 
         query_config = QueryConfig(budget_tokens=10000)
         dp_generator = DynamicTilingGenerator(query_config)

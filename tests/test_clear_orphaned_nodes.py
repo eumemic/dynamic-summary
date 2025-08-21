@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from ragzoom.cli import cli
 from ragzoom.config import IndexConfig, OperationalConfig
-from ragzoom.store import Document, Store, TreeNode
+from ragzoom.store import Document, StoreManager, TreeNode
 
 
 class TestAutomaticClearing:
@@ -51,7 +51,7 @@ class TestAutomaticClearing:
         )
 
     def simulate_interrupted_indexing(
-        self, store: Store, document_id: str, num_nodes: int = 248
+        self, store: StoreManager, document_id: str, num_nodes: int = 248
     ):
         """Simulate an interrupted indexing run that leaves orphaned nodes.
 

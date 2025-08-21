@@ -100,25 +100,27 @@ class TestStoreMock:
 
     def test_real_store_interface_compliance(self):
         """Test that real Store class has the same interface as mock."""
-        from ragzoom.store import Store
+        from ragzoom.store import StoreManager
 
         # Get method names from both classes
         mock_methods = {
             name for name in dir(SimpleMockStore) if not name.startswith("_")
         }
-        real_methods = {name for name in dir(Store) if not name.startswith("_")}
+        real_methods = {name for name in dir(StoreManager) if not name.startswith("_")}
 
-        # Mock should implement core Store methods
-        core_methods = {
-            "add_node",
-            "get_node",
-            "search_similar",
-            "get_children",
-            "get_ancestors",
+        # StoreManager should provide document store factory and repository access
+        manager_methods = {
+            "for_document",  # Document store factory
+            "nodes",  # Repository property
+            "documents",  # Repository property
+            "search",  # Repository property
+            "tree",  # Repository property
         }
-        for method in core_methods:
-            assert method in mock_methods, f"Mock missing core method: {method}"
-            assert method in real_methods, f"Store missing core method: {method}"
+        for method in manager_methods:
+            assert method in real_methods, f"StoreManager missing: {method}"
+
+        # Mock should provide compatibility with new patterns
+        assert "for_document" in mock_methods, "Mock missing for_document factory"
 
     def test_builder_advanced_features(self, mock_store, tree_node_builder):
         """Test advanced builder features with mock store."""

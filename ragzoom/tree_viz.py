@@ -4,7 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ragzoom.store import Store, TreeNode
+from ragzoom.store import StoreManager, TreeNode
 from ragzoom.utils.tokenization import tokenizer as default_tokenizer
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class CharacterPositionResolver(PositionResolver):
     def __init__(
         self,
         all_nodes: list[TreeNode],
-        store: Store,
+        store: StoreManager,
         preloaded_nodes: dict[str, "TreeNode"] | None = None,
     ):
         self.store = store
@@ -75,7 +75,7 @@ class TokenPositionResolver(PositionResolver):
         self,
         node_infos: list[Any],  # List of NodeInfo from dynamic_tiling
         coverage_map: dict[str, bool],
-        store: Store,
+        store: StoreManager,
         tokenizer: Any = None,
         preloaded_nodes: dict[str, "TreeNode"] | None = None,
     ):
@@ -235,7 +235,7 @@ class TokenPositionResolver(PositionResolver):
 
 def build_ascii_tree(
     tiling: list[str],  # List of node IDs in the tiling
-    store: Store,
+    store: StoreManager,
     document_id: str,
     width: int = 120,
     coverage_map: dict[str, bool] | None = None,
@@ -249,7 +249,7 @@ def build_ascii_tree(
 
     Args:
         tiling: List of node IDs in the tiling
-        store: Store instance
+        store: StoreManager instance
         document_id: Document to visualize
         width: Terminal width for visualization
         coverage_map: Optional dict of covered node IDs
@@ -280,7 +280,8 @@ def build_ascii_tree(
             return "No nodes found in coverage map"
     else:
         # Fallback to all nodes only if no coverage map provided
-        all_nodes = store.get_all_nodes_for_document(document_id)
+        doc_store = store.for_document(document_id)
+        all_nodes = doc_store.nodes.get_all()
         if not all_nodes:
             return "No nodes found for document"
 
@@ -396,7 +397,7 @@ def build_ascii_tree(
                 end_pos = start_pos + 1
             is_covered = coverage_map and node.id in coverage_map
             # Leaf node
-            if store.is_leaf_node(node.id):
+            if store.tree.is_leaf_node(node.id):
                 char_priority = (
                     1 if node.id in selected_nodes else 0 if is_covered else -1
                 )
