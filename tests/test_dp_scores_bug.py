@@ -94,7 +94,7 @@ class TestDPScoresBug:
         }
 
         # Load nodes from coverage map
-        nodes = {nid: store.get_node(nid) for nid in coverage_tree}
+        nodes = {nid: store.nodes.get_node(nid) for nid in coverage_tree}
 
         # Find root node
         root_id = "root"
@@ -109,7 +109,7 @@ class TestDPScoresBug:
 
         # Check results
         leaf_node_ids = {
-            node_id for node_id in tiling.node_ids if store.is_leaf_node(node_id)
+            node_id for node_id in tiling.node_ids if store.tree.is_leaf_node(node_id)
         }
 
         # With our fix, all leaf nodes in tiling must be in the coverage tree
@@ -173,7 +173,7 @@ class TestDPScoresBug:
         # Load nodes from coverage map
         nodes = {}
         for node_id in result.coverage_map:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 
@@ -190,7 +190,7 @@ class TestDPScoresBug:
 
         # Check results
         leaf_node_ids = {
-            node_id for node_id in tiling.node_ids if store.is_leaf_node(node_id)
+            node_id for node_id in tiling.node_ids if store.tree.is_leaf_node(node_id)
         }
 
         # With our fix: leaf2 should NOT appear in tiling unless it is in the coverage map

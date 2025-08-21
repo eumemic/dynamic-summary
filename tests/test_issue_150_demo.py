@@ -12,7 +12,7 @@ class TestIssue150Demonstration:
         # with store.transaction() as session:
         #     store.delete_document_nodes(doc_id, session=session)
         #     store.add_document(doc_data, session=session)
-        #     store.add_nodes_batch(nodes, session=session)
+        #     store.nodes.add_nodes_batch(nodes, session=session)
         #     # All commit together or all rollback
 
         # Setup: Create initial document with nodes
@@ -37,11 +37,11 @@ class TestIssue150Demonstration:
                 "token_count": 2,
             }
         ]
-        store.add_nodes_batch(old_nodes_data)
+        store.nodes.add_nodes_batch(old_nodes_data)
 
         # Verify initial state
         assert store.get_document_by_id(doc_id) is not None
-        assert store.get_node("old-node") is not None
+        assert store.nodes.get_node("old-node") is not None
 
         # Demonstrate atomic multi-operation sequence from issue #150
         new_doc_data = {
@@ -76,7 +76,7 @@ class TestIssue150Demonstration:
             store.add_document(**new_doc_data, session=session)
 
             # Add new nodes
-            new_nodes = store.add_nodes_batch(new_nodes_data, session=session)
+            new_nodes = store.nodes.add_nodes_batch(new_nodes_data, session=session)
             assert len(new_nodes) == 1
 
             # All operations are part of the same transaction
@@ -88,8 +88,8 @@ class TestIssue150Demonstration:
         assert final_doc is not None
         assert final_doc.content_hash == "new-hash"  # Document updated
 
-        assert store.get_node("old-node") is None  # Old node deleted
-        assert store.get_node("new-node") is not None  # New node added
+        assert store.nodes.get_node("old-node") is None  # Old node deleted
+        assert store.nodes.get_node("new-node") is not None  # New node added
 
     def test_backward_compatibility_demonstration(self, store):
         """Demonstrate that existing code works unchanged (backward compatibility)."""
@@ -119,7 +119,7 @@ class TestIssue150Demonstration:
                 "token_count": 3,
             }
         ]
-        nodes = store.add_nodes_batch(nodes_data)  # No session parameter
+        nodes = store.nodes.add_nodes_batch(nodes_data)  # No session parameter
         assert len(nodes) == 1
 
         # Delete nodes without session (existing API)
@@ -127,4 +127,4 @@ class TestIssue150Demonstration:
         assert deleted_count == 1
 
         # All existing APIs work exactly as before
-        assert store.get_node("compat-node") is None
+        assert store.nodes.get_node("compat-node") is None

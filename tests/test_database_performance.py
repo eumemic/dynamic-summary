@@ -325,7 +325,7 @@ class TestRegressionPrevention:
         )
 
         # Load into cache
-        node = store.get_node(node_id)
+        node = store.nodes.get_node(node_id)
         assert node is not None
         assert node.text == "Cache test node"
 
@@ -334,7 +334,7 @@ class TestRegressionPrevention:
         assert deleted_count == 1
 
         # Node should no longer be accessible
-        node_after_deletion = store.get_node(node_id)
+        node_after_deletion = store.nodes.get_node(node_id)
         assert node_after_deletion is None
 
     def test_transaction_support_maintained(self, store: StoreInterface) -> None:

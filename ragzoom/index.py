@@ -625,7 +625,7 @@ class TreeBuilder:
             )
 
             # Build tree from leaves using document-scoped store
-            doc_store = self.store.for_document(document_id)
+            doc_store = self.store.for_document(prep_result.document_id)
             root_id = await self._build_tree_from_leaves(
                 leaf_ids,
                 chunks,

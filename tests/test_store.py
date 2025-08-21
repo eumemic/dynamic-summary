@@ -100,7 +100,7 @@ class TestStore:
         assert left.id == "child1"
         assert right.id == "child2"
 
-        ancestors = temp_store.get_ancestors(["child1", "child2"])
+        ancestors = temp_store.tree.get_ancestors(["child1", "child2"])
         assert len(ancestors) == 1
         assert ancestors[0].id == "parent"
 
@@ -571,4 +571,4 @@ class TestStore:
         # Test query methods return None for missing items (don't raise)
         assert temp_store.nodes.get_node("missing") is None
         assert temp_store.get_document_by_id("missing") is None
-        assert temp_store.get_document_embedding_model("missing") is None
+        assert temp_store.documents.get_document_embedding_model("missing") is None

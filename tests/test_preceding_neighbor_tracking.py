@@ -184,7 +184,7 @@ class TestPrecedingNeighborTracking:
                 # Get the preceding node
                 if hasattr(store, "get_node"):
                     # Mock store
-                    preceding_node = store.get_node(node.preceding_neighbor_id)
+                    preceding_node = store.nodes.get_node(node.preceding_neighbor_id)
                 else:
                     # Real store - use nodes repository
                     preceding_node = store.nodes.get_node(node.preceding_neighbor_id)

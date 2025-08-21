@@ -44,7 +44,7 @@ class TestTransactionContext:
 
         # Verify both operations were committed
         persisted_doc = store.get_document_by_id(doc_id)
-        persisted_node = store.get_node("node-1")
+        persisted_node = store.nodes.get_node("node-1")
 
         assert persisted_doc is not None
         assert persisted_doc.id == doc_id
@@ -143,9 +143,9 @@ class TestTransactionContext:
             store.update_parent_references_batch(parent_updates, session=session)
 
         # Verify all operations were committed
-        leaf1 = store.get_node("leaf-1")
-        leaf2 = store.get_node("leaf-2")
-        parent = store.get_node("parent-1")
+        leaf1 = store.nodes.get_node("leaf-1")
+        leaf2 = store.nodes.get_node("leaf-2")
+        parent = store.nodes.get_node("parent-1")
 
         assert leaf1 is not None
         assert leaf1.parent_id == "parent-1"
@@ -196,7 +196,7 @@ class TestBackwardCompatibility:
         assert nodes[0].id == "node-no-session"
 
         # Verify it was persisted
-        persisted_node = store.get_node("node-no-session")
+        persisted_node = store.nodes.get_node("node-no-session")
         assert persisted_node is not None
 
     def test_delete_document_nodes_without_session(self, store):
@@ -231,7 +231,7 @@ class TestBackwardCompatibility:
         assert deleted_count == 1
 
         # Verify node was deleted
-        persisted_node = store.get_node("node-to-delete")
+        persisted_node = store.nodes.get_node("node-to-delete")
         assert persisted_node is None
 
 
@@ -266,7 +266,7 @@ class TestAtomicReindexing:
         store.nodes.add_nodes_batch(old_nodes_data)
 
         # Verify old content exists
-        assert store.get_node("old-node-1") is not None
+        assert store.nodes.get_node("old-node-1") is not None
 
         # Now atomically re-index with new content
         new_nodes_data = [
@@ -291,8 +291,8 @@ class TestAtomicReindexing:
             assert len(new_nodes) == 1
 
         # Verify atomic operation: old gone, new present
-        assert store.get_node("old-node-1") is None
-        assert store.get_node("new-node-1") is not None
+        assert store.nodes.get_node("old-node-1") is None
+        assert store.nodes.get_node("new-node-1") is not None
 
     @pytest.mark.integration
     def test_atomic_reindexing_rollback(self, store):
@@ -325,7 +325,7 @@ class TestAtomicReindexing:
         store.nodes.add_nodes_batch(old_nodes_data)
 
         # Verify old content exists
-        old_node = store.get_node("old-node-fail")
+        old_node = store.nodes.get_node("old-node-fail")
         assert old_node is not None
 
         # Attempt atomic re-index that fails
@@ -338,7 +338,7 @@ class TestAtomicReindexing:
                 raise ValueError("Simulated reindex failure")
 
         # Verify old content is still there (rollback succeeded)
-        persisted_old_node = store.get_node("old-node-fail")
+        persisted_old_node = store.nodes.get_node("old-node-fail")
         assert persisted_old_node is not None
         assert persisted_old_node.text == "Old content"
 
@@ -378,7 +378,7 @@ class TestTransactionSafety:
             raise ValueError("Simulated database error")
 
         # Verify the node was not persisted due to rollback
-        node = store.get_node("test-node-exception")
+        node = store.nodes.get_node("test-node-exception")
         assert node is None
 
     def test_nested_transaction_prevention(self, store):

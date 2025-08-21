@@ -145,7 +145,7 @@ class TestNumSeedsFix:
 
             # Count leaf nodes in tiling
             leaf_count = sum(
-                1 for node_id in result.tiling if store.is_leaf_node(node_id)
+                1 for node_id in result.tiling if store.tree.is_leaf_node(node_id)
             )
             # Since we have to include leaf2 to maintain coverage property, the DP algorithm
             # might choose to use both leaves instead of their parent
