@@ -428,7 +428,6 @@ ragzoom-telemetry visualize baseline.json current.json -o comparison.png
 # Git hooks (automatically installed by setup script)
 # - pre-commit: Runs relevant tests for changed files
 # - pre-push: Runs full test suite
-# Skip with: git commit/push --no-verify
 ```
 
 ## License

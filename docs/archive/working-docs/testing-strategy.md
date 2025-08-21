@@ -134,17 +134,6 @@ Configured in `.claude/hooks.json`:
 - Automatic test execution on file changes
 - Linting before file writes
 
-### Disabling Hooks (Temporarily)
-```bash
-# Skip pre-commit hook
-git commit --no-verify
-
-# Skip pre-push hook  
-git push --no-verify
-
-# Disable Claude Code hooks
-# Edit .claude/hooks.json and set "enabled": false
-```
 
 ## Test Utilities
 
