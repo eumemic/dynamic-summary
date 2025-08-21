@@ -146,12 +146,17 @@ class SimpleMockStore(StoreInterface):
         mock_tree = MagicMock()
         mock_tree.get_ancestors = self.get_ancestors
         mock_tree.is_leaf_node = self.is_leaf_node
+        mock_tree.is_root_node = self.is_root_node
+        mock_tree.get_node_depth = self.get_node_depth
+        mock_tree.get_children = self.get_children
         self.tree = mock_tree
 
         mock_nodes = MagicMock()
         mock_nodes.get_node = self.get_node
         mock_nodes.get_nodes = self.get_nodes
         mock_nodes.update_node_access = self.update_node_access
+        mock_nodes.add_nodes_batch = self.add_nodes_batch
+        mock_nodes.update_parent_references_batch = self.update_parent_references_batch
         self.nodes = mock_nodes
 
         # Create a documents property that acts like both dict and repository
