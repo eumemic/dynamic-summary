@@ -27,9 +27,9 @@ class TestCLI:
             patch("ragzoom.cli.QueryConfig") as mock_query_config,
             patch("ragzoom.cli.OperationalConfig") as mock_operational_config,
             patch("ragzoom.cli.create_store_with_docker") as mock_create_store,
-            patch("ragzoom.cli.TreeBuilder") as mock_builder,
-            patch("ragzoom.cli.Retriever") as mock_retriever,
-            patch("ragzoom.cli.Assembler") as mock_assembler,
+            patch("ragzoom.cli.DocumentService") as mock_document_service,
+            patch("ragzoom.cli.IndexingService") as mock_indexing_service,
+            patch("ragzoom.cli.QueryService") as mock_query_service,
         ):
 
             # Mock index config
@@ -129,47 +129,70 @@ class TestCLI:
 
             mock_create_store.return_value = store_instance
 
-            # Mock tree builder
-            builder_instance = Mock()
-            # add_document is called synchronously in CLI
-            builder_instance.add_document.return_value = "doc-123"
-            mock_builder.return_value = builder_instance
+            # Mock services
+            document_service_instance = Mock()
 
-            # Mock retriever
-            retriever_instance = Mock()
-            retriever_instance.retrieve.return_value = Mock(
-                node_ids=["node-1", "node-2"],
-                tiling=None,  # Updated field name
-                coverage_map={"node-1": 1.0, "node-2": 1.0},
-            )
-            mock_retriever.return_value = retriever_instance
+            # Create mock document for list_documents
+            from datetime import datetime
 
-            # Mock assembler
-            assembler_instance = Mock()
-            assembler_instance.assemble.return_value = (
-                "This is a summary of the content."
+            from ragzoom.services.document_service import DocumentInfo
+
+            mock_document = DocumentInfo(
+                document_id="doc-123",
+                file_path="/path/to/file.txt",
+                indexed_at=datetime(2023, 1, 1),
+                chunk_count=5,
+                node_count=15,
             )
-            assembler_instance.assemble_with_budget.return_value = (
-                "This is a summary of the content.",
-                100,
+            document_service_instance.list_documents.return_value = [mock_document]
+
+            document_service_instance.get_system_status.return_value = Mock(
+                total_nodes=10, leaf_nodes=5, tree_depth=3, pinned_nodes=0
             )
-            mock_assembler.return_value = assembler_instance
+            # Set default clear values - individual tests can override these
+            document_service_instance.clear_document.return_value = 10
+            document_service_instance.clear_all_documents.return_value = 50
+            mock_document_service.return_value = document_service_instance
+
+            # Mock indexing service
+            indexing_service_instance = Mock()
+            from ragzoom.services.indexing_service import IndexingResult
+
+            indexing_service_instance.index_from_file.return_value = IndexingResult(
+                document_id="doc-123",
+                chunks_created=5,
+                tree_depth=3,
+                telemetry=None,
+            )
+            mock_indexing_service.return_value = indexing_service_instance
+
+            # Mock query service
+            query_service_instance = Mock()
+            from ragzoom.services.query_service import QueryResult
+
+            query_service_instance.execute_query.return_value = QueryResult(
+                summary="This is a summary of the content.",
+                token_count=100,
+                nodes_retrieved=2,
+                tiling_size=3,
+            )
+            mock_query_service.return_value = query_service_instance
 
             yield {
                 "index_config": mock_index_config,
                 "query_config": mock_query_config,
                 "operational_config": mock_operational_config,
                 "create_store": mock_create_store,
-                "builder": mock_builder,
-                "retriever": mock_retriever,
-                "assembler": mock_assembler,
+                "document_service": mock_document_service,
+                "indexing_service": mock_indexing_service,
+                "query_service": mock_query_service,
                 "index_config_instance": index_config_instance,
                 "query_config_instance": query_config_instance,
                 "operational_config_instance": operational_config_instance,
                 "store_instance": store_instance,
-                "builder_instance": builder_instance,
-                "retriever_instance": retriever_instance,
-                "assembler_instance": assembler_instance,
+                "document_service_instance": document_service_instance,
+                "indexing_service_instance": indexing_service_instance,
+                "query_service_instance": query_service_instance,
             }
 
     def test_cli_help(self, runner):
@@ -187,8 +210,9 @@ class TestCLI:
             assert result.exit_code == 0
             assert "SYSTEM STATUS" in result.output
             assert "Total nodes: 10" in result.output
-            assert "Leaf nodes: N/A (multi-document)" in result.output
-            assert "Tree height:" in result.output
+            assert "Leaf nodes: 5" in result.output
+            assert "Tree height: 3" in result.output
+            assert "Pinned nodes: 0" in result.output
 
     def test_index_command_with_file(self, runner, mock_ragzoom):
         """Test indexing a file."""
@@ -204,10 +228,14 @@ class TestCLI:
                 assert "Document indexed successfully!" in result.output
                 assert "doc-123" in result.output
 
-                # Verify add_document was called with the content
-                mock_ragzoom["builder_instance"].add_document.assert_called_once()
-                call_args = mock_ragzoom["builder_instance"].add_document.call_args
-                assert "Test content for indexing." in call_args[0][0]
+                # Verify index_from_file was called with the content
+                mock_ragzoom[
+                    "indexing_service_instance"
+                ].index_from_file.assert_called_once()
+                call_args = mock_ragzoom[
+                    "indexing_service_instance"
+                ].index_from_file.call_args
+                assert temp_file in call_args[0][0]
         finally:
             os.unlink(temp_file)
 
@@ -227,8 +255,10 @@ class TestCLI:
                 assert "Document indexed successfully!" in result.output
                 assert "doc-123" in result.output
 
-                # Verify add_document was called with document_id
-                call_args = mock_ragzoom["builder_instance"].add_document.call_args
+                # Verify index_from_file was called with document_id
+                call_args = mock_ragzoom[
+                    "indexing_service_instance"
+                ].index_from_file.call_args
                 assert call_args[1]["document_id"] == "my-doc-id"
         finally:
             os.unlink(temp_file)
@@ -263,17 +293,19 @@ class TestCLI:
 
             assert result.exit_code == 0
 
-            # Verify retrieve was called with correct query, num_seeds, budget_tokens, and document_id
-            mock_ragzoom["retriever_instance"].retrieve.assert_called_once_with(
+            # Verify execute_query was called with correct parameters
+            mock_ragzoom[
+                "query_service_instance"
+            ].execute_query.assert_called_once_with(
                 "Tell me about cats",
-                budget_tokens=1000,
-                document_id="test-doc",
+                "test-doc",
                 num_seeds=5,
+                token_budget=1000,
             )
 
     def test_pin_command(self, runner, mock_ragzoom):
         """Test pin command."""
-        mock_ragzoom["store_instance"].pin_node.return_value = True
+        mock_ragzoom["document_service_instance"].pin_node.return_value = None
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
             result = runner.invoke(cli, ["pin", "node-123"])
@@ -283,8 +315,8 @@ class TestCLI:
 
     def test_pin_command_failure(self, runner, mock_ragzoom):
         """Test pin command when pinning fails."""
-        mock_ragzoom["store_instance"].pin_node.side_effect = InvalidOperationError(
-            "pin_node", "Node is too deep or already pinned"
+        mock_ragzoom["document_service_instance"].pin_node.side_effect = (
+            InvalidOperationError("pin_node", "Node is too deep or already pinned")
         )
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
@@ -309,23 +341,22 @@ class TestCLI:
 
     def test_documents_command(self, runner, mock_ragzoom):
         """Test documents command."""
-        # Mock document results
+        # Mock document results using the document service
         from datetime import datetime
-        from unittest.mock import MagicMock
 
-        mock_doc1 = MagicMock()
-        mock_doc1.id = "doc-123"
-        mock_doc1.file_path = "/path/to/file.txt"
-        mock_doc1.indexed_at = datetime.now()
-        mock_doc1.chunk_count = 10
+        from ragzoom.services.document_service import DocumentInfo
 
-        mock_session = MagicMock()
-        mock_session.query.return_value.all.return_value = [mock_doc1]
-        mock_session.query.return_value.filter_by.return_value.count.return_value = 15
+        mock_doc_info = DocumentInfo(
+            document_id="doc-123",
+            file_path="/path/to/file.txt",
+            indexed_at=datetime.now(),
+            chunk_count=10,
+            node_count=15,
+        )
 
-        mock_ragzoom[
-            "store_instance"
-        ].SessionLocal.return_value.__enter__.return_value = mock_session
+        mock_ragzoom["document_service_instance"].list_documents.return_value = [
+            mock_doc_info
+        ]
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
             result = runner.invoke(cli, ["documents"])
@@ -357,34 +388,16 @@ class TestCLI:
             temp_file = f.name
 
         try:
-            # Mock existing document
-            mock_session = MagicMock()
-            mock_doc = MagicMock()
-            mock_doc.id = os.path.basename(temp_file)
-            mock_session.query.return_value.filter_by.return_value.first.return_value = (
-                mock_doc
-            )
-            mock_session.query.return_value.filter_by.return_value.delete.return_value = (
-                1
-            )
-
-            mock_ragzoom[
-                "store_instance"
-            ].SessionLocal.return_value.__enter__.return_value = mock_session
-            mock_ragzoom["store_instance"].clear_document.return_value = 5
-
             with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
                 result = runner.invoke(cli, ["index", temp_file])
 
                 assert result.exit_code == 0
-                assert "Clearing existing data" in result.output
-                assert "Cleared 5 nodes" in result.output
                 assert "Document indexed successfully!" in result.output
 
-                # Verify clear_document was called
-                mock_ragzoom["store_instance"].clear_document.assert_called_once_with(
-                    os.path.basename(temp_file)
-                )
+                # Verify that the indexing service was called
+                mock_ragzoom[
+                    "indexing_service_instance"
+                ].index_from_file.assert_called_once()
         finally:
             os.unlink(temp_file)
 
@@ -395,27 +408,16 @@ class TestCLI:
             temp_file = f.name
 
         try:
-            # Mock no existing document
-            mock_session = MagicMock()
-            mock_session.query.return_value.filter_by.return_value.first.return_value = (
-                None
-            )
-
-            mock_ragzoom[
-                "store_instance"
-            ].SessionLocal.return_value.__enter__.return_value = mock_session
-            mock_ragzoom["store_instance"].clear_document.return_value = 0
-
             with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
                 result = runner.invoke(cli, ["index", temp_file])
 
                 assert result.exit_code == 0
-                # Should NOT show clearing message when no nodes exist
-                assert "Clearing existing data" not in result.output
                 assert "Document indexed successfully!" in result.output
 
-                # Verify clear_document was called (automatic clearing)
-                mock_ragzoom["store_instance"].clear_document.assert_called_once()
+                # Verify that the indexing service was called
+                mock_ragzoom[
+                    "indexing_service_instance"
+                ].index_from_file.assert_called_once()
         finally:
             os.unlink(temp_file)
 
@@ -431,8 +433,10 @@ class TestCLI:
 
                 assert result.exit_code == 0
 
-                # Verify add_document was called
-                mock_ragzoom["builder_instance"].add_document.assert_called_once()
+                # Verify index_from_file was called
+                mock_ragzoom[
+                    "indexing_service_instance"
+                ].index_from_file.assert_called_once()
         finally:
             os.unlink(temp_file)
 
@@ -461,22 +465,14 @@ class TestCLI:
             assert "Cleared document 'test-doc' (10 nodes deleted)" in result.output
 
             # Verify clear_document was called
-            mock_ragzoom["store_instance"].clear_document.assert_called_once_with(
-                "test-doc"
-            )
+            mock_ragzoom[
+                "document_service_instance"
+            ].clear_document.assert_called_once_with("test-doc")
 
     def test_clear_document_with_orphaned_nodes(self, runner, mock_ragzoom):
         """Test clearing orphaned nodes (no Document record)."""
-        # Mock no document record but nodes exist
-        mock_session = MagicMock()
-        mock_session.query.return_value.filter_by.return_value.first.return_value = None
-
-        mock_ragzoom[
-            "store_instance"
-        ].SessionLocal.return_value.__enter__.return_value = mock_session
-        mock_ragzoom["store_instance"].clear_document.return_value = (
-            248  # orphaned nodes
-        )
+        # Mock document service clearing orphaned nodes
+        mock_ragzoom["document_service_instance"].clear_document.return_value = 248
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
             result = runner.invoke(
@@ -489,9 +485,9 @@ class TestCLI:
             )
 
             # Verify clear_document was called even without Document record
-            mock_ragzoom["store_instance"].clear_document.assert_called_once_with(
-                "orphaned-doc"
-            )
+            mock_ragzoom[
+                "document_service_instance"
+            ].clear_document.assert_called_once_with("orphaned-doc")
 
     def test_clear_all_data(self, runner, mock_ragzoom):
         """Test clearing all data."""
