@@ -13,6 +13,7 @@ from ragzoom.telemetry_collection import (
     SummaryAttempt,
     TelemetryCollector,
 )
+from tests.utils import create_telemetry_summary_mock
 
 
 class TestTelemetryDataStructures:
@@ -223,10 +224,10 @@ class TestTelemetryIntegration:
             + " ".join(["Data" + str(i) for i in range(150)])
         )
 
-        # Create mock AsyncOpenAI client
+        # Create mock with telemetry-specific behavior
         mock_async_client = MagicMock()
 
-        # Mock embeddings - needs to be async
+        # Mock embeddings with store-type specific behavior
         async def mock_embeddings(*args: Any, **kwargs: Any) -> Any:
             input_texts = kwargs.get("input", [])
             if isinstance(input_texts, str):
@@ -239,22 +240,9 @@ class TestTelemetryIntegration:
 
         mock_async_client.embeddings.create = mock_embeddings
 
-        # Mock summaries - needs to be async
-        async def mock_chat_completion(*args: Any, **kwargs: Any) -> Any:
-            response = MagicMock()
-            response.choices = [MagicMock()]
-            response.choices[0].message = MagicMock()
-            # Return a summary that's close to the target token count to avoid retries
-            response.choices[0].message.content = " ".join(
-                ["Summary", "word"] * 50
-            )  # ~100 tokens
-            # Add usage data for telemetry
-            response.usage = MagicMock()
-            response.usage.prompt_tokens = 250
-            response.usage.completion_tokens = 50
-            return response
-
-        mock_async_client.chat.completions.create = mock_chat_completion
+        # Use centralized telemetry summary mock
+        _, telemetry_chat_async = create_telemetry_summary_mock()
+        mock_async_client.chat.completions.create = telemetry_chat_async
 
         # Index with mocked client
         with patch(
