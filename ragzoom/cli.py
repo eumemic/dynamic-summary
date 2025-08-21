@@ -9,7 +9,6 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
-from ragzoom.assemble import Assembler
 from ragzoom.config import (
     IndexConfig,
     OperationalConfig,
@@ -24,8 +23,9 @@ from ragzoom.exceptions import (
     ResourceError,
     ValidationError,
 )
-from ragzoom.index import TreeBuilder
-from ragzoom.retrieve import Retriever
+from ragzoom.services.document_service import DocumentService
+from ragzoom.services.indexing_service import IndexingService
+from ragzoom.services.query_service import QueryService
 from ragzoom.store import TreeNode, create_store_with_docker
 from ragzoom.tree_viz import build_ascii_tree
 
@@ -232,103 +232,75 @@ def index(
         ctx.obj["query_config"] = query_config
         ctx.obj["operational_config"] = operational_config
 
-        # Create components for this command
+        # Create services for this command
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
-        tree_builder = TreeBuilder(
-            index_config,
-            store,
-            api_key=operational_config.openai_api_key,
+        indexing_service = IndexingService(store, index_config, operational_config)
+
+        # Index document from file
+        click.echo(f"Indexing {Path(file_path).name}...")
+
+        result = indexing_service.index_from_file(
+            file_path,
+            document_id=document_id,
+            show_progress=not no_progress,
+            collect_telemetry=bool(telemetry_file),
         )
-
-        # Read file
-        path = Path(file_path)
-        text = path.read_text(encoding="utf-8")
-
-        # Determine document ID (use provided ID or filename)
-        if not document_id:
-            document_id = path.name
-
-        # Always clear existing data for the document (handles both complete and interrupted indexing)
-        deleted_count = store.clear_document(document_id)
-        if deleted_count > 0:
-            click.echo(f"Clearing existing data for '{document_id}'...")
-            click.echo(f"   Cleared {deleted_count} nodes")
-
-        click.echo(f"Indexing {path.name}...")
-
-        # Index with telemetry if requested
-        if telemetry_file:
-            doc_id, telemetry = tree_builder.add_document_with_telemetry(
-                text,
-                document_id=document_id,
-                file_path=str(path.absolute()),
-                show_progress=not no_progress,
-            )
-        else:
-            doc_id = tree_builder.add_document(
-                text,
-                document_id=document_id,
-                file_path=str(path.absolute()),
-                show_progress=not no_progress,
-            )
-
-        # Get stats
-
-        # Get leaf nodes for this specific document
-        with store.SessionLocal() as session:
-            doc_leaves = (
-                session.query(TreeNode)
-                .filter_by(document_id=doc_id)
-                .filter(
-                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
-                )
-                .all()
-            )
-
-        # Get root node for this document
-        with store.SessionLocal() as session:
-            root = (
-                session.query(TreeNode)
-                .filter_by(document_id=doc_id, parent_id=None)
-                .first()
-            )
 
         click.echo("✅ Document indexed successfully!")
-        click.echo(f"   Document ID: {doc_id}")
-        click.echo(f"   Chunks created: {len(doc_leaves)}")
-        tree_height = root.height if root else 0
-        click.echo(f"   Tree height: {tree_height}")
+        click.echo(f"   Document ID: {result.document_id}")
+        click.echo(f"   Chunks created: {result.chunks_created}")
+        click.echo(f"   Tree height: {result.tree_depth}")
+
+        # Store telemetry reference for later use
+        telemetry_data = result.telemetry
 
         # Run validation checks
-        from ragzoom.validate import (
-            validate as run_validate,
-        )
-        from ragzoom.validate import (
-            validate_chunk_sizes,
-            validate_document_coverage,
-            validate_equal_leaf_depth,
-            validate_tree_structure,
-        )
+        if validate:
+            from ragzoom.validate import (
+                validate as run_validate,
+            )
+            from ragzoom.validate import (
+                validate_chunk_sizes,
+                validate_document_coverage,
+                validate_equal_leaf_depth,
+                validate_tree_structure,
+            )
 
-        # Validations will run only if --validate was passed
-        run_validate(
-            lambda: validate_document_coverage(text, doc_leaves), "document coverage"
-        )
+            # Read file to get text for validation
+            text = Path(file_path).read_text(encoding="utf-8")
 
-        run_validate(
-            lambda: validate_chunk_sizes(doc_leaves, index_config.target_chunk_tokens),
-            "chunk sizes",
-        )
+            # Get leaf nodes for validation
+            with store.SessionLocal() as session:
+                doc_leaves = (
+                    session.query(TreeNode)
+                    .filter_by(document_id=result.document_id)
+                    .filter(
+                        TreeNode.left_child_id.is_(None),
+                        TreeNode.right_child_id.is_(None),
+                    )
+                    .all()
+                )
 
-        run_validate(
-            lambda: validate_tree_structure(store, doc_id, text), "tree structure"
-        )
-
-        run_validate(
-            lambda: validate_equal_leaf_depth(store, doc_id), "equal leaf depth"
-        )
+            run_validate(
+                lambda: validate_document_coverage(text, doc_leaves),
+                "document coverage",
+            )
+            run_validate(
+                lambda: validate_chunk_sizes(
+                    doc_leaves, index_config.target_chunk_tokens
+                ),
+                "chunk sizes",
+            )
+            run_validate(
+                lambda: validate_tree_structure(store, result.document_id, text),
+                "tree structure",
+            )
+            run_validate(
+                lambda: validate_equal_leaf_depth(store, result.document_id),
+                "equal leaf depth",
+            )
 
         # Show debug hint if enabled
         if debug:
@@ -337,20 +309,11 @@ def index(
             )
 
         # Save telemetry if requested
-        if telemetry_file:
-            # telemetry_file will be either the flag_value or the user-provided path
-            output_file = telemetry_file
-
-            click.echo(f"\n📁 Saving telemetry to {output_file}...")
-
-            # Telemetry data is already flat - just save it directly
-            # The telemetry data from finalize() already contains all necessary information
-            telemetry_data = telemetry
-
-            with open(output_file, "w") as f:
+        if telemetry_file and telemetry_data:
+            click.echo(f"\n📁 Saving telemetry to {telemetry_file}...")
+            with open(telemetry_file, "w") as f:
                 json.dump(telemetry_data, f, indent=2)
-
-            click.echo(f"✅ Telemetry saved to {output_file}")
+            click.echo(f"✅ Telemetry saved to {telemetry_file}")
 
     except OSError as e:
         # Clean user-friendly errors (no "Error indexing document" prefix)
@@ -365,18 +328,16 @@ def index(
 def documents(ctx: click.Context) -> None:
     """List all indexed documents."""
     try:
-        # Create components for this command
+        # Create services for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
+        document_service = DocumentService(store)
 
-        # Get all unique documents
-        with store.SessionLocal() as session:
-            from ragzoom.store import Document
-
-            docs = session.query(Document).all()
+        # Get all documents
+        docs = document_service.list_documents()
 
         if not docs:
             click.echo("No documents indexed yet.")
@@ -386,20 +347,24 @@ def documents(ctx: click.Context) -> None:
         click.echo("-" * 60)
 
         for doc in docs:
-            # Get document stats using document-scoped store
-            doc_store = store.for_document(doc.id)
-            all_nodes = doc_store.nodes.get_all()
-            leaves = doc_store.nodes.get_leaves()
-
-            node_count = len(all_nodes)
-            leaf_count = len(leaves)
-
-            click.echo(f"\nDocument ID: {doc.id}")
+            click.echo(f"\nDocument ID: {doc.document_id}")
             if doc.file_path:
                 click.echo(f"File: {doc.file_path}")
             click.echo(f"Indexed: {doc.indexed_at}")
             click.echo(f"Chunks: {doc.chunk_count}")
-            click.echo(f"Total nodes: {node_count}")
+            click.echo(f"Total nodes: {doc.node_count}")
+
+            # Calculate leaf count separately if needed
+            with store.SessionLocal() as session:
+                leaf_count = (
+                    session.query(TreeNode)
+                    .filter_by(document_id=doc.document_id)
+                    .filter(
+                        TreeNode.left_child_id.is_(None),
+                        TreeNode.right_child_id.is_(None),
+                    )
+                    .count()
+                )
             click.echo(f"Leaf nodes: {leaf_count}")
 
     except Exception as e:
@@ -457,28 +422,37 @@ def query(
         if embedding_model is not None:
             query_config = query_config.replace(embedding_model=embedding_model)
 
-        # Create components for this command
+        # Create services for this command
         store = create_store_with_docker(
             operational_config, embedding_model=query_config.embedding_model
         )
-        retriever = Retriever(
-            query_config,
-            store,
-            api_key=operational_config.openai_api_key,
-        )
-        assembler = Assembler(store)
+        query_service = QueryService(store, query_config, operational_config)
 
-        # Retrieve with CLI parameters
-        result = retriever.retrieve(
+        # Execute query
+        query_result = query_service.execute_query(
             query_text,
-            budget_tokens=query_config.budget_tokens,
-            document_id=document_id,
+            document_id,
             num_seeds=num_seeds,
+            token_budget=token_budget,
         )
 
-        # Assemble
-        summary = assembler.assemble(result)
-        token_count = assembler.get_token_count(summary)
+        # Get retrieval result for debug info (if needed)
+        result = None
+        if debug:
+            # We need the raw retrieval result for debug visualization
+            from ragzoom.retrieve import Retriever
+
+            retriever = Retriever(
+                query_config,
+                store,
+                api_key=operational_config.openai_api_key,
+            )
+            result = retriever.retrieve(
+                query_text,
+                budget_tokens=token_budget or query_config.budget_tokens,
+                document_id=document_id,
+                num_seeds=num_seeds,
+            )
 
         # Tiling validation
         if validate and getattr(result, "tiling", None) and result.tiling:
@@ -498,10 +472,9 @@ def query(
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY")
         click.echo("=" * 60)
-        if debug and getattr(result, "tiling", None) and result.tiling:
-            doc_store = store.for_document(document_id)
+        if debug and result and getattr(result, "tiling", None) and result.tiling:
             for idx, node_id in enumerate(result.tiling):
-                node = doc_store.nodes.get(node_id)
+                node = store.nodes.get_node(node_id)
                 if node:
                     # Node span is always the full span
                     span_start, span_end = node.span_start, node.span_end
@@ -519,11 +492,11 @@ def query(
                     if idx < len(result.tiling) - 1:
                         click.echo("")
         else:
-            click.echo(summary)
+            click.echo(query_result.summary)
         click.echo("")
 
         # Show debug info if requested
-        if debug:
+        if debug and result:
             # Show ASCII tree visualization first
             if result.tiling:
                 # Get terminal width with fallback, or use CLI override
@@ -557,11 +530,19 @@ def query(
             click.echo("=" * 60)
             click.echo("STATISTICS")
             click.echo("=" * 60)
-            click.echo(f"  Nodes retrieved: {len(result.node_ids)}")
-            tiling_size = len(result.tiling) if result.tiling else 0
-            click.echo(f"  Tiling size: {tiling_size}")
-            click.echo(f"  Token count: {token_count}")
-            click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
+            click.echo(f"  Nodes retrieved: {query_result.nodes_retrieved}")
+            click.echo(f"  Tiling size: {query_result.tiling_size}")
+            click.echo(f"  Token count: {query_result.token_count}")
+            if result:
+                click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
+        elif debug:
+            # Show basic statistics if debug but no detailed result
+            click.echo("=" * 60)
+            click.echo("STATISTICS")
+            click.echo("=" * 60)
+            click.echo(f"  Nodes retrieved: {query_result.nodes_retrieved}")
+            click.echo(f"  Tiling size: {query_result.tiling_size}")
+            click.echo(f"  Token count: {query_result.token_count}")
 
     except Exception as e:
         handle_cli_error(e, "processing query")
@@ -573,13 +554,15 @@ def query(
 def pin(ctx: click.Context, node_id: str) -> None:
     """Pin a node to always include it."""
     try:
-        # Create components for this command
+        # Create services for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
-        store.pin_node(node_id)
+        document_service = DocumentService(store)
+
+        document_service.pin_node(node_id)
         click.echo(f"✅ Node {node_id} pinned successfully!")
     except NodeNotFoundError:
         click.echo(f"❌ Node {node_id} not found")
@@ -597,17 +580,16 @@ def pin(ctx: click.Context, node_id: str) -> None:
 def status(ctx: click.Context) -> None:
     """Show system status."""
     try:
-        # Get configs and create components
+        # Get configs and create services
         index_config = ctx.obj["index_config"]
         query_config = ctx.obj["query_config"]
         operational_config = ctx.obj["operational_config"]
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
-        # Gather stats
-        with store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
+        document_service = DocumentService(store)
 
+<<<<<<< HEAD
             all_nodes = session.query(TreeNode).count()
         # TODO: Implement system-wide stats for multi-document architecture
         pinned = store.get_pinned_nodes()
@@ -622,6 +604,17 @@ def status(ctx: click.Context) -> None:
             "Tree height: N/A (multi-document)"
         )  # TODO: Max depth across documents
         click.echo(f"Pinned nodes: {len(pinned)}")
+=======
+        # Get system status
+        status = document_service.get_system_status()
+
+        click.echo("\nSYSTEM STATUS:")
+        click.echo("=" * 40)
+        click.echo(f"Total nodes: {status.total_nodes}")
+        click.echo(f"Leaf nodes: {status.leaf_nodes}")
+        click.echo(f"Tree height: {status.tree_depth}")
+        click.echo(f"Pinned nodes: {status.pinned_nodes}")
+>>>>>>> 454393c (refactor: add service layer to eliminate API/CLI duplication)
         click.echo("\nCONFIGURATION:")
         click.echo("=" * 40)
         click.echo(f"Budget tokens: {query_config.budget_tokens}")
@@ -665,12 +658,13 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
     With --document-id, clears only the specified document.
     """
     try:
-        # Create components for this command
+        # Create services for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
+        document_service = DocumentService(store)
 
         if document_id:
             # Clear specific document
@@ -680,9 +674,7 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
                     abort=True,
                 )
 
-            # Clear document (handles both complete documents and orphaned nodes)
-            deleted_count = store.clear_document(document_id)
-
+            deleted_count = document_service.clear_document(document_id)
             click.echo(
                 f"✅ Cleared document '{document_id}' ({deleted_count} nodes deleted)"
             )
@@ -691,21 +683,7 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
             if not confirm:
                 click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
 
-            # Clear database data
-            with store.SessionLocal() as session:
-                # Import models
-                from ragzoom.store import Document, TreeNode
-
-                # Delete all nodes
-                deleted_count = session.query(TreeNode).count()
-                session.query(TreeNode).delete()
-                session.query(Document).delete()
-                session.commit()
-
-            # Clear the cache
-            store.node_cache.clear()
-            store.cache_order.clear()
-
+            deleted_count = document_service.clear_all_documents()
             click.echo(f"✅ Cleared {deleted_count} nodes from the database")
 
     except click.Abort:
@@ -721,12 +699,13 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
 def export(ctx: click.Context, output_file: str, format: str) -> None:
     """Export tree structure to file."""
     try:
-        # Create components for this command
+        # Create services for this command
         operational_config = ctx.obj["operational_config"]
         index_config = ctx.obj["index_config"]
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
+        document_service = DocumentService(store)
 
         # Get all nodes
         nodes_data = []

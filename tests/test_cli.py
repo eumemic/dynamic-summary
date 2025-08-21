@@ -27,9 +27,9 @@ class TestCLI:
             patch("ragzoom.cli.QueryConfig") as mock_query_config,
             patch("ragzoom.cli.OperationalConfig") as mock_operational_config,
             patch("ragzoom.cli.create_store_with_docker") as mock_create_store,
-            patch("ragzoom.cli.TreeBuilder") as mock_builder,
-            patch("ragzoom.cli.Retriever") as mock_retriever,
-            patch("ragzoom.cli.Assembler") as mock_assembler,
+            patch("ragzoom.cli.DocumentService") as mock_document_service,
+            patch("ragzoom.cli.IndexingService") as mock_indexing_service,
+            patch("ragzoom.cli.QueryService") as mock_query_service,
         ):
 
             # Mock index config
@@ -129,47 +129,55 @@ class TestCLI:
 
             mock_create_store.return_value = store_instance
 
-            # Mock tree builder
-            builder_instance = Mock()
-            # add_document is called synchronously in CLI
-            builder_instance.add_document.return_value = "doc-123"
-            mock_builder.return_value = builder_instance
+            # Mock services
+            document_service_instance = Mock()
+            document_service_instance.list_documents.return_value = []
+            document_service_instance.get_system_status.return_value = Mock(
+                total_nodes=10, leaf_nodes=5, tree_depth=3, pinned_nodes=0
+            )
+            document_service_instance.clear_document.return_value = 5
+            document_service_instance.clear_all_documents.return_value = 10
+            mock_document_service.return_value = document_service_instance
 
-            # Mock retriever
-            retriever_instance = Mock()
-            retriever_instance.retrieve.return_value = Mock(
-                node_ids=["node-1", "node-2"],
-                tiling=None,  # Updated field name
-                coverage_map={"node-1": 1.0, "node-2": 1.0},
-            )
-            mock_retriever.return_value = retriever_instance
+            # Mock indexing service
+            indexing_service_instance = Mock()
+            from ragzoom.services.indexing_service import IndexingResult
 
-            # Mock assembler
-            assembler_instance = Mock()
-            assembler_instance.assemble.return_value = (
-                "This is a summary of the content."
+            indexing_service_instance.index_from_file.return_value = IndexingResult(
+                document_id="doc-123",
+                chunks_created=5,
+                tree_depth=3,
+                telemetry=None,
             )
-            assembler_instance.assemble_with_budget.return_value = (
-                "This is a summary of the content.",
-                100,
+            mock_indexing_service.return_value = indexing_service_instance
+
+            # Mock query service
+            query_service_instance = Mock()
+            from ragzoom.services.query_service import QueryResult
+
+            query_service_instance.execute_query.return_value = QueryResult(
+                summary="This is a summary of the content.",
+                token_count=100,
+                nodes_retrieved=2,
+                tiling_size=3,
             )
-            mock_assembler.return_value = assembler_instance
+            mock_query_service.return_value = query_service_instance
 
             yield {
                 "index_config": mock_index_config,
                 "query_config": mock_query_config,
                 "operational_config": mock_operational_config,
                 "create_store": mock_create_store,
-                "builder": mock_builder,
-                "retriever": mock_retriever,
-                "assembler": mock_assembler,
+                "document_service": mock_document_service,
+                "indexing_service": mock_indexing_service,
+                "query_service": mock_query_service,
                 "index_config_instance": index_config_instance,
                 "query_config_instance": query_config_instance,
                 "operational_config_instance": operational_config_instance,
                 "store_instance": store_instance,
-                "builder_instance": builder_instance,
-                "retriever_instance": retriever_instance,
-                "assembler_instance": assembler_instance,
+                "document_service_instance": document_service_instance,
+                "indexing_service_instance": indexing_service_instance,
+                "query_service_instance": query_service_instance,
             }
 
     def test_cli_help(self, runner):
