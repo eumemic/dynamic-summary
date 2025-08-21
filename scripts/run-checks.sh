@@ -198,10 +198,10 @@ fi
 
 # jscpd
 if ! should_skip "jscpd"; then
-    if command -v npx &> /dev/null && [[ -n "$modified_files" ]]; then
+    if command -v npx &> /dev/null; then
         run_check_background "JSCPD" "npx jscpd@latest ragzoom/ --config $GIT_ROOT/.jscpd.json"
     else
-        echo "[JSCPD] Skipped (no Python files or npx not available)"
+        echo "[JSCPD] Skipped (npx not available)"
     fi
 fi
 
