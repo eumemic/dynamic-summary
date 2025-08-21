@@ -2,7 +2,14 @@
 # Common script for running Python quality checks
 # Used by both git hooks and Claude hooks
 #
-# Usage: run-checks.sh [--skip tests,dmypy,ruff,black,jscpd] [file_or_directory ...]
+# Usage: 
+#   run-checks.sh [OPTIONS] [file_or_directory ...]
+#
+# Options:
+#   --skip CHECKS           Skip specific checks (comma-separated): tests,dmypy,ruff,black,jscpd,bandit
+#   --fail-fast             Stop at first failure (useful for debugging)
+#   --include-slow-tests    Include slow and integration tests (auto-starts PostgreSQL)
+#   --help                  Show this help message
 #
 # Exit codes:
 #   0 - All checks passed
@@ -15,6 +22,10 @@ SKIP_CHECKS=""
 TARGETS=""
 FAIL_FAST=false
 INCLUDE_SLOW_TESTS=false
+
+show_help() {
+    sed -n '2,/^$/p' "$0" | sed 's/^# *//'
+}
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -29,6 +40,10 @@ while [[ $# -gt 0 ]]; do
         --include-slow-tests)
             INCLUDE_SLOW_TESTS=true
             shift
+            ;;
+        --help|-h)
+            show_help
+            exit 0
             ;;
         *)
             TARGETS="$TARGETS $1"
