@@ -9,7 +9,7 @@ argument-hint: [pr-number] [initial-task]
 # file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
 
 ## Context
-- Current PR: !`gh pr view --json number -q .number 2>/dev/null || echo ""`
+- Current PR: !`gh pr list --head $(git branch --show-current) --state open --json number -q '.[0].number // ""'`
 - Branch: !`git branch --show-current`
 
 ## Strategic Guidance
