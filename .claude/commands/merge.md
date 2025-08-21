@@ -10,9 +10,9 @@ argument-hint: [PR number]
 
 ## Context
 - Current branch: !`git branch --show-current`
-- PR status: !`gh pr list --head $(git branch --show-current) --state open --json mergeable -q 'if length > 0 then if .[0].mergeable == "MERGEABLE" then "OPEN / Ready" else "OPEN / Not ready" end else "No PR" end'`
-- CI status: !`gh pr checks --json conclusion --jq 'if length == 0 then "No checks" else "See details below" end'`
-- Uncommitted changes: !`git diff-index --quiet HEAD && echo "None" || echo "Present - will be lost!"`
+- PR status: !`gh pr list --head $(git branch --show-current) --state open --json number --jq 'if length > 0 then "OPEN" else "No PR" end'`
+- CI status: Use `gh pr checks` to verify before merging
+- Uncommitted changes: Use `git status --porcelain` to check
 
 ## Strategic Guidance
 Merging completes the feature cycle. Use squash merge to maintain a clean commit history on master. For worktree branches, we don't delete the branch - just sync with master for the next cycle.
