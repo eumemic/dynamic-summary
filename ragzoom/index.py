@@ -537,7 +537,7 @@ class TreeBuilder:
 
             return document_id
         finally:
-            # Always close progress
+            # Always close progress if it exists
             if progress:
                 progress.close()
 
