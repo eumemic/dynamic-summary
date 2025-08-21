@@ -59,7 +59,7 @@ def test_indexing_performance(leaf_tokens, document_type):
     api_key = os.getenv("OPENAI_API_KEY", "test-key")
 
     # Skip if no API key
-    if api_key == "test-key":
+    if api_key == "test-key" or api_key == "test-key-for-tests":
         pytest.skip("OPENAI_API_KEY not set")
 
     index_config = IndexConfig.load(

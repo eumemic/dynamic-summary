@@ -138,7 +138,9 @@ class TestChunkSizeRegression:
         mock_async_client.chat.completions.create.side_effect = mock_chat_completion
 
         # Index the document
-        with patch("ragzoom.index.AsyncOpenAI", return_value=mock_async_client):
+        with patch(
+            "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
+        ):
             builder = TreeBuilder(
                 index_config, store, api_key=operational_config.openai_api_key
             )

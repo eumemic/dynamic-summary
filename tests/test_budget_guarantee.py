@@ -18,7 +18,7 @@ class TestBudgetGuarantee:
         """Set up a test system with mocked API."""
         # Mock OpenAI clients
         with (
-            patch("ragzoom.index.AsyncOpenAI") as mock_index_client,
+            patch("ragzoom.services.llm_service.AsyncOpenAI") as mock_index_client,
             patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
         ):
 
