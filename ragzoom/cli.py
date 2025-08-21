@@ -365,22 +365,13 @@ def documents(ctx: click.Context) -> None:
         click.echo("-" * 60)
 
         for doc in docs:
-            # Get document stats
-            with store.SessionLocal() as session:
-                from ragzoom.store import TreeNode
+            # Get document stats using document-scoped store
+            doc_store = store.for_document(doc.id)
+            all_nodes = doc_store.nodes.get_all()
+            leaves = doc_store.nodes.get_leaves()
 
-                node_count = (
-                    session.query(TreeNode).filter_by(document_id=doc.id).count()
-                )
-                leaf_count = (
-                    session.query(TreeNode)
-                    .filter_by(document_id=doc.id)
-                    .filter(
-                        TreeNode.left_child_id.is_(None),
-                        TreeNode.right_child_id.is_(None),
-                    )
-                    .count()
-                )
+            node_count = len(all_nodes)
+            leaf_count = len(leaves)
 
             click.echo(f"\nDocument ID: {doc.id}")
             if doc.file_path:
@@ -488,8 +479,9 @@ def query(
         click.echo("SUMMARY")
         click.echo("=" * 60)
         if debug and getattr(result, "tiling", None) and result.tiling:
+            doc_store = store.for_document(document_id)
             for idx, node_id in enumerate(result.tiling):
-                node = store.get_node(node_id)
+                node = doc_store.nodes.get(node_id)
                 if node:
                     # Node span is always the full span
                     span_start, span_end = node.span_start, node.span_end
@@ -599,16 +591,18 @@ def status(ctx: click.Context) -> None:
             from ragzoom.store import TreeNode
 
             all_nodes = session.query(TreeNode).count()
-        leaf_nodes = store.get_leaf_nodes()
-        root = store.get_root_node()
+        # TODO: Implement system-wide stats for multi-document architecture
         pinned = store.get_pinned_nodes()
 
         click.echo("\nSYSTEM STATUS:")
         click.echo("=" * 40)
         click.echo(f"Total nodes: {all_nodes}")
-        click.echo(f"Leaf nodes: {len(leaf_nodes)}")
-        tree_height = root.height if root else 0
-        click.echo(f"Tree height: {tree_height}")
+        click.echo(
+            "Leaf nodes: N/A (multi-document)"
+        )  # TODO: Aggregate across documents
+        click.echo(
+            "Tree height: N/A (multi-document)"
+        )  # TODO: Max depth across documents
         click.echo(f"Pinned nodes: {len(pinned)}")
         click.echo("\nCONFIGURATION:")
         click.echo("=" * 40)
@@ -732,7 +726,8 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
                     "height": node.height,
                     "span_start": node.span_start,
                     "span_end": node.span_end,
-                    "is_leaf": store.is_leaf_node(node.id),
+                    "is_leaf": node.left_child_id is None
+                    and node.right_child_id is None,
                     "text_preview": (
                         node.text[:100] + "..." if len(node.text) > 100 else node.text
                     ),

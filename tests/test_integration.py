@@ -102,11 +102,12 @@ class TestIntegration:
 
         assert doc_id == "test-doc"
 
-        # Check tree was built
-        leaf_nodes = store.get_leaf_nodes()
+        # Check tree was built - get leaf nodes from the specific document
+        doc_store = store.for_document(doc_id)
+        leaf_nodes = doc_store.nodes.get_leaves()
         assert len(leaf_nodes) > 0
 
-        root = store.get_root_node()
+        root = doc_store.tree.get_root()
         assert root is not None
 
         # Query the system
@@ -130,19 +131,24 @@ class TestIntegration:
         text1 = "First document content. " * 10
         tree_builder.add_document(text1, "doc1")
 
-        initial_leaf_count = len(store.get_leaf_nodes())
+        # Get initial leaf count from doc1
+        doc1_store = store.for_document("doc1")
+        initial_leaf_count = len(doc1_store.nodes.get_leaves())
 
         # Index second document
         text2 = "Second document content. " * 10
         tree_builder.add_document(text2, "doc2")
 
-        # Check new leaves were added
-        new_leaf_count = len(store.get_leaf_nodes())
-        assert new_leaf_count > initial_leaf_count
+        # Check new leaves were added by checking both documents
+        doc2_store = store.for_document("doc2")
+        doc1_leaf_count = len(doc1_store.nodes.get_leaves())
+        doc2_leaf_count = len(doc2_store.nodes.get_leaves())
+        total_leaf_count = doc1_leaf_count + doc2_leaf_count
+        assert total_leaf_count > initial_leaf_count
 
         # Check we have nodes from both documents
-        doc1_nodes = [n for n in store.get_leaf_nodes() if n.document_id == "doc1"]
-        doc2_nodes = [n for n in store.get_leaf_nodes() if n.document_id == "doc2"]
+        doc1_nodes = doc1_store.nodes.get_leaves()
+        doc2_nodes = doc2_store.nodes.get_leaves()
         assert len(doc1_nodes) > 0
         assert len(doc2_nodes) > 0
 
@@ -195,8 +201,9 @@ class TestIntegration:
         for i, text in enumerate(texts):
             tree_builder.add_document(text * 10, f"doc-{i}")
 
-        # Pin a specific node
-        all_nodes = store.get_leaf_nodes()
+        # Pin a specific node from the first document
+        doc0_store = store.for_document("doc-0")
+        all_nodes = doc0_store.nodes.get_leaves()
         if all_nodes:
             important_node = all_nodes[0]
             store.pin_node(important_node.id)

@@ -8,7 +8,7 @@ import pytest
 
 from ragzoom.config import IndexConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.store import Store
+from ragzoom.store import StoreManager
 
 # Skip benchmarks by default unless explicitly requested
 pytestmark = pytest.mark.benchmark
@@ -70,7 +70,7 @@ def test_indexing_performance(leaf_tokens, document_type):
     test_doc, doc_name = get_test_document(document_type)
 
     # Run indexing with metrics
-    with Store.temporary() as store:
+    with StoreManager.temporary() as store:
         builder = TreeBuilder(index_config, store, api_key)
 
         # Warm up tokenizer

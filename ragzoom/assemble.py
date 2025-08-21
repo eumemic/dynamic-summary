@@ -3,7 +3,7 @@
 import logging
 
 from ragzoom.retrieve import RetrievalResult
-from ragzoom.store import Store, TreeNode
+from ragzoom.store import StoreManager, TreeNode
 from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class Assembler:
     """Assembles tiling nodes into coherent summary with optional smoothing."""
 
-    def __init__(self, store: Store):
+    def __init__(self, store: StoreManager):
         """Initialize assembler."""
         self.store = store
         self.tokenizer = tokenizer
@@ -48,7 +48,7 @@ class Assembler:
         if nodes and node_id in nodes:
             node = nodes[node_id]
         else:
-            node = self.store.get_node(node_id)
+            node = self.store.nodes.get_node(node_id)
 
         if not node or not node.text:
             return ""

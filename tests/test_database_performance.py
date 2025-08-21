@@ -99,7 +99,7 @@ class TestDatabaseScalability:
         logger.info(f"Added {expected_count} nodes in {add_duration:.2f}s")
 
         # Verify nodes were added
-        count_before = len(store.get_all_nodes_for_document(document_id))
+        count_before = len(store.for_document(document_id).nodes.get_all())
         assert count_before == expected_count
 
         # Test deletion performance
@@ -110,7 +110,7 @@ class TestDatabaseScalability:
 
         # Verify deletion
         assert deleted_count == expected_count
-        count_after = len(store.get_all_nodes_for_document(document_id))
+        count_after = len(store.for_document(document_id).nodes.get_all())
         assert count_after == 0
 
         # Performance assertions
@@ -167,8 +167,8 @@ class TestDatabaseScalability:
             logger.info(f"Testing paginated retrieval with page_size={page_size}")
             start_time = time.perf_counter()
 
-            batches = store.get_all_nodes_for_document_paginated(
-                document_id, page_size=page_size
+            batches = store.for_document(document_id).nodes.get_all_paginated(
+                page_size=page_size
             )
 
             retrieval_duration = time.perf_counter() - start_time
@@ -212,7 +212,7 @@ class TestDatabaseScalability:
         document_id = "boundary_test_doc"
 
         # Test with no nodes
-        batches = store.get_all_nodes_for_document_paginated(document_id)
+        batches = store.for_document(document_id).nodes.get_all_paginated()
         assert len(batches) == 0
 
         # Add exactly one page worth of nodes
@@ -229,8 +229,8 @@ class TestDatabaseScalability:
             )
 
         # Test retrieval
-        batches = store.get_all_nodes_for_document_paginated(
-            document_id, page_size=page_size
+        batches = store.for_document(document_id).nodes.get_all_paginated(
+            page_size=page_size
         )
         assert len(batches) == 1
         assert len(batches[0]) == page_size
@@ -246,8 +246,8 @@ class TestDatabaseScalability:
             token_count=10,
         )
 
-        batches = store.get_all_nodes_for_document_paginated(
-            document_id, page_size=page_size
+        batches = store.for_document(document_id).nodes.get_all_paginated(
+            page_size=page_size
         )
         assert len(batches) == 2
         assert len(batches[0]) == page_size
@@ -259,10 +259,10 @@ class TestDatabaseScalability:
     def test_invalid_page_size(self, store: StoreInterface) -> None:
         """Test that invalid page sizes are rejected."""
         with pytest.raises(ValueError, match="page_size must be positive"):
-            store.get_all_nodes_for_document_paginated("test_doc", page_size=0)
+            store.for_document("test_doc").nodes.get_all_paginated(page_size=0)
 
         with pytest.raises(ValueError, match="page_size must be positive"):
-            store.get_all_nodes_for_document_paginated("test_doc", page_size=-1)
+            store.for_document("test_doc").nodes.get_all_paginated(page_size=-1)
 
 
 class TestMemoryEfficiency:
@@ -325,7 +325,7 @@ class TestRegressionPrevention:
         )
 
         # Load into cache
-        node = store.get_node(node_id)
+        node = store.nodes.get_node(node_id)
         assert node is not None
         assert node.text == "Cache test node"
 
@@ -334,7 +334,7 @@ class TestRegressionPrevention:
         assert deleted_count == 1
 
         # Node should no longer be accessible
-        node_after_deletion = store.get_node(node_id)
+        node_after_deletion = store.nodes.get_node(node_id)
         assert node_after_deletion is None
 
     def test_transaction_support_maintained(self, store: StoreInterface) -> None:
@@ -359,5 +359,5 @@ class TestRegressionPrevention:
         assert deleted_count == 5
 
         # After deletion, nodes should be gone
-        remaining_nodes = store.get_all_nodes_for_document(document_id)
+        remaining_nodes = store.for_document(document_id).nodes.get_all()
         assert len(remaining_nodes) == 0

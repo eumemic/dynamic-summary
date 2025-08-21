@@ -12,7 +12,7 @@ from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store
+from ragzoom.store import StoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class RagZoomService:
         )  # Will read OPENAI_API_KEY from env
 
         # Initialize components with specific configs
-        self.store = Store(
+        self.store = StoreManager(
             self.operational_config, embedding_model=self.index_config.embedding_model
         )
         self.tree_builder = TreeBuilder(
@@ -166,24 +166,10 @@ async def index_document(
             show_progress=False,
         )
 
-        # Get stats for this specific document
-        with service.store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
-
-            doc_leaves = (
-                session.query(TreeNode)
-                .filter_by(document_id=document_id)
-                .filter(
-                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
-                )
-                .all()
-            )
-
-            root = (
-                session.query(TreeNode)
-                .filter_by(document_id=document_id, parent_id=None)
-                .first()
-            )
+        # Get stats for this specific document using document store
+        doc_store = service.store.for_document(document_id)
+        doc_leaves = doc_store.nodes.get_leaves()
+        root = doc_store.tree.get_root()
 
         tree_height = root.height if root else 0
 
@@ -347,14 +333,14 @@ async def get_status(
             from ragzoom.store import TreeNode
 
             all_nodes = session.query(TreeNode).count()
-        leaf_nodes = service.store.get_leaf_nodes()
-        root = service.store.get_root_node()
+        # TODO: Implement system-wide stats for multi-document architecture
+        # For now, return basic stats
         pinned = service.store.get_pinned_nodes()
 
         return SystemStatusResponse(
             total_nodes=all_nodes,
-            leaf_nodes=len(leaf_nodes),
-            tree_depth=root.height if root else 0,
+            leaf_nodes=0,  # TODO: Aggregate across all documents
+            tree_depth=0,  # TODO: Maximum depth across all documents
             pinned_nodes=len(pinned),
             config={
                 "index": asdict(service.index_config),

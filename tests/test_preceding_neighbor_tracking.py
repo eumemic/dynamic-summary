@@ -39,8 +39,9 @@ class TestPrecedingNeighborTracking:
             tree_builder.add_document_async(test_document, document_id="test-doc")
         )
 
-        # Get all leaf nodes
-        leaf_nodes = store.get_leaf_nodes()
+        # Get all leaf nodes for the document
+        doc_store = store.for_document("test-doc")
+        leaf_nodes = doc_store.nodes.get_leaves()
 
         # Sort by span_start to get document order
         leaf_nodes.sort(key=lambda n: n.span_start)
@@ -95,14 +96,20 @@ class TestPrecedingNeighborTracking:
             all_nodes = store.get_all_nodes()
         else:
             # For real store, get nodes from document
+            doc_store = store.for_document("test-doc")
             all_nodes = []
             # Get leaf nodes
-            leaf_nodes = store.get_leaf_nodes()
+            leaf_nodes = doc_store.nodes.get_leaves()
             all_nodes.extend(leaf_nodes)
             # Get their ancestors
             if leaf_nodes:
                 leaf_ids = [n.id for n in leaf_nodes]
-                ancestors = store.get_ancestors(leaf_ids)
+                if hasattr(store, "tree"):
+                    # For real store
+                    ancestors = store.tree.get_ancestors(leaf_ids)
+                else:
+                    # For mock store
+                    ancestors = store.get_ancestors(leaf_ids)
                 all_nodes.extend(ancestors)
 
         # Group nodes by height (leaf nodes have no children)
@@ -161,15 +168,26 @@ class TestPrecedingNeighborTracking:
             tree_builder.add_document_async(test_document, document_id="test-doc")
         )
 
-        # Get leaf nodes
-        leaf_nodes = store.get_leaf_nodes()
+        # Get leaf nodes for the document
+        if hasattr(store, "get_leaf_nodes"):
+            # Mock store
+            leaf_nodes = store.get_leaf_nodes()
+        else:
+            # Real store - use document store
+            doc_store = store.for_document("test-doc")
+            leaf_nodes = doc_store.nodes.get_leaves()
         leaf_nodes.sort(key=lambda n: n.span_start)
 
         # For each node (except the first), verify we can get its preceding context
         for i, node in enumerate(leaf_nodes):
             if i > 0:
                 # Get the preceding node
-                preceding_node = store.get_node(node.preceding_neighbor_id)
+                if hasattr(store, "get_node"):
+                    # Mock store
+                    preceding_node = store.nodes.get_node(node.preceding_neighbor_id)
+                else:
+                    # Real store - use nodes repository
+                    preceding_node = store.nodes.get_node(node.preceding_neighbor_id)
                 assert (
                     preceding_node is not None
                 ), f"Should be able to retrieve preceding node for {node.id}"
