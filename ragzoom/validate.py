@@ -571,15 +571,29 @@ Be strict about factual additions, but allow normal paraphrasing and summarizati
 
         result = response.choices[0].message.content.strip()
 
-        if result.startswith("VALID"):
+        # Parse LLM response with proper validation
+        result_upper = result.upper().strip()
+
+        if result_upper == "VALID" or result_upper.startswith("VALID"):
             return None
-        elif result.startswith("INVALID:"):
+        elif result.upper().startswith("INVALID:"):
             return str(result)
         else:
-            logger.warning(f"Unexpected validation response: {result}")
-            return "INVALID: unexpected response format"
+            from ragzoom.exceptions import ValidationError
+
+            raise ValidationError(
+                field="llm_response",
+                value=result,
+                reason="Expected 'VALID' or 'INVALID: <reason>' format",
+            )
 
     except Exception as e:
-        logger.error(f"Error during summary validation: {e}")
-        # Don't fail indexing due to validation errors
-        return None
+        from ragzoom.error_utils import preserve_exception_chain
+        from ragzoom.exceptions import LLMError
+
+        validation_error = LLMError(
+            operation="summary_validation",
+            model=model,
+            message=f"Failed to validate summary faithfulness: {e}",
+        )
+        raise preserve_exception_chain(validation_error, e)

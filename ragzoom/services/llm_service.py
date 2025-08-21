@@ -100,8 +100,16 @@ class LLMService:
                 )
                 return response.data[0].embedding
             except Exception as e:
-                logger.error(f"Error getting embedding: {e}")
-                raise
+                from ragzoom.error_utils import preserve_exception_chain
+                from ragzoom.exceptions import LLMError
+
+                llm_error = LLMError(
+                    operation="get_embedding",
+                    model=self.config.embedding_model,
+                    message=f"Failed to get embedding: {e}",
+                    text_length=len(text),
+                )
+                raise preserve_exception_chain(llm_error, e)
 
     async def _get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
         """Get embeddings for multiple texts in batches to respect API limits."""
@@ -144,8 +152,16 @@ class LLMService:
                 )
                 return [data.embedding for data in response.data]
             except Exception as e:
-                logger.error(f"Error getting batch embeddings: {e}")
-                raise
+                from ragzoom.error_utils import preserve_exception_chain
+                from ragzoom.exceptions import LLMError
+
+                llm_error = LLMError(
+                    operation="get_batch_embeddings",
+                    model=self.config.embedding_model,
+                    message=f"Failed to get batch embeddings: {e}",
+                    batch_size=len(texts),
+                )
+                raise preserve_exception_chain(llm_error, e)
 
     def _tokens_to_words(self, target_tokens: int) -> int:
         """Convert target token count to target word count with bias compensation."""
@@ -217,8 +233,16 @@ class LLMService:
             return content, usage_info
 
         except Exception as e:
-            logger.error(f"Error in OpenAI API call for node {node_id}: {e}")
-            raise
+            from ragzoom.error_utils import preserve_exception_chain
+            from ragzoom.exceptions import LLMError
+
+            llm_error = LLMError(
+                operation="summarize_text",
+                model=self.config.summary_model,
+                message=f"Failed to summarize text for node {node_id}: {e}",
+                node_id=node_id,
+            )
+            raise preserve_exception_chain(llm_error, e)
 
     async def _record_summary_telemetry(
         self,
@@ -642,5 +666,13 @@ Here's the content to summarize:"""
                 return summary, 0, summary_tokens
 
             except Exception as e:
-                logger.error(f"Error summarizing text for node {parent_id}: {e}")
-                raise
+                from ragzoom.error_utils import preserve_exception_chain
+                from ragzoom.exceptions import LLMError
+
+                llm_error = LLMError(
+                    operation="batch_summarize",
+                    model=self.config.summary_model,
+                    message=f"Failed to summarize text for node {parent_id}: {e}",
+                    node_id=parent_id,
+                )
+                raise preserve_exception_chain(llm_error, e)
