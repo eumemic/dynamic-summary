@@ -8,111 +8,44 @@ from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
+from tests.utils import create_predictable_summary_mock, mock_openai_context
 
 
 class TestBudgetGuarantee:
     """Test that budget guarantees are enforced by construction."""
 
     @pytest.fixture
-    def setup_system(self, store):
+    def setup_system(self, store, config_factory):
         """Set up a test system with mocked API."""
-        # Mock OpenAI clients
-        with (
-            patch("ragzoom.services.llm_service.AsyncOpenAI") as mock_index_client,
-            patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
-        ):
+        # Create custom config for budget testing
+        config = config_factory(
+            target_chunk_tokens=200,  # Standard leaf size
+            preceding_context_tokens=50,
+            budget_tokens=1000,  # Strict budget for testing
+        )
 
-            # Setup async mocks for indexing
-            async def mock_embeddings_create(*args, **kwargs):
-                input_data = kwargs.get("input", args[0] if args else "")
-                if isinstance(input_data, list):
-                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
-                else:
-                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
-
-            async def mock_chat_create(*args, **kwargs):
-                # Generate predictable summaries
-                messages = kwargs.get("messages", [])
-                content = messages[-1]["content"] if messages else ""
-
-                # Extract token count hint from the prompt
-                if "approximately 50 tokens" in content:
-                    return Mock(
-                        choices=[
-                            Mock(
-                                message=Mock(content="Short summary of both children.")
-                            )
-                        ]
-                    )
-                else:
-                    return Mock(
-                        choices=[
-                            Mock(
-                                message=Mock(
-                                    content="This is the combined summary text for both children."
-                                )
-                            )
-                        ]
-                    )
-
-            # Setup sync mocks for retrieval/assembly
-            def mock_embeddings_create_sync(*args, **kwargs):
-                input_data = kwargs.get("input", args[0] if args else "")
-                if isinstance(input_data, list):
-                    return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
-                else:
-                    return Mock(data=[Mock(embedding=[0.1] * 1536)])
-
-            # Configure mocks
-            mock_embeddings_async = Mock()
-            mock_embeddings_async.create = Mock(side_effect=mock_embeddings_create)
-
-            mock_embeddings_sync = Mock()
-            mock_embeddings_sync.create = Mock(side_effect=mock_embeddings_create_sync)
-
-            mock_chat_async = Mock()
-            mock_chat_async.completions = Mock()
-            mock_chat_async.completions.create = Mock(side_effect=mock_chat_create)
-
-            # Set up clients
-            instance_async = Mock()
-            instance_async.embeddings = mock_embeddings_async
-            instance_async.chat = mock_chat_async
-            mock_index_client.return_value = instance_async
-
-            # Set up sync client for retrieve
-            instance_sync = Mock()
-            instance_sync.embeddings = mock_embeddings_sync
-            mock_retrieve_client.return_value = instance_sync
-
-            # Create test configs with specific budget
-            index_config = IndexConfig.load(
-                target_chunk_tokens=200,  # Standard leaf size
-                preceding_context_tokens=50,
-            )
-            query_config = QueryConfig(
-                budget_tokens=1000,  # Strict budget for testing
-            )
-            operational_config = OperationalConfig(
-                openai_api_key="test-key",
-            )
+        # Use centralized mocking with predictable summaries
+        with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
+            # Override with predictable summary behavior
+            mock_chat_sync, mock_chat_async = create_predictable_summary_mock()
+            mock_index.chat.completions.create = mock_chat_async
 
             tree_builder = TreeBuilder(
-                index_config,
+                config.index_config,
                 store,
-                api_key=operational_config.openai_api_key,
+                api_key=config.openai_api_key,
             )
             retriever = Retriever(
-                query_config,
+                config.query_config,
                 store,
-                api_key=operational_config.openai_api_key,
+                api_key=config.openai_api_key,
             )
             assembler = Assembler(store)
 
             yield (
-                index_config,
-                query_config,
-                operational_config,
+                config.index_config,
+                config.query_config,
+                config.operational_config,
             ), store, tree_builder, retriever, assembler
 
     def test_budget_never_exceeded_worst_case(self, setup_system):
@@ -315,7 +248,6 @@ class TestBudgetGuarantee:
 
     def test_num_seeds_only_mode(self):
         """Test num_seeds only mode (no budget enforcement)."""
-        from unittest.mock import Mock, patch
 
         from tests.mock_store import SimpleMockStore
 

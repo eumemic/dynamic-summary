@@ -7,14 +7,17 @@ These tests verify the DP tiling algorithm's correctness, including:
 - Budget constraints
 """
 
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
+from tests.utils import (
+    create_hash_based_embedding_mock,
+    create_predictable_summary_mock,
+    mock_openai_context,
+)
 
 
 class ConfigWrapper:
@@ -48,44 +51,6 @@ class ConfigWrapper:
         return self.query_config.budget_tokens
 
 
-def sync_embedding(*args, **kwargs):
-    texts = kwargs.get("input")
-    if texts is None and len(args) > 0:
-        texts = args[0]
-    if not isinstance(texts, list):
-        texts = [texts]
-    embeddings = []
-    for text in texts:
-        hash_val = sum(ord(c) for c in text) % 100
-        embedding = [hash_val / 100.0] * 1536
-        embeddings.append(MagicMock(embedding=embedding))
-    return MagicMock(data=embeddings)
-
-
-async def async_embedding(*args, **kwargs):
-    return sync_embedding(*args, **kwargs)
-
-
-def sync_summary(*args, **kwargs):
-    messages = kwargs.get("messages")
-    if messages is None and len(args) > 0:
-        messages = args[0]
-    content = messages[1]["content"] if messages and len(messages) > 1 else ""
-    if "First chunk" in content and "Second chunk" in content:
-        summary = "Summary of first two chunks. Combined content of chunks 1 and 2."
-    elif "Third chunk" in content and "Fourth chunk" in content:
-        summary = "Summary of last two chunks. Combined content of chunks 3 and 4."
-    elif "Summary of first" in content and "Summary of last" in content:
-        summary = "Overall document summary. Complete document overview."
-    else:
-        summary = "Generic summary of the content."
-    return MagicMock(choices=[MagicMock(message=MagicMock(content=summary))])
-
-
-async def async_summary(*args, **kwargs):
-    return sync_summary(*args, **kwargs)
-
-
 class TestDPIntegration:
     """Test DP algorithm integration with indexing and assembly.
 
@@ -94,19 +59,14 @@ class TestDPIntegration:
     """
 
     @pytest.fixture
-    def config(self):
+    def config(self, config_factory):
         """Create test configuration."""
         return ConfigWrapper(
-            index_config=IndexConfig.load(
+            **config_factory(
                 target_chunk_tokens=50,
                 preceding_context_tokens=0,
-            ),
-            query_config=QueryConfig(
                 budget_tokens=500,
-            ),
-            operational_config=OperationalConfig(
-                openai_api_key="test-key",
-            ),
+            ).__dict__
         )
 
     @pytest.fixture
@@ -114,48 +74,18 @@ class TestDPIntegration:
         """Mock OpenAI for consistent embeddings and summaries."""
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
-        # Mock embeddings
-        async def mock_embedding(*args, **kwargs):
-            # Extract the 'input' argument (list of texts)
-            texts = kwargs.get("input")
-            if texts is None and len(args) > 0:
-                texts = args[0]
-            if not isinstance(texts, list):
-                texts = [texts]
-            embeddings = []
-            for text in texts:
-                hash_val = sum(ord(c) for c in text) % 100
-                embedding = [hash_val / 100.0] * 1536
-                embeddings.append(MagicMock(embedding=embedding))
-            return MagicMock(data=embeddings)
+        # Use centralized mocking with hash-based embeddings and predictable summaries
+        with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
+            # Override with hash-based embedding behavior
+            hash_sync, hash_async = create_hash_based_embedding_mock()
+            mock_index.embeddings.create = hash_async
+            mock_retrieve.embeddings.create = hash_sync
 
-        # Mock summaries with MID delimiter
-        async def mock_summary(*args, **kwargs):
-            messages = kwargs.get("messages")
-            if messages is None and len(args) > 0:
-                messages = args[0]
-            content = messages[1]["content"] if messages and len(messages) > 1 else ""
-            if "First chunk" in content and "Second chunk" in content:
-                summary = (
-                    "Summary of first two chunks. Combined content of chunks 1 and 2."
-                )
-            elif "Third chunk" in content and "Fourth chunk" in content:
-                summary = (
-                    "Summary of last two chunks. Combined content of chunks 3 and 4."
-                )
-            elif "Summary of first" in content and "Summary of last" in content:
-                summary = "Overall document summary. Complete document overview."
-            else:
-                summary = "Generic summary of the content."
-            return MagicMock(choices=[MagicMock(message=MagicMock(content=summary))])
+            # Override with predictable summary behavior
+            chat_sync, chat_async = create_predictable_summary_mock()
+            mock_index.chat.completions.create = chat_async
 
-        mock_client = MagicMock()
-        mock_client.embeddings.create = mock_embedding
-
-        mock_async_client = AsyncMock()
-        mock_async_client.chat.completions.create = mock_summary
-
-        return mock_client, mock_async_client
+            yield mock_retrieve, mock_index
 
     @pytest.mark.asyncio
     async def test_no_duplicate_content(self, config, store, mock_openai, monkeypatch):
@@ -176,8 +106,6 @@ class TestDPIntegration:
         tree_builder = TreeBuilder(
             config.index_config, store, api_key=config.openai_api_key
         )
-        tree_builder.llm_service.client.embeddings.create = async_embedding
-        tree_builder.llm_service.client.chat.completions.create = async_summary
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
         )
@@ -189,8 +117,6 @@ class TestDPIntegration:
             api_key=config.openai_api_key,
             tree_builder=tree_builder,
         )
-        retriever.client.embeddings.create = sync_embedding
-        retriever.client.chat.completions.create = sync_summary
         query = "First chunk Second chunk"  # Query that should match the first half
         result = await retriever.retrieve_async(query, document_id="doc1")
 
@@ -232,8 +158,6 @@ class TestDPIntegration:
             store=store,
             api_key=config.openai_api_key,
         )
-        tree_builder.llm_service.client.embeddings.create = async_embedding
-        tree_builder.llm_service.client.chat.completions.create = async_summary
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
         )
@@ -245,8 +169,6 @@ class TestDPIntegration:
             api_key=config.openai_api_key,
             tree_builder=tree_builder,
         )
-        retriever.client.embeddings.create = sync_embedding
-        retriever.client.chat.completions.create = sync_summary
         result = await retriever.retrieve_async("test document", document_id="doc1")
 
         # Check tiling doesn't have both parent and child
@@ -282,8 +204,6 @@ class TestDPIntegration:
             store=store,
             api_key=config.openai_api_key,
         )
-        tree_builder.llm_service.client.embeddings.create = async_embedding
-        tree_builder.llm_service.client.chat.completions.create = async_summary
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
         )
@@ -297,8 +217,6 @@ class TestDPIntegration:
         )
 
         # Patch retriever client for sync
-        retriever.client.embeddings.create = sync_embedding
-        retriever.client.chat.completions.create = sync_summary
         # Query for first half
         result1 = await retriever.retrieve_async("AAAA BBBB", document_id="doc1")
         assembler = Assembler(store)
@@ -333,8 +251,6 @@ class TestDPIntegration:
             store=store,
             api_key=config.openai_api_key,
         )
-        tree_builder.llm_service.client.embeddings.create = async_embedding
-        tree_builder.llm_service.client.chat.completions.create = async_summary
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
         )
@@ -346,8 +262,6 @@ class TestDPIntegration:
             api_key=config.openai_api_key,
             tree_builder=tree_builder,
         )
-        retriever.client.embeddings.create = sync_embedding
-        retriever.client.chat.completions.create = sync_summary
         result = await retriever.retrieve_async(
             "Sentence", document_id="doc1", budget_tokens=100
         )
