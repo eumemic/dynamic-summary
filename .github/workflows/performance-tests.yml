@@ -397,7 +397,7 @@ jobs:
               echo "📸 Image published to GitHub Pages: $VISUALIZATION_URL"
             fi
           else
-            echo "⚠️ Skipping visualization - missing telemetry_${CHUNK_SIZE}_tokens.json files"
+            echo "⚠️ Skipping visualization - missing telemetry.json files"
           fi
       
       - name: Update comment - visualization complete
@@ -443,7 +443,7 @@ jobs:
         run: |
           set +e  # Don't exit on error, we handle exit codes manually
           # Check if we have baseline results
-          if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/telemetry_100_tokens.json" ]; then
+          if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/telemetry.json" ]; then
             echo "## 📊 Performance Report" > report.md
             echo "" >> report.md
             echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" >> report.md
@@ -455,20 +455,18 @@ jobs:
             echo "### Current Performance" >> report.md
             echo "" >> report.md
             
-            # Show current results
-            for file in benchmark_results/telemetry_*_tokens.json; do
-              if [ -f "$file" ]; then
-                chunk_size=$(basename "$file" | sed 's/telemetry_\([0-9]*\)_tokens.json/\1/')
-                echo "**Chunk size: $chunk_size tokens**" >> report.md
-                # Check if file contains error
-                if grep -q '"error"' "$file"; then
-                  echo "- ❌ Benchmark failed to run" >> report.md
-                else
-                  python3 -c "import json; from ragzoom.telemetry_analysis import compute_metrics_from_telemetry; data = json.load(open('$file')); metrics = compute_metrics_from_telemetry(data['telemetry']); print(f'- Duration: {metrics.total_duration_seconds:.2f}s'); print(f'- Total cost: \${metrics.total_cost:.4f}'); print(f'- Document size: {metrics.source_document_tokens:,} tokens')" >> report.md
-                fi
-                echo "" >> report.md
+            # Show current results from the single telemetry.json file
+            if [ -f "benchmark_results/telemetry.json" ]; then
+              # Check if file contains error
+              if grep -q '"error"' "benchmark_results/telemetry.json"; then
+                echo "- ❌ Benchmark failed to run" >> report.md
+              else
+                python3 -c "import json; from ragzoom.telemetry_analysis import compute_metrics_from_telemetry; data = json.load(open('benchmark_results/telemetry.json')); metrics = compute_metrics_from_telemetry(data['telemetry']); print(f'- Duration: {metrics.total_duration_seconds:.2f}s'); print(f'- Total cost: \${metrics.total_cost:.4f}'); print(f'- Document size: {metrics.source_document_tokens:,} tokens'); print(f'- Chunk size: {metrics.target_chunk_tokens} tokens')" >> report.md
               fi
-            done
+              echo "" >> report.md
+            else
+              echo "⚠️ No benchmark results found" >> report.md
+            fi
           else
             # Generate comparison report using ragzoom-telemetry
             echo "🔍 Checking for baseline and current benchmark files..."
@@ -492,28 +490,12 @@ jobs:
               exit 1
             }
             
-            # Compare benchmarks
-            # Check if we have multiple baseline files for directory comparison
-            baseline_count=$(ls baseline_results/telemetry_*_tokens.json 2>/dev/null | wc -l)
-            
-            if [ "$baseline_count" -gt 1 ]; then
-              # New style: directory comparison for multiple chunk sizes
-              echo "📊 Running multi-file benchmark comparison..."
-              # Run comparison and capture both output and exit code
-              # Use set +e to prevent immediate exit on error
-              set +e
-              ragzoom-telemetry compare baseline_results/ benchmark_results/ > report.md 2>&1
-              comparison_exit_code=$?
-              set -e
-              
-              # Report is ready as-is, no need to add visualization (handled in PR comment)
-            elif [ -f "baseline_results/telemetry_100_tokens.json" ] && [ -f "benchmark_results/telemetry_100_tokens.json" ]; then
-              # TODO: Remove this single-file fallback after migration period
-              # Once all baselines in master are multi-file, we can remove this branch
-              echo "📊 Running single-file benchmark comparison (legacy mode)..."
+            # Compare benchmarks using single telemetry.json files
+            if [ -f "baseline_results/telemetry.json" ] && [ -f "benchmark_results/telemetry.json" ]; then
+              echo "📊 Running benchmark comparison..."
               # Run comparison and capture both output and exit code
               set +e
-              ragzoom-telemetry compare baseline_results/telemetry_100_tokens.json benchmark_results/telemetry_100_tokens.json > report.md 2>&1
+              ragzoom-telemetry compare baseline_results/telemetry.json benchmark_results/telemetry.json > report.md 2>&1
               comparison_exit_code=$?
               set -e
               
@@ -522,8 +504,8 @@ jobs:
               echo "❌ Expected benchmark files not found" > report.md
               echo "" >> report.md
               echo "Looking for:" >> report.md
-              echo "- baseline_results/telemetry_*_tokens.json" >> report.md  
-              echo "- benchmark_results/telemetry_*_tokens.json" >> report.md
+              echo "- baseline_results/telemetry.json" >> report.md  
+              echo "- benchmark_results/telemetry.json" >> report.md
               echo "" >> report.md
               comparison_exit_code=1
             fi
