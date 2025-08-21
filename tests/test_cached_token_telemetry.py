@@ -102,7 +102,9 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store):
 
         return MockOpenAIResponseWithCache("", 0, 0)
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         with (
             patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
             patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
@@ -164,7 +166,9 @@ async def test_backward_compatibility_without_cached_tokens(mock_store):
     async def mock_create(**kwargs):
         return response
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         # Mock encode to return appropriate lengths - combined text should exceed target
         def mock_encode(text):
             if "Test content" in text and "More content" in text:
@@ -253,7 +257,9 @@ async def test_cached_tokens_across_multiple_retries(mock_store):
 
         return MockOpenAIResponseWithCache("", 0, 0)
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         with (
             patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
             patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
@@ -312,7 +318,9 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store):
         api_calls.append(kwargs)
         pytest.fail("Should not call API for passthrough")
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         with (
             patch(
                 "ragzoom.index.tokenizer.encode", return_value=[0] * 50  # Under target
@@ -377,7 +385,9 @@ async def test_cached_tokens_with_high_cache_rate(mock_store):
                 cached_tokens=2090,  # 95% cached
             )
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         with (
             patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
             patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),

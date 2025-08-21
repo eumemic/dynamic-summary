@@ -32,7 +32,7 @@ class TestPrecedingNeighborTracking:
 
         # Create tree builder and index
         tree_builder = TreeBuilder(config, store, max_concurrent=5)
-        tree_builder.client = mock_openai_async_client
+        tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
         asyncio.run(
@@ -83,7 +83,7 @@ class TestPrecedingNeighborTracking:
 
         # Create tree builder and index
         tree_builder = TreeBuilder(config, store, max_concurrent=5)
-        tree_builder.client = mock_openai_async_client
+        tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
         asyncio.run(
@@ -154,7 +154,7 @@ class TestPrecedingNeighborTracking:
 
         # Create tree builder and index
         tree_builder = TreeBuilder(config, store, max_concurrent=5)
-        tree_builder.client = mock_openai_async_client
+        tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
         asyncio.run(
