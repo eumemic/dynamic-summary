@@ -267,9 +267,7 @@ jobs:
             _View [workflow run](${workflowUrl})_
             
             ⏳ **Progress:**
-            - ✅ 100 tokens benchmark complete
-            - ✅ 200 tokens benchmark complete
-            - ✅ 400 tokens benchmark complete
+            - ✅ Indexing benchmark complete
             - ✅ Query benchmarks complete
             - ⏱️ Generating visualization...`;
             
@@ -415,9 +413,8 @@ jobs:
             _View [workflow run](${workflowUrl})_
             
             ⏳ **Progress:**
-            - ✅ 100 tokens benchmark complete
-            - ✅ 200 tokens benchmark complete
-            - ✅ 400 tokens benchmark complete
+            - ✅ Indexing benchmark complete
+            - ✅ Query benchmarks complete  
             - ✅ Visualization generated
             - ⏱️ Generating comparison report...`;
             
