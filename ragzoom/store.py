@@ -391,3 +391,7 @@ class StoreManager:
         """Run database migrations (deprecated - handled by DatabaseManager)."""
         # This is now handled by DatabaseManager during initialization
         pass
+
+
+# Alias for backward compatibility
+Store = StoreManager

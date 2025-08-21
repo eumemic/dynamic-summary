@@ -8,43 +8,38 @@ from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 
 from ragzoom.api_middleware import ErrorHandlingMiddleware
-from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
-from ragzoom.index import TreeBuilder
-from ragzoom.retrieve import Retriever
-from ragzoom.store import StoreManager
+from ragzoom.services.document_service import DocumentInfo, DocumentService
+from ragzoom.services.indexing_service import IndexingService
+from ragzoom.services.query_service import QueryService
+from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
 
 
-# Thread-safe service creation - new instance per request
-class RagZoomService:
-    """Service container for RagZoom components."""
+# Service container for dependency injection
+class ServiceContainer:
+    """Container for RagZoom services."""
 
     def __init__(self) -> None:
-        # Create separate configs
-        self.index_config = IndexConfig.load()  # Load defaults
+        # Create configurations
+        self.index_config = IndexConfig.load()
         self.query_config = QueryConfig()
-        self.operational_config: OperationalConfig = (
-            OperationalConfig()
-        )  # Will read OPENAI_API_KEY from env
+        self.operational_config = OperationalConfig()
 
-        # Initialize components with specific configs
-        self.store = StoreManager(
+        # Initialize store
+        self.store = Store(
             self.operational_config, embedding_model=self.index_config.embedding_model
         )
-        self.tree_builder = TreeBuilder(
-            self.index_config,
-            self.store,
-            api_key=self.operational_config.openai_api_key,
-            max_concurrent=30,  # Default concurrency limit for API calls
+
+        # Initialize services
+        self.document_service = DocumentService(self.store)
+        self.indexing_service = IndexingService(
+            self.store, self.index_config, self.operational_config
         )
-        self.retriever = Retriever(
-            self.query_config,
-            self.store,
-            api_key=self.operational_config.openai_api_key,
+        self.query_service = QueryService(
+            self.store, self.query_config, self.operational_config
         )
-        self.assembler = Assembler(self.store)
 
     def close(self) -> None:
         """Close store connections and cleanup resources."""
@@ -52,10 +47,10 @@ class RagZoomService:
             self.store.close()
 
 
-# Dependency injection - creates new service per request
-def get_ragzoom_service() -> RagZoomService:
-    """Create a new RagZoom service instance for thread safety."""
-    return RagZoomService()
+# Dependency injection - creates new service container per request
+def get_service_container() -> ServiceContainer:
+    """Create a new service container for thread safety."""
+    return ServiceContainer()
 
 
 # Create FastAPI app
@@ -131,8 +126,8 @@ class SystemStatusResponse(BaseModel):
     config: dict[str, Any]
 
 
-class DocumentInfo(BaseModel):
-    """Information about an indexed document."""
+class DocumentInfoResponse(BaseModel):
+    """Information about an indexed document for API response."""
 
     document_id: str
     file_path: str | None
@@ -140,11 +135,22 @@ class DocumentInfo(BaseModel):
     chunk_count: int
     node_count: int
 
+    @classmethod
+    def from_domain(cls, doc_info: DocumentInfo) -> "DocumentInfoResponse":
+        """Create from domain DocumentInfo object."""
+        return cls(
+            document_id=doc_info.document_id,
+            file_path=doc_info.file_path,
+            indexed_at=doc_info.indexed_at.isoformat(),
+            chunk_count=doc_info.chunk_count,
+            node_count=doc_info.node_count,
+        )
+
 
 class DocumentsResponse(BaseModel):
     """Response listing all indexed documents."""
 
-    documents: list[DocumentInfo]
+    documents: list[DocumentInfoResponse]
 
 
 # Routes
@@ -157,94 +163,63 @@ async def root() -> dict[str, str]:
 @app.post("/index", response_model=IndexDocumentResponse)
 async def index_document(
     request: IndexDocumentRequest,
-    service: RagZoomService = Depends(get_ragzoom_service),
+    services: ServiceContainer = Depends(get_service_container),
 ) -> IndexDocumentResponse:
     """Index a new document."""
-    # Add document to tree - use async version directly since we're in an async endpoint
-    document_id = await service.tree_builder.add_document_async(
+    # Use service layer - error handling is done by middleware
+    result = await services.indexing_service.index_document_async(
         request.text,
-        request.document_id,
+        document_id=request.document_id,
         file_path=request.file_path,
         show_progress=False,
     )
 
-    # Get stats for this specific document using document store
-    doc_store = service.store.for_document(document_id)
-    doc_leaves = doc_store.nodes.get_leaves()
-    root = doc_store.tree.get_root()
-
-    tree_height = root.height if root else 0
-
     return IndexDocumentResponse(
-        document_id=document_id,
-        chunks_created=len(doc_leaves),
-        tree_depth=tree_height,
+        document_id=result.document_id,
+        chunks_created=result.chunks_created,
+        tree_depth=result.tree_depth,
     )
     # Error handling is now done by middleware
 
 
 @app.get("/documents", response_model=DocumentsResponse)
 async def list_documents(
-    service: RagZoomService = Depends(get_ragzoom_service),
+    services: ServiceContainer = Depends(get_service_container),
 ) -> DocumentsResponse:
     """List all indexed documents."""
-    documents = []
-
-    with service.store.SessionLocal() as session:
-        from ragzoom.store import Document, TreeNode
-
-        docs = session.query(Document).all()
-
-        for doc in docs:
-            # Get node count for this document
-            node_count = session.query(TreeNode).filter_by(document_id=doc.id).count()
-
-            documents.append(
-                DocumentInfo(
-                    document_id=doc.id,
-                    file_path=doc.file_path,
-                    indexed_at=doc.indexed_at.isoformat(),
-                    chunk_count=doc.chunk_count,
-                    node_count=node_count,
-                )
-            )
-
+    doc_infos = services.document_service.list_documents()
+    documents = [DocumentInfoResponse.from_domain(doc) for doc in doc_infos]
     return DocumentsResponse(documents=documents)
     # Error handling is now done by middleware
 
 
 @app.post("/query", response_model=QueryResponse)
 async def query(
-    request: QueryRequest, service: RagZoomService = Depends(get_ragzoom_service)
+    request: QueryRequest, services: ServiceContainer = Depends(get_service_container)
 ) -> QueryResponse:
     """Query the system."""
-    # Use async version since we're in an async endpoint
-    retrieval_result = await service.retriever.retrieve_async(
+    result = await services.query_service.execute_query_async(
         request.query,
-        request.num_seeds,
-        request.token_budget,
-        document_id=request.document_id,
+        request.document_id,
+        num_seeds=request.num_seeds,
+        token_budget=request.token_budget,
     )
 
-    # Assemble summary
-    summary = service.assembler.assemble(retrieval_result)
-    token_count = service.assembler.get_token_count(summary)
-
     return QueryResponse(
-        summary=summary,
-        token_count=token_count,
-        nodes_retrieved=len(retrieval_result.node_ids),
-        tiling_size=(len(retrieval_result.tiling) if retrieval_result.tiling else 0),
+        summary=result.summary,
+        token_count=result.token_count,
+        nodes_retrieved=result.nodes_retrieved,
+        tiling_size=result.tiling_size,
     )
     # Error handling is now done by middleware
 
 
 @app.post("/pin")
 async def pin_node(
-    request: PinNodeRequest, service: RagZoomService = Depends(get_ragzoom_service)
+    request: PinNodeRequest, services: ServiceContainer = Depends(get_service_container)
 ) -> dict[str, str]:
     """Pin a node."""
-    service.store.pin_node(request.node_id)
+    services.document_service.pin_node(request.node_id)
     return {"message": "Node pinned successfully", "node_id": request.node_id}
     # Specific exceptions are now handled by middleware
     # Error handling is now done by middleware
@@ -252,46 +227,25 @@ async def pin_node(
 
 @app.patch("/config")
 async def update_config(
-    request: UpdateConfigRequest, service: RagZoomService = Depends(get_ragzoom_service)
+    request: UpdateConfigRequest,
+    services: ServiceContainer = Depends(get_service_container),
 ) -> dict[str, str]:
     """Update configuration dynamically."""
-    # Update query config fields
-    query_updates: dict[str, int | float] = {}
-    if request.budget_tokens is not None:
-        query_updates["budget_tokens"] = request.budget_tokens
-    if request.mmr_lambda is not None:
-        query_updates["mmr_lambda"] = request.mmr_lambda
+    # Update query service configuration
+    services.query_service.update_config(
+        budget_tokens=request.budget_tokens,
+        mmr_lambda=request.mmr_lambda,
+    )
 
-    if query_updates:
-        service.query_config = service.query_config.replace(**query_updates)
-        # Recreate retriever with new config
-        service.retriever = Retriever(
-            service.query_config,
-            service.store,
-            api_key=service.operational_config.openai_api_key,
-        )
-
-    # Update index config fields
-    index_updates = {}
+    # Update index config if needed
     if request.leaf_tokens is not None:
-        index_updates["target_chunk_tokens"] = request.leaf_tokens
-
-    if index_updates:
-        service.index_config = service.index_config.replace(**index_updates)
-        # Recreate components that use index config
-        service.tree_builder = TreeBuilder(
-            service.index_config,
-            service.store,
-            api_key=service.operational_config.openai_api_key,
-            max_concurrent=30,  # Default concurrency limit for API calls
+        services.index_config = services.index_config.replace(
+            target_chunk_tokens=request.leaf_tokens
         )
-        service.retriever = Retriever(
-            service.query_config,
-            service.store,
-            api_key=service.operational_config.openai_api_key,
+        # Recreate indexing service with new config
+        services.indexing_service = IndexingService(
+            services.store, services.index_config, services.operational_config
         )
-
-    # Note: slope_cap and smoothing_pass_enabled were removed as they're not in any config
 
     return {"message": "Configuration updated successfully"}
     # Error handling is now done by middleware
@@ -299,33 +253,26 @@ async def update_config(
 
 @app.get("/status", response_model=SystemStatusResponse)
 async def get_status(
-    service: RagZoomService = Depends(get_ragzoom_service),
+    services: ServiceContainer = Depends(get_service_container),
 ) -> SystemStatusResponse:
     """Get system status."""
-    # Gather stats
-    with service.store.SessionLocal() as session:
-        from ragzoom.store import TreeNode
+    status = services.document_service.get_system_status()
 
-        all_nodes = session.query(TreeNode).count()
-        # TODO: Implement system-wide stats for multi-document architecture
-        # For now, return basic stats
-        pinned = service.store.get_pinned_nodes()
-
-        return SystemStatusResponse(
-            total_nodes=all_nodes,
-            leaf_nodes=0,  # TODO: Aggregate across all documents
-            tree_depth=0,  # TODO: Maximum depth across all documents
-            pinned_nodes=len(pinned),
-            config={
-                "index": asdict(service.index_config),
-                "query": asdict(service.query_config),
-                "operational": {
-                    k: v
-                    for k, v in asdict(service.operational_config).items()
-                    if k != "openai_api_key"  # Don't expose API key
-                },
+    return SystemStatusResponse(
+        total_nodes=status.total_nodes,
+        leaf_nodes=status.leaf_nodes,
+        tree_depth=status.tree_depth,
+        pinned_nodes=status.pinned_nodes,
+        config={
+            "index": asdict(services.index_config),
+            "query": asdict(services.query_config),
+            "operational": {
+                k: v
+                for k, v in asdict(services.operational_config).items()
+                if k != "openai_api_key"  # Don't expose API key
             },
-        )
+        },
+    )
     # Error handling is now done by middleware
 
 
@@ -340,9 +287,9 @@ if __name__ == "__main__":
     import uvicorn
 
     # Configure logging
-    service = RagZoomService()
+    services = ServiceContainer()
     logging.basicConfig(
-        level=getattr(logging, service.operational_config.log_level.upper()),
+        level=getattr(logging, services.operational_config.log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
