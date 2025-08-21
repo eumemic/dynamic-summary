@@ -23,6 +23,9 @@ Merge the current PR and sync with master.
 ## Process
 
 1. **Verify Ready**: Check CI passed, no review blockers
+   ```bash
+   gh pr view --json state,mergeable,statusCheckRollup
+   ```
 2. **Check for uncommitted changes**: Ensure no work will be lost
    ```bash
    git diff-index --quiet HEAD || {
