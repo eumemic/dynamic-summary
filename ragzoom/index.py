@@ -129,6 +129,316 @@ class TreeBuilder:
                     if node_id in self.store.cache_order:
                         self.store.cache_order.remove(node_id)
 
+    def _prepare_document(
+        self,
+        text: str,
+        document_id: str | None = None,
+        file_path: str | None = None,
+    ) -> tuple[str, str | None, str]:
+        """Prepare document for indexing: validate models, check existence, determine ID.
+
+        Returns:
+            tuple: (final_document_id, existing_doc_id_if_unchanged, content_hash)
+            - If existing_doc_id_if_unchanged is not None, skip indexing (document unchanged)
+        """
+        # Validate model names to warn about potential issues
+        self._validate_model_names()
+
+        # Compute content hash
+        content_hash = self.store.compute_content_hash(text)
+
+        # Check if document already exists
+        existing_doc = None
+        if file_path:
+            existing_doc = self.store.get_document_by_path(file_path)
+            if existing_doc:
+                # Check if content changed
+                if existing_doc.content_hash == content_hash:
+                    logger.info(
+                        f"Document at {file_path} unchanged, skipping re-indexing"
+                    )
+                    return existing_doc.id, existing_doc.id, content_hash
+                else:
+                    logger.info(f"Document at {file_path} has changed, re-indexing...")
+                    # Delete old nodes
+                    deleted = self.store.delete_document_nodes(existing_doc.id)
+                    logger.info(f"Deleted {deleted} old nodes")
+                    document_id = existing_doc.id
+
+        # Determine final document ID
+        if not document_id:
+            if file_path:
+                # Use filename (without path) as document_id
+                from pathlib import Path
+
+                document_id = Path(file_path).name
+            else:
+                document_id = self._generate_node_id()
+
+        return document_id, None, content_hash
+
+    def _create_and_validate_chunks(
+        self, text: str, show_progress: bool = True
+    ) -> list[str]:
+        """Create chunks from text and validate their sizes.
+
+        Args:
+            text: The text to split into chunks
+            show_progress: Whether to show progress logs
+
+        Returns:
+            List of text chunks
+        """
+        # Split into chunks
+        chunks = self.splitter.split_text(text)
+
+        # Log only when progress bar is not active to avoid display issues
+        if not show_progress:
+            logger.info("Splitting document into chunks...")
+            logger.info(f"Split document into {len(chunks)} chunks")
+
+        # Early validation: Check chunk sizes immediately after splitting
+        from ragzoom.validate import validate, validate_chunk_sizes
+
+        # Create simple objects with just the fields needed for validation
+        chunk_objects = []
+        for i, chunk in enumerate(chunks):
+            chunk_obj = type("ChunkObj", (), {"text": chunk, "id": f"chunk_{i}"})()
+            chunk_objects.append(chunk_obj)
+
+        validate(
+            lambda: validate_chunk_sizes(
+                chunk_objects, self.config.target_chunk_tokens
+            ),
+            "early chunk size validation",
+        )
+
+        return chunks
+
+    def _setup_progress_tracking(
+        self, chunk_count: int, show_progress: bool = True
+    ) -> tuple[GlobalProgressTracker | None, AsyncProgressWrapper | None]:
+        """Setup progress tracking for document indexing.
+
+        Args:
+            chunk_count: Number of chunks to process
+            show_progress: Whether to show progress bar
+
+        Returns:
+            tuple: (progress_tracker, async_progress_wrapper)
+        """
+        # Create progress tracker early so we can use it for logging
+        # When progress bar is active, we suppress info logs to avoid disrupting the display
+        progress = (
+            GlobalProgressTracker(chunk_count, show_progress) if show_progress else None
+        )
+
+        # Create async wrapper for progress (tracker already created above)
+        async_progress = AsyncProgressWrapper(progress) if progress else None
+
+        return progress, async_progress
+
+    async def _index_chunks(
+        self,
+        chunks: list[str],
+        text: str,
+        document_id: str,
+        content_hash: str,
+        file_path: str | None,
+        async_progress: AsyncProgressWrapper | None,
+        overall_start_time: float,
+        show_progress: bool,
+        reporter: TelemetryCollector | None,
+    ) -> tuple[list[str], bool]:
+        """Index chunks: create embeddings, prepare leaf nodes, and store in database.
+
+        Returns:
+            tuple: (leaf_ids, existing_doc_found)
+        """
+        # Create leaf nodes with batch embeddings
+        if not show_progress and len(chunks) > 100:
+            logger.info("Preparing chunk data...")
+
+        leaf_ids: list[str] = []
+        chunk_data: list[dict[str, Any]] = []
+
+        # Prepare all chunk data with character positions
+        # Now that splitter handles whitespace gaps, positioning is straightforward
+        current_pos = 0
+        for i, chunk in enumerate(chunks):
+            node_id = self._generate_node_id()
+
+            # Chunks now have complete coverage with no gaps
+            chunk_start = current_pos
+            chunk_end = chunk_start + len(chunk)
+
+            # Verify this chunk matches the original text
+            if text[chunk_start:chunk_end] != chunk:
+                # This should not happen with the fixed splitter, but provide fallback
+                logger.warning(f"Chunk {i} position mismatch, using find() fallback")
+                chunk_start = text.find(chunk, current_pos)
+                if chunk_start == -1:
+                    logger.error(f"Could not find chunk {i} in text")
+                    chunk_start = current_pos
+                chunk_end = chunk_start + len(chunk)
+
+            chunk_data.append(
+                {
+                    "id": node_id,
+                    "text": chunk,
+                    "span_start": chunk_start,
+                    "span_end": chunk_end,
+                }
+            )
+
+            # Track node creation for telemetry
+            if reporter:
+                reporter.track_node_created(
+                    node_id=node_id,
+                    height=0,  # Leaves have height 0
+                    span=(chunk_start, chunk_end),
+                )
+            leaf_ids.append(node_id)
+
+            # Track chunk creation
+            if reporter:
+                try:
+                    chunk_tokens = tokenizer.count_tokens(chunk)
+                    reporter.record_chunk_created(node_id, chunk_tokens)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to record telemetry for chunk creation: {e}"
+                    )
+
+            current_pos = chunk_end
+
+        # Early validation: Check document coverage before processing embeddings
+        from ragzoom.validate import validate, validate_document_coverage
+
+        # Create node objects for validation using actual chunk data
+        leaf_nodes_for_validation = []
+        for data in chunk_data:
+            node_obj = type(
+                "Node",
+                (),
+                {
+                    "id": data["id"],
+                    "span_start": data["span_start"],
+                    "span_end": data["span_end"],
+                    "text": data["text"],
+                },
+            )()
+            leaf_nodes_for_validation.append(node_obj)
+
+        validate(
+            lambda: validate_document_coverage(text, leaf_nodes_for_validation),
+            "early document coverage check",
+        )
+
+        # Get embeddings in batches
+        batch_size = self.config.embedding_batch_size
+        all_embeddings = []
+
+        for i in range(0, len(chunks), batch_size):
+            batch_texts = [cast(str, d["text"]) for d in chunk_data[i : i + batch_size]]
+            batch_end = min(i + batch_size, len(chunks))
+
+            # Show which batch we're processing with cumulative elapsed time
+            if not show_progress:
+                elapsed = time.time() - overall_start_time
+                mins, secs = divmod(int(elapsed), 60)
+                logger.info(
+                    f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]"
+                )
+
+            # Track embedding call with node-level detail
+            if reporter:
+                node_embeddings = []
+                for j in range(i, batch_end):
+                    node_id = chunk_data[j]["id"]
+                    text = chunk_data[j]["text"]
+                    # Cache token count to avoid re-tokenization later
+                    if "token_count" not in chunk_data[j]:
+                        chunk_data[j]["token_count"] = len(tokenizer.encode(text))
+                    token_count = chunk_data[j]["token_count"]
+                    node_embeddings.append((node_id, token_count))
+
+                start_time = time.time()
+
+            batch_embeddings = await self.llm_service._get_embeddings_batch(batch_texts)
+
+            if reporter:
+                reporter.record_embedding_call_v2(
+                    node_embeddings=node_embeddings,
+                    batch_size=len(batch_texts),
+                    model=self.config.embedding_model,
+                    start_time=start_time,
+                )
+            all_embeddings.extend(batch_embeddings)
+
+            # Update progress for embeddings
+            if async_progress:
+                await async_progress.update(len(batch_texts))
+
+        # Prepare all leaf nodes for batch insertion
+        leaf_nodes_data = []
+        preceding_leaf_id = None  # Track preceding leaf for document order
+
+        for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
+            text = cast(str, data["text"])
+            # Use cached token count if available, otherwise compute it
+            token_count = data.get("token_count", tokenizer.count_tokens(text))
+
+            leaf_nodes_data.append(
+                {
+                    "node_id": cast(str, data["id"]),
+                    "text": text,
+                    "embedding": embedding,
+                    "span_start": cast(int, data["span_start"]),
+                    "span_end": cast(int, data["span_end"]),
+                    "document_id": document_id,
+                    "token_count": token_count,
+                    "preceding_neighbor_id": preceding_leaf_id,
+                    "height": 0,  # Leaf nodes have height 0
+                }
+            )
+
+            # Update preceding ID for next iteration
+            preceding_leaf_id = cast(str, data["id"])
+
+        # Check if this is updating an existing document
+        existing_doc = file_path and self.store.get_document_by_path(file_path)
+
+        # Add document record BEFORE creating nodes (foreign key constraint)
+        if not existing_doc:
+            self.store.add_document(
+                document_id,
+                file_path,
+                content_hash,
+                len(chunks),
+                self.config.embedding_model,
+                self.config.summary_model,
+            )
+
+        # Batch insert all leaf nodes at once
+        if leaf_nodes_data:
+            self.store.add_nodes_batch(leaf_nodes_data)
+        else:
+            # Update existing document
+            with self.store.SessionLocal() as session:
+                from ragzoom.store import Document
+
+                doc = session.query(Document).filter_by(id=document_id).first()
+                if doc:
+                    doc.content_hash = content_hash
+                    doc.chunk_count = len(chunks)
+                    doc.indexed_at = datetime.utcnow()
+                    doc.embedding_model = self.config.embedding_model
+                    doc.summary_model = self.config.summary_model
+                    session.commit()
+
+        return leaf_ids, existing_doc is not None
+
     @overload
     async def _add_document_impl(
         self,
@@ -163,260 +473,39 @@ class TreeBuilder:
             If reporter is None: document_id
             If reporter is provided: (document_id, metrics)
         """
-        # Validate model names to warn about potential issues
-        self._validate_model_names()
-
-        # Compute content hash
-        content_hash = self.store.compute_content_hash(text)
-
-        # Check if document already exists
-        existing_doc = None
-        if file_path:
-            existing_doc = self.store.get_document_by_path(file_path)
-            if existing_doc:
-                # Check if content changed
-                if existing_doc.content_hash == content_hash:
-                    logger.info(
-                        f"Document at {file_path} unchanged, skipping re-indexing"
-                    )
-                    return existing_doc.id
-                else:
-                    logger.info(f"Document at {file_path} has changed, re-indexing...")
-                    # Delete old nodes
-                    deleted = self.store.delete_document_nodes(existing_doc.id)
-                    logger.info(f"Deleted {deleted} old nodes")
-                    document_id = existing_doc.id
-
-        if not document_id:
-            if file_path:
-                # Use filename (without path) as document_id
-                from pathlib import Path
-
-                document_id = Path(file_path).name
-            else:
-                document_id = self._generate_node_id()
-
-        # Split into chunks
-        chunks = self.splitter.split_text(text)
-
-        # Create progress tracker early so we can use it for logging
-        # When progress bar is active, we suppress info logs to avoid disrupting the display
-        progress = (
-            GlobalProgressTracker(len(chunks), show_progress) if show_progress else None
+        # Step 1: Prepare document (validation, hashing, existence check)
+        document_id, existing_unchanged_id, content_hash = self._prepare_document(
+            text, document_id, file_path
         )
 
-        # Log only when progress bar is not active to avoid display issues
-        if not show_progress:
-            logger.info("Splitting document into chunks...")
-            logger.info(f"Split document into {len(chunks)} chunks")
+        # Early return if document is unchanged
+        if existing_unchanged_id:
+            return existing_unchanged_id
 
-        # Early validation: Check chunk sizes immediately after splitting
-        from ragzoom.validate import validate, validate_chunk_sizes
+        # Step 2: Create and validate chunks
+        chunks = self._create_and_validate_chunks(text, show_progress)
 
-        # Create simple objects with just the fields needed for validation
-        chunk_objects = []
-        for i, chunk in enumerate(chunks):
-            chunk_obj = type("ChunkObj", (), {"text": chunk, "id": f"chunk_{i}"})()
-            chunk_objects.append(chunk_obj)
-
-        validate(
-            lambda: validate_chunk_sizes(
-                chunk_objects, self.config.target_chunk_tokens
-            ),
-            "early chunk size validation",
+        # Step 3: Setup progress tracking
+        progress, async_progress = self._setup_progress_tracking(
+            len(chunks), show_progress
         )
-
-        # Create async wrapper for progress (tracker already created above)
-        async_progress = AsyncProgressWrapper(progress) if progress else None
 
         # Track overall start time for cumulative elapsed time
         overall_start_time = time.time()
 
         try:
-            # Create leaf nodes with batch embeddings
-            if not show_progress and len(chunks) > 100:
-                logger.info("Preparing chunk data...")
-
-            leaf_ids: list[str] = []
-            chunk_data: list[dict[str, Any]] = []
-
-            # Prepare all chunk data with character positions
-            # Now that splitter handles whitespace gaps, positioning is straightforward
-            current_pos = 0
-            for i, chunk in enumerate(chunks):
-                node_id = self._generate_node_id()
-
-                # Chunks now have complete coverage with no gaps
-                chunk_start = current_pos
-                chunk_end = chunk_start + len(chunk)
-
-                # Verify this chunk matches the original text
-                if text[chunk_start:chunk_end] != chunk:
-                    # This should not happen with the fixed splitter, but provide fallback
-                    logger.warning(
-                        f"Chunk {i} position mismatch, using find() fallback"
-                    )
-                    chunk_start = text.find(chunk, current_pos)
-                    if chunk_start == -1:
-                        logger.error(f"Could not find chunk {i} in text")
-                        chunk_start = current_pos
-                    chunk_end = chunk_start + len(chunk)
-
-                chunk_data.append(
-                    {
-                        "id": node_id,
-                        "text": chunk,
-                        "span_start": chunk_start,
-                        "span_end": chunk_end,
-                    }
-                )
-
-                # Track node creation for telemetry
-                if reporter:
-                    reporter.track_node_created(
-                        node_id=node_id,
-                        height=0,  # Leaves have height 0
-                        span=(chunk_start, chunk_end),
-                    )
-                leaf_ids.append(node_id)
-
-                # Track chunk creation
-                if reporter:
-                    try:
-                        chunk_tokens = tokenizer.count_tokens(chunk)
-                        reporter.record_chunk_created(node_id, chunk_tokens)
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to record telemetry for chunk creation: {e}"
-                        )
-
-                current_pos = chunk_end
-
-            # Early validation: Check document coverage before processing embeddings
-            from ragzoom.validate import validate, validate_document_coverage
-
-            # Create node objects for validation using actual chunk data
-            leaf_nodes_for_validation = []
-            for data in chunk_data:
-                node_obj = type(
-                    "Node",
-                    (),
-                    {
-                        "id": data["id"],
-                        "span_start": data["span_start"],
-                        "span_end": data["span_end"],
-                        "text": data["text"],
-                    },
-                )()
-                leaf_nodes_for_validation.append(node_obj)
-
-            validate(
-                lambda: validate_document_coverage(text, leaf_nodes_for_validation),
-                "early document coverage check",
+            # Step 4: Index chunks (embeddings + leaf nodes)
+            leaf_ids, existing_doc_updated = await self._index_chunks(
+                chunks=chunks,
+                text=text,
+                document_id=document_id,
+                content_hash=content_hash,
+                file_path=file_path,
+                async_progress=async_progress,
+                overall_start_time=overall_start_time,
+                show_progress=show_progress,
+                reporter=reporter,
             )
-
-            # Get embeddings in batches
-            batch_size = self.config.embedding_batch_size
-            all_embeddings = []
-
-            for i in range(0, len(chunks), batch_size):
-                batch_texts = [
-                    cast(str, d["text"]) for d in chunk_data[i : i + batch_size]
-                ]
-                batch_end = min(i + batch_size, len(chunks))
-
-                # Show which batch we're processing with cumulative elapsed time
-                if not show_progress:
-                    elapsed = time.time() - overall_start_time
-                    mins, secs = divmod(int(elapsed), 60)
-                    logger.info(
-                        f"Processing embedding batch: chunks {i+1}-{batch_end} of {len(chunks)} [{mins}m {secs}s elapsed]"
-                    )
-
-                # Track embedding call with node-level detail
-                if reporter:
-                    node_embeddings = []
-                    for j in range(i, batch_end):
-                        node_id = chunk_data[j]["id"]
-                        text = chunk_data[j]["text"]
-                        # Cache token count to avoid re-tokenization later
-                        if "token_count" not in chunk_data[j]:
-                            chunk_data[j]["token_count"] = len(tokenizer.encode(text))
-                        token_count = chunk_data[j]["token_count"]
-                        node_embeddings.append((node_id, token_count))
-
-                    start_time = time.time()
-
-                batch_embeddings = await self.llm_service._get_embeddings_batch(
-                    batch_texts
-                )
-
-                if reporter:
-                    reporter.record_embedding_call_v2(
-                        node_embeddings=node_embeddings,
-                        batch_size=len(batch_texts),
-                        model=self.config.embedding_model,
-                        start_time=start_time,
-                    )
-                all_embeddings.extend(batch_embeddings)
-
-                # Update progress for embeddings
-                if async_progress:
-                    await async_progress.update(len(batch_texts))
-
-            # Prepare all leaf nodes for batch insertion
-            leaf_nodes_data = []
-            preceding_leaf_id = None  # Track preceding leaf for document order
-
-            for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
-                text = cast(str, data["text"])
-                # Use cached token count if available, otherwise compute it
-                token_count = data.get("token_count", tokenizer.count_tokens(text))
-
-                leaf_nodes_data.append(
-                    {
-                        "node_id": cast(str, data["id"]),
-                        "text": text,
-                        "embedding": embedding,
-                        "span_start": cast(int, data["span_start"]),
-                        "span_end": cast(int, data["span_end"]),
-                        "document_id": document_id,
-                        "token_count": token_count,
-                        "preceding_neighbor_id": preceding_leaf_id,
-                        "height": 0,  # Leaf nodes have height 0
-                    }
-                )
-
-                # Update preceding ID for next iteration
-                preceding_leaf_id = cast(str, data["id"])
-
-            # Add document record BEFORE creating nodes (foreign key constraint)
-            if not existing_doc:
-                self.store.add_document(
-                    document_id,
-                    file_path,
-                    content_hash,
-                    len(chunks),
-                    self.config.embedding_model,
-                    self.config.summary_model,
-                )
-
-            # Batch insert all leaf nodes at once
-            if leaf_nodes_data:
-                self.store.add_nodes_batch(leaf_nodes_data)
-            else:
-                # Update existing document
-                with self.store.SessionLocal() as session:
-                    from ragzoom.store import Document
-
-                    doc = session.query(Document).filter_by(id=document_id).first()
-                    if doc:
-                        doc.content_hash = content_hash
-                        doc.chunk_count = len(chunks)
-                        doc.indexed_at = datetime.utcnow()
-                        doc.embedding_model = self.config.embedding_model
-                        doc.summary_model = self.config.summary_model
-                        session.commit()
 
             # Build tree from leaves
             root_id = await self._build_tree_from_leaves(
