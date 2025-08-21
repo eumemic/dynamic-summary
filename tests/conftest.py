@@ -134,6 +134,48 @@ def base_config() -> BackwardCompatibilityConfig:
 
 
 @pytest.fixture
+def config_factory():
+    """Factory fixture for creating custom test configurations.
+
+    Returns a function that can create BackwardCompatibilityConfig with custom parameters.
+
+    Usage:
+        def test_something(config_factory):
+            config = config_factory(target_chunk_tokens=200, budget_tokens=1500)
+    """
+
+    def _create_config(
+        target_chunk_tokens=50,
+        preceding_context_tokens=25,
+        budget_tokens=1000,
+        openai_api_key="test-key",
+        database_url=None,
+    ):
+        if database_url is None:
+            database_url = os.getenv(
+                "RAGZOOM_DATABASE_URL",
+                "postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test",
+            )
+
+        index_config = IndexConfig.load(
+            target_chunk_tokens=target_chunk_tokens,
+            preceding_context_tokens=preceding_context_tokens,
+        )
+        query_config = QueryConfig(
+            budget_tokens=budget_tokens,
+        )
+        operational_config = OperationalConfig(
+            openai_api_key=openai_api_key,
+            database_url=database_url,
+        )
+        return BackwardCompatibilityConfig(
+            index_config, query_config, operational_config
+        )
+
+    return _create_config
+
+
+@pytest.fixture
 def mock_store(base_config) -> Generator[SimpleMockStore, None, None]:
     """Create a mock store for fast testing."""
     store = SimpleMockStore(base_config)
