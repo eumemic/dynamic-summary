@@ -16,7 +16,7 @@ from ragzoom.retrieval import (
     ScoringService,
 )
 from ragzoom.retrieval.telemetry_collector import TelemetryCollector
-from ragzoom.store import Store, TreeNode
+from ragzoom.store import StoreManager, TreeNode
 from ragzoom.telemetry_query import QueryTelemetry
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ class Retriever:
     def __init__(
         self,
         query_config: QueryConfig,
-        store: Store,
+        store: StoreManager,
         api_key: str = "",
         tree_builder: Optional["TreeBuilder"] = None,
     ):
@@ -50,7 +50,7 @@ class Retriever:
 
         Args:
             query_config: Query configuration
-            store: Store instance
+            store: StoreManager instance
             api_key: OpenAI API key (if not provided, reads from OPENAI_API_KEY env)
             tree_builder: Optional TreeBuilder instance
         """
@@ -135,7 +135,7 @@ class Retriever:
         # Phase 2: Initial retrieval
         k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
         where_filter = {"document_id": document_id} if document_id else None
-        candidates = self.store.search_similar(
+        candidates = self.store.search.search_similar(
             query_embedding, k_candidates, where=where_filter
         )
         if telemetry_collector:
@@ -144,7 +144,7 @@ class Retriever:
             telemetry_collector.record_metric("candidates_retrieved", len(candidates))
 
         # Phase 3: Apply MMR
-        selected_ids = self.store.compute_mmr_diverse_results(
+        selected_ids = self.store.search.compute_mmr_diverse_results(
             query_embedding, candidates, self.query_config.mmr_lambda, num_seeds
         )
         if telemetry_collector:
@@ -181,7 +181,7 @@ class Retriever:
         nodes: dict[str, TreeNode] = {}
         node_ids_to_load = list(coverage_map.keys())
         if node_ids_to_load:
-            loaded_nodes = self.store.get_nodes(node_ids_to_load)
+            loaded_nodes = self.store.nodes.get_nodes(node_ids_to_load)
             for node in loaded_nodes:
                 nodes[node.id] = node
 

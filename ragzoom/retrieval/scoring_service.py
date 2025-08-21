@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 if TYPE_CHECKING:
-    from ragzoom.store import Store, TreeNode
+    from ragzoom.store import StoreManager, TreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class ScoringService:
     """Computes relevance scores for nodes in the coverage map."""
 
-    def __init__(self, store: "Store"):
+    def __init__(self, store: "StoreManager"):
         """Initialize scoring service.
 
         Args:
@@ -68,7 +68,7 @@ class ScoringService:
         query_vec = np.array(query_embedding)
 
         for node_id in node_ids:
-            node: TreeNode | None = self.store.get_node(node_id)
+            node: TreeNode | None = self.store.nodes.get_node(node_id)
             if node is not None and node.embedding is not None:
                 try:
                     similarity = self._compute_cosine_similarity(

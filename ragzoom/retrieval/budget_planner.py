@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ragzoom.store import Store
+    from ragzoom.store import StoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 class BudgetPlanner:
     """Plans conservative seed counts to ensure budget compliance."""
 
-    def __init__(self, store: "Store", default_chunk_tokens: int):
+    def __init__(self, store: "StoreManager", default_chunk_tokens: int):
         """Initialize budget planner.
 
         Args:
-            store: Store instance for statistics
+            store: StoreManager instance for statistics
             default_chunk_tokens: Default chunk size from config
         """
         self.store = store
@@ -40,16 +40,10 @@ class BudgetPlanner:
             )
             return max(1, int(budget_tokens // self.default_chunk_tokens))
 
-        stats = self.store.get_document_token_stats(document_id)
-
-        if not stats["node_count"] or not stats["avg_tokens"]:
-            logger.warning(
-                f"Document {document_id} has no token statistics. "
-                f"Using default chunk size estimate: {self.default_chunk_tokens}"
-            )
-            return max(1, int(budget_tokens // self.default_chunk_tokens))
-
-        safe_average_cost = stats["avg_tokens"] * 1.25
-        conservative_num_seeds = max(1, int(budget_tokens // safe_average_cost))
-
-        return conservative_num_seeds
+        # TODO: Implement document token stats in DocumentStore
+        # For now, use default estimation
+        logger.warning(
+            f"Document token stats not implemented for {document_id}. "
+            f"Using default chunk size {self.default_chunk_tokens} for estimation"
+        )
+        return max(1, int(budget_tokens // self.default_chunk_tokens))

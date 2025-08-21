@@ -127,7 +127,7 @@ class TestRetrieverBug:
         def mock_search_similar(embedding, n_results, where=None):
             return [("L3", 0.95, {})]
 
-        store.search_similar = mock_search_similar
+        store.search.search_similar = mock_search_similar
 
         # Mock the query embedding generation
         retriever.embedding_service.get_query_embedding = (
@@ -157,7 +157,7 @@ class TestRetrieverBug:
         def mock_search_similar(embedding, n_results, where=None):
             return [("L3", 0.95, {})]
 
-        store.search_similar = mock_search_similar
+        store.search.search_similar = mock_search_similar
 
         # Mock the query embedding generation
         retriever.embedding_service.get_query_embedding = (

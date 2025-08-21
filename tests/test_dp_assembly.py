@@ -279,7 +279,7 @@ class TestDPAssembly:
         # Load nodes from coverage map
         nodes = {}
         for node_id in coverage_map:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 

@@ -72,7 +72,7 @@ def test_zero_score_collapse_empty_result():
     # Load nodes from coverage map
     nodes = {}
     for node_id in coverage_map:
-        node = store.get_node(node_id)
+        node = store.nodes.get_node(node_id)
         if node:
             nodes[node_id] = node
 
@@ -221,7 +221,7 @@ def test_zero_score_collapse_to_root():
     # Load nodes from coverage map
     nodes = {}
     for node_id in coverage_map:
-        node = store.get_node(node_id)
+        node = store.nodes.get_node(node_id)
         if node:
             nodes[node_id] = node
 

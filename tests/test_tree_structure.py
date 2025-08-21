@@ -41,6 +41,17 @@ class TestTreeValidation:
             def get_all_nodes_for_document(self, doc_id):
                 return list(self.nodes.values())
 
+            def for_document(self, document_id):
+                """Return a mock document store that delegates to this store."""
+                from types import SimpleNamespace
+
+                doc_store = SimpleNamespace()
+                doc_store.nodes = SimpleNamespace()
+                doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
+                    document_id
+                )
+                return doc_store
+
         store = MockStore()
 
         # Create a valid left-balanced tree (happens to be full):
@@ -79,6 +90,17 @@ class TestTreeValidation:
 
             def get_all_nodes_for_document(self, doc_id):
                 return list(self.nodes.values())
+
+            def for_document(self, document_id):
+                """Return a mock document store that delegates to this store."""
+                from types import SimpleNamespace
+
+                doc_store = SimpleNamespace()
+                doc_store.nodes = SimpleNamespace()
+                doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
+                    document_id
+                )
+                return doc_store
 
         store = MockStore()
 
@@ -125,6 +147,17 @@ class TestTreeValidation:
             def get_all_nodes_for_document(self, doc_id):
                 return [MockNode("root")]
 
+            def for_document(self, document_id):
+                """Return a mock document store that delegates to this store."""
+                from types import SimpleNamespace
+
+                doc_store = SimpleNamespace()
+                doc_store.nodes = SimpleNamespace()
+                doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
+                    document_id
+                )
+                return doc_store
+
         store = MockStore()
         result = validate_tree_is_left_balanced(store, "test-doc")
         assert result is None  # Single node tree is valid
@@ -142,6 +175,17 @@ class TestTreeValidation:
             def get_all_nodes_for_document(self, doc_id):
                 # Node references children that don't exist
                 return [MockNode("root", "missing-left", "missing-right")]
+
+            def for_document(self, document_id):
+                """Return a mock document store that delegates to this store."""
+                from types import SimpleNamespace
+
+                doc_store = SimpleNamespace()
+                doc_store.nodes = SimpleNamespace()
+                doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
+                    document_id
+                )
+                return doc_store
 
         store = MockStore()
         result = validate_tree_is_left_balanced(store, "test-doc")
@@ -167,6 +211,17 @@ class TestTreeValidation:
 
             def get_all_nodes_for_document(self, doc_id):
                 return list(self.nodes.values())
+
+            def for_document(self, document_id):
+                """Return a mock document store that delegates to this store."""
+                from types import SimpleNamespace
+
+                doc_store = SimpleNamespace()
+                doc_store.nodes = SimpleNamespace()
+                doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
+                    document_id
+                )
+                return doc_store
 
         store = MockStore()
 
@@ -333,7 +388,7 @@ class TestIndexingCreatesValidTrees:
         assert result is None
 
         # Check we have multiple leaf nodes (exact count depends on tokenization)
-        nodes = store.get_all_nodes_for_document(doc_id)
+        nodes = store.for_document(doc_id).nodes.get_all()
         leaf_nodes = [
             n for n in nodes if n.left_child_id is None and n.right_child_id is None
         ]
@@ -389,7 +444,7 @@ class TestIndexingCreatesValidTrees:
         assert result is None
 
         # Verify we have exactly 5 leaf nodes
-        nodes = store.get_all_nodes_for_document(doc_id)
+        nodes = store.for_document(doc_id).nodes.get_all()
         leaf_nodes = [
             n for n in nodes if n.left_child_id is None and n.right_child_id is None
         ]

@@ -18,7 +18,19 @@ class TestStore:
 
     def test_add_node(self, temp_store):
         """Test adding a node to the store."""
-        node = temp_store.add_node(
+        # Create document first to satisfy foreign key constraint
+        temp_store.add_document(
+            document_id="test-doc",
+            file_path="test.txt",
+            content_hash="test-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        # Use document-scoped store for node operations
+        doc_store = temp_store.for_document("test-doc")
+        node = doc_store.nodes.add_node(
             node_id="test-1",
             text="Test text",
             embedding=[0.1] * 1536,
@@ -34,7 +46,7 @@ class TestStore:
     def test_get_node(self, temp_store):
         """Test retrieving a node."""
         # Add a node
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="test-2",
             text="Test text 2",
             embedding=[0.2] * 1536,
@@ -43,19 +55,19 @@ class TestStore:
         )
 
         # Retrieve it
-        node = temp_store.get_node("test-2")
+        node = temp_store.nodes.get_node("test-2")
         assert node is not None
         assert node.id == "test-2"
         assert node.text == "Test text 2"
 
         # Test non-existent node
-        node = temp_store.get_node("non-existent")
+        node = temp_store.nodes.get_node("non-existent")
         assert node is None
 
     def test_node_relationships(self, temp_store):
         """Test parent-child relationships."""
         # Create parent and children
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="parent",
             text="Parent node",
             embedding=[0.3] * 1536,
@@ -65,7 +77,7 @@ class TestStore:
             right_child_id="child2",
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="child1",
             text="Child 1",
             embedding=[0.4] * 1536,
@@ -74,7 +86,7 @@ class TestStore:
             parent_id="parent",
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="child2",
             text="Child 2",
             embedding=[0.5] * 1536,
@@ -84,11 +96,11 @@ class TestStore:
         )
 
         # Test relationships
-        left, right = temp_store.get_children("parent")
+        left, right = temp_store.tree.get_children("parent")
         assert left.id == "child1"
         assert right.id == "child2"
 
-        ancestors = temp_store.get_ancestors(["child1", "child2"])
+        ancestors = temp_store.tree.get_ancestors(["child1", "child2"])
         assert len(ancestors) == 1
         assert ancestors[0].id == "parent"
 
@@ -97,7 +109,7 @@ class TestStore:
         # Add some nodes
         for i in range(5):
             embedding = [i * 0.1] * 1536
-            temp_store.add_node(
+            temp_store.nodes.add_node(
                 node_id=f"node-{i}",
                 text=f"Text {i}",
                 embedding=embedding,
@@ -107,7 +119,7 @@ class TestStore:
 
         # Search with a query embedding
         query_embedding = [0.25] * 1536
-        results = temp_store.search_similar(query_embedding, n_results=3)
+        results = temp_store.search.search_similar(query_embedding, n_results=3)
 
         assert len(results) == 3
         assert all(isinstance(r, tuple) for r in results)
@@ -136,7 +148,7 @@ class TestStore:
         for i, (node_id, _, _) in enumerate(candidates):
             # Pad embedding to expected size
             full_embedding = embeddings[i] + [0.0] * (1536 - 3)
-            temp_store.add_node(
+            temp_store.nodes.add_node(
                 node_id=node_id,
                 text=f"Text for {node_id}",
                 embedding=full_embedding,
@@ -146,7 +158,7 @@ class TestStore:
 
         # Test MMR selection
         query_embedding = [1.0, 0.0, 0.0] + [0.0] * 1533  # Similar to node-1
-        selected = temp_store.compute_mmr_diverse_results(
+        selected = temp_store.search.compute_mmr_diverse_results(
             query_embedding, candidates, lambda_param=0.7, k=3
         )
 
@@ -160,7 +172,7 @@ class TestStore:
         """Test node pinning functionality."""
         # Create a tree structure with proper depths
         # Root node (depth 0)
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="root",
             text="Root node",
             embedding=[0.5] * 1536,
@@ -170,7 +182,7 @@ class TestStore:
         )
 
         # Level 1 node (depth 1)
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="level1",
             text="Level 1 node",
             embedding=[0.6] * 1536,
@@ -180,7 +192,7 @@ class TestStore:
         )
 
         # Level 2 node (depth 2)
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="level2",
             text="Level 2 node",
             embedding=[0.7] * 1536,
@@ -190,7 +202,7 @@ class TestStore:
         )
 
         # Level 3 node (depth 3)
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="level3",
             text="Level 3 node",
             embedding=[0.8] * 1536,
@@ -226,7 +238,7 @@ class TestStore:
     def test_cache_functionality(self, temp_store):
         """Test LRU cache behavior."""
         # Add a node
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="cached",
             text="Cached node",
             embedding=[0.8] * 1536,
@@ -235,11 +247,11 @@ class TestStore:
         )
 
         # First retrieval (from DB)
-        node1 = temp_store.get_node("cached")
+        node1 = temp_store.nodes.get_node("cached")
         assert node1 is not None
 
         # Second retrieval (from cache)
-        node2 = temp_store.get_node("cached")
+        node2 = temp_store.nodes.get_node("cached")
         assert node2 is not None
         assert node2.id == node1.id
 
@@ -256,7 +268,7 @@ class TestStore:
         # ll  lr    rc
 
         # Root node (depth 0)
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="root",
             text="Root",
             embedding=[0.1] * 1536,
@@ -267,7 +279,7 @@ class TestStore:
         )
 
         # Level 1 nodes (depth 1)
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="left",
             text="Left",
             embedding=[0.2] * 1536,
@@ -278,7 +290,7 @@ class TestStore:
             right_child_id="lr",
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="right",
             text="Right",
             embedding=[0.3] * 1536,
@@ -289,7 +301,7 @@ class TestStore:
         )
 
         # Level 2 nodes (depth 2)
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="ll",
             text="Left-Left",
             embedding=[0.4] * 1536,
@@ -298,7 +310,7 @@ class TestStore:
             parent_id="left",
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="lr",
             text="Left-Right",
             embedding=[0.5] * 1536,
@@ -307,7 +319,7 @@ class TestStore:
             parent_id="left",
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="rc",
             text="Right-Child",
             embedding=[0.6] * 1536,
@@ -317,29 +329,29 @@ class TestStore:
         )
 
         # Test depth calculations
-        assert temp_store.get_node_depth("root") == 0
-        assert temp_store.get_node_depth("left") == 1
-        assert temp_store.get_node_depth("right") == 1
-        assert temp_store.get_node_depth("ll") == 2
-        assert temp_store.get_node_depth("lr") == 2
-        assert temp_store.get_node_depth("rc") == 2
+        assert temp_store.tree.get_node_depth("root") == 0
+        assert temp_store.tree.get_node_depth("left") == 1
+        assert temp_store.tree.get_node_depth("right") == 1
+        assert temp_store.tree.get_node_depth("ll") == 2
+        assert temp_store.tree.get_node_depth("lr") == 2
+        assert temp_store.tree.get_node_depth("rc") == 2
 
         # Test is_root_node
-        assert temp_store.is_root_node("root") is True
-        assert temp_store.is_root_node("left") is False
-        assert temp_store.is_root_node("ll") is False
+        assert temp_store.tree.is_root_node("root") is True
+        assert temp_store.tree.is_root_node("left") is False
+        assert temp_store.tree.is_root_node("ll") is False
 
         # Test with non-existent node
-        assert temp_store.is_root_node("non-existent") is False
+        assert temp_store.tree.is_root_node("non-existent") is False
 
         # Test non-existent node
         with pytest.raises(NodeNotFoundError):
-            temp_store.get_node_depth("non-existent")
+            temp_store.tree.get_node_depth("non-existent")
 
     def test_node_height_calculation(self, temp_store):
         """Test dynamic height calculation."""
         # Create the same tree structure
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="root",
             text="Root",
             embedding=[0.1] * 1536,
@@ -350,7 +362,7 @@ class TestStore:
             height=2,
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="left",
             text="Left",
             embedding=[0.2] * 1536,
@@ -362,7 +374,7 @@ class TestStore:
             height=1,
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="right",
             text="Right",
             embedding=[0.3] * 1536,
@@ -373,7 +385,7 @@ class TestStore:
             height=1,
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="ll",
             text="Left-Left",
             embedding=[0.4] * 1536,
@@ -383,7 +395,7 @@ class TestStore:
             height=0,
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="lr",
             text="Left-Right",
             embedding=[0.5] * 1536,
@@ -393,7 +405,7 @@ class TestStore:
             height=0,
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="rc",
             text="Right-Child",
             embedding=[0.6] * 1536,
@@ -405,32 +417,32 @@ class TestStore:
 
         # Test height calculations using stored values
         # Leaf nodes have height 0
-        assert temp_store.get_node("ll").height == 0
-        assert temp_store.get_node("lr").height == 0
-        assert temp_store.get_node("rc").height == 0
+        assert temp_store.nodes.get_node("ll").height == 0
+        assert temp_store.nodes.get_node("lr").height == 0
+        assert temp_store.nodes.get_node("rc").height == 0
 
         # Internal nodes have height = 1 + max(child heights)
-        assert temp_store.get_node("left").height == 1  # max(0, 0) + 1
-        assert temp_store.get_node("right").height == 1  # has only left child
-        assert temp_store.get_node("root").height == 2  # max(1, 1) + 1
+        assert temp_store.nodes.get_node("left").height == 1  # max(0, 0) + 1
+        assert temp_store.nodes.get_node("right").height == 1  # has only left child
+        assert temp_store.nodes.get_node("root").height == 2  # max(1, 1) + 1
 
         # Test is_leaf_node
-        assert temp_store.is_leaf_node("ll") is True
-        assert temp_store.is_leaf_node("lr") is True
-        assert temp_store.is_leaf_node("rc") is True
-        assert temp_store.is_leaf_node("left") is False
-        assert temp_store.is_leaf_node("root") is False
+        assert temp_store.tree.is_leaf_node("ll") is True
+        assert temp_store.tree.is_leaf_node("lr") is True
+        assert temp_store.tree.is_leaf_node("rc") is True
+        assert temp_store.tree.is_leaf_node("left") is False
+        assert temp_store.tree.is_leaf_node("root") is False
 
         # Test with non-existent node
-        assert temp_store.is_leaf_node("non-existent") is False
+        assert temp_store.tree.is_leaf_node("non-existent") is False
 
         # Test non-existent node
-        assert temp_store.get_node("non-existent") is None
+        assert temp_store.nodes.get_node("non-existent") is None
 
     def test_depth_height_edge_cases(self, temp_store):
         """Test edge cases for depth/height calculation."""
         # Test single node (both root and leaf)
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="single",
             text="Single node",
             embedding=[0.1] * 1536,
@@ -439,13 +451,13 @@ class TestStore:
             height=0,
         )
 
-        assert temp_store.get_node_depth("single") == 0  # Root has depth 0
-        assert temp_store.get_node("single").height == 0  # Leaf has height 0
-        assert temp_store.is_root_node("single") is True
-        assert temp_store.is_leaf_node("single") is True
+        assert temp_store.tree.get_node_depth("single") == 0  # Root has depth 0
+        assert temp_store.nodes.get_node("single").height == 0  # Leaf has height 0
+        assert temp_store.tree.is_root_node("single") is True
+        assert temp_store.tree.is_leaf_node("single") is True
 
         # Test node with only left child
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="parent_left_only",
             text="Parent with left only",
             embedding=[0.2] * 1536,
@@ -455,7 +467,7 @@ class TestStore:
             height=1,
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="left_only_child",
             text="Left only child",
             embedding=[0.3] * 1536,
@@ -465,11 +477,11 @@ class TestStore:
             height=0,
         )
 
-        assert temp_store.get_node("parent_left_only").height == 1
-        assert temp_store.is_leaf_node("parent_left_only") is False
+        assert temp_store.nodes.get_node("parent_left_only").height == 1
+        assert temp_store.tree.is_leaf_node("parent_left_only") is False
 
         # Test node with only right child
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="parent_right_only",
             text="Parent with right only",
             embedding=[0.4] * 1536,
@@ -479,7 +491,7 @@ class TestStore:
             height=1,
         )
 
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="right_only_child",
             text="Right only child",
             embedding=[0.5] * 1536,
@@ -489,8 +501,8 @@ class TestStore:
             height=0,
         )
 
-        assert temp_store.get_node("parent_right_only").height == 1
-        assert temp_store.is_leaf_node("parent_right_only") is False
+        assert temp_store.nodes.get_node("parent_right_only").height == 1
+        assert temp_store.tree.is_leaf_node("parent_right_only") is False
 
     def test_depth_calculation_performance(self, temp_store):
         """Test that depth calculation is O(log n) by creating a deep tree."""
@@ -501,7 +513,7 @@ class TestStore:
         # Create a chain of 10 nodes
         for i in range(10):
             node_id = f"chain_{i}"
-            temp_store.add_node(
+            temp_store.nodes.add_node(
                 node_id=node_id,
                 text=f"Chain node {i}",
                 embedding=[0.1 * i] * 1536,
@@ -514,16 +526,16 @@ class TestStore:
 
         # Test depths
         for i, node_id in enumerate(nodes):
-            assert temp_store.get_node_depth(node_id) == i
+            assert temp_store.tree.get_node_depth(node_id) == i
 
         # Even for the deepest node, we only traverse up to root
         # This is O(depth) = O(log n) for balanced trees
-        assert temp_store.get_node_depth("chain_9") == 9
+        assert temp_store.tree.get_node_depth("chain_9") == 9
 
     def test_error_handling_patterns(self, temp_store):
         """Test consistent error handling patterns."""
         # Create a simple tree for testing
-        temp_store.add_node(
+        temp_store.nodes.add_node(
             node_id="root",
             text="Root",
             embedding=[0.1] * 1536,
@@ -534,7 +546,7 @@ class TestStore:
 
         # Test NodeNotFoundError for calculation methods
         with pytest.raises(NodeNotFoundError) as exc_info:
-            temp_store.get_node_depth("missing")
+            temp_store.tree.get_node_depth("missing")
         assert exc_info.value.node_id == "missing"
 
         # Test InvalidOperationError for already pinned node
@@ -544,7 +556,7 @@ class TestStore:
 
         # Test InvalidOperationError for embedding validation
         with pytest.raises(InvalidOperationError, match="Embedding cannot be empty"):
-            temp_store.add_node(
+            temp_store.nodes.add_node(
                 node_id="bad",
                 text="Bad node",
                 embedding=[],  # Empty embedding
@@ -553,10 +565,10 @@ class TestStore:
             )
 
         # Test predicate methods return False for missing nodes (don't raise)
-        assert temp_store.is_leaf_node("missing") is False
-        assert temp_store.is_root_node("missing") is False
+        assert temp_store.tree.is_leaf_node("missing") is False
+        assert temp_store.tree.is_root_node("missing") is False
 
         # Test query methods return None for missing items (don't raise)
-        assert temp_store.get_node("missing") is None
+        assert temp_store.nodes.get_node("missing") is None
         assert temp_store.get_document_by_id("missing") is None
-        assert temp_store.get_document_embedding_model("missing") is None
+        assert temp_store.documents.get_document_embedding_model("missing") is None

@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from ragzoom.store import Store, TreeNode
+from ragzoom.store import StoreManager, TreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ def validate(validation_fn: Callable[[], str | None], context: str = "") -> None
 
 
 def _validate_with_nodes(
-    store: Store,
+    store: StoreManager,
     document_id: str,
     validator: Callable[[list[TreeNode]], str | None],
     empty_error: str = "No nodes found for document",
@@ -59,7 +59,8 @@ def _validate_with_nodes(
     Returns:
         Error message if invalid, None if valid
     """
-    nodes = store.get_all_nodes_for_document(document_id)
+    doc_store = store.for_document(document_id)
+    nodes = doc_store.nodes.get_all()
     if not nodes:
         return empty_error
     return validator(nodes)
@@ -162,7 +163,7 @@ def validate_chunk_sizes(
 
 
 def validate_tree_structure(
-    store: Store, document_id: str, original_text: str | None = None
+    store: StoreManager, document_id: str, original_text: str | None = None
 ) -> str | None:
     """Validate tree structure integrity.
 
@@ -267,7 +268,7 @@ def validate_tree_structure(
 
 def validate_tiling(
     tiling: list[str],  # List of node IDs
-    store: Store,
+    store: StoreManager,
     document_id: str,
     original_text: str | None = None,
     budget_tokens: int | None = None,
@@ -277,7 +278,7 @@ def validate_tiling(
 
     Args:
         tiling: List of node IDs in the tiling
-        store: Store instance
+        store: StoreManager instance
         document_id: Document ID
         original_text: Optional original text for gap validation
         budget_tokens: Optional token budget to validate against
@@ -296,7 +297,7 @@ def validate_tiling(
         if node_id in seen_nodes:
             return f"Duplicate node: {node_id}"
         seen_nodes.add(node_id)
-        node = store.get_node(node_id)
+        node = store.nodes.get_node(node_id)
         if not node:
             return f"Node {node_id} not found in store"
 
@@ -336,7 +337,8 @@ def validate_tiling(
             doc_end = max(n.span_end for n in preloaded_nodes.values())
     else:
         # Only fall back to loading all nodes if no preloaded nodes provided
-        doc_nodes = store.get_all_nodes_for_document(document_id)
+        doc_store = store.for_document(document_id)
+        doc_nodes = doc_store.nodes.get_all()
         if doc_nodes:
             doc_start = min(n.span_start for n in doc_nodes)
             doc_end = max(n.span_end for n in doc_nodes)
@@ -366,7 +368,7 @@ def validate_tiling(
     if budget_tokens is not None:
         total_tokens = 0
         for node_id in tiling:
-            node = store.get_node(node_id)
+            node = store.nodes.get_node(node_id)
             if not node:
                 continue
 
@@ -382,7 +384,7 @@ def validate_tiling(
     return None  # Valid tiling
 
 
-def validate_tree_is_left_balanced(store: Store, document_id: str) -> str | None:
+def validate_tree_is_left_balanced(store: StoreManager, document_id: str) -> str | None:
     """Validate that the indexed tree is left-balanced.
 
     A left-balanced tree means internal nodes have either:
@@ -427,7 +429,7 @@ def validate_tree_is_left_balanced(store: Store, document_id: str) -> str | None
     return _validate_with_nodes(store, document_id, check_balance)
 
 
-def validate_equal_leaf_depth(store: Store, document_id: str) -> str | None:
+def validate_equal_leaf_depth(store: StoreManager, document_id: str) -> str | None:
     """Validate that all leaf nodes are at the same (maximal) depth.
 
     This ensures consistent abstraction levels across the tree and prevents
