@@ -11,7 +11,7 @@ from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store
+from ragzoom.store import StoreManager
 
 # Skip benchmarks by default unless explicitly requested
 pytestmark = pytest.mark.benchmark
@@ -53,7 +53,7 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
         pytest.skip(f"Could not load test document {file_path}: {e}")
 
 
-def setup_test_document(store: Store, api_key: str) -> str:
+def setup_test_document(store: StoreManager, api_key: str) -> str:
     """Get or reuse the test document for query benchmarking.
 
     Returns the document ID of the indexed document.
@@ -106,7 +106,7 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
     )
 
     # Run query with metrics
-    with Store.temporary() as store:
+    with StoreManager.temporary() as store:
         # Index document first (or reuse if exists)
         doc_id = setup_test_document(store, api_key)
 

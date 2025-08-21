@@ -117,6 +117,16 @@ class TestCLI:
             mock_context_manager.__exit__ = Mock(return_value=None)
             store_instance.SessionLocal.return_value = mock_context_manager
 
+            # Mock document store (returned by for_document)
+            mock_doc_store = Mock()
+            mock_doc_store.nodes.get_all.return_value = [
+                Mock() for _ in range(10)
+            ]  # Mock list
+            mock_doc_store.nodes.get_leaves.return_value = [
+                Mock() for _ in range(5)
+            ]  # Mock list
+            store_instance.for_document.return_value = mock_doc_store
+
             mock_create_store.return_value = store_instance
 
             # Mock tree builder
@@ -177,7 +187,7 @@ class TestCLI:
             assert result.exit_code == 0
             assert "SYSTEM STATUS" in result.output
             assert "Total nodes: 10" in result.output
-            assert "Leaf nodes: 5" in result.output
+            assert "Leaf nodes: N/A (multi-document)" in result.output
             assert "Tree height:" in result.output
 
     def test_index_command_with_file(self, runner, mock_ragzoom):
