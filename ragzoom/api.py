@@ -37,6 +37,7 @@ class RagZoomService:
             self.index_config,
             self.store,
             api_key=self.operational_config.openai_api_key,
+            max_concurrent=30,  # Default concurrency limit for API calls
         )
         self.retriever = Retriever(
             self.query_config,
@@ -319,6 +320,7 @@ async def update_config(
                 service.index_config,
                 service.store,
                 api_key=service.operational_config.openai_api_key,
+                max_concurrent=30,  # Default concurrency limit for API calls
             )
             service.retriever = Retriever(
                 service.query_config,

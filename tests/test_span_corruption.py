@@ -30,7 +30,7 @@ class TestSpanCorruption:
 
         # Mock API calls
         mock_client = AsyncMock()
-        tree_builder.client = mock_client
+        tree_builder.llm_service.client = mock_client
 
         # Create a config wrapper for backward compatibility
         from tests.conftest import BackwardCompatibilityConfig

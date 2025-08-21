@@ -97,7 +97,9 @@ async def test_retry_maintains_conversation_history(mock_store):
 
         return MockOpenAIResponse("", 0, 0)
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         reporter = create_test_reporter(config)
 
         # Mock tokenizer to return length as token count
@@ -192,7 +194,9 @@ async def test_retry_preserves_original_context(mock_store):
 
         return MockOpenAIResponse("", 0, 0)
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         with (
             patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
             patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
@@ -250,7 +254,9 @@ async def test_multiple_retries_build_conversation(mock_store):
 
         return MockOpenAIResponse("", 0, 0)
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         with (
             patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
             patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
@@ -292,7 +298,9 @@ async def test_no_retry_when_within_threshold(mock_store):
         # Return summary within threshold (105 tokens, 5% over - within 10% threshold)
         return MockOpenAIResponse("A" * 105, 1000, 105, 0)
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         with (
             patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
             patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
@@ -346,7 +354,9 @@ async def test_accept_retry_within_threshold_immediately(mock_store):
                 "attempt 2 was within threshold"
             )
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         with (
             patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
             patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
@@ -384,7 +394,9 @@ async def test_passthrough_for_text_under_target(mock_store):
         api_calls.append(copy.deepcopy(kwargs))
         pytest.fail("Should not call LLM for text under target")
 
-    with patch.object(indexer.client.chat.completions, "create", new=mock_create):
+    with patch.object(
+        indexer.llm_service.client.chat.completions, "create", new=mock_create
+    ):
         with (
             patch(
                 "ragzoom.index.tokenizer.encode",
