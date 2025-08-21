@@ -7,8 +7,7 @@ from typing import Any
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.interfaces import StoreInterface
-from ragzoom.store import TreeNode
+from ragzoom.store import Store, TreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,7 @@ class IndexingService:
 
     def __init__(
         self,
-        store: StoreInterface,
+        store: Store,
         index_config: IndexConfig,
         operational_config: OperationalConfig,
     ):

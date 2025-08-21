@@ -4,8 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
-from ragzoom.interfaces import StoreInterface
-from ragzoom.store import Document, TreeNode
+from ragzoom.store import Document, Store, TreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ class SystemStatus:
 class DocumentService:
     """Service for document management operations."""
 
-    def __init__(self, store: StoreInterface):
+    def __init__(self, store: Store):
         """Initialize document service.
 
         Args:

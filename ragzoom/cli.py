@@ -455,7 +455,7 @@ def query(
             )
 
         # Tiling validation
-        if validate and getattr(result, "tiling", None) and result.tiling:
+        if validate and result and getattr(result, "tiling", None) and result.tiling:
             from ragzoom.validate import validate_tiling
 
             error = validate_tiling(
@@ -705,7 +705,6 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
-        document_service = DocumentService(store)
 
         # Get all nodes
         nodes_data = []

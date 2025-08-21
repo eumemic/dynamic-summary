@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
-from ragzoom.api import app, get_ragzoom_service
+from ragzoom.api import app
 from tests.utils import mock_openai_context
 
 
@@ -103,8 +103,8 @@ class TestConcurrency:
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
         # Get multiple service instances
-        service1 = get_ragzoom_service()
-        service2 = get_ragzoom_service()
+        service1 = get_service_container()
+        service2 = get_service_container()
 
         # Should be different instances (not singleton)
         assert service1 is not service2
