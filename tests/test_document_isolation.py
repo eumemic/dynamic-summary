@@ -1,14 +1,11 @@
 """Test document isolation - queries should only return results from specified document."""
 
-from unittest.mock import Mock, patch
-
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from tests.conftest import BackwardCompatibilityConfig
+from tests.utils import mock_openai_context
 
 
 class TestDocumentIsolation:
@@ -16,96 +13,28 @@ class TestDocumentIsolation:
 
     @pytest.fixture
     def mock_openai(self):
-        """Mock OpenAI API calls."""
-        with (
-            patch("ragzoom.services.llm_service.AsyncOpenAI") as mock_index_client,
-            patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,
-        ):
-
-            # Mock embeddings - return different embeddings for different content
-            async def mock_embeddings_create(*args, **kwargs):
-                input_data = kwargs.get("input", args[0] if args else "")
-                if isinstance(input_data, list):
-                    embeddings = []
-                    for text in input_data:
-                        if "dragon" in text.lower():
-                            embeddings.append(Mock(embedding=[0.9] * 1536))
-                        elif "wizard" in text.lower():
-                            embeddings.append(Mock(embedding=[0.8] * 1536))
-                        else:
-                            embeddings.append(Mock(embedding=[0.5] * 1536))
-                    return Mock(data=embeddings)
-                else:
-                    if "dragon" in input_data.lower():
-                        return Mock(data=[Mock(embedding=[0.9] * 1536)])
-                    elif "wizard" in input_data.lower():
-                        return Mock(data=[Mock(embedding=[0.8] * 1536)])
-                    else:
-                        return Mock(data=[Mock(embedding=[0.5] * 1536)])
-
-            async def mock_chat_create(*args, **kwargs):
-                return Mock(
-                    choices=[
-                        Mock(message=Mock(content="Summary of left and right content"))
-                    ]
-                )
-
-            def mock_embeddings_create_sync(*args, **kwargs):
-                input_data = kwargs.get("input", args[0] if args else "")
-                if "dragon" in input_data.lower():
-                    return Mock(data=[Mock(embedding=[0.9] * 1536)])
-                elif "wizard" in input_data.lower():
-                    return Mock(data=[Mock(embedding=[0.8] * 1536)])
-                else:
-                    return Mock(data=[Mock(embedding=[0.5] * 1536)])
-
-            # Set up async client
-            instance_async = Mock()
-            instance_async.embeddings = Mock()
-            instance_async.embeddings.create = Mock(side_effect=mock_embeddings_create)
-            instance_async.chat = Mock()
-            instance_async.chat.completions = Mock()
-            instance_async.chat.completions.create = Mock(side_effect=mock_chat_create)
-            mock_index_client.return_value = instance_async
-
-            # Set up sync client for retrieve only
-            instance_sync = Mock()
-            instance_sync.embeddings = Mock()
-            instance_sync.embeddings.create = Mock(
-                side_effect=mock_embeddings_create_sync
-            )
-            mock_retrieve_client.return_value = instance_sync
-
-            yield
+        """Mock OpenAI API calls with specialized embedding rules."""
+        embedding_rules = {
+            "dragon": [0.9] * 1536,
+            "wizard": [0.8] * 1536,
+        }
+        with mock_openai_context(embedding_rules) as mocks:
+            yield mocks
 
     @pytest.fixture
-    def setup(self, mock_openai, store):
+    def setup(self, mock_openai, store, base_config):
         """Create test environment."""
-        index_config = IndexConfig.load(
-            target_chunk_tokens=50,
-            preceding_context_tokens=25,
-        )
-        query_config = QueryConfig(
-            budget_tokens=1000,
-        )
-        operational_config = OperationalConfig(
-            openai_api_key="test-key",
-        )
-        config = BackwardCompatibilityConfig(
-            index_config, query_config, operational_config
-        )
-
         tree_builder = TreeBuilder(
-            index_config, store, api_key=operational_config.openai_api_key
+            base_config.index_config, store, api_key=base_config.openai_api_key
         )
         retriever = Retriever(
-            query_config,
+            base_config.query_config,
             store,
-            api_key=operational_config.openai_api_key,
+            api_key=base_config.openai_api_key,
         )
         assembler = Assembler(store)
 
-        yield config, store, tree_builder, retriever, assembler
+        yield base_config, store, tree_builder, retriever, assembler
 
     def test_document_isolation(self, setup):
         """Test that queries only return results from the specified document."""
