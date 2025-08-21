@@ -492,8 +492,27 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     common_sizes = baseline_sizes & current_sizes
 
     if not common_sizes:
-        click.echo("No common chunk sizes found between files", err=True)
-        return False  # Return False, don't exit here
+        # Check if both have single chunk sizes (different values) - this is the new scenario
+        if len(baseline_sizes) == 1 and len(current_sizes) == 1:
+            baseline_size = list(baseline_sizes)[0]
+            current_size = list(current_sizes)[0]
+
+            # Handle single-chunk comparison with different sizes
+            _format_single_chunk_different_sizes_comparison(
+                baseline_metrics,
+                current_metrics,
+                baseline_size,
+                current_size,
+                baseline_config,
+                current_config,
+            )
+
+            # For different chunk sizes, we don't do regression detection
+            # since the metrics aren't directly comparable
+            return False
+        else:
+            click.echo("No common chunk sizes found between files", err=True)
+            return False  # Return False, don't exit here
 
     # Check for regressions with dynamic thresholds
     has_regression, thresholds_by_chunk = (
@@ -1850,6 +1869,97 @@ def _compare_metric(
 
     # Display
     click.echo(f"  {name:15} {base_str:>12} → {curr_str:>12}  ({change_str})")
+
+
+def _format_single_chunk_different_sizes_comparison(
+    baseline: SimplifiedMetrics,
+    current: SimplifiedMetrics,
+    baseline_size: int,
+    current_size: int,
+    baseline_config: dict[str, Any] | None = None,
+    current_config: dict[str, Any] | None = None,
+) -> None:
+    """Format comparison when baseline and current have different single chunk sizes."""
+
+    click.echo("# Performance Comparison Report\n")
+
+    # Configuration comparison if available
+    if baseline_config is not None and current_config is not None:
+        click.echo("## Configuration Changes\n")
+        click.echo("| Parameter | Baseline | Current |")
+        click.echo("|-----------|----------|---------|")
+
+        # Get all config keys from both configs
+        all_keys = sorted(set(baseline_config.keys()) | set(current_config.keys()))
+
+        for key in all_keys:
+            baseline_val = baseline_config.get(key, "—")
+            current_val = current_config.get(key, "—")
+
+            # Format the key for display
+            display_key = key.replace("_", " ").title()
+
+            # Highlight differences
+            if baseline_val != current_val:
+                click.echo(
+                    f"| **{display_key}** | {baseline_val} | **{current_val}** |"
+                )
+            else:
+                click.echo(f"| {display_key} | {baseline_val} | {current_val} |")
+
+        click.echo("")
+
+    # Note about different chunk sizes
+    click.echo("## ℹ️ Different Chunk Sizes\n")
+    click.echo(f"**Baseline:** {baseline_size} tokens")
+    click.echo(f"**Current:** {current_size} tokens\n")
+    click.echo(
+        "_Regression detection is disabled when comparing different chunk sizes._\n"
+    )
+
+    # Side-by-side comparison
+    click.echo("## Performance Metrics Comparison\n")
+    click.echo("| Metric | Baseline | Current | Notes |")
+    click.echo("|--------|----------|---------|-------|")
+
+    baseline_metrics = baseline.metrics_by_chunk_size[baseline_size]
+    current_metrics = current.metrics_by_chunk_size[current_size]
+
+    # Target-fit metrics
+    click.echo("| **Target Fit** | | | |")
+    click.echo(
+        f"| Median Error | {baseline_metrics.target_fit.median_error:.1f} tokens | {current_metrics.target_fit.median_error:.1f} tokens | Target accuracy |"
+    )
+    click.echo(
+        f"| P95 Error | {baseline_metrics.target_fit.p95_error:.1f} tokens | {current_metrics.target_fit.p95_error:.1f} tokens | Worst-case accuracy |"
+    )
+    click.echo(
+        f"| % Within 10 tokens | {baseline_metrics.target_fit.percent_within_10:.1f}% | {current_metrics.target_fit.percent_within_10:.1f}% | Consistency |"
+    )
+
+    # Latency metrics
+    click.echo("| **Latency** | | | |")
+    click.echo(
+        f"| Median Time | {baseline_metrics.latency.median_seconds:.2f}s | {current_metrics.latency.median_seconds:.2f}s | Per-node processing |"
+    )
+    click.echo(
+        f"| Total Time | {baseline_metrics.latency.total_indexing_seconds:.1f}s | {current_metrics.latency.total_indexing_seconds:.1f}s | Full document |"
+    )
+
+    # Cost metrics
+    click.echo("| **Cost** | | | |")
+    click.echo(
+        f"| Cost per Node | ${baseline_metrics.cost.usd_per_node:.4f} | ${current_metrics.cost.usd_per_node:.4f} | Economic efficiency |"
+    )
+    click.echo(
+        f"| Total Tokens | {baseline_metrics.cost.total_tokens:,} | {current_metrics.cost.total_tokens:,} | API usage |"
+    )
+
+    # Retry metrics
+    click.echo("| **Reliability** | | | |")
+    click.echo(
+        f"| Retry Rate | {baseline_metrics.retries.retry_rate:.1%} | {current_metrics.retries.retry_rate:.1%} | API stability |"
+    )
 
 
 def _format_markdown_comparison_with_thresholds(

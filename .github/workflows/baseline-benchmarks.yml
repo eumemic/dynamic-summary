@@ -66,15 +66,15 @@ jobs:
       - name: Run benchmarks
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          RAGZOOM_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test
         run: |
           mkdir -p benchmark_results
           
-          # Run indexing benchmarks for different chunk sizes
-          for chunk_size in 100 200 400; do
-            echo "Running indexing benchmark with chunk_size=$chunk_size"
-            pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-$chunk_size" -v
-          done
+          # Run indexing benchmark with current defaults and full Hobbit text
+          echo "Running indexing benchmark with full Hobbit text and current defaults..."
+          ./scripts/run-indexing-benchmarks \
+            --database "postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test" \
+            --output-dir benchmark_results \
+            test_data/the_hobbit.txt
           
           # Run query benchmarks (same configurations as PR tests)
           echo "Running query performance benchmarks..."

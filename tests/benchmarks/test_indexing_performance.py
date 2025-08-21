@@ -14,47 +14,42 @@ from ragzoom.store import Store
 pytestmark = pytest.mark.benchmark
 
 
-def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
-    """Get a test document from the test_data directory.
+def get_test_document(document_path: str) -> tuple[str, str]:
+    """Get a test document from the provided path.
 
     Args:
-        document_type: Type of document to load
-            - "narrative": The Hobbit Chapter 1 (~7K tokens)
-            - "technical": Technical documentation sample
-            - "classic": Moby Dick sample
+        document_path: Path to the document to load
 
     Returns:
         Tuple of (document_text, document_name)
     """
-    documents = {
-        "narrative": ("test_data/the_hobbit_chapter_1.txt", "The Hobbit Ch1"),
-        "technical": ("test_data/smoke_test_larger.txt", "Technical Doc"),
-        "classic": ("test_data/moby_dick_sample.txt", "Moby Dick Sample"),
-    }
-
-    if document_type not in documents:
-        document_type = "narrative"  # Default
-
-    file_path, name = documents[document_type]
-
     # Read the document
     try:
-        path = Path(file_path)
-        if not path.exists():
-            # If running from different directory, try from root
-            path = Path(__file__).parent.parent.parent / file_path
+        path = Path(document_path)
+        if not path.is_absolute():
+            # If relative path, try from current directory and from test root
+            if not path.exists():
+                path = Path(__file__).parent.parent.parent / document_path
 
         text = path.read_text(encoding="utf-8")
+        # Use the filename as the document name
+        name = path.stem.replace("_", " ").title()
         return text, name
     except Exception as e:
-        pytest.skip(f"Could not load test document {file_path}: {e}")
+        pytest.skip(f"Could not load test document {document_path}: {e}")
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("leaf_tokens", [100, 200, 400])
-@pytest.mark.parametrize("document_type", ["narrative"])
-def test_indexing_performance(leaf_tokens, document_type):
-    """Benchmark indexing performance at different chunk sizes with real documents."""
+def test_indexing_performance(
+    leaf_tokens, document_path="test_data/the_hobbit_chapter_1.txt"
+):
+    """Benchmark indexing performance with configurable document and chunk size.
+
+    Args:
+        leaf_tokens: Target tokens per leaf node
+        document_path: Path to document to index (default: Hobbit Chapter 1)
+    """
     # Create config for this specific test
     api_key = os.getenv("OPENAI_API_KEY", "test-key")
 
@@ -67,7 +62,7 @@ def test_indexing_performance(leaf_tokens, document_type):
     )
 
     # Get test document
-    test_doc, doc_name = get_test_document(document_type)
+    test_doc, doc_name = get_test_document(document_path)
 
     # Run indexing with metrics
     with Store.temporary() as store:
@@ -77,8 +72,10 @@ def test_indexing_performance(leaf_tokens, document_type):
         _ = builder.splitter.tokenizer.encode("warmup")
 
         # Run indexing
+        # Create document ID from path and tokens
+        doc_stem = Path(document_path).stem
         doc_id, telemetry = builder.add_document_with_telemetry(
-            test_doc, document_id=f"{document_type}_{leaf_tokens}", show_progress=False
+            test_doc, document_id=f"{doc_stem}_{leaf_tokens}", show_progress=False
         )
 
         # Save telemetry data for comparison

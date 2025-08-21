@@ -104,6 +104,9 @@ Options:
                           3. <repo_root>/telemetry.json (if in worktree)
     --output-dir <dir>     Directory for output files
                           Default: benchmarks/<timestamp> (e.g., benchmarks/20250815_163448)
+    --database <url>       PostgreSQL database URL to use
+                          If provided, skips Docker PostgreSQL setup
+                          Example: postgresql+psycopg://user:pass@host:5432/db
     --help                 Show this help message and exit
     
 Document:
@@ -140,6 +143,8 @@ EOF
 BASELINE=""
 OUTPUT_DIR=""  # Will be set to benchmarks/<timestamp> by default
 DOCUMENT=""  # Will be auto-detected or provided
+DATABASE_URL=""  # Will be set by --database flag or generated
+SKIP_DB_SETUP=false  # Skip Docker PostgreSQL setup if --database provided
 EXTRA_ARGS=()
 USE_DEFAULT_OUTPUT=true  # Track if user provided custom output dir
 
@@ -174,6 +179,11 @@ while [[ $# -gt 0 ]]; do
         --output-dir)
             OUTPUT_DIR="$2"
             USE_DEFAULT_OUTPUT=false
+            shift 2
+            ;;
+        --database)
+            DATABASE_URL="$2"
+            SKIP_DB_SETUP=true
             shift 2
             ;;
         --document-id|--max-retries|--retry-threshold|--target-chunk-tokens|--preceding-context-tokens|--summary-model|--embedding-model|--embedding-batch-size)
@@ -325,12 +335,22 @@ if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
 fi
 echo ""
 
-# Ensure PostgreSQL is running and create benchmark database
-echo "🗄️ Setting up PostgreSQL benchmark database..."
+# Set up database - either use provided URL or create new one
+if [ "$SKIP_DB_SETUP" = true ]; then
+    echo "🗄️ Using provided database URL..."
+    echo "  Database URL: $DATABASE_URL"
+    echo ""
+    
+    # Save database info for reference (no cleanup needed for external DB)
+    echo "external_database" > "$DATABASE_NAME_FILE"
+    echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
+else
+    # Ensure PostgreSQL is running and create benchmark database
+    echo "🗄️ Setting up PostgreSQL benchmark database..."
 
-# Create database and capture the returned URL with credentials
-# Use environment variable to avoid shell injection
-BENCHMARK_DB_ENV_NAME="$BENCHMARK_DB_NAME" python -c "
+    # Create database and capture the returned URL with credentials
+    # Use environment variable to avoid shell injection
+    BENCHMARK_DB_ENV_NAME="$BENCHMARK_DB_NAME" python -c "
 from ragzoom.docker_postgres import DockerPostgres
 from ragzoom.db_utils import create_temp_database
 import os, sys
@@ -345,29 +365,28 @@ except Exception as e:
     sys.exit(1)
 " > /tmp/db_setup_$$.out 2> /tmp/db_setup_$$.err
 
-# Check if database creation succeeded and capture output properly
-if [ $? -eq 0 ]; then
-    DATABASE_URL=$(cat /tmp/db_setup_$$.out)
-    rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
-else
-    echo "❌ Failed to set up PostgreSQL database:"
-    cat /tmp/db_setup_$$.err >&2
-    rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
-    exit 1
+    # Check if database creation succeeded and capture output properly
+    if [ $? -eq 0 ]; then
+        DATABASE_URL=$(cat /tmp/db_setup_$$.out)
+        rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
+    else
+        echo "❌ Failed to set up PostgreSQL database:"
+        cat /tmp/db_setup_$$.err >&2
+        rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
+        exit 1
+    fi
+
+    # Track the database for cleanup
+    CREATED_DB_NAME="$BENCHMARK_DB_NAME"
+
+    # Save database name and URL for reference
+    echo "$BENCHMARK_DB_NAME" > "$DATABASE_NAME_FILE"
+    echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
+
+    echo "✅ Created benchmark database: $BENCHMARK_DB_NAME"
+    echo "  Database URL: $DATABASE_URL"
+    echo ""
 fi
-
-# Database creation check is now handled above
-
-# Track the database for cleanup
-CREATED_DB_NAME="$BENCHMARK_DB_NAME"
-
-# Save database name and URL for reference
-echo "$BENCHMARK_DB_NAME" > "$DATABASE_NAME_FILE"
-echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
-
-echo "✅ Created benchmark database: $BENCHMARK_DB_NAME"
-echo "  Database URL: $DATABASE_URL"
-echo ""
 
 # Run indexing with telemetry
 # Implicitly adds: --telemetry <file> --validate --debug --no-progress
@@ -429,6 +448,22 @@ else
     echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
 fi
 
+# Generate CI-friendly summary
+echo "  Generating CI summary..."
+CI_SUMMARY_FILE="$OUTPUT_DIR/ci-summary.json"
+cat > "$CI_SUMMARY_FILE" <<EOF
+{
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "exit_code": $COMPARE_EXIT_CODE,
+  "regression_detected": $([ $COMPARE_EXIT_CODE -eq 1 ] && echo "true" || echo "false"),
+  "comparison_succeeded": $([ $COMPARE_EXIT_CODE -le 1 ] && echo "true" || echo "false"),
+  "telemetry_file": "$TELEMETRY_FILE",
+  "comparison_file": "$OUTPUT_DIR/comparison.md",
+  "baseline_file": "$BASELINE"
+}
+EOF
+echo "  ✅ CI summary saved to $CI_SUMMARY_FILE"
+
 # Generate visualization (optional - check for dependencies)
 echo "  Checking for visualization dependencies..."
 if python -c "import matplotlib, seaborn, pandas" 2>/dev/null; then
@@ -473,13 +508,16 @@ echo "  - Database: $DATABASE_URL (details saved in $DATABASE_NAME_FILE)"
 echo "  - Telemetry: $OUTPUT_DIR/telemetry.json"
 echo "  - Log: $OUTPUT_DIR/log.txt"
 echo "  - Comparison report: $OUTPUT_DIR/comparison.md"
+echo "  - CI summary: $OUTPUT_DIR/ci-summary.json"
 echo "  - Visualization: $OUTPUT_DIR/visualization.png"
 echo ""
 # On successful completion, don't auto-cleanup - leave database for debugging
 CREATED_DB_NAME=""  # Clear the cleanup variable to prevent auto-cleanup
 
-echo "💡 Database cleanup: The benchmark database '$BENCHMARK_DB_NAME' is left intact for debugging."
-echo "   To clean up manually: CLEANUP_DB_NAME='$BENCHMARK_DB_NAME' python -c 'from ragzoom.db_utils import drop_temp_database; import os; drop_temp_database(os.environ[\"CLEANUP_DB_NAME\"])'"
+if [ "$SKIP_DB_SETUP" != true ]; then
+    echo "💡 Database cleanup: The benchmark database '$BENCHMARK_DB_NAME' is left intact for debugging."
+    echo "   To clean up manually: CLEANUP_DB_NAME='$BENCHMARK_DB_NAME' python -c 'from ragzoom.db_utils import drop_temp_database; import os; drop_temp_database(os.environ[\"CLEANUP_DB_NAME\"])'"
+fi
 
 if [ "$USE_DEFAULT_OUTPUT" = true ]; then
     echo ""

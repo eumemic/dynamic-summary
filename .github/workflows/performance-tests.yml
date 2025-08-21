@@ -40,9 +40,7 @@ jobs:
         ports:
           - 5432:5432
     
-    env:
-      # Single source of truth for which chunk size to visualize and check for verbatim issues
-      VISUALIZATION_CHUNK_SIZE: 200
+    # No environment variables needed - using single benchmark with current defaults
     
     steps:
       - name: Checkout PR branch
@@ -160,20 +158,32 @@ jobs:
           fi
           mkdir -p benchmark_results
       
-      - name: Run benchmark - 100 tokens
-        id: benchmark_100
+      - name: Run indexing benchmark
+        id: benchmark
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          echo "Running PR benchmark with chunk_size=100"
-          if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-100" -v; then
-            echo "❌ Benchmark failed for chunk_size=100"
-            echo "Creating error result file..."
-            echo '{"error": "Benchmark failed to run", "chunk_size": "100"}' > "benchmark_results/telemetry_100_tokens.json"
-            echo "BENCHMARK_ERROR=true" >> $GITHUB_OUTPUT  # Mark as error, not just failed
+          echo "Running indexing benchmark with full Hobbit text and current defaults..."
+          if ! ./scripts/run-indexing-benchmarks \
+            --database "postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test" \
+            --baseline baseline_results/telemetry.json \
+            --output-dir benchmark_results \
+            test_data/the_hobbit.txt; then
+            echo "❌ Indexing benchmark failed"
+            echo "BENCHMARK_ERROR=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Indexing benchmark completed"
+            # Check for regression using CI summary
+            if [ -f benchmark_results/ci-summary.json ]; then
+              REGRESSION=$(jq -r '.regression_detected' benchmark_results/ci-summary.json)
+              if [ "$REGRESSION" = "true" ]; then
+                echo "REGRESSION=true" >> $GITHUB_OUTPUT
+                echo "⚠️ Performance regression detected"
+              fi
+            fi
           fi
       
-      - name: Update comment - 100 tokens complete
+      - name: Update comment - indexing complete
         uses: actions/github-script@v7
         with:
           script: |
@@ -186,108 +196,7 @@ jobs:
             _View [workflow run](${workflowUrl})_
             
             ⏳ **Progress:**
-            - ✅ 100 tokens benchmark complete
-            - ⏱️ Running 200 tokens benchmark...`;
-            
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.body && comment.body.includes(identifier) &&
-              comment.user && comment.user.login === 'github-actions[bot]'
-            );
-            
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body
-              });
-            }
-      
-      - name: Run benchmark - 200 tokens
-        id: benchmark_200
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          echo "Running PR benchmark with chunk_size=200"
-          if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-200" -v; then
-            echo "❌ Benchmark failed for chunk_size=200"
-            echo "Creating error result file..."
-            echo '{"error": "Benchmark failed to run", "chunk_size": "200"}' > "benchmark_results/telemetry_200_tokens.json"
-            echo "BENCHMARK_ERROR=true" >> $GITHUB_OUTPUT  # Mark as error, not just failed
-          fi
-      
-      - name: Update comment - 200 tokens complete
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const identifier = '<!-- github-actions-perf-report-comment -->';
-            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            
-            const body = `${identifier}
-            ## 📊 Performance Report
-            
-            _View [workflow run](${workflowUrl})_
-            
-            ⏳ **Progress:**
-            - ✅ 100 tokens benchmark complete
-            - ✅ 200 tokens benchmark complete
-            - ⏱️ Running 400 tokens benchmark...`;
-            
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.body && comment.body.includes(identifier) &&
-              comment.user && comment.user.login === 'github-actions[bot]'
-            );
-            
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body
-              });
-            }
-      
-      - name: Run benchmark - 400 tokens
-        id: benchmark_400
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          echo "Running PR benchmark with chunk_size=400"
-          if ! pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance -k "narrative-400" -v; then
-            echo "❌ Benchmark failed for chunk_size=400"
-            echo "Creating error result file..."
-            echo '{"error": "Benchmark failed to run", "chunk_size": "400"}' > "benchmark_results/telemetry_400_tokens.json"
-            echo "BENCHMARK_ERROR=true" >> $GITHUB_OUTPUT  # Mark as error, not just failed
-          fi
-      
-      - name: Update comment - 400 tokens complete
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const identifier = '<!-- github-actions-perf-report-comment -->';
-            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            
-            const body = `${identifier}
-            ## 📊 Performance Report
-            
-            _View [workflow run](${workflowUrl})_
-            
-            ⏳ **Progress:**
-            - ✅ 100 tokens benchmark complete
-            - ✅ 200 tokens benchmark complete
-            - ✅ 400 tokens benchmark complete
+            - ✅ Indexing benchmark complete
             - ⏱️ Running query benchmarks...`;
             
             const { data: comments } = await github.rest.issues.listComments({
@@ -306,7 +215,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 comment_id: botComment.id,
-                body: body
+                body
               });
             }
       
@@ -389,28 +298,27 @@ jobs:
         run: |
           echo "🔍 Analyzing telemetry for potential issues..."
           
-          # Only analyze the visualization chunk size for verbatim issues
-          CHUNK_SIZE="${{ env.VISUALIZATION_CHUNK_SIZE }}"
-          file="benchmark_results/telemetry_${CHUNK_SIZE}_tokens.json"
+          # Analyze the main telemetry file
+          file="benchmark_results/telemetry.json"
           
           if [ -f "$file" ]; then
             echo ""
-            echo "### Analyzing ${CHUNK_SIZE} tokens benchmark (matches visualization)"
+            echo "### Analyzing indexing benchmark telemetry"
             
             # Run analysis and capture output
-            if ragzoom-telemetry analyze "$file" > "analysis_${CHUNK_SIZE}.txt" 2>&1; then
+            if ragzoom-telemetry analyze "$file" > "analysis.txt" 2>&1; then
               # Check for verbatim issues in the output
-              if grep -q "Verbatim Concatenation Issues" "analysis_${CHUNK_SIZE}.txt"; then
-                echo "⚠️ VERBATIM ISSUES DETECTED in ${CHUNK_SIZE} tokens benchmark!"
+              if grep -q "Verbatim Concatenation Issues" "analysis.txt"; then
+                echo "⚠️ VERBATIM ISSUES DETECTED in indexing benchmark!"
                 echo "VERBATIM_DETECTED=true" >> $GITHUB_OUTPUT
                 
                 # Extract verbatim details for report
-                grep -A 20 "Verbatim Concatenation Issues" "analysis_${CHUNK_SIZE}.txt" > "verbatim_${CHUNK_SIZE}.txt"
+                grep -A 20 "Verbatim Concatenation Issues" "analysis.txt" > "verbatim_details.txt"
               else
                 echo "✅ No verbatim issues detected"
               fi
             else
-              echo "❌ Analysis failed for ${CHUNK_SIZE} tokens"
+              echo "❌ Analysis failed"
             fi
           else
             echo "⚠️ Telemetry file not found: $file"
@@ -424,23 +332,22 @@ jobs:
             echo "REGRESSION=true" >> $GITHUB_OUTPUT
           fi
       
-      - name: Generate visualization for ${{ env.VISUALIZATION_CHUNK_SIZE }} tokens
+      - name: Generate visualization
         id: visualize
         run: |
-          # Generate side-by-side visualization for the configured chunk size if both files exist
-          CHUNK_SIZE="${{ env.VISUALIZATION_CHUNK_SIZE }}"
-          if [ -f "baseline_results/telemetry_${CHUNK_SIZE}_tokens.json" ] && [ -f "benchmark_results/telemetry_${CHUNK_SIZE}_tokens.json" ]; then
-            echo "📊 Generating side-by-side visualization for ${CHUNK_SIZE} tokens..."
-            ragzoom-telemetry visualize baseline_results/telemetry_${CHUNK_SIZE}_tokens.json benchmark_results/telemetry_${CHUNK_SIZE}_tokens.json -o comparison_${CHUNK_SIZE}_tokens.png || {
+          # Generate side-by-side visualization if both files exist
+          if [ -f "baseline_results/telemetry.json" ] && [ -f "benchmark_results/telemetry.json" ]; then
+            echo "📊 Generating side-by-side visualization..."
+            ragzoom-telemetry visualize baseline_results/telemetry.json benchmark_results/telemetry.json -o comparison.png || {
               echo "⚠️ Failed to generate visualization"
             }
-            if [ -f "comparison_${CHUNK_SIZE}_tokens.png" ]; then
+            if [ -f "comparison.png" ]; then
               echo "✅ Visualization generated successfully"
               echo "VISUALIZATION_GENERATED=true" >> $GITHUB_OUTPUT
               
               # Publish visualization to GitHub Pages for inline display
               # Use a subdirectory to organize images by run ID
-              IMAGE_PATH="ci-visualizations/${{ github.run_id }}/comparison_${CHUNK_SIZE}_tokens.png"
+              IMAGE_PATH="ci-visualizations/${{ github.run_id }}/comparison.png"
               
               # Clone gh-pages branch (or create if it doesn't exist)
               cd /tmp
@@ -462,7 +369,7 @@ jobs:
               
               # Create directory structure and copy image
               mkdir -p $(dirname "$IMAGE_PATH")
-              cp ${{ github.workspace }}/comparison_${CHUNK_SIZE}_tokens.png "$IMAGE_PATH"
+              cp ${{ github.workspace }}/comparison.png "$IMAGE_PATH"
               
               # Add and commit
               git add "$IMAGE_PATH"
@@ -640,11 +547,10 @@ jobs:
             echo "This indicates a potential issue with summarization quality." >> report.md
             echo "" >> report.md
             
-            # Add details for the visualization chunk size
-            CHUNK_SIZE="${{ env.VISUALIZATION_CHUNK_SIZE }}"
-            verbatim_file="verbatim_${CHUNK_SIZE}.txt"
+            # Add details from verbatim analysis
+            verbatim_file="verbatim_details.txt"
             if [ -f "$verbatim_file" ]; then
-              echo "**Chunk size: ${CHUNK_SIZE} tokens (shown in visualization)**" >> report.md
+              echo "**Indexing Benchmark Details**" >> report.md
               echo '```' >> report.md
               cat "$verbatim_file" >> report.md
               echo '```' >> report.md
@@ -689,9 +595,7 @@ jobs:
             body += `_View [workflow run](${workflowUrl})_\n\n`;
             
             // Check for benchmark errors first
-            const hasErrors = `${{ steps.benchmark_100.outputs.BENCHMARK_ERROR }}` === 'true' ||
-                             `${{ steps.benchmark_200.outputs.BENCHMARK_ERROR }}` === 'true' ||
-                             `${{ steps.benchmark_400.outputs.BENCHMARK_ERROR }}` === 'true';
+            const hasErrors = `${{ steps.benchmark.outputs.BENCHMARK_ERROR }}` === 'true';
             
             if (hasErrors) {
               body += '## ❌ Benchmark Execution Error\n\n';
@@ -718,7 +622,7 @@ jobs:
               
               // Add visualization after the report if it was generated
               if (visualizationUrl) {
-                body += `\n### Performance Visualization (${{ env.VISUALIZATION_CHUNK_SIZE }} tokens)\n\n`;
+                body += `\n### Performance Visualization\n\n`;
                 body += `![Telemetry Comparison](${visualizationUrl})\n\n`;
               }
             } else {
@@ -758,10 +662,7 @@ jobs:
             }
       
       - name: Fail if benchmark errors occurred
-        if: |
-          steps.benchmark_100.outputs.BENCHMARK_ERROR == 'true' ||
-          steps.benchmark_200.outputs.BENCHMARK_ERROR == 'true' ||
-          steps.benchmark_400.outputs.BENCHMARK_ERROR == 'true'
+        if: steps.benchmark.outputs.BENCHMARK_ERROR == 'true'
         run: |
           echo "❌ Benchmark execution errors detected!"
           echo "The benchmarks failed to run due to code errors."
@@ -778,7 +679,7 @@ jobs:
           exit 1
       
       - name: Fail if regression detected
-        if: steps.compare.outputs.REGRESSION == 'true'
+        if: steps.benchmark.outputs.REGRESSION == 'true'
         run: |
           echo "❌ Performance regression detected!"
           exit 1
@@ -792,4 +693,4 @@ jobs:
             baseline_results/
             benchmark_results/
             report.md
-            comparison_${{ env.VISUALIZATION_CHUNK_SIZE }}_tokens.png
+            comparison.png
