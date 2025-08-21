@@ -421,9 +421,10 @@ class TreeBuilder:
                 self.config.summary_model,
             )
 
-        # Batch insert all leaf nodes at once
+        # Batch insert all leaf nodes at once using document-scoped store
         if leaf_nodes_data:
-            self.store.add_nodes_batch(leaf_nodes_data)
+            doc_store = self.store.for_document(document_id)
+            doc_store.nodes.add_batch(leaf_nodes_data)
         else:
             # Update existing document
             with self.store.SessionLocal() as session:
