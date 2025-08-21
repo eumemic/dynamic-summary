@@ -32,7 +32,7 @@ class TestIndexingFast:
 
         # Create tree builder and index
         tree_builder = TreeBuilder(config, store, max_concurrent=5)
-        tree_builder.client = mock_client
+        tree_builder.llm_service.client = mock_client
 
         # Index the document
         asyncio.run(
@@ -106,7 +106,7 @@ class TestIndexingFast:
 
         # Create tree builder and index
         tree_builder = TreeBuilder(config, store, max_concurrent=1)
-        tree_builder.client = mock_client
+        tree_builder.llm_service.client = mock_client
 
         # Index the document
         asyncio.run(
@@ -163,7 +163,7 @@ class TestIndexingFast:
 
         # Create tree builder and index
         tree_builder = TreeBuilder(config, store, max_concurrent=5)
-        tree_builder.client = mock_client
+        tree_builder.llm_service.client = mock_client
 
         # Index the document
         asyncio.run(

@@ -257,7 +257,9 @@ class TestTelemetryIntegration:
         mock_async_client.chat.completions.create = mock_chat_completion
 
         # Index with mocked client
-        with patch("ragzoom.index.AsyncOpenAI", return_value=mock_async_client):
+        with patch(
+            "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
+        ):
             builder = TreeBuilder(
                 index_config, store, operational_config.openai_api_key
             )

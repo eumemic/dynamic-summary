@@ -176,8 +176,8 @@ class TestDPIntegration:
         tree_builder = TreeBuilder(
             config.index_config, store, api_key=config.openai_api_key
         )
-        tree_builder.client.embeddings.create = async_embedding
-        tree_builder.client.chat.completions.create = async_summary
+        tree_builder.llm_service.client.embeddings.create = async_embedding
+        tree_builder.llm_service.client.chat.completions.create = async_summary
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
         )
@@ -232,8 +232,8 @@ class TestDPIntegration:
             store=store,
             api_key=config.openai_api_key,
         )
-        tree_builder.client.embeddings.create = async_embedding
-        tree_builder.client.chat.completions.create = async_summary
+        tree_builder.llm_service.client.embeddings.create = async_embedding
+        tree_builder.llm_service.client.chat.completions.create = async_summary
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
         )
@@ -282,8 +282,8 @@ class TestDPIntegration:
             store=store,
             api_key=config.openai_api_key,
         )
-        tree_builder.client.embeddings.create = async_embedding
-        tree_builder.client.chat.completions.create = async_summary
+        tree_builder.llm_service.client.embeddings.create = async_embedding
+        tree_builder.llm_service.client.chat.completions.create = async_summary
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
         )
@@ -333,8 +333,8 @@ class TestDPIntegration:
             store=store,
             api_key=config.openai_api_key,
         )
-        tree_builder.client.embeddings.create = async_embedding
-        tree_builder.client.chat.completions.create = async_summary
+        tree_builder.llm_service.client.embeddings.create = async_embedding
+        tree_builder.llm_service.client.chat.completions.create = async_summary
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
         )

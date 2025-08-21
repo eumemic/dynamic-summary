@@ -95,7 +95,7 @@ class MockOpenAIContext:
 
     def __enter__(self):
         """Enter context and set up mocks."""
-        self.index_patcher = patch("ragzoom.index.AsyncOpenAI")
+        self.index_patcher = patch("ragzoom.services.llm_service.AsyncOpenAI")
         self.retrieve_patcher = patch("ragzoom.retrieve.OpenAI")
 
         mock_index_class = self.index_patcher.start()
@@ -152,7 +152,7 @@ def mock_openai_fixture():
             return mock_openai_fixture()
     """
     with (
-        patch("ragzoom.index.AsyncOpenAI") as mock_index,
+        patch("ragzoom.services.llm_service.AsyncOpenAI") as mock_index,
         patch("ragzoom.retrieve.OpenAI") as mock_retrieve,
     ):
         mock_index_client, mock_retrieve_client, mock_assemble_client = (

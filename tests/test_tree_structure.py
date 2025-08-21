@@ -219,10 +219,10 @@ class TestIndexingCreatesValidTrees:
             left,
             right,
             target,
-            prev_context,
+            *,
             parent_id=None,
-            debug=False,
             reporter=None,
+            prev_context=None,
             left_token_count=None,
             right_token_count=None,
         ):
@@ -231,9 +231,9 @@ class TestIndexingCreatesValidTrees:
             else:  # Single child
                 return f"Summary of: {left[:20]}...", 0, 50
 
-        tree_builder._get_embedding = mock_get_embedding
-        tree_builder._get_embeddings_batch = mock_get_batch_embeddings
-        tree_builder._summarize_text = mock_summarize_text
+        tree_builder.llm_service._get_embedding = mock_get_embedding
+        tree_builder.llm_service._get_embeddings_batch = mock_get_batch_embeddings
+        tree_builder.llm_service._summarize_text = mock_summarize_text
 
         # Enable validation
         set_validation_enabled(True)
