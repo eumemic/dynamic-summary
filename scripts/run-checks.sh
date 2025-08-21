@@ -149,7 +149,6 @@ run_check_background() {
 }
 
 # Start all checks in parallel
-echo "Running checks in parallel..."
 
 # Tests
 if ! should_skip "tests"; then
