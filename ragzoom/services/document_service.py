@@ -79,14 +79,27 @@ class DocumentService:
         with self.store.SessionLocal() as session:
             all_nodes = session.query(TreeNode).count()
 
-        leaf_nodes = self.store.get_leaf_nodes()
-        root = self.store.get_root_node()
+            # Count leaf nodes (nodes without children)
+            leaf_count = (
+                session.query(TreeNode)
+                .filter(
+                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
+                )
+                .count()
+            )
+
+            # Get max tree height across all documents
+            max_height = (
+                session.query(TreeNode.height).order_by(TreeNode.height.desc()).first()
+            )
+            tree_depth = max_height[0] if max_height else 0
+
         pinned = self.store.get_pinned_nodes()
 
         return SystemStatus(
             total_nodes=all_nodes,
-            leaf_nodes=len(leaf_nodes),
-            tree_depth=root.height if root else 0,
+            leaf_nodes=leaf_count,
+            tree_depth=tree_depth,
             pinned_nodes=len(pinned),
         )
 

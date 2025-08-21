@@ -589,22 +589,6 @@ def status(ctx: click.Context) -> None:
         )
         document_service = DocumentService(store)
 
-<<<<<<< HEAD
-            all_nodes = session.query(TreeNode).count()
-        # TODO: Implement system-wide stats for multi-document architecture
-        pinned = store.get_pinned_nodes()
-
-        click.echo("\nSYSTEM STATUS:")
-        click.echo("=" * 40)
-        click.echo(f"Total nodes: {all_nodes}")
-        click.echo(
-            "Leaf nodes: N/A (multi-document)"
-        )  # TODO: Aggregate across documents
-        click.echo(
-            "Tree height: N/A (multi-document)"
-        )  # TODO: Max depth across documents
-        click.echo(f"Pinned nodes: {len(pinned)}")
-=======
         # Get system status
         status = document_service.get_system_status()
 
@@ -614,7 +598,6 @@ def status(ctx: click.Context) -> None:
         click.echo(f"Leaf nodes: {status.leaf_nodes}")
         click.echo(f"Tree height: {status.tree_depth}")
         click.echo(f"Pinned nodes: {status.pinned_nodes}")
->>>>>>> 454393c (refactor: add service layer to eliminate API/CLI duplication)
         click.echo("\nCONFIGURATION:")
         click.echo("=" * 40)
         click.echo(f"Budget tokens: {query_config.budget_tokens}")

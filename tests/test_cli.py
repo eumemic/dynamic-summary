@@ -210,8 +210,9 @@ class TestCLI:
             assert result.exit_code == 0
             assert "SYSTEM STATUS" in result.output
             assert "Total nodes: 10" in result.output
-            assert "Leaf nodes: N/A (multi-document)" in result.output
-            assert "Tree height:" in result.output
+            assert "Leaf nodes: 5" in result.output
+            assert "Tree height: 3" in result.output
+            assert "Pinned nodes: 0" in result.output
 
     def test_index_command_with_file(self, runner, mock_ragzoom):
         """Test indexing a file."""
@@ -315,7 +316,7 @@ class TestCLI:
     def test_pin_command_failure(self, runner, mock_ragzoom):
         """Test pin command when pinning fails."""
         mock_ragzoom["document_service_instance"].pin_node.side_effect = (
-            InvalidOperationError("Node is too deep or already pinned")
+            InvalidOperationError("pin_node", "Node is too deep or already pinned")
         )
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):

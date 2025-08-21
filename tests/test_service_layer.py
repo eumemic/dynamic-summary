@@ -51,16 +51,32 @@ class TestDocumentService:
         """Test getting system status."""
         mock_store = Mock()
         mock_session = Mock()
-        mock_session.query.return_value.count.return_value = 100
+
+        # Create chainable mock for queries
+        mock_query = Mock()
+
+        # First query().count() returns total nodes
+        mock_query.count.return_value = 100
+
+        # Second query for leaf nodes
+        mock_filter = Mock()
+        mock_filter.count.return_value = 20
+        mock_query.filter.return_value = mock_filter
+
+        # Third query for max height
+        mock_order = Mock()
+        mock_order.first.return_value = (5,)  # Returns tuple as SQL would
+        mock_query.order_by.return_value = mock_order
+
+        # Make query return our mock
+        mock_session.query.return_value = mock_query
 
         mock_context_manager = Mock()
         mock_context_manager.__enter__ = Mock(return_value=mock_session)
         mock_context_manager.__exit__ = Mock(return_value=None)
         mock_store.SessionLocal.return_value = mock_context_manager
 
-        # Mock other store methods
-        mock_store.get_leaf_nodes.return_value = [Mock() for _ in range(20)]
-        mock_store.get_root_node.return_value = Mock(height=5)
+        # Mock pinned nodes
         mock_store.get_pinned_nodes.return_value = [Mock() for _ in range(2)]
 
         service = DocumentService(mock_store)
