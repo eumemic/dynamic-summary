@@ -20,43 +20,39 @@ class TestDocumentAPI:
     @pytest.fixture
     def client(self, mock_openai, monkeypatch, mock_store):
         """Create test client with mocked dependencies."""
-        from ragzoom.api import get_ragzoom_service
-        from ragzoom.assemble import Assembler
+        from ragzoom.api import get_service_container
         from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
-        from ragzoom.index import TreeBuilder
-        from ragzoom.retrieve import Retriever
+        from ragzoom.services.document_service import DocumentService
+        from ragzoom.services.indexing_service import IndexingService
+        from ragzoom.services.query_service import QueryService
 
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
-        # Create a mock service that uses our mock store
-        class MockRagZoomService:
+        # Create a mock service container that uses our mock store
+        class MockServiceContainer:
             def __init__(self):
                 self.index_config = IndexConfig.load()
                 self.query_config = QueryConfig()
                 self.operational_config = OperationalConfig(openai_api_key="test-key")
 
                 self.store = mock_store
-                self.tree_builder = TreeBuilder(
-                    self.index_config,
-                    self.store,
-                    api_key=self.operational_config.openai_api_key,
+                self.document_service = DocumentService(self.store)
+                self.indexing_service = IndexingService(
+                    self.store, self.index_config, self.operational_config
                 )
-                self.retriever = Retriever(
-                    self.query_config,
-                    self.store,
-                    api_key=self.operational_config.openai_api_key,
+                self.query_service = QueryService(
+                    self.store, self.query_config, self.operational_config
                 )
-                self.assembler = Assembler(self.store)
 
             def close(self):
                 """Mock close method."""
                 pass
 
-        def mock_get_ragzoom_service():
-            return MockRagZoomService()
+        def mock_get_service_container():
+            return MockServiceContainer()
 
         # Override the dependency
-        app.dependency_overrides[get_ragzoom_service] = mock_get_ragzoom_service
+        app.dependency_overrides[get_service_container] = mock_get_service_container
 
         try:
             with TestClient(app) as client:
