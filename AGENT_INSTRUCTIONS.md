@@ -57,6 +57,7 @@ Every agent must approach code as a master craftsperson. Each line you write is 
 ### 4. Version Control & Collaboration Rules
 
 - **Never Commit to Master:** Always ensure you're on a feature branch before committing. Check with `git branch --show-current`. If on master/main, ALWAYS ask the user what feature you're about to work on before creating a branch - don't assume the scope.
+- **NEVER Use `--no-verify`:** ABSOLUTELY NEVER use `--no-verify` to bypass pre-commit hooks unless given EXPLICIT PERMISSION by the user. Pre-commit hooks are the guardians of code quality and must not be bypassed. They prevent broken code, failed tests, and style violations from entering the repository.
 - **No Unauthorized Commits:** Never commit code unless explicitly directed to by the user.
 - **Atomic Commits:** When asked to commit, group changes into small, logical, atomic commits with clear messages. Do not lump unrelated changes together.
 - **Don't Deprecate, Delete:** Do not leave old code paths behind a feature flag or comment them out. Remove them. The git history will preserve them if we ever need to look back.
