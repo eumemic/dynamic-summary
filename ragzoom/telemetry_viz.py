@@ -99,6 +99,56 @@ class TelemetryVisualizer:
         chunk_size = config.get("target_chunk_tokens", 0)
         return int(chunk_size) if chunk_size else 0
 
+    def _calculate_max_time_from_telemetry(self, telemetry: dict[str, Any]) -> float:
+        """Calculate the maximum end time from telemetry data.
+
+        Args:
+            telemetry: Telemetry data dictionary
+
+        Returns:
+            Maximum end time found in the telemetry, relative to baseline
+        """
+        nodes = self._extract_nodes_from_telemetry(telemetry)
+        indexing_start_time = telemetry.get("indexed_at", None)
+
+        max_time = 0
+        min_time = None
+
+        # Process each node to find the maximum end time
+        for node in nodes:
+            # Skip leaf nodes (height 0) - they're raw text chunks
+            if node["height"] == 0:
+                continue
+
+            # Handle passthrough nodes (no summary attempts)
+            if not node.get("summary_attempts"):
+                created_at = node.get("created_at", 0)
+                max_time = max(max_time, created_at)
+                if min_time is None:
+                    min_time = created_at
+                continue
+
+            # Process summary nodes with attempts
+            attempts = node["summary_attempts"]
+            for attempt in attempts:
+                start_time = attempt.get("start_time")
+                end_time = attempt.get("end_time")
+
+                if start_time is None or end_time is None:
+                    continue
+
+                if min_time is None:
+                    min_time = start_time
+
+                max_time = max(max_time, end_time)
+
+        # Calculate baseline and return relative max time
+        baseline = indexing_start_time if indexing_start_time is not None else min_time
+        if baseline is not None and max_time > baseline:
+            return float(max_time - baseline)
+        else:
+            return 1.0  # Fallback value
+
     def _ensure_output_dir(self) -> None:
         """Ensure the output directory exists, creating it if necessary."""
         self.output_path.parent.mkdir(exist_ok=True, parents=True)
@@ -297,6 +347,11 @@ class TelemetryVisualizer:
 
         # Telemetry data already contains model information for cost calculations
 
+        # Pre-calculate the maximum time across both datasets for consistent y-axis scaling
+        max_time_1 = self._calculate_max_time_from_telemetry(telemetry1)
+        max_time_2 = self._calculate_max_time_from_telemetry(telemetry2)
+        global_max_time = max(max_time_1, max_time_2)
+
         # Create figure with side-by-side subplots using built-in axis sharing
         if figsize is None:
             figsize = (
@@ -362,10 +417,14 @@ class TelemetryVisualizer:
         ax3_left = fig.add_subplot(bottom_gs[0, 0])
         ax3_right = fig.add_subplot(bottom_gs[0, 1], sharex=ax3_left, sharey=ax3_left)
 
-        self._plot_tree_construction_timeline(telemetry1, ax3_left)
+        self._plot_tree_construction_timeline(
+            telemetry1, ax3_left, max_y_limit=global_max_time
+        )
         ax3_left.set_title("Tree Construction Timeline", fontsize=12, pad=25)
 
-        self._plot_tree_construction_timeline(telemetry2, ax3_right)
+        self._plot_tree_construction_timeline(
+            telemetry2, ax3_right, max_y_limit=global_max_time
+        )
         ax3_right.set_title("Tree Construction Timeline", fontsize=12, pad=25)
         ax3_right.set_ylabel("")  # Remove y-axis label
 
@@ -1174,7 +1233,7 @@ class TelemetryVisualizer:
         )
 
     def _plot_tree_construction_timeline(
-        self, telemetry: dict[str, Any], ax: Axes
+        self, telemetry: dict[str, Any], ax: Axes, max_y_limit: float | None = None
     ) -> None:
         """Plot tree construction as rectangles showing span coverage over time.
 
@@ -1365,10 +1424,14 @@ class TelemetryVisualizer:
             )
             if baseline is not None:
                 ax.set_xlim(min_span, max_span)
-                ax.set_ylim(0, max_time - baseline if max_time > baseline else 1)
+                # Use provided max_y_limit if available, otherwise calculate from current data
+                if max_y_limit is not None:
+                    ax.set_ylim(0, max_y_limit)
+                else:
+                    ax.set_ylim(0, max_time - baseline if max_time > baseline else 1)
             else:
                 ax.set_xlim(min_span, max_span)
-                ax.set_ylim(0, 1)
+                ax.set_ylim(0, max_y_limit if max_y_limit is not None else 1)
             ax.set_xlabel("Document Position (characters)")
             ax.set_ylabel("Time Since Start (seconds)")
             # Add extra padding at the top for the legend
