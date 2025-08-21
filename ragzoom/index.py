@@ -537,7 +537,7 @@ class TreeBuilder:
 
         # Batch insert all leaf nodes at once using document-scoped store
         if leaf_nodes_data:
-            doc_store = self.store.for_document(document_id)
+            doc_store = self.store.for_document(context.document_id)
             doc_store.nodes.add_batch(leaf_nodes_data)
         else:
             # Update existing document
