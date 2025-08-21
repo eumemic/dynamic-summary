@@ -147,7 +147,7 @@ class TelemetryVisualizer:
         if baseline is not None and max_time > baseline:
             return float(max_time - baseline)
         else:
-            return 1.0  # Fallback value
+            return 1.0  # Fallback: minimum 1 second for empty datasets
 
     def _ensure_output_dir(self) -> None:
         """Ensure the output directory exists, creating it if necessary."""
@@ -1149,7 +1149,6 @@ class TelemetryVisualizer:
         # Calculate retry rate: percentage of nodes that needed more than 1 attempt
         # Group attempts by node to count nodes with retries
         node_attempt_counts = {}
-        node_index = 0
         for node in nodes:
             height = node["height"]
             if height > 0:  # Summary nodes only
@@ -1164,8 +1163,9 @@ class TelemetryVisualizer:
                         1 for attempt in attempts if attempt.get("actual_tokens", 0) > 0
                     )
                     if valid_attempts > 0:
-                        node_attempt_counts[node_index] = valid_attempts
-                        node_index += 1
+                        # Use node_id as key to ensure unique node tracking
+                        node_id = node.get("node_id", f"unknown_{id(node)}")
+                        node_attempt_counts[node_id] = valid_attempts
 
         # Calculate retry rate
         nodes_with_retries = sum(
