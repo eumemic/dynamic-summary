@@ -401,21 +401,45 @@ ragzoom/
 
 ## Development
 
+### Quality Checks
+
+```bash
+# Run all checks (fast tests, linting, formatting, type checking, security, duplication)
+./scripts/run-checks.sh
+
+# Include slow and integration tests (auto-starts PostgreSQL if needed)
+./scripts/run-checks.sh --include-slow-tests
+
+# Run checks without tests
+./scripts/run-checks.sh --skip tests
+
+# Skip specific checks
+./scripts/run-checks.sh --skip tests,jscpd,bandit
+
+# Stop at first error (useful for debugging)
+./scripts/run-checks.sh --fail-fast
+```
+
+**Note:** Claude automatically runs `dmypy`, `ruff`, and `black` on every Python file edit for immediate feedback.
+
+### Testing
+
+```bash
+# Run specific test patterns
+pytest tests/ -k "test_name"     # Run tests matching pattern
+pytest tests/test_file.py        # Run specific test file
+
+# Run by test category
+pytest -m "not slow and not integration"  # Fast tests only (default)
+pytest -m slow                             # Slow tests only
+pytest -m integration                      # Integration tests only
+```
+
+### Other Development Tools
+
 ```bash
 # Set up development environment (first time only)
 ./scripts/setup-dev.sh
-
-# Run tests
-pytest                      # All tests
-./scripts/test_quick.sh            # Quick test runner
-./scripts/test_quick.sh splitter   # Test specific module
-
-# Format code
-black ragzoom/ tests/
-ruff check ragzoom/ tests/
-
-# Type checking
-mypy ragzoom/
 
 # Performance benchmarking
 ./scripts/run-indexing-benchmarks --baseline baseline.json document.txt
@@ -426,8 +450,8 @@ ragzoom-telemetry compare baseline.json current.json
 ragzoom-telemetry visualize baseline.json current.json -o comparison.png
 
 # Git hooks (automatically installed by setup script)
-# - pre-commit: Runs relevant tests for changed files
-# - pre-push: Runs full test suite
+# - pre-commit: Runs all quality checks in parallel
+# - Claude hooks: Runs Python checks on every edit
 ```
 
 ## License

@@ -19,166 +19,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Combined static analysis job (saves 3 runner initializations)
-  static-analysis:
-    name: Static Analysis (Linting, Formatting, Deduplication, Types, Security)
+  # Single comprehensive validation job that runs all checks
+  validate:
+    name: Code Validation (All Checks)
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml', 'requirements-dev.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-      
-      - name: Cache mypy results
-        uses: actions/cache@v4
-        with:
-          path: .mypy_cache
-          key: ${{ runner.os }}-mypy-${{ hashFiles('ragzoom/**/*.py') }}
-          restore-keys: |
-            ${{ runner.os }}-mypy-
-      
-      
-      - name: Install analysis tools
-        run: |
-          python -m pip install --upgrade pip
-          pip install ruff black mypy bandit
-          # Only install full dependencies if mypy needs them
-          pip install -e .
-          pip install -r requirements-dev.txt
-      
-      - name: Run Ruff (linting)
-        run: |
-          echo "::group::Ruff Linting"
-          ruff check ragzoom/ tests/ --output-format=github
-          echo "::endgroup::"
-      
-      - name: Check Black formatting
-        run: |
-          echo "::group::Black Formatting"
-          black --check --diff ragzoom/ tests/
-          echo "::endgroup::"
-      
-      - name: Run MyPy (type checking)
-        run: |
-          echo "::group::MyPy Type Checking"
-          mypy ragzoom/ --ignore-missing-imports --no-error-summary --check-untyped-defs
-          echo "::endgroup::"
-      
-      - name: Run Bandit (security)
-        run: |
-          echo "::group::Bandit Security Check"
-          bandit -r ragzoom/ -ll
-          echo "::endgroup::"
-      
-      - name: Check for code duplication
-        run: |
-          echo "::group::Code Duplication Check"
-          npx jscpd@latest ragzoom/ --config .jscpd.json
-          echo "::endgroup::"
-
-  # Fast tests (excluding slow and integration tests)
-  test-fast:
-    name: Fast Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml', 'requirements-dev.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-      
-      - name: Cache pytest results
-        uses: actions/cache@v4
-        with:
-          path: .pytest_cache
-          key: ${{ runner.os }}-pytest-fast-${{ hashFiles('tests/**/*.py', 'ragzoom/**/*.py') }}
-          restore-keys: |
-            ${{ runner.os }}-pytest-fast-
-            
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-          pip install -r requirements-dev.txt
-          
-      - name: Run fast tests
-        env:
-          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
-        run: |
-          # Use -n 2 for optimal performance on 2-core GitHub runners
-          pytest tests/ -m "not slow and not integration" -n 2 --no-header -v
-
-  # Slow tests only (skip on draft PRs)
-  test-slow:
-    name: Slow Tests
-    runs-on: ubuntu-latest
-    # Skip on draft PRs to save compute
-    if: github.event.pull_request.draft != true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml', 'requirements-dev.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-            
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-          pip install -r requirements-dev.txt
-          
-      - name: Run slow tests
-        env:
-          RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
-        run: |
-          # Run slow tests if any exist, otherwise skip gracefully
-          if pytest --collect-only -m "slow" tests/ 2>/dev/null | grep -q "0 selected"; then
-            echo "No slow tests found - skipping"
-            exit 0
-          else
-            pytest tests/ -m "slow" -n 2 --no-header -v
-          fi
-
-  # Integration tests only (skip on draft PRs)
-  test-integration:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    # Skip on draft PRs to save compute
-    if: github.event.pull_request.draft != true
+    # Skip slow/integration tests on draft PRs to save compute
     
     services:
       postgres:
@@ -211,12 +56,30 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml', 'requirements-dev.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
+      
+      - name: Cache mypy results
+        uses: actions/cache@v4
+        with:
+          path: .mypy_cache
+          key: ${{ runner.os }}-mypy-${{ hashFiles('ragzoom/**/*.py') }}
+          restore-keys: |
+            ${{ runner.os }}-mypy-
+      
+      - name: Cache pytest results
+        uses: actions/cache@v4
+        with:
+          path: .pytest_cache
+          key: ${{ runner.os }}-pytest-${{ hashFiles('tests/**/*.py', 'ragzoom/**/*.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pytest-
             
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e .
           pip install -r requirements-dev.txt
+          # Install quality check tools
+          pip install mypy[dmypy] bandit
           
       - name: Initialize PostgreSQL vector extension
         run: |
@@ -229,13 +92,19 @@ jobs:
           # Create vector extension
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d ragzoom_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
           
-      - name: Run integration tests
+      - name: Run all quality checks
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test
         run: |
-          # Run integration tests with real PostgreSQL - should not skip any
-          pytest tests/ -m "integration" --use-real-store -v --tb=short
+          # For draft PRs, skip slow/integration tests
+          if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
+            echo "Draft PR detected - running fast checks only"
+            ./scripts/run-checks.sh
+          else
+            echo "Running all checks including slow and integration tests"
+            ./scripts/run-checks.sh --include-slow-tests
+          fi
 
   # Test coverage report (only on push to master)
   coverage:
