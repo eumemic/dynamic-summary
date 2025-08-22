@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-from ragzoom.config import OperationalConfig, QueryConfig
+from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
 from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
@@ -97,7 +97,7 @@ class TestNumSeedsFix:
 
         # Create config and retriever
         query_config = QueryConfig(budget_tokens=10000)
-        operational_config = OperationalConfig(openai_api_key="test-key")
+        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         # Mock OpenAI client
         with patch("ragzoom.retrieve.OpenAI") as mock_client:

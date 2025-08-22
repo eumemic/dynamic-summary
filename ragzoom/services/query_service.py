@@ -43,7 +43,7 @@ class QueryService:
         self.retriever = Retriever(
             query_config,
             store,
-            api_key=operational_config.openai_api_key,
+            api_key=operational_config.openai_api_key.get_secret_value(),
         )
         self.assembler = Assembler(store)
 

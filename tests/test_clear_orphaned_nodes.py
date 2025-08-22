@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from ragzoom.cli import cli
-from ragzoom.config import IndexConfig, OperationalConfig
+from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.store import Document, StoreManager, TreeNode
 
 
@@ -45,7 +45,7 @@ class TestAutomaticClearing:
     def operational_config(self, temp_db):
         """Create operational configuration for test database."""
         return OperationalConfig(
-            openai_api_key="test-key",
+            openai_api_key=SecretStr("test-key"),
             database_url=f"postgresql:///{temp_db}",
             cache_size=100,
         )

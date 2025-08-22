@@ -21,7 +21,12 @@ class TestDocumentAPI:
     def client(self, mock_openai, monkeypatch, mock_store):
         """Create test client with mocked dependencies."""
         from ragzoom.api import get_service_container
-        from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+        from ragzoom.config import (
+            IndexConfig,
+            OperationalConfig,
+            QueryConfig,
+            SecretStr,
+        )
         from ragzoom.services.document_service import DocumentService
         from ragzoom.services.indexing_service import IndexingService
         from ragzoom.services.query_service import QueryService
@@ -33,7 +38,9 @@ class TestDocumentAPI:
             def __init__(self):
                 self.index_config = IndexConfig.load()
                 self.query_config = QueryConfig()
-                self.operational_config = OperationalConfig(openai_api_key="test-key")
+                self.operational_config = OperationalConfig(
+                    openai_api_key=SecretStr("test-key")
+                )
 
                 self.store = mock_store
                 self.document_service = DocumentService(self.store)

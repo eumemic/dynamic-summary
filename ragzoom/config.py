@@ -7,6 +7,28 @@ from pathlib import Path
 from typing import Any
 
 
+class SecretStr(str):
+    """String type that automatically redacts its value in string representations.
+
+    Prevents accidental exposure of sensitive values like API keys in logs,
+    stack traces, and error messages.
+    """
+
+    def __repr__(self) -> str:
+        return "***REDACTED***"
+
+    def __str__(self) -> str:
+        return "***REDACTED***"
+
+    def get_secret_value(self) -> str:
+        """Get the actual secret value.
+
+        Returns:
+            The unredacted secret string value
+        """
+        return super().__str__()
+
+
 def get_embedding_cost(model: str) -> float:
     """Get embedding cost per 1K tokens using ModelInfo."""
     from ragzoom.model_info import ModelInfo
@@ -172,7 +194,7 @@ class OperationalConfig:
     They include storage paths, API keys, and other runtime settings.
     """
 
-    openai_api_key: str = ""
+    openai_api_key: SecretStr = SecretStr("")
     database_url: str = "postgresql+psycopg://localhost/ragzoom"
     cache_size: int = 1000
     log_level: str = "INFO"
@@ -180,8 +202,8 @@ class OperationalConfig:
 
     def __post_init__(self) -> None:
         """Load API key from environment if not set."""
-        if not self.openai_api_key:
-            self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not self.openai_api_key.get_secret_value():
+            self.openai_api_key = SecretStr(os.environ.get("OPENAI_API_KEY", ""))
 
         # Allow environment overrides for storage path (for testing)
         if os.environ.get("RAGZOOM_DATABASE_URL"):

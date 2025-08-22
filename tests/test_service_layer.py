@@ -3,7 +3,7 @@
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.services.document_service import (
     DocumentInfo,
     DocumentService,
@@ -131,7 +131,7 @@ class TestIndexingService:
 
         # Create configs
         index_config = IndexConfig.load()
-        operational_config = OperationalConfig(openai_api_key="test-key")
+        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         # Create service and test
         service = IndexingService(mock_store, index_config, operational_config)
@@ -174,7 +174,7 @@ class TestQueryService:
 
         # Create configs
         query_config = QueryConfig(budget_tokens=1000)
-        operational_config = OperationalConfig(openai_api_key="test-key")
+        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         # Create service and test
         service = QueryService(mock_store, query_config, operational_config)
@@ -202,7 +202,7 @@ class TestQueryService:
 
         # Create configs
         query_config = QueryConfig(budget_tokens=1000, mmr_lambda=0.7)
-        operational_config = OperationalConfig(openai_api_key="test-key")
+        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         # Create service
         service = QueryService(mock_store, query_config, operational_config)
