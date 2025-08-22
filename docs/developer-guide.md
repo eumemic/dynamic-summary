@@ -117,12 +117,14 @@ The pre-commit hook is defined in `scripts/git-hooks/pre-commit` and is the guar
 ### 4.2. Running Checks Manually
 
 You can and should run these checks yourself as you code:
--   **Run all fast tests:** `./scripts/test_quick.sh`
--   **Run the full test suite (including slow/integration tests):** `pytest`
+-   **Run all quality checks:** `./scripts/run-checks.sh` (tests, linting, formatting, types, security)
+-   **Include slow/integration tests:** `./scripts/run-checks.sh --include-slow-tests`
+-   **Skip specific checks:** `./scripts/run-checks.sh --skip tests,jscpd`
+-   **Stop at first error:** `./scripts/run-checks.sh --fail-fast`
+-   **Run specific test patterns:** `pytest tests/ -k "pattern"`
 -   **Auto-format your code:** `black ragzoom/ tests/`
 -   **Auto-fix linting issues:** `ruff check ragzoom/ tests/ --fix`
 -   **Run the type checker:** `dmypy run -- ragzoom/` (11x faster after first run)
--   **Run the type checker (fresh):** `mypy ragzoom`
 
 ### 4.3. Claude Code Hooks
 

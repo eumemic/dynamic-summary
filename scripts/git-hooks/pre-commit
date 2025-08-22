@@ -1,128 +1,30 @@
 #!/bin/bash
 # Git pre-commit hook for RagZoom
-# Runs tests (excluding slow ones) and linting checks in parallel
+# Runs tests (excluding slow ones) and linting checks
 
 echo "Running pre-commit checks..."
 
 # Find the repository root (works from .git/hooks/ or worktree hooks)
 GIT_ROOT="$(git rev-parse --show-toplevel)"
-# Source common Python check functions
-source "$GIT_ROOT/scripts/python-checks-common.sh"
 
-# Get the list of modified Python files
-modified_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$')
+# Run all checks using the common script
+# Don't skip any checks for git commits
+"$GIT_ROOT/scripts/run-checks.sh"
+RESULT=$?
 
-# Function to run tests
-run_tests() {
-    echo "[Tests] Starting..."
-    # Run quietly first, capture output
-    local tmpfile=$(mktemp)
-    pytest tests/ -q --tb=short -m "not slow and not integration and not benchmark" -n 8 --no-header > "$tmpfile" 2>&1
-    local result=$?
-    if [ $result -ne 0 ]; then
-        echo "[Tests] ❌ Failed!"
-        # Show full output on failure
-        cat "$tmpfile"
-        rm -f "$tmpfile"
-        return 1
-    else
-        echo "[Tests] ✅ Passed!"
-        return 0
-    fi
-}
-
-# Note: run_ruff, run_black, and run_mypy are now imported from python-checks-common.sh
-
-# Function to run jscpd
-run_jscpd() {
-    if command -v npx &> /dev/null; then
-        if [ -n "$modified_files" ]; then
-            echo "[JSCPD] Starting..."
-            # Run with silent flag, capture output
-            local tmpfile=$(mktemp)
-            npx jscpd@latest ragzoom/ --config .jscpd.json > "$tmpfile" 2>&1
-            local result=$?
-            if [ $result -ne 0 ]; then
-                echo "[JSCPD] ❌ Code duplication found!"
-                # Show full output on failure
-                cat "$tmpfile"
-                rm -f "$tmpfile"
-                return 1
-            else
-                echo "[JSCPD] ✅ Passed!"
-                return 0
-            fi
-        else
-            echo "[JSCPD] Skipped (no Python files)"
-            return 0
-        fi
-    else
-        echo "[JSCPD] Skipped (npx not available)"
-        return 0
-    fi
-}
-
-# Create temporary files for storing results
-tmpdir=$(mktemp -d)
-# Set up trap to clean up temp files and kill any background processes on exit
-cleanup() {
-    # Kill any background processes that might still be running
-    kill $pid_tests $pid_jscpd $pid_python_checks 2>/dev/null || true
-    # Clean up temp directory
-    rm -rf "$tmpdir"
-}
-trap cleanup EXIT INT TERM
-
-# Capture output from each tool
-(run_tests > "$tmpdir/tests.output" 2>&1; echo $? > "$tmpdir/tests.result") &
-pid_tests=$!
-
-(run_jscpd > "$tmpdir/jscpd.output" 2>&1; echo $? > "$tmpdir/jscpd.result") &
-pid_jscpd=$!
-
-# Run Python checks (black, ruff, mypy) in parallel using common function
-# Note: mypy only checks ragzoom directory (tests don't need strict type checking)
-# Black and ruff check both ragzoom and tests directories
-(run_python_checks_parallel "ragzoom tests" "$modified_files" "true" > "$tmpdir/python_checks.output" 2>&1; echo $? > "$tmpdir/python_checks.result") &
-pid_python_checks=$!
-
-# Wait for all background jobs to complete
-echo ""
-wait $pid_tests $pid_jscpd $pid_python_checks
-
-# Display output in predictable order: tests, python checks (mypy, ruff, black), jscpd
-cat "$tmpdir/tests.output" 2>/dev/null
-cat "$tmpdir/python_checks.output" 2>/dev/null
-cat "$tmpdir/jscpd.output" 2>/dev/null
+# Get list of modified Python files to re-add after formatting
+modified_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || true)
 
 # Re-add any files that were auto-formatted
 if [ -n "$modified_files" ]; then
     git add $modified_files 2>/dev/null
 fi
 
-# Check results
-failed=0
-
-# Check test results
-if [ -f "$tmpdir/tests.result" ] && [ "$(cat "$tmpdir/tests.result")" -ne 0 ]; then
-    failed=1
-fi
-
-# Check Python checks results
-if [ -f "$tmpdir/python_checks.result" ] && [ "$(cat "$tmpdir/python_checks.result")" -ne 0 ]; then
-    failed=1
-fi
-
-# Check jscpd results
-if [ -f "$tmpdir/jscpd.result" ] && [ "$(cat "$tmpdir/jscpd.result")" -ne 0 ]; then
-    failed=1
-fi
-
 echo ""
-if [ $failed -eq 0 ]; then
+if [ $RESULT -eq 0 ]; then
     echo "✅ All pre-commit checks passed!"
-    exit 0
 else
     echo "❌ Pre-commit checks failed! See above for details."
-    exit 1
 fi
+
+exit $RESULT
