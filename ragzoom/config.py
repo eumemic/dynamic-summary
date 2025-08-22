@@ -11,7 +11,16 @@ class SecretStr(str):
     """String type that automatically redacts its value in string representations.
 
     Prevents accidental exposure of sensitive values like API keys in logs,
-    stack traces, and error messages.
+    stack traces, and error messages while preserving the actual value for
+    legitimate usage.
+
+    Usage:
+        api_key = SecretStr("sk-1234567890...")
+        print(f"Using key: {api_key}")  # "Using key: ***REDACTED***"
+
+        # When you need the actual value (e.g., for API calls):
+        actual_key = api_key.get_secret_value()  # "sk-1234567890..."
+        client = OpenAI(api_key=actual_key)
     """
 
     def __repr__(self) -> str:

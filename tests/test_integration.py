@@ -7,7 +7,7 @@ retrieval to final assembly, using mock OpenAI clients.
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from tests.utils import mock_openai_context
@@ -46,7 +46,7 @@ class TestIntegration:
 
         # Create operational config
         operational_config = OperationalConfig(
-            openai_api_key="test-key",
+            openai_api_key=SecretStr("test-key"),
             database_url=real_store.config.database_url,  # Use the store's database URL
         )
 

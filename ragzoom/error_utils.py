@@ -8,7 +8,8 @@ from uuid import uuid4
 logger = logging.getLogger(__name__)
 
 # Pattern for OpenAI API keys (sk-...)
-API_KEY_PATTERN = re.compile(r"sk-[A-Za-z0-9]{20,}")
+# More flexible pattern to catch all OpenAI key formats
+API_KEY_PATTERN = re.compile(r"sk-[A-Za-z0-9]+")
 
 
 class RedactionFilter(logging.Filter):

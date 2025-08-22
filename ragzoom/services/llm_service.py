@@ -8,7 +8,7 @@ from typing import Any, cast
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
-from ragzoom.config import IndexConfig, is_gpt5_model
+from ragzoom.config import IndexConfig, SecretStr, is_gpt5_model
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
@@ -51,14 +51,14 @@ class LLMService:
     def __init__(  # jscpd:ignore-start
         self,
         config: IndexConfig,
-        api_key: str = "",
+        api_key: str | SecretStr = "",
         max_concurrent: int = 30,
     ):
         """Initialize LLM service.
 
         Args:
             config: Index configuration
-            api_key: OpenAI API key (if not provided, reads from OPENAI_API_KEY env)
+            api_key: OpenAI API key as SecretStr or string (if not provided, reads from OPENAI_API_KEY env)
             max_concurrent: Maximum concurrent API requests
         """  # jscpd:ignore-end
         self.config = config
@@ -66,11 +66,15 @@ class LLMService:
         # Get API key from parameter or environment
         import os
 
-        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
+        # Convert to SecretStr if needed and get actual value for OpenAI client
+        if isinstance(api_key, str):
+            api_key = SecretStr(api_key or os.environ.get("OPENAI_API_KEY", ""))
+        actual_key = api_key.get_secret_value()
+
+        if not actual_key:
             raise ValueError("OpenAI API key required for LLMService")
 
-        self.client = AsyncOpenAI(api_key=api_key)
+        self.client = AsyncOpenAI(api_key=actual_key)
         self.semaphore = asyncio.Semaphore(max_concurrent)
 
     async def _get_embedding(self, text: str) -> list[float]:
