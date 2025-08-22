@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "scripts/claude-python-hook.sh \"$FILE_PATH\""
+            "command": "$(git rev-parse --show-toplevel)/.claude/hooks/post-tool-use.sh"
           }
         ]
       }
