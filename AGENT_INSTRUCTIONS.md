@@ -71,13 +71,44 @@ Every agent must approach code as a master craftsperson. Each line you write is 
 
 @include docs/developer-guide.md
 
-### 7. Algorithm Deep Dive
+### 7. Quality Checks & Testing for Agents
+
+**IMPORTANT: Most quality checks happen automatically - you rarely need to run them manually.**
+
+#### Automatic Checks
+- **On every Python edit**: `dmypy`, `ruff`, and `black` run automatically (~750ms)
+- **On every commit**: All checks run via pre-commit hook (tests, linting, formatting, security, duplication)
+
+#### When to Run Checks Manually
+1. **Before committing** (if you want to verify tests pass): Use `./scripts/run-checks.sh`
+2. **To test specific functionality**: Use `./scripts/run-checks.sh` with appropriate options
+3. **NEVER use `pytest` directly** - always use `run-checks.sh` which ensures proper environment setup
+
+#### Common Commands for Agents
+```bash
+# Preferred: Run all fast checks (what pre-commit will run)
+./scripts/run-checks.sh
+
+# If you need to skip tests temporarily (e.g., debugging)
+./scripts/run-checks.sh --skip tests
+
+# Stop at first error (useful for debugging)
+./scripts/run-checks.sh --fail-fast
+```
+
+**Key Points:**
+- If checks pass on edit → They'll likely pass on commit
+- If pre-commit fails → It will show you exactly what's wrong
+- The system is designed to give you immediate feedback without manual intervention
+- **VERY IMPORTANT**: When you have completed a task, run `./scripts/run-checks.sh` to ensure your code is correct (NOT `pytest`)
+
+### 8. Algorithm Deep Dive
 
 For detailed understanding of the core tiling algorithm:
 
 @include docs/deep-dives/tiling-algorithm.md
 
-### 8. Custom Claude Commands
+### 9. Custom Claude Commands
 
 Custom slash commands are stored in `.claude/commands/` as markdown files:
 - `/commit` - Create atomic commits and push to origin
@@ -87,11 +118,11 @@ Custom slash commands are stored in `.claude/commands/` as markdown files:
 - `/review` - Code review
 To modify: edit `.claude/commands/<command-name>.md`
 
-### 9. Subagent Management
+### 10. Subagent Management
 
 Claude Code subagents can be either local custom agents or symlinks to external agents via git submodule. See `docs/subagent-management.md` for details.
 
-### 10. Agent Slots for Parallel Development
+### 11. Agent Slots for Parallel Development
 
 This repository uses persistent worktree "agent slots" for isolated Claude sessions. Each slot provides:
 - Separate conversation history (stored in ~/.claude/projects/)
@@ -111,7 +142,7 @@ cd worktrees/worktree-N && claude
 - Use `/merge` to merge PR and sync with master
 - The same branch is reused for multiple sequential PRs
 
-### 11. Agent-Specific Troubleshooting
+### 12. Agent-Specific Troubleshooting
 
-- **Segmentation Faults:** If `pytest` crashes with a `Segmentation fault`, the local `chroma_db/` directory is almost certainly corrupted. Delete it and restart: `rm -rf chroma_db/`
 - **Pre-commit Hook Issues:** If pre-commit hooks fail, they'll automatically fix most issues. Just re-commit after they run.
+- **Testing Issues:** Always use `./scripts/run-checks.sh` instead of `pytest` directly - it handles environment setup correctly.
