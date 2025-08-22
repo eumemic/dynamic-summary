@@ -116,10 +116,11 @@ class TestTelemetryCompare:
                 )
 
         assert result.exit_code == 0
-        # Check for new table format
-        assert "100 tokens" in result.output
+        # Check for new simplified table format (no chunk size column)
         assert "Median error" in result.output
         assert "Avg retries/node" in result.output
+        # Chunk size should appear in configuration section
+        assert "Target Chunk Tokens" in result.output
 
     def test_compare_directories(self, create_test_files):
         """Test comparing two directories with matching files."""
@@ -285,11 +286,12 @@ class TestTelemetryCompare:
 
         # Test that comparison works and shows the cost increase
         assert result.exit_code == 0  # CLI should run successfully
-        assert "100 tokens" in result.output  # Should show chunk size comparison
         assert "USD per node" in result.output  # Should show cost metrics
         assert (
             "+450.0%" in result.output or "+$" in result.output
         )  # Should show cost increase
+        # Chunk size should appear in configuration section
+        assert "Target Chunk Tokens" in result.output
 
     def test_dynamic_thresholds_computation(self, tmp_path, sample_telemetry_data):
         """Test that dynamic thresholds are computed from baseline variance."""

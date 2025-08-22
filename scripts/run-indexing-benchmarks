@@ -104,6 +104,9 @@ Options:
                           3. <repo_root>/telemetry.json (if in worktree)
     --output-dir <dir>     Directory for output files
                           Default: benchmarks/<timestamp> (e.g., benchmarks/20250815_163448)
+    --database <url>       PostgreSQL database URL to use
+                          If provided, skips Docker PostgreSQL setup
+                          Example: postgresql+psycopg://user:pass@host:5432/db
     --help                 Show this help message and exit
     
 Document:
@@ -113,8 +116,8 @@ Additional Options:
     All other options are passed through to the ragzoom index command.
     The script automatically:
     - Adds: --telemetry --validate --debug --no-progress
-    - Extracts target_chunk_tokens from baseline (for fair comparison)
-    - Uses current default_config.json for all other settings (to test improvements)
+    - Uses current default_config.json for all settings
+    - Applies any CLI overrides (e.g., --target-chunk-tokens 400)
 
 Output Structure:
     benchmarks/
@@ -140,6 +143,8 @@ EOF
 BASELINE=""
 OUTPUT_DIR=""  # Will be set to benchmarks/<timestamp> by default
 DOCUMENT=""  # Will be auto-detected or provided
+DATABASE_URL=""  # Will be set by --database flag or generated
+SKIP_DB_SETUP=false  # Skip Docker PostgreSQL setup if --database provided
 EXTRA_ARGS=()
 USE_DEFAULT_OUTPUT=true  # Track if user provided custom output dir
 
@@ -176,6 +181,11 @@ while [[ $# -gt 0 ]]; do
             USE_DEFAULT_OUTPUT=false
             shift 2
             ;;
+        --database)
+            DATABASE_URL="$2"
+            SKIP_DB_SETUP=true
+            shift 2
+            ;;
         --document-id|--max-retries|--retry-threshold|--target-chunk-tokens|--preceding-context-tokens|--summary-model|--embedding-model|--embedding-batch-size)
             # Pass-through options that take an argument
             EXTRA_ARGS+=("$1" "$2")
@@ -207,8 +217,12 @@ fi
 
 # Check for default baseline if not provided
 if [ -z "$BASELINE" ]; then
-    # First check for previous run in benchmarks/latest
-    if [ -f "benchmarks/latest/telemetry.json" ]; then
+    # First check for repository baseline
+    if [ -f "benchmarks/baselines/latest.json" ]; then
+        BASELINE="benchmarks/baselines/latest.json"
+        echo "Using repository baseline: $(basename $(readlink $BASELINE 2>/dev/null || echo 'latest.json'))"
+    # Then check for previous run in benchmarks/latest
+    elif [ -f "benchmarks/latest/telemetry.json" ]; then
         BASELINE="benchmarks/latest/telemetry.json"
         echo "Using previous run as baseline: $BASELINE"
     elif [ -f "./telemetry.json" ]; then
@@ -222,18 +236,27 @@ if [ -z "$BASELINE" ]; then
             REPO_ROOT=$(echo "$PWD" | sed 's|/worktrees/.*||')
         fi
         
-        # Check repository root if different from current directory
-        if [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$PWD" ] && [ -f "$REPO_ROOT/telemetry.json" ]; then
-            BASELINE="$REPO_ROOT/telemetry.json"
-            echo "Using baseline from repository root: $BASELINE"
-        else
+        # Check repository root for baseline or fallback
+        if [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$PWD" ]; then
+            if [ -f "$REPO_ROOT/benchmarks/baselines/latest.json" ]; then
+                BASELINE="$REPO_ROOT/benchmarks/baselines/latest.json"
+                echo "Using repository baseline from root: $(basename $(readlink $BASELINE 2>/dev/null || echo 'latest.json'))"
+            elif [ -f "$REPO_ROOT/telemetry.json" ]; then
+                BASELINE="$REPO_ROOT/telemetry.json"
+                echo "Using baseline from repository root: $BASELINE"
+            fi
+        fi
+        
+        if [ -z "$BASELINE" ]; then
             echo "Error: No baseline specified and no telemetry.json found"
             echo ""
             echo "Searched for telemetry.json in:"
-            echo "  1. benchmarks/latest/telemetry.json (previous run)"
-            echo "  2. ./telemetry.json (current directory)"
+            echo "  1. benchmarks/baselines/latest.json (repository baseline)"
+            echo "  2. benchmarks/latest/telemetry.json (previous run)"
+            echo "  3. ./telemetry.json (current directory)"
             if [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$PWD" ]; then
-                echo "  3. $REPO_ROOT/telemetry.json (repository root)"
+                echo "  4. $REPO_ROOT/benchmarks/baselines/latest.json (repository root baseline)"
+                echo "  5. $REPO_ROOT/telemetry.json (repository root)"
             fi
             echo ""
             echo "For first run, either:"
@@ -249,33 +272,29 @@ fi
 # Validate baseline path
 validate_path "$BASELINE" "baseline"
 
+# Check if baseline exists - warn if not but don't exit (allows first run without baseline)
+BASELINE_EXISTS=true
 if [ ! -f "$BASELINE" ]; then
-    echo "Error: Baseline file '$BASELINE' does not exist"
-    exit 1
+    echo "⚠️ Warning: Baseline file '$BASELINE' does not exist"
+    echo "   This will be a baseline-generation run (no comparison possible)"
+    BASELINE_EXISTS=false
 fi
 
 # Create output directory early if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Extract metadata from baseline
-echo "Extracting configuration from baseline..."
-DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
-DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
+# Extract metadata from baseline (if it exists)
+DOCUMENT_ID=""
+DOCUMENT_PATH=""
 
-# Extract ONLY target_chunk_tokens from baseline for fair comparison
-# All other settings should use current defaults from default_config.json
-CONFIG=$(jq -r '.config // empty' "$BASELINE")
-TARGET_CHUNK_TOKENS=""
-if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
-    TARGET_CHUNK_TOKENS=$(echo "$CONFIG" | jq -r '.target_chunk_tokens // empty')
-    if [ -n "$TARGET_CHUNK_TOKENS" ]; then
-        echo "  Extracted target_chunk_tokens from baseline: $TARGET_CHUNK_TOKENS"
-        echo "  All other settings will use current defaults from default_config.json"
-    fi
-else
-    echo "Warning: Could not extract config from baseline telemetry"
-    echo "  The indexer will use default configuration"
+if [ "$BASELINE_EXISTS" = true ]; then
+    echo "Extracting document metadata from baseline..."
+    DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
+    DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
+    echo "  Document metadata extracted for auto-detection"
 fi
+
+echo "Configuration: Using current defaults from default_config.json plus any CLI overrides"
 
 # Auto-detect document if not provided
 if [ -z "$DOCUMENT" ]; then
@@ -325,12 +344,22 @@ if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
 fi
 echo ""
 
-# Ensure PostgreSQL is running and create benchmark database
-echo "🗄️ Setting up PostgreSQL benchmark database..."
+# Set up database - either use provided URL or create new one
+if [ "$SKIP_DB_SETUP" = true ]; then
+    echo "🗄️ Using provided database URL..."
+    echo "  Database URL: $DATABASE_URL"
+    echo ""
+    
+    # Save database info for reference (no cleanup needed for external DB)
+    echo "external_database" > "$DATABASE_NAME_FILE"
+    echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
+else
+    # Ensure PostgreSQL is running and create benchmark database
+    echo "🗄️ Setting up PostgreSQL benchmark database..."
 
-# Create database and capture the returned URL with credentials
-# Use environment variable to avoid shell injection
-BENCHMARK_DB_ENV_NAME="$BENCHMARK_DB_NAME" python -c "
+    # Create database and capture the returned URL with credentials
+    # Use environment variable to avoid shell injection
+    BENCHMARK_DB_ENV_NAME="$BENCHMARK_DB_NAME" python -c "
 from ragzoom.docker_postgres import DockerPostgres
 from ragzoom.db_utils import create_temp_database
 import os, sys
@@ -345,29 +374,28 @@ except Exception as e:
     sys.exit(1)
 " > /tmp/db_setup_$$.out 2> /tmp/db_setup_$$.err
 
-# Check if database creation succeeded and capture output properly
-if [ $? -eq 0 ]; then
-    DATABASE_URL=$(cat /tmp/db_setup_$$.out)
-    rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
-else
-    echo "❌ Failed to set up PostgreSQL database:"
-    cat /tmp/db_setup_$$.err >&2
-    rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
-    exit 1
+    # Check if database creation succeeded and capture output properly
+    if [ $? -eq 0 ]; then
+        DATABASE_URL=$(cat /tmp/db_setup_$$.out)
+        rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
+    else
+        echo "❌ Failed to set up PostgreSQL database:"
+        cat /tmp/db_setup_$$.err >&2
+        rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
+        exit 1
+    fi
+
+    # Track the database for cleanup
+    CREATED_DB_NAME="$BENCHMARK_DB_NAME"
+
+    # Save database name and URL for reference
+    echo "$BENCHMARK_DB_NAME" > "$DATABASE_NAME_FILE"
+    echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
+
+    echo "✅ Created benchmark database: $BENCHMARK_DB_NAME"
+    echo "  Database URL: $DATABASE_URL"
+    echo ""
 fi
-
-# Database creation check is now handled above
-
-# Track the database for cleanup
-CREATED_DB_NAME="$BENCHMARK_DB_NAME"
-
-# Save database name and URL for reference
-echo "$BENCHMARK_DB_NAME" > "$DATABASE_NAME_FILE"
-echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
-
-echo "✅ Created benchmark database: $BENCHMARK_DB_NAME"
-echo "  Database URL: $DATABASE_URL"
-echo ""
 
 # Run indexing with telemetry
 # Implicitly adds: --telemetry <file> --validate --debug --no-progress
@@ -383,11 +411,8 @@ INDEX_ARGS=(
     --no-progress
 )
 
-# Add target_chunk_tokens if we extracted it from baseline
-# This ensures fair comparison while using current defaults for everything else
-if [ -n "$TARGET_CHUNK_TOKENS" ]; then
-    INDEX_ARGS+=(--target-chunk-tokens "$TARGET_CHUNK_TOKENS")
-fi
+# All configuration comes from default_config.json plus any CLI overrides
+# No settings are extracted from baseline - each run uses current defaults
 
 # Add any extra arguments
 if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
@@ -409,25 +434,66 @@ echo ""
 # Generate comparison report and visualization
 echo "📊 Generating comparison report and visualization..."
 
-# Generate markdown comparison report
-echo "  Generating comparison report..."
-# Note: compare command returns exit code 1 when regression detected, but still generates report
-# Temporarily disable exit on error for this command
-set +e
-python -m ragzoom.telemetry_cli compare \
-    "$BASELINE" \
-    "$TELEMETRY_FILE" \
-    > "$OUTPUT_DIR/comparison.md" 2>&1
-COMPARE_EXIT_CODE=$?
-set -e
+COMPARE_EXIT_CODE=0  # Default to success
 
-if [ $COMPARE_EXIT_CODE -eq 0 ]; then
-    echo "  ✅ Comparison report saved to $OUTPUT_DIR/comparison.md"
-elif [ $COMPARE_EXIT_CODE -eq 1 ]; then
-    echo "  ⚠️ Comparison report saved to $OUTPUT_DIR/comparison.md (regression detected)"
+if [ "$BASELINE_EXISTS" = true ]; then
+    # Generate markdown comparison report
+    echo "  Generating comparison report..."
+    # Note: compare command returns exit code 1 when regression detected, but still generates report
+    # Temporarily disable exit on error for this command
+    set +e
+    python -m ragzoom.telemetry_cli compare \
+        "$BASELINE" \
+        "$TELEMETRY_FILE" \
+        > "$OUTPUT_DIR/comparison.md" 2>&1
+    COMPARE_EXIT_CODE=$?
+    set -e
+
+    if [ $COMPARE_EXIT_CODE -eq 0 ]; then
+        echo "  ✅ Comparison report saved to $OUTPUT_DIR/comparison.md"
+    elif [ $COMPARE_EXIT_CODE -eq 1 ]; then
+        echo "  ⚠️ Comparison report saved to $OUTPUT_DIR/comparison.md (regression detected)"
+    else
+        echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
+    fi
 else
-    echo "  ❌ Comparison failed. Check $OUTPUT_DIR/comparison.md for details."
+    # Generate a baseline-establishment report
+    echo "  Generating baseline establishment report..."
+    cat > "$OUTPUT_DIR/comparison.md" <<EOF
+# Baseline Establishment Report
+
+This run establishes a new performance baseline since no compatible baseline was available.
+
+## Telemetry Summary
+- **Document:** $(basename "$DOCUMENT")
+- **Telemetry file:** $TELEMETRY_FILE
+- **Configuration:** Current defaults
+
+This telemetry will be used as the baseline for future comparisons.
+
+To compare against this baseline in future runs:
+\`\`\`bash
+$0 --baseline "$TELEMETRY_FILE" "$DOCUMENT"
+\`\`\`
+EOF
+    echo "  ✅ Baseline establishment report saved to $OUTPUT_DIR/comparison.md"
 fi
+
+# Generate CI-friendly summary
+echo "  Generating CI summary..."
+CI_SUMMARY_FILE="$OUTPUT_DIR/ci-summary.json"
+cat > "$CI_SUMMARY_FILE" <<EOF
+{
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "exit_code": $COMPARE_EXIT_CODE,
+  "regression_detected": $([ $COMPARE_EXIT_CODE -eq 1 ] && echo "true" || echo "false"),
+  "comparison_succeeded": $([ $COMPARE_EXIT_CODE -le 1 ] && echo "true" || echo "false"),
+  "telemetry_file": "$TELEMETRY_FILE",
+  "comparison_file": "$OUTPUT_DIR/comparison.md",
+  "baseline_file": "$BASELINE"
+}
+EOF
+echo "  ✅ CI summary saved to $CI_SUMMARY_FILE"
 
 # Generate visualization (optional - check for dependencies)
 echo "  Checking for visualization dependencies..."
@@ -473,13 +539,16 @@ echo "  - Database: $DATABASE_URL (details saved in $DATABASE_NAME_FILE)"
 echo "  - Telemetry: $OUTPUT_DIR/telemetry.json"
 echo "  - Log: $OUTPUT_DIR/log.txt"
 echo "  - Comparison report: $OUTPUT_DIR/comparison.md"
+echo "  - CI summary: $OUTPUT_DIR/ci-summary.json"
 echo "  - Visualization: $OUTPUT_DIR/visualization.png"
 echo ""
 # On successful completion, don't auto-cleanup - leave database for debugging
 CREATED_DB_NAME=""  # Clear the cleanup variable to prevent auto-cleanup
 
-echo "💡 Database cleanup: The benchmark database '$BENCHMARK_DB_NAME' is left intact for debugging."
-echo "   To clean up manually: CLEANUP_DB_NAME='$BENCHMARK_DB_NAME' python -c 'from ragzoom.db_utils import drop_temp_database; import os; drop_temp_database(os.environ[\"CLEANUP_DB_NAME\"])'"
+if [ "$SKIP_DB_SETUP" != true ]; then
+    echo "💡 Database cleanup: The benchmark database '$BENCHMARK_DB_NAME' is left intact for debugging."
+    echo "   To clean up manually: CLEANUP_DB_NAME='$BENCHMARK_DB_NAME' python -c 'from ragzoom.db_utils import drop_temp_database; import os; drop_temp_database(os.environ[\"CLEANUP_DB_NAME\"])'"
+fi
 
 if [ "$USE_DEFAULT_OUTPUT" = true ]; then
     echo ""
