@@ -143,19 +143,3 @@ class ScoringService:
 
         # Clip to [0, 1] range
         return np.clip(similarities, 0.0, 1.0)
-
-    @staticmethod
-    def _compute_cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
-        """Compute cosine similarity between two vectors.
-
-        Args:
-            vec1: First vector
-            vec2: Second vector
-
-        Returns:
-            Cosine similarity in range [0, 1]
-        """
-        similarity = float(
-            np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-        )
-        return max(0.0, min(1.0, similarity))
