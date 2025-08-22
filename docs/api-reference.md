@@ -406,16 +406,21 @@ All parameters can be set via CLI options or config files. For an overview of ho
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `budget_tokens` | int | 8000 | Maximum tokens in final summary |
-| `leaf_tokens` | int | 200 | Target tokens per leaf chunk |
-| `split_threshold` | float | 0.3 | Threshold for text splitting |
+| `mmr_lambda` | float | 0.7 | MMR diversity parameter (0=diverse, 1=relevant) |
+| `mmr_k_multiplier` | float | 2.0 | Multiplier for MMR candidate selection |
+| `embedding_model` | str | "text-embedding-3-small" | OpenAI embedding model |
 
-#### Retrieval Parameters
+#### Indexing Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `n_rerank` | int | 20 | Number of nodes for reranking |
-| `mmr_lambda` | float | 0.7 | MMR diversity parameter (0=diverse, 1=relevant) |
-| `mmr_consideration_penalty` | float | 0.8 | Penalty for already selected content |
+| `target_chunk_tokens` | int | 200 | Target tokens per leaf chunk |
+| `preceding_context_tokens` | int | 75 | Context tokens before each chunk |
+| `summary_model` | str | "gpt-5-nano" | Model for summarization |
+| `retry_threshold` | float | 0.2 | Retry threshold for failed operations |
+| `max_retries` | int | 3 | Maximum number of retries |
+| `embedding_batch_size` | int | 100 | Batch size for embeddings |
+| `use_anti_verbatim_vaccine` | bool | true | Enable anti-verbatim processing |
 
 #### Tiling Parameters
 
@@ -425,31 +430,15 @@ All parameters can be set via CLI options or config files. For an overview of ho
 | `slope_cap_size` | int | 1 | Maximum depth difference | **STATUS: NOT IMPLEMENTED** |
 | `enable_smoothing` | bool | False | Enable smoothing pass | **STATUS: NOT IMPLEMENTED** |
 
-#### Model Configuration
+#### Operational Configuration
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `embedding_model` | str | "text-embedding-3-small" | OpenAI embedding model |
-| `embedding_dimensions` | int | 1536 | Embedding vector dimensions |
-| `summary_model` | str | (see config) | Model for summarization |
-| `summary_max_tokens` | int | None | Max tokens for summaries |
-| `temperature` | float | 0.2 | Temperature for generation |
-| `timeout` | int | 120 | API timeout in seconds |
-
-#### Storage Configuration
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `database_url` | str | "postgresql://localhost/ragzoom" | PostgreSQL database URL |
+| `openai_api_key` | str | "" | OpenAI API key (from env: OPENAI_API_KEY) |
+| `database_url` | str | "postgresql+psycopg://localhost/ragzoom" | PostgreSQL database URL |
 | `cache_size` | int | 1000 | LRU cache size |
-
-#### Operational Settings
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
 | `log_level` | str | "INFO" | Logging level |
-| `rate_limit_rpm` | int | 10000 | Requests per minute limit |
-| `embedding_batch_size` | int | 100 | Batch size for embeddings |
+| `validate_pipeline` | bool | false | Enable pipeline validation |
 
 ### Configuration Files
 

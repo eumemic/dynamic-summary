@@ -10,7 +10,7 @@ Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system tha
 - **Dynamic Resolution**: "Zooms in" on relevant content based on queries
 - **Document Isolation**: Complete namespace separation between indexed documents
 - **MMR Diversity**: Maximal Marginal Relevance for diverse, comprehensive results
-- **Slope-Capped Transitions**: Smooth depth transitions (±1 level) for coherent summaries
+- **Slope-Capped Transitions**: Smooth depth transitions (±1 level) for coherent summaries *(planned feature)*
 - **Token Budget Management**: Strict adherence to configurable token limits
 - **Incremental Updates**: Append-only design with efficient dirty node tracking
 - **Optional Features**:
