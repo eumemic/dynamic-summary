@@ -116,8 +116,8 @@ Additional Options:
     All other options are passed through to the ragzoom index command.
     The script automatically:
     - Adds: --telemetry --validate --debug --no-progress
-    - Extracts target_chunk_tokens from baseline (for fair comparison)
-    - Uses current default_config.json for all other settings (to test improvements)
+    - Uses current default_config.json for all settings
+    - Applies any CLI overrides (e.g., --target-chunk-tokens 400)
 
 Output Structure:
     benchmarks/
@@ -286,29 +286,15 @@ mkdir -p "$OUTPUT_DIR"
 # Extract metadata from baseline (if it exists)
 DOCUMENT_ID=""
 DOCUMENT_PATH=""
-TARGET_CHUNK_TOKENS=""
 
 if [ "$BASELINE_EXISTS" = true ]; then
-    echo "Extracting configuration from baseline..."
+    echo "Extracting document metadata from baseline..."
     DOCUMENT_ID=$(jq -r '.document_id // empty' "$BASELINE")
     DOCUMENT_PATH=$(jq -r '.document_path // empty' "$BASELINE")
-
-    # Extract ONLY target_chunk_tokens from baseline for fair comparison
-    # All other settings should use current defaults from default_config.json
-    CONFIG=$(jq -r '.config // empty' "$BASELINE")
-    if [ -n "$CONFIG" ] && [ "$CONFIG" != "null" ]; then
-        TARGET_CHUNK_TOKENS=$(echo "$CONFIG" | jq -r '.target_chunk_tokens // empty')
-        if [ -n "$TARGET_CHUNK_TOKENS" ]; then
-            echo "  Extracted target_chunk_tokens from baseline: $TARGET_CHUNK_TOKENS"
-            echo "  All other settings will use current defaults from default_config.json"
-        fi
-    else
-        echo "Warning: Could not extract config from baseline telemetry"
-        echo "  The indexer will use default configuration"
-    fi
-else
-    echo "No baseline available - will use current default configuration"
+    echo "  Document metadata extracted for auto-detection"
 fi
+
+echo "Configuration: Using current defaults from default_config.json plus any CLI overrides"
 
 # Auto-detect document if not provided
 if [ -z "$DOCUMENT" ]; then
@@ -425,11 +411,8 @@ INDEX_ARGS=(
     --no-progress
 )
 
-# Add target_chunk_tokens if we extracted it from baseline
-# This ensures fair comparison while using current defaults for everything else
-if [ -n "$TARGET_CHUNK_TOKENS" ]; then
-    INDEX_ARGS+=(--target-chunk-tokens "$TARGET_CHUNK_TOKENS")
-fi
+# All configuration comes from default_config.json plus any CLI overrides
+# No settings are extracted from baseline - each run uses current defaults
 
 # Add any extra arguments
 if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
