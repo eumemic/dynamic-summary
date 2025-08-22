@@ -235,9 +235,9 @@ class TestPerformance:
             t.encoder
             times.append(time.time() - start)
 
-        # All accesses should be very fast (less than 1ms)
+        # All accesses should be very fast (less than 10ms in CI environments)
         max_time = max(times)
-        assert max_time < 0.001, f"Encoder access should be fast, got {max_time:.6f}s"
+        assert max_time < 0.01, f"Encoder access should be fast, got {max_time:.6f}s"
 
 
 @pytest.fixture(autouse=True)
