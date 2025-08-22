@@ -25,10 +25,11 @@ Merge the current PR and sync with master.
 ## Process
 
 1. **Verify Ready**: If CI failing or uncommitted changes present (see **Context** section above), stop and inform user
-2. **Merge**: `gh pr merge --squash` (GitHub auto-deletes the remote branch)
-3. **Sync with master**: `git fetch origin && git reset --hard origin/master`
-4. **Push to recreate remote**: `git push -u origin $(git branch --show-current)` (recreate remote worktree branch)
-5. **Ready for next PR**: The worktree branch is now synced and ready for the next feature
+2. **Prepare clean commit message**: `COMMIT_BODY=$(./scripts/generate-merge-message.sh)` (fails if no open PR)
+3. **Merge with custom message**: `gh pr merge --squash --body "$COMMIT_BODY"` (GitHub auto-deletes the remote branch)
+4. **Sync with master**: `git fetch origin && git reset --hard origin/master`
+5. **Push to recreate remote**: `git push -u origin $(git branch --show-current)` (recreate remote worktree branch)
+6. **Ready for next PR**: The worktree branch is now synced and ready for the next feature
 
 ## Error Handling
 - No PR found → "Create PR first with /pr"
