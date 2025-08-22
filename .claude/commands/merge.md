@@ -11,6 +11,8 @@ argument-hint: [PR number]
 ## Context
 - Current branch: !`git branch --show-current`
 - PR status: !`gh pr list --head $(git branch --show-current) --state open --json mergeable -q 'if length > 0 then if .[0].mergeable == "MERGEABLE" then "OPEN / Ready" else "OPEN / Not ready" end else "No PR" end'`
+- CI status: !`gh pr checks --json state --jq 'if length == 0 then "No checks" else "See details below" end'`
+- Uncommitted changes: !`git diff-index --quiet HEAD && echo "None" || echo "Present - will be lost!"`
 
 ## Strategic Guidance
 Merging completes the feature cycle. Use squash merge to maintain a clean commit history on master. For worktree branches, we don't delete the branch - just sync with master for the next cycle.
@@ -22,22 +24,11 @@ Merge the current PR and sync with master.
 
 ## Process
 
-1. **Verify Ready**: Check CI passed, no review blockers
-   ```bash
-   gh pr view --json state,mergeable,statusCheckRollup
-   ```
-2. **Check for uncommitted changes**: Ensure no work will be lost
-   ```bash
-   git diff-index --quiet HEAD || {
-       echo "⚠️ Warning: You have uncommitted changes that will be lost!"
-       echo "Commit or stash them before merging."
-       exit 1
-   }
-   ```
-3. **Merge**: `gh pr merge --squash` (GitHub auto-deletes the remote branch)
-4. **Sync with master**: `git fetch origin && git reset --hard origin/master`
-5. **Push to recreate remote**: `git push -u origin $(git branch --show-current)` (recreate remote worktree branch)
-6. **Ready for next PR**: The worktree branch is now synced and ready for the next feature
+1. **Verify Ready**: If CI failing or uncommitted changes present (see **Context** section above), stop and inform user
+2. **Merge**: `gh pr merge --squash` (GitHub auto-deletes the remote branch)
+3. **Sync with master**: `git fetch origin && git reset --hard origin/master`
+4. **Push to recreate remote**: `git push -u origin $(git branch --show-current)` (recreate remote worktree branch)
+5. **Ready for next PR**: The worktree branch is now synced and ready for the next feature
 
 ## Error Handling
 - No PR found → "Create PR first with /pr"
