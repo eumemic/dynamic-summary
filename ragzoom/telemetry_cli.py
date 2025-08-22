@@ -486,47 +486,47 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     # Detect if running in CI
     is_ci = current_data.get("environment", {}).get("ci", False)
 
-    # Find common chunk sizes
-    baseline_sizes = set(baseline_metrics.metrics_by_chunk_size.keys())
-    current_sizes = set(current_metrics.metrics_by_chunk_size.keys())
-    common_sizes = baseline_sizes & current_sizes
+    # Extract single chunk size from each file
+    baseline_sizes = list(baseline_metrics.metrics_by_chunk_size.keys())
+    current_sizes = list(current_metrics.metrics_by_chunk_size.keys())
 
-    if not common_sizes:
-        # Check if both have single chunk sizes (different values) - this is the new scenario
-        if len(baseline_sizes) == 1 and len(current_sizes) == 1:
-            baseline_size = list(baseline_sizes)[0]
-            current_size = list(current_sizes)[0]
+    if len(baseline_sizes) != 1:
+        click.echo(
+            f"Error: Baseline has {len(baseline_sizes)} chunk sizes, expected exactly 1",
+            err=True,
+        )
+        return False
 
-            # Handle single-chunk comparison with different sizes
-            _format_single_chunk_different_sizes_comparison(
-                baseline_metrics,
-                current_metrics,
-                baseline_size,
-                current_size,
-                baseline_config,
-                current_config,
-            )
+    if len(current_sizes) != 1:
+        click.echo(
+            f"Error: Current has {len(current_sizes)} chunk sizes, expected exactly 1",
+            err=True,
+        )
+        return False
 
-            # For different chunk sizes, we don't do regression detection
-            # since the metrics aren't directly comparable
-            return False
-        else:
-            click.echo("No common chunk sizes found between files", err=True)
-            return False  # Return False, don't exit here
+    baseline_chunk_size = baseline_sizes[0]
+    current_chunk_size = current_sizes[0]
+
+    # Extract metrics for the single chunk sizes
+    baseline_chunk_metrics = baseline_metrics.metrics_by_chunk_size[baseline_chunk_size]
+    current_chunk_metrics = current_metrics.metrics_by_chunk_size[current_chunk_size]
 
     # Check for regressions with dynamic thresholds
-    has_regression, thresholds_by_chunk = (
-        _check_metrics_for_regressions_with_thresholds(
-            baseline_metrics, current_metrics, common_sizes, is_ci
-        )
+    has_regression, thresholds = _check_single_chunk_for_regressions_with_thresholds(
+        baseline_chunk_metrics,
+        current_chunk_metrics,
+        baseline_chunk_size,
+        current_chunk_size,
+        is_ci,
     )
 
     # Format comparison with thresholds
-    _format_markdown_comparison_with_thresholds(
-        baseline_metrics,
-        current_metrics,
-        common_sizes,
-        thresholds_by_chunk,
+    _format_single_chunk_comparison_with_thresholds(
+        baseline_chunk_metrics,
+        current_chunk_metrics,
+        baseline_chunk_size,
+        current_chunk_size,
+        thresholds,
         baseline_config,
         current_config,
     )
@@ -784,6 +784,89 @@ def _check_metrics_for_regressions_with_thresholds(
         thresholds_by_chunk[chunk_size] = chunk_thresholds
 
     return has_regression, thresholds_by_chunk
+
+
+def _check_single_chunk_for_regressions_with_thresholds(
+    baseline_metrics: ChunkMetrics,
+    current_metrics: ChunkMetrics,
+    baseline_chunk_size: int,
+    current_chunk_size: int,
+    is_ci: bool = False,
+) -> tuple[bool, dict[str, DynamicThreshold]]:
+    """Check if single chunk metrics show regressions using dynamic thresholds.
+
+    Returns:
+        Tuple of (has_regression, thresholds)
+    """
+    has_regression = False
+    # Use higher thresholds for indexing metrics that include API calls with inherent variance
+    config = ThresholdConfig(
+        k1_between_run=9.0, k2_baseline_uncertainty=6.0
+    )  # ~15σ for API-inclusive indexing benchmarks
+    thresholds = {}
+
+    # Define metric configurations
+    metric_configs = [
+        MetricCheckConfig(
+            MetricNames.MEDIAN_ERROR,
+            "error_mad",
+            "target_fit",
+            "median_error",
+            MetricNames.MEDIAN_ERROR_KEY,
+            use_absolute=True,
+        ),
+        MetricCheckConfig(
+            MetricNames.P95_ERROR,
+            "error_mad",
+            "target_fit",
+            "p95_error",
+            MetricNames.P95_ERROR_KEY,
+            use_absolute=True,
+        ),
+        MetricCheckConfig(
+            MetricNames.MEDIAN_SECONDS,
+            "latency_mad",
+            "latency",
+            "median_seconds",
+            MetricNames.LATENCY_KEY,
+        ),
+        MetricCheckConfig(
+            MetricNames.MAD, "mad", "dispersion", "mad", MetricNames.MAD_KEY
+        ),
+        MetricCheckConfig(
+            MetricNames.RETRY_RATE,
+            "retry_mad",
+            "retries",
+            "retry_rate",
+            MetricNames.RETRY_RATE_KEY,
+        ),
+        MetricCheckConfig(
+            MetricNames.USD_PER_NODE,
+            "cost_mad",
+            "cost",
+            "usd_per_node",
+            MetricNames.COST_KEY,
+        ),
+        MetricCheckConfig(
+            MetricNames.PERCENT_WITHIN_10,
+            "percent_within_10_mad",
+            "target_fit",
+            "percent_within_10",
+            MetricNames.PERCENT_WITHIN_10_KEY,
+            higher_is_better=True,
+        ),
+    ]
+
+    # Check each metric for regression
+    for metric_config in metric_configs:
+        is_regressed, threshold = _check_single_metric_regression(
+            baseline_metrics, current_metrics, metric_config, config, is_ci
+        )
+        thresholds[metric_config.threshold_key] = threshold
+        if is_regressed:
+            has_regression = True
+
+    return has_regression, thresholds
 
 
 def _compare_directories(baseline_dir: Path, current_dir: Path) -> tuple[bool, bool]:
@@ -1871,21 +1954,22 @@ def _compare_metric(
     click.echo(f"  {name:15} {base_str:>12} → {curr_str:>12}  ({change_str})")
 
 
-def _format_single_chunk_different_sizes_comparison(
-    baseline: SimplifiedMetrics,
-    current: SimplifiedMetrics,
-    baseline_size: int,
-    current_size: int,
+def _format_single_chunk_comparison_with_thresholds(
+    baseline_metrics: ChunkMetrics,
+    current_metrics: ChunkMetrics,
+    baseline_chunk_size: int,
+    current_chunk_size: int,
+    thresholds: dict[str, DynamicThreshold],
     baseline_config: dict[str, Any] | None = None,
     current_config: dict[str, Any] | None = None,
 ) -> None:
-    """Format comparison when baseline and current have different single chunk sizes."""
+    """Format single chunk comparison as markdown table with dynamic thresholds."""
 
     click.echo("# Performance Comparison Report\n")
 
-    # Configuration comparison if available
+    # Add configuration comparison if available
     if baseline_config is not None and current_config is not None:
-        click.echo("## Configuration Changes\n")
+        click.echo("## Configuration\n")
         click.echo("| Parameter | Baseline | Current |")
         click.echo("|-----------|----------|---------|")
 
@@ -1907,59 +1991,18 @@ def _format_single_chunk_different_sizes_comparison(
             else:
                 click.echo(f"| {display_key} | {baseline_val} | {current_val} |")
 
-        click.echo("")
+        click.echo("\n## Performance Metrics\n")
 
-    # Note about different chunk sizes
-    click.echo("## ℹ️ Different Chunk Sizes\n")
-    click.echo(f"**Baseline:** {baseline_size} tokens")
-    click.echo(f"**Current:** {current_size} tokens\n")
-    click.echo(
-        "_Regression detection is disabled when comparing different chunk sizes._\n"
-    )
+    # Create simplified table without chunk size column
+    click.echo("| Metric | Baseline | Current | Change | Threshold |")
+    click.echo("|--------|----------|---------|--------|-----------|")
 
-    # Side-by-side comparison
-    click.echo("## Performance Metrics Comparison\n")
-    click.echo("| Metric | Baseline | Current | Notes |")
-    click.echo("|--------|----------|---------|-------|")
-
-    baseline_metrics = baseline.metrics_by_chunk_size[baseline_size]
-    current_metrics = current.metrics_by_chunk_size[current_size]
-
-    # Target-fit metrics
-    click.echo("| **Target Fit** | | | |")
-    click.echo(
-        f"| Median Error | {baseline_metrics.target_fit.median_error:.1f} tokens | {current_metrics.target_fit.median_error:.1f} tokens | Target accuracy |"
-    )
-    click.echo(
-        f"| P95 Error | {baseline_metrics.target_fit.p95_error:.1f} tokens | {current_metrics.target_fit.p95_error:.1f} tokens | Worst-case accuracy |"
-    )
-    click.echo(
-        f"| % Within 10 tokens | {baseline_metrics.target_fit.percent_within_10:.1f}% | {current_metrics.target_fit.percent_within_10:.1f}% | Consistency |"
+    # Format metrics for the single chunk
+    _format_metrics_for_chunk_with_thresholds(
+        "", baseline_metrics, current_metrics, thresholds
     )
 
-    # Latency metrics
-    click.echo("| **Latency** | | | |")
-    click.echo(
-        f"| Median Time | {baseline_metrics.latency.median_seconds:.2f}s | {current_metrics.latency.median_seconds:.2f}s | Per-node processing |"
-    )
-    click.echo(
-        f"| Total Time | {baseline_metrics.latency.total_indexing_seconds:.1f}s | {current_metrics.latency.total_indexing_seconds:.1f}s | Full document |"
-    )
-
-    # Cost metrics
-    click.echo("| **Cost** | | | |")
-    click.echo(
-        f"| Cost per Node | ${baseline_metrics.cost.usd_per_node:.4f} | ${current_metrics.cost.usd_per_node:.4f} | Economic efficiency |"
-    )
-    click.echo(
-        f"| Total Tokens | {baseline_metrics.cost.total_tokens:,} | {current_metrics.cost.total_tokens:,} | API usage |"
-    )
-
-    # Retry metrics
-    click.echo("| **Reliability** | | | |")
-    click.echo(
-        f"| Retry Rate | {baseline_metrics.retries.retry_rate:.1%} | {current_metrics.retries.retry_rate:.1%} | API stability |"
-    )
+    click.echo("")
 
 
 def _format_markdown_comparison_with_thresholds(
