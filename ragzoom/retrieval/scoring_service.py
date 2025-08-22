@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 if TYPE_CHECKING:
-    from ragzoom.store import StoreManager, TreeNode
+    from ragzoom.store import StoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -65,21 +65,84 @@ class ScoringService:
             node_ids: Set of node IDs needing scores
             scores: Dictionary to update with computed scores
         """
-        query_vec = np.array(query_embedding)
+        if not node_ids:
+            return
 
+        # Batch fetch all nodes in a single operation
+        nodes = self.store.nodes.get_nodes(list(node_ids))
+
+        # Prepare for vectorized computation
+        query_vec = np.array(query_embedding)
+        valid_embeddings = []
+        valid_node_ids = []
+
+        # Collect valid embeddings
+        for node in nodes:
+            if node.embedding is not None:
+                valid_embeddings.append(node.embedding)
+                valid_node_ids.append(node.id)
+            else:
+                scores[node.id] = 0.0
+
+        # Handle missing nodes
+        loaded_node_ids = {node.id for node in nodes}
         for node_id in node_ids:
-            node: TreeNode | None = self.store.nodes.get_node(node_id)
-            if node is not None and node.embedding is not None:
-                try:
-                    similarity = self._compute_cosine_similarity(
-                        query_vec, np.array(node.embedding)
-                    )
+            if node_id not in loaded_node_ids:
+                scores[node_id] = 0.0
+
+        # Vectorized similarity computation for all valid embeddings
+        if valid_embeddings:
+            try:
+                embeddings_matrix = np.array(valid_embeddings)
+                similarities = self._compute_cosine_similarities_batch(
+                    query_vec, embeddings_matrix
+                )
+
+                # Update scores dictionary
+                for node_id, similarity in zip(valid_node_ids, similarities):
                     scores[node_id] = similarity
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to compute embedding similarity for node {node_id}: {e}"
-                    )
+
+            except Exception as e:
+                logger.warning(f"Failed to compute batch similarities: {e}")
+                # Fallback to individual computation
+                for node_id in valid_node_ids:
                     scores[node_id] = 0.0
+
+    @staticmethod
+    def _compute_cosine_similarities_batch(
+        query_vec: np.ndarray, embeddings_matrix: np.ndarray
+    ) -> np.ndarray:
+        """Compute cosine similarities between query and multiple embeddings.
+
+        Args:
+            query_vec: Query embedding vector (1D)
+            embeddings_matrix: Matrix of embeddings (2D: num_embeddings x embedding_dim)
+
+        Returns:
+            Array of cosine similarities in range [0, 1]
+        """
+        # Normalize query vector
+        query_norm = np.linalg.norm(query_vec)
+        if query_norm == 0:
+            return np.zeros(embeddings_matrix.shape[0])
+
+        # Normalize embedding vectors
+        embedding_norms = np.linalg.norm(embeddings_matrix, axis=1)
+
+        # Handle zero-norm embeddings
+        zero_norm_mask = embedding_norms == 0
+        embedding_norms = np.where(zero_norm_mask, 1.0, embedding_norms)
+
+        # Compute similarities
+        similarities = np.dot(embeddings_matrix, query_vec) / (
+            query_norm * embedding_norms
+        )
+
+        # Set zero-norm embeddings to 0 similarity
+        similarities = np.where(zero_norm_mask, 0.0, similarities)
+
+        # Clip to [0, 1] range
+        return np.clip(similarities, 0.0, 1.0)
 
     @staticmethod
     def _compute_cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
