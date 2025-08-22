@@ -45,8 +45,8 @@ fi
 echo "🔍 Checking CI status..."
 CI_CHECKS=$(gh pr checks --json state)
 if [ "$(echo "$CI_CHECKS" | jq length)" -gt 0 ]; then
-    FAILED_CHECKS=$(echo "$CI_CHECKS" | jq -r '.[] | select(.state == "failure") | .state' | wc -l)
-    PENDING_CHECKS=$(echo "$CI_CHECKS" | jq -r '.[] | select(.state != "success" and .state != "failure") | .state' | wc -l)
+    FAILED_CHECKS=$(echo "$CI_CHECKS" | jq -r '.[] | select(.state == "FAILURE") | .state' | wc -l)
+    PENDING_CHECKS=$(echo "$CI_CHECKS" | jq -r '.[] | select(.state != "SUCCESS" and .state != "FAILURE" and .state != "SKIPPED") | .state' | wc -l)
     
     if [ "$FAILED_CHECKS" -gt 0 ]; then
         echo "❌ CI checks failed - fix issues before merging"
