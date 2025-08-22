@@ -1,17 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo \"🤔 THINK CRITICALLY: Does this request make sense? Are there gaps or ambiguities? Investigate first to answer questions yourself. BUT push back if: 1) something feels wrong/missing critical info, 2) conflicts with your understanding, OR 3) you see a better way to accomplish the goal! Users make mistakes, so don't be afraid to push back. On the other hand, if you think the request is clear and makes sense, or there are minor gaps you could fill on your own with investigation, just proceed.\""
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
