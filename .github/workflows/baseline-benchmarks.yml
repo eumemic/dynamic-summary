@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   benchmark:
@@ -83,19 +83,34 @@ jobs:
             pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v
           done
           
-          # Add metadata
-          echo "{\"commit\": \"${{ github.sha }}\", \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > benchmark_results/metadata.json
-      
-      - name: Upload benchmark artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: baseline-benchmarks-${{ github.sha }}
-          path: benchmark_results/
-          retention-days: 90
-      
-      - name: Upload latest baseline
-        uses: actions/upload-artifact@v4
-        with:
-          name: baseline-benchmarks-latest
-          path: benchmark_results/
-          retention-days: 7
+          # Store baseline in repository
+          TIMESTAMP=$(date -u +%Y-%m-%d-%H%M%S)
+          SHORT_COMMIT=$(echo "${{ github.sha }}" | cut -c1-7)
+          BASELINE_NAME="telemetry-${TIMESTAMP}-${SHORT_COMMIT}.json"
+          
+          # Copy telemetry to baselines directory
+          cp benchmark_results/telemetry.json "benchmarks/baselines/${BASELINE_NAME}"
+          
+          # Update latest symlink
+          cd benchmarks/baselines
+          rm -f latest.json
+          ln -s "${BASELINE_NAME}" latest.json
+          cd ../..
+          
+          # Cleanup old baselines (keep last 100)
+          cd benchmarks/baselines
+          ls -1t telemetry-*.json | tail -n +101 | xargs -r rm -f
+          cd ../..
+          
+          # Commit and push to master
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add benchmarks/baselines/
+          git commit -m "feat: add baseline telemetry for ${{ github.sha }}
+
+          Generated on $(date -u +%Y-%m-%d) from commit ${{ github.sha }}
+          
+          🤖 Generated with [Claude Code](https://claude.ai/code)
+          
+          Co-Authored-By: Claude <noreply@anthropic.com>"
+          git push origin master

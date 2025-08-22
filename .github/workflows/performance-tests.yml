@@ -103,16 +103,16 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Download baseline benchmarks
-        uses: dawidd6/action-download-artifact@v3
-        with:
-          workflow: baseline-benchmarks.yml
-          branch: master
-          name: baseline-benchmarks-latest
-          path: baseline_results
-          if_no_artifact_found: warn
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
+      - name: Setup baseline from repository
+        run: |
+          # Copy baseline from repository to expected location
+          if [ -f "benchmarks/baselines/latest.json" ]; then
+            mkdir -p baseline_results
+            cp benchmarks/baselines/latest.json baseline_results/telemetry.json
+            echo "✅ Using repository baseline: $(basename $(readlink benchmarks/baselines/latest.json))"
+          else
+            echo "⚠️ No baseline available in repository"
+          fi
       
       - name: Cache pip dependencies
         uses: actions/cache@v4
@@ -444,9 +444,7 @@ jobs:
           set +e  # Don't exit on error, we handle exit codes manually
           # Check if we have baseline results
           if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/telemetry.json" ]; then
-            echo "## 📊 Performance Report" > report.md
-            echo "" >> report.md
-            echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" >> report.md
+            echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report.md
             echo "" >> report.md
             echo "⚠️ No baseline benchmarks available." >> report.md
             echo "" >> report.md

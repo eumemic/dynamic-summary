@@ -217,8 +217,12 @@ fi
 
 # Check for default baseline if not provided
 if [ -z "$BASELINE" ]; then
-    # First check for previous run in benchmarks/latest
-    if [ -f "benchmarks/latest/telemetry.json" ]; then
+    # First check for repository baseline
+    if [ -f "benchmarks/baselines/latest.json" ]; then
+        BASELINE="benchmarks/baselines/latest.json"
+        echo "Using repository baseline: $(basename $(readlink $BASELINE 2>/dev/null || echo 'latest.json'))"
+    # Then check for previous run in benchmarks/latest
+    elif [ -f "benchmarks/latest/telemetry.json" ]; then
         BASELINE="benchmarks/latest/telemetry.json"
         echo "Using previous run as baseline: $BASELINE"
     elif [ -f "./telemetry.json" ]; then
@@ -232,18 +236,27 @@ if [ -z "$BASELINE" ]; then
             REPO_ROOT=$(echo "$PWD" | sed 's|/worktrees/.*||')
         fi
         
-        # Check repository root if different from current directory
-        if [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$PWD" ] && [ -f "$REPO_ROOT/telemetry.json" ]; then
-            BASELINE="$REPO_ROOT/telemetry.json"
-            echo "Using baseline from repository root: $BASELINE"
-        else
+        # Check repository root for baseline or fallback
+        if [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$PWD" ]; then
+            if [ -f "$REPO_ROOT/benchmarks/baselines/latest.json" ]; then
+                BASELINE="$REPO_ROOT/benchmarks/baselines/latest.json"
+                echo "Using repository baseline from root: $(basename $(readlink $BASELINE 2>/dev/null || echo 'latest.json'))"
+            elif [ -f "$REPO_ROOT/telemetry.json" ]; then
+                BASELINE="$REPO_ROOT/telemetry.json"
+                echo "Using baseline from repository root: $BASELINE"
+            fi
+        fi
+        
+        if [ -z "$BASELINE" ]; then
             echo "Error: No baseline specified and no telemetry.json found"
             echo ""
             echo "Searched for telemetry.json in:"
-            echo "  1. benchmarks/latest/telemetry.json (previous run)"
-            echo "  2. ./telemetry.json (current directory)"
+            echo "  1. benchmarks/baselines/latest.json (repository baseline)"
+            echo "  2. benchmarks/latest/telemetry.json (previous run)"
+            echo "  3. ./telemetry.json (current directory)"
             if [ -n "$REPO_ROOT" ] && [ "$REPO_ROOT" != "$PWD" ]; then
-                echo "  3. $REPO_ROOT/telemetry.json (repository root)"
+                echo "  4. $REPO_ROOT/benchmarks/baselines/latest.json (repository root baseline)"
+                echo "  5. $REPO_ROOT/telemetry.json (repository root)"
             fi
             echo ""
             echo "For first run, either:"

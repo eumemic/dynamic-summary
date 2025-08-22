@@ -76,6 +76,8 @@ telemetry-*.json
 telemetry.json
 benchmark_results/
 /benchmarks/
+!/benchmarks/baselines/
+!/benchmarks/README.md
 visualization.png
 visualization.pdf
 visualization.svg
