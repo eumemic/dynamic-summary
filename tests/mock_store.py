@@ -154,6 +154,7 @@ class SimpleMockStore(StoreInterface):
         mock_nodes = MagicMock()
         mock_nodes.get_node = self.get_node
         mock_nodes.get_nodes = self.get_nodes
+        mock_nodes.get_nodes_by_paths = self.get_nodes_by_paths
         mock_nodes.update_node_access = self.update_node_access
         mock_nodes.add_nodes_batch = self.add_nodes_batch
         mock_nodes.update_parent_references_batch = self.update_parent_references_batch
@@ -263,6 +264,7 @@ class SimpleMockStore(StoreInterface):
         token_count: int = 0,
         height: int = 0,
         preceding_neighbor_id: str | None = None,
+        path: str = "",
     ) -> TreeNode:
         """Add a node to the mock store."""
         # Convert embedding to list if needed
@@ -304,6 +306,7 @@ class SimpleMockStore(StoreInterface):
             access_count=0,
             created_at=None,
             preceding_neighbor_id=preceding_neighbor_id,
+            path=path,  # Binary tree path
             embedding=list(embedding),  # Store embedding in node
         )
 
@@ -429,6 +432,14 @@ class SimpleMockStore(StoreInterface):
             self._nodes[ancestor_id]
             for ancestor_id in all_ancestors
             if ancestor_id in self._nodes
+        ]
+
+    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
+        """Get nodes by their path values."""
+        return [
+            node
+            for node in self._nodes.values()
+            if hasattr(node, "path") and node.path in paths
         ]
 
     def get_node_depth(self, node_id: str) -> int:

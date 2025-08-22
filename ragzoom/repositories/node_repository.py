@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import update
+from sqlalchemy import func, update
 
 from ragzoom.models import TreeNode
 
@@ -160,6 +160,7 @@ class NodeRepository(BaseRepository):
                     token_count=data.get("token_count", 0),
                     preceding_neighbor_id=data.get("preceding_neighbor_id"),
                     height=data.get("height", 0),
+                    path=data.get("path", ""),
                 )
                 nodes.append(node)
 
@@ -275,6 +276,30 @@ class NodeRepository(BaseRepository):
 
         return nodes
 
+    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
+        """Get multiple nodes by their path values.
+
+        Args:
+            paths: List of path strings to retrieve
+
+        Returns:
+            List of TreeNode objects found
+        """
+        if not paths:
+            return []
+
+        with self.SessionLocal() as session:
+            db_nodes = session.query(TreeNode).filter(TreeNode.path.in_(paths)).all()
+            nodes = []
+            for node in db_nodes:
+                # Force load and detach
+                self._force_load_and_detach(session, node)
+                # Add to cache
+                self.cache_manager.put(node.id, node)
+                nodes.append(node)
+
+            return nodes
+
     def update_node_access(self, node_id: str) -> None:
         """Update access time and count for a node.
 
@@ -305,20 +330,36 @@ class NodeRepository(BaseRepository):
         """
         with self.SessionLocal() as session:
             query = session.query(TreeNode).filter(TreeNode.is_pinned == 1)
+
+            # Use database-level path filtering for better performance if depth_max specified
+            if depth_max is not None:
+                # Filter by path length at database level for nodes with paths
+                query = query.filter(
+                    (
+                        TreeNode.path.is_(None)
+                    )  # Include nodes without path for backward compatibility
+                    | (
+                        func.length(TreeNode.path) <= depth_max
+                    )  # Path length equals depth
+                )
+
             nodes = query.all()
 
             # Force load and detach all
             for node in nodes:
                 self._force_load_and_detach(session, node)
 
-            # Filter by depth if specified
+            # Fallback filtering for nodes without path field (backward compatibility)
             if depth_max is not None:
-                # Calculate depth for each node and filter
-                # This is done post-query for simplicity
                 filtered_nodes = []
                 for node in nodes:
-                    depth = self._calculate_depth(node.id)
-                    if depth <= depth_max:
+                    # If node has no path, calculate depth the old way
+                    if not hasattr(node, "path") or node.path is None:
+                        depth = self._calculate_depth(node.id)
+                        if depth <= depth_max:
+                            filtered_nodes.append(node)
+                    else:
+                        # Path-based filtering already done in database query
                         filtered_nodes.append(node)
                 return filtered_nodes
 
@@ -333,6 +374,17 @@ class NodeRepository(BaseRepository):
         Returns:
             Depth from root (0 for root nodes)
         """
+        node = self.get_node(node_id)
+        if not node:
+            return 0
+
+        # Use path field for instant depth calculation if available
+        if hasattr(node, "path") and node.path is not None:
+            from ragzoom.utils.path_utils import get_depth
+
+            return get_depth(node.path)
+
+        # Fallback to traversal-based calculation for backward compatibility
         depth = 0
         current_id = node_id
 
