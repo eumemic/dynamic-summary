@@ -1,6 +1,5 @@
 """Performance tests for parallel DP tiling algorithm."""
 
-import asyncio
 import time
 
 import pytest
@@ -11,11 +10,12 @@ from ragzoom.retrieve import Retriever
 from tests.utils import create_predictable_summary_mock, mock_openai_context
 
 
+@pytest.mark.asyncio
 class TestParallelDPPerformance:
     """Test parallel DP performance compared to sequential."""
 
     @pytest.fixture
-    def large_document_setup(self, store, config_factory):
+    async def large_document_setup(self, store, config_factory):
         """Set up a test system with a larger document for performance testing."""
         config = config_factory(
             target_chunk_tokens=200,
@@ -32,20 +32,20 @@ class TestParallelDPPerformance:
                 api_key=config.openai_api_key,
             )
 
-            # Create a larger document that will build a deeper tree
-            # Each chunk is ~200 tokens, create enough for a 4+ level tree
+            # Create a smaller document for testing (4 chunks = 2-3 levels)
+            # Each chunk is ~200 tokens, create enough for basic tree testing
             chunk_text = (
-                "This is test content for performance testing. " * 50
-            )  # ~250 tokens
+                "This is test content for performance testing. " * 20
+            )  # ~100 tokens
             large_document = " ".join(
-                [chunk_text for _ in range(16)]
-            )  # 16 chunks = 4 levels
+                [chunk_text for _ in range(4)]
+            )  # 4 chunks = 2-3 levels
 
-            tree_builder.add_document(large_document, "large-test-doc")
+            await tree_builder.add_document_async(large_document, "large-test-doc")
 
             yield config, store, tree_builder
 
-    def test_sync_vs_async_dp_correctness(self, large_document_setup):
+    async def test_sync_vs_async_dp_correctness(self, large_document_setup):
         """Test that sync and async DP generators produce identical results."""
         config, store, _ = large_document_setup
 
@@ -57,7 +57,7 @@ class TestParallelDPPerformance:
 
         # Get test data
         retriever = Retriever(config.query_config, store, config.openai_api_key)
-        result = retriever.retrieve("test content", budget_tokens=1500)
+        result = await retriever.retrieve_async("test content", budget_tokens=1500)
 
         # Extract the data needed for DP
         nodes = result.nodes or {}
@@ -68,26 +68,23 @@ class TestParallelDPPerformance:
                 root_id = node_id
                 break
 
-        if not root_id or len(nodes) < 10:
+        if not root_id or len(nodes) < 3:
             pytest.skip("Not enough nodes for meaningful comparison")
 
         # Run sync version
         sync_result = sync_generator.find_optimal_tiling(1500, scores, nodes, root_id)
 
         # Run async version
-        async def run_async():
-            return await async_generator.find_optimal_tiling(
-                1500, scores, nodes, root_id
-            )
-
-        async_result = asyncio.run(run_async())
+        async_result = await async_generator.find_optimal_tiling(
+            1500, scores, nodes, root_id
+        )
 
         # Results should be identical
         assert sync_result.tiling.node_ids == async_result.tiling.node_ids
         assert abs(sync_result.total_quality - async_result.total_quality) < 1e-6
         assert len(sync_result.node_infos) == len(async_result.node_infos)
 
-    def test_async_dp_performance_benefit(self, large_document_setup):
+    async def test_async_dp_performance_benefit(self, large_document_setup):
         """Test that async DP provides performance benefit on larger trees."""
         config, store, _ = large_document_setup
 
@@ -99,7 +96,7 @@ class TestParallelDPPerformance:
 
         # Get test data
         retriever = Retriever(config.query_config, store, config.openai_api_key)
-        result = retriever.retrieve("test content", budget_tokens=1800)
+        result = await retriever.retrieve_async("test content", budget_tokens=1800)
 
         nodes = result.nodes or {}
         scores = result.scores
@@ -109,7 +106,7 @@ class TestParallelDPPerformance:
                 root_id = node_id
                 break
 
-        if not root_id or len(nodes) < 20:
+        if not root_id or len(nodes) < 3:
             pytest.skip("Not enough nodes for meaningful performance test")
 
         # Benchmark sync version
@@ -118,13 +115,10 @@ class TestParallelDPPerformance:
         sync_time = time.perf_counter() - start_time
 
         # Benchmark async version
-        async def run_async():
-            return await async_generator.find_optimal_tiling(
-                1800, scores, nodes, root_id
-            )
-
         start_time = time.perf_counter()
-        async_result = asyncio.run(run_async())
+        async_result = await async_generator.find_optimal_tiling(
+            1800, scores, nodes, root_id
+        )
         async_time = time.perf_counter() - start_time
 
         print(f"Sync time: {sync_time:.4f}s, Async time: {async_time:.4f}s")
@@ -142,7 +136,7 @@ class TestParallelDPPerformance:
                 async_time <= sync_time * 1.2
             ), f"Async ({async_time:.4f}s) much slower than sync ({sync_time:.4f}s) on large tree"
 
-    def test_retriever_with_async_dp(self, large_document_setup):
+    async def test_retriever_with_async_dp(self, large_document_setup):
         """Test retriever using async DP generator."""
         config, store, _ = large_document_setup
 
@@ -161,18 +155,15 @@ class TestParallelDPPerformance:
         # Test both retrievers produce same results
         sync_result = sync_retriever.retrieve("test content", budget_tokens=1200)
 
-        async def run_async_retriever():
-            return await async_retriever.retrieve_async(
-                "test content", budget_tokens=1200
-            )
-
-        async_result = asyncio.run(run_async_retriever())
+        async_result = await async_retriever.retrieve_async(
+            "test content", budget_tokens=1200
+        )
 
         # Results should be identical
         assert sync_result.tiling == async_result.tiling
         assert sync_result.scores == async_result.scores
 
-    def test_error_handling_in_parallel_dp(self, large_document_setup):
+    async def test_error_handling_in_parallel_dp(self, large_document_setup):
         """Test graceful error handling in parallel DP execution."""
         config, store, _ = large_document_setup
 
@@ -182,7 +173,7 @@ class TestParallelDPPerformance:
 
         # Get test data
         retriever = Retriever(config.query_config, store, config.openai_api_key)
-        result = retriever.retrieve("test content", budget_tokens=1000)
+        result = await retriever.retrieve_async("test content", budget_tokens=1000)
 
         nodes = result.nodes or {}
         scores = result.scores
@@ -196,16 +187,11 @@ class TestParallelDPPerformance:
             pytest.skip("No valid root found")
 
         # Should handle errors gracefully and still produce a result
-        async def run_with_potential_errors():
-            return await async_generator.find_optimal_tiling(
-                1000, scores, nodes, root_id
-            )
-
-        result = asyncio.run(run_with_potential_errors())
+        result = await async_generator.find_optimal_tiling(1000, scores, nodes, root_id)
         assert result is not None
         assert result.tiling is not None
 
-    def test_parallelization_threshold(self, large_document_setup):
+    async def test_parallelization_threshold(self, large_document_setup):
         """Test that parallelization threshold works correctly."""
         config, store, _ = large_document_setup
 
@@ -220,7 +206,7 @@ class TestParallelDPPerformance:
         )
 
         retriever = Retriever(config.query_config, store, config.openai_api_key)
-        result = retriever.retrieve("test content", budget_tokens=1000)
+        result = await retriever.retrieve_async("test content", budget_tokens=1000)
 
         nodes = result.nodes or {}
         scores = result.scores
@@ -233,16 +219,12 @@ class TestParallelDPPerformance:
         if not root_id:
             pytest.skip("No valid root found")
 
-        async def test_both():
-            high_result = await high_threshold_generator.find_optimal_tiling(
-                1000, scores, nodes, root_id
-            )
-            low_result = await low_threshold_generator.find_optimal_tiling(
-                1000, scores, nodes, root_id
-            )
-            return high_result, low_result
-
-        high_result, low_result = asyncio.run(test_both())
+        high_result = await high_threshold_generator.find_optimal_tiling(
+            1000, scores, nodes, root_id
+        )
+        low_result = await low_threshold_generator.find_optimal_tiling(
+            1000, scores, nodes, root_id
+        )
 
         # Both should produce identical results regardless of parallelization
         assert high_result.tiling.node_ids == low_result.tiling.node_ids

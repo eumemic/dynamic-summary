@@ -264,8 +264,14 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
         super().__init__(config)
         self.min_nodes_for_parallel = min_nodes_for_parallel
         self._memo_cache: dict[tuple[str | None, int], Tiling] = {}
-        self._memo_lock: asyncio.Lock = asyncio.Lock()
+        self._memo_lock: asyncio.Lock | None = None
         # Threading lock for relevance cache will be created lazily
+
+    def _get_memo_lock(self) -> asyncio.Lock:
+        """Lazily create the memo lock in async context."""
+        if self._memo_lock is None:
+            self._memo_lock = asyncio.Lock()
+        return self._memo_lock
 
     async def find_optimal_tiling(
         self,
@@ -468,7 +474,7 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
         cache_key = (node_id, budget)
 
         # Thread-safe cache access
-        async with self._memo_lock:
+        async with self._get_memo_lock():
             if cache_key in self._memo_cache:
                 return self._memo_cache[cache_key]
 
@@ -477,7 +483,7 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
         )
 
         # Thread-safe cache write
-        async with self._memo_lock:
+        async with self._get_memo_lock():
             self._memo_cache[cache_key] = result
 
         return result
