@@ -445,7 +445,7 @@ def query(
             retriever = Retriever(
                 query_config,
                 store,
-                api_key=operational_config.openai_api_key,
+                api_key=operational_config.openai_api_key.get_secret_value(),
             )
             result = retriever.retrieve(
                 query_text,

@@ -22,7 +22,12 @@ class TestConcurrency:
     def client(self, mock_openai, monkeypatch, mock_store):
         """Create test client with mocked dependencies."""
         from ragzoom.api import get_service_container
-        from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+        from ragzoom.config import (
+            IndexConfig,
+            OperationalConfig,
+            QueryConfig,
+            SecretStr,
+        )
 
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
@@ -31,7 +36,9 @@ class TestConcurrency:
             def __init__(self):
                 self.index_config = IndexConfig.load()
                 self.query_config = QueryConfig()
-                self.operational_config = OperationalConfig(openai_api_key="test-key")
+                self.operational_config = OperationalConfig(
+                    openai_api_key=SecretStr("test-key")
+                )
                 self.store = mock_store
 
                 # Initialize services with mock store

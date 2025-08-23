@@ -2,7 +2,7 @@
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
@@ -17,7 +17,7 @@ class TestCoverageTreeCompleteness:
             target_chunk_tokens=100, preceding_context_tokens=50
         )
         query_config = QueryConfig(budget_tokens=1000)
-        operational_config = OperationalConfig(openai_api_key="test-key")
+        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         # Create config wrapper for SimpleMockStore compatibility
         class LocalTestConfig:
