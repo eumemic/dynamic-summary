@@ -12,6 +12,8 @@ from ragzoom.exceptions import (
 )
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
+from ragzoom.store import Store
+from ragzoom.wrapper import AsyncRagZoom, RagZoom
 
 __all__ = [
     "IndexConfig",
@@ -20,6 +22,9 @@ __all__ = [
     "TreeBuilder",
     "Retriever",
     "Assembler",
+    "Store",
+    "RagZoom",
+    "AsyncRagZoom",
     "NodeNotFoundError",
     "DocumentNotFoundError",
     "InvalidOperationError",

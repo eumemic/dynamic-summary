@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast, overload
 
-from ragzoom.config import IndexConfig
+from ragzoom.config import IndexConfig, SecretStr
 from ragzoom.document_store import DocumentStore
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.services.llm_service import LLMService
@@ -56,7 +56,7 @@ class TreeBuilder:
         self,
         config: IndexConfig,
         store: StoreManager,
-        api_key: str = "",
+        api_key: str | SecretStr = "",
         max_concurrent: int = 30,
     ):
         """Initialize tree builder.
@@ -64,12 +64,15 @@ class TreeBuilder:
         Args:
             config: Index configuration
             store: StoreManager instance for persistence
-            api_key: OpenAI API key (if not provided, reads from OPENAI_API_KEY env)
+            api_key: OpenAI API key as SecretStr or string (if not provided, reads from OPENAI_API_KEY env)
             max_concurrent: Maximum concurrent API requests
         """
         self.config = config
         self.store = store
         self.splitter = TextSplitter(config)
+        # Convert string to SecretStr for security
+        if isinstance(api_key, str) and not isinstance(api_key, SecretStr):
+            api_key = SecretStr(api_key) if api_key else SecretStr("")
         self.llm_service = LLMService(config, api_key, max_concurrent)
 
         # Backward compatibility: provide access to centralized tokenizer

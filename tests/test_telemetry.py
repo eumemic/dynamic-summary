@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig
+from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import (
     NodeTelemetry,
@@ -211,7 +211,7 @@ class TestTelemetryIntegration:
             embedding_batch_size=2,
         )
         operational_config = OperationalConfig(
-            openai_api_key="test-key",
+            openai_api_key=SecretStr("test-key"),
         )
 
         # Create test text that will generate multiple nodes
@@ -249,7 +249,9 @@ class TestTelemetryIntegration:
             "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
         ):
             builder = TreeBuilder(
-                index_config, store, operational_config.openai_api_key
+                index_config,
+                store,
+                operational_config.openai_api_key.get_secret_value(),
             )
 
             # Create reporter for metrics

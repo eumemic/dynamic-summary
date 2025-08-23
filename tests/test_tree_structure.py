@@ -7,7 +7,7 @@ This module consolidates tests for:
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.index import TreeBuilder
 from ragzoom.validate import (
     set_validation_enabled,
@@ -256,11 +256,13 @@ class TestIndexingCreatesValidTrees:
         )
         query_config = QueryConfig()
         operational_config = OperationalConfig(
-            openai_api_key="test-key-for-tests",
+            openai_api_key=SecretStr("test-key-for-tests"),
         )
         store = SimpleMockStore(config=(index_config, query_config, operational_config))
         tree_builder = TreeBuilder(
-            index_config, store, api_key=operational_config.openai_api_key
+            index_config,
+            store,
+            api_key=operational_config.openai_api_key.get_secret_value(),
         )
 
         # Mock the API calls - need to mock the async methods
