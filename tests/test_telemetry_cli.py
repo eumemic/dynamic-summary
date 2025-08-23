@@ -118,7 +118,7 @@ class TestTelemetryCompare:
         assert result.exit_code == 0
         # Check for new simplified table format (no chunk size column)
         assert "Median error" in result.output
-        assert "Avg retries/node" in result.output
+        assert "Mean retries/node" in result.output
         # Chunk size should appear in configuration section
         assert "Target Chunk Tokens" in result.output
 
@@ -286,7 +286,7 @@ class TestTelemetryCompare:
 
         # Test that comparison works and shows the cost increase
         assert result.exit_code == 0  # CLI should run successfully
-        assert "USD per node" in result.output  # Should show cost metrics
+        assert "USD per 1M source tokens" in result.output  # Should show cost metrics
         assert (
             "+450.0%" in result.output or "+$" in result.output
         )  # Should show cost increase

@@ -1520,7 +1520,7 @@ def _format_metrics_for_chunk_with_thresholds(
         current_variance=curr_metrics.target_fit.error_mad,
     )
     _format_comparison_row_with_threshold(
-        "",
+        None,
         "p95 error",
         base_metrics.target_fit.p95_error,
         curr_metrics.target_fit.p95_error,
@@ -1531,33 +1531,9 @@ def _format_metrics_for_chunk_with_thresholds(
         current_variance=curr_metrics.target_fit.error_mad,
     )
 
-    # Absolute deviation metrics (clearer than signed errors)
-    _format_comparison_row_with_threshold(
-        "",
-        "Mean absolute error",
-        base_metrics.target_fit.mean_absolute_error,
-        curr_metrics.target_fit.mean_absolute_error,
-        thresholds.get("mean_absolute_error", thresholds[MetricNames.MEDIAN_ERROR_KEY]),
-        is_error_metric=True,
-        baseline_variance=base_metrics.target_fit.absolute_error_mad,
-        current_variance=curr_metrics.target_fit.absolute_error_mad,
-    )
-    _format_comparison_row_with_threshold(
-        "",
-        "Median absolute error",
-        base_metrics.target_fit.median_absolute_error,
-        curr_metrics.target_fit.median_absolute_error,
-        thresholds.get(
-            "median_absolute_error", thresholds[MetricNames.MEDIAN_ERROR_KEY]
-        ),
-        is_error_metric=True,
-        baseline_variance=base_metrics.target_fit.absolute_error_mad,
-        current_variance=curr_metrics.target_fit.absolute_error_mad,
-    )
-
     # Percentage-based metrics (chunk-size invariant)
     _format_comparison_row_with_threshold(
-        "",
+        None,
         "Mean % deviation",
         base_metrics.target_fit.mean_percent_deviation,
         curr_metrics.target_fit.mean_percent_deviation,
@@ -1568,52 +1544,23 @@ def _format_metrics_for_chunk_with_thresholds(
         current_variance=curr_metrics.target_fit.percent_deviation_mad,
     )
 
-    # Acceptance distribution metrics
+    # Oversized summary rate (percentage of nodes that produced oversized summaries)
     _format_comparison_row_with_threshold(
-        "",
-        "Within ±5 tokens",
-        base_metrics.target_fit.percent_within_5,
-        curr_metrics.target_fit.percent_within_5,
+        None,
+        "Oversized summary rate",
+        base_metrics.retries.oversized_summary_rate,
+        curr_metrics.retries.oversized_summary_rate,
         thresholds.get(
-            "percent_within_5", thresholds[MetricNames.PERCENT_WITHIN_10_KEY]
+            "oversized_summary_rate", thresholds[MetricNames.RETRY_RATE_KEY]
         ),
-        higher_is_better=True,
-    )
-    _format_comparison_row_with_threshold(
-        "",
-        "Within ±10 tokens",
-        base_metrics.target_fit.percent_within_10,
-        curr_metrics.target_fit.percent_within_10,
-        thresholds[MetricNames.PERCENT_WITHIN_10_KEY],
-        higher_is_better=True,
-        baseline_variance=base_metrics.target_fit.percent_within_10_mad,
-        current_variance=curr_metrics.target_fit.percent_within_10_mad,
-    )
-    _format_comparison_row_with_threshold(
-        "",
-        "Within ±20 tokens",
-        base_metrics.target_fit.percent_within_20,
-        curr_metrics.target_fit.percent_within_20,
-        thresholds.get(
-            "percent_within_20", thresholds[MetricNames.PERCENT_WITHIN_10_KEY]
-        ),
-        higher_is_better=True,
-    )
-    _format_comparison_row_with_threshold(
-        "",
-        "Within ±50 tokens",
-        base_metrics.target_fit.percent_within_50,
-        curr_metrics.target_fit.percent_within_50,
-        thresholds.get(
-            "percent_within_50", thresholds[MetricNames.PERCENT_WITHIN_10_KEY]
-        ),
-        higher_is_better=True,
+        baseline_variance=base_metrics.retries.retry_mad,
+        current_variance=curr_metrics.retries.retry_mad,
     )
 
     # Retry metrics
     _format_comparison_row_with_threshold(
-        "",
-        "Avg retries/node",
+        None,
+        "Mean retries/node",
         base_metrics.retries.retry_rate,
         curr_metrics.retries.retry_rate,
         thresholds[MetricNames.RETRY_RATE_KEY],
@@ -1623,7 +1570,7 @@ def _format_metrics_for_chunk_with_thresholds(
 
     # Latency metrics
     _format_comparison_row_with_threshold(
-        "",
+        None,
         "Median time/node",
         base_metrics.latency.median_seconds,
         curr_metrics.latency.median_seconds,
@@ -1634,10 +1581,10 @@ def _format_metrics_for_chunk_with_thresholds(
 
     # Cost metrics
     _format_comparison_row_with_threshold(
-        "",
-        "USD per node",
-        base_metrics.cost.usd_per_node,
-        curr_metrics.cost.usd_per_node,
+        None,
+        "USD per 1M source tokens",
+        base_metrics.cost.usd_per_million_source_tokens,
+        curr_metrics.cost.usd_per_million_source_tokens,
         thresholds[MetricNames.COST_KEY],
         is_cost=True,
         baseline_variance=base_metrics.cost.cost_mad,
@@ -1995,12 +1942,15 @@ def _get_unit_for_metric(metric_name: str) -> str:
         MetricNames.USD_PER_NODE: "$",
         MetricNames.MAD: "tok",
         MetricNames.RETRY_RATE: "",  # Ratio, no unit
+        "oversized_summary_rate": "%",  # Percentage of nodes with oversized summaries
         MetricNames.MAX_RETRIES: "",  # Count, no unit
         MetricNames.PERCENT_WITHIN_10: "%",
         "percent": "%",  # For backward compatibility with _prepare_row_data
         MetricNames.TOTAL_TOKENS: "tok",
         MetricNames.TOTAL_PROMPT_TOKENS: "tok",
         MetricNames.TOTAL_COMPLETION_TOKENS: "tok",
+        # Percentage-based metrics
+        "mean_percent_deviation": "%",
     }
     return units.get(metric_name, "")
 

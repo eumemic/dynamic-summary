@@ -181,6 +181,9 @@ class RetryMetrics:
     """Metrics for retry patterns."""
 
     retry_rate: float
+    oversized_summary_rate: (
+        float  # Percentage of nodes that produced oversized summaries
+    )
     max_retries: float
     retry_mad: float
     retry_std: float
@@ -206,6 +209,7 @@ class CostMetrics:
     total_completion_tokens: int
     total_tokens: int
     usd_per_node: float
+    usd_per_million_source_tokens: float
     cost_mad: float
     cost_iqr: float
     cost_std: float
@@ -263,6 +267,9 @@ def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetr
             "Cannot compute cost metrics without knowing which models were used."
         )
 
+    # Extract source document tokens for cost calculations
+    source_document_tokens = parsed_data.get("source_document_tokens", 0)
+
     # Group nodes by target chunk size
     nodes_by_target: dict[int, list[NodeTelemetryDict]] = {}
 
@@ -311,6 +318,7 @@ def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetr
                 cost=compute_cost_metrics(
                     chunk_nodes,
                     {"summary": summary_model, "embedding": embedding_model},
+                    source_document_tokens,
                 ),
                 dispersion=compute_dispersion_metrics(chunk_nodes),
             )
@@ -501,6 +509,10 @@ def compute_retry_metrics(nodes: list[NodeTelemetryDict]) -> RetryMetrics:
     num_nodes = len(nodes)
     retry_rate = ((total_attempts - num_nodes) / num_nodes) if num_nodes > 0 else 0.0
 
+    # Calculate rejection rate - percentage of nodes that needed retries
+    nodes_with_retries = sum(1 for retries in node_retries_list if retries > 0)
+    rejection_rate = (nodes_with_retries / num_nodes * 100) if num_nodes > 0 else 0.0
+
     # Compute variance metrics for per-node retry counts
     if node_retries_list:
         median_retries = median(node_retries_list)
@@ -517,6 +529,7 @@ def compute_retry_metrics(nodes: list[NodeTelemetryDict]) -> RetryMetrics:
 
     return RetryMetrics(
         retry_rate=retry_rate,
+        oversized_summary_rate=rejection_rate,
         max_retries=float(max_retries),
         retry_mad=retry_mad,
         retry_std=retry_std,
@@ -594,7 +607,7 @@ def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> LatencyMetrics:
 
 
 def compute_cost_metrics(
-    nodes: list[NodeTelemetryDict], models: dict[str, str]
+    nodes: list[NodeTelemetryDict], models: dict[str, str], source_document_tokens: int
 ) -> CostMetrics:
     """Compute cost and token metrics.
 
@@ -665,6 +678,13 @@ def compute_cost_metrics(
     num_nodes = len(nodes)
     usd_per_node = (total_cost / num_nodes) if num_nodes > 0 else 0.0
 
+    # Calculate USD per 1M source tokens
+    usd_per_million_source_tokens = (
+        (total_cost / source_document_tokens) * 1_000_000
+        if source_document_tokens > 0
+        else 0.0
+    )
+
     # Compute variance metrics for per-node costs
     if node_costs:
         median_cost = median(node_costs)
@@ -690,6 +710,7 @@ def compute_cost_metrics(
         total_completion_tokens=total_completion_tokens,
         total_tokens=total_tokens,
         usd_per_node=usd_per_node,
+        usd_per_million_source_tokens=usd_per_million_source_tokens,
         cost_mad=cost_mad,
         cost_iqr=cost_iqr,
         cost_std=cost_std,
