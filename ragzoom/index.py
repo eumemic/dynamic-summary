@@ -71,7 +71,7 @@ class TreeBuilder:
         self.store = store
         self.splitter = TextSplitter(config)
         # Convert string to SecretStr for security
-        if isinstance(api_key, str):
+        if isinstance(api_key, str) and not isinstance(api_key, SecretStr):
             api_key = SecretStr(api_key) if api_key else SecretStr("")
         self.llm_service = LLMService(config, api_key, max_concurrent)
 

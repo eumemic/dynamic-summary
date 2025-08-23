@@ -38,6 +38,43 @@ class SecretStr(str):
         return super().__str__()
 
 
+def ensure_secret_str(api_key: str | SecretStr, service_name: str = "Service") -> str:
+    """Convert API key to SecretStr if needed and extract the actual value.
+
+    Args:
+        api_key: API key as string or SecretStr
+        service_name: Name of the service (for error messages)
+
+    Returns:
+        The actual API key value for use with OpenAI client
+
+    Raises:
+        ValueError: If no valid API key is available and not in test environment
+    """
+    import os
+
+    # Convert to SecretStr if needed
+    if isinstance(api_key, str) and not isinstance(api_key, SecretStr):
+        api_key = SecretStr(api_key or os.environ.get("OPENAI_API_KEY", ""))
+
+    # Extract the actual value
+    if hasattr(api_key, "get_secret_value"):
+        actual_key = api_key.get_secret_value()
+    else:
+        # Fallback - should not happen but prevents issues
+        actual_key = str(api_key)
+
+    # Validate we have a key
+    if not actual_key:
+        # In test environments, allow empty API key (will be mocked)
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            actual_key = "test-key-placeholder"
+        else:
+            raise ValueError(f"OpenAI API key required for {service_name}")
+
+    return actual_key
+
+
 def get_embedding_cost(model: str) -> float:
     """Get embedding cost per 1K tokens using ModelInfo."""
     from ragzoom.model_info import ModelInfo

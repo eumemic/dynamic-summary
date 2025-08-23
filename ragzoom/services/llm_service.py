@@ -64,15 +64,9 @@ class LLMService:
         self.config = config
 
         # Get API key from parameter or environment
-        import os
+        from ragzoom.config import ensure_secret_str
 
-        # Convert to SecretStr if needed and get actual value for OpenAI client
-        if isinstance(api_key, str):
-            api_key = SecretStr(api_key or os.environ.get("OPENAI_API_KEY", ""))
-        actual_key = api_key.get_secret_value()
-
-        if not actual_key:
-            raise ValueError("OpenAI API key required for LLMService")
+        actual_key = ensure_secret_str(api_key, "LLMService")
 
         self.client = AsyncOpenAI(api_key=actual_key)
         self.semaphore = asyncio.Semaphore(max_concurrent)
