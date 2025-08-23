@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from tests.utils import create_predictable_summary_mock, mock_openai_context
@@ -33,12 +33,12 @@ class TestBudgetGuarantee:
             tree_builder = TreeBuilder(
                 config.index_config,
                 store,
-                api_key=config.openai_api_key,
+                api_key=config.openai_api_key.get_secret_value(),
             )
             retriever = Retriever(
                 config.query_config,
                 store,
-                api_key=config.openai_api_key,
+                api_key=config.openai_api_key.get_secret_value(),
             )
             assembler = Assembler(store)
 
@@ -270,7 +270,7 @@ class TestBudgetGuarantee:
 
             index_config = IndexConfig.load(target_chunk_tokens=200)
             query_config = QueryConfig(budget_tokens=1000)
-            operational_config = OperationalConfig(openai_api_key="test-key")
+            operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
             store = SimpleMockStore(
                 config=(index_config, query_config, operational_config)
             )

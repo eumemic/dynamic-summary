@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.index import TreeBuilder
 
 
@@ -21,11 +21,13 @@ class TestSpanCorruption:
         )
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(
-            openai_api_key="test-key",
+            openai_api_key=SecretStr("test-key"),
         )
 
         tree_builder = TreeBuilder(
-            index_config, store, api_key=operational_config.openai_api_key
+            index_config,
+            store,
+            api_key=operational_config.openai_api_key.get_secret_value(),
         )
 
         # Mock API calls

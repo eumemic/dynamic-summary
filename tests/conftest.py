@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
 from ragzoom.store import StoreManager
 from tests.mock_store import SimpleMockStore
@@ -124,7 +124,7 @@ def base_config() -> BackwardCompatibilityConfig:
         budget_tokens=1000,
     )
     operational_config = OperationalConfig(
-        openai_api_key="test-key",
+        openai_api_key=SecretStr("test-key"),
         database_url=os.getenv(
             "RAGZOOM_DATABASE_URL",
             "postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test",
@@ -165,7 +165,11 @@ def config_factory():
             budget_tokens=budget_tokens,
         )
         operational_config = OperationalConfig(
-            openai_api_key=openai_api_key,
+            openai_api_key=(
+                SecretStr(openai_api_key)
+                if isinstance(openai_api_key, str)
+                else openai_api_key
+            ),
             database_url=database_url,
         )
         return BackwardCompatibilityConfig(

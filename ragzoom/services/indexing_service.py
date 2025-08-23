@@ -44,7 +44,7 @@ class IndexingService:
         self.tree_builder = TreeBuilder(
             index_config,
             store,
-            api_key=operational_config.openai_api_key,
+            api_key=operational_config.openai_api_key.get_secret_value(),
             max_concurrent=30,  # Default concurrency for API calls
         )
 

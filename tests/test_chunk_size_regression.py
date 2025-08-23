@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig
+from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
 from ragzoom.utils.tokenization import tokenizer
@@ -97,7 +97,7 @@ class TestChunkSizeRegression:
         # Create separate configs
         index_config = IndexConfig.load(target_chunk_tokens=200)
         operational_config = OperationalConfig(
-            openai_api_key="test-key",
+            openai_api_key=SecretStr("test-key"),
         )
         # Use shared tokenizer instead of creating new instance
 
