@@ -1,10 +1,77 @@
 """Utilities for error handling and context management."""
 
 import logging
+import re
 from typing import Any
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
+
+# Pattern for OpenAI API keys (sk-...)
+# More flexible pattern to catch all OpenAI key formats
+API_KEY_PATTERN = re.compile(r"sk-[A-Za-z0-9]+")
+
+
+class RedactionFilter(logging.Filter):
+    """Logging filter that redacts sensitive information like API keys."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Filter log record to redact sensitive information."""
+        # Redact API keys in the log message
+        if hasattr(record, "msg") and isinstance(record.msg, str):
+            record.msg = sanitize_message(record.msg)
+
+        # Redact API keys in log record arguments
+        if hasattr(record, "args") and record.args:
+            record.args = tuple(
+                sanitize_message(str(arg)) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+
+        return True
+
+
+def sanitize_message(message: str) -> str:
+    """Sanitize a message by redacting API keys and other sensitive data."""
+    return API_KEY_PATTERN.sub("***REDACTED***", message)
+
+
+def sanitize_dict(data: dict[str, Any]) -> dict[str, Any]:
+    """Recursively sanitize dictionary values to redact sensitive information."""
+    if not isinstance(data, dict):
+        return data
+
+    result: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            result[key] = sanitize_message(value)
+        elif isinstance(value, dict):
+            result[key] = sanitize_dict(value)
+        elif isinstance(value, list):
+            result[key] = sanitize_list(value)
+        else:
+            result[key] = value
+
+    return result
+
+
+def sanitize_list(data: list[Any]) -> list[Any]:
+    """Recursively sanitize list values to redact sensitive information."""
+    if not isinstance(data, list):
+        return data
+
+    result: list[Any] = []
+    for item in data:
+        if isinstance(item, str):
+            result.append(sanitize_message(item))
+        elif isinstance(item, dict):
+            result.append(sanitize_dict(item))
+        elif isinstance(item, list):
+            result.append(sanitize_list(item))
+        else:
+            result.append(item)
+
+    return result
 
 
 class ErrorContext:
@@ -72,17 +139,20 @@ def format_structured_error(
     exc: Exception, include_traceback: bool = False
 ) -> dict[str, Any]:
     """Format exception as structured error response."""
-    error_data = {
+    error_data: dict[str, Any] = {
         "type": type(exc).__name__,
         "category": categorize_exception(exc),
-        "message": str(exc),
+        "message": sanitize_message(str(exc)),
     }
 
     # Add structured context from custom exceptions
     if hasattr(exc, "operation"):
         error_data["operation"] = exc.operation
     if hasattr(exc, "context"):
-        error_data["context"] = exc.context
+        context = exc.context
+        error_data["context"] = (
+            sanitize_dict(context) if isinstance(context, dict) else context
+        )
     if hasattr(exc, "request_id"):
         error_data["request_id"] = exc.request_id
 
@@ -93,15 +163,18 @@ def format_structured_error(
         error_data["document_id"] = exc.document_id
     if hasattr(exc, "field"):
         error_data["field"] = exc.field  # type: ignore[attr-defined]
-        error_data["value"] = exc.value  # type: ignore[attr-defined]
-        error_data["reason"] = exc.reason  # type: ignore[attr-defined]
+        if hasattr(exc, "value"):
+            error_data["value"] = sanitize_message(str(exc.value))  # type: ignore[attr-defined]
+        if hasattr(exc, "reason"):
+            error_data["reason"] = sanitize_message(str(exc.reason))  # type: ignore[attr-defined]
 
     if include_traceback:
         import traceback
 
-        error_data["traceback"] = traceback.format_exc()
+        error_data["traceback"] = sanitize_message(traceback.format_exc())
 
-    return error_data
+    # Sanitize the entire error_data structure
+    return sanitize_dict(error_data)
 
 
 def preserve_exception_chain(new_exc: Exception, original_exc: Exception) -> Exception:
