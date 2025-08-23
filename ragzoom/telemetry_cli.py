@@ -709,10 +709,10 @@ def _check_metrics_for_regressions_with_thresholds(
         Tuple of (has_regression, thresholds_by_chunk)
     """
     has_regression = False
-    # Use higher thresholds for indexing metrics that include API calls with inherent variance
+    # Use standard thresholds (5σ total) appropriate for post-vaccine stable distributions
     config = ThresholdConfig(
-        k1_between_run=9.0, k2_baseline_uncertainty=6.0
-    )  # ~15σ for API-inclusive indexing benchmarks
+        k1_between_run=3.0, k2_baseline_uncertainty=2.0
+    )  # 5σ for meaningful regression detection without excessive false positives
     thresholds_by_chunk = {}
 
     # Define metric configurations
@@ -799,10 +799,10 @@ def _check_single_chunk_for_regressions_with_thresholds(
         Tuple of (has_regression, thresholds)
     """
     has_regression = False
-    # Use higher thresholds for indexing metrics that include API calls with inherent variance
+    # Use standard thresholds (5σ total) appropriate for post-vaccine stable distributions
     config = ThresholdConfig(
-        k1_between_run=9.0, k2_baseline_uncertainty=6.0
-    )  # ~15σ for API-inclusive indexing benchmarks
+        k1_between_run=3.0, k2_baseline_uncertainty=2.0
+    )  # 5σ for meaningful regression detection without excessive false positives
     thresholds = {}
 
     # Define metric configurations
@@ -1021,11 +1021,11 @@ def _calculate_query_phase_thresholds(
     """
     # Phase categorization with different k-factors
     phase_categories: dict[str, dict[str, Any]] = {
-        # API phases: high variance due to API non-determinism (15-sigma)
+        # API phases: moderate variance due to API non-determinism (5-sigma)
         "api": {
             "phases": ["embedding_time"],
-            "k1": 9.0,  # Between-run variance
-            "k2": 6.0,  # Baseline uncertainty
+            "k1": 3.0,  # Between-run variance
+            "k2": 2.0,  # Baseline uncertainty
         },
         # Local compute phases: deterministic, low variance (6-sigma)
         "local": {
@@ -1501,7 +1501,7 @@ def visualize(input_paths: tuple[str, ...], output: str | None, format: str) -> 
 
 
 def _format_metrics_for_chunk_with_thresholds(
-    chunk_label: str,
+    chunk_label: str | None,
     base_metrics: ChunkMetrics,
     curr_metrics: ChunkMetrics,
     thresholds: dict[str, DynamicThreshold],
@@ -1531,7 +1531,54 @@ def _format_metrics_for_chunk_with_thresholds(
         current_variance=curr_metrics.target_fit.error_mad,
     )
 
-    # Percent within ±10 tokens (now with dynamic threshold)
+    # Absolute deviation metrics (clearer than signed errors)
+    _format_comparison_row_with_threshold(
+        "",
+        "Mean absolute error",
+        base_metrics.target_fit.mean_absolute_error,
+        curr_metrics.target_fit.mean_absolute_error,
+        thresholds.get("mean_absolute_error", thresholds[MetricNames.MEDIAN_ERROR_KEY]),
+        is_error_metric=True,
+        baseline_variance=base_metrics.target_fit.absolute_error_mad,
+        current_variance=curr_metrics.target_fit.absolute_error_mad,
+    )
+    _format_comparison_row_with_threshold(
+        "",
+        "Median absolute error",
+        base_metrics.target_fit.median_absolute_error,
+        curr_metrics.target_fit.median_absolute_error,
+        thresholds.get(
+            "median_absolute_error", thresholds[MetricNames.MEDIAN_ERROR_KEY]
+        ),
+        is_error_metric=True,
+        baseline_variance=base_metrics.target_fit.absolute_error_mad,
+        current_variance=curr_metrics.target_fit.absolute_error_mad,
+    )
+
+    # Percentage-based metrics (chunk-size invariant)
+    _format_comparison_row_with_threshold(
+        "",
+        "Mean % deviation",
+        base_metrics.target_fit.mean_percent_deviation,
+        curr_metrics.target_fit.mean_percent_deviation,
+        thresholds.get(
+            "mean_percent_deviation", thresholds[MetricNames.MEDIAN_ERROR_KEY]
+        ),
+        baseline_variance=base_metrics.target_fit.percent_deviation_mad,
+        current_variance=curr_metrics.target_fit.percent_deviation_mad,
+    )
+
+    # Acceptance distribution metrics
+    _format_comparison_row_with_threshold(
+        "",
+        "Within ±5 tokens",
+        base_metrics.target_fit.percent_within_5,
+        curr_metrics.target_fit.percent_within_5,
+        thresholds.get(
+            "percent_within_5", thresholds[MetricNames.PERCENT_WITHIN_10_KEY]
+        ),
+        higher_is_better=True,
+    )
     _format_comparison_row_with_threshold(
         "",
         "Within ±10 tokens",
@@ -1541,6 +1588,26 @@ def _format_metrics_for_chunk_with_thresholds(
         higher_is_better=True,
         baseline_variance=base_metrics.target_fit.percent_within_10_mad,
         current_variance=curr_metrics.target_fit.percent_within_10_mad,
+    )
+    _format_comparison_row_with_threshold(
+        "",
+        "Within ±20 tokens",
+        base_metrics.target_fit.percent_within_20,
+        curr_metrics.target_fit.percent_within_20,
+        thresholds.get(
+            "percent_within_20", thresholds[MetricNames.PERCENT_WITHIN_10_KEY]
+        ),
+        higher_is_better=True,
+    )
+    _format_comparison_row_with_threshold(
+        "",
+        "Within ±50 tokens",
+        base_metrics.target_fit.percent_within_50,
+        curr_metrics.target_fit.percent_within_50,
+        thresholds.get(
+            "percent_within_50", thresholds[MetricNames.PERCENT_WITHIN_10_KEY]
+        ),
+        higher_is_better=True,
     )
 
     # Retry metrics
@@ -1613,7 +1680,7 @@ def _prepare_row_data(
 
 
 def _format_comparison_row_with_threshold(
-    category: str,
+    category: str | None,
     metric: str,
     baseline: float,
     current: float,
@@ -1663,9 +1730,17 @@ def _format_comparison_row_with_threshold(
 
     # For markdown, replace newlines with <br> for proper rendering
     change_str_md = change_str.replace("\n", "<br>")
-    click.echo(
-        f"| {category} | {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
-    )
+
+    if category is None:
+        # Single chunk size format - no category column
+        click.echo(
+            f"| {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
+        )
+    else:
+        # Multi chunk size format - include category column
+        click.echo(
+            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
+        )
 
 
 def _format_comparison_row(
@@ -2043,19 +2118,33 @@ def _format_markdown_comparison_with_thresholds(
 
         click.echo("\n## Performance Metrics\n")
 
-    # Create unified table
-    click.echo("| Chunk Size | Metric | Baseline | Current | Change | Threshold |")
-    click.echo("|------------|--------|----------|---------|--------|-----------|")
+    # Create unified table - adjust format based on number of chunk sizes
+    single_chunk_size = len(chunk_sizes) == 1
+
+    if single_chunk_size:
+        # Simplified table without redundant "Chunk Size" column
+        click.echo("| Metric | Baseline | Current | Change | Threshold |")
+        click.echo("|--------|----------|---------|--------|-----------|")
+    else:
+        # Full table with chunk size column for multiple sizes
+        click.echo("| Chunk Size | Metric | Baseline | Current | Change | Threshold |")
+        click.echo("|------------|--------|----------|---------|--------|-----------|")
 
     for chunk_size in sorted(chunk_sizes):
         base_metrics = baseline.metrics_by_chunk_size[chunk_size]
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
         thresholds = thresholds_by_chunk[chunk_size]
 
-        chunk_label = f"**{chunk_size} tokens**"
-        _format_metrics_for_chunk_with_thresholds(
-            chunk_label, base_metrics, curr_metrics, thresholds
-        )
+        if single_chunk_size:
+            # Don't show chunk label for single size
+            _format_metrics_for_chunk_with_thresholds(
+                None, base_metrics, curr_metrics, thresholds
+            )
+        else:
+            chunk_label = f"**{chunk_size} tokens**"
+            _format_metrics_for_chunk_with_thresholds(
+                chunk_label, base_metrics, curr_metrics, thresholds
+            )
 
     click.echo("")
 

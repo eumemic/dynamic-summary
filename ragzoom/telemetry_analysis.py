@@ -102,6 +102,7 @@ class VerbatimDetectionResult(TypedDict):
 class TargetFitMetrics:
     """Metrics for target-fit accuracy."""
 
+    # Signed error metrics (existing)
     median_error: float
     p95_error: float
     percent_within_10: float
@@ -112,6 +113,24 @@ class TargetFitMetrics:
     error_std: float
     percent_within_10_mad: float
     percent_within_10_std: float
+
+    # Absolute deviation metrics (new for clearer regression detection)
+    mean_absolute_error: float  # More sensitive to outliers than median
+    median_absolute_error: float  # Robust to outliers
+    absolute_error_mad: float  # Variance for absolute errors
+    absolute_error_std: float  # Standard deviation for absolute errors
+
+    # Percentage-based metrics (chunk-size invariant)
+    mean_percent_deviation: float  # Mean of |actual - target| / target * 100
+    median_percent_deviation: float  # Median of |actual - target| / target * 100
+    percent_deviation_mad: float  # MAD of percentage deviations
+    percent_deviation_std: float  # Standard deviation of percentage deviations
+
+    # Acceptance distribution metrics (multiple thresholds for better insight)
+    percent_within_5: float  # Percentage within ±5 tokens
+    percent_within_20: float  # Percentage within ±20 tokens
+    percent_within_50: float  # Percentage within ±50 tokens
+    # Note: percent_within_10 already exists above
 
 
 @dataclass
@@ -272,7 +291,10 @@ def compute_target_fit_metrics(
         - error_std: Standard deviation of errors
     """
     errors = []
+    within_5_count = 0
     within_10_count = 0
+    within_20_count = 0
+    within_50_count = 0
     max_overshoot = 0
     max_undershoot = 0
     # Track per-node within_10 status for variance calculation
@@ -287,9 +309,21 @@ def compute_target_fit_metrics(
                 error = actual_tokens - target_size
                 errors.append(error)
 
-                is_within_10 = abs(error) <= 10
+                abs_error = abs(error)
+                is_within_5 = abs_error <= 5
+                is_within_10 = abs_error <= 10
+                is_within_20 = abs_error <= 20
+                is_within_50 = abs_error <= 50
+
+                if is_within_5:
+                    within_5_count += 1
                 if is_within_10:
                     within_10_count += 1
+                if is_within_20:
+                    within_20_count += 1
+                if is_within_50:
+                    within_50_count += 1
+
                 # Store 1 if within ±10, 0 if not (for variance calculation)
                 node_within_10_list.append(1.0 if is_within_10 else 0.0)
 
@@ -310,12 +344,26 @@ def compute_target_fit_metrics(
             error_std=0.0,
             percent_within_10_mad=0.0,
             percent_within_10_std=0.0,
+            mean_absolute_error=0.0,
+            median_absolute_error=0.0,
+            absolute_error_mad=0.0,
+            absolute_error_std=0.0,
+            mean_percent_deviation=0.0,
+            median_percent_deviation=0.0,
+            percent_deviation_mad=0.0,
+            percent_deviation_std=0.0,
+            percent_within_5=0.0,
+            percent_within_20=0.0,
+            percent_within_50=0.0,
         )
 
     sorted_errors = sorted(errors)
     median_error = median(sorted_errors)
     p95_error = float(np.percentile(sorted_errors, 95))
+    percent_within_5 = (within_5_count / len(errors)) * 100
     percent_within_10 = (within_10_count / len(errors)) * 100
+    percent_within_20 = (within_20_count / len(errors)) * 100
+    percent_within_50 = (within_50_count / len(errors)) * 100
 
     # Calculate variance metrics for errors
     absolute_deviations = [abs(e - median_error) for e in errors]
@@ -351,6 +399,40 @@ def compute_target_fit_metrics(
         percent_within_10_mad = 0.0
         percent_within_10_std = 0.0
 
+    # Calculate absolute deviation metrics
+    absolute_errors = [abs(error) for error in errors]
+    mean_absolute_error = sum(absolute_errors) / len(absolute_errors)
+    median_absolute_error = median(absolute_errors)
+
+    # Calculate MAD for absolute errors
+    absolute_error_deviations = [
+        abs(ae - median_absolute_error) for ae in absolute_errors
+    ]
+    absolute_error_mad = median(absolute_error_deviations)
+
+    # Calculate standard deviation for absolute errors
+    if len(absolute_errors) > 1:
+        absolute_error_std = statistics.stdev(absolute_errors)
+    else:
+        absolute_error_std = 0.0
+
+    # Calculate percentage-based metrics (chunk-size invariant)
+    percent_deviations = [abs(error) / target_size * 100 for error in errors]
+    mean_percent_deviation = sum(percent_deviations) / len(percent_deviations)
+    median_percent_deviation = median(percent_deviations)
+
+    # Calculate MAD for percentage deviations
+    percent_deviation_deviations = [
+        abs(pd - median_percent_deviation) for pd in percent_deviations
+    ]
+    percent_deviation_mad = median(percent_deviation_deviations)
+
+    # Calculate standard deviation for percentage deviations
+    if len(percent_deviations) > 1:
+        percent_deviation_std = statistics.stdev(percent_deviations)
+    else:
+        percent_deviation_std = 0.0
+
     return TargetFitMetrics(
         median_error=median_error,
         p95_error=p95_error,
@@ -362,6 +444,17 @@ def compute_target_fit_metrics(
         error_std=error_std,
         percent_within_10_mad=percent_within_10_mad,
         percent_within_10_std=percent_within_10_std,
+        mean_absolute_error=mean_absolute_error,
+        median_absolute_error=median_absolute_error,
+        absolute_error_mad=absolute_error_mad,
+        absolute_error_std=absolute_error_std,
+        mean_percent_deviation=mean_percent_deviation,
+        median_percent_deviation=median_percent_deviation,
+        percent_deviation_mad=percent_deviation_mad,
+        percent_deviation_std=percent_deviation_std,
+        percent_within_5=percent_within_5,
+        percent_within_20=percent_within_20,
+        percent_within_50=percent_within_50,
     )
 
 
