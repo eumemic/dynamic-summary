@@ -94,6 +94,20 @@ class NodeRepository(BaseRepository):
         self.db_manager.validate_embedding_dimension(embedding)
 
         with self.SessionLocal() as session:
+            # Calculate path based on parent relationship
+            path = ""  # Default for root nodes
+            if parent_id:
+                parent = session.query(TreeNode).filter_by(id=parent_id).first()
+                if parent and parent.path is not None:
+                    # Determine if this is left or right child
+                    if parent.left_child_id == node_id:
+                        path = parent.path + "0"
+                    elif parent.right_child_id == node_id:
+                        path = parent.path + "1"
+                    else:
+                        # Parent-child relationship not yet established - use fallback
+                        path = parent.path + "0"  # Assume left child for now
+
             node = TreeNode(
                 id=node_id,
                 parent_id=parent_id,
@@ -106,6 +120,7 @@ class NodeRepository(BaseRepository):
                 document_id=document_id,
                 token_count=token_count,
                 height=height,
+                path=path,
             )
             session.add(node)
             session.commit()
