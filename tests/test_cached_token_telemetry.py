@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig
+from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.index import TreeBuilder
 
 
@@ -64,7 +64,7 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store):
         target_chunk_tokens=100,
     )
     operational_config = OperationalConfig(
-        openai_api_key="test-key",
+        openai_api_key=SecretStr("test-key"),
     )
 
     # Create a config wrapper for backward compatibility with telemetry
@@ -141,7 +141,7 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store):
 async def test_backward_compatibility_without_cached_tokens(mock_store):
     """Test that telemetry works correctly when OpenAI doesn't return cached_tokens."""
     index_config = IndexConfig.load(target_chunk_tokens=100)
-    operational_config = OperationalConfig(openai_api_key="test-key")
+    operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
     # Create a config wrapper for backward compatibility with telemetry
     from tests.conftest import BackwardCompatibilityConfig
@@ -215,7 +215,7 @@ async def test_cached_tokens_across_multiple_retries(mock_store):
         max_retries=3,
         target_chunk_tokens=100,
     )
-    operational_config = OperationalConfig(openai_api_key="test-key")
+    operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
     # Create a config wrapper for backward compatibility with telemetry
     from tests.conftest import BackwardCompatibilityConfig
@@ -299,7 +299,7 @@ async def test_cached_tokens_across_multiple_retries(mock_store):
 async def test_passthrough_summary_has_no_cached_tokens(mock_store):
     """Test that passthrough summaries correctly report 0 cached tokens."""
     index_config = IndexConfig.load(target_chunk_tokens=100)
-    operational_config = OperationalConfig(openai_api_key="test-key")
+    operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
     # Create a config wrapper for backward compatibility with telemetry
     from tests.conftest import BackwardCompatibilityConfig
@@ -355,7 +355,7 @@ async def test_cached_tokens_with_high_cache_rate(mock_store):
         max_retries=1,  # Enable retries for this test
         target_chunk_tokens=100,
     )
-    operational_config = OperationalConfig(openai_api_key="test-key")
+    operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
     # Create a config wrapper for backward compatibility with telemetry
     from tests.conftest import BackwardCompatibilityConfig

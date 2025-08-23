@@ -8,7 +8,7 @@ all DP-related testing in one place.
 import pytest
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import OperationalConfig, QueryConfig
+from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
 from ragzoom.retrieve import Retriever
 
 
@@ -27,7 +27,7 @@ class TestDPAssembly:
     @pytest.fixture
     def operational_config(self):
         """Create test operational configuration."""
-        return OperationalConfig(openai_api_key="test-key")
+        return OperationalConfig(openai_api_key=SecretStr("test-key"))
 
     @pytest.fixture
     def assembler(self, store):
@@ -247,7 +247,7 @@ class TestDPAssembly:
         # Set up configuration similar to the original test
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(
-            openai_api_key="test-key",
+            openai_api_key=SecretStr("test-key"),
             database_url="postgresql:///:memory:",
         )
 
