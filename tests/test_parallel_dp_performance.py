@@ -11,7 +11,6 @@ from ragzoom.retrieve import Retriever
 from tests.utils import create_predictable_summary_mock, mock_openai_context
 
 
-@pytest.mark.slow
 class TestParallelDPPerformance:
     """Test parallel DP performance compared to sequential."""
 
