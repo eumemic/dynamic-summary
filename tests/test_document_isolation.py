@@ -30,7 +30,7 @@ class TestDocumentIsolation:
         retriever = Retriever(
             base_config.query_config,
             store,
-            api_key=base_config.openai_api_key,
+            api_key=base_config.openai_api_key.get_secret_value(),
         )
         assembler = Assembler(store)
 
