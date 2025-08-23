@@ -333,15 +333,7 @@ class NodeRepository(BaseRepository):
 
             # Use database-level path filtering for better performance if depth_max specified
             if depth_max is not None:
-                # Filter by path length at database level for nodes with paths
-                query = query.filter(
-                    (
-                        TreeNode.path.is_(None)
-                    )  # Include nodes without path for backward compatibility
-                    | (
-                        func.length(TreeNode.path) <= depth_max
-                    )  # Path length equals depth
-                )
+                query = query.filter(func.length(TreeNode.path) <= depth_max)
 
             nodes = query.all()
 
@@ -349,24 +341,10 @@ class NodeRepository(BaseRepository):
             for node in nodes:
                 self._force_load_and_detach(session, node)
 
-            # Fallback filtering for nodes without path field (backward compatibility)
-            if depth_max is not None:
-                filtered_nodes = []
-                for node in nodes:
-                    # If node has no path, calculate depth the old way
-                    if not hasattr(node, "path") or node.path is None:
-                        depth = self._calculate_depth(node.id)
-                        if depth <= depth_max:
-                            filtered_nodes.append(node)
-                    else:
-                        # Path-based filtering already done in database query
-                        filtered_nodes.append(node)
-                return filtered_nodes
-
             return nodes
 
     def _calculate_depth(self, node_id: str) -> int:
-        """Calculate depth of a node from root.
+        """Calculate depth of a node from root using path field.
 
         Args:
             node_id: Node ID to calculate depth for
@@ -374,28 +352,13 @@ class NodeRepository(BaseRepository):
         Returns:
             Depth from root (0 for root nodes)
         """
+        from ragzoom.utils.path_utils import get_depth
+
         node = self.get_node(node_id)
         if not node:
             return 0
 
-        # Use path field for instant depth calculation if available
-        if hasattr(node, "path") and node.path is not None:
-            from ragzoom.utils.path_utils import get_depth
-
-            return get_depth(node.path)
-
-        # Fallback to traversal-based calculation for backward compatibility
-        depth = 0
-        current_id = node_id
-
-        while current_id:
-            node = self.get_node(current_id)
-            if not node or not node.parent_id:
-                break
-            depth += 1
-            current_id = node.parent_id
-
-        return depth
+        return get_depth(node.path)
 
     def pin_node(self, node_id: str) -> None:
         """Pin a node (mark as important).
