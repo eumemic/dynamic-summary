@@ -122,9 +122,6 @@ class TreeNavigator:
         if not node:
             raise NodeNotFoundError(node_id)
 
-        if node.path is None:
-            raise ValueError(f"Node {node_id} has no path - path field is required")
-
         return get_depth(node.path)
 
     def is_leaf_node(self, node_id: str) -> bool:

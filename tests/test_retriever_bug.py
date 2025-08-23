@@ -110,6 +110,9 @@ class TestRetrieverBug:
             right_child_id="P2",
         )
 
+        # Update paths after tree construction is complete
+        store.update_node_paths_from_tree_structure()
+
         retriever = Retriever(
             query_config=query_config,
             store=store,

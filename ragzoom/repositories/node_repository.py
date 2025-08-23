@@ -71,6 +71,7 @@ class NodeRepository(BaseRepository):
         document_id: str | None = None,
         token_count: int = 0,
         height: int = 0,
+        is_left_child: bool | None = None,
     ) -> TreeNode:
         """Add a node to the database with its embedding.
 
@@ -86,6 +87,8 @@ class NodeRepository(BaseRepository):
             document_id: Document this node belongs to (optional)
             token_count: Number of tokens in text
             height: Height in tree (0 for leaves)
+            is_left_child: Whether this node is a left child (True) or right child (False) of its parent.
+                          If None, will attempt to determine from parent's existing child pointers.
 
         Returns:
             Created TreeNode
@@ -99,14 +102,19 @@ class NodeRepository(BaseRepository):
             if parent_id:
                 parent = session.query(TreeNode).filter_by(id=parent_id).first()
                 if parent and parent.path is not None:
-                    # Determine if this is left or right child
-                    if parent.left_child_id == node_id:
-                        path = parent.path + "0"
-                    elif parent.right_child_id == node_id:
-                        path = parent.path + "1"
+                    # Use explicit child position if provided
+                    if is_left_child is not None:
+                        path = parent.path + ("0" if is_left_child else "1")
                     else:
-                        # Parent-child relationship not yet established - use fallback
-                        path = parent.path + "0"  # Assume left child for now
+                        # Fallback: determine from parent's current child pointers
+                        if parent.left_child_id == node_id:
+                            path = parent.path + "0"
+                        elif parent.right_child_id == node_id:
+                            path = parent.path + "1"
+                        else:
+                            # Parent-child relationship not yet established and no explicit position given
+                            # Defer path assignment - it will be set later when relationships are established
+                            path = ""  # Temporary placeholder - should be updated later
 
             node = TreeNode(
                 id=node_id,
@@ -226,6 +234,70 @@ class NodeRepository(BaseRepository):
             # Invalidate cache for updated nodes
             for node_id, _ in updates:
                 self.cache_manager.invalidate(node_id)
+
+    def update_node_paths_from_tree_structure(
+        self, *, session: Optional["Session"] = None
+    ) -> None:
+        """Update node paths based on the current tree structure.
+
+        This method should be called after tree construction is complete to ensure
+        all nodes have correct paths assigned based on their parent-child relationships.
+
+        Args:
+            session: Optional database session for transactional operations
+        """
+        with self._session_scope(session) as db_session:
+            # Get all nodes and build the tree structure
+            nodes = db_session.query(TreeNode).all()
+
+            # Find root nodes (nodes with no parent)
+            root_nodes = [node for node in nodes if node.parent_id is None]
+
+            # Update paths starting from root nodes
+            for root in root_nodes:
+                self._update_node_path_recursive(root, "", db_session, set())
+
+    def _update_node_path_recursive(
+        self, node: "TreeNode", path: str, session: "Session", visited: set[str]
+    ) -> None:
+        """Recursively update node paths in the tree.
+
+        Args:
+            node: Current node to update
+            path: Path to assign to this node
+            session: Database session
+            visited: Set of visited node IDs to prevent infinite loops
+        """
+        if node.id in visited:
+            return
+        visited.add(node.id)
+
+        # Update this node's path
+        session.execute(
+            update(TreeNode).where(TreeNode.id == node.id).values(path=path)
+        )
+
+        # Invalidate cache
+        self.cache_manager.invalidate(node.id)
+
+        # Update children
+        if node.left_child_id:
+            left_child = (
+                session.query(TreeNode).filter_by(id=node.left_child_id).first()
+            )
+            if left_child:
+                self._update_node_path_recursive(
+                    left_child, path + "0", session, visited
+                )
+
+        if node.right_child_id:
+            right_child = (
+                session.query(TreeNode).filter_by(id=node.right_child_id).first()
+            )
+            if right_child:
+                self._update_node_path_recursive(
+                    right_child, path + "1", session, visited
+                )
 
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID.

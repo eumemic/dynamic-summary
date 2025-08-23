@@ -265,6 +265,7 @@ class SimpleMockStore(StoreInterface):
         height: int = 0,
         preceding_neighbor_id: str | None = None,
         path: str = "",
+        is_left_child: bool | None = None,
     ) -> TreeNode:
         """Add a node to the mock store."""
         # Convert embedding to list if needed
@@ -289,6 +290,22 @@ class SimpleMockStore(StoreInterface):
             except (ImportError, Exception):
                 # Fallback: approximate tokens as words
                 token_count = len(text.split())
+
+        # Calculate path based on parent relationship if not explicitly provided
+        if path == "" and parent_id:
+            parent = self._nodes.get(parent_id)
+            if parent:
+                # Use explicit child position if provided
+                if is_left_child is not None:
+                    path = parent.path + ("0" if is_left_child else "1")
+                else:
+                    # Determine from parent's current child pointers
+                    if parent.left_child_id == node_id:
+                        path = parent.path + "0"
+                    elif parent.right_child_id == node_id:
+                        path = parent.path + "1"
+                    # If neither matches, the relationship might not be established yet
+                    # In that case, keep the empty path for now
 
         node = SimpleNamespace(
             id=node_id,
@@ -340,6 +357,7 @@ class SimpleMockStore(StoreInterface):
                 token_count=data.get("token_count", 0),
                 height=data.get("height", 0),
                 preceding_neighbor_id=data.get("preceding_neighbor_id"),
+                path=data.get("path", ""),
             )
             nodes.append(node)
         return nodes
@@ -770,6 +788,44 @@ class SimpleMockStore(StoreInterface):
     def cache_order(self):
         """Access to cache order for backward compatibility."""
         return self._cache_order
+
+    def update_node_paths_from_tree_structure(self) -> None:
+        """Update node paths based on the current tree structure.
+
+        This method should be called after tree construction is complete to ensure
+        all nodes have correct paths assigned based on their parent-child relationships.
+        """
+        # Find root nodes (nodes with no parent)
+        root_nodes = [node for node in self._nodes.values() if node.parent_id is None]
+
+        # Update paths starting from root nodes
+        visited = set()
+        for root in root_nodes:
+            self._update_node_path_recursive(root, "", visited)
+
+    def _update_node_path_recursive(self, node, path: str, visited: set[str]) -> None:
+        """Recursively update node paths in the tree.
+
+        Args:
+            node: Current node to update
+            path: Path to assign to this node
+            visited: Set of visited node IDs to prevent infinite loops
+        """
+        if node.id in visited:
+            return
+        visited.add(node.id)
+
+        # Update this node's path
+        node.path = path
+
+        # Update children
+        if node.left_child_id and node.left_child_id in self._nodes:
+            left_child = self._nodes[node.left_child_id]
+            self._update_node_path_recursive(left_child, path + "0", visited)
+
+        if node.right_child_id and node.right_child_id in self._nodes:
+            right_child = self._nodes[node.right_child_id]
+            self._update_node_path_recursive(right_child, path + "1", visited)
 
     def _add_to_cache(self, node) -> None:
         """Add a node to the cache."""

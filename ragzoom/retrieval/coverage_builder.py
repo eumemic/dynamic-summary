@@ -79,57 +79,20 @@ class CoverageBuilder:
         # Get all nodes currently in coverage to access their paths
         nodes_in_coverage = self.store.nodes.get_nodes(list(coverage_map.keys()))
 
-        # Check if nodes have valid path fields for optimized path-based logic
-        has_path_support = (
-            all(hasattr(node, "path") for node in nodes_in_coverage)
-            and len(set(node.path for node in nodes_in_coverage))
-            > 1  # More than one unique path
-            and any(
-                node.path != "" for node in nodes_in_coverage
-            )  # At least one non-root path
-        )
+        # All nodes should have valid paths - use optimized path-based logic
+        # Use fast path-based sibling detection
+        from ragzoom.utils.path_utils import get_sibling_path
 
-        if has_path_support:
-            # Use fast path-based sibling detection
-            from ragzoom.utils.path_utils import get_sibling_path
+        # Compute sibling paths using direct string manipulation
+        sibling_paths = set()
+        for node in nodes_in_coverage:
+            sibling_path = get_sibling_path(node.path)
+            if sibling_path is not None:  # Root has no sibling
+                sibling_paths.add(sibling_path)
 
-            # Compute sibling paths using direct string manipulation
-            sibling_paths = set()
-            for node in nodes_in_coverage:
-                sibling_path = get_sibling_path(node.path)
-                if sibling_path is not None:  # Root has no sibling
-                    sibling_paths.add(sibling_path)
-
-            # Single batch fetch of all potential siblings
-            if sibling_paths:
-                siblings = self.store.nodes.get_nodes_by_paths(list(sibling_paths))
-                # Add existing siblings to coverage map
-                for sibling in siblings:
-                    coverage_map[sibling.id] = True
-        else:
-            # Fall back to legacy iterative logic for backward compatibility
-            while True:
-                new_nodes_added = False
-
-                for node in nodes_in_coverage:
-                    # Handle both real nodes and mock objects gracefully
-                    left = getattr(node, "left_child_id", None)
-                    right = getattr(node, "right_child_id", None)
-
-                    if left or right:
-                        if left and left in coverage_map:
-                            if right and right not in coverage_map:
-                                coverage_map[right] = True
-                                new_nodes_added = True
-                        elif right and right in coverage_map:
-                            if left and left not in coverage_map:
-                                coverage_map[left] = True
-                                new_nodes_added = True
-
-                if not new_nodes_added:
-                    break
-
-                # Refresh nodes in coverage for next iteration
-                nodes_in_coverage = self.store.nodes.get_nodes(
-                    list(coverage_map.keys())
-                )
+        # Single batch fetch of all potential siblings
+        if sibling_paths:
+            siblings = self.store.nodes.get_nodes_by_paths(list(sibling_paths))
+            # Add existing siblings to coverage map
+            for sibling in siblings:
+                coverage_map[sibling.id] = True
