@@ -73,6 +73,7 @@ worktrees/
 # Benchmark/telemetry result files
 benchmark-*.json
 telemetry-*.json
+!/benchmarks/baselines/telemetry-*.json
 telemetry.json
 benchmark_results/
 /benchmarks/*
