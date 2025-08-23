@@ -14,6 +14,7 @@ Simplified telemetry analysis for format 4.2 only.
 
 import logging
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass
 from statistics import median
 from typing import Any, TypedDict
@@ -34,6 +35,48 @@ logger = logging.getLogger(__name__)
 
 # Current supported telemetry format version
 SUPPORTED_TELEMETRY_VERSION = "4.2"
+
+
+def _calculate_mad_and_std(values: Sequence[float | int]) -> tuple[float, float]:
+    """Calculate Median Absolute Deviation (MAD) and standard deviation.
+
+    Args:
+        values: List of numeric values
+
+    Returns:
+        Tuple of (mad, std_dev)
+    """
+    if not values:
+        return 0.0, 0.0
+
+    median_val = median(values)
+    absolute_deviations = [abs(v - median_val) for v in values]
+    mad = median(absolute_deviations)
+
+    if len(values) > 1:
+        std_dev = statistics.stdev(values)
+    else:
+        std_dev = 0.0
+
+    return mad, std_dev
+
+
+def _calculate_percentage_deviation(error: float, target_size: int) -> float:
+    """Calculate percentage deviation with edge case handling.
+
+    Args:
+        error: Signed error (actual - target)
+        target_size: Target size value
+
+    Returns:
+        Percentage deviation as float
+    """
+    if target_size == 0:
+        # Edge case: if target is 0, return a large deviation to indicate the issue
+        return 100.0 if error != 0 else 0.0
+
+    return abs(error) / target_size * 100
+
 
 # Default token estimate for leaf nodes when source tokens are not available
 # This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
@@ -382,19 +425,9 @@ def compute_target_fit_metrics(
     if node_within_10_list:
         # Convert binary values (0s and 1s) to percentages once
         percent_within_10_values = [w * 100 for w in node_within_10_list]
-
-        # Calculate median and MAD
-        median_within_10 = median(percent_within_10_values)
-        absolute_deviations = [
-            abs(p - median_within_10) for p in percent_within_10_values
-        ]
-        percent_within_10_mad = median(absolute_deviations)
-
-        # Calculate standard deviation
-        if len(percent_within_10_values) > 1:
-            percent_within_10_std = statistics.stdev(percent_within_10_values)
-        else:
-            percent_within_10_std = 0.0
+        percent_within_10_mad, percent_within_10_std = _calculate_mad_and_std(
+            percent_within_10_values
+        )
     else:
         percent_within_10_mad = 0.0
         percent_within_10_std = 0.0
@@ -403,35 +436,17 @@ def compute_target_fit_metrics(
     absolute_errors = [abs(error) for error in errors]
     mean_absolute_error = sum(absolute_errors) / len(absolute_errors)
     median_absolute_error = median(absolute_errors)
-
-    # Calculate MAD for absolute errors
-    absolute_error_deviations = [
-        abs(ae - median_absolute_error) for ae in absolute_errors
-    ]
-    absolute_error_mad = median(absolute_error_deviations)
-
-    # Calculate standard deviation for absolute errors
-    if len(absolute_errors) > 1:
-        absolute_error_std = statistics.stdev(absolute_errors)
-    else:
-        absolute_error_std = 0.0
+    absolute_error_mad, absolute_error_std = _calculate_mad_and_std(absolute_errors)
 
     # Calculate percentage-based metrics (chunk-size invariant)
-    percent_deviations = [abs(error) / target_size * 100 for error in errors]
+    percent_deviations = [
+        _calculate_percentage_deviation(error, target_size) for error in errors
+    ]
     mean_percent_deviation = sum(percent_deviations) / len(percent_deviations)
     median_percent_deviation = median(percent_deviations)
-
-    # Calculate MAD for percentage deviations
-    percent_deviation_deviations = [
-        abs(pd - median_percent_deviation) for pd in percent_deviations
-    ]
-    percent_deviation_mad = median(percent_deviation_deviations)
-
-    # Calculate standard deviation for percentage deviations
-    if len(percent_deviations) > 1:
-        percent_deviation_std = statistics.stdev(percent_deviations)
-    else:
-        percent_deviation_std = 0.0
+    percent_deviation_mad, percent_deviation_std = _calculate_mad_and_std(
+        percent_deviations
+    )
 
     return TargetFitMetrics(
         median_error=median_error,
