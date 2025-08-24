@@ -463,27 +463,9 @@ jobs:
           set +e  # Don't exit on error, we handle exit codes manually
           # Check if we have baseline results
           if [ ! -d "baseline_results" ] || [ ! -f "baseline_results/telemetry.json" ]; then
-            echo "_View [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)_" > report.md
-            echo "" >> report.md
-            echo "⚠️ No baseline benchmarks available." >> report.md
+            echo "⚠️ No baseline benchmarks available." > report.md
             echo "" >> report.md
             echo "This is the first PR with performance benchmarks. Future PRs will compare against these results." >> report.md
-            echo "" >> report.md
-            echo "### Current Performance" >> report.md
-            echo "" >> report.md
-            
-            # Show current results from the single telemetry.json file
-            if [ -f "benchmark_results/telemetry.json" ]; then
-              # Check if file contains error
-              if grep -q '"error"' "benchmark_results/telemetry.json"; then
-                echo "- ❌ Benchmark failed to run" >> report.md
-              else
-                python3 -c "import json; from ragzoom.telemetry_analysis import compute_metrics_from_telemetry; data = json.load(open('benchmark_results/telemetry.json')); metrics = compute_metrics_from_telemetry(data['telemetry']); print(f'- Duration: {metrics.total_duration_seconds:.2f}s'); print(f'- Total cost: \${metrics.total_cost:.4f}'); print(f'- Document size: {metrics.source_document_tokens:,} tokens'); print(f'- Chunk size: {metrics.target_chunk_tokens} tokens')" >> report.md
-              fi
-              echo "" >> report.md
-            else
-              echo "⚠️ No benchmark results found" >> report.md
-            fi
           else
             # Generate comparison report using ragzoom-telemetry
             echo "🔍 Checking for baseline and current benchmark files..."
