@@ -204,14 +204,14 @@ while IFS= read -r s3_prefix <&3; do
     
     if [ -f "$local_file" ]; then
         log "⏭️  Skipping $folder_name (already exists)"
-        ((SKIPPED_COUNT++))
+        SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
     else
         log "⬇️  Downloading $folder_name/indexing-telemetry.json..."
         log "    Command: aws s3 cp s3://$BUCKET/$clean_s3_file_path $clean_local_file"
         # Always disable progress to avoid TTY/progress interference and capture real errors
         __err_log=$(mktemp)
         if aws s3 cp "s3://$BUCKET/$clean_s3_file_path" "$clean_local_file" --no-progress 2>"$__err_log"; then
-            ((DOWNLOADED_COUNT++))
+            DOWNLOADED_COUNT=$((DOWNLOADED_COUNT + 1))
         else
             rc=$?
             echo "❌ ERROR: Failed to download from $folder_name (exit $rc)" >&2
@@ -220,7 +220,7 @@ while IFS= read -r s3_prefix <&3; do
             else
                 echo "(no stderr captured from aws cli)" >&2
             fi
-            ((FAILED_COUNT++))
+            FAILED_COUNT=$((FAILED_COUNT + 1))
         fi
         rm -f "$__err_log"
     fi
