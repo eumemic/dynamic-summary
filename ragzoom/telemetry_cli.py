@@ -1673,15 +1673,35 @@ def _format_comparison_row_with_threshold(
 
     # Format threshold value
     if threshold.absolute_value is None:
-        threshold_str = "—"  # No threshold enforced
-    else:
-        unit = _get_unit_for_metric(threshold.metric_name)
-        if unit == "$":
-            threshold_str = f"±{unit}{threshold.absolute_value:.4f}"
-        elif unit:
-            threshold_str = f"±{threshold.absolute_value:.1f} {unit}"
+        # For metrics without computed thresholds, use sensible defaults
+        if metric == "Oversized summary rate":
+            threshold_str = "< 15%"  # 15% upper bound seems reasonable
+        elif metric == "Mean retries/node":
+            threshold_str = "< 0.15"  # 0.15 retries per node upper bound
         else:
-            threshold_str = f"±{threshold.absolute_value:.2f}"
+            threshold_str = "—"  # No threshold enforced
+    else:
+        # Use the same format_metric_name for threshold units as for values
+        unit = _get_unit_for_metric(format_metric_name)
+
+        # Determine threshold direction based on metric type
+        # For most metrics, lower is better, so show upper bound only
+        if metric in ["Mean % deviation"]:
+            # Bidirectional threshold (±)
+            if unit == "$":
+                threshold_str = f"±{unit}{threshold.absolute_value:.4f}"
+            elif unit:
+                threshold_str = f"±{threshold.absolute_value:.1f}{unit}"
+            else:
+                threshold_str = f"±{threshold.absolute_value:.2f}"
+        else:
+            # Unidirectional threshold (< upper bound for "lower is better" metrics)
+            if unit == "$":
+                threshold_str = f"< {unit}{threshold.absolute_value:.4f}"
+            elif unit:
+                threshold_str = f"< {threshold.absolute_value:.1f}{unit}"
+            else:
+                threshold_str = f"< {threshold.absolute_value:.2f}"
 
     # For markdown, replace newlines with <br> for proper rendering
     change_str_md = change_str.replace("\n", "<br>")
@@ -1731,7 +1751,7 @@ def _format_value(
     signed: bool = False,
     variance: float | None = None,
 ) -> str:
-    """Format a metric value with appropriate precision and units, optionally with variance.
+    """Format a metric value with appropriate precision and units.
 
     Args:
         value: The metric value
@@ -1739,41 +1759,31 @@ def _format_value(
         is_cost: Whether this is a cost metric
         is_integer: Whether to format as integer
         signed: Whether to show sign
-        variance: Optional variance/MAD value to show as ±
+        variance: Unused (kept for compatibility)
 
     Returns:
-        Formatted string like "50.0 ±2.0 tokens" or "$0.0010 ±0.0001"
+        Formatted string like "50.0 tokens" or "$0.0010"
     """
     unit = _get_unit_for_metric(metric_name)
 
     if is_cost or unit == "$":
         formatted = f"${value:.4f}"
-        if variance is not None:
-            formatted += f" ±${variance:.4f}"
     elif unit == "%":
-        # For percentage metrics, show % for both value and variance
+        # For percentage metrics, show %
         formatted = f"{value:.2f}%"
-        if variance is not None:
-            formatted += f" ±{variance:.2f}%"
     elif is_integer:
         if signed:
             formatted = f"{value:+.0f}"
         else:
             formatted = f"{value:.0f}"
-        if variance is not None:
-            formatted += f" ±{variance:.0f}"
         if unit:
             formatted += f" {unit}"
     elif signed:
         formatted = f"{value:+.1f}"
-        if variance is not None:
-            formatted += f" ±{variance:.1f}"
         if unit:
             formatted += f" {unit}"
     else:
         formatted = f"{value:.2f}"
-        if variance is not None:
-            formatted += f" ±{variance:.2f}"
         if unit:
             formatted += f" {unit}"
 
@@ -1894,63 +1904,14 @@ def _calculate_change_with_threshold(
     if baseline_val == 0:
         return "—" if for_table else "N/A"
 
-    # Calculate percentage for display
-    change_pct = (absolute_change / abs(baseline_val)) * 100
-
     # Get emoji based on significance and direction
     metric_emoji = get_change_emoji(absolute_change, higher_is_better, threshold)
 
     # Format absolute change
     abs_str = _format_absolute_change(absolute_change, threshold.metric_name)
 
-    # Format first line: emoji + absolute + percentage (no extra significance emoji)
-    line1 = f"{metric_emoji} {abs_str} ({change_pct:+.1f}%)"
-
-    # Format variance change if both variances provided
-    if baseline_variance is not None and current_variance is not None:
-        variance_change = current_variance - baseline_variance
-
-        # Skip variance display if change is negligible (≤0.1% or ≤0.001 absolute)
-        unit = _get_unit_for_metric(threshold.metric_name)
-        if unit == "$":
-            variance_threshold = 0.001  # $0.001 or less
-        elif unit == "%":
-            variance_threshold = 0.1  # 0.1 percentage points or less
-        else:
-            variance_threshold = 0.1  # 0.1 units or less
-
-        if abs(variance_change) <= variance_threshold:
-            return line1  # Skip variance display
-
-        # Get variance emoji based on dynamic significance
-        variance_emoji = get_variance_emoji(variance_change, baseline_variance)
-
-        # Calculate percentage for display
-        if baseline_variance == 0:
-            if current_variance > 0:
-                variance_pct_str = " (+∞%)"
-            else:
-                variance_pct_str = " (±0%)"
-        else:
-            variance_change_pct = (variance_change / baseline_variance) * 100
-            variance_pct_str = f" ({variance_change_pct:+.0f}%)"
-
-        # Format variance absolute change based on metric type
-        unit = _get_unit_for_metric(threshold.metric_name)
-        if unit == "$":
-            variance_abs_str = f"σ{variance_change:+.4f}"
-        elif unit == "%":
-            # For percentage metrics, variance is in percentage points
-            variance_abs_str = f"σ{variance_change:+.1f}"
-        elif unit:
-            variance_abs_str = f"σ{variance_change:+.1f}"
-        else:
-            variance_abs_str = f"σ{variance_change:+.1f}"
-
-        line2 = f"\n{variance_emoji} {variance_abs_str}{variance_pct_str}"
-        return line1 + line2
-    else:
-        return line1
+    # Simple format: emoji + absolute change only
+    return f"{metric_emoji} {abs_str}"
 
 
 def _get_unit_for_metric(metric_name: str) -> str:
