@@ -215,6 +215,19 @@ if [ "$USE_DEFAULT_OUTPUT" = true ]; then
     echo "Using timestamped output directory: $OUTPUT_DIR"
 fi
 
+# Sync latest baselines from S3 (if available and no baseline specified)
+if [ -z "$BASELINE" ]; then
+    echo "🔄 Syncing baselines from S3..."
+    if [ -x "scripts/sync-baselines" ]; then
+        # Run sync script quietly, only show errors
+        if ! scripts/sync-baselines --quiet 2>/dev/null; then
+            echo "⚠️  Warning: Failed to sync baselines from S3 (will use local baselines only)"
+        fi
+    else
+        echo "⚠️  Warning: sync-baselines script not found or not executable"
+    fi
+fi
+
 # Check for default baseline if not provided
 if [ -z "$BASELINE" ]; then
     # First check for repository baseline
