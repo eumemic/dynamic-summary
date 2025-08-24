@@ -1643,12 +1643,20 @@ def _format_comparison_row_with_threshold(
     """Format a single row in the comparison table with dynamic threshold."""
     for_table = True
 
+    # Determine the correct metric name for unit formatting
+    # Map display names to internal metric names for proper unit lookup
+    metric_name_mapping = {
+        "Mean % deviation": "mean_percent_deviation",
+        "Oversized summary rate": "oversized_summary_rate",
+    }
+    format_metric_name = metric_name_mapping.get(metric, threshold.metric_name)
+
     # Format baseline and current values with variance
     base_str = _format_value(
-        baseline, threshold.metric_name, is_cost, is_integer, signed, baseline_variance
+        baseline, format_metric_name, is_cost, is_integer, signed, baseline_variance
     )
     curr_str = _format_value(
-        current, threshold.metric_name, is_cost, is_integer, signed, current_variance
+        current, format_metric_name, is_cost, is_integer, signed, current_variance
     )
 
     # Calculate change with threshold and variance
@@ -1747,7 +1755,12 @@ def _format_value(
     if is_cost or unit == "$":
         formatted = f"${value:.4f}"
         if variance is not None:
-            formatted += f" ±{variance:.4f}"
+            formatted += f" ±${variance:.4f}"
+    elif unit == "%":
+        # For percentage metrics, show % for both value and variance
+        formatted = f"{value:.2f}%"
+        if variance is not None:
+            formatted += f" ±{variance:.2f}%"
     elif is_integer:
         if signed:
             formatted = f"{value:+.0f}"
@@ -1755,17 +1768,20 @@ def _format_value(
             formatted = f"{value:.0f}"
         if variance is not None:
             formatted += f" ±{variance:.0f}"
+        if unit:
+            formatted += f" {unit}"
     elif signed:
         formatted = f"{value:+.1f}"
         if variance is not None:
             formatted += f" ±{variance:.1f}"
+        if unit:
+            formatted += f" {unit}"
     else:
         formatted = f"{value:.2f}"
         if variance is not None:
             formatted += f" ±{variance:.2f}"
-
-    if unit and unit != "$":
-        formatted += f" {unit}"
+        if unit:
+            formatted += f" {unit}"
 
     return formatted
 
