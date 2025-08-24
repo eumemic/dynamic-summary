@@ -1,2 +1,0 @@
-# This directory will contain baselines synced from S3
-# Files in this directory are ignored by git - they're downloaded on-demand
