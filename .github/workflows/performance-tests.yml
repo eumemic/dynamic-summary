@@ -144,6 +144,9 @@ jobs:
           pip install -r requirements-dev.txt
           # Install main package with telemetry dependencies
           pip install -e .[telemetry]
+          
+          # Install AWS CLI for S3 baseline syncing
+          pip install awscli
       
       - name: Initialize PostgreSQL vector extension
         run: |

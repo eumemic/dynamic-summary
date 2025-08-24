@@ -1,0 +1,77 @@
+#!/bin/bash
+# One-time script to migrate existing baselines to S3 folder structure
+# Usage: ./scripts/migrate-existing-baselines
+
+set -e
+
+# Load environment variables from .env if it exists
+if [ -f ".env" ]; then
+    set -a
+    source .env 2>/dev/null || true
+    set +a
+fi
+
+# Check for AWS CLI
+if ! command -v aws &> /dev/null; then
+    echo "Error: AWS CLI not found. Please install awscli." >&2
+    exit 1
+fi
+
+# Check AWS credentials
+if [ -z "${AWS_ACCESS_KEY_ID}" ] && ! aws configure list &> /dev/null; then
+    echo "Error: AWS credentials not configured." >&2
+    exit 1
+fi
+
+BUCKET="${BUCKET:-ragzoom}"
+BASELINES_DIR="../../benchmarks/baselines"
+
+echo "🔄 Migrating existing baselines to S3..."
+echo "   Source: $BASELINES_DIR"
+echo "   Bucket: s3://$BUCKET/baselines/"
+
+# Check if source directory exists
+if [ ! -d "$BASELINES_DIR" ]; then
+    echo "Error: Baselines directory not found: $BASELINES_DIR" >&2
+    echo "Run this from a worktree directory" >&2
+    exit 1
+fi
+
+# Baseline 1: d8ff0ee
+FILE1="$BASELINES_DIR/telemetry-2025-08-23-220043-d8ff0ee.json"
+FOLDER1="2025-08-23-220043-d8ff0ee3e0f1422b771c5fe676b48f7b0f6883bc"
+
+if [ -f "$FILE1" ]; then
+    echo "📤 Uploading baseline 1: $FOLDER1/"
+    aws s3 cp "$FILE1" "s3://$BUCKET/baselines/$FOLDER1/indexing-telemetry.json"
+    echo "   ✅ Uploaded indexing-telemetry.json"
+else
+    echo "⚠️  Baseline 1 not found: $FILE1"
+fi
+
+# Baseline 2: a7e690c  
+FILE2="$BASELINES_DIR/telemetry-2025-08-23-222406-a7e690c.json"
+FOLDER2="2025-08-23-222406-a7e690cabf4290b6381f8c3463194165a0a55aac"
+
+if [ -f "$FILE2" ]; then
+    echo "📤 Uploading baseline 2: $FOLDER2/"
+    aws s3 cp "$FILE2" "s3://$BUCKET/baselines/$FOLDER2/indexing-telemetry.json"
+    echo "   ✅ Uploaded indexing-telemetry.json"
+else
+    echo "⚠️  Baseline 2 not found: $FILE2"
+fi
+
+# Update latest.txt to point to most recent (a7e690c)
+echo "🔗 Setting latest.txt to most recent baseline..."
+echo "$FOLDER2" > latest.txt
+aws s3 cp latest.txt "s3://$BUCKET/baselines/latest.txt"
+rm latest.txt
+echo "   ✅ Updated latest.txt -> $FOLDER2"
+
+echo ""
+echo "🎉 Migration complete! Baselines are now available in S3:"
+echo "   s3://$BUCKET/baselines/$FOLDER1/indexing-telemetry.json"
+echo "   s3://$BUCKET/baselines/$FOLDER2/indexing-telemetry.json"
+echo "   s3://$BUCKET/baselines/latest.txt"
+echo ""
+echo "You can now test with: scripts/sync-baselines"
