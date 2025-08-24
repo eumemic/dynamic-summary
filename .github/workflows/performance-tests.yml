@@ -124,29 +124,81 @@ jobs:
           # Install AWS CLI for S3 baseline syncing
           pip install awscli
       
-      - name: Setup baseline from S3
+      - name: Setup baseline from S3 (MANDATORY)
+        id: sync_baseline
         run: |
           echo "🔄 Syncing baselines from S3..."
-          
-          # Make sync script executable
           chmod +x scripts/sync-baselines
           
-          # Sync baselines from S3
-          if scripts/sync-baselines --count 5; then
-            echo "✅ Successfully synced baselines from S3"
-          else
-            echo "⚠️ Failed to sync baselines from S3, checking for local baselines..."
+          # SYNC MUST SUCCEED OR WE FAIL THE JOB
+          if ! scripts/sync-baselines --count 5; then
+            echo "❌ FATAL: Failed to sync baselines from S3"
+            echo "::error::Baseline sync failed - cannot proceed with performance tests"
+            exit 1
           fi
           
-          # Set up baseline for comparison
-          if [ -f "benchmarks/baselines/latest.json" ]; then
-            mkdir -p baseline_results
-            cp benchmarks/baselines/latest.json baseline_results/telemetry.json
-            BASELINE_NAME=$(readlink benchmarks/baselines/latest.json 2>/dev/null || echo 'latest.json')
-            echo "✅ Using baseline: $(basename $BASELINE_NAME)"
-          else
-            echo "⚠️ No baseline available (neither S3 nor local)"
+          # VERIFY we actually have a baseline file
+          if [ ! -f "benchmarks/baselines/latest.json" ]; then
+            echo "❌ FATAL: Sync claimed success but no baseline file exists"
+            echo "::error::Expected benchmarks/baselines/latest.json but file not found"
+            exit 1
           fi
+          
+          # Copy to expected location
+          mkdir -p baseline_results
+          cp benchmarks/baselines/latest.json baseline_results/telemetry.json
+          
+          BASELINE_NAME=$(readlink benchmarks/baselines/latest.json 2>/dev/null || echo 'latest.json')
+          echo "✅ Baseline ready: $(basename $BASELINE_NAME)"
+      
+      - name: Post baseline sync failure to PR
+        if: failure() && steps.sync_baseline.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            const body = `${identifier}
+            ## ❌ Performance Tests Failed
+            
+            **Could not sync baseline benchmarks from S3**
+            
+            Performance comparison requires baseline data but sync failed. This usually means:
+            - S3 credentials are not configured correctly
+            - S3 bucket doesn't exist or isn't accessible  
+            - Baseline files are missing from S3
+            - AWS permissions issues
+            
+            _View [workflow logs](${workflowUrl}) for detailed error messages._`;
+            
+            // Find existing comment to replace or create new one
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.body && comment.body.includes(identifier) &&
+              comment.user && comment.user.login === 'github-actions[bot]'
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
       
       - name: Initialize PostgreSQL vector extension
         run: |

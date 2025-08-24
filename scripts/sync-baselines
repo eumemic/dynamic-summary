@@ -117,14 +117,35 @@ mkdir -p "$BASELINES_DIR"
 
 log "🔄 Syncing baselines from S3 bucket: $BUCKET"
 
-# Check if bucket and baselines prefix exist
+# Pre-flight check: Verify AWS credentials work
+log "🔍 Verifying AWS access..."
+if ! aws sts get-caller-identity &> /dev/null; then
+    echo "❌ ERROR: AWS credentials not working"
+    echo "AWS CLI cannot authenticate. Check:"
+    echo "  1. AWS_ACCESS_KEY_ID is set"
+    echo "  2. AWS_SECRET_ACCESS_KEY is set" 
+    echo "  3. Credentials have valid permissions"
+    exit 1
+fi
+
+# Pre-flight check: Verify bucket access
+log "🔍 Checking S3 bucket access..."
+if ! aws s3 ls "s3://$BUCKET/" &> /dev/null; then
+    echo "❌ ERROR: Cannot access S3 bucket '$BUCKET'"
+    echo "Debugging info:"
+    aws sts get-caller-identity 2>/dev/null || echo "  - AWS auth failed"
+    echo "  - Bucket: $BUCKET"
+    echo "  - Region: ${AWS_REGION:-not set}"
+    exit 1
+fi
+
+# Check if baselines prefix exists
+log "🔍 Checking for baselines/ prefix..."
 if ! aws s3 ls "s3://$BUCKET/baselines/" &> /dev/null; then
-    echo "Error: Cannot access S3 bucket '$BUCKET/baselines/'" >&2
-    echo "Please check:" >&2
-    echo "  1. Bucket name is correct" >&2
-    echo "  2. AWS credentials have read permission" >&2
-    echo "  3. Bucket exists with baselines/ prefix" >&2
-    echo "  4. Bucket is in the correct region" >&2
+    echo "❌ ERROR: No baselines/ prefix found in S3 bucket '$BUCKET'"
+    echo "Expected to find: s3://$BUCKET/baselines/"
+    echo "Bucket contents:"
+    aws s3 ls "s3://$BUCKET/" 2>/dev/null | head -5 || echo "  (failed to list)"
     exit 1
 fi
 
@@ -180,12 +201,13 @@ while IFS= read -r s3_prefix; do
         ((SKIPPED_COUNT++))
     else
         log "⬇️  Downloading $folder_name/indexing-telemetry.json..."
+        log "    Command: aws s3 cp s3://$BUCKET/$s3_file_path $local_file"
         # Capture stderr to show actual error
         ERROR_MSG=$(aws s3 cp "s3://$BUCKET/$s3_file_path" "$local_file" ${QUIET:+--no-progress} 2>&1)
         if [ $? -eq 0 ]; then
             ((DOWNLOADED_COUNT++))
         else
-            echo "Warning: Failed to download from $folder_name: $ERROR_MSG" >&2
+            echo "❌ ERROR: Failed to download from $folder_name: $ERROR_MSG"
             ((FAILED_COUNT++))
         fi
     fi
