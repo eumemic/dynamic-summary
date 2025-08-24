@@ -95,7 +95,19 @@ jobs:
           TIMESTAMP=$(date -u +%Y-%m-%d-%H%M%S)
           FULL_COMMIT="${{ github.sha }}"
           BASELINE_FOLDER="${TIMESTAMP}-${FULL_COMMIT}"
-          BUCKET_PATH="s3://${{ vars.BASELINES_BUCKET || 'ragzoom' }}/baselines/${BASELINE_FOLDER}"
+          BUCKET_NAME="${{ vars.BASELINES_BUCKET || 'ragzoom' }}"
+          BUCKET_PATH="s3://${BUCKET_NAME}/baselines/${BASELINE_FOLDER}"
+          
+          # Verify bucket exists
+          echo "🔍 Verifying S3 bucket access: ${BUCKET_NAME}"
+          if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "❌ Error: S3 bucket '$BUCKET_NAME' does not exist or is not accessible"
+            echo "Please check:"
+            echo "  1. Bucket name is correct"
+            echo "  2. AWS credentials have access to the bucket"
+            echo "  3. Bucket exists in the specified region"
+            exit 1
+          fi
           
           echo "📤 Uploading baseline to S3: ${BASELINE_FOLDER}/"
           
@@ -104,11 +116,11 @@ jobs:
           
           # Update latest.txt pointer in S3 (contains folder name)
           echo "$BASELINE_FOLDER" > latest.txt
-          aws s3 cp latest.txt "s3://${{ vars.BASELINES_BUCKET || 'ragzoom' }}/baselines/latest.txt"
+          aws s3 cp latest.txt "s3://${BUCKET_NAME}/baselines/latest.txt"
           rm latest.txt
           
           echo "✅ Baseline uploaded successfully"
           echo "   Folder: ${BASELINE_FOLDER}/"
           echo "   File: indexing-telemetry.json"
           echo "   Commit: ${FULL_COMMIT}"
-          echo "   Bucket: ${{ vars.BASELINES_BUCKET || 'ragzoom' }}"
+          echo "   Bucket: ${BUCKET_NAME}"

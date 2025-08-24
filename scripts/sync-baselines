@@ -134,13 +134,13 @@ TEMP_LIST=$(mktemp)
 trap "rm -f $TEMP_LIST" EXIT
 
 # List folders in baselines/ (CommonPrefixes gives us the folder names)
-# Use json output and process with jq to get one folder per line
+# Use simpler query for better AWS CLI compatibility
 aws s3api list-objects-v2 \
     --bucket "$BUCKET" \
     --prefix "baselines/" \
     --delimiter "/" \
-    --query "sort_by(CommonPrefixes[?ends_with(Prefix, '/')], &Prefix) | reverse(@) | [0:$COUNT].Prefix" \
-    --output json 2>/dev/null | jq -r '.[]' > "$TEMP_LIST" || {
+    --query "CommonPrefixes[].Prefix" \
+    --output text 2>/dev/null | tr '\t' '\n' | sort -r | head -n "$COUNT" > "$TEMP_LIST" || {
     echo "Error: Failed to list baseline folders in S3 bucket '$BUCKET'" >&2
     exit 1
 }
@@ -179,7 +179,7 @@ while IFS= read -r s3_prefix; do
         ((SKIPPED_COUNT++))
     else
         log "⬇️  Downloading $folder_name/indexing-telemetry.json..."
-        if aws s3 cp "s3://$BUCKET/$s3_file_path" "$local_file" --quiet; then
+        if aws s3 cp "s3://$BUCKET/$s3_file_path" "$local_file" ${QUIET:+--no-progress} 2>/dev/null; then
             ((DOWNLOADED_COUNT++))
         else
             echo "Warning: Failed to download from $folder_name" >&2
