@@ -1,0 +1,278 @@
+#!/bin/bash
+# Sync latest baselines from S3 to local benchmarks/baselines/
+# Usage: ./scripts/sync-baselines [--count N] [--bucket BUCKET] [--quiet]
+
+set -e
+set -o pipefail
+
+# Default configuration
+DEFAULT_BUCKET="ragzoom"
+DEFAULT_COUNT=30
+QUIET=false
+BUCKET=""
+COUNT=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --bucket)
+            BUCKET="$2"
+            shift 2
+            ;;
+        --count)
+            COUNT="$2"
+            shift 2
+            ;;
+        --quiet)
+            QUIET=true
+            shift
+            ;;
+        --help|-h)
+            cat << EOF
+Usage: $0 [--bucket BUCKET] [--count N] [--quiet]
+
+Sync latest baselines from S3 to local benchmarks/baselines/ directory.
+
+Options:
+    --bucket BUCKET    S3 bucket name (default: $DEFAULT_BUCKET)
+    --count N          Number of recent baselines to keep (default: $DEFAULT_COUNT)
+    --quiet            Suppress non-error output
+    --help             Show this help
+
+Environment Variables:
+    AWS_ACCESS_KEY_ID     AWS access key
+    AWS_SECRET_ACCESS_KEY AWS secret key
+    AWS_REGION           AWS region (default: us-east-1)
+    
+Note: The script will automatically load variables from .env file if present.
+
+The script will:
+1. Create benchmarks/baselines/ directory if needed
+2. List recent baseline folders from S3 baselines/ prefix
+3. Download indexing-telemetry.json from each folder
+4. Save locally as flattened files: TIMESTAMP-COMMIT-indexing.json
+5. Update latest.json symlink to most recent baseline
+
+Files are only downloaded if they don't already exist locally.
+EOF
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown option $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# Set defaults
+BUCKET="${BUCKET:-$DEFAULT_BUCKET}"
+COUNT="${COUNT:-$DEFAULT_COUNT}"
+
+# Load environment variables from .env if it exists
+if [ -f ".env" ]; then
+    # Source .env file, but only export the AWS variables we need
+    set -a  # Automatically export all variables
+    source .env 2>/dev/null || true
+    set +a  # Stop auto-exporting
+fi
+
+# Logging function
+log() {
+    if [ "$QUIET" != "true" ]; then
+        echo "$@"
+    fi
+}
+
+# Check for AWS CLI and jq
+if ! command -v aws &> /dev/null; then
+    echo "Error: AWS CLI not found. Please install awscli." >&2
+    echo "  pip install awscli" >&2
+    echo "  or: brew install awscli" >&2
+    exit 1
+fi
+
+if ! command -v jq &> /dev/null; then
+    echo "Error: jq not found. Please install jq for JSON processing." >&2
+    echo "  brew install jq (macOS) or apt-get install jq (Linux)" >&2
+    exit 1
+fi
+
+# Check AWS credentials
+if [ -z "${AWS_ACCESS_KEY_ID}" ] && ! aws configure list &> /dev/null; then
+    echo "Error: AWS credentials not configured." >&2
+    echo "Either set environment variables:" >&2
+    echo "  export AWS_ACCESS_KEY_ID=..." >&2
+    echo "  export AWS_SECRET_ACCESS_KEY=..." >&2
+    echo "  export AWS_REGION=us-east-1" >&2
+    echo "Or configure AWS CLI: aws configure" >&2
+    exit 1
+fi
+
+# Set default region if not specified
+export AWS_REGION="${AWS_REGION:-us-east-1}"
+
+# Create baselines directory
+BASELINES_DIR="benchmarks/baselines"
+mkdir -p "$BASELINES_DIR"
+
+log "🔄 Syncing baselines from S3 bucket: $BUCKET"
+
+# Pre-flight check: Verify AWS credentials work
+log "🔍 Verifying AWS access..."
+if ! aws sts get-caller-identity &> /dev/null; then
+    echo "❌ ERROR: AWS credentials not working"
+    echo "AWS CLI cannot authenticate. Check:"
+    echo "  1. AWS_ACCESS_KEY_ID is set"
+    echo "  2. AWS_SECRET_ACCESS_KEY is set" 
+    echo "  3. Credentials have valid permissions"
+    exit 1
+fi
+
+# Pre-flight check: Verify bucket access
+log "🔍 Checking S3 bucket access..."
+if ! aws s3 ls "s3://$BUCKET/" &> /dev/null; then
+    echo "❌ ERROR: Cannot access S3 bucket '$BUCKET'"
+    echo "Debugging info:"
+    aws sts get-caller-identity 2>/dev/null || echo "  - AWS auth failed"
+    echo "  - Bucket: $BUCKET"
+    echo "  - Region: ${AWS_REGION:-not set}"
+    exit 1
+fi
+
+# Check if baselines prefix exists
+log "🔍 Checking for baselines/ prefix..."
+if ! aws s3 ls "s3://$BUCKET/baselines/" &> /dev/null; then
+    echo "❌ ERROR: No baselines/ prefix found in S3 bucket '$BUCKET'"
+    echo "Expected to find: s3://$BUCKET/baselines/"
+    echo "Bucket contents:"
+    aws s3 ls "s3://$BUCKET/" 2>/dev/null | head -5 || echo "  (failed to list)"
+    exit 1
+fi
+
+# Get list of baseline folders sorted by last modified (most recent first)
+log "📂 Fetching baseline folders from S3..."
+TEMP_LIST=$(mktemp)
+trap "rm -f $TEMP_LIST" EXIT
+
+# List folders in baselines/ (CommonPrefixes gives us the folder names)
+# Use simpler query for better AWS CLI compatibility
+aws s3api list-objects-v2 \
+    --bucket "$BUCKET" \
+    --prefix "baselines/" \
+    --delimiter "/" \
+    --query "CommonPrefixes[].Prefix" \
+    --output text 2>/dev/null | tr '\t' '\n' | sort -r | head -n "$COUNT" > "$TEMP_LIST" || {
+    echo "Error: Failed to list baseline folders in S3 bucket '$BUCKET'" >&2
+    exit 1
+}
+
+# Check if we got any folders
+if [ ! -s "$TEMP_LIST" ] || grep -q "None" "$TEMP_LIST"; then
+    log "⚠️  No baseline folders found in S3 bucket '$BUCKET'"
+    exit 0
+fi
+
+# Read folder list and download indexing telemetry from each
+DOWNLOADED_COUNT=0
+SKIPPED_COUNT=0
+FAILED_COUNT=0
+LATEST_FOLDER=""
+
+while IFS= read -r s3_prefix <&3; do
+    # Normalize potential CRLF endings from AWS CLI text output
+    s3_prefix=${s3_prefix%$'\r'}
+    # Skip empty lines or "None" responses
+    if [ -z "$s3_prefix" ] || [ "$s3_prefix" = "None" ]; then
+        continue
+    fi
+    
+    # Extract folder name from prefix (baselines/TIMESTAMP-COMMIT/ -> TIMESTAMP-COMMIT)
+    folder_name=$(echo "$s3_prefix" | sed 's|^baselines/||' | sed 's|/$||')
+    
+    # Track the most recent folder (first in list)
+    if [ -z "$LATEST_FOLDER" ]; then
+        LATEST_FOLDER="$folder_name"
+    fi
+    
+    # Local filename: TIMESTAMP-COMMIT-indexing.json
+    local_file="$BASELINES_DIR/${folder_name}-indexing.json"
+    s3_file_path="${s3_prefix}indexing-telemetry.json"
+    # Extra safety: strip any stray CRs that could sneak into file paths
+    clean_local_file=${local_file%$'\r'}
+    clean_s3_file_path=${s3_file_path%$'\r'}
+    
+    if [ -f "$local_file" ]; then
+        log "⏭️  Skipping $folder_name (already exists)"
+        SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+    else
+        log "⬇️  Downloading $folder_name/indexing-telemetry.json..."
+        log "    Command: aws s3 cp s3://$BUCKET/$clean_s3_file_path $clean_local_file"
+        # Always disable progress to avoid TTY/progress interference and capture real errors
+        __err_log=$(mktemp)
+        if aws s3 cp "s3://$BUCKET/$clean_s3_file_path" "$clean_local_file" --no-progress 2>"$__err_log"; then
+            DOWNLOADED_COUNT=$((DOWNLOADED_COUNT + 1))
+        else
+            rc=$?
+            echo "❌ ERROR: Failed to download from $folder_name (exit $rc)" >&2
+            if [ -s "$__err_log" ]; then
+                cat "$__err_log" >&2
+            else
+                echo "(no stderr captured from aws cli)" >&2
+            fi
+            FAILED_COUNT=$((FAILED_COUNT + 1))
+        fi
+        rm -f "$__err_log"
+    fi
+done 3< "$TEMP_LIST"
+
+# Validate sync results and exit with error if sync failed
+TOTAL_FILES=$(find "$BASELINES_DIR" -name "*-indexing.json" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$TOTAL_FILES" -eq 0 ]; then
+    echo "Error: No baseline files available after sync attempt" >&2
+    exit 1
+fi
+
+# If we tried to download but all failed
+if [ "$DOWNLOADED_COUNT" -eq 0 ] && [ "$SKIPPED_COUNT" -eq 0 ] && [ -n "$LATEST_FOLDER" ]; then
+    echo "Error: Failed to download any baseline files from S3" >&2
+    exit 1
+fi
+
+# If more than half of downloads failed, consider it a failure
+if [ "$FAILED_COUNT" -gt 0 ] && [ "$FAILED_COUNT" -ge "$DOWNLOADED_COUNT" ]; then
+    echo "Error: Too many download failures ($FAILED_COUNT failed, $DOWNLOADED_COUNT succeeded)" >&2
+    exit 1
+fi
+
+# Update latest.json symlink if we have files
+if [ -n "$LATEST_FOLDER" ]; then
+    latest_local_file="${LATEST_FOLDER}-indexing.json"
+    if [ -f "$BASELINES_DIR/$latest_local_file" ]; then
+        log "🔗 Updating latest.json symlink -> $latest_local_file"
+        cd "$BASELINES_DIR"
+        rm -f latest.json
+        ln -s "$latest_local_file" latest.json
+        cd - > /dev/null
+    else
+        log "⚠️  Latest baseline file not found: $latest_local_file"
+    fi
+else
+    log "⚠️  No valid baseline files available for latest.json symlink"
+fi
+
+if [ "$FAILED_COUNT" -eq 0 ]; then
+    log "✅ Sync complete: Downloaded $DOWNLOADED_COUNT, Skipped $SKIPPED_COUNT"
+else
+    log "⚠️  Sync complete with warnings: Downloaded $DOWNLOADED_COUNT, Skipped $SKIPPED_COUNT, Failed $FAILED_COUNT"
+fi
+
+# Show what we have locally
+if [ "$QUIET" != "true" ]; then
+    TOTAL_LOCAL=$(find "$BASELINES_DIR" -name "*-indexing.json" | wc -l)
+    log "📊 Total baselines available locally: $TOTAL_LOCAL"
+    if [ -L "$BASELINES_DIR/latest.json" ]; then
+        LATEST_TARGET=$(readlink "$BASELINES_DIR/latest.json")
+        log "🎯 Latest baseline: $LATEST_TARGET"
+    fi
+fi
