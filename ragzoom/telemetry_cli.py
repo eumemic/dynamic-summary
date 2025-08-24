@@ -254,16 +254,35 @@ def compute_dynamic_threshold(
     # Calculate threshold
     threshold = (k1 + k2) * variance
 
-    # For cost metrics, apply a minimum threshold of 5% of baseline value
-    # to avoid flagging small percentage changes as regressions
+    # For cost metrics, apply percentage-based thresholds to avoid flagging
+    # small percentage changes as regressions or warnings
     if metric_name in [MetricNames.USD_PER_NODE, MetricNames.COST]:
         if metric_name == MetricNames.USD_PER_NODE:
             baseline_value = baseline_metrics.cost.usd_per_million_source_tokens
         else:
             baseline_value = baseline_metrics.cost.usd_per_node
 
-        min_threshold = baseline_value * 0.05  # 5% minimum threshold
-        threshold = max(threshold, min_threshold)
+        # 10% minimum for regression detection (🔴)
+        min_regression_threshold = baseline_value * 0.10
+        threshold = max(threshold, min_regression_threshold)
+
+        # Set custom emoji significance threshold for 5% warning (🟡)
+        # We need to override the default 1σ with a percentage-based threshold
+        warning_threshold = baseline_value * 0.05
+        # Store this as a custom emoji significance value (convert to sigma equivalent)
+        if variance > 0:
+            custom_emoji_sigma = warning_threshold / variance
+        else:
+            custom_emoji_sigma = config.emoji_significance_sigma
+
+        return DynamicThreshold(
+            absolute_value=threshold,
+            baseline_variance=variance,
+            k_factors=(k1, k2),
+            metric_name=metric_name,
+            is_computed=True,
+            emoji_significance_sigma=custom_emoji_sigma,
+        )
 
     return DynamicThreshold(
         absolute_value=threshold,
@@ -1512,16 +1531,14 @@ def visualize(input_paths: tuple[str, ...], output: str | None, format: str) -> 
 
 
 def _format_metrics_for_chunk_with_thresholds(
-    chunk_label: str | None,
     base_metrics: ChunkMetrics,
     curr_metrics: ChunkMetrics,
     thresholds: dict[str, DynamicThreshold],
 ) -> None:
-    """Format all metrics for a single chunk size with dynamic thresholds."""
+    """Format all metrics for a chunk size with dynamic thresholds."""
 
-    # Percentage-based metrics (chunk-size invariant) - include chunk size in first row
+    # Percentage-based metrics (chunk-size invariant)
     _format_comparison_row_with_threshold(
-        chunk_label,
         "Mean % deviation",
         base_metrics.target_fit.mean_percent_deviation,
         curr_metrics.target_fit.mean_percent_deviation,
@@ -1534,7 +1551,6 @@ def _format_metrics_for_chunk_with_thresholds(
 
     # Oversized summary rate (percentage of nodes that produced oversized summaries)
     _format_comparison_row_with_threshold(
-        None,
         "Oversized summary rate",
         base_metrics.retries.oversized_summary_rate,
         curr_metrics.retries.oversized_summary_rate,
@@ -1547,7 +1563,6 @@ def _format_metrics_for_chunk_with_thresholds(
 
     # Retry metrics
     _format_comparison_row_with_threshold(
-        None,
         "Mean retries/node",
         base_metrics.retries.retry_rate,
         curr_metrics.retries.retry_rate,
@@ -1558,7 +1573,6 @@ def _format_metrics_for_chunk_with_thresholds(
 
     # Latency metrics
     _format_comparison_row_with_threshold(
-        None,
         "Median time/node",
         base_metrics.latency.median_seconds,
         curr_metrics.latency.median_seconds,
@@ -1569,7 +1583,6 @@ def _format_metrics_for_chunk_with_thresholds(
 
     # Cost metrics
     _format_comparison_row_with_threshold(
-        None,
         "USD per 1M source tokens",
         base_metrics.cost.usd_per_million_source_tokens,
         curr_metrics.cost.usd_per_million_source_tokens,
@@ -1615,7 +1628,6 @@ def _prepare_row_data(
 
 
 def _format_comparison_row_with_threshold(
-    category: str | None,
     metric: str,
     baseline: float,
     current: float,
@@ -1674,16 +1686,10 @@ def _format_comparison_row_with_threshold(
     # For markdown, replace newlines with <br> for proper rendering
     change_str_md = change_str.replace("\n", "<br>")
 
-    if category is None:
-        # Single chunk size format - no category column
-        click.echo(
-            f"| {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
-        )
-    else:
-        # Multi chunk size format - include category column
-        click.echo(
-            f"| {category} | {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
-        )
+    # Simple table format
+    click.echo(
+        f"| {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
+    )
 
 
 def _format_comparison_row(
@@ -2040,7 +2046,7 @@ def _format_single_chunk_comparison_with_thresholds(
 
     # Format metrics for the single chunk
     _format_metrics_for_chunk_with_thresholds(
-        "", baseline_metrics, current_metrics, thresholds
+        baseline_metrics, current_metrics, thresholds
     )
 
     click.echo("")
@@ -2084,33 +2090,18 @@ def _format_markdown_comparison_with_thresholds(
 
         click.echo("\n## Performance Metrics\n")
 
-    # Create unified table - adjust format based on number of chunk sizes
-    single_chunk_size = len(chunk_sizes) == 1
-
-    if single_chunk_size:
-        # Simplified table without redundant "Chunk Size" column
-        click.echo("| Metric | Baseline | Current | Change | Threshold |")
-        click.echo("|--------|----------|---------|--------|-----------|")
-    else:
-        # Full table with chunk size column for multiple sizes
-        click.echo("| Chunk Size | Metric | Baseline | Current | Change | Threshold |")
-        click.echo("|------------|--------|----------|---------|--------|-----------|")
+    # Create simple metrics table
+    click.echo("| Metric | Baseline | Current | Change | Threshold |")
+    click.echo("|--------|----------|---------|--------|-----------|")
 
     for chunk_size in sorted(chunk_sizes):
         base_metrics = baseline.metrics_by_chunk_size[chunk_size]
         curr_metrics = current.metrics_by_chunk_size[chunk_size]
         thresholds = thresholds_by_chunk[chunk_size]
 
-        if single_chunk_size:
-            # Don't show chunk label for single size
-            _format_metrics_for_chunk_with_thresholds(
-                None, base_metrics, curr_metrics, thresholds
-            )
-        else:
-            chunk_label = f"**{chunk_size} tokens**"
-            _format_metrics_for_chunk_with_thresholds(
-                chunk_label, base_metrics, curr_metrics, thresholds
-            )
+        _format_metrics_for_chunk_with_thresholds(
+            base_metrics, curr_metrics, thresholds
+        )
 
     click.echo("")
 

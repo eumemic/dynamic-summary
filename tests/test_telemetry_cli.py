@@ -136,11 +136,11 @@ class TestTelemetryCompare:
             print(f"Exception: {result.exception}")
 
         assert result.exit_code == 0
-        # Check for unified table format with chunk sizes
-        assert "100 tokens" in result.output
-        assert "200 tokens" in result.output
+        # Check for simplified table format without chunk size columns
         assert "Mean % deviation" in result.output
-        # Should be a unified table, not separate sections per file
+        assert "Oversized summary rate" in result.output
+        assert "USD per 1M source tokens" in result.output
+        # Should be a unified table with simplified format
 
     def test_compare_directories_with_output(self, create_test_files, tmp_path):
         """Test comparing directories with markdown output."""
