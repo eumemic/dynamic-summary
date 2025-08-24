@@ -3,6 +3,7 @@
 # Usage: ./scripts/sync-baselines [--count N] [--bucket BUCKET] [--quiet]
 
 set -e
+set -o pipefail
 
 # Default configuration
 DEFAULT_BUCKET="ragzoom"
@@ -179,6 +180,8 @@ FAILED_COUNT=0
 LATEST_FOLDER=""
 
 while IFS= read -r s3_prefix <&3; do
+    # Normalize potential CRLF endings from AWS CLI text output
+    s3_prefix=${s3_prefix%$'\r'}
     # Skip empty lines or "None" responses
     if [ -z "$s3_prefix" ] || [ "$s3_prefix" = "None" ]; then
         continue
@@ -195,20 +198,31 @@ while IFS= read -r s3_prefix <&3; do
     # Local filename: TIMESTAMP-COMMIT-indexing.json
     local_file="$BASELINES_DIR/${folder_name}-indexing.json"
     s3_file_path="${s3_prefix}indexing-telemetry.json"
+    # Extra safety: strip any stray CRs that could sneak into file paths
+    clean_local_file=${local_file%$'\r'}
+    clean_s3_file_path=${s3_file_path%$'\r'}
     
     if [ -f "$local_file" ]; then
         log "⏭️  Skipping $folder_name (already exists)"
         ((SKIPPED_COUNT++))
     else
         log "⬇️  Downloading $folder_name/indexing-telemetry.json..."
-        log "    Command: aws s3 cp s3://$BUCKET/$s3_file_path $local_file"
-        # Capture stderr to show actual error - fix exit code handling
-        if ERROR_MSG=$(aws s3 cp "s3://$BUCKET/$s3_file_path" "$local_file" ${QUIET:+--no-progress} 2>&1); then
+        log "    Command: aws s3 cp s3://$BUCKET/$clean_s3_file_path $clean_local_file"
+        # Always disable progress to avoid TTY/progress interference and capture real errors
+        __err_log=$(mktemp)
+        if aws s3 cp "s3://$BUCKET/$clean_s3_file_path" "$clean_local_file" --no-progress 2>"$__err_log"; then
             ((DOWNLOADED_COUNT++))
         else
-            echo "❌ ERROR: Failed to download from $folder_name: $ERROR_MSG"
+            rc=$?
+            echo "❌ ERROR: Failed to download from $folder_name (exit $rc)" >&2
+            if [ -s "$__err_log" ]; then
+                cat "$__err_log" >&2
+            else
+                echo "(no stderr captured from aws cli)" >&2
+            fi
             ((FAILED_COUNT++))
         fi
+        rm -f "$__err_log"
     fi
 done 3< "$TEMP_LIST"
 
