@@ -83,11 +83,17 @@ log() {
     fi
 }
 
-# Check for AWS CLI
+# Check for AWS CLI and jq
 if ! command -v aws &> /dev/null; then
     echo "Error: AWS CLI not found. Please install awscli." >&2
     echo "  pip install awscli" >&2
     echo "  or: brew install awscli" >&2
+    exit 1
+fi
+
+if ! command -v jq &> /dev/null; then
+    echo "Error: jq not found. Please install jq for JSON processing." >&2
+    echo "  brew install jq (macOS) or apt-get install jq (Linux)" >&2
     exit 1
 fi
 
@@ -128,12 +134,13 @@ TEMP_LIST=$(mktemp)
 trap "rm -f $TEMP_LIST" EXIT
 
 # List folders in baselines/ (CommonPrefixes gives us the folder names)
+# Use json output and process with jq to get one folder per line
 aws s3api list-objects-v2 \
     --bucket "$BUCKET" \
     --prefix "baselines/" \
     --delimiter "/" \
     --query "sort_by(CommonPrefixes[?ends_with(Prefix, '/')], &Prefix) | reverse(@) | [0:$COUNT].Prefix" \
-    --output text > "$TEMP_LIST" 2>/dev/null || {
+    --output json 2>/dev/null | jq -r '.[]' > "$TEMP_LIST" || {
     echo "Error: Failed to list baseline folders in S3 bucket '$BUCKET'" >&2
     exit 1
 }
