@@ -130,10 +130,27 @@ jobs:
           echo "🔄 Syncing baselines from S3..."
           chmod +x scripts/sync-baselines
           
-          # SYNC MUST SUCCEED OR WE FAIL THE JOB
-          if ! scripts/sync-baselines --count 5; then
+          # Show detailed debugging information
+          echo "🔍 Environment check:"
+          echo "  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:+SET (${#AWS_ACCESS_KEY_ID} chars)}${AWS_ACCESS_KEY_ID:-NOT SET}"
+          echo "  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:+SET (${#AWS_SECRET_ACCESS_KEY} chars)}${AWS_SECRET_ACCESS_KEY:-NOT SET}"
+          echo "  AWS_REGION: ${AWS_REGION:-NOT SET}"
+          echo "  AWS CLI version: $(aws --version 2>&1 || echo 'NOT INSTALLED')"
+          
+          # SYNC MUST SUCCEED OR WE FAIL THE JOB - but capture full output
+          echo "🚀 Running sync with full error output..."
+          if ! scripts/sync-baselines --count 5 2>&1; then
+            echo ""
             echo "❌ FATAL: Failed to sync baselines from S3"
-            echo "::error::Baseline sync failed - cannot proceed with performance tests"
+            echo "::error::Baseline sync failed with the above error - cannot proceed with performance tests"
+            echo ""
+            echo "🔍 Additional debugging:"
+            echo "  Current directory: $(pwd)"
+            echo "  Files in current directory: $(ls -la | head -10)"
+            echo "  Benchmarks directory exists: $([ -d benchmarks ] && echo 'YES' || echo 'NO')"
+            echo "  Scripts directory exists: $([ -d scripts ] && echo 'YES' || echo 'NO')"
+            echo "  sync-baselines script exists: $([ -f scripts/sync-baselines ] && echo 'YES' || echo 'NO')"
+            echo "  sync-baselines is executable: $([ -x scripts/sync-baselines ] && echo 'YES' || echo 'NO')"
             exit 1
           fi
           
