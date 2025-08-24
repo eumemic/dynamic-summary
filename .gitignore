@@ -73,12 +73,14 @@ worktrees/
 # Benchmark/telemetry result files
 benchmark-*.json
 telemetry-*.json
-!/benchmarks/baselines/telemetry-*.json
 telemetry.json
 benchmark_results/
 /benchmarks/*
 !/benchmarks/baselines/
 !/benchmarks/README.md
+# Baselines synced from S3 (ignore all except .gitkeep)
+benchmarks/baselines/*
+!benchmarks/baselines/.gitkeep
 visualization.png
 visualization.pdf
 visualization.svg
