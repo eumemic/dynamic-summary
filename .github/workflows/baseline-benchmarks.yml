@@ -88,22 +88,24 @@ jobs:
             pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v
           done
           
-          # Store baseline in S3
+          # Store baseline in S3 with folder structure
           TIMESTAMP=$(date -u +%Y-%m-%d-%H%M%S)
-          SHORT_COMMIT=$(echo "${{ github.sha }}" | cut -c1-7)
-          BASELINE_NAME="telemetry-${TIMESTAMP}-${SHORT_COMMIT}.json"
+          FULL_COMMIT="${{ github.sha }}"
+          BASELINE_FOLDER="${TIMESTAMP}-${FULL_COMMIT}"
+          BUCKET_PATH="s3://${{ vars.BASELINES_BUCKET || 'ragzoom' }}/baselines/${BASELINE_FOLDER}"
           
-          echo "📤 Uploading baseline to S3: $BASELINE_NAME"
+          echo "📤 Uploading baseline to S3: ${BASELINE_FOLDER}/"
           
-          # Upload telemetry file to S3
-          aws s3 cp benchmark_results/telemetry.json "s3://${{ vars.BASELINES_BUCKET || 'ragzoom-baselines' }}/${BASELINE_NAME}"
+          # Upload indexing telemetry to baseline folder
+          aws s3 cp benchmark_results/telemetry.json "${BUCKET_PATH}/indexing-telemetry.json"
           
-          # Update latest.json pointer in S3
-          echo "$BASELINE_NAME" > latest.json
-          aws s3 cp latest.json "s3://${{ vars.BASELINES_BUCKET || 'ragzoom-baselines' }}/latest.json"
-          rm latest.json
+          # Update latest.txt pointer in S3 (contains folder name)
+          echo "$BASELINE_FOLDER" > latest.txt
+          aws s3 cp latest.txt "s3://${{ vars.BASELINES_BUCKET || 'ragzoom' }}/baselines/latest.txt"
+          rm latest.txt
           
           echo "✅ Baseline uploaded successfully"
-          echo "   File: ${BASELINE_NAME}"
-          echo "   Commit: ${{ github.sha }}"
-          echo "   Bucket: ${{ vars.BASELINES_BUCKET || 'ragzoom-baselines' }}"
+          echo "   Folder: ${BASELINE_FOLDER}/"
+          echo "   File: indexing-telemetry.json"
+          echo "   Commit: ${FULL_COMMIT}"
+          echo "   Bucket: ${{ vars.BASELINES_BUCKET || 'ragzoom' }}"

@@ -5,7 +5,7 @@
 set -e
 
 # Default configuration
-DEFAULT_BUCKET="ragzoom-baselines"
+DEFAULT_BUCKET="ragzoom"
 DEFAULT_COUNT=30
 QUIET=false
 BUCKET=""
@@ -45,9 +45,10 @@ Environment Variables:
 
 The script will:
 1. Create benchmarks/baselines/ directory if needed
-2. List recent baselines in S3
-3. Download only missing files
-4. Update latest.json symlink to most recent baseline
+2. List recent baseline folders from S3 baselines/ prefix
+3. Download indexing-telemetry.json from each folder
+4. Save locally as flattened files: TIMESTAMP-COMMIT-indexing.json
+5. Update latest.json symlink to most recent baseline
 
 Files are only downloaded if they don't already exist locally.
 EOF
@@ -100,74 +101,87 @@ mkdir -p "$BASELINES_DIR"
 
 log "🔄 Syncing baselines from S3 bucket: $BUCKET"
 
-# Check if bucket exists and is accessible
-if ! aws s3 ls "s3://$BUCKET/" &> /dev/null; then
-    echo "Error: Cannot access S3 bucket '$BUCKET'" >&2
+# Check if bucket and baselines prefix exist
+if ! aws s3 ls "s3://$BUCKET/baselines/" &> /dev/null; then
+    echo "Error: Cannot access S3 bucket '$BUCKET/baselines/'" >&2
     echo "Please check:" >&2
     echo "  1. Bucket name is correct" >&2
     echo "  2. AWS credentials have read permission" >&2
-    echo "  3. Bucket exists and is in the correct region" >&2
+    echo "  3. Bucket exists with baselines/ prefix" >&2
+    echo "  4. Bucket is in the correct region" >&2
     exit 1
 fi
 
-# Get list of telemetry files sorted by last modified (most recent first)
-log "📂 Fetching baseline list from S3..."
+# Get list of baseline folders sorted by last modified (most recent first)
+log "📂 Fetching baseline folders from S3..."
 TEMP_LIST=$(mktemp)
 trap "rm -f $TEMP_LIST" EXIT
 
+# List folders in baselines/ (CommonPrefixes gives us the folder names)
 aws s3api list-objects-v2 \
     --bucket "$BUCKET" \
-    --prefix "telemetry-" \
-    --query "sort_by(Contents[?ends_with(Key, '.json')], &LastModified) | reverse(@) | [0:$COUNT].Key" \
+    --prefix "baselines/" \
+    --delimiter "/" \
+    --query "sort_by(CommonPrefixes[?ends_with(Prefix, '/')], &Prefix) | reverse(@) | [0:$COUNT].Prefix" \
     --output text > "$TEMP_LIST" 2>/dev/null || {
-    echo "Error: Failed to list objects in S3 bucket '$BUCKET'" >&2
+    echo "Error: Failed to list baseline folders in S3 bucket '$BUCKET'" >&2
     exit 1
 }
 
-# Check if we got any files
+# Check if we got any folders
 if [ ! -s "$TEMP_LIST" ] || grep -q "None" "$TEMP_LIST"; then
-    log "⚠️  No baseline files found in S3 bucket '$BUCKET'"
+    log "⚠️  No baseline folders found in S3 bucket '$BUCKET'"
     exit 0
 fi
 
-# Read file list and download missing files
+# Read folder list and download indexing telemetry from each
 DOWNLOADED_COUNT=0
 SKIPPED_COUNT=0
-LATEST_FILE=""
+LATEST_FOLDER=""
 
-while IFS= read -r s3_key; do
+while IFS= read -r s3_prefix; do
     # Skip empty lines or "None" responses
-    if [ -z "$s3_key" ] || [ "$s3_key" = "None" ]; then
+    if [ -z "$s3_prefix" ] || [ "$s3_prefix" = "None" ]; then
         continue
     fi
     
-    local_file="$BASELINES_DIR/$s3_key"
+    # Extract folder name from prefix (baselines/TIMESTAMP-COMMIT/ -> TIMESTAMP-COMMIT)
+    folder_name=$(echo "$s3_prefix" | sed 's|^baselines/||' | sed 's|/$||')
     
-    # Track the most recent file (first in list)
-    if [ -z "$LATEST_FILE" ]; then
-        LATEST_FILE="$s3_key"
+    # Track the most recent folder (first in list)
+    if [ -z "$LATEST_FOLDER" ]; then
+        LATEST_FOLDER="$folder_name"
     fi
     
+    # Local filename: TIMESTAMP-COMMIT-indexing.json
+    local_file="$BASELINES_DIR/${folder_name}-indexing.json"
+    s3_file_path="${s3_prefix}indexing-telemetry.json"
+    
     if [ -f "$local_file" ]; then
-        log "⏭️  Skipping $s3_key (already exists)"
+        log "⏭️  Skipping $folder_name (already exists)"
         ((SKIPPED_COUNT++))
     else
-        log "⬇️  Downloading $s3_key..."
-        if aws s3 cp "s3://$BUCKET/$s3_key" "$local_file" --quiet; then
+        log "⬇️  Downloading $folder_name/indexing-telemetry.json..."
+        if aws s3 cp "s3://$BUCKET/$s3_file_path" "$local_file" --quiet; then
             ((DOWNLOADED_COUNT++))
         else
-            echo "Warning: Failed to download $s3_key" >&2
+            echo "Warning: Failed to download from $folder_name" >&2
         fi
     fi
 done < "$TEMP_LIST"
 
 # Update latest.json symlink if we have files
-if [ -n "$LATEST_FILE" ] && [ -f "$BASELINES_DIR/$LATEST_FILE" ]; then
-    log "🔗 Updating latest.json symlink -> $LATEST_FILE"
-    cd "$BASELINES_DIR"
-    rm -f latest.json
-    ln -s "$LATEST_FILE" latest.json
-    cd - > /dev/null
+if [ -n "$LATEST_FOLDER" ]; then
+    latest_local_file="${LATEST_FOLDER}-indexing.json"
+    if [ -f "$BASELINES_DIR/$latest_local_file" ]; then
+        log "🔗 Updating latest.json symlink -> $latest_local_file"
+        cd "$BASELINES_DIR"
+        rm -f latest.json
+        ln -s "$latest_local_file" latest.json
+        cd - > /dev/null
+    else
+        log "⚠️  Latest baseline file not found: $latest_local_file"
+    fi
 else
     log "⚠️  No valid baseline files available for latest.json symlink"
 fi
@@ -176,7 +190,7 @@ log "✅ Sync complete: Downloaded $DOWNLOADED_COUNT, Skipped $SKIPPED_COUNT"
 
 # Show what we have locally
 if [ "$QUIET" != "true" ]; then
-    TOTAL_LOCAL=$(find "$BASELINES_DIR" -name "telemetry-*.json" | wc -l)
+    TOTAL_LOCAL=$(find "$BASELINES_DIR" -name "*-indexing.json" | wc -l)
     log "📊 Total baselines available locally: $TOTAL_LOCAL"
     if [ -L "$BASELINES_DIR/latest.json" ]; then
         LATEST_TARGET=$(readlink "$BASELINES_DIR/latest.json")
