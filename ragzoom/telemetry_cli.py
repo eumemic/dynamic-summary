@@ -254,6 +254,17 @@ def compute_dynamic_threshold(
     # Calculate threshold
     threshold = (k1 + k2) * variance
 
+    # For cost metrics, apply a minimum threshold of 5% of baseline value
+    # to avoid flagging small percentage changes as regressions
+    if metric_name in [MetricNames.USD_PER_NODE, MetricNames.COST]:
+        if metric_name == MetricNames.USD_PER_NODE:
+            baseline_value = baseline_metrics.cost.usd_per_million_source_tokens
+        else:
+            baseline_value = baseline_metrics.cost.usd_per_node
+
+        min_threshold = baseline_value * 0.05  # 5% minimum threshold
+        threshold = max(threshold, min_threshold)
+
     return DynamicThreshold(
         absolute_value=threshold,
         baseline_variance=variance,
