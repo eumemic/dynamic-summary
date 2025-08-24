@@ -154,6 +154,7 @@ fi
 # Read folder list and download indexing telemetry from each
 DOWNLOADED_COUNT=0
 SKIPPED_COUNT=0
+FAILED_COUNT=0
 LATEST_FOLDER=""
 
 while IFS= read -r s3_prefix; do
@@ -179,13 +180,35 @@ while IFS= read -r s3_prefix; do
         ((SKIPPED_COUNT++))
     else
         log "⬇️  Downloading $folder_name/indexing-telemetry.json..."
-        if aws s3 cp "s3://$BUCKET/$s3_file_path" "$local_file" ${QUIET:+--no-progress} 2>/dev/null; then
+        # Capture stderr to show actual error
+        ERROR_MSG=$(aws s3 cp "s3://$BUCKET/$s3_file_path" "$local_file" ${QUIET:+--no-progress} 2>&1)
+        if [ $? -eq 0 ]; then
             ((DOWNLOADED_COUNT++))
         else
-            echo "Warning: Failed to download from $folder_name" >&2
+            echo "Warning: Failed to download from $folder_name: $ERROR_MSG" >&2
+            ((FAILED_COUNT++))
         fi
     fi
 done < "$TEMP_LIST"
+
+# Validate sync results and exit with error if sync failed
+TOTAL_FILES=$(find "$BASELINES_DIR" -name "*-indexing.json" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$TOTAL_FILES" -eq 0 ]; then
+    echo "Error: No baseline files available after sync attempt" >&2
+    exit 1
+fi
+
+# If we tried to download but all failed
+if [ "$DOWNLOADED_COUNT" -eq 0 ] && [ "$SKIPPED_COUNT" -eq 0 ] && [ -n "$LATEST_FOLDER" ]; then
+    echo "Error: Failed to download any baseline files from S3" >&2
+    exit 1
+fi
+
+# If more than half of downloads failed, consider it a failure
+if [ "$FAILED_COUNT" -gt 0 ] && [ "$FAILED_COUNT" -ge "$DOWNLOADED_COUNT" ]; then
+    echo "Error: Too many download failures ($FAILED_COUNT failed, $DOWNLOADED_COUNT succeeded)" >&2
+    exit 1
+fi
 
 # Update latest.json symlink if we have files
 if [ -n "$LATEST_FOLDER" ]; then
@@ -203,7 +226,11 @@ else
     log "⚠️  No valid baseline files available for latest.json symlink"
 fi
 
-log "✅ Sync complete: Downloaded $DOWNLOADED_COUNT, Skipped $SKIPPED_COUNT"
+if [ "$FAILED_COUNT" -eq 0 ]; then
+    log "✅ Sync complete: Downloaded $DOWNLOADED_COUNT, Skipped $SKIPPED_COUNT"
+else
+    log "⚠️  Sync complete with warnings: Downloaded $DOWNLOADED_COUNT, Skipped $SKIPPED_COUNT, Failed $FAILED_COUNT"
+fi
 
 # Show what we have locally
 if [ "$QUIET" != "true" ]; then
