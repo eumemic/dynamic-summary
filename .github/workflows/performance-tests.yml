@@ -124,107 +124,20 @@ jobs:
           # Install AWS CLI for S3 baseline syncing
           pip install awscli
       
-      - name: Setup baseline from S3 (MANDATORY)
-        id: sync_baseline
+      - name: Setup baseline from S3
         run: |
           echo "🔄 Syncing baselines from S3..."
-          chmod +x scripts/sync-baselines
           
-          # Show detailed debugging information
-          echo "🔍 Environment check:"
-          echo "  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:+SET (${#AWS_ACCESS_KEY_ID} chars)}${AWS_ACCESS_KEY_ID:-NOT SET}"
-          echo "  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:+SET (${#AWS_SECRET_ACCESS_KEY} chars)}${AWS_SECRET_ACCESS_KEY:-NOT SET}"
-          echo "  AWS_REGION: ${AWS_REGION:-NOT SET}"
-          echo "  AWS CLI version: $(aws --version 2>&1 || echo 'NOT INSTALLED')"
-          
-          # Test AWS CLI directly first
-          echo "🧪 Testing AWS CLI directly..."
-          echo "  Listing bucket: aws s3 ls s3://ragzoom/baselines/ --max-items 3"
-          aws s3 ls s3://ragzoom/baselines/ --max-items 3 || echo "❌ Bucket listing failed"
-          echo "  Testing direct download of known file..."
-          timeout 30 aws s3 cp s3://ragzoom/baselines/2025-08-23-222406-a7e690cabf4290b6381f8c3463194165a0a55aac/indexing-telemetry.json /tmp/test-ci-download.json --debug 2>&1 | head -20 || echo "❌ Direct download failed or timed out"
-          
-          # SYNC MUST SUCCEED OR WE FAIL THE JOB - but capture full output
-          echo "🚀 Running sync with full error output..."
-          timeout 60 scripts/sync-baselines --count 5 2>&1 || SYNC_EXIT_CODE=$?
-          if [ "${SYNC_EXIT_CODE:-0}" -ne 0 ]; then
-            echo ""
-            echo "❌ FATAL: Failed to sync baselines from S3 (exit code: ${SYNC_EXIT_CODE:-unknown})"
-            echo "::error::Baseline sync failed with the above error - cannot proceed with performance tests"
-            echo ""
-            echo "🔍 Additional debugging:"
-            echo "  Current directory: $(pwd)"
-            echo "  Benchmarks directory exists: $([ -d benchmarks ] && echo 'YES' || echo 'NO')"
-            echo "  Scripts directory exists: $([ -d scripts ] && echo 'YES' || echo 'NO')"
-            echo "  sync-baselines script exists: $([ -f scripts/sync-baselines ] && echo 'YES' || echo 'NO')"
-            echo "  sync-baselines is executable: $([ -x scripts/sync-baselines ] && echo 'YES' || echo 'NO')"
-            echo "  Test download file exists: $([ -f /tmp/test-ci-download.json ] && echo 'YES' || echo 'NO')"
-            echo "  Test download file size: $([ -f /tmp/test-ci-download.json ] && stat -c%s /tmp/test-ci-download.json || echo 'N/A')"
+          if ! scripts/sync-baselines --count 5; then
+            echo "❌ Failed to sync baselines from S3"
+            echo "::error::Baseline sync failed - cannot proceed with performance tests"
             exit 1
           fi
           
-          # VERIFY we actually have a baseline file
-          if [ ! -f "benchmarks/baselines/latest.json" ]; then
-            echo "❌ FATAL: Sync claimed success but no baseline file exists"
-            echo "::error::Expected benchmarks/baselines/latest.json but file not found"
-            exit 1
-          fi
-          
-          # Copy to expected location
+          # Copy baseline to expected location for benchmark comparison
           mkdir -p baseline_results
           cp benchmarks/baselines/latest.json baseline_results/telemetry.json
-          
-          BASELINE_NAME=$(readlink benchmarks/baselines/latest.json 2>/dev/null || echo 'latest.json')
-          echo "✅ Baseline ready: $(basename $BASELINE_NAME)"
-      
-      - name: Post baseline sync failure to PR
-        if: failure() && steps.sync_baseline.outcome == 'failure'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const identifier = '<!-- github-actions-perf-report-comment -->';
-            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            
-            const body = `${identifier}
-            ## ❌ Performance Tests Failed
-            
-            **Could not sync baseline benchmarks from S3**
-            
-            Performance comparison requires baseline data but sync failed. This usually means:
-            - S3 credentials are not configured correctly
-            - S3 bucket doesn't exist or isn't accessible  
-            - Baseline files are missing from S3
-            - AWS permissions issues
-            
-            _View [workflow logs](${workflowUrl}) for detailed error messages._`;
-            
-            // Find existing comment to replace or create new one
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.body && comment.body.includes(identifier) &&
-              comment.user && comment.user.login === 'github-actions[bot]'
-            );
-            
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body
-              });
-            }
+          echo "✅ Baseline ready for performance testing"
       
       - name: Initialize PostgreSQL vector extension
         run: |
