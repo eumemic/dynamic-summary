@@ -40,7 +40,10 @@ jobs:
         ports:
           - 5432:5432
     
-    # No environment variables needed - using single benchmark with current defaults
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
     
     steps:
       - name: Checkout PR branch
@@ -103,15 +106,28 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Setup baseline from repository
+      - name: Setup baseline from S3
         run: |
-          # Copy baseline from repository to expected location
+          echo "🔄 Syncing baselines from S3..."
+          
+          # Make sync script executable
+          chmod +x scripts/sync-baselines
+          
+          # Sync baselines from S3
+          if scripts/sync-baselines --count 5; then
+            echo "✅ Successfully synced baselines from S3"
+          else
+            echo "⚠️ Failed to sync baselines from S3, checking for local baselines..."
+          fi
+          
+          # Set up baseline for comparison
           if [ -f "benchmarks/baselines/latest.json" ]; then
             mkdir -p baseline_results
             cp benchmarks/baselines/latest.json baseline_results/telemetry.json
-            echo "✅ Using repository baseline: $(basename $(readlink benchmarks/baselines/latest.json))"
+            BASELINE_NAME=$(readlink benchmarks/baselines/latest.json 2>/dev/null || echo 'latest.json')
+            echo "✅ Using baseline: $(basename $BASELINE_NAME)"
           else
-            echo "⚠️ No baseline available in repository"
+            echo "⚠️ No baseline available (neither S3 nor local)"
           fi
       
       - name: Cache pip dependencies
