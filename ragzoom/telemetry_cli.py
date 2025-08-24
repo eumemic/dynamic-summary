@@ -754,7 +754,7 @@ def _check_metrics_for_regressions_with_thresholds(
             MetricNames.USD_PER_NODE,
             "cost_mad",
             "cost",
-            "usd_per_node",
+            "usd_per_million_source_tokens",
             MetricNames.COST_KEY,
         ),
         MetricCheckConfig(
@@ -844,7 +844,7 @@ def _check_single_chunk_for_regressions_with_thresholds(
             MetricNames.USD_PER_NODE,
             "cost_mad",
             "cost",
-            "usd_per_node",
+            "usd_per_million_source_tokens",
             MetricNames.COST_KEY,
         ),
         MetricCheckConfig(
@@ -1507,33 +1507,10 @@ def _format_metrics_for_chunk_with_thresholds(
     thresholds: dict[str, DynamicThreshold],
 ) -> None:
     """Format all metrics for a single chunk size with dynamic thresholds."""
-    # Target-fit metrics - include chunk size in first row
+
+    # Percentage-based metrics (chunk-size invariant) - include chunk size in first row
     _format_comparison_row_with_threshold(
         chunk_label,
-        "Median error",
-        base_metrics.target_fit.median_error,
-        curr_metrics.target_fit.median_error,
-        thresholds[MetricNames.MEDIAN_ERROR_KEY],
-        signed=True,
-        is_error_metric=True,
-        baseline_variance=base_metrics.target_fit.error_mad,
-        current_variance=curr_metrics.target_fit.error_mad,
-    )
-    _format_comparison_row_with_threshold(
-        None,
-        "p95 error",
-        base_metrics.target_fit.p95_error,
-        curr_metrics.target_fit.p95_error,
-        thresholds[MetricNames.P95_ERROR_KEY],
-        signed=True,
-        is_error_metric=True,
-        baseline_variance=base_metrics.target_fit.error_mad,
-        current_variance=curr_metrics.target_fit.error_mad,
-    )
-
-    # Percentage-based metrics (chunk-size invariant)
-    _format_comparison_row_with_threshold(
-        None,
         "Mean % deviation",
         base_metrics.target_fit.mean_percent_deviation,
         curr_metrics.target_fit.mean_percent_deviation,
@@ -1915,6 +1892,18 @@ def _calculate_change_with_threshold(
     # Format variance change if both variances provided
     if baseline_variance is not None and current_variance is not None:
         variance_change = current_variance - baseline_variance
+
+        # Skip variance display if change is negligible (≤0.1% or ≤0.001 absolute)
+        unit = _get_unit_for_metric(threshold.metric_name)
+        if unit == "$":
+            variance_threshold = 0.001  # $0.001 or less
+        elif unit == "%":
+            variance_threshold = 0.1  # 0.1 percentage points or less
+        else:
+            variance_threshold = 0.1  # 0.1 units or less
+
+        if abs(variance_change) <= variance_threshold:
+            return line1  # Skip variance display
 
         # Get variance emoji based on dynamic significance
         variance_emoji = get_variance_emoji(variance_change, baseline_variance)

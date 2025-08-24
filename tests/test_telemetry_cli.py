@@ -117,7 +117,7 @@ class TestTelemetryCompare:
 
         assert result.exit_code == 0
         # Check for new simplified table format (no chunk size column)
-        assert "Median error" in result.output
+        assert "Mean % deviation" in result.output
         assert "Mean retries/node" in result.output
         # Chunk size should appear in configuration section
         assert "Target Chunk Tokens" in result.output
@@ -139,7 +139,7 @@ class TestTelemetryCompare:
         # Check for unified table format with chunk sizes
         assert "100 tokens" in result.output
         assert "200 tokens" in result.output
-        assert "Median error" in result.output
+        assert "Mean % deviation" in result.output
         # Should be a unified table, not separate sections per file
 
     def test_compare_directories_with_output(self, create_test_files, tmp_path):
