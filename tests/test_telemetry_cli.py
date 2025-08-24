@@ -117,8 +117,7 @@ class TestTelemetryCompare:
 
         assert result.exit_code == 0
         # Check for new simplified table format (no chunk size column)
-        assert "Mean % deviation" in result.output
-        assert "Mean retries/node" in result.output
+        assert "Summary size deviation" in result.output
         # Chunk size should appear in configuration section
         assert "Target Chunk Tokens" in result.output
 
@@ -137,9 +136,9 @@ class TestTelemetryCompare:
 
         assert result.exit_code == 0
         # Check for simplified table format without chunk size columns
-        assert "Mean % deviation" in result.output
+        assert "Summary size deviation" in result.output
         assert "Oversized summary rate" in result.output
-        assert "USD per 1M source tokens" in result.output
+        assert "Cost per 1M source tokens" in result.output
         # Should be a unified table with simplified format
 
     def test_compare_directories_with_output(self, create_test_files, tmp_path):
@@ -286,7 +285,7 @@ class TestTelemetryCompare:
 
         # Test that comparison works and shows the cost increase
         assert result.exit_code == 0  # CLI should run successfully
-        assert "USD per 1M source tokens" in result.output  # Should show cost metrics
+        assert "Cost per 1M source tokens" in result.output  # Should show cost metrics
         assert (
             "+450.0%" in result.output or "+$" in result.output
         )  # Should show cost increase

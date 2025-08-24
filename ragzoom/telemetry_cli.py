@@ -1539,7 +1539,7 @@ def _format_metrics_for_chunk_with_thresholds(
 
     # Percentage-based metrics (chunk-size invariant)
     _format_comparison_row_with_threshold(
-        "Mean % deviation",
+        "Summary size deviation",
         base_metrics.target_fit.mean_percent_deviation,
         curr_metrics.target_fit.mean_percent_deviation,
         thresholds.get(
@@ -1561,19 +1561,9 @@ def _format_metrics_for_chunk_with_thresholds(
         current_variance=curr_metrics.retries.retry_mad,
     )
 
-    # Retry metrics
-    _format_comparison_row_with_threshold(
-        "Mean retries/node",
-        base_metrics.retries.retry_rate,
-        curr_metrics.retries.retry_rate,
-        thresholds[MetricNames.RETRY_RATE_KEY],
-        baseline_variance=base_metrics.retries.retry_mad,
-        current_variance=curr_metrics.retries.retry_mad,
-    )
-
     # Latency metrics
     _format_comparison_row_with_threshold(
-        "Median time/node",
+        "Median node processing time",
         base_metrics.latency.median_seconds,
         curr_metrics.latency.median_seconds,
         thresholds[MetricNames.LATENCY_KEY],
@@ -1583,7 +1573,7 @@ def _format_metrics_for_chunk_with_thresholds(
 
     # Cost metrics
     _format_comparison_row_with_threshold(
-        "USD per 1M source tokens",
+        "Cost per 1M source tokens",
         base_metrics.cost.usd_per_million_source_tokens,
         curr_metrics.cost.usd_per_million_source_tokens,
         thresholds[MetricNames.COST_KEY],
@@ -1646,7 +1636,7 @@ def _format_comparison_row_with_threshold(
     # Determine the correct metric name for unit formatting
     # Map display names to internal metric names for proper unit lookup
     metric_name_mapping = {
-        "Mean % deviation": "mean_percent_deviation",
+        "Summary size deviation": "mean_percent_deviation",
         "Oversized summary rate": "oversized_summary_rate",
     }
     format_metric_name = metric_name_mapping.get(metric, threshold.metric_name)
@@ -1676,32 +1666,19 @@ def _format_comparison_row_with_threshold(
         # For metrics without computed thresholds, use sensible defaults
         if metric == "Oversized summary rate":
             threshold_str = "< 15%"  # 15% upper bound seems reasonable
-        elif metric == "Mean retries/node":
-            threshold_str = "< 0.15"  # 0.15 retries per node upper bound
         else:
             threshold_str = "—"  # No threshold enforced
     else:
         # Use the same format_metric_name for threshold units as for values
         unit = _get_unit_for_metric(format_metric_name)
 
-        # Determine threshold direction based on metric type
-        # For most metrics, lower is better, so show upper bound only
-        if metric in ["Mean % deviation"]:
-            # Bidirectional threshold (±)
-            if unit == "$":
-                threshold_str = f"±{unit}{threshold.absolute_value:.4f}"
-            elif unit:
-                threshold_str = f"±{threshold.absolute_value:.1f}{unit}"
-            else:
-                threshold_str = f"±{threshold.absolute_value:.2f}"
+        # All metrics use unidirectional threshold (< upper bound for "lower is better" metrics)
+        if unit == "$":
+            threshold_str = f"< {unit}{threshold.absolute_value:.4f}"
+        elif unit:
+            threshold_str = f"< {threshold.absolute_value:.1f}{unit}"
         else:
-            # Unidirectional threshold (< upper bound for "lower is better" metrics)
-            if unit == "$":
-                threshold_str = f"< {unit}{threshold.absolute_value:.4f}"
-            elif unit:
-                threshold_str = f"< {threshold.absolute_value:.1f}{unit}"
-            else:
-                threshold_str = f"< {threshold.absolute_value:.2f}"
+            threshold_str = f"< {threshold.absolute_value:.2f}"
 
     # For markdown, replace newlines with <br> for proper rendering
     change_str_md = change_str.replace("\n", "<br>")
@@ -1852,8 +1829,8 @@ def _format_absolute_change(
     if unit == "$":
         abs_str = f"{unit}{abs(absolute_change):.4f}"
     elif unit == "%":
-        # For percentage metrics, show as percentage points (pp)
-        abs_str = f"{abs(absolute_change):.1f} pp"
+        # For percentage metrics, show as percentage points with % sign
+        abs_str = f"{abs(absolute_change):.2f}%"
     elif unit:
         abs_str = f"{abs(absolute_change):.1f} {unit}"
     else:
