@@ -55,6 +55,10 @@ ATTEMPT_COLORS = [
     "#991b1b",  # Red for retry 4+
 ]
 
+# Legend layout constants
+LEGEND_COLUMN_SPACING = 0.5  # Horizontal spacing between legend columns
+LEGEND_HANDLE_TEXT_PAD = 0.3  # Spacing between legend marker and text
+
 
 class TelemetryVisualizer:
     """Generate visualizations from telemetry data."""
@@ -1261,6 +1265,29 @@ class TelemetryVisualizer:
             fontsize=8,
         )
 
+    def _calculate_timeline_baseline(
+        self,
+        indexing_start_time: float | None,
+        min_time: float | None,
+        current_time: float,
+    ) -> tuple[float, float]:
+        """Calculate baseline time for timeline Y-axis with three-level fallback.
+
+        Args:
+            indexing_start_time: When indexing started (preferred baseline)
+            min_time: Earliest recorded time (fallback baseline)
+            current_time: Current operation time (last resort baseline)
+
+        Returns:
+            Tuple of (baseline_time, updated_min_time)
+        """
+        if indexing_start_time is not None:
+            return indexing_start_time, min_time or current_time
+        elif min_time is not None:
+            return min_time, min_time
+        else:
+            return current_time, current_time
+
     def _plot_tree_construction_timeline(
         self, telemetry: dict[str, Any], ax: Axes, max_y_limit: float | None = None
     ) -> None:
@@ -1344,7 +1371,39 @@ class TelemetryVisualizer:
 
             span_start, span_end = node_spans[node_id]
 
-            # Skip only leaf nodes (height 0) - they're raw text chunks
+            # First, process embedding operations for ALL nodes (including leaves)
+            embedding = node.get("embedding")
+            if embedding:
+                embed_start_time = embedding.get("start_time")
+                embed_end_time = embedding.get("end_time")
+
+                if embed_start_time is not None and embed_end_time is not None:
+                    # Update min_time tracking for fallback
+                    if indexing_start_time is None and min_time is None:
+                        min_time = embed_start_time
+
+                    max_time = max(max_time, embed_end_time)
+
+                    # Calculate baseline for relative time
+                    baseline, min_time = self._calculate_timeline_baseline(
+                        indexing_start_time, min_time, embed_start_time
+                    )
+
+                    # Draw purple rectangle for embedding
+                    rect = Rectangle(
+                        (span_start, embed_start_time - baseline),  # Position
+                        max(
+                            1, span_end - span_start - gap
+                        ),  # Width = span coverage minus gap
+                        embed_end_time - embed_start_time,  # Height = duration
+                        facecolor=EMBEDDINGS_COLOR,  # Purple (#9333ea)
+                        edgecolor="none",  # No border for embeddings
+                        linewidth=0,
+                        alpha=0.9,
+                    )
+                    ax.add_patch(rect)
+
+            # Skip leaf nodes for summary processing - they don't have summaries
             if node["height"] == 0:
                 continue
 
@@ -1359,13 +1418,9 @@ class TelemetryVisualizer:
                 # Calculate relative time from indexing start
                 # Three-level fallback: indexed_at -> min_time -> current node time
                 # This handles telemetry without indexed_at (older versions)
-                if indexing_start_time is not None:
-                    baseline = indexing_start_time
-                elif min_time is not None:
-                    baseline = min_time
-                else:
-                    baseline = created_at
-                    min_time = created_at
+                baseline, min_time = self._calculate_timeline_baseline(
+                    indexing_start_time, min_time, created_at
+                )
                 relative_time = created_at - baseline
 
                 # For passthrough nodes, use first attempt color (blue)
@@ -1419,13 +1474,9 @@ class TelemetryVisualizer:
 
                 # Calculate baseline for relative time
                 # Three-level fallback: indexed_at -> min_time -> current attempt time
-                if indexing_start_time is not None:
-                    baseline = indexing_start_time
-                elif min_time is not None:
-                    baseline = min_time
-                else:
-                    baseline = cumulative_start
-                    min_time = cumulative_start
+                baseline, min_time = self._calculate_timeline_baseline(
+                    indexing_start_time, min_time, cumulative_start
+                )
 
                 # Draw rectangle for this attempt with gap
                 rect = Rectangle(
@@ -1448,16 +1499,18 @@ class TelemetryVisualizer:
         # Set axis limits and labels
         if max_span > min_span:
             # Determine final baseline for Y-axis: prefer indexed_at, fallback to min_time
-            baseline = (
+            final_baseline = (
                 indexing_start_time if indexing_start_time is not None else min_time
             )
-            if baseline is not None:
+            if final_baseline is not None:
                 ax.set_xlim(min_span, max_span)
                 # Use provided max_y_limit if available, otherwise calculate from current data
                 if max_y_limit is not None:
                     ax.set_ylim(0, max_y_limit)
                 else:
-                    ax.set_ylim(0, max_time - baseline if max_time > baseline else 1)
+                    ax.set_ylim(
+                        0, max_time - final_baseline if max_time > final_baseline else 1
+                    )
             else:
                 ax.set_xlim(min_span, max_span)
                 ax.set_ylim(0, max_y_limit if max_y_limit is not None else 1)
@@ -1470,8 +1523,18 @@ class TelemetryVisualizer:
             )
             ax.grid(True, alpha=0.3)
 
-            # Add legend for attempt colors
-            legend_elements = [
+            # Add legend for embeddings and attempt colors
+            legend_elements = []
+
+            # Check if any nodes have embeddings to show
+            has_embeddings = any(node.get("embedding") for node in nodes)
+            if has_embeddings:
+                legend_elements.append(
+                    Patch(facecolor=EMBEDDINGS_COLOR, label="Embeddings", alpha=0.9)
+                )
+
+            # Add summary attempt colors
+            attempt_legend_elements = [
                 Patch(facecolor=attempt_colors[0], label="Initial attempt", alpha=0.9),
                 Patch(facecolor=attempt_colors[1], label="Retry 1", alpha=0.9),
                 Patch(facecolor=attempt_colors[2], label="Retry 2", alpha=0.9),
@@ -1486,7 +1549,9 @@ class TelemetryVisualizer:
                     max_attempts = max(max_attempts, len(node["summary_attempts"]))
 
             if max_attempts > 0:
-                legend_elements = legend_elements[:max_attempts]
+                legend_elements.extend(attempt_legend_elements[:max_attempts])
+
+            if legend_elements:
                 # Place legend horizontally between title and chart
                 ax.legend(
                     handles=legend_elements,
@@ -1495,6 +1560,8 @@ class TelemetryVisualizer:
                     ncol=min(len(legend_elements), 6),  # Horizontal layout
                     fontsize=8,
                     frameon=False,  # Remove frame for cleaner look
+                    columnspacing=LEGEND_COLUMN_SPACING,  # Reduce horizontal spacing between columns
+                    handletextpad=LEGEND_HANDLE_TEXT_PAD,  # Reduce spacing between legend marker and text
                 )
         else:
             # No valid data to plot
