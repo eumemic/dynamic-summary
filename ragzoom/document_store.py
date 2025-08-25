@@ -30,6 +30,7 @@ class DocumentNodeRepository:
         right_child_id: str | None = None,
         token_count: int = 0,
         height: int = 0,
+        is_left_child: bool | None = None,
     ) -> TreeNode:
         """Add a node scoped to this document."""
         return self._repo.add_node(
@@ -44,6 +45,7 @@ class DocumentNodeRepository:
             document_id=self.document_id,
             token_count=token_count,
             height=height,
+            is_left_child=is_left_child,
         )
 
     def add_batch(

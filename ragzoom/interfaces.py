@@ -31,6 +31,7 @@ class StoreInterface(Protocol):
         document_id: str | None = None,
         token_count: int = 0,
         height: int = 0,
+        is_left_child: bool | None = None,
     ) -> TreeNode:
         """Add a node to the store."""
         ...
