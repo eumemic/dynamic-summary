@@ -1418,13 +1418,9 @@ class TelemetryVisualizer:
                 # Calculate relative time from indexing start
                 # Three-level fallback: indexed_at -> min_time -> current node time
                 # This handles telemetry without indexed_at (older versions)
-                if indexing_start_time is not None:
-                    baseline = indexing_start_time
-                elif min_time is not None:
-                    baseline = min_time
-                else:
-                    baseline = created_at
-                    min_time = created_at
+                baseline, min_time = self._calculate_timeline_baseline(
+                    indexing_start_time, min_time, created_at
+                )
                 relative_time = created_at - baseline
 
                 # For passthrough nodes, use first attempt color (blue)
@@ -1478,13 +1474,9 @@ class TelemetryVisualizer:
 
                 # Calculate baseline for relative time
                 # Three-level fallback: indexed_at -> min_time -> current attempt time
-                if indexing_start_time is not None:
-                    baseline = indexing_start_time
-                elif min_time is not None:
-                    baseline = min_time
-                else:
-                    baseline = cumulative_start
-                    min_time = cumulative_start
+                baseline, min_time = self._calculate_timeline_baseline(
+                    indexing_start_time, min_time, cumulative_start
+                )
 
                 # Draw rectangle for this attempt with gap
                 rect = Rectangle(
