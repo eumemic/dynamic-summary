@@ -369,11 +369,10 @@ jobs:
                 echo "⚠️ Visualization won't be published, but this doesn't affect the performance report"
                 VISUALIZATION_URL=""
               else
-                # Upload visualization (bucket policy handles public access)
+                # Upload visualization 
                 if aws s3 cp comparison.png "$S3_URI" --no-progress; then
-                  # Generate public S3 URL
-                  # Note: This assumes the bucket is configured for public read or has CloudFront
-                  VISUALIZATION_URL="https://s3.amazonaws.com/${BUCKET_NAME}/${S3_PATH}"
+                  # Generate presigned URL (valid for 30 days)
+                  VISUALIZATION_URL=$(aws s3 presign "$S3_URI" --expires-in 2592000)
                   echo "✅ Visualization uploaded successfully"
                   echo "📸 Image available at: $VISUALIZATION_URL"
                 else
