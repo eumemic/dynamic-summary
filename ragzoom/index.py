@@ -460,13 +460,22 @@ class TreeBuilder:
         Returns:
             List of leaf node data ready for database insertion
         """
+        from ragzoom.utils.path_utils import calculate_tree_depth, generate_leaf_path
+
         leaf_nodes_data = []
         preceding_leaf_id = None  # Track preceding leaf for document order
+
+        # Calculate tree depth for path generation
+        num_leaves = len(chunk_data)
+        tree_depth = calculate_tree_depth(num_leaves)
 
         for i, (data, embedding) in enumerate(zip(chunk_data, all_embeddings)):
             text = cast(str, data["text"])
             # Use cached token count if available, otherwise compute it
             token_count = data.get("token_count", tokenizer.count_tokens(text))
+
+            # Generate binary path for this leaf
+            path = generate_leaf_path(i, tree_depth)
 
             leaf_nodes_data.append(
                 {
@@ -479,6 +488,7 @@ class TreeBuilder:
                     "token_count": token_count,
                     "preceding_neighbor_id": preceding_leaf_id,
                     "height": 0,  # Leaf nodes have height 0
+                    "path": path,  # Binary path encoding position in tree
                 }
             )
 
@@ -792,6 +802,11 @@ class TreeBuilder:
             right_token_count=right_node.token_count if right_node else 0,
         )
 
+        # Derive parent path from left child path
+        from ragzoom.utils.path_utils import get_parent_path
+
+        parent_path = get_parent_path(left_node.path)
+
         # Embedding will be generated in batch after all summaries are collected
         # This avoids 183 individual API calls for a typical level
 
@@ -808,6 +823,7 @@ class TreeBuilder:
                 "document_id": document_id,
                 "token_count": token_count,
                 "height": current_height,  # Store pre-calculated height
+                "path": parent_path,  # Binary path derived from child paths
             },
             "parent_updates": [
                 (left_id, parent_id),

@@ -85,15 +85,7 @@ class TestNumSeedsFix:
         # Mock compute_mmr_diverse_results to select only leaf1
         store.search.compute_mmr_diverse_results = Mock(return_value=["leaf1"])
 
-        # Mock get_ancestors to return proper ancestors
-        def mock_get_ancestors(node_ids):
-            ancestors = []
-            for nid in node_ids:
-                if nid == "leaf1":
-                    ancestors.extend([Mock(id="nodeA"), Mock(id="root")])
-            return ancestors
-
-        store.tree.get_ancestors = Mock(side_effect=mock_get_ancestors)
+        # Let the mock store handle get_ancestors naturally - it has proper implementation
 
         # Create config and retriever
         query_config = QueryConfig(budget_tokens=10000)

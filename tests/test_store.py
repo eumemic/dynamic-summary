@@ -189,6 +189,7 @@ class TestStore:
             span_start=0,
             span_end=20,
             parent_id="root",
+            is_left_child=True,
         )
 
         # Level 2 node (depth 2)
@@ -199,6 +200,7 @@ class TestStore:
             span_start=0,
             span_end=10,
             parent_id="level1",
+            is_left_child=True,
         )
 
         # Level 3 node (depth 3)
@@ -209,6 +211,7 @@ class TestStore:
             span_start=0,
             span_end=5,
             parent_id="level2",
+            is_left_child=True,
         )
 
         # pin_depth_max is hardcoded to 2 in the config
@@ -520,6 +523,7 @@ class TestStore:
                 span_start=i * 10,
                 span_end=(i + 1) * 10,
                 parent_id=parent_id,
+                is_left_child=True if parent_id else None,
             )
             nodes.append(node_id)
             parent_id = node_id
