@@ -1344,7 +1344,43 @@ class TelemetryVisualizer:
 
             span_start, span_end = node_spans[node_id]
 
-            # Skip only leaf nodes (height 0) - they're raw text chunks
+            # First, process embedding operations for ALL nodes (including leaves)
+            embedding = node.get("embedding")
+            if embedding:
+                embed_start_time = embedding.get("start_time")
+                embed_end_time = embedding.get("end_time")
+
+                if embed_start_time is not None and embed_end_time is not None:
+                    # Update min_time tracking for fallback
+                    if indexing_start_time is None and min_time is None:
+                        min_time = embed_start_time
+
+                    max_time = max(max_time, embed_end_time)
+
+                    # Calculate baseline for relative time
+                    if indexing_start_time is not None:
+                        baseline = indexing_start_time
+                    elif min_time is not None:
+                        baseline = min_time
+                    else:
+                        baseline = embed_start_time
+                        min_time = embed_start_time
+
+                    # Draw purple rectangle for embedding
+                    rect = Rectangle(
+                        (span_start, embed_start_time - baseline),  # Position
+                        max(
+                            1, span_end - span_start - gap
+                        ),  # Width = span coverage minus gap
+                        embed_end_time - embed_start_time,  # Height = duration
+                        facecolor=EMBEDDINGS_COLOR,  # Purple (#9333ea)
+                        edgecolor="none",  # No border for embeddings
+                        linewidth=0,
+                        alpha=0.9,
+                    )
+                    ax.add_patch(rect)
+
+            # Skip leaf nodes for summary processing - they don't have summaries
             if node["height"] == 0:
                 continue
 
@@ -1470,8 +1506,18 @@ class TelemetryVisualizer:
             )
             ax.grid(True, alpha=0.3)
 
-            # Add legend for attempt colors
-            legend_elements = [
+            # Add legend for embeddings and attempt colors
+            legend_elements = []
+
+            # Check if any nodes have embeddings to show
+            has_embeddings = any(node.get("embedding") for node in nodes)
+            if has_embeddings:
+                legend_elements.append(
+                    Patch(facecolor=EMBEDDINGS_COLOR, label="Embeddings", alpha=0.9)
+                )
+
+            # Add summary attempt colors
+            attempt_legend_elements = [
                 Patch(facecolor=attempt_colors[0], label="Initial attempt", alpha=0.9),
                 Patch(facecolor=attempt_colors[1], label="Retry 1", alpha=0.9),
                 Patch(facecolor=attempt_colors[2], label="Retry 2", alpha=0.9),
@@ -1486,7 +1532,9 @@ class TelemetryVisualizer:
                     max_attempts = max(max_attempts, len(node["summary_attempts"]))
 
             if max_attempts > 0:
-                legend_elements = legend_elements[:max_attempts]
+                legend_elements.extend(attempt_legend_elements[:max_attempts])
+
+            if legend_elements:
                 # Place legend horizontally between title and chart
                 ax.legend(
                     handles=legend_elements,
@@ -1495,6 +1543,8 @@ class TelemetryVisualizer:
                     ncol=min(len(legend_elements), 6),  # Horizontal layout
                     fontsize=8,
                     frameon=False,  # Remove frame for cleaner look
+                    columnspacing=0.5,  # Reduce horizontal spacing between columns
+                    handletextpad=0.3,  # Reduce spacing between legend marker and text
                 )
         else:
             # No valid data to plot
