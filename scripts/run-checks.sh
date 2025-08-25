@@ -177,11 +177,15 @@ run_check_background() {
 if ! should_skip "tests"; then
     if command -v pytest &> /dev/null; then
         if [ "$INCLUDE_SLOW_TESTS" = true ]; then
-            # Ensure PostgreSQL is running for integration tests
-            echo "[PostgreSQL] Ensuring PostgreSQL is running for integration tests..."
-            python -c "from ragzoom.docker_postgres import DockerPostgres; dp = DockerPostgres(); dp.ensure_running()" 2>/dev/null || {
-                echo "[PostgreSQL] Warning: Could not start PostgreSQL, integration tests may fail"
-            }
+            # Ensure PostgreSQL is available for integration tests
+            if [ -z "$RAGZOOM_DATABASE_URL" ]; then
+                echo "[PostgreSQL] Ensuring PostgreSQL is running for integration tests..."
+                python -c "from ragzoom.docker_postgres import DockerPostgres; dp = DockerPostgres(); dp.ensure_running()" 2>/dev/null || {
+                    echo "[PostgreSQL] Warning: Could not start PostgreSQL, integration tests may fail"
+                }
+            else
+                echo "[PostgreSQL] Using provided database URL: $RAGZOOM_DATABASE_URL"
+            fi
             # Run all tests including slow and integration
             run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark' -n 8 --no-header"
         else

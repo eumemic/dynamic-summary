@@ -10,12 +10,13 @@ from ragzoom.retrieve import Retriever
 from tests.utils import create_predictable_summary_mock, mock_openai_context
 
 
+@pytest.mark.benchmark
 @pytest.mark.asyncio
 class TestParallelDPPerformance:
     """Test parallel DP performance compared to sequential."""
 
     @pytest.fixture
-    async def large_document_setup(self, store, config_factory):
+    def large_document_setup(self, store, config_factory):
         """Set up a test system with a larger document for performance testing."""
         config = config_factory(
             target_chunk_tokens=200,
@@ -41,7 +42,7 @@ class TestParallelDPPerformance:
                 [chunk_text for _ in range(4)]
             )  # 4 chunks = 2-3 levels
 
-            await tree_builder.add_document_async(large_document, "large-test-doc")
+            tree_builder.add_document(large_document, "large-test-doc")
 
             yield config, store, tree_builder
 
