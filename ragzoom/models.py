@@ -49,6 +49,9 @@ class TreeNode(Base):
     height: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # Distance to furthest leaf (0 for leaves, incrementing upward)
+    path: Mapped[str] = mapped_column(
+        String, nullable=False, default=""
+    )  # Binary path encoding node position in tree (empty string for root)
 
     # Performance indices for frequently queried columns
     __table_args__ = (
@@ -58,6 +61,10 @@ class TreeNode(Base):
         Index("idx_tree_nodes_parent_id", "parent_id"),
         # Composite index for root node queries (document + no parent)
         Index("idx_tree_nodes_document_root", "document_id", "parent_id"),
+        # Index on path for fast tree traversal operations
+        Index("idx_tree_nodes_path", "path"),
+        # Composite index for document-scoped path queries
+        Index("idx_tree_nodes_document_path", "document_id", "path"),
     )
 
 

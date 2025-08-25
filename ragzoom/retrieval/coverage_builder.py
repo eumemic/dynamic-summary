@@ -68,31 +68,31 @@ class CoverageBuilder:
         return coverage_map
 
     def _ensure_sibling_coverage(self, coverage_map: dict[str, bool]) -> None:
-        """Iteratively ensure coverage property by including siblings.
+        """Ensure coverage property by including siblings using path-based logic.
 
-        If a node is in coverage and is an internal node in the main tree,
-        ensure both children are present to maintain the coverage property.
+        If a node is in coverage, its sibling must also be included (if it exists)
+        to maintain the coverage property that parent span equals union of children spans.
 
         Args:
             coverage_map: Coverage map to update in place
         """
-        while True:
-            nodes_in_coverage = self.store.nodes.get_nodes(list(coverage_map.keys()))
-            new_nodes_added = False
+        # Get all nodes currently in coverage to access their paths
+        nodes_in_coverage = self.store.nodes.get_nodes(list(coverage_map.keys()))
 
-            for node in nodes_in_coverage:
-                left = node.left_child_id
-                right = node.right_child_id
+        # All nodes should have valid paths - use optimized path-based logic
+        # Use fast path-based sibling detection
+        from ragzoom.utils.path_utils import get_sibling_path
 
-                if left or right:
-                    if left and left in coverage_map:
-                        if right and right not in coverage_map:
-                            coverage_map[right] = True
-                            new_nodes_added = True
-                    elif right and right in coverage_map:
-                        if left and left not in coverage_map:
-                            coverage_map[left] = True
-                            new_nodes_added = True
+        # Compute sibling paths using direct string manipulation
+        sibling_paths = set()
+        for node in nodes_in_coverage:
+            sibling_path = get_sibling_path(node.path)
+            if sibling_path is not None:  # Root has no sibling
+                sibling_paths.add(sibling_path)
 
-            if not new_nodes_added:
-                break
+        # Single batch fetch of all potential siblings
+        if sibling_paths:
+            siblings = self.store.nodes.get_nodes_by_paths(list(sibling_paths))
+            # Add existing siblings to coverage map
+            for sibling in siblings:
+                coverage_map[sibling.id] = True
