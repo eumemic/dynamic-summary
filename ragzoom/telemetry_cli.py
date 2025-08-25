@@ -462,14 +462,14 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     with open(baseline_file) as f:
         baseline_data = json.load(f)
 
-    # Detect query telemetry files (v1.0 or v1.1 format)
+    # Detect query telemetry files (v1.0, v1.1, or v1.2 format)
     format_version = baseline_data.get("format_version")
-    if format_version in ["1.0", "1.1"] and (
+    if format_version in ["1.0", "1.1", "1.2"] and (
         (
             "telemetry" in baseline_data
             and "timings" in baseline_data.get("telemetry", {})
         )
-        or ("telemetries" in baseline_data)  # v1.1 format with multiple runs
+        or ("telemetries" in baseline_data)  # v1.1/v1.2 format with multiple runs
     ):
         # This is query telemetry
         return _compare_query_telemetry_files(baseline_file, current_file)
@@ -2058,6 +2058,84 @@ def _format_markdown_comparison_with_thresholds(
         )
 
     click.echo("")
+
+
+@cli.command()
+@click.argument(
+    "directory", type=click.Path(exists=True, file_okay=False, dir_okay=True)
+)
+@click.option(
+    "--output",
+    "-o",
+    required=True,
+    type=click.Path(),
+    help="Output file path for consolidated query telemetry",
+)
+def consolidate(directory: str, output: str) -> None:
+    """Consolidate multiple query telemetry files into a single baseline file.
+
+    This command takes a directory containing query_telemetry_*.json files
+    and creates a single consolidated file suitable for baseline comparison.
+    """
+    import json
+    from pathlib import Path
+
+    directory_path = Path(directory)
+    output_path = Path(output)
+
+    # Find all query telemetry files
+    query_files = list(directory_path.glob("query_telemetry_*.json"))
+
+    if not query_files:
+        click.echo("❌ No query telemetry files found in directory", err=True)
+        sys.exit(1)
+
+    click.echo(f"🔍 Found {len(query_files)} query telemetry files")
+
+    # Load and consolidate files
+    consolidated_telemetries = []
+    all_configs = []
+
+    for file_path in sorted(query_files):
+        click.echo(f"  - {file_path.name}")
+
+        with open(file_path) as f:
+            data = json.load(f)
+
+        # Extract telemetries - handle both v1.0 and v1.1 formats
+        if "telemetries" in data:
+            # v1.1 format with multiple runs
+            consolidated_telemetries.extend(data["telemetries"])
+        elif "telemetry" in data:
+            # v1.0 format with single run
+            consolidated_telemetries.append(data["telemetry"])
+
+        # Track all configs
+        if "config" in data:
+            all_configs.append(data["config"])
+
+    if not consolidated_telemetries:
+        click.echo("❌ No telemetry data found in files", err=True)
+        sys.exit(1)
+
+    # Create consolidated structure
+    consolidated_data = {
+        "format_version": "1.2",  # New format for consolidated baselines
+        "telemetries": consolidated_telemetries,
+        "configs": all_configs,  # All individual configs
+        "source_files": [f.name for f in sorted(query_files)],
+        "consolidated_count": len(consolidated_telemetries),
+        "config_count": len(all_configs),
+    }
+
+    # Write consolidated file
+    with open(output_path, "w") as f:
+        json.dump(consolidated_data, f, indent=2)
+
+    click.echo(
+        f"✅ Consolidated {len(consolidated_telemetries)} telemetry runs from {len(query_files)} files"
+    )
+    click.echo(f"📄 Output: {output_path}")
 
 
 if __name__ == "__main__":
