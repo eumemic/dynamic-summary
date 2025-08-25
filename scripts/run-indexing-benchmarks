@@ -370,24 +370,27 @@ if [ "$SKIP_DB_SETUP" = true ]; then
     echo "external_database" > "$DATABASE_NAME_FILE"
     echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
 else
-    # Create unique benchmark database - let ragzoom index handle Docker/PostgreSQL setup
-    echo "🗄️ Creating unique benchmark database..."
+    # Create unique benchmark database (PostgreSQL setup handled automatically)
+    echo "🗄️ Setting up benchmark database..."
     
-    # Create the database directly (ragzoom index will handle Docker startup if needed)
-    # Use environment variable to avoid shell injection
+    # Create database - Docker PostgreSQL startup is handled automatically
+    # Use environment variable to avoid shell injection  
     BENCHMARK_DB_ENV_NAME="$BENCHMARK_DB_NAME" python -c "
+from ragzoom.docker_postgres import DockerPostgres
 from ragzoom.db_utils import create_temp_database
 import os, sys
 try:
+    dp = DockerPostgres()
+    dp.ensure_running()
     db_name = os.environ['BENCHMARK_DB_ENV_NAME']
     url = create_temp_database(db_name)
     print(url)
 except Exception as e:
-    print(f'Error creating benchmark database: {e}', file=sys.stderr)
+    print(f'Error: {e}', file=sys.stderr)
     sys.exit(1)
 " > /tmp/db_setup_$$.out 2> /tmp/db_setup_$$.err
 
-    # Check if database creation succeeded
+    # Check if database setup succeeded
     if [ $? -eq 0 ]; then
         DATABASE_URL=$(cat /tmp/db_setup_$$.out)
         rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
@@ -395,20 +398,16 @@ except Exception as e:
         # Track the database for cleanup
         CREATED_DB_NAME="$BENCHMARK_DB_NAME"
         
-        # Save database name and URL for reference
+        # Save database info for reference  
         echo "$BENCHMARK_DB_NAME" > "$DATABASE_NAME_FILE"
         echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
         
         echo "✅ Created benchmark database: $BENCHMARK_DB_NAME"
-        echo "  Database URL: $DATABASE_URL"
         echo ""
     else
-        echo "❌ Failed to create benchmark database:"
+        echo "❌ PostgreSQL setup failed:"
         cat /tmp/db_setup_$$.err >&2
         rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
-        echo ""
-        echo "Note: ragzoom index will attempt Docker PostgreSQL setup if needed."
-        echo "      This may provide more detailed error information."
         exit 1
     fi
 fi
