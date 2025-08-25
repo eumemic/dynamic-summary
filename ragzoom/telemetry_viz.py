@@ -1399,7 +1399,8 @@ class TelemetryVisualizer:
                         facecolor=EMBEDDINGS_COLOR,  # Purple (#9333ea)
                         edgecolor="none",  # No border for embeddings
                         linewidth=0,
-                        alpha=0.9,
+                        alpha=0.5,  # Semi-transparent to show overlapping operations
+                        zorder=2,  # Draw on top of summaries
                     )
                     ax.add_patch(rect)
 
@@ -1437,6 +1438,7 @@ class TelemetryVisualizer:
                     edgecolor="black",
                     linewidth=0.5,
                     alpha=0.9,
+                    zorder=1,  # Draw beneath embeddings
                 )
                 ax.add_patch(rect)
                 continue
@@ -1492,6 +1494,7 @@ class TelemetryVisualizer:
                     edgecolor="black" if is_accepted else "none",
                     linewidth=0.5 if is_accepted else 0,
                     alpha=0.9,
+                    zorder=1,  # Draw beneath embeddings
                 )
                 ax.add_patch(rect)
                 cumulative_start = end_time
