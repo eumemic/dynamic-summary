@@ -55,6 +55,10 @@ ATTEMPT_COLORS = [
     "#991b1b",  # Red for retry 4+
 ]
 
+# Legend layout constants
+LEGEND_COLUMN_SPACING = 0.5  # Horizontal spacing between legend columns
+LEGEND_HANDLE_TEXT_PAD = 0.3  # Spacing between legend marker and text
+
 
 class TelemetryVisualizer:
     """Generate visualizations from telemetry data."""
@@ -1261,6 +1265,29 @@ class TelemetryVisualizer:
             fontsize=8,
         )
 
+    def _calculate_timeline_baseline(
+        self,
+        indexing_start_time: float | None,
+        min_time: float | None,
+        current_time: float,
+    ) -> tuple[float, float]:
+        """Calculate baseline time for timeline Y-axis with three-level fallback.
+
+        Args:
+            indexing_start_time: When indexing started (preferred baseline)
+            min_time: Earliest recorded time (fallback baseline)
+            current_time: Current operation time (last resort baseline)
+
+        Returns:
+            Tuple of (baseline_time, updated_min_time)
+        """
+        if indexing_start_time is not None:
+            return indexing_start_time, min_time or current_time
+        elif min_time is not None:
+            return min_time, min_time
+        else:
+            return current_time, current_time
+
     def _plot_tree_construction_timeline(
         self, telemetry: dict[str, Any], ax: Axes, max_y_limit: float | None = None
     ) -> None:
@@ -1358,13 +1385,9 @@ class TelemetryVisualizer:
                     max_time = max(max_time, embed_end_time)
 
                     # Calculate baseline for relative time
-                    if indexing_start_time is not None:
-                        baseline = indexing_start_time
-                    elif min_time is not None:
-                        baseline = min_time
-                    else:
-                        baseline = embed_start_time
-                        min_time = embed_start_time
+                    baseline, min_time = self._calculate_timeline_baseline(
+                        indexing_start_time, min_time, embed_start_time
+                    )
 
                     # Draw purple rectangle for embedding
                     rect = Rectangle(
@@ -1484,16 +1507,18 @@ class TelemetryVisualizer:
         # Set axis limits and labels
         if max_span > min_span:
             # Determine final baseline for Y-axis: prefer indexed_at, fallback to min_time
-            baseline = (
+            final_baseline = (
                 indexing_start_time if indexing_start_time is not None else min_time
             )
-            if baseline is not None:
+            if final_baseline is not None:
                 ax.set_xlim(min_span, max_span)
                 # Use provided max_y_limit if available, otherwise calculate from current data
                 if max_y_limit is not None:
                     ax.set_ylim(0, max_y_limit)
                 else:
-                    ax.set_ylim(0, max_time - baseline if max_time > baseline else 1)
+                    ax.set_ylim(
+                        0, max_time - final_baseline if max_time > final_baseline else 1
+                    )
             else:
                 ax.set_xlim(min_span, max_span)
                 ax.set_ylim(0, max_y_limit if max_y_limit is not None else 1)
@@ -1543,8 +1568,8 @@ class TelemetryVisualizer:
                     ncol=min(len(legend_elements), 6),  # Horizontal layout
                     fontsize=8,
                     frameon=False,  # Remove frame for cleaner look
-                    columnspacing=0.5,  # Reduce horizontal spacing between columns
-                    handletextpad=0.3,  # Reduce spacing between legend marker and text
+                    columnspacing=LEGEND_COLUMN_SPACING,  # Reduce horizontal spacing between columns
+                    handletextpad=LEGEND_HANDLE_TEXT_PAD,  # Reduce spacing between legend marker and text
                 )
         else:
             # No valid data to plot
