@@ -45,6 +45,8 @@ class Retriever:
         store: StoreManager,
         api_key: str | SecretStr = "",
         tree_builder: Optional["TreeBuilder"] = None,
+        use_async_dp: bool = False,
+        min_nodes_for_parallel: int = 10,
     ):
         """Initialize retriever.
 
@@ -53,9 +55,17 @@ class Retriever:
             store: StoreManager instance
             api_key: OpenAI API key as SecretStr or string (if not provided, reads from OPENAI_API_KEY env)
             tree_builder: Optional TreeBuilder instance
+            use_async_dp: Whether to use async DP generator for parallelization
+            min_nodes_for_parallel: Minimum nodes in subtree to enable parallelization
         """
         self.query_config = query_config
         self.store = store
+        self.use_async_dp = use_async_dp
+
+        # Type annotation for async_dp_generator
+        from ragzoom.dynamic_tiling import AsyncDynamicTilingGenerator
+
+        self.async_dp_generator: AsyncDynamicTilingGenerator | None
 
         # Get API key from parameter or environment
         from ragzoom.config import ensure_secret_str
@@ -64,6 +74,14 @@ class Retriever:
 
         self.client = OpenAI(api_key=actual_key)
         self.dp_generator = DynamicTilingGenerator(query_config)
+
+        # Initialize async generator if requested
+        if use_async_dp:
+            self.async_dp_generator = AsyncDynamicTilingGenerator(
+                query_config, min_nodes_for_parallel
+            )
+        else:
+            self.async_dp_generator = None
 
         # Initialize services
         self.embedding_service = EmbeddingService(
@@ -204,9 +222,16 @@ class Retriever:
             if budget_tokens is not None
             else self.query_config.budget_tokens
         )
-        dp_result = self.dp_generator.find_optimal_tiling(
-            final_budget, scores, nodes, root_id
-        )
+
+        # Use async DP generator if available, otherwise use sync version
+        if self.async_dp_generator is not None:
+            dp_result = await self.async_dp_generator.find_optimal_tiling(
+                final_budget, scores, nodes, root_id
+            )
+        else:
+            dp_result = self.dp_generator.find_optimal_tiling(
+                final_budget, scores, nodes, root_id
+            )
         if telemetry_collector:
             telemetry_collector.end_phase("dp")
             telemetry_collector.start_phase()

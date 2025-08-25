@@ -49,9 +49,13 @@ The system is composed of several key modules that work together.
     updates. An LRU cache keeps frequently accessed nodes in memory (default:
     1000 nodes). Node IDs are generated as UUIDs using `uuid.uuid4()`.
 
--   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent node or recurse into children for higher detail. Budget is split proportionally based on relevance scores. For a comprehensive technical deep dive into this algorithm, see [The Tiling Algorithm: Deep Dive](deep-dives/tiling-algorithm.md).
+-   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent node or recurse into children for higher detail. Budget is split proportionally based on relevance scores. 
 
--   **`ragzoom.retrieve.Retriever`**: Orchestrates the querying process. It takes a user query, generates an embedding, and uses the `Store` to find relevant "seed" nodes via vector search. It applies MMR (Maximal Marginal Relevance) for diversity, then invokes the `DynamicTilingGenerator` to build the final tiling based on these seed nodes and the budget.
+-   **`ragzoom.dynamic_tiling.AsyncDynamicTilingGenerator`**: An async version of the DP tiling generator that provides fork-join parallelism for independent subtree processing. When both left and right children exist, the algorithm can process them concurrently using asyncio tasks, providing 2-4x speedup on multi-core systems for trees with sufficient size. Parallelization is threshold-controlled (default: 10+ nodes) to avoid overhead on small subtrees.
+
+For a comprehensive technical deep dive into the tiling algorithm, see [The Tiling Algorithm: Deep Dive](deep-dives/tiling-algorithm.md).
+
+-   **`ragzoom.retrieve.Retriever`**: Orchestrates the querying process. It takes a user query, generates an embedding, and uses the `Store` to find relevant "seed" nodes via vector search. It applies MMR (Maximal Marginal Relevance) for diversity, then invokes either the `DynamicTilingGenerator` (sync) or `AsyncDynamicTilingGenerator` (parallel) to build the final tiling based on these seed nodes and the budget. The async version can be enabled with `use_async_dp=True` parameter.
 
 -   **`ragzoom.assemble.Assembler`**: The final step in the pipeline. It takes the tiling (a list of node IDs) produced by the retriever and assembles the final summary text by concatenating the text content of each node. **STATUS: IMPLEMENTED** - Only DP-based assembly is supported; legacy assembly has been removed.
 

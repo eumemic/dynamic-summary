@@ -211,6 +211,21 @@ result = retriever.retrieve("Your query here", document_id="my-doc-id")
 summary = assembler.assemble(result)
 print(summary)
 
+# For performance: Use async retriever with parallel DP algorithm
+retriever_async = Retriever(
+    query_config, 
+    store, 
+    operational_config.openai_api_key,
+    use_async_dp=True,                # Enable parallel processing
+    min_nodes_for_parallel=10         # Threshold for parallelization
+)
+
+# Async retrieval (2-4x faster on large trees)
+import asyncio
+result = await retriever_async.retrieve_async("Your query here", document_id="my-doc-id")
+summary = assembler.assemble(result)
+print(summary)
+
 # List all documents
 with store.SessionLocal() as session:
     from ragzoom.store import Document
