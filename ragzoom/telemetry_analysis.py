@@ -14,6 +14,7 @@ Simplified telemetry analysis for format 4.2 only.
 
 import logging
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass
 from statistics import median
 from typing import Any, TypedDict
@@ -34,6 +35,48 @@ logger = logging.getLogger(__name__)
 
 # Current supported telemetry format version
 SUPPORTED_TELEMETRY_VERSION = "4.2"
+
+
+def _calculate_mad_and_std(values: Sequence[float | int]) -> tuple[float, float]:
+    """Calculate Median Absolute Deviation (MAD) and standard deviation.
+
+    Args:
+        values: List of numeric values
+
+    Returns:
+        Tuple of (mad, std_dev)
+    """
+    if not values:
+        return 0.0, 0.0
+
+    median_val = median(values)
+    absolute_deviations = [abs(v - median_val) for v in values]
+    mad = median(absolute_deviations)
+
+    if len(values) > 1:
+        std_dev = statistics.stdev(values)
+    else:
+        std_dev = 0.0
+
+    return mad, std_dev
+
+
+def _calculate_percentage_deviation(error: float, target_size: int) -> float:
+    """Calculate percentage deviation with edge case handling.
+
+    Args:
+        error: Signed error (actual - target)
+        target_size: Target size value
+
+    Returns:
+        Percentage deviation as float
+    """
+    if target_size == 0:
+        # Edge case: if target is 0, return a large deviation to indicate the issue
+        return 100.0 if error != 0 else 0.0
+
+    return abs(error) / target_size * 100
+
 
 # Default token estimate for leaf nodes when source tokens are not available
 # This is set to 150 tokens (75% of the default 200 token chunk size) as a conservative
@@ -102,6 +145,7 @@ class VerbatimDetectionResult(TypedDict):
 class TargetFitMetrics:
     """Metrics for target-fit accuracy."""
 
+    # Signed error metrics (existing)
     median_error: float
     p95_error: float
     percent_within_10: float
@@ -113,12 +157,33 @@ class TargetFitMetrics:
     percent_within_10_mad: float
     percent_within_10_std: float
 
+    # Absolute deviation metrics (new for clearer regression detection)
+    mean_absolute_error: float  # More sensitive to outliers than median
+    median_absolute_error: float  # Robust to outliers
+    absolute_error_mad: float  # Variance for absolute errors
+    absolute_error_std: float  # Standard deviation for absolute errors
+
+    # Percentage-based metrics (chunk-size invariant)
+    mean_percent_deviation: float  # Mean of |actual - target| / target * 100
+    median_percent_deviation: float  # Median of |actual - target| / target * 100
+    percent_deviation_mad: float  # MAD of percentage deviations
+    percent_deviation_std: float  # Standard deviation of percentage deviations
+
+    # Acceptance distribution metrics (multiple thresholds for better insight)
+    percent_within_5: float  # Percentage within ±5 tokens
+    percent_within_20: float  # Percentage within ±20 tokens
+    percent_within_50: float  # Percentage within ±50 tokens
+    # Note: percent_within_10 already exists above
+
 
 @dataclass
 class RetryMetrics:
     """Metrics for retry patterns."""
 
     retry_rate: float
+    oversized_summary_rate: (
+        float  # Percentage of nodes that produced oversized summaries
+    )
     max_retries: float
     retry_mad: float
     retry_std: float
@@ -144,6 +209,7 @@ class CostMetrics:
     total_completion_tokens: int
     total_tokens: int
     usd_per_node: float
+    usd_per_million_source_tokens: float
     cost_mad: float
     cost_iqr: float
     cost_std: float
@@ -201,6 +267,9 @@ def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetr
             "Cannot compute cost metrics without knowing which models were used."
         )
 
+    # Extract source document tokens for cost calculations
+    source_document_tokens = parsed_data.get("source_document_tokens", 0)
+
     # Group nodes by target chunk size
     nodes_by_target: dict[int, list[NodeTelemetryDict]] = {}
 
@@ -249,6 +318,7 @@ def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetr
                 cost=compute_cost_metrics(
                     chunk_nodes,
                     {"summary": summary_model, "embedding": embedding_model},
+                    source_document_tokens,
                 ),
                 dispersion=compute_dispersion_metrics(chunk_nodes),
             )
@@ -272,7 +342,10 @@ def compute_target_fit_metrics(
         - error_std: Standard deviation of errors
     """
     errors = []
+    within_5_count = 0
     within_10_count = 0
+    within_20_count = 0
+    within_50_count = 0
     max_overshoot = 0
     max_undershoot = 0
     # Track per-node within_10 status for variance calculation
@@ -287,9 +360,21 @@ def compute_target_fit_metrics(
                 error = actual_tokens - target_size
                 errors.append(error)
 
-                is_within_10 = abs(error) <= 10
+                abs_error = abs(error)
+                is_within_5 = abs_error <= 5
+                is_within_10 = abs_error <= 10
+                is_within_20 = abs_error <= 20
+                is_within_50 = abs_error <= 50
+
+                if is_within_5:
+                    within_5_count += 1
                 if is_within_10:
                     within_10_count += 1
+                if is_within_20:
+                    within_20_count += 1
+                if is_within_50:
+                    within_50_count += 1
+
                 # Store 1 if within ±10, 0 if not (for variance calculation)
                 node_within_10_list.append(1.0 if is_within_10 else 0.0)
 
@@ -310,12 +395,26 @@ def compute_target_fit_metrics(
             error_std=0.0,
             percent_within_10_mad=0.0,
             percent_within_10_std=0.0,
+            mean_absolute_error=0.0,
+            median_absolute_error=0.0,
+            absolute_error_mad=0.0,
+            absolute_error_std=0.0,
+            mean_percent_deviation=0.0,
+            median_percent_deviation=0.0,
+            percent_deviation_mad=0.0,
+            percent_deviation_std=0.0,
+            percent_within_5=0.0,
+            percent_within_20=0.0,
+            percent_within_50=0.0,
         )
 
     sorted_errors = sorted(errors)
     median_error = median(sorted_errors)
     p95_error = float(np.percentile(sorted_errors, 95))
+    percent_within_5 = (within_5_count / len(errors)) * 100
     percent_within_10 = (within_10_count / len(errors)) * 100
+    percent_within_20 = (within_20_count / len(errors)) * 100
+    percent_within_50 = (within_50_count / len(errors)) * 100
 
     # Calculate variance metrics for errors
     absolute_deviations = [abs(e - median_error) for e in errors]
@@ -334,22 +433,28 @@ def compute_target_fit_metrics(
     if node_within_10_list:
         # Convert binary values (0s and 1s) to percentages once
         percent_within_10_values = [w * 100 for w in node_within_10_list]
-
-        # Calculate median and MAD
-        median_within_10 = median(percent_within_10_values)
-        absolute_deviations = [
-            abs(p - median_within_10) for p in percent_within_10_values
-        ]
-        percent_within_10_mad = median(absolute_deviations)
-
-        # Calculate standard deviation
-        if len(percent_within_10_values) > 1:
-            percent_within_10_std = statistics.stdev(percent_within_10_values)
-        else:
-            percent_within_10_std = 0.0
+        percent_within_10_mad, percent_within_10_std = _calculate_mad_and_std(
+            percent_within_10_values
+        )
     else:
         percent_within_10_mad = 0.0
         percent_within_10_std = 0.0
+
+    # Calculate absolute deviation metrics
+    absolute_errors = [abs(error) for error in errors]
+    mean_absolute_error = sum(absolute_errors) / len(absolute_errors)
+    median_absolute_error = median(absolute_errors)
+    absolute_error_mad, absolute_error_std = _calculate_mad_and_std(absolute_errors)
+
+    # Calculate percentage-based metrics (chunk-size invariant)
+    percent_deviations = [
+        _calculate_percentage_deviation(error, target_size) for error in errors
+    ]
+    mean_percent_deviation = sum(percent_deviations) / len(percent_deviations)
+    median_percent_deviation = median(percent_deviations)
+    percent_deviation_mad, percent_deviation_std = _calculate_mad_and_std(
+        percent_deviations
+    )
 
     return TargetFitMetrics(
         median_error=median_error,
@@ -362,6 +467,17 @@ def compute_target_fit_metrics(
         error_std=error_std,
         percent_within_10_mad=percent_within_10_mad,
         percent_within_10_std=percent_within_10_std,
+        mean_absolute_error=mean_absolute_error,
+        median_absolute_error=median_absolute_error,
+        absolute_error_mad=absolute_error_mad,
+        absolute_error_std=absolute_error_std,
+        mean_percent_deviation=mean_percent_deviation,
+        median_percent_deviation=median_percent_deviation,
+        percent_deviation_mad=percent_deviation_mad,
+        percent_deviation_std=percent_deviation_std,
+        percent_within_5=percent_within_5,
+        percent_within_20=percent_within_20,
+        percent_within_50=percent_within_50,
     )
 
 
@@ -393,6 +509,10 @@ def compute_retry_metrics(nodes: list[NodeTelemetryDict]) -> RetryMetrics:
     num_nodes = len(nodes)
     retry_rate = ((total_attempts - num_nodes) / num_nodes) if num_nodes > 0 else 0.0
 
+    # Calculate rejection rate - percentage of nodes that needed retries
+    nodes_with_retries = sum(1 for retries in node_retries_list if retries > 0)
+    rejection_rate = (nodes_with_retries / num_nodes * 100) if num_nodes > 0 else 0.0
+
     # Compute variance metrics for per-node retry counts
     if node_retries_list:
         median_retries = median(node_retries_list)
@@ -409,6 +529,7 @@ def compute_retry_metrics(nodes: list[NodeTelemetryDict]) -> RetryMetrics:
 
     return RetryMetrics(
         retry_rate=retry_rate,
+        oversized_summary_rate=rejection_rate,
         max_retries=float(max_retries),
         retry_mad=retry_mad,
         retry_std=retry_std,
@@ -486,7 +607,7 @@ def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> LatencyMetrics:
 
 
 def compute_cost_metrics(
-    nodes: list[NodeTelemetryDict], models: dict[str, str]
+    nodes: list[NodeTelemetryDict], models: dict[str, str], source_document_tokens: int
 ) -> CostMetrics:
     """Compute cost and token metrics.
 
@@ -557,6 +678,13 @@ def compute_cost_metrics(
     num_nodes = len(nodes)
     usd_per_node = (total_cost / num_nodes) if num_nodes > 0 else 0.0
 
+    # Calculate USD per 1M source tokens
+    usd_per_million_source_tokens = (
+        (total_cost / source_document_tokens) * 1_000_000
+        if source_document_tokens > 0
+        else 0.0
+    )
+
     # Compute variance metrics for per-node costs
     if node_costs:
         median_cost = median(node_costs)
@@ -582,6 +710,7 @@ def compute_cost_metrics(
         total_completion_tokens=total_completion_tokens,
         total_tokens=total_tokens,
         usd_per_node=usd_per_node,
+        usd_per_million_source_tokens=usd_per_million_source_tokens,
         cost_mad=cost_mad,
         cost_iqr=cost_iqr,
         cost_std=cost_std,
