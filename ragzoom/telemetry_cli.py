@@ -1659,6 +1659,7 @@ def _format_comparison_row_with_threshold(
         for_table,
         baseline_variance,
         current_variance,
+        format_metric_name,
     )
 
     # Format threshold value
@@ -1831,6 +1832,9 @@ def _format_absolute_change(
     elif unit == "%":
         # For percentage metrics, show as percentage points with % sign
         abs_str = f"{abs(absolute_change):.2f}%"
+    elif unit == "s":
+        # For time metrics, show 2 decimal places for precision
+        abs_str = f"{abs(absolute_change):.2f} {unit}"
     elif unit:
         abs_str = f"{abs(absolute_change):.1f} {unit}"
     else:
@@ -1852,6 +1856,7 @@ def _calculate_change_with_threshold(
     for_table: bool = False,
     baseline_variance: float | None = None,
     current_variance: float | None = None,
+    format_metric_name: str | None = None,
 ) -> str:
     """Calculate and format the change between baseline and current values.
 
@@ -1864,6 +1869,7 @@ def _calculate_change_with_threshold(
         for_table: If True, use table-friendly formatting
         baseline_variance: Optional baseline variance/MAD value
         current_variance: Optional current variance/MAD value
+        format_metric_name: Optional metric name to use for unit formatting
 
     Returns:
         Formatted string showing absolute and percentage change with emojis
@@ -1884,8 +1890,11 @@ def _calculate_change_with_threshold(
     # Get emoji based on significance and direction
     metric_emoji = get_change_emoji(absolute_change, higher_is_better, threshold)
 
-    # Format absolute change
-    abs_str = _format_absolute_change(absolute_change, threshold.metric_name)
+    # Format absolute change - use format_metric_name if provided, otherwise use threshold's metric_name
+    metric_name_for_unit = (
+        format_metric_name if format_metric_name else threshold.metric_name
+    )
+    abs_str = _format_absolute_change(absolute_change, metric_name_for_unit)
 
     # Simple format: emoji + absolute change only
     return f"{metric_emoji} {abs_str}"
