@@ -228,6 +228,29 @@ class DatabaseManager:
                     )
                 )
 
+                # Add path column if it doesn't exist (binary tree path optimization)
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'path'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN path VARCHAR NOT NULL DEFAULT '';
+
+                            -- Create indexes for path-based operations
+                            CREATE INDEX IF NOT EXISTS idx_tree_nodes_path ON tree_nodes (path);
+                            CREATE INDEX IF NOT EXISTS idx_tree_nodes_document_path ON tree_nodes (document_id, path);
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist
