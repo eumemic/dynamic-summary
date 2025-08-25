@@ -195,34 +195,68 @@ while IFS= read -r s3_prefix <&3; do
         LATEST_FOLDER="$folder_name"
     fi
     
-    # Local filename: TIMESTAMP-COMMIT-indexing.json
-    local_file="$BASELINES_DIR/${folder_name}-indexing.json"
-    s3_file_path="${s3_prefix}indexing-telemetry.json"
+    # Download indexing telemetry
+    indexing_local_file="$BASELINES_DIR/${folder_name}-indexing.json"
+    indexing_s3_path="${s3_prefix}indexing-telemetry.json"
     # Extra safety: strip any stray CRs that could sneak into file paths
-    clean_local_file=${local_file%$'\r'}
-    clean_s3_file_path=${s3_file_path%$'\r'}
+    clean_indexing_local=${indexing_local_file%$'\r'}
+    clean_indexing_s3=${indexing_s3_path%$'\r'}
     
-    if [ -f "$local_file" ]; then
-        log "⏭️  Skipping $folder_name (already exists)"
+    # Download query telemetry (optional for backward compatibility)
+    query_local_file="$BASELINES_DIR/${folder_name}-query.json"
+    query_s3_path="${s3_prefix}query-telemetry.json"
+    clean_query_local=${query_local_file%$'\r'}
+    clean_query_s3=${query_s3_path%$'\r'}
+    
+    # Check if we need to download anything
+    indexing_exists=$( [ -f "$indexing_local_file" ] && echo "true" || echo "false" )
+    query_exists=$( [ -f "$query_local_file" ] && echo "true" || echo "false" )
+    
+    if [ "$indexing_exists" = "true" ] && [ "$query_exists" = "true" ]; then
+        log "⏭️  Skipping $folder_name (both files already exist)"
         SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
     else
-        log "⬇️  Downloading $folder_name/indexing-telemetry.json..."
-        log "    Command: aws s3 cp s3://$BUCKET/$clean_s3_file_path $clean_local_file"
-        # Always disable progress to avoid TTY/progress interference and capture real errors
-        __err_log=$(mktemp)
-        if aws s3 cp "s3://$BUCKET/$clean_s3_file_path" "$clean_local_file" --no-progress 2>"$__err_log"; then
-            DOWNLOADED_COUNT=$((DOWNLOADED_COUNT + 1))
-        else
-            rc=$?
-            echo "❌ ERROR: Failed to download from $folder_name (exit $rc)" >&2
-            if [ -s "$__err_log" ]; then
-                cat "$__err_log" >&2
+        log "⬇️  Downloading $folder_name telemetry files..."
+        folder_downloaded=0
+        folder_failed=0
+        
+        # Download indexing telemetry if missing
+        if [ "$indexing_exists" = "false" ]; then
+            log "    📊 Downloading indexing-telemetry.json..."
+            __err_log=$(mktemp)
+            if aws s3 cp "s3://$BUCKET/$clean_indexing_s3" "$clean_indexing_local" --no-progress 2>"$__err_log"; then
+                folder_downloaded=$((folder_downloaded + 1))
             else
-                echo "(no stderr captured from aws cli)" >&2
+                rc=$?
+                echo "❌ ERROR: Failed to download indexing telemetry from $folder_name (exit $rc)" >&2
+                if [ -s "$__err_log" ]; then
+                    cat "$__err_log" >&2
+                fi
+                folder_failed=$((folder_failed + 1))
             fi
+            rm -f "$__err_log"
+        fi
+        
+        # Download query telemetry if missing (optional - may not exist in older baselines)
+        if [ "$query_exists" = "false" ]; then
+            log "    🔍 Downloading query-telemetry.json..."
+            __err_log=$(mktemp)
+            if aws s3 cp "s3://$BUCKET/$clean_query_s3" "$clean_query_local" --no-progress 2>"$__err_log"; then
+                folder_downloaded=$((folder_downloaded + 1))
+                log "    ✅ Query telemetry downloaded"
+            else
+                # Query telemetry might not exist in older baselines - don't treat as error
+                log "    ⚠️  Query telemetry not available (older baseline)"
+            fi
+            rm -f "$__err_log"
+        fi
+        
+        # Update counters based on folder results
+        if [ "$folder_downloaded" -gt 0 ] && [ "$folder_failed" -eq 0 ]; then
+            DOWNLOADED_COUNT=$((DOWNLOADED_COUNT + 1))
+        elif [ "$folder_failed" -gt 0 ]; then
             FAILED_COUNT=$((FAILED_COUNT + 1))
         fi
-        rm -f "$__err_log"
     fi
 done 3< "$TEMP_LIST"
 
@@ -245,20 +279,42 @@ if [ "$FAILED_COUNT" -gt 0 ] && [ "$FAILED_COUNT" -ge "$DOWNLOADED_COUNT" ]; the
     exit 1
 fi
 
-# Update latest.json symlink if we have files
+# Update latest symlinks if we have files
 if [ -n "$LATEST_FOLDER" ]; then
-    latest_local_file="${LATEST_FOLDER}-indexing.json"
-    if [ -f "$BASELINES_DIR/$latest_local_file" ]; then
-        log "🔗 Updating latest.json symlink -> $latest_local_file"
-        cd "$BASELINES_DIR"
+    latest_indexing_file="${LATEST_FOLDER}-indexing.json"
+    
+    cd "$BASELINES_DIR"
+    
+    # Update indexing symlink (use absolute latest)
+    if [ -f "$latest_indexing_file" ]; then
+        log "🔗 Updating latest.json symlink -> $latest_indexing_file"
         rm -f latest.json
-        ln -s "$latest_local_file" latest.json
-        cd - > /dev/null
+        ln -s "$latest_indexing_file" latest.json
     else
-        log "⚠️  Latest baseline file not found: $latest_local_file"
+        log "⚠️  Latest indexing baseline not found: $latest_indexing_file"
     fi
+    
+    # Update query symlink to most recent baseline that has query telemetry
+    # (not necessarily the absolute latest baseline)
+    latest_query_file=""
+    while IFS= read -r query_file <&4; do
+        if [ -f "$query_file" ]; then
+            latest_query_file="$query_file"
+            break
+        fi
+    done 4< <(ls -1t *-query.json 2>/dev/null | head -5)
+    
+    if [ -n "$latest_query_file" ]; then
+        log "🔗 Updating latest-query.json symlink -> $latest_query_file"
+        rm -f latest-query.json
+        ln -s "$latest_query_file" latest-query.json
+    else
+        log "📋 No query telemetry in any recent baselines"
+    fi
+    
+    cd - > /dev/null
 else
-    log "⚠️  No valid baseline files available for latest.json symlink"
+    log "⚠️  No valid baseline files available for latest symlinks"
 fi
 
 if [ "$FAILED_COUNT" -eq 0 ]; then
@@ -269,10 +325,19 @@ fi
 
 # Show what we have locally
 if [ "$QUIET" != "true" ]; then
-    TOTAL_LOCAL=$(find "$BASELINES_DIR" -name "*-indexing.json" | wc -l)
-    log "📊 Total baselines available locally: $TOTAL_LOCAL"
+    TOTAL_INDEXING=$(find "$BASELINES_DIR" -name "*-indexing.json" | wc -l)
+    TOTAL_QUERY=$(find "$BASELINES_DIR" -name "*-query.json" | wc -l)
+    log "📊 Baselines available locally:"
+    log "   - Indexing: $TOTAL_INDEXING"
+    log "   - Query: $TOTAL_QUERY"
+    
     if [ -L "$BASELINES_DIR/latest.json" ]; then
-        LATEST_TARGET=$(readlink "$BASELINES_DIR/latest.json")
-        log "🎯 Latest baseline: $LATEST_TARGET"
+        LATEST_INDEXING=$(readlink "$BASELINES_DIR/latest.json")
+        log "🎯 Latest indexing baseline: $LATEST_INDEXING"
+    fi
+    
+    if [ -L "$BASELINES_DIR/latest-query.json" ]; then
+        LATEST_QUERY=$(readlink "$BASELINES_DIR/latest-query.json")
+        log "🎯 Latest query baseline: $LATEST_QUERY"
     fi
 fi

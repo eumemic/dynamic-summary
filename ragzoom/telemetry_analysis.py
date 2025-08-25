@@ -1391,8 +1391,8 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
     # Handle both single telemetry and list of telemetries
     if isinstance(telemetry_data, dict):
         format_version = telemetry_data.get("format_version")
-        if format_version == "1.1" and "telemetries" in telemetry_data:
-            # v1.1 format with multiple runs and pre-calculated statistics
+        if format_version in ("1.1", "1.2") and "telemetries" in telemetry_data:
+            # v1.1/v1.2 format with multiple runs and optional pre-calculated statistics
             telemetries = telemetry_data["telemetries"]
             statistics_data = telemetry_data.get("statistics", {})
         elif "telemetry" in telemetry_data:

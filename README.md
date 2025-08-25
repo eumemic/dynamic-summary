@@ -471,4 +471,8 @@ ragzoom-telemetry visualize baseline.json current.json -o comparison.png
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License - see LICENSE file for details.# Query metrics baseline is now available in S3
+
+<!-- Real query metrics baseline now available -->
+
+<!-- Query baseline synced to latest folder -->

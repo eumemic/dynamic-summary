@@ -134,10 +134,17 @@ jobs:
             exit 1
           fi
           
-          # Copy baseline to expected location for benchmark comparison
+          # Copy baselines to expected locations for benchmark comparison
           mkdir -p baseline_results
           cp benchmarks/baselines/latest.json baseline_results/telemetry.json
-          echo "✅ Baseline ready for performance testing"
+          
+          # Copy query baseline if available
+          if [ -f "benchmarks/baselines/latest-query.json" ]; then
+            cp benchmarks/baselines/latest-query.json baseline_results/query-telemetry.json
+            echo "✅ Both indexing and query baselines ready"
+          else
+            echo "📋 Only indexing baseline available (older baseline without query metrics)"
+          fi
       
       - name: Initialize PostgreSQL vector extension
         run: |
@@ -262,6 +269,18 @@ jobs:
             echo "⚠️ Query benchmarks failed for: $failed_configs"
           else
             echo "✅ All query benchmarks passed"
+          fi
+          
+          # Consolidate query telemetry files for comparison
+          echo "📊 Consolidating query telemetry files..."
+          QUERY_FILES_COUNT=$(ls benchmark_results/query_telemetry_*.json 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$QUERY_FILES_COUNT" -gt 0 ]; then
+            echo "🔍 Found $QUERY_FILES_COUNT query telemetry files to consolidate"
+            ragzoom-telemetry consolidate benchmark_results/ --output benchmark_results/query-telemetry.json
+            echo "✅ Query telemetry consolidated for comparison"
+          else
+            echo "⚠️ No query telemetry files found - skipping consolidation"
+            echo "   This could indicate query benchmarks failed or were skipped"
           fi
       
       - name: Update comment - benchmarks complete
@@ -458,18 +477,23 @@ jobs:
               exit 1
             }
             
-            # Compare benchmarks using single telemetry.json files
+            # Compare indexing telemetry
+            comparison_exit_code=0
+            echo "" > report.md  # Initialize report
+            
             if [ -f "baseline_results/telemetry.json" ] && [ -f "benchmark_results/telemetry.json" ]; then
-              echo "📊 Running benchmark comparison..."
-              # Run comparison and capture both output and exit code
+              echo "📊 Running indexing benchmark comparison..."
+              # Run indexing comparison and capture both output and exit code
               set +e
-              ragzoom-telemetry compare baseline_results/telemetry.json benchmark_results/telemetry.json > report.md 2>&1
-              comparison_exit_code=$?
+              ragzoom-telemetry compare baseline_results/telemetry.json benchmark_results/telemetry.json >> report.md 2>&1
+              indexing_exit_code=$?
               set -e
               
-              # Report is ready as-is, no need to add visualization (handled in PR comment)
+              if [ $indexing_exit_code -ne 0 ]; then
+                comparison_exit_code=1
+              fi
             else
-              echo "❌ Expected benchmark files not found" > report.md
+              echo "❌ Indexing benchmark files not found" >> report.md
               echo "" >> report.md
               echo "Looking for:" >> report.md
               echo "- baseline_results/telemetry.json" >> report.md  
@@ -478,10 +502,35 @@ jobs:
               comparison_exit_code=1
             fi
             
+            # Compare query telemetry if available
+            if [ -f "baseline_results/query-telemetry.json" ] && [ -f "benchmark_results/query-telemetry.json" ]; then
+              echo "🔍 Running query benchmark comparison..."
+              echo "" >> report.md
+              echo "---" >> report.md
+              echo "" >> report.md
+              
+              # Run query comparison and capture both output and exit code
+              set +e
+              ragzoom-telemetry compare baseline_results/query-telemetry.json benchmark_results/query-telemetry.json >> report.md 2>&1
+              query_exit_code=$?
+              set -e
+              
+              if [ $query_exit_code -ne 0 ]; then
+                comparison_exit_code=1
+              fi
+            else
+              if [ -f "benchmark_results/query-telemetry.json" ]; then
+                echo "" >> report.md
+                echo "### 📋 Query Performance Metrics" >> report.md
+                echo "" >> report.md
+                echo "Query telemetry was collected but no baseline is available for comparison." >> report.md
+                echo "This is expected for the first PR with query metrics after the baseline system was updated." >> report.md
+                echo "" >> report.md
+              fi
+            fi
+            
             if [ $comparison_exit_code -ne 0 ]; then
               echo "REGRESSION=true" >> $GITHUB_OUTPUT
-              # The compare command already wrote the complete report to report.md
-              # No need to append debug information
             fi
           fi
           
