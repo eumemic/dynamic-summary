@@ -273,11 +273,14 @@ jobs:
           
           # Consolidate query telemetry files for comparison
           echo "📊 Consolidating query telemetry files..."
-          if ls benchmark_results/query_telemetry_*.json 1> /dev/null 2>&1; then
+          QUERY_FILES_COUNT=$(ls benchmark_results/query_telemetry_*.json 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$QUERY_FILES_COUNT" -gt 0 ]; then
+            echo "🔍 Found $QUERY_FILES_COUNT query telemetry files to consolidate"
             ragzoom-telemetry consolidate benchmark_results/ --output benchmark_results/query-telemetry.json
             echo "✅ Query telemetry consolidated for comparison"
           else
-            echo "⚠️ No query telemetry files found for consolidation"
+            echo "⚠️ No query telemetry files found - skipping consolidation"
+            echo "   This could indicate query benchmarks failed or were skipped"
           fi
       
       - name: Update comment - benchmarks complete
