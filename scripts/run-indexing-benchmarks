@@ -22,7 +22,8 @@ CREATED_DB_NAME=""
 
 # Cleanup function for error handling
 cleanup_benchmark_db() {
-    if [ -n "$CREATED_DB_NAME" ]; then
+    # Only clean up if we explicitly created a database and it's still marked for cleanup
+    if [ -n "$CREATED_DB_NAME" ] && [ "$CREATED_DB_NAME" != "" ]; then
         echo ""
         echo "🧹 Cleaning up benchmark database: $CREATED_DB_NAME"
         # Use environment variable to avoid shell injection
@@ -35,6 +36,8 @@ try:
 except Exception as e:
     print(f'⚠️ Cleanup failed: {e}', file=__import__('sys').stderr)
 " 2>&1
+        # Clear the variable to prevent duplicate cleanup
+        CREATED_DB_NAME=""
     fi
 }
 
@@ -357,7 +360,7 @@ if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
 fi
 echo ""
 
-# Set up database - either use provided URL or create new one
+# Set up database - either use provided URL or create unique benchmark database
 if [ "$SKIP_DB_SETUP" = true ]; then
     echo "🗄️ Using provided database URL..."
     echo "  Database URL: $DATABASE_URL"
@@ -367,11 +370,11 @@ if [ "$SKIP_DB_SETUP" = true ]; then
     echo "external_database" > "$DATABASE_NAME_FILE"
     echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
 else
-    # Ensure PostgreSQL is running and create benchmark database
-    echo "🗄️ Setting up PostgreSQL benchmark database..."
-
-    # Create database and capture the returned URL with credentials
-    # Use environment variable to avoid shell injection
+    # Create unique benchmark database (PostgreSQL setup handled automatically)
+    echo "🗄️ Setting up benchmark database..."
+    
+    # Create database - Docker PostgreSQL startup is handled automatically
+    # Use environment variable to avoid shell injection  
     BENCHMARK_DB_ENV_NAME="$BENCHMARK_DB_NAME" python -c "
 from ragzoom.docker_postgres import DockerPostgres
 from ragzoom.db_utils import create_temp_database
@@ -387,27 +390,26 @@ except Exception as e:
     sys.exit(1)
 " > /tmp/db_setup_$$.out 2> /tmp/db_setup_$$.err
 
-    # Check if database creation succeeded and capture output properly
+    # Check if database setup succeeded
     if [ $? -eq 0 ]; then
         DATABASE_URL=$(cat /tmp/db_setup_$$.out)
         rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
+        
+        # Track the database for cleanup
+        CREATED_DB_NAME="$BENCHMARK_DB_NAME"
+        
+        # Save database info for reference  
+        echo "$BENCHMARK_DB_NAME" > "$DATABASE_NAME_FILE"
+        echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
+        
+        echo "✅ Created benchmark database: $BENCHMARK_DB_NAME"
+        echo ""
     else
-        echo "❌ Failed to set up PostgreSQL database:"
+        echo "❌ PostgreSQL setup failed:"
         cat /tmp/db_setup_$$.err >&2
         rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
         exit 1
     fi
-
-    # Track the database for cleanup
-    CREATED_DB_NAME="$BENCHMARK_DB_NAME"
-
-    # Save database name and URL for reference
-    echo "$BENCHMARK_DB_NAME" > "$DATABASE_NAME_FILE"
-    echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
-
-    echo "✅ Created benchmark database: $BENCHMARK_DB_NAME"
-    echo "  Database URL: $DATABASE_URL"
-    echo ""
 fi
 
 # Run indexing with telemetry
