@@ -46,6 +46,9 @@ class TreeNode(Base):
     preceding_neighbor_id: Mapped[str | None] = mapped_column(
         String, nullable=True
     )  # ID of the node that immediately precedes this one at the same tree level
+    following_neighbor_id: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # ID of the node that immediately follows this one at the same tree level
     height: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # Distance to furthest leaf (0 for leaves, incrementing upward)

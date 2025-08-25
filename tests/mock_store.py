@@ -264,6 +264,7 @@ class SimpleMockStore(StoreInterface):
         token_count: int = 0,
         height: int = 0,
         preceding_neighbor_id: str | None = None,
+        following_neighbor_id: str | None = None,
         path: str = "",
         is_left_child: bool | None = None,
     ) -> TreeNode:
@@ -323,6 +324,7 @@ class SimpleMockStore(StoreInterface):
             access_count=0,
             created_at=None,
             preceding_neighbor_id=preceding_neighbor_id,
+            following_neighbor_id=following_neighbor_id,
             path=path,  # Binary tree path
             embedding=list(embedding),  # Store embedding in node
         )
@@ -357,6 +359,7 @@ class SimpleMockStore(StoreInterface):
                 token_count=data.get("token_count", 0),
                 height=data.get("height", 0),
                 preceding_neighbor_id=data.get("preceding_neighbor_id"),
+                following_neighbor_id=data.get("following_neighbor_id"),
                 path=data.get("path", ""),
             )
             nodes.append(node)

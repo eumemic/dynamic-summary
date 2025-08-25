@@ -487,6 +487,7 @@ class TreeBuilder:
                     "document_id": document_id,
                     "token_count": token_count,
                     "preceding_neighbor_id": preceding_leaf_id,
+                    "following_neighbor_id": None,  # Will be set in second pass
                     "height": 0,  # Leaf nodes have height 0
                     "path": path,  # Binary path encoding position in tree
                 }
@@ -494,6 +495,12 @@ class TreeBuilder:
 
             # Update preceding ID for next iteration
             preceding_leaf_id = cast(str, data["id"])
+
+        # Second pass to set following_neighbor_id
+        for i in range(len(leaf_nodes_data) - 1):
+            leaf_nodes_data[i]["following_neighbor_id"] = leaf_nodes_data[i + 1][
+                "node_id"
+            ]
 
         return leaf_nodes_data
 
@@ -1052,6 +1059,9 @@ class TreeBuilder:
                 for result in results:
                     # Add preceding neighbor ID to node data
                     result["node_data"]["preceding_neighbor_id"] = preceding_node_id
+                    result["node_data"][
+                        "following_neighbor_id"
+                    ] = None  # Will be set in second pass
 
                     # Add node data for batch insertion
                     nodes_to_add.append(result["node_data"])
@@ -1069,6 +1079,12 @@ class TreeBuilder:
 
                     # Update preceding ID for next iteration
                     preceding_node_id = result["parent_id"]
+
+                # Second pass to set following_neighbor_id
+                for i in range(len(nodes_to_add) - 1):
+                    nodes_to_add[i]["following_neighbor_id"] = nodes_to_add[i + 1][
+                        "node_id"
+                    ]
 
                 # Batch store all nodes for this level
                 if nodes_to_add:
