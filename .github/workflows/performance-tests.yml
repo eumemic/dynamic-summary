@@ -353,58 +353,36 @@ jobs:
               echo "✅ Visualization generated successfully"
               echo "VISUALIZATION_GENERATED=true" >> $GITHUB_OUTPUT
               
-              # Publish visualization to GitHub Pages for inline display
-              # Use a subdirectory to organize images by run ID
-              IMAGE_PATH="ci-visualizations/${{ github.run_id }}/comparison.png"
+              # Upload visualization to S3 for immediate availability
+              # Note: Consider configuring S3 lifecycle policy to auto-delete old visualizations:
+              #   - Delete visualizations/ after 30-60 days to manage storage costs
+              #   - Keep longer for merged PRs if needed for historical analysis
+              BUCKET_NAME="${{ vars.BASELINES_BUCKET || 'ragzoom' }}"
+              S3_PATH="visualizations/pr-${{ github.event.pull_request.number }}/run-${{ github.run_id }}/comparison.png"
+              S3_URI="s3://${BUCKET_NAME}/${S3_PATH}"
               
-              # Clone gh-pages branch (or create if it doesn't exist)
-              cd /tmp
-              if git clone --depth 1 --branch gh-pages https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git gh-pages 2>/dev/null; then
-                echo "✅ Cloned existing gh-pages branch"
-                cd gh-pages
+              echo "📤 Uploading visualization to S3: ${S3_URI}"
+              
+              # Verify bucket access
+              if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+                echo "❌ Error: Cannot access S3 bucket '$BUCKET_NAME'"
+                echo "⚠️ Visualization won't be published, but this doesn't affect the performance report"
+                VISUALIZATION_URL=""
               else
-                echo "📝 Creating new gh-pages branch"
-                mkdir gh-pages
-                cd gh-pages
-                git init
-                git checkout -b gh-pages
-                git remote add origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
-              fi
-              
-              # Configure git
-              git config user.name "github-actions[bot]"
-              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              
-              # Create directory structure and copy image
-              mkdir -p $(dirname "$IMAGE_PATH")
-              cp ${{ github.workspace }}/comparison.png "$IMAGE_PATH"
-              
-              # Add and commit
-              git add "$IMAGE_PATH"
-              git commit -m "Add telemetry visualization for PR #${{ github.event.pull_request.number }} (run: ${{ github.run_id }})"
-              
-              # Push to gh-pages with retry on conflict
-              # Pull and rebase to handle concurrent pushes from other workflows
-              if ! git push origin gh-pages; then
-                echo "⚠️ Push failed, attempting to pull and retry..."
-                git pull --rebase origin gh-pages
-                if ! git push origin gh-pages; then
-                  echo "❌ Failed to push after retry - visualization won't be published"
-                  echo "⚠️ This doesn't affect the performance report itself"
+                # Upload visualization 
+                if aws s3 cp comparison.png "$S3_URI" --no-progress; then
+                  # Generate presigned URL (valid for 30 days)
+                  VISUALIZATION_URL=$(aws s3 presign "$S3_URI" --expires-in 2592000)
+                  echo "✅ Visualization uploaded successfully"
+                  echo "📸 Image available at: $VISUALIZATION_URL"
                 else
-                  echo "✅ Successfully pushed after retry"
+                  echo "❌ Failed to upload visualization to S3"
+                  echo "⚠️ This doesn't affect the performance report itself"
+                  VISUALIZATION_URL=""
                 fi
-              else
-                echo "✅ Successfully pushed on first attempt"
               fi
               
-              # Return to main directory
-              cd ${{ github.workspace }}
-              
-              # Use GitHub Pages URL (now that it's enabled)
-              VISUALIZATION_URL="https://eumemic.github.io/dynamic-summary/$IMAGE_PATH"
               echo "VISUALIZATION_URL=$VISUALIZATION_URL" >> $GITHUB_OUTPUT
-              echo "📸 Image published to GitHub Pages: $VISUALIZATION_URL"
             fi
           else
             echo "⚠️ Skipping visualization - missing telemetry.json files"
