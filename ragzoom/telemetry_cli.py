@@ -15,6 +15,14 @@ from ragzoom.telemetry_analysis import (
 )
 from ragzoom.telemetry_query import QueryPhaseMetrics
 
+# Fixed thresholds for each metric
+FIXED_THRESHOLDS = {
+    "Summary size deviation": 14.0,  # Maximum 14%
+    "Oversized summary rate": 9.0,  # Maximum 9%
+    "Median node processing time": 3.0,  # Maximum 3 seconds
+    "Cost per 1M source tokens": 1.0,  # Maximum $1
+}
+
 
 # Metric name constants for consistency
 class MetricNames:
@@ -1535,18 +1543,17 @@ def _format_metrics_for_chunk_with_thresholds(
     curr_metrics: ChunkMetrics,
     thresholds: dict[str, DynamicThreshold],
 ) -> None:
-    """Format all metrics for a chunk size with dynamic thresholds."""
+    """Format all metrics for a chunk size with fixed thresholds."""
+
+    # Create a dummy threshold object for compatibility
+    dummy_threshold = type("DummyThreshold", (), {"metric_name": "dummy"})()
 
     # Percentage-based metrics (chunk-size invariant)
     _format_comparison_row_with_threshold(
         "Summary size deviation",
         base_metrics.target_fit.mean_percent_deviation,
         curr_metrics.target_fit.mean_percent_deviation,
-        thresholds.get(
-            "mean_percent_deviation", thresholds[MetricNames.MEDIAN_ERROR_KEY]
-        ),
-        baseline_variance=base_metrics.target_fit.percent_deviation_mad,
-        current_variance=curr_metrics.target_fit.percent_deviation_mad,
+        dummy_threshold,
     )
 
     # Oversized summary rate (percentage of nodes that produced oversized summaries)
@@ -1554,11 +1561,7 @@ def _format_metrics_for_chunk_with_thresholds(
         "Oversized summary rate",
         base_metrics.retries.oversized_summary_rate,
         curr_metrics.retries.oversized_summary_rate,
-        thresholds.get(
-            "oversized_summary_rate", thresholds[MetricNames.RETRY_RATE_KEY]
-        ),
-        baseline_variance=base_metrics.retries.retry_mad,
-        current_variance=curr_metrics.retries.retry_mad,
+        dummy_threshold,
     )
 
     # Latency metrics
@@ -1566,9 +1569,7 @@ def _format_metrics_for_chunk_with_thresholds(
         "Median node processing time",
         base_metrics.latency.median_seconds,
         curr_metrics.latency.median_seconds,
-        thresholds[MetricNames.LATENCY_KEY],
-        baseline_variance=base_metrics.latency.latency_mad,
-        current_variance=curr_metrics.latency.latency_mad,
+        dummy_threshold,
     )
 
     # Cost metrics
@@ -1576,10 +1577,8 @@ def _format_metrics_for_chunk_with_thresholds(
         "Cost per 1M source tokens",
         base_metrics.cost.usd_per_million_source_tokens,
         curr_metrics.cost.usd_per_million_source_tokens,
-        thresholds[MetricNames.COST_KEY],
+        dummy_threshold,
         is_cost=True,
-        baseline_variance=base_metrics.cost.cost_mad,
-        current_variance=curr_metrics.cost.cost_mad,
     )
 
 
@@ -1630,63 +1629,59 @@ def _format_comparison_row_with_threshold(
     baseline_variance: float | None = None,
     current_variance: float | None = None,
 ) -> None:
-    """Format a single row in the comparison table with dynamic threshold."""
-    for_table = True
-
+    """Format a single row in the comparison table with fixed threshold."""
     # Determine the correct metric name for unit formatting
-    # Map display names to internal metric names for proper unit lookup
     metric_name_mapping = {
         "Summary size deviation": "mean_percent_deviation",
         "Oversized summary rate": "oversized_summary_rate",
+        "Median node processing time": "median_seconds",
+        "Cost per 1M source tokens": "cost",
     }
-    format_metric_name = metric_name_mapping.get(metric, threshold.metric_name)
 
-    # Format baseline and current values with variance
+    # Get the format name - use mapping or fall back to threshold.metric_name for compatibility
+    format_metric_name = metric_name_mapping.get(metric)
+    if not format_metric_name and hasattr(threshold, "metric_name"):
+        format_metric_name = threshold.metric_name
+    if not format_metric_name:
+        format_metric_name = metric.lower().replace(" ", "_")
+
+    # Format baseline and current values (without variance)
     base_str = _format_value(
-        baseline, format_metric_name, is_cost, is_integer, signed, baseline_variance
+        baseline, format_metric_name, is_cost, is_integer, signed, None
     )
     curr_str = _format_value(
-        current, format_metric_name, is_cost, is_integer, signed, current_variance
+        current, format_metric_name, is_cost, is_integer, signed, None
     )
 
-    # Calculate change with threshold and variance
-    change_str = _calculate_change_with_threshold(
-        baseline,
-        current,
-        threshold,
-        higher_is_better,
-        is_error_metric,
-        for_table,
-        baseline_variance,
-        current_variance,
-        format_metric_name,
-    )
+    # Calculate simple change
+    absolute_change = current - baseline
+    unit = _get_unit_for_metric(format_metric_name)
+    abs_str = _format_absolute_change(absolute_change, format_metric_name)
+
+    # Check if regression using fixed threshold
+    regression_emoji = ""
+    fixed_threshold = FIXED_THRESHOLDS.get(metric)
+    if fixed_threshold is not None and current > fixed_threshold:
+        regression_emoji = "🔴 "  # Red circle for regression
+
+    change_str = f"{regression_emoji}{abs_str}"
 
     # Format threshold value
-    if threshold.absolute_value is None:
-        # For metrics without computed thresholds, use sensible defaults
-        if metric == "Oversized summary rate":
-            threshold_str = "< 15%"  # 15% upper bound seems reasonable
-        else:
-            threshold_str = "—"  # No threshold enforced
-    else:
-        # Use the same format_metric_name for threshold units as for values
-        unit = _get_unit_for_metric(format_metric_name)
-
-        # All metrics use unidirectional threshold (< upper bound for "lower is better" metrics)
+    if fixed_threshold is not None:
         if unit == "$":
-            threshold_str = f"< {unit}{threshold.absolute_value:.4f}"
-        elif unit:
-            threshold_str = f"< {threshold.absolute_value:.1f}{unit}"
+            threshold_str = f"< {unit}{fixed_threshold:.2f}"
+        elif unit == "%":
+            threshold_str = f"< {fixed_threshold:.0f}%"
+        elif unit == "s":
+            threshold_str = f"< {fixed_threshold:.0f}s"
         else:
-            threshold_str = f"< {threshold.absolute_value:.2f}"
-
-    # For markdown, replace newlines with <br> for proper rendering
-    change_str_md = change_str.replace("\n", "<br>")
+            threshold_str = f"< {fixed_threshold:.1f}"
+    else:
+        threshold_str = "—"  # No threshold defined
 
     # Simple table format
     click.echo(
-        f"| {metric} | {base_str} | {curr_str} | {change_str_md} | {threshold_str} |"
+        f"| {metric} | {base_str} | {curr_str} | {change_str} | {threshold_str} |"
     )
 
 
