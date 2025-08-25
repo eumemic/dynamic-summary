@@ -80,7 +80,7 @@ class TestDPIntegration:
         retriever = Retriever(
             config.query_config,
             store,
-            api_key=config.openai_api_key,
+            api_key=config.openai_api_key.get_secret_value(),
             tree_builder=tree_builder,
         )
         query = "First chunk Second chunk"  # Query that should match the first half
@@ -122,7 +122,7 @@ class TestDPIntegration:
         tree_builder = TreeBuilder(
             config=small_config,
             store=store,
-            api_key=config.openai_api_key,
+            api_key=config.openai_api_key.get_secret_value(),
         )
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
@@ -132,7 +132,7 @@ class TestDPIntegration:
         retriever = Retriever(
             config.query_config,
             store,
-            api_key=config.openai_api_key,
+            api_key=config.openai_api_key.get_secret_value(),
             tree_builder=tree_builder,
         )
         result = await retriever.retrieve_async("test document", document_id="doc1")
@@ -168,7 +168,7 @@ class TestDPIntegration:
         tree_builder = TreeBuilder(
             config=small_config,
             store=store,
-            api_key=config.openai_api_key,
+            api_key=config.openai_api_key.get_secret_value(),
         )
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
@@ -178,7 +178,7 @@ class TestDPIntegration:
         retriever = Retriever(
             config.query_config,
             store,
-            api_key=config.openai_api_key,
+            api_key=config.openai_api_key.get_secret_value(),
             tree_builder=tree_builder,
         )
 
@@ -215,7 +215,7 @@ class TestDPIntegration:
         tree_builder = TreeBuilder(
             config=config.index_config,
             store=store,
-            api_key=config.openai_api_key,
+            api_key=config.openai_api_key.get_secret_value(),
         )
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
@@ -225,7 +225,7 @@ class TestDPIntegration:
         retriever = Retriever(
             small_query_config,
             store,
-            api_key=config.openai_api_key,
+            api_key=config.openai_api_key.get_secret_value(),
             tree_builder=tree_builder,
         )
         result = await retriever.retrieve_async(

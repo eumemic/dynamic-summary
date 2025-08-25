@@ -8,7 +8,7 @@ from contextlib import contextmanager
 import numpy as np
 from numpy.typing import NDArray
 
-from ragzoom.config import OperationalConfig
+from ragzoom.config import OperationalConfig, SecretStr
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
 from ragzoom.document_store import DocumentStore
 from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
@@ -147,7 +147,7 @@ class StoreManager:
 
                 # Create store configuration
                 temp_config = OperationalConfig(
-                    openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+                    openai_api_key=SecretStr(os.getenv("OPENAI_API_KEY", "test-key")),
                     database_url=temp_db_url,
                 )
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 from openai import OpenAI
 
-from ragzoom.config import IndexConfig, QueryConfig
+from ragzoom.config import IndexConfig, QueryConfig, SecretStr
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.retrieval import (
     BudgetPlanner,
@@ -43,7 +43,7 @@ class Retriever:
         self,
         query_config: QueryConfig,
         store: StoreManager,
-        api_key: str = "",
+        api_key: str | SecretStr = "",
         tree_builder: Optional["TreeBuilder"] = None,
         use_async_dp: bool = False,
         min_nodes_for_parallel: int = 10,
@@ -53,7 +53,7 @@ class Retriever:
         Args:
             query_config: Query configuration
             store: StoreManager instance
-            api_key: OpenAI API key (if not provided, reads from OPENAI_API_KEY env)
+            api_key: OpenAI API key as SecretStr or string (if not provided, reads from OPENAI_API_KEY env)
             tree_builder: Optional TreeBuilder instance
             use_async_dp: Whether to use async DP generator for parallelization
             min_nodes_for_parallel: Minimum nodes in subtree to enable parallelization
@@ -67,13 +67,12 @@ class Retriever:
 
         self.async_dp_generator: AsyncDynamicTilingGenerator | None
 
-        import os
+        # Get API key from parameter or environment
+        from ragzoom.config import ensure_secret_str
 
-        api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            raise ValueError("OpenAI API key required for Retriever")
+        actual_key = ensure_secret_str(api_key, "Retriever")
 
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=actual_key)
         self.dp_generator = DynamicTilingGenerator(query_config)
 
         # Initialize async generator if requested

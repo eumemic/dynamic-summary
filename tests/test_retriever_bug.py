@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
@@ -19,14 +19,16 @@ class TestRetrieverBug:
             target_chunk_tokens=100, preceding_context_tokens=50
         )
         query_config = QueryConfig(budget_tokens=1000)
-        operational_config = OperationalConfig(openai_api_key="test-key")
+        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         # Create a simple config object with properties for backward compatibility
         class Config:
             def __init__(self):
                 self.target_chunk_tokens = index_config.target_chunk_tokens
                 self.preceding_context_tokens = index_config.preceding_context_tokens
-                self.openai_api_key = operational_config.openai_api_key
+                self.openai_api_key = (
+                    operational_config.openai_api_key.get_secret_value()
+                )
 
         config = Config()
         store = SimpleMockStore(config=config)
