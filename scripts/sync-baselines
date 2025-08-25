@@ -282,11 +282,10 @@ fi
 # Update latest symlinks if we have files
 if [ -n "$LATEST_FOLDER" ]; then
     latest_indexing_file="${LATEST_FOLDER}-indexing.json"
-    latest_query_file="${LATEST_FOLDER}-query.json"
     
     cd "$BASELINES_DIR"
     
-    # Update indexing symlink
+    # Update indexing symlink (use absolute latest)
     if [ -f "$latest_indexing_file" ]; then
         log "🔗 Updating latest.json symlink -> $latest_indexing_file"
         rm -f latest.json
@@ -295,13 +294,22 @@ if [ -n "$LATEST_FOLDER" ]; then
         log "⚠️  Latest indexing baseline not found: $latest_indexing_file"
     fi
     
-    # Update query symlink if query file exists
-    if [ -f "$latest_query_file" ]; then
+    # Update query symlink to most recent baseline that has query telemetry
+    # (not necessarily the absolute latest baseline)
+    latest_query_file=""
+    while IFS= read -r query_file <&4; do
+        if [ -f "$query_file" ]; then
+            latest_query_file="$query_file"
+            break
+        fi
+    done 4< <(ls -1t *-query.json 2>/dev/null | head -5)
+    
+    if [ -n "$latest_query_file" ]; then
         log "🔗 Updating latest-query.json symlink -> $latest_query_file"
         rm -f latest-query.json
         ln -s "$latest_query_file" latest-query.json
     else
-        log "📋 No query telemetry in latest baseline (older baseline)"
+        log "📋 No query telemetry in any recent baselines"
     fi
     
     cd - > /dev/null
