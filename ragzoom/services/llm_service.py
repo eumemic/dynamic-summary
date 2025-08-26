@@ -1,6 +1,5 @@
 """LLM service for handling OpenAI API interactions."""
 
-import asyncio
 import logging
 import time
 from typing import Any, cast
@@ -69,45 +68,43 @@ class LLMService:
         actual_key = ensure_secret_str(api_key, "LLMService")
 
         self.client = AsyncOpenAI(api_key=actual_key)
-        self.semaphore = asyncio.Semaphore(max_concurrent)
 
     async def _get_embedding(self, text: str) -> list[float]:
         """Get embedding for text using OpenAI."""
-        async with self.semaphore:
-            try:
-                # Check token count before embedding
-                tokens = tokenizer.encode(text)
-                token_count = len(tokens)
+        try:
+            # Check token count before embedding
+            tokens = tokenizer.encode(text)
+            token_count = len(tokens)
 
-                # Hard limit at 8000 tokens to leave margin for API overhead
-                if token_count > 8000:
-                    logger.error(
-                        f"Text exceeds embedding token limit: {token_count} tokens "
-                        f"(limit: 8000). First 200 chars: {text[:200]}..."
-                    )
-                    raise ValueError(
-                        f"Text too large for embedding: {token_count} tokens exceeds "
-                        f"limit of 8000. This is likely due to summary size growth "
-                        f"at higher tree levels."
-                    )
-
-                response = await self.client.embeddings.create(
-                    model=self.config.embedding_model,
-                    input=text,
-                    # Let OpenAI API determine dimensions - no need for hardcoded values
+            # Hard limit at 8000 tokens to leave margin for API overhead
+            if token_count > 8000:
+                logger.error(
+                    f"Text exceeds embedding token limit: {token_count} tokens "
+                    f"(limit: 8000). First 200 chars: {text[:200]}..."
                 )
-                return response.data[0].embedding
-            except Exception as e:
-                from ragzoom.error_utils import preserve_exception_chain
-                from ragzoom.exceptions import LLMError
-
-                llm_error = LLMError(
-                    operation="get_embedding",
-                    model=self.config.embedding_model,
-                    message=f"Failed to get embedding: {e}",
-                    text_length=len(text),
+                raise ValueError(
+                    f"Text too large for embedding: {token_count} tokens exceeds "
+                    f"limit of 8000. This is likely due to summary size growth "
+                    f"at higher tree levels."
                 )
-                raise preserve_exception_chain(llm_error, e)
+
+            response = await self.client.embeddings.create(
+                model=self.config.embedding_model,
+                input=text,
+                # Let OpenAI API determine dimensions - no need for hardcoded values
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            from ragzoom.error_utils import preserve_exception_chain
+            from ragzoom.exceptions import LLMError
+
+            llm_error = LLMError(
+                operation="get_embedding",
+                model=self.config.embedding_model,
+                message=f"Failed to get embedding: {e}",
+                text_length=len(text),
+            )
+            raise preserve_exception_chain(llm_error, e)
 
     async def _get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
         """Get embeddings for multiple texts in batches to respect API limits."""
@@ -142,24 +139,23 @@ class LLMService:
                     f"Empty text at index {i} in embedding batch. This should be filtered by the caller."
                 )
 
-        async with self.semaphore:
-            try:
-                response = await self.client.embeddings.create(
-                    model=self.config.embedding_model,
-                    input=texts,
-                )
-                return [data.embedding for data in response.data]
-            except Exception as e:
-                from ragzoom.error_utils import preserve_exception_chain
-                from ragzoom.exceptions import LLMError
+        try:
+            response = await self.client.embeddings.create(
+                model=self.config.embedding_model,
+                input=texts,
+            )
+            return [data.embedding for data in response.data]
+        except Exception as e:
+            from ragzoom.error_utils import preserve_exception_chain
+            from ragzoom.exceptions import LLMError
 
-                llm_error = LLMError(
-                    operation="get_batch_embeddings",
-                    model=self.config.embedding_model,
-                    message=f"Failed to get batch embeddings: {e}",
-                    batch_size=len(texts),
-                )
-                raise preserve_exception_chain(llm_error, e)
+            llm_error = LLMError(
+                operation="get_batch_embeddings",
+                model=self.config.embedding_model,
+                message=f"Failed to get batch embeddings: {e}",
+                batch_size=len(texts),
+            )
+            raise preserve_exception_chain(llm_error, e)
 
     def _tokens_to_words(self, target_tokens: int) -> int:
         """Convert target token count to target word count with bias compensation."""
@@ -173,7 +169,6 @@ class LLMService:
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Make OpenAI API call for summarization with telemetry tracking."""  # jscpd:ignore-end
-        # Note: Semaphore is now handled at the _summarize_text level to control entire summarization process
         try:
             # Build kwargs for the API call
             api_kwargs: dict[str, Any] = {
@@ -609,80 +604,76 @@ Here's the content to summarize:"""
             )
 
         # Make initial summary attempt
-        # Acquire semaphore for the entire summarization process (including retries)
-        async with self.semaphore:
-            try:
-                start_time = time.time()
-                summary, usage_info = await self._make_summary_call(
-                    cast(list[ChatCompletionMessageParam], messages),
-                    target_tokens,
-                    parent_id or "",
-                    reporter,
+        try:
+            start_time = time.time()
+            summary, usage_info = await self._make_summary_call(
+                cast(list[ChatCompletionMessageParam], messages),
+                target_tokens,
+                parent_id or "",
+                reporter,
+            )
+
+            summary_tokens = tokenizer.count_tokens(summary)
+
+            # Record telemetry for initial attempt - create a mock response object
+            if reporter and parent_id:
+                mock_response = _create_mock_response(usage_info)
+                await self._record_summary_telemetry(
+                    reporter=reporter,
+                    parent_id=parent_id,
+                    response=mock_response,
+                    target_tokens=target_tokens,
+                    input_text_tokens=input_text_tokens,
+                    actual_tokens=summary_tokens,
+                    start_time=start_time,
                 )
 
-                summary_tokens = tokenizer.count_tokens(summary)
-
-                # Record telemetry for initial attempt - create a mock response object
-                if reporter and parent_id:
-                    mock_response = _create_mock_response(usage_info)
-                    await self._record_summary_telemetry(
-                        reporter=reporter,
-                        parent_id=parent_id,
-                        response=mock_response,
-                        target_tokens=target_tokens,
-                        input_text_tokens=input_text_tokens,
-                        actual_tokens=summary_tokens,
-                        start_time=start_time,
-                    )
-
-                # Check if retry is needed
-                if not self._should_retry_summary(
-                    summary, summary_tokens, target_tokens
-                ):
-                    accepted_attempt = 0  # Initial attempt was accepted
-                    # Mark which attempt was accepted
-                    if reporter and parent_id:
-                        reporter.mark_accepted_attempt(parent_id, accepted_attempt)
-                    return summary, 0, summary_tokens
-
-                # Attempt to correct the summary
-                if self.config.max_retries > 0:
-                    final_summary, retry_count, best_attempt_index = (
-                        await self._retry_summary_correction(
-                            cast(list[ChatCompletionMessageParam], messages),
-                            summary,
-                            summary_tokens,
-                            target_tokens,
-                            parent_id or "",
-                            reporter,
-                        )
-                    )
-                    # Track which attempt was accepted (like master does)
-                    accepted_attempt = best_attempt_index
-                    # Mark which attempt was accepted
-                    if reporter and parent_id:
-                        reporter.mark_accepted_attempt(parent_id, accepted_attempt)
-                    return (
-                        final_summary,
-                        retry_count,
-                        tokenizer.count_tokens(final_summary),
-                    )
-
-                # No retries allowed, return initial attempt
+            # Check if retry is needed
+            if not self._should_retry_summary(summary, summary_tokens, target_tokens):
                 accepted_attempt = 0  # Initial attempt was accepted
                 # Mark which attempt was accepted
                 if reporter and parent_id:
                     reporter.mark_accepted_attempt(parent_id, accepted_attempt)
                 return summary, 0, summary_tokens
 
-            except Exception as e:
-                from ragzoom.error_utils import preserve_exception_chain
-                from ragzoom.exceptions import LLMError
-
-                llm_error = LLMError(
-                    operation="batch_summarize",
-                    model=self.config.summary_model,
-                    message=f"Failed to summarize text for node {parent_id}: {e}",
-                    node_id=parent_id,
+            # Attempt to correct the summary
+            if self.config.max_retries > 0:
+                final_summary, retry_count, best_attempt_index = (
+                    await self._retry_summary_correction(
+                        cast(list[ChatCompletionMessageParam], messages),
+                        summary,
+                        summary_tokens,
+                        target_tokens,
+                        parent_id or "",
+                        reporter,
+                    )
                 )
-                raise preserve_exception_chain(llm_error, e)
+                # Track which attempt was accepted (like master does)
+                accepted_attempt = best_attempt_index
+                # Mark which attempt was accepted
+                if reporter and parent_id:
+                    reporter.mark_accepted_attempt(parent_id, accepted_attempt)
+                return (
+                    final_summary,
+                    retry_count,
+                    tokenizer.count_tokens(final_summary),
+                )
+
+            # No retries allowed, return initial attempt
+            accepted_attempt = 0  # Initial attempt was accepted
+            # Mark which attempt was accepted
+            if reporter and parent_id:
+                reporter.mark_accepted_attempt(parent_id, accepted_attempt)
+            return summary, 0, summary_tokens
+
+        except Exception as e:
+            from ragzoom.error_utils import preserve_exception_chain
+            from ragzoom.exceptions import LLMError
+
+            llm_error = LLMError(
+                operation="batch_summarize",
+                model=self.config.summary_model,
+                message=f"Failed to summarize text for node {parent_id}: {e}",
+                node_id=parent_id,
+            )
+            raise preserve_exception_chain(llm_error, e)
