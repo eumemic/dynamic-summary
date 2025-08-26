@@ -90,4 +90,3 @@ jscpd-report.json
 .jscpd/
 report/
 /results/
-*_telemetry.json
