@@ -402,17 +402,22 @@ class TelemetryVisualizer:
         # Bottom section: Tree Construction Timeline
         bottom_gs = GridSpecFromSubplotSpec(1, 1, subplot_spec=main_gs[1])
 
+        # Pre-calculate bounds for consistent approach with side-by-side
+        cost_bounds = self._get_plot_bounds(telemetry, "cost")
+        summary_bounds = self._get_plot_bounds(telemetry, "summary")
+        timeline_bounds = self._get_plot_bounds(telemetry, "timeline")
+
         # 1. Cost Breakdown
         ax1 = fig.add_subplot(top_gs[0])
-        self._plot_cost_breakdown(telemetry, ax1)
+        self._plot_cost_breakdown(telemetry, ax1, bounds=cost_bounds)
 
         # 2. Summary Compression Patterns
         ax2 = fig.add_subplot(top_gs[1])
-        self._plot_summary_scatter(telemetry, ax2)
+        self._plot_summary_scatter(telemetry, ax2, bounds=summary_bounds)
 
         # 3. Tree Construction Timeline
         ax3 = fig.add_subplot(bottom_gs[0])
-        self._plot_tree_construction_timeline(telemetry, ax3)
+        self._plot_tree_construction_timeline(telemetry, ax3, bounds=timeline_bounds)
 
         # Add title and metadata
         if "config" in data:
