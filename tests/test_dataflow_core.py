@@ -6,42 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ragzoom.dataflow.core import (
-    AtomicCounter,
     build_tree_dataflow,
     poke,
 )
 from ragzoom.models import TreeNode
-
-
-class TestAtomicCounter:
-    """Test atomic counter for tracking pending work."""
-
-    @pytest.mark.asyncio
-    async def test_atomic_counter_basic(self):
-        """Test basic atomic counter operations."""
-        counter = AtomicCounter(10)
-        assert counter.value == 10
-
-        counter.decrement(3)
-        assert counter.value == 7
-
-        counter.decrement(7)
-        assert counter.value == 0
-
-    @pytest.mark.asyncio
-    async def test_atomic_counter_thread_safe(self):
-        """Test that atomic counter is thread-safe."""
-        counter = AtomicCounter(100)
-
-        async def decrement_many():
-            for _ in range(10):
-                counter.decrement(1)
-                await asyncio.sleep(0)  # Yield to other tasks
-
-        # Run multiple tasks concurrently
-        await asyncio.gather(*[decrement_many() for _ in range(10)])
-
-        assert counter.value == 0
 
 
 class TestPokeMechanism:
@@ -94,7 +62,7 @@ class TestPokeMechanism:
         lookup = {"left": left_child, "right": right_child, "parent": parent}
 
         # Poke the parent - should be queued since children have text
-        await poke("parent", lookup, queue)
+        poke("parent", lookup, queue)
 
         assert queue.qsize() == 1
         queued_id = await queue.get()
@@ -146,7 +114,7 @@ class TestPokeMechanism:
         lookup = {"left": left_child, "right": right_child, "parent": parent}
 
         # Poke the parent - should NOT be queued since left child has no text
-        await poke("parent", lookup, queue)
+        poke("parent", lookup, queue)
 
         assert queue.qsize() == 0
 
@@ -204,7 +172,7 @@ class TestPokeMechanism:
         lookup["node2"] = node2
 
         # Poke node2 - should be queued since all dependencies are ready
-        await poke("node2", lookup, queue)
+        poke("node2", lookup, queue)
 
         assert queue.qsize() == 1
 

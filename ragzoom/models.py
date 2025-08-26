@@ -70,6 +70,14 @@ class TreeNode(Base):
         Index("idx_tree_nodes_document_path", "document_id", "path"),
     )
 
+    def is_left_child(self) -> bool:
+        """Check if this node is a left child based on its path."""
+        return self.path.endswith("0")
+
+    def is_right_child(self) -> bool:
+        """Check if this node is a right child based on its path."""
+        return self.path.endswith("1")
+
 
 class Document(Base):
     """Database model for documents."""

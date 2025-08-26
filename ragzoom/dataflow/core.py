@@ -19,26 +19,6 @@ from ragzoom.utils.tokenization import tokenizer
 logger = logging.getLogger(__name__)
 
 
-class AtomicCounter:
-    """Thread-safe counter for tracking pending work."""
-
-    def __init__(self, initial: int = 0):
-        """Initialize counter with initial value."""
-        self._value = initial
-        self._lock = asyncio.Lock()
-
-    @property
-    def value(self) -> int:
-        """Get current value."""
-        return self._value
-
-    def decrement(self, amount: int = 1) -> None:
-        """Decrement counter by amount."""
-        # For simplicity, using synchronous decrement since it's atomic enough
-        # In production, might want to use asyncio.Lock for true thread safety
-        self._value -= amount
-
-
 def _generate_node_id() -> str:
     """Generate a unique node ID."""
     return str(uuid.uuid4())
@@ -217,7 +197,7 @@ def build_internal_nodes(
         current_height += 1
 
 
-async def poke(node_id: str, lookup: dict[str, TreeNode], queue: asyncio.Queue) -> None:
+def poke(node_id: str, lookup: dict[str, TreeNode], queue: asyncio.Queue) -> None:
     """Check if node's dependencies are ready and queue if so.
 
     Args:
@@ -237,21 +217,20 @@ async def poke(node_id: str, lookup: dict[str, TreeNode], queue: asyncio.Queue) 
         left_child = lookup.get(node.left_child_id)
         if not left_child or not left_child.text:
             ready = False
+        # Also check if left child's preceding neighbor is ready (for context)
+        elif left_child.preceding_neighbor_id:
+            left_child_preceding = lookup.get(left_child.preceding_neighbor_id)
+            if not left_child_preceding or not left_child_preceding.text:
+                ready = False
 
     if ready and node.right_child_id:
         right_child = lookup.get(node.right_child_id)
         if not right_child or not right_child.text:
             ready = False
 
-    # Check preceding neighbor has text
-    if ready and node.preceding_neighbor_id:
-        preceding = lookup.get(node.preceding_neighbor_id)
-        if not preceding or not preceding.text:
-            ready = False
-
     # Queue if ready
     if ready:
-        await queue.put(node_id)
+        queue.put_nowait(node_id)
 
 
 async def summary_worker(
@@ -301,11 +280,16 @@ async def summary_worker(
                     right_text = right_child.text or ""
                     right_token_count = right_child.token_count
 
-                # Get preceding context
+                # Get preceding context from left child's preceding neighbor
                 prev_context = None
-                if node.preceding_neighbor_id:
-                    preceding = lookup[node.preceding_neighbor_id]
-                    prev_context = preceding.text
+                if node.left_child_id:
+                    left_child = lookup[node.left_child_id]
+                    if left_child.preceding_neighbor_id:
+                        left_child_preceding = lookup.get(
+                            left_child.preceding_neighbor_id
+                        )
+                        if left_child_preceding:
+                            prev_context = left_child_preceding.text
 
                 # Generate summary - telemetry is handled internally by _summarize_text
                 summary, retry_count, tokens = await llm_service._summarize_text(
@@ -323,20 +307,23 @@ async def summary_worker(
                 node.text = summary
                 node.token_count = tokens
 
-                # Telemetry is already recorded inside _summarize_text, no need to call it here
-
-                # Queue for embedding
-                await embedding_queue.put((node_id, summary))
-
-                # Update progress if available
-                if progress:
-                    await progress.update(1)
-
-                # Poke dependents
+                # Poke dependents IMMEDIATELY (no yielding between set and poke!)
                 if node.parent_id:
-                    await poke(node.parent_id, lookup, summary_queue)
-                if node.following_neighbor_id:
-                    await poke(node.following_neighbor_id, lookup, summary_queue)
+                    poke(node.parent_id, lookup, summary_queue)
+
+                # Only right children poke their following neighbor's parent
+                # (Left children's following neighbor shares the same parent)
+                if node.is_right_child() and node.following_neighbor_id:
+                    following_neighbor = lookup.get(node.following_neighbor_id)
+                    if following_neighbor and following_neighbor.parent_id:
+                        poke(following_neighbor.parent_id, lookup, summary_queue)
+
+                # Queue for embedding (use put_nowait - we have unlimited queue)
+                embedding_queue.put_nowait((node_id, summary))
+
+                # Update progress synchronously
+                if progress:
+                    progress.update_sync(1)
 
             finally:
                 summary_queue.task_done()
@@ -358,7 +345,6 @@ async def embedding_worker(
     lookup: dict[str, TreeNode],
     llm_service: LLMService,
     batch_size: int,
-    pending_embeddings: AtomicCounter,
     shutdown: asyncio.Event,
     reporter: TelemetryCollector | None = None,
     progress: AsyncProgressWrapper | None = None,
@@ -372,10 +358,9 @@ async def embedding_worker(
         lookup: Dictionary to update with embeddings
         llm_service: Service for generating embeddings
         batch_size: Maximum batch size
-        pending_embeddings: Counter of pending embeddings
         shutdown: Event to signal shutdown
     """
-    while pending_embeddings.value > 0 and not shutdown.is_set():
+    while not shutdown.is_set():
         batch = []
 
         # Collect a batch with timeout to allow checking shutdown
@@ -397,10 +382,10 @@ async def embedding_worker(
 
         except asyncio.TimeoutError:
             # No items available, check if we should continue
-            if pending_embeddings.value > 0 and not shutdown.is_set():
-                continue  # Still work to do, keep waiting
+            if not shutdown.is_set():
+                continue  # Keep waiting for more work
             else:
-                break  # All done
+                break  # Shutdown requested
 
         # Process batch if we have items
         if not batch:
@@ -436,8 +421,9 @@ async def embedding_worker(
                     start_time=time.time(),  # Approximate start time
                 )
 
-            # Update counter
-            pending_embeddings.decrement(len(batch))
+            # Mark tasks as done
+            for _ in batch:
+                embedding_queue.task_done()
 
             # Update progress for leaf embeddings
             if progress:
@@ -490,10 +476,6 @@ async def build_tree_dataflow(
     summary_queue: asyncio.Queue[str] = asyncio.Queue()
     embedding_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
 
-    # Count total embeddings needed
-    total_nodes = len(lookup)
-    pending_embeddings = AtomicCounter(total_nodes)
-
     # Queue leaf embeddings immediately (they have text)
     for leaf in leaves:
         if leaf.text:  # Leaf nodes always have text
@@ -529,7 +511,6 @@ async def build_tree_dataflow(
                 lookup,
                 llm_service,
                 embedding_batch_size,
-                pending_embeddings,
                 shutdown,
                 reporter,
                 progress,
@@ -538,25 +519,34 @@ async def build_tree_dataflow(
         embedding_workers.append(worker)
 
     try:
-        # Start the cascade - poke first parent if exists
+        # Start the cascade - poke all height 1 nodes (parents of leaves)
         # For trees with only leaves (no internal nodes), no summaries needed
         if len(lookup) > len(leaves):
-            if leaves and leaves[0].parent_id:
-                await poke(leaves[0].parent_id, lookup, summary_queue)
+            height_1_nodes = set()
+            for leaf in leaves:
+                if leaf.parent_id:
+                    height_1_nodes.add(leaf.parent_id)
+
+            # Poke all unique height 1 nodes - they can all start immediately
+            for node_id in height_1_nodes:
+                poke(node_id, lookup, summary_queue)
 
         # Wait for all summaries to complete
         await summary_queue.join()
 
-        # Signal summary workers to shutdown
+        # Wait for all embeddings to complete
+        # This ensures all embeddings are processed before shutdown
+        await embedding_queue.join()
+
+        # NOW signal shutdown - all work is complete
         shutdown.set()
 
-        # Wait for all embeddings to complete
-        # Embedding workers will process remaining items and exit when counter reaches 0
-        await asyncio.gather(*embedding_workers, return_exceptions=True)
+        # Wait for all workers to finish cleanly
+        all_workers = summary_workers + embedding_workers
+        results = await asyncio.gather(*all_workers, return_exceptions=True)
 
-        # Check if any summary workers had errors
-        summary_results = await asyncio.gather(*summary_workers, return_exceptions=True)
-        for result in summary_results:
+        # Check for any errors
+        for result in results:
             if isinstance(result, Exception):
                 raise result
 
