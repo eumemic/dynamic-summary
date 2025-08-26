@@ -16,7 +16,7 @@ from ragzoom.telemetry_query import QueryPhaseMetrics
 
 # Fixed thresholds for each metric
 FIXED_THRESHOLDS = {
-    "Summary size deviation": 14.0,  # Maximum 14%
+    "Avg summary size deviation": 14.0,  # Maximum 14%
     "Oversized summary rate": 9.0,  # Maximum 9%
     "Median node processing time": 3.0,  # Maximum 3 seconds
     "Cost per 1M source tokens": 1.0,  # Maximum $1
@@ -446,7 +446,10 @@ def _check_single_chunk_for_regressions_with_thresholds(
 
     # Check each metric against fixed thresholds
     metrics_to_check = [
-        ("Summary size deviation", current_metrics.target_fit.mean_percent_deviation),
+        (
+            "Avg summary size deviation",
+            current_metrics.target_fit.mean_percent_deviation,
+        ),
         ("Oversized summary rate", current_metrics.retries.oversized_summary_rate),
         ("Median node processing time", current_metrics.latency.median_seconds),
         (
@@ -545,7 +548,7 @@ def _compare_directories(baseline_dir: Path, current_dir: Path) -> tuple[bool, b
                 # Check each metric against fixed thresholds
                 metrics_to_check = [
                     (
-                        "Summary size deviation",
+                        "Avg summary size deviation",
                         curr_metrics.target_fit.mean_percent_deviation,
                     ),
                     (
@@ -1121,7 +1124,7 @@ def _format_metrics_for_chunk_with_thresholds(
     """Format all metrics for a chunk size with fixed thresholds."""
     # Percentage-based metrics (chunk-size invariant)
     _format_comparison_row_with_threshold(
-        "Summary size deviation",
+        "Avg summary size deviation",
         base_metrics.target_fit.mean_percent_deviation,
         curr_metrics.target_fit.mean_percent_deviation,
     )
@@ -1198,7 +1201,7 @@ def _format_comparison_row_with_threshold(
     """Format a single row in the comparison table with fixed threshold."""
     # Determine the correct metric name for unit formatting
     metric_name_mapping = {
-        "Summary size deviation": "mean_percent_deviation",
+        "Avg summary size deviation": "mean_percent_deviation",
         "Oversized summary rate": "oversized_summary_rate",
         "Median node processing time": "median_seconds",
         "Cost per 1M source tokens": "cost",
