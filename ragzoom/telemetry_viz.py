@@ -1249,18 +1249,6 @@ class TelemetryVisualizer:
         max_attempts = max(attempt_numbers) if attempt_numbers else 0
         legend_elements = legend_elements[: min(max_attempts, 5)]
 
-        # Add target line to legend (insert at beginning as most important reference)
-        if chunk_size > 0:
-            target_element = Line2D(
-                [0],
-                [0],
-                color="green",
-                linestyle="--",
-                linewidth=2,
-                label=f"Target ({chunk_size} tokens)",
-            )
-            legend_elements.insert(0, target_element)
-
         # Add accepted attempt indicator to legend with transparent fill
         legend_elements.append(
             Line2D(
@@ -1277,69 +1265,17 @@ class TelemetryVisualizer:
             )
         )
 
-        # Add statistics annotation
-        # Calculate deviations from target (chunk_size) as percentages for ACCEPTED attempts only
-        if chunk_size > 0 and accepted_outputs:
-            accepted_deviations_pct = [
-                (output - chunk_size) / chunk_size * 100 for output in accepted_outputs
-            ]
-            avg_deviation_pct = np.mean(accepted_deviations_pct)
-            median_deviation_pct = np.median(accepted_deviations_pct)
-
-            # Calculate actual token positions for the lines
-            avg_position = chunk_size * (1 + avg_deviation_pct / 100)
-            median_position = chunk_size * (1 + median_deviation_pct / 100)
-
-            # Draw horizontal lines for average and median deviations
-            ax.axhline(
-                avg_position,
-                color="blue",
-                linestyle=":",
-                alpha=0.5,
-                linewidth=1.5,
-                label=f"Avg: {avg_deviation_pct:+.1f}%",
+        # Add target line to legend (after accepted attempts)
+        if chunk_size > 0:
+            target_element = Line2D(
+                [0],
+                [0],
+                color="green",
+                linestyle="--",
+                linewidth=2,
+                label=f"Target size: {chunk_size} tokens",
             )
-            ax.axhline(
-                median_position,
-                color="red",
-                linestyle="-.",
-                alpha=0.5,
-                linewidth=1.5,
-                label=f"Median: {median_deviation_pct:+.1f}%",
-            )
-
-            # Add the line references to legend elements
-
-            legend_elements.extend(
-                [
-                    Line2D(
-                        [0],
-                        [0],
-                        color="blue",
-                        linestyle=":",
-                        alpha=0.5,
-                        linewidth=1.5,
-                        label=f"Avg: {avg_deviation_pct:+.1f}%",
-                    ),
-                    Line2D(
-                        [0],
-                        [0],
-                        color="red",
-                        linestyle="-.",
-                        alpha=0.5,
-                        linewidth=1.5,
-                        label=f"Median: {median_deviation_pct:+.1f}%",
-                    ),
-                ]
-            )
-
-        elif chunk_size > 0:
-            # No accepted outputs, but chunk_size is valid
-            avg_deviation_pct = 0.0
-            median_deviation_pct = 0.0
-        else:
-            avg_deviation_pct = 0.0
-            median_deviation_pct = 0.0
+            legend_elements.append(target_element)
 
         # Add the legend with all elements
         ax.legend(handles=legend_elements, loc="upper left", fontsize=8)

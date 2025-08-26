@@ -120,7 +120,7 @@ class TestTelemetryCompare:
 
         assert result.exit_code == 0
         # Check for new simplified table format (no chunk size column)
-        assert "Summary size deviation" in result.output
+        assert "Avg summary size deviation" in result.output
         # Chunk size should appear in configuration section
         assert "Target Chunk Tokens" in result.output
 
@@ -139,7 +139,7 @@ class TestTelemetryCompare:
 
         assert result.exit_code == 0
         # Check for simplified table format without chunk size columns
-        assert "Summary size deviation" in result.output
+        assert "Avg summary size deviation" in result.output
         assert "Oversized summary rate" in result.output
         assert "Cost per 1M source tokens" in result.output
         # Should be a unified table with simplified format
