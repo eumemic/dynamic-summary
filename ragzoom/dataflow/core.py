@@ -525,12 +525,13 @@ async def build_tree_dataflow(
         # Start the cascade - poke all height 1 nodes (parents of leaves)
         # For trees with only leaves (no internal nodes), no summaries needed
         if len(lookup) > len(leaves):
-            height_1_nodes = set()
-            for leaf in leaves:
-                if leaf.parent_id:
-                    height_1_nodes.add(leaf.parent_id)
+            # Collect unique height-1 nodes and sort by span_start for ordered processing
+            height_1_nodes = list(
+                set(leaf.parent_id for leaf in leaves if leaf.parent_id)
+            )
+            height_1_nodes.sort(key=lambda node_id: lookup[node_id].span_start)
 
-            # Poke all unique height 1 nodes - they can all start immediately
+            # Poke all unique height 1 nodes in document order - they can all start immediately
             for node_id in height_1_nodes:
                 poke(node_id, lookup, summary_queue)
 
