@@ -340,8 +340,7 @@ class TreeBuilder:
                 chunks=chunks,
                 document_id=prep_result.document_id,
                 llm_service=self.llm_service,
-                target_tokens=self.config.target_chunk_tokens
-                // 2,  # Use half of chunk size as target
+                target_tokens=self.config.target_chunk_tokens,
                 max_summary_concurrency=30,  # Use default max_concurrent value
                 max_embedding_concurrency=10,  # Reasonable default
                 embedding_batch_size=self.config.embedding_batch_size,
