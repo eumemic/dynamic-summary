@@ -153,6 +153,174 @@ class TelemetryVisualizer:
         else:
             return 1.0  # Fallback: minimum 1 second for empty datasets
 
+    def _extract_plot_bounds(
+        self, telemetry: dict[str, Any], plot_type: str
+    ) -> dict[str, tuple[float, float]]:
+        """Extract axis bounds for a specific plot type from telemetry data.
+
+        Args:
+            telemetry: Telemetry data dictionary
+            plot_type: One of "cost", "summary", "timeline"
+
+        Returns:
+            Dict with 'x' and/or 'y' keys containing (min, max) tuples
+        """
+        if plot_type == "cost":
+            # Calculate total cost for Y-axis bound
+            total_cost = self._calculate_total_cost(telemetry)
+            return {"y": (0, total_cost * 1.2)}
+
+        elif plot_type == "summary":
+            # Extract input/output tokens for X/Y bounds
+            input_tokens, output_tokens = self._extract_summary_tokens(telemetry)
+            if not input_tokens:
+                return {"x": (0, 1), "y": (0, 1)}
+
+            x_margin = (max(input_tokens) - min(input_tokens)) * 0.05
+            y_margin = (max(output_tokens) - min(output_tokens)) * 0.05
+            return {
+                "x": (min(input_tokens) - x_margin, max(input_tokens) + x_margin),
+                "y": (min(output_tokens) - y_margin, max(output_tokens) + y_margin),
+            }
+
+        elif plot_type == "timeline":
+            # Extract span range and max time for X/Y bounds
+            min_span, max_span = self._extract_span_range(telemetry)
+            max_time = self._calculate_max_time_from_telemetry(telemetry)
+            return {"x": (min_span, max_span), "y": (0, max_time)}
+
+        else:
+            raise ValueError(f"Unknown plot type: {plot_type}")
+
+    def _combine_bounds(
+        self, bounds_list: list[dict]
+    ) -> dict[str, tuple[float, float]]:
+        """Combine multiple bounds dicts into unified bounds using min/max.
+
+        Args:
+            bounds_list: List of bounds dicts with 'x' and/or 'y' keys
+
+        Returns:
+            Combined bounds dict with (min, max) tuples
+        """
+        combined = {}
+        for axis in ["x", "y"]:
+            values = [b[axis] for b in bounds_list if axis in b]
+            if values:
+                mins = [v[0] for v in values]
+                maxs = [v[1] for v in values]
+                combined[axis] = (min(mins), max(maxs))
+        return combined
+
+    def _get_plot_bounds(
+        self, telemetries: dict | list[dict], plot_type: str
+    ) -> dict[str, tuple[float, float]]:
+        """Get combined bounds for a plot type from one or more telemetries.
+
+        Args:
+            telemetries: Single telemetry dict or list of telemetry dicts
+            plot_type: One of "cost", "summary", "timeline"
+
+        Returns:
+            Dict with 'x' and/or 'y' keys containing combined (min, max) bounds
+        """
+        if not isinstance(telemetries, list):
+            telemetries = [telemetries]
+
+        all_bounds = [self._extract_plot_bounds(t, plot_type) for t in telemetries]
+        return self._combine_bounds(all_bounds)
+
+    def _calculate_total_cost(self, telemetry: dict[str, Any]) -> float:
+        """Calculate total cost for cost breakdown chart.
+
+        Returns:
+            Total cost in USD
+        """
+        # Get cost functions for models in telemetry
+        embedding_cost_per_1k, summary_input_cost_per_1k, summary_output_cost_per_1k = (
+            self._get_cost_functions(telemetry)
+        )
+
+        # Extract nodes from telemetry data
+        nodes = self._extract_nodes_from_telemetry(telemetry)
+
+        # Calculate embedding cost
+        total_embedding_tokens = 0
+        for node in nodes:
+            embedding = node.get("embedding")
+            if embedding:
+                total_embedding_tokens += embedding.get("text_tokens", 0)
+
+        embedding_cost = (total_embedding_tokens / 1000) * embedding_cost_per_1k
+
+        # Calculate summary cost from all attempts
+        summary_cost = 0.0
+        for node in nodes:
+            height = node["height"]
+            if height > 0:  # Summary nodes only
+                attempts = node.get("summary_attempts", [])
+                for attempt in attempts:
+                    prompt_tokens = attempt.get("prompt_tokens", 0)
+                    completion_tokens = attempt.get("completion_tokens", 0)
+
+                    input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
+                    output_cost = (
+                        completion_tokens / 1000
+                    ) * summary_output_cost_per_1k
+                    summary_cost += input_cost + output_cost
+
+        return embedding_cost + summary_cost
+
+    def _extract_summary_tokens(
+        self, telemetry: dict[str, Any]
+    ) -> tuple[list[float], list[float]]:
+        """Extract input and output tokens from summary attempts.
+
+        Returns:
+            Tuple of (input_tokens, output_tokens) lists
+        """
+        nodes = self._extract_nodes_from_telemetry(telemetry)
+        input_tokens = []
+        output_tokens = []
+
+        for node in nodes:
+            height = node["height"]
+            if height > 0:  # Summary nodes only
+                input_text_tokens = node.get("input_text_tokens")
+                if input_text_tokens is None or input_text_tokens <= 0:
+                    continue
+
+                attempts = node.get("summary_attempts", [])
+                for attempt in attempts:
+                    actual_tokens = attempt.get("actual_tokens", 0)
+                    if actual_tokens > 0:
+                        input_tokens.append(float(input_text_tokens))
+                        output_tokens.append(float(actual_tokens))
+
+        return input_tokens, output_tokens
+
+    def _extract_span_range(self, telemetry: dict[str, Any]) -> tuple[float, float]:
+        """Extract document span range from telemetry.
+
+        Returns:
+            Tuple of (min_span, max_span)
+        """
+        nodes = self._extract_nodes_from_telemetry(telemetry)
+        min_span = float("inf")
+        max_span = 0.0
+
+        for node in nodes:
+            span = node.get("span")
+            if span:
+                span_start, span_end = span
+                min_span = min(min_span, span_start)
+                max_span = max(max_span, span_end)
+
+        if min_span == float("inf"):
+            return (0.0, 1.0)  # Fallback for empty data
+
+        return (float(min_span), float(max_span))
+
     def _ensure_output_dir(self) -> None:
         """Ensure the output directory exists, creating it if necessary."""
         self.output_path.parent.mkdir(exist_ok=True, parents=True)
@@ -356,6 +524,11 @@ class TelemetryVisualizer:
         max_time_2 = self._calculate_max_time_from_telemetry(telemetry2)
         global_max_time = max(max_time_1, max_time_2)
 
+        # Pre-calculate all bounds for consistent axis scaling
+        cost_bounds = self._get_plot_bounds([telemetry1, telemetry2], "cost")
+        summary_bounds = self._get_plot_bounds([telemetry1, telemetry2], "summary")
+        timeline_bounds = self._get_plot_bounds([telemetry1, telemetry2], "timeline")
+
         # Create figure with side-by-side subplots using built-in axis sharing
         if figsize is None:
             figsize = (
@@ -399,10 +572,10 @@ class TelemetryVisualizer:
         ax1_left = fig.add_subplot(top_gs[0, 0])
         ax1_right = fig.add_subplot(top_gs[0, 1], sharey=ax1_left)
 
-        self._plot_cost_breakdown(telemetry1, ax1_left)
+        self._plot_cost_breakdown(telemetry1, ax1_left, bounds=cost_bounds)
         ax1_left.set_title("Cost Breakdown", fontsize=12)
 
-        self._plot_cost_breakdown(telemetry2, ax1_right)
+        self._plot_cost_breakdown(telemetry2, ax1_right, bounds=cost_bounds)
         ax1_right.set_title("Cost Breakdown", fontsize=12)
         ax1_right.set_ylabel("")  # Remove y-axis label
 
@@ -410,10 +583,10 @@ class TelemetryVisualizer:
         ax2_left = fig.add_subplot(top_gs[1, 0])
         ax2_right = fig.add_subplot(top_gs[1, 1], sharex=ax2_left, sharey=ax2_left)
 
-        self._plot_summary_scatter(telemetry1, ax2_left)
+        self._plot_summary_scatter(telemetry1, ax2_left, bounds=summary_bounds)
         ax2_left.set_title("Summary Compression Patterns", fontsize=12)
 
-        self._plot_summary_scatter(telemetry2, ax2_right)
+        self._plot_summary_scatter(telemetry2, ax2_right, bounds=summary_bounds)
         ax2_right.set_title("Summary Compression Patterns", fontsize=12)
         ax2_right.set_ylabel("")  # Remove y-axis label
 
@@ -422,12 +595,12 @@ class TelemetryVisualizer:
         ax3_right = fig.add_subplot(bottom_gs[0, 1], sharex=ax3_left, sharey=ax3_left)
 
         self._plot_tree_construction_timeline(
-            telemetry1, ax3_left, max_y_limit=global_max_time
+            telemetry1, ax3_left, max_y_limit=global_max_time, bounds=timeline_bounds
         )
         ax3_left.set_title("Tree Construction Timeline", fontsize=12, pad=25)
 
         self._plot_tree_construction_timeline(
-            telemetry2, ax3_right, max_y_limit=global_max_time
+            telemetry2, ax3_right, max_y_limit=global_max_time, bounds=timeline_bounds
         )
         ax3_right.set_title("Tree Construction Timeline", fontsize=12, pad=25)
         ax3_right.set_ylabel("")  # Remove y-axis label
@@ -525,7 +698,9 @@ class TelemetryVisualizer:
         ax.legend()
         ax.grid(True, alpha=0.3, axis="y")
 
-    def _plot_cost_breakdown(self, telemetry: dict[str, Any], ax: Axes) -> None:
+    def _plot_cost_breakdown(
+        self, telemetry: dict[str, Any], ax: Axes, bounds: dict | None = None
+    ) -> None:
         """Plot cost breakdown by attempt number as vertical stacked bar."""
         # Get cost functions for models in telemetry
         embedding_cost_per_1k, summary_input_cost_per_1k, summary_output_cost_per_1k = (
@@ -626,7 +801,11 @@ class TelemetryVisualizer:
                 )
                 bottom += cost
 
-        ax.set_ylim(0, total_cost * 1.2)  # Add 20% padding for legend
+        # Use provided bounds or calculate from local data
+        if bounds and "y" in bounds:
+            ax.set_ylim(*bounds["y"])
+        else:
+            ax.set_ylim(0, total_cost * 1.2)  # Add 20% padding for legend
         ax.set_xlim(0, 1)
         ax.set_ylabel("Cost ($)")
         ax.set_title(f"Cost Breakdown\nTotal: ${total_cost:.4f}")
@@ -837,7 +1016,9 @@ class TelemetryVisualizer:
 
         return deviations
 
-    def _plot_summary_scatter(self, telemetry: dict[str, Any], ax: Axes) -> None:
+    def _plot_summary_scatter(
+        self, telemetry: dict[str, Any], ax: Axes, bounds: dict | None = None
+    ) -> None:
         """Plot input vs output token scatter plot, color-coded by attempt number."""
         # Extract chunk size (target) and nodes from telemetry data
         chunk_size = self._extract_chunk_size_from_telemetry(telemetry)
@@ -947,8 +1128,15 @@ class TelemetryVisualizer:
             )
 
         # Apply axis limits first
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
+        if bounds and "x" in bounds:
+            ax.set_xlim(*bounds["x"])
+        else:
+            ax.set_xlim(x_min, x_max)
+
+        if bounds and "y" in bounds:
+            ax.set_ylim(*bounds["y"])
+        else:
+            ax.set_ylim(y_min, y_max)
 
         # Add acceptable range band based on retry_threshold (full width of plot)
         # Get current x-axis limits and extend well beyond them to ensure full coverage
@@ -1060,6 +1248,18 @@ class TelemetryVisualizer:
         # Only include legend items for attempt numbers that exist in the data
         max_attempts = max(attempt_numbers) if attempt_numbers else 0
         legend_elements = legend_elements[: min(max_attempts, 5)]
+
+        # Add target line to legend (insert at beginning as most important reference)
+        if chunk_size > 0:
+            target_element = Line2D(
+                [0],
+                [0],
+                color="green",
+                linestyle="--",
+                linewidth=2,
+                label=f"Target ({chunk_size} tokens)",
+            )
+            legend_elements.insert(0, target_element)
 
         # Add accepted attempt indicator to legend with transparent fill
         legend_elements.append(
@@ -1289,7 +1489,11 @@ class TelemetryVisualizer:
             return current_time, current_time
 
     def _plot_tree_construction_timeline(
-        self, telemetry: dict[str, Any], ax: Axes, max_y_limit: float | None = None
+        self,
+        telemetry: dict[str, Any],
+        ax: Axes,
+        max_y_limit: float | None = None,
+        bounds: dict | None = None,
     ) -> None:
         """Plot tree construction as rectangles showing span coverage over time.
 
@@ -1506,17 +1710,31 @@ class TelemetryVisualizer:
                 indexing_start_time if indexing_start_time is not None else min_time
             )
             if final_baseline is not None:
-                ax.set_xlim(min_span, max_span)
-                # Use provided max_y_limit if available, otherwise calculate from current data
-                if max_y_limit is not None:
+                # Use provided bounds or calculate from local data
+                if bounds and "x" in bounds:
+                    ax.set_xlim(*bounds["x"])
+                else:
+                    ax.set_xlim(min_span, max_span)
+
+                if bounds and "y" in bounds:
+                    ax.set_ylim(*bounds["y"])
+                elif max_y_limit is not None:
                     ax.set_ylim(0, max_y_limit)
                 else:
                     ax.set_ylim(
                         0, max_time - final_baseline if max_time > final_baseline else 1
                     )
             else:
-                ax.set_xlim(min_span, max_span)
-                ax.set_ylim(0, max_y_limit if max_y_limit is not None else 1)
+                # Use provided bounds or calculate from local data
+                if bounds and "x" in bounds:
+                    ax.set_xlim(*bounds["x"])
+                else:
+                    ax.set_xlim(min_span, max_span)
+
+                if bounds and "y" in bounds:
+                    ax.set_ylim(*bounds["y"])
+                else:
+                    ax.set_ylim(0, max_y_limit if max_y_limit is not None else 1)
             ax.set_xlabel("Document Position (characters)")
             ax.set_ylabel("Time Since Start (seconds)")
             # Add extra padding at the top for the legend
