@@ -25,7 +25,7 @@ class TestDataflowRaceConditions:
         # Track what gets embedded
         embedded_nodes = []
 
-        async def slow_summary(*args):
+        async def slow_summary(*args, **kwargs):
             """Simulate slow summary generation."""
             await asyncio.sleep(0.05)  # Slow enough to expose race condition
             return ("Summary text", 1, 10)
@@ -36,10 +36,8 @@ class TestDataflowRaceConditions:
             await asyncio.sleep(0.001)  # Fast embedding
             return [[0.1] * 10 for _ in texts]
 
-        mock_llm_service.generate_summary_async = AsyncMock(side_effect=slow_summary)
-        mock_llm_service.generate_embeddings_batch_async = AsyncMock(
-            side_effect=fast_embeddings
-        )
+        mock_llm_service._summarize_text = AsyncMock(side_effect=slow_summary)
+        mock_llm_service._get_embeddings_batch = AsyncMock(side_effect=fast_embeddings)
 
         # Create a tree that will have internal nodes
         chunks = ["Chunk 1", "Chunk 2", "Chunk 3", "Chunk 4"]
@@ -81,7 +79,7 @@ class TestDataflowRaceConditions:
         summary_generated = asyncio.Event()
         embedding_calls = []
 
-        async def delayed_summary(*args):
+        async def delayed_summary(*args, **kwargs):
             """Summary that signals when complete."""
             await asyncio.sleep(0.1)  # Significant delay
             summary_generated.set()
@@ -97,10 +95,8 @@ class TestDataflowRaceConditions:
                 ), "Embedding summary before it was generated!"
             return [[0.1] * 10 for _ in texts]
 
-        mock_llm_service.generate_summary_async = AsyncMock(side_effect=delayed_summary)
-        mock_llm_service.generate_embeddings_batch_async = AsyncMock(
-            side_effect=track_embeddings
-        )
+        mock_llm_service._summarize_text = AsyncMock(side_effect=delayed_summary)
+        mock_llm_service._get_embeddings_batch = AsyncMock(side_effect=track_embeddings)
 
         # Simple 2-node tree (will create 1 parent)
         chunks = ["Chunk 1", "Chunk 2"]

@@ -217,7 +217,7 @@ class TestDataflowIntegration:
         """Test building a simple tree with dataflow."""
         # Create mock LLM service
         mock_llm_service = MagicMock()
-        mock_llm_service.generate_summary_async = AsyncMock(
+        mock_llm_service._summarize_text = AsyncMock(
             return_value=("Summary text", 1, 10)
         )
 
@@ -225,9 +225,7 @@ class TestDataflowIntegration:
         async def mock_embeddings(texts):
             return [[0.1] * 10 for _ in texts]
 
-        mock_llm_service.generate_embeddings_batch_async = AsyncMock(
-            side_effect=mock_embeddings
-        )
+        mock_llm_service._get_embeddings_batch = AsyncMock(side_effect=mock_embeddings)
 
         # Create simple chunks for testing
         chunks = ["Chunk 1", "Chunk 2", "Chunk 3", "Chunk 4"]
@@ -278,8 +276,8 @@ class TestDataflowIntegration:
             return [[0.1] * 10] * len(args[0])
 
         mock_llm_service = MagicMock()
-        mock_llm_service.generate_summary_async = mock_summary
-        mock_llm_service.generate_embeddings_batch_async = mock_embeddings
+        mock_llm_service._summarize_text = mock_summary
+        mock_llm_service._get_embeddings_batch = mock_embeddings
 
         # Create tree with 8 chunks (will create multiple levels)
         chunks = [f"Chunk {i}" for i in range(8)]
@@ -302,17 +300,13 @@ class TestDataflowIntegration:
     async def test_dataflow_error_handling(self):
         """Test that dataflow handles errors appropriately."""
         mock_llm_service = MagicMock()
-        mock_llm_service.generate_summary_async = AsyncMock(
-            side_effect=Exception("API error")
-        )
+        mock_llm_service._summarize_text = AsyncMock(side_effect=Exception("API error"))
 
         # Mock should return embeddings for each text in the batch
         async def mock_embeddings(texts):
             return [[0.1] * 10 for _ in texts]
 
-        mock_llm_service.generate_embeddings_batch_async = AsyncMock(
-            side_effect=mock_embeddings
-        )
+        mock_llm_service._get_embeddings_batch = AsyncMock(side_effect=mock_embeddings)
 
         chunks = ["Chunk 1", "Chunk 2"]
 
@@ -331,17 +325,13 @@ class TestDataflowIntegration:
     async def test_dataflow_produces_complete_tree(self):
         """Test that dataflow produces a complete tree with all nodes."""
         mock_llm_service = MagicMock()
-        mock_llm_service.generate_summary_async = AsyncMock(
-            return_value=("Summary", 1, 10)
-        )
+        mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
 
         # Mock should return embeddings for each text in the batch
         async def mock_embeddings(texts):
             return [[0.1] * 10 for _ in texts]
 
-        mock_llm_service.generate_embeddings_batch_async = AsyncMock(
-            side_effect=mock_embeddings
-        )
+        mock_llm_service._get_embeddings_batch = AsyncMock(side_effect=mock_embeddings)
 
         # Create tree with 4 chunks
         chunks = ["A", "B", "C", "D"]
