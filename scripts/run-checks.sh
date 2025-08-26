@@ -9,6 +9,7 @@
 #   --skip CHECKS           Skip specific checks (comma-separated): tests,dmypy,ruff,black,jscpd,bandit
 #   --fail-fast             Stop at first failure (useful for debugging)
 #   --include-slow-tests    Include slow and integration tests (auto-starts PostgreSQL)
+#   --ignore-lint-rules RULES  Ignore specific lint rules (comma-separated): F401,E402,etc.
 #   --help                  Show this help message
 #
 # Exit codes:
@@ -22,6 +23,7 @@ SKIP_CHECKS=""
 TARGETS=""
 FAIL_FAST=false
 INCLUDE_SLOW_TESTS=false
+IGNORE_LINT_RULES=""
 
 show_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# *//'
@@ -40,6 +42,10 @@ while [[ $# -gt 0 ]]; do
         --include-slow-tests)
             INCLUDE_SLOW_TESTS=true
             shift
+            ;;
+        --ignore-lint-rules)
+            IGNORE_LINT_RULES="$2"
+            shift 2
             ;;
         --help|-h)
             show_help
@@ -211,7 +217,11 @@ fi
 if ! should_skip "ruff"; then
     if command -v ruff &> /dev/null; then
         if [ -z "$modified_files" ] || [ -n "$modified_files" ]; then
-            run_check_background "Ruff" "ruff check $TARGETS --fix --quiet --output-format concise"
+            ruff_cmd="ruff check $TARGETS --fix --quiet --output-format concise"
+            if [ -n "$IGNORE_LINT_RULES" ]; then
+                ruff_cmd="$ruff_cmd --ignore $IGNORE_LINT_RULES"
+            fi
+            run_check_background "Ruff" "$ruff_cmd"
         else
             echo "[Ruff] Skipped (no Python files)"
         fi
