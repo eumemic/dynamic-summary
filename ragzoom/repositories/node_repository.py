@@ -251,7 +251,7 @@ class NodeRepository(BaseRepository):
             nodes = db_session.query(TreeNode).all()
 
             # Find root nodes (nodes with no parent)
-            root_nodes = [node for node in nodes if node.parent_id is None]
+            root_nodes = [node for node in nodes if node.is_root()]
 
             # Update paths starting from root nodes
             for root in root_nodes:

@@ -324,7 +324,7 @@ def validate_tiling(
         # Find root node from preloaded nodes (node with no parent in the set)
         root_node = None
         for node in preloaded_nodes.values():
-            if node.parent_id is None or node.parent_id not in preloaded_nodes:
+            if node.is_root() or node.parent_id not in preloaded_nodes:
                 root_node = node
                 break
 
@@ -452,7 +452,7 @@ def validate_equal_leaf_depth(store: StoreManager, document_id: str) -> str | No
         # Find root node (node with no parent)
         root_node = None
         for node in nodes:
-            if node.parent_id is None:
+            if node.is_root():
                 root_node = node
                 break
 

@@ -205,7 +205,7 @@ class Retriever:
         # Find the root node
         root_id = None
         for node_id, node in nodes.items():
-            if node.parent_id is None or node.parent_id not in nodes:
+            if node.is_root() or node.parent_id not in nodes:
                 root_id = node_id
                 break
 

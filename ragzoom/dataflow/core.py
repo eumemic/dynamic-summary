@@ -321,7 +321,7 @@ async def summary_worker(
                         poke(following_neighbor.parent_id, lookup, summary_queue)
 
                 # Queue for embedding (use put_nowait - we have unlimited queue)
-                embedding_queue.put_nowait((node_id, summary))
+                embedding_queue.put_nowait(node)
 
                 # Update progress synchronously
                 if progress:
@@ -343,8 +343,7 @@ async def summary_worker(
 # Similar structure to summary_worker but fundamentally different processing
 async def embedding_worker(
     worker_id: int,
-    embedding_queue: asyncio.Queue,
-    lookup: dict[str, TreeNode],
+    embedding_queue: asyncio.Queue[TreeNode],
     llm_service: LLMService,
     batch_size: int,
     shutdown: asyncio.Event,
@@ -360,8 +359,7 @@ async def embedding_worker(
 
     Args:
         worker_id: ID for logging
-        embedding_queue: Queue of (node_id, text) tuples
-        lookup: Dictionary to update with embeddings
+        embedding_queue: Queue of TreeNode objects
         llm_service: Service for generating embeddings
         batch_size: Target batch size for optimal API utilization
         shutdown: Event to signal shutdown
@@ -379,7 +377,7 @@ async def embedding_worker(
 
                 # Process full batch
                 await _process_embedding_batch(
-                    batch, lookup, llm_service, reporter, progress, worker_id
+                    batch, llm_service, reporter, progress, worker_id
                 )
 
                 # Mark all items as done
@@ -399,7 +397,7 @@ async def embedding_worker(
                 if batch:
                     # Process partial batch
                     await _process_embedding_batch(
-                        batch, lookup, llm_service, reporter, progress, worker_id
+                        batch, llm_service, reporter, progress, worker_id
                     )
 
                     # Mark all items as done
@@ -419,8 +417,7 @@ async def embedding_worker(
 
 
 async def _process_embedding_batch(
-    batch: list[tuple[str, str]],
-    lookup: dict[str, TreeNode],
+    batch: list[TreeNode],
     llm_service: LLMService,
     reporter: TelemetryCollector | None,
     progress: AsyncProgressWrapper | None,
@@ -429,21 +426,21 @@ async def _process_embedding_batch(
     """Process a batch of embeddings."""
     try:
         # Generate embeddings for batch
-        texts = [text for _, text in batch]
+        texts = [node.text for node in batch]
         start_time = time.time()
         embeddings = await llm_service._get_embeddings_batch(texts)
 
-        # Store embeddings
-        for (node_id, _), embedding in zip(batch, embeddings):
-            lookup[node_id].embedding = embedding
+        # Store embeddings directly on nodes
+        for node, embedding in zip(batch, embeddings):
+            node.embedding = embedding
 
         # Track telemetry
         if reporter:
             # Prepare node embeddings data
             node_embeddings = []
-            for node_id, text in batch:
-                token_count = tokenizer.count_tokens(text)
-                node_embeddings.append((node_id, token_count))
+            for node in batch:
+                token_count = tokenizer.count_tokens(node.text)
+                node_embeddings.append((node.id, token_count))
 
             # Record v2 telemetry with per-node tracking
             model = (
@@ -460,8 +457,8 @@ async def _process_embedding_batch(
 
         # Update progress for leaf embeddings
         if progress:
-            # Count how many are leaves (height 0)
-            leaf_count = sum(1 for node_id, _ in batch if lookup[node_id].height == 0)
+            # Count how many are leaves
+            leaf_count = sum(1 for node in batch if node.is_leaf())
             if leaf_count > 0:
                 await progress.update(leaf_count)
 
@@ -505,12 +502,12 @@ async def build_tree_dataflow(
 
     # Initialize queues and storage
     summary_queue: asyncio.Queue[str] = asyncio.Queue()
-    embedding_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+    embedding_queue: asyncio.Queue[TreeNode] = asyncio.Queue()
 
     # Queue leaf embeddings immediately (they have text)
     for leaf in leaves:
         if leaf.text:  # Leaf nodes always have text
-            await embedding_queue.put((leaf.id, leaf.text))
+            await embedding_queue.put(leaf)
 
     # Create shutdown and completion events
     shutdown = asyncio.Event()
@@ -540,7 +537,6 @@ async def build_tree_dataflow(
             embedding_worker(
                 i,
                 embedding_queue,
-                lookup,
                 llm_service,
                 embedding_batch_size,
                 shutdown,
