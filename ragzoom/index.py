@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, cast, overload
 
 from ragzoom.config import IndexConfig, SecretStr
+from ragzoom.dataflow import build_tree_dataflow
 from ragzoom.document_store import DocumentStore
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.services.llm_service import LLMService
@@ -463,7 +464,7 @@ class TreeBuilder:
         from ragzoom.utils.path_utils import calculate_tree_depth, generate_leaf_path
 
         leaf_nodes_data = []
-        preceding_leaf_id = None  # Track preceding leaf for document order
+        previous_leaf_data = None
 
         # Calculate tree depth for path generation
         num_leaves = len(chunk_data)
@@ -477,30 +478,30 @@ class TreeBuilder:
             # Generate binary path for this leaf
             path = generate_leaf_path(i, tree_depth)
 
-            leaf_nodes_data.append(
-                {
-                    "node_id": cast(str, data["id"]),
-                    "text": text,
-                    "embedding": embedding,
-                    "span_start": cast(int, data["span_start"]),
-                    "span_end": cast(int, data["span_end"]),
-                    "document_id": document_id,
-                    "token_count": token_count,
-                    "preceding_neighbor_id": preceding_leaf_id,
-                    "following_neighbor_id": None,  # Will be set in second pass
-                    "height": 0,  # Leaf nodes have height 0
-                    "path": path,  # Binary path encoding position in tree
-                }
-            )
+            current_leaf_data = {
+                "node_id": cast(str, data["id"]),
+                "text": text,
+                "embedding": embedding,
+                "span_start": cast(int, data["span_start"]),
+                "span_end": cast(int, data["span_end"]),
+                "document_id": document_id,
+                "token_count": token_count,
+                "preceding_neighbor_id": (
+                    previous_leaf_data["node_id"] if previous_leaf_data else None
+                ),
+                "following_neighbor_id": None,  # Will be set by next leaf
+                "height": 0,  # Leaf nodes have height 0
+                "path": path,  # Binary path encoding position in tree
+            }
 
-            # Update preceding ID for next iteration
-            preceding_leaf_id = cast(str, data["id"])
+            # Update previous leaf's following_neighbor_id
+            if previous_leaf_data:
+                previous_leaf_data["following_neighbor_id"] = current_leaf_data[
+                    "node_id"
+                ]
 
-        # Second pass to set following_neighbor_id
-        for i in range(len(leaf_nodes_data) - 1):
-            leaf_nodes_data[i]["following_neighbor_id"] = leaf_nodes_data[i + 1][
-                "node_id"
-            ]
+            leaf_nodes_data.append(current_leaf_data)
+            previous_leaf_data = current_leaf_data
 
         return leaf_nodes_data
 
@@ -856,279 +857,106 @@ class TreeBuilder:
         reporter: TelemetryCollector | None = None,
         doc_store: DocumentStore | None = None,
     ) -> str:
-        """Build tree bottom-up from leaf nodes with concurrent processing."""
+        """Build tree using dataflow parallelism for maximum performance.
+
+        This method has been greatly simplified by using the dataflow implementation
+        which handles all parallelism and dependency tracking internally.
+        """
         if doc_store is None:
             doc_store = self.store.for_document(document_id)
 
-        current_level_ids = leaf_ids
-        current_level_texts = leaf_texts
-        current_level_nodes = None  # Will be populated after first batch insert
+        # Build tree using dataflow parallelism
+        tree_nodes = await build_tree_dataflow(
+            chunks=leaf_texts,
+            document_id=document_id or "",  # Ensure we have a string
+            llm_service=self.llm_service,
+            max_summary_concurrency=30,  # Match the default max_concurrent from TreeBuilder
+            max_embedding_concurrency=10,  # Reasonable default for embedding concurrency
+            embedding_batch_size=self.config.embedding_batch_size,  # Use configured batch size
+        )
 
-        # Calculate total tree height (distance from root to furthest leaf)
-        # Note: This is used for progress tracking estimation
+        # Find leaf nodes and update them with the provided IDs
+        # Also separate internal nodes for storage
+        leaf_index = 0
+        internal_nodes = []
+        leaf_node_map = {}  # Map from dataflow leaf IDs to actual leaf IDs
 
-        # Track leaf level
+        for node in tree_nodes:
+            if node.height == 0:  # This is a leaf node
+                if leaf_index < len(leaf_ids):
+                    old_id = node.id
+                    new_id = leaf_ids[leaf_index]
+                    leaf_node_map[old_id] = new_id
+                    node.id = new_id
+                    leaf_index += 1
+            else:
+                # Internal node - needs to be stored
+                # Update child references to use actual leaf IDs
+                if node.left_child_id in leaf_node_map:
+                    node.left_child_id = leaf_node_map[node.left_child_id]
+                if node.right_child_id and node.right_child_id in leaf_node_map:
+                    node.right_child_id = leaf_node_map[node.right_child_id]
+                internal_nodes.append(node)
+
+        # Store only internal nodes in the database (leaves already stored in _index_chunks)
+        nodes_data = []
+        for node in internal_nodes:
+            node_data = {
+                "node_id": node.id,
+                "text": node.text,
+                "document_id": node.document_id,
+                "span_start": node.span_start,
+                "span_end": node.span_end,
+                "parent_id": node.parent_id,
+                "left_child_id": node.left_child_id,
+                "right_child_id": node.right_child_id,
+                "preceding_neighbor_id": node.preceding_neighbor_id,
+                "following_neighbor_id": node.following_neighbor_id,
+                "embedding": node.embedding,
+                "token_count": node.token_count,
+            }
+            nodes_data.append(node_data)
+
+        # Batch insert only internal nodes
+        if nodes_data:
+            doc_store.nodes.add_batch(nodes_data)
+
+        # Update parent references for leaf nodes (they were already stored)
+        parent_updates = []
+        leaf_ids_set = set(leaf_ids)  # For O(1) lookup
+        for node in internal_nodes:
+            # Only update parent references for leaf children
+            if node.left_child_id in leaf_ids_set:
+                parent_updates.append((node.left_child_id, node.id))
+            if node.right_child_id and node.right_child_id in leaf_ids_set:
+                parent_updates.append((node.right_child_id, node.id))
+
+        if parent_updates:
+            doc_store.nodes.update_parent_references_batch(parent_updates)
+
+        # Find and return the root node ID (highest height node)
+        root_node = max(tree_nodes, key=lambda n: n.height)
+
+        # Update progress if provided
+        if progress:
+            # Update progress for all nodes processed
+            await progress.update(len(tree_nodes) - len(leaf_ids))
+
+        # Log completion
+        if overall_start_time:
+            elapsed = time.time() - overall_start_time
+            mins, secs = divmod(int(elapsed), 60)
+            logger.info(
+                f"Tree building complete. Root node at height {root_node.height} with ID: {root_node.id[:8]}... [{mins}m {secs}s elapsed total]"
+            )
+
+        # Record telemetry if reporter provided
         if reporter:
-            try:
-                reporter.record_tree_height_complete(0, len(leaf_ids))
-            except Exception as e:
-                logger.warning(f"Failed to record telemetry for tree height: {e}")
-
-        current_height = 1  # Track height for logging (leaves are at height 0)
-        while len(current_level_ids) > 1:
-            next_level_ids: list[str] = []
-            next_level_texts: list[str] = []
-            # Note: current_height will be incremented after processing this height
-
-            # Use pre-stored nodes if available, otherwise fetch from database
-            if current_level_nodes is not None:
-                # Use nodes from previous batch insert
-                nodes_by_id = {node.id: node for node in current_level_nodes}
-            else:
-                # Pre-fetch all nodes for this level (first iteration with leaf nodes)
-                all_nodes = doc_store.nodes.get_many(current_level_ids)
-                nodes_by_id = {node.id: node for node in all_nodes}
-
-            # Process pairs concurrently
-            tasks = []
-            pair_info: list[tuple[int, int | None]] = []
-
-            # Process all nodes in pairs, with the last one having no right child if odd
-            i = 0
-            while i < len(current_level_ids):
-                left_id = current_level_ids[i]
-                left_text = current_level_texts[i]
-
-                # Check if we have a right node
-                if i + 1 < len(current_level_ids):
-                    right_id = current_level_ids[i + 1]
-                    right_text = current_level_texts[i + 1]
-                    pair_info.append((i, i + 1))
-                    i += 2  # Move to next pair
-                else:
-                    # Odd node - no right child
-                    right_id = None
-                    right_text = None
-                    pair_info.append((i, None))
-                    i += 1  # This was the last node
-
-                # Get adjacent context
-                prev_context = None
-                if pair_info[-1][0] > 0:  # Use the left index from the current pair
-                    prev_context, _ = self.splitter.get_adjacent_context(
-                        current_level_texts, pair_info[-1][0] - 1
-                    )
-
-                # Get pre-fetched nodes
-                left_node = nodes_by_id.get(left_id)
-                right_node = nodes_by_id.get(right_id) if right_id else None
-
-                # Create async task with pre-fetched nodes
-                task = self._process_node_pair(
-                    left_id,
-                    left_text,
-                    right_id,
-                    right_text,
-                    prev_context,
-                    document_id,
-                    current_height,
-                    reporter,
-                    left_node=left_node,
-                    right_node=right_node,
-                    doc_store=doc_store,
-                )
-                tasks.append(task)
-
-            # Process all pairs concurrently
-            if tasks:
-                # Log tree building progress only when no progress bar
-                if not (
-                    progress and progress.tracker and progress.tracker.show_progress
-                ):
-                    if overall_start_time:
-                        elapsed = time.time() - overall_start_time
-                        mins, secs = divmod(int(elapsed), 60)
-                        logger.info(
-                            f"Building tree height {current_height}: processing {len(tasks)} node pairs [{mins}m {secs}s elapsed]"
-                        )
-                    else:
-                        logger.info(
-                            f"Building tree height {current_height}: processing {len(tasks)} node pairs"
-                        )
-
-                # Track completion count
-                completed_count = 0
-
-                # Wrap each task to update progress when it completes
-                async def track_progress(task: Any, task_index: int) -> Any:
-                    nonlocal completed_count
-                    result = await task
-
-                    # Update progress immediately when this pair completes
-                    # For odd nodes (single child), only update by 1
-                    if progress:
-                        # Check if this is an odd node (has None for right child)
-                        # task_index comes from enumerate(tasks) and corresponds to the position
-                        # in both the tasks list and pair_info list (created in the same loop).
-                        # Even though tasks complete out of order due to parallel execution,
-                        # each task's index is captured in its closure when track_progress is created.
-                        if (
-                            task_index < len(pair_info)
-                            and pair_info[task_index][1] is None
-                        ):
-                            await progress.update(1)  # Single node processed
-                        else:
-                            await progress.update(2)  # Pair processed
-
-                    # Log batch completion every 10 tasks
-                    completed_count += 1
-                    if completed_count % 10 == 0 and overall_start_time:
-                        if not (
-                            progress
-                            and progress.tracker
-                            and progress.tracker.show_progress
-                        ):
-                            elapsed = time.time() - overall_start_time
-                            mins, secs = divmod(int(elapsed), 60)
-                            logger.info(
-                                f"  Completed {completed_count}/{len(tasks)} pairs at height {current_height} [{mins}m {secs}s elapsed total]"
-                            )
-
-                    return result
-
-                # Create tracked tasks
-                tracked_tasks = [
-                    track_progress(task, i) for i, task in enumerate(tasks)
-                ]
-
-                # Process all tasks concurrently (semaphore already controls parallelism)
-                results = await asyncio.gather(*tracked_tasks)
-
-                # Batch generate embeddings for all summaries at this level
-                # This avoids individual API calls per node (e.g., 183 calls → 3 batch calls)
-                # Extract summaries, warning about any empty ones (shouldn't happen due to verbatim fallback)
-                summaries = []
-                for i, result in enumerate(results):
-                    summary = result["summary"]
-                    if not summary or not summary.strip():
-                        # This shouldn't happen as _summarize_text has verbatim fallback
-                        logger.warning(
-                            f"Unexpected empty summary for node {result.get('parent_id', 'unknown')}. "
-                            f"This may indicate a bug in the summarization process."
-                        )
-                        # Use a minimal fallback to avoid embedding API errors
-                        summary = "empty"
-                        result["summary"] = summary  # Update for consistency
-                    summaries.append(summary)
-
-                start_time = time.time()
-                embeddings = await self.llm_service._get_embeddings_batch(summaries)
-
-                # Track batch embedding call for telemetry
-                if reporter:
-                    node_embeddings = []
-                    for result in results:
-                        # Use the token count from summarization
-                        token_count = result.get(
-                            "token_count",
-                            tokenizer.count_tokens(result["summary"]),
-                        )
-                        node_embeddings.append((result["parent_id"], token_count))
-
-                    reporter.record_embedding_call_v2(
-                        node_embeddings=node_embeddings,
-                        batch_size=len(summaries),
-                        model=self.config.embedding_model,
-                        start_time=start_time,
-                    )
-
-                # Update results with the generated embeddings
-                # Since we process all results, we can directly zip them
-                for result, embedding in zip(results, embeddings):
-                    result["node_data"]["embedding"] = embedding
-
-                # Extract data for batch processing
-                nodes_to_add = []
-                parent_updates = []
-                next_level_ids = []
-                next_level_texts = []
-
-                # Track preceding node for this level
-                preceding_node_id = None
-
-                for result in results:
-                    # Add preceding neighbor ID to node data
-                    result["node_data"]["preceding_neighbor_id"] = preceding_node_id
-                    result["node_data"][
-                        "following_neighbor_id"
-                    ] = None  # Will be set in second pass
-
-                    # Add node data for batch insertion
-                    nodes_to_add.append(result["node_data"])
-
-                    # Collect parent updates
-                    for update in result["parent_updates"]:
-                        if (
-                            update is not None
-                        ):  # Skip None updates (for nodes without right child)
-                            parent_updates.append(update)
-
-                    # Track IDs and texts for next level
-                    next_level_ids.append(result["parent_id"])
-                    next_level_texts.append(result["summary"])
-
-                    # Update preceding ID for next iteration
-                    preceding_node_id = result["parent_id"]
-
-                # Second pass to set following_neighbor_id
-                for i in range(len(nodes_to_add) - 1):
-                    nodes_to_add[i]["following_neighbor_id"] = nodes_to_add[i + 1][
-                        "node_id"
-                    ]
-
-                # Batch store all nodes for this level
-                if nodes_to_add:
-                    current_level_nodes = doc_store.nodes.add_batch(nodes_to_add)
-                else:
-                    current_level_nodes = []
-
-                # Batch update all parent references
-                if parent_updates:
-                    doc_store.nodes.update_parent_references_batch(parent_updates)
-
-            current_level_ids = next_level_ids
-            current_level_texts = next_level_texts
-            # current_level_nodes is already set from the batch insert above
-
-            # Track tree level completion
-            if reporter and current_level_ids:
+            for height in range(root_node.height + 1):
+                nodes_at_height = sum(1 for n in tree_nodes if n.height == height)
                 try:
-                    reporter.record_tree_height_complete(
-                        current_height, len(current_level_ids)
-                    )
+                    reporter.record_tree_height_complete(height, nodes_at_height)
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to record telemetry for tree level completion: {e}"
-                    )
+                    logger.warning(f"Failed to record telemetry for tree height: {e}")
 
-            current_height += 1
-
-        # Return root node ID
-        if current_level_ids:
-            if overall_start_time:
-                elapsed = time.time() - overall_start_time
-                mins, secs = divmod(int(elapsed), 60)
-                if not (
-                    progress and progress.tracker and progress.tracker.show_progress
-                ):
-                    logger.info(
-                        f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}... [{mins}m {secs}s elapsed total]"
-                    )
-            else:
-                if not (
-                    progress and progress.tracker and progress.tracker.show_progress
-                ):
-                    logger.info(
-                        f"Tree building complete. Root node at height {current_height - 1} with ID: {current_level_ids[0][:8]}..."
-                    )
-        return current_level_ids[0] if current_level_ids else ""
+        return root_node.id

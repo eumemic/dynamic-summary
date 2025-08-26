@@ -280,15 +280,23 @@ class LLMService:
         except Exception as e:
             logger.warning(f"Failed to record summary telemetry: {e}")
 
-    def _should_retry_summary(self, current_tokens: int, target_tokens: int) -> bool:
-        """Determine if a summary should be retried based on deviation from target.
+    def _should_retry_summary(
+        self, summary: str, current_tokens: int, target_tokens: int
+    ) -> bool:
+        """Determine if a summary should be retried.
 
-        Only retries overshoots (when summary is too long).
-        Undershoots are always accepted as they're already concise.
+        Retries if:
+        - Summary is empty or only whitespace
+        - Summary overshoots target by more than the configured threshold
 
-        Returns True if the current summary overshoots target by more than
-        the configured threshold.
+        Undershoots are accepted as they're already concise.
+
+        Returns True if the summary should be retried.
         """
+        # Always retry empty summaries
+        if not summary or not summary.strip():
+            return True
+
         if target_tokens <= 0:
             return False
 
@@ -444,7 +452,9 @@ class LLMService:
                     )
 
                 # Check if this attempt is acceptable (within threshold)
-                if not self._should_retry_summary(retry_tokens, target_tokens):
+                if not self._should_retry_summary(
+                    retry_summary, retry_tokens, target_tokens
+                ):
                     # This attempt is within threshold - accept it immediately
                     return retry_summary, actual_retries, actual_retries
 
@@ -626,7 +636,9 @@ Here's the content to summarize:"""
                     )
 
                 # Check if retry is needed
-                if not self._should_retry_summary(summary_tokens, target_tokens):
+                if not self._should_retry_summary(
+                    summary, summary_tokens, target_tokens
+                ):
                     accepted_attempt = 0  # Initial attempt was accepted
                     # Mark which attempt was accepted
                     if reporter and parent_id:
