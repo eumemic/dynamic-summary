@@ -7,10 +7,14 @@ as soon as their dependencies are ready, enabling maximum parallelism.
 import asyncio
 import logging
 import math
+import time
 import uuid
-from typing import Any
 
 from ragzoom.models import TreeNode
+from ragzoom.progress import AsyncProgressWrapper
+from ragzoom.services.llm_service import LLMService
+from ragzoom.telemetry_collection import TelemetryCollector
+from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +62,7 @@ def _derive_parent_path(child_path: str) -> str:
 
 
 def create_leaf_nodes(
-    chunks: list[str], document_id: str, reporter: Any = None
+    chunks: list[str], document_id: str, reporter: TelemetryCollector | None = None
 ) -> tuple[dict[str, TreeNode], list[TreeNode]]:
     """Create leaf nodes from document chunks.
 
@@ -115,18 +119,13 @@ def create_leaf_nodes(
 
         # Track node creation for telemetry
         if reporter:
-            try:
-                from ragzoom.utils.tokenization import tokenizer
-
-                chunk_tokens = tokenizer.count_tokens(chunk)
-                reporter.track_node_created(
-                    node_id=leaf.id,
-                    height=0,
-                    span=(leaf.span_start, leaf.span_end),
-                )
-                reporter.record_chunk_created(leaf.id, chunk_tokens)
-            except Exception:
-                pass  # Silently ignore telemetry errors
+            chunk_tokens = tokenizer.count_tokens(chunk)
+            reporter.track_node_created(
+                node_id=leaf.id,
+                height=0,
+                span=(leaf.span_start, leaf.span_end),
+            )
+            reporter.record_chunk_created(leaf.id, chunk_tokens)
 
         previous_leaf = leaf
         current_pos = leaf.span_end
@@ -138,7 +137,7 @@ def build_internal_nodes(
     lookup: dict[str, TreeNode],
     leaves: list[TreeNode],
     document_id: str,
-    reporter: Any = None,
+    reporter: TelemetryCollector | None = None,
 ) -> None:
     """Build internal nodes from leaves bottom-up.
 
@@ -203,14 +202,11 @@ def build_internal_nodes(
 
             # Track internal node creation for telemetry
             if reporter:
-                try:
-                    reporter.track_node_created(
-                        node_id=parent.id,
-                        height=parent.height,
-                        span=(parent.span_start, parent.span_end),
-                    )
-                except Exception:
-                    pass  # Silently ignore telemetry errors
+                reporter.track_node_created(
+                    node_id=parent.id,
+                    height=parent.height,
+                    span=(parent.span_start, parent.span_end),
+                )
 
             previous_parent = parent
 
@@ -263,11 +259,11 @@ async def summary_worker(
     lookup: dict[str, TreeNode],
     summary_queue: asyncio.Queue,
     embedding_queue: asyncio.Queue,
-    llm_service: Any,
+    llm_service: LLMService,
     shutdown: asyncio.Event,
     target_tokens: int = 200,
-    reporter: Any = None,
-    progress: Any = None,
+    reporter: TelemetryCollector | None = None,
+    progress: AsyncProgressWrapper | None = None,
 ) -> None:
     """Worker that processes summary generation.
 
@@ -290,15 +286,20 @@ async def summary_worker(
             try:
                 node = lookup[node_id]
 
-                # Get child texts
+                # Get child texts and token counts
                 left_text = ""
                 right_text = ""
+                left_token_count = 0
+                right_token_count = 0
+
                 if node.left_child_id:
                     left_child = lookup[node.left_child_id]
                     left_text = left_child.text or ""
+                    left_token_count = left_child.token_count
                 if node.right_child_id:
                     right_child = lookup[node.right_child_id]
                     right_text = right_child.text or ""
+                    right_token_count = right_child.token_count
 
                 # Get preceding context
                 prev_context = None
@@ -306,30 +307,23 @@ async def summary_worker(
                     preceding = lookup[node.preceding_neighbor_id]
                     prev_context = preceding.text
 
-                # Generate summary
+                # Generate summary - telemetry is handled internally by _summarize_text
                 summary, retry_count, tokens = await llm_service._summarize_text(
-                    left_text, right_text, target_tokens, prev_context=prev_context
+                    left_text,
+                    right_text,
+                    target_tokens,
+                    parent_id=node_id,  # Pass node_id as parent_id for telemetry
+                    reporter=reporter,  # Pass reporter so telemetry works
+                    prev_context=prev_context,
+                    left_token_count=left_token_count,
+                    right_token_count=right_token_count,
                 )
 
                 # Update node
                 node.text = summary
                 node.token_count = tokens
 
-                # Track telemetry
-                if reporter:
-                    try:
-                        reporter.record_summary(
-                            node_id=node.id,
-                            retry_count=retry_count,
-                            tokens_used=tokens,
-                            model=(
-                                llm_service.config.summary_model
-                                if hasattr(llm_service, "config")
-                                else None
-                            ),
-                        )
-                    except Exception:
-                        pass  # Silently ignore telemetry errors
+                # Telemetry is already recorded inside _summarize_text, no need to call it here
 
                 # Queue for embedding
                 await embedding_queue.put((node_id, summary))
@@ -362,12 +356,12 @@ async def embedding_worker(
     worker_id: int,
     embedding_queue: asyncio.Queue,
     lookup: dict[str, TreeNode],
-    llm_service: Any,
+    llm_service: LLMService,
     batch_size: int,
     pending_embeddings: AtomicCounter,
     shutdown: asyncio.Event,
-    reporter: Any = None,
-    progress: Any = None,
+    reporter: TelemetryCollector | None = None,
+    progress: AsyncProgressWrapper | None = None,
 ) -> None:
     """Worker that processes embedding generation.
     # jscpd:ignore-end
@@ -423,30 +417,24 @@ async def embedding_worker(
 
             # Track telemetry
             if reporter:
-                try:
-                    import time
+                # Prepare node embeddings data
+                node_embeddings = []
+                for node_id, text in batch:
+                    token_count = tokenizer.count_tokens(text)
+                    node_embeddings.append((node_id, token_count))
 
-                    from ragzoom.utils.tokenization import tokenizer
-
-                    # Prepare node embeddings data
-                    node_embeddings = []
-                    for node_id, text in batch:
-                        token_count = tokenizer.count_tokens(text)
-                        node_embeddings.append((node_id, token_count))
-
-                    # Record v2 telemetry with per-node tracking
-                    reporter.record_embedding_call_v2(
-                        node_embeddings=node_embeddings,
-                        batch_size=len(batch),
-                        model=(
-                            llm_service.config.embedding_model
-                            if hasattr(llm_service, "config")
-                            else None
-                        ),
-                        start_time=time.time(),  # Approximate start time
-                    )
-                except Exception:
-                    pass  # Silently ignore telemetry errors
+                # Record v2 telemetry with per-node tracking
+                model = (
+                    llm_service.config.embedding_model
+                    if hasattr(llm_service, "config")
+                    else "unknown"
+                )
+                reporter.record_embedding_call_v2(
+                    node_embeddings=node_embeddings,
+                    batch_size=len(batch),
+                    model=model,  # Ensure it's never None
+                    start_time=time.time(),  # Approximate start time
+                )
 
             # Update counter
             pending_embeddings.decrement(len(batch))
@@ -468,13 +456,13 @@ async def embedding_worker(
 async def build_tree_dataflow(
     chunks: list[str],
     document_id: str,
-    llm_service: Any,
+    llm_service: LLMService,
     target_tokens: int = 200,
     max_summary_concurrency: int = 30,
     max_embedding_concurrency: int = 10,
     embedding_batch_size: int = 100,
-    reporter: Any = None,
-    progress: Any = None,
+    reporter: TelemetryCollector | None = None,
+    progress: AsyncProgressWrapper | None = None,
 ) -> list[TreeNode]:
     """Build tree using dataflow pattern.
 
