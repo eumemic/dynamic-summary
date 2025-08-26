@@ -78,6 +78,14 @@ class TreeNode(Base):
         """Check if this node is a right child based on its path."""
         return self.path.endswith("1")
 
+    def is_leaf(self) -> bool:
+        """Check if this node is a leaf node (has no children)."""
+        return self.height == 0
+
+    def is_root(self) -> bool:
+        """Check if this node is the root node (has no parent)."""
+        return self.parent_id is None
+
 
 class Document(Base):
     """Database model for documents."""
