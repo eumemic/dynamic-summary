@@ -394,6 +394,7 @@ async def embedding_worker(
         try:
             # Generate embeddings for batch
             texts = [text for _, text in batch]
+            start_time = time.time()
             embeddings = await llm_service._get_embeddings_batch(texts)
 
             # Store embeddings
@@ -417,8 +418,8 @@ async def embedding_worker(
                 reporter.record_embedding_call_v2(
                     node_embeddings=node_embeddings,
                     batch_size=len(batch),
-                    model=model,  # Ensure it's never None
-                    start_time=time.time(),  # Approximate start time
+                    model=model,
+                    start_time=start_time,
                 )
 
             # Mark tasks as done
