@@ -120,31 +120,46 @@ class TelemetryVisualizer:
 
         # Process each node to find the maximum end time
         for node in nodes:
-            # Skip leaf nodes (height 0) - they're raw text chunks
-            if node["height"] == 0:
-                continue
-
-            # Handle passthrough nodes (no summary attempts)
-            if not node.get("summary_attempts"):
-                created_at = node.get("created_at", 0)
+            # Always check node creation time for all nodes (including leaf nodes)
+            created_at = node.get("created_at", 0)
+            if created_at > 0:
                 max_time = max(max_time, created_at)
                 if min_time is None:
                     min_time = created_at
-                continue
+                else:
+                    min_time = min(min_time, created_at)
 
-            # Process summary nodes with attempts
-            attempts = node["summary_attempts"]
-            for attempt in attempts:
-                start_time = attempt.get("start_time")
-                end_time = attempt.get("end_time")
+            # Check embedding times for all nodes that have embeddings
+            embedding = node.get("embedding")
+            if embedding:
+                embed_start_time = embedding.get("start_time")
+                embed_end_time = embedding.get("end_time")
 
-                if start_time is None or end_time is None:
-                    continue
+                if embed_start_time is not None:
+                    if min_time is None:
+                        min_time = embed_start_time
+                    else:
+                        min_time = min(min_time, embed_start_time)
 
-                if min_time is None:
-                    min_time = start_time
+                if embed_end_time is not None:
+                    max_time = max(max_time, embed_end_time)
 
-                max_time = max(max_time, end_time)
+            # For non-leaf nodes, also check summary attempts
+            height = node["height"]
+            if height > 0:
+                attempts = node.get("summary_attempts", [])
+                for attempt in attempts:
+                    start_time = attempt.get("start_time")
+                    end_time = attempt.get("end_time")
+
+                    if start_time is not None:
+                        if min_time is None:
+                            min_time = start_time
+                        else:
+                            min_time = min(min_time, start_time)
+
+                    if end_time is not None:
+                        max_time = max(max_time, end_time)
 
         # Calculate baseline and return relative max time
         baseline = indexing_start_time if indexing_start_time is not None else min_time
