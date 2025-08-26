@@ -69,6 +69,9 @@ def create_leaf_nodes(
     for i, chunk in enumerate(chunks):
         node_id = _generate_node_id()
 
+        # Calculate token count for this chunk
+        chunk_tokens = tokenizer.count_tokens(chunk)
+
         # Create TreeNode with actual text for leaves
         leaf = TreeNode(
             id=node_id,
@@ -87,7 +90,7 @@ def create_leaf_nodes(
             following_neighbor_id=None,  # Will be set by next leaf
             # Leaves need embeddings but we'll generate them later
             embedding=[],  # Empty list for now
-            token_count=0,
+            token_count=chunk_tokens,  # Set actual token count
         )
 
         # Update previous leaf's following_neighbor_id
@@ -99,7 +102,6 @@ def create_leaf_nodes(
 
         # Track node creation for telemetry
         if reporter:
-            chunk_tokens = tokenizer.count_tokens(chunk)
             reporter.track_node_created(
                 node_id=leaf.id,
                 height=0,

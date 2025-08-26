@@ -177,6 +177,65 @@ class TestPokeMechanism:
         assert queue.qsize() == 1
 
 
+class TestLeafNodeCreation:
+    """Test leaf node creation in dataflow."""
+
+    def test_create_leaf_nodes_sets_correct_token_count(self):
+        """Test that leaf nodes are created with correct token counts."""
+        from ragzoom.dataflow.core import create_leaf_nodes
+
+        # Create test chunks with known token counts
+        chunks = ["Hello world", "This is a longer text", "Short"]
+        document_id = "test_doc"
+
+        # Create leaf nodes
+        lookup, leaves = create_leaf_nodes(chunks, document_id)
+
+        # Verify all leaves have non-zero token counts
+        for leaf in leaves:
+            assert (
+                leaf.token_count > 0
+            ), f"Leaf {leaf.id} has token_count = {leaf.token_count}, expected > 0"
+            assert leaf.text in chunks
+
+        # Verify token counts are reasonable (not zero, not huge)
+        # "Hello world" should be 2 tokens, "This is a longer text" should be 6, "Short" should be 1
+        assert leaves[0].token_count >= 1
+        assert leaves[1].token_count >= 4  # longer text should have more tokens
+        assert leaves[2].token_count >= 1
+
+    def test_parent_input_token_calculation(self):
+        """Test that parent nodes can correctly calculate input tokens from children."""
+
+        from ragzoom.dataflow.core import create_leaf_nodes
+
+        # Create test chunks
+        chunks = ["First chunk", "Second chunk"]
+        document_id = "test_doc"
+
+        # Create leaf nodes
+        lookup, leaves = create_leaf_nodes(chunks, document_id)
+
+        # Simulate what a summary worker would do
+        left_child = leaves[0]
+        right_child = leaves[1]
+
+        # Calculate input tokens like the summary worker does
+        left_token_count = left_child.token_count
+        right_token_count = right_child.token_count
+        input_text_tokens = left_token_count + right_token_count
+
+        # Verify that both children have positive token counts
+        assert left_token_count > 0, f"Left child token count is {left_token_count}"
+        assert right_token_count > 0, f"Right child token count is {right_token_count}"
+
+        # Verify that input_text_tokens is the sum (and positive)
+        assert input_text_tokens == left_token_count + right_token_count
+        assert (
+            input_text_tokens > 0
+        ), f"Combined input_text_tokens is {input_text_tokens}, should be > 0"
+
+
 class TestDataflowIntegration:
     """Test the complete dataflow implementation."""
 
