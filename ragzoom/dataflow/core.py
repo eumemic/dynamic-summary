@@ -348,98 +348,126 @@ async def embedding_worker(
     llm_service: LLMService,
     batch_size: int,
     shutdown: asyncio.Event,
+    embedding_complete: asyncio.Event,
     reporter: TelemetryCollector | None = None,
     progress: AsyncProgressWrapper | None = None,
 ) -> None:
-    """Worker that processes embedding generation.
+    """Worker that processes embedding generation using batch-aware strategy.
     # jscpd:ignore-end
+
+    Only processes when there are enough items to make a full batch,
+    maximizing API efficiency by avoiding single-item calls.
 
     Args:
         worker_id: ID for logging
         embedding_queue: Queue of (node_id, text) tuples
         lookup: Dictionary to update with embeddings
         llm_service: Service for generating embeddings
-        batch_size: Maximum batch size
+        batch_size: Target batch size for optimal API utilization
         shutdown: Event to signal shutdown
+        embedding_complete: Event to signal no more items will be added
     """
     while not shutdown.is_set():
-        batch = []
-
-        # Collect a batch with timeout to allow checking shutdown
         try:
-            # Wait for at least one item with timeout
-            first_item = await asyncio.wait_for(
-                embedding_queue.get(),
-                timeout=0.5,  # Timeout to check conditions periodically
-            )
-            batch.append(first_item)
-
-            # Try to fill the rest of the batch without waiting
-            for _ in range(batch_size - 1):
-                try:
-                    item = embedding_queue.get_nowait()
+            # Check if we have enough items for a full batch
+            if embedding_queue.qsize() >= batch_size:
+                # Grab a full batch immediately
+                batch = []
+                for _ in range(batch_size):
+                    item = await embedding_queue.get()
                     batch.append(item)
-                except asyncio.QueueEmpty:
-                    break
 
-        except asyncio.TimeoutError:
-            # No items available, check if we should continue
-            if not shutdown.is_set():
-                continue  # Keep waiting for more work
+                # Process full batch
+                await _process_embedding_batch(
+                    batch, lookup, llm_service, reporter, progress, worker_id
+                )
+
+                # Mark all items as done
+                for _ in batch:
+                    embedding_queue.task_done()
+
+            elif embedding_complete.is_set() and not embedding_queue.empty():
+                # All summaries are done but we have a partial batch - process it
+                batch = []
+                while not embedding_queue.empty():
+                    try:
+                        item = embedding_queue.get_nowait()
+                        batch.append(item)
+                    except asyncio.QueueEmpty:
+                        break
+
+                if batch:
+                    # Process partial batch
+                    await _process_embedding_batch(
+                        batch, lookup, llm_service, reporter, progress, worker_id
+                    )
+
+                    # Mark all items as done
+                    for _ in batch:
+                        embedding_queue.task_done()
+
+                # No more work to do
+                break
+
             else:
-                break  # Shutdown requested
-
-        # Process batch if we have items
-        if not batch:
-            continue
-
-        try:
-            # Generate embeddings for batch
-            texts = [text for _, text in batch]
-            start_time = time.time()
-            embeddings = await llm_service._get_embeddings_batch(texts)
-
-            # Store embeddings
-            for (node_id, _), embedding in zip(batch, embeddings):
-                lookup[node_id].embedding = embedding
-
-            # Track telemetry
-            if reporter:
-                # Prepare node embeddings data
-                node_embeddings = []
-                for node_id, text in batch:
-                    token_count = tokenizer.count_tokens(text)
-                    node_embeddings.append((node_id, token_count))
-
-                # Record v2 telemetry with per-node tracking
-                model = (
-                    llm_service.config.embedding_model
-                    if hasattr(llm_service, "config")
-                    else "unknown"
-                )
-                reporter.record_embedding_call_v2(
-                    node_embeddings=node_embeddings,
-                    batch_size=len(batch),
-                    model=model,
-                    start_time=start_time,
-                )
-
-            # Mark tasks as done
-            for _ in batch:
-                embedding_queue.task_done()
-
-            # Update progress for leaf embeddings
-            if progress:
-                # Count how many are leaves (height 0)
-                leaf_count = sum(
-                    1 for node_id, _ in batch if lookup[node_id].height == 0
-                )
-                if leaf_count > 0:
-                    await progress.update(leaf_count)
+                # Not enough items for full batch and not complete yet - wait briefly
+                await asyncio.sleep(0.01)  # Small sleep to avoid busy-waiting
 
         except Exception as e:
             logger.error(f"Embedding worker {worker_id} error: {e}")
             raise
+
+
+async def _process_embedding_batch(
+    batch: list[tuple[str, str]],
+    lookup: dict[str, TreeNode],
+    llm_service: LLMService,
+    reporter: TelemetryCollector | None,
+    progress: AsyncProgressWrapper | None,
+    worker_id: int,
+) -> None:
+    """Process a batch of embeddings."""
+    try:
+        # Generate embeddings for batch
+        texts = [text for _, text in batch]
+        start_time = time.time()
+        embeddings = await llm_service._get_embeddings_batch(texts)
+
+        # Store embeddings
+        for (node_id, _), embedding in zip(batch, embeddings):
+            lookup[node_id].embedding = embedding
+
+        # Track telemetry
+        if reporter:
+            # Prepare node embeddings data
+            node_embeddings = []
+            for node_id, text in batch:
+                token_count = tokenizer.count_tokens(text)
+                node_embeddings.append((node_id, token_count))
+
+            # Record v2 telemetry with per-node tracking
+            model = (
+                llm_service.config.embedding_model
+                if hasattr(llm_service, "config")
+                else "unknown"
+            )
+            reporter.record_embedding_call_v2(
+                node_embeddings=node_embeddings,
+                batch_size=len(batch),
+                model=model,
+                start_time=start_time,
+            )
+
+        # Update progress for leaf embeddings
+        if progress:
+            # Count how many are leaves (height 0)
+            leaf_count = sum(1 for node_id, _ in batch if lookup[node_id].height == 0)
+            if leaf_count > 0:
+                await progress.update(leaf_count)
+
+    except Exception as e:
+        logger.error(f"Embedding worker {worker_id} batch processing error: {e}")
+        raise
 
 
 async def build_tree_dataflow(
@@ -484,8 +512,9 @@ async def build_tree_dataflow(
         if leaf.text:  # Leaf nodes always have text
             await embedding_queue.put((leaf.id, leaf.text))
 
-    # Create shutdown event
+    # Create shutdown and completion events
     shutdown = asyncio.Event()
+    embedding_complete = asyncio.Event()
 
     # Start workers
     summary_workers = []
@@ -515,6 +544,7 @@ async def build_tree_dataflow(
                 llm_service,
                 embedding_batch_size,
                 shutdown,
+                embedding_complete,
                 reporter,
                 progress,
             )
@@ -537,6 +567,9 @@ async def build_tree_dataflow(
 
         # Wait for all summaries to complete
         await summary_queue.join()
+
+        # Signal that no more embeddings will be added
+        embedding_complete.set()
 
         # Wait for all embeddings to complete
         # This ensures all embeddings are processed before shutdown

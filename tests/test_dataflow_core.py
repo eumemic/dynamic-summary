@@ -379,3 +379,148 @@ class TestDataflowIntegration:
         for node in result:
             assert node.embedding is not None
             assert len(node.embedding) == 10
+
+
+class TestEmbeddingBatching:
+    """Test that embedding workers use optimal batching strategies."""
+
+    @pytest.mark.asyncio
+    async def test_embedding_workers_wait_for_full_batches(self):
+        """Test that embedding workers wait for full batches when items arrive gradually."""
+        batch_calls = []
+
+        async def mock_embeddings(texts):
+            # Record the batch size for analysis
+            batch_calls.append(len(texts))
+            await asyncio.sleep(0.01)  # Simulate API call
+            return [[0.1] * 10 for _ in texts]
+
+        async def mock_slow_summary(*args, **kwargs):
+            # Simulate realistic API timing - summaries arrive spaced out
+            await asyncio.sleep(0.1)  # Much slower than embedding batching
+            return ("Summary", 1, 10)
+
+        mock_llm_service = MagicMock()
+        mock_llm_service._summarize_text = mock_slow_summary
+        mock_llm_service._get_embeddings_batch = mock_embeddings
+
+        # Create a larger tree to ensure we have enough summaries to batch
+        # 16 chunks -> 8 parents -> 4 grandparents -> 2 great-grandparents -> 1 root
+        # Total internal nodes: 8 + 4 + 2 + 1 = 15
+        chunks = [f"Chunk {i}" for i in range(16)]
+
+        await build_tree_dataflow(
+            chunks=chunks,
+            document_id="test-doc",
+            llm_service=mock_llm_service,
+            max_summary_concurrency=5,
+            max_embedding_concurrency=2,
+            embedding_batch_size=8,  # Batch size of 8
+        )
+
+        # Analyze batching efficiency
+        total_items = sum(batch_calls)
+        full_batches = sum(1 for size in batch_calls if size == 8)
+
+        # We expect most batches to be full size (8)
+        # The first batch should be all 16 leaves = 2 full batches
+        # Then summaries should batch well if workers wait properly
+        assert (
+            full_batches >= 2
+        ), f"Expected at least 2 full batches, got {full_batches}. Batch sizes: {batch_calls}"
+
+        # At least 70% of items should be in full batches (allowing for final partial batch)
+        full_batch_items = full_batches * 8
+        batching_efficiency = full_batch_items / total_items
+        assert (
+            batching_efficiency >= 0.7
+        ), f"Batching efficiency {batching_efficiency:.2%} is too low. Batch sizes: {batch_calls}"
+
+    @pytest.mark.asyncio
+    async def test_multiple_workers_coordinate_batching(self):
+        """Test that multiple embedding workers coordinate to take full batches."""
+        batch_calls = []
+        worker_calls = {}
+
+        async def mock_embeddings(texts):
+            # Use asyncio context to identify which worker made the call
+            worker_id = id(asyncio.current_task())
+            if worker_id not in worker_calls:
+                worker_calls[worker_id] = []
+
+            batch_size = len(texts)
+            batch_calls.append(batch_size)
+            worker_calls[worker_id].append(batch_size)
+
+            await asyncio.sleep(0.01)  # Simulate work
+            return [[0.1] * 10 for _ in texts]
+
+        mock_llm_service = MagicMock()
+        mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
+        mock_llm_service._get_embeddings_batch = mock_embeddings
+
+        # Use many chunks to create lots of summaries
+        chunks = [f"Chunk {i}" for i in range(32)]  # 31 total internal nodes
+
+        await build_tree_dataflow(
+            chunks=chunks,
+            document_id="test-doc",
+            llm_service=mock_llm_service,
+            max_summary_concurrency=10,
+            max_embedding_concurrency=4,  # Multiple workers
+            embedding_batch_size=10,
+        )
+
+        # Multiple workers should have participated
+        assert (
+            len(worker_calls) >= 2
+        ), f"Expected multiple workers, got {len(worker_calls)}"
+
+        # Most batches should be full size
+        full_batches = sum(1 for size in batch_calls if size == 10)
+        total_items = sum(batch_calls)
+        batching_efficiency = (full_batches * 10) / total_items
+
+        assert (
+            batching_efficiency >= 0.6
+        ), f"Multi-worker batching efficiency {batching_efficiency:.2%} too low. Batch sizes: {batch_calls}"
+
+    @pytest.mark.asyncio
+    async def test_final_partial_batch_processed(self):
+        """Test that final partial batches are processed correctly."""
+        batch_calls = []
+
+        async def mock_embeddings(texts):
+            batch_calls.append(len(texts))
+            await asyncio.sleep(0.01)
+            return [[0.1] * 10 for _ in texts]
+
+        mock_llm_service = MagicMock()
+        mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
+        mock_llm_service._get_embeddings_batch = mock_embeddings
+
+        # Choose chunk count that will result in partial final batch
+        # 7 chunks -> 4 parents -> 2 grandparents -> 1 root = 7 internal nodes
+        # With batch_size=3: leaves=7 (2 full + 1 partial), summaries=7 (2 full + 1 partial)
+        chunks = [f"Chunk {i}" for i in range(7)]
+
+        result = await build_tree_dataflow(
+            chunks=chunks,
+            document_id="test-doc",
+            llm_service=mock_llm_service,
+            max_summary_concurrency=3,
+            max_embedding_concurrency=1,
+            embedding_batch_size=3,
+        )
+
+        # All nodes should have embeddings (partial batch was processed)
+        assert len(result) == 14  # 7 leaves + 7 internal nodes
+        for node in result:
+            assert node.embedding is not None
+            assert len(node.embedding) == 10
+
+        # Should have processed some partial batches
+        partial_batches = [size for size in batch_calls if size < 3 and size > 0]
+        assert (
+            len(partial_batches) >= 1
+        ), f"Expected partial batches, got batch sizes: {batch_calls}"
