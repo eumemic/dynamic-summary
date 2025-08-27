@@ -41,6 +41,7 @@ class QueryService:
         self.store = store
         self.query_config = query_config
         self.operational_config = operational_config
+        # Default components use system-wide store; per-request we scope them
         self.retriever = Retriever(
             query_config,
             store,
@@ -70,8 +71,16 @@ class QueryService:
         # Use provided budget or config default
         budget = token_budget or self.query_config.budget_tokens
 
+        # Create a document-scoped retriever for isolation
+        doc_store: DocumentStore = self.store.for_document(document_id)
+        retriever = Retriever(
+            self.query_config,
+            doc_store,
+            api_key=self.operational_config.openai_api_key.get_secret_value(),
+        )
+
         # Retrieve relevant nodes
-        retrieval_result = self.retriever.retrieve(
+        retrieval_result = retriever.retrieve(
             query_text,
             budget_tokens=budget,
             document_id=document_id,
@@ -79,7 +88,6 @@ class QueryService:
         )
 
         # Assemble summary with a document-scoped view for safety
-        doc_store: DocumentStore = self.store.for_document(document_id)
         assembler = Assembler(doc_store)
         summary = assembler.assemble(retrieval_result)
         token_count = assembler.get_token_count(summary)
@@ -115,8 +123,16 @@ class QueryService:
         # Use provided budget or config default
         budget = token_budget or self.query_config.budget_tokens
 
+        # Create a document-scoped retriever for isolation
+        doc_store: DocumentStore = self.store.for_document(document_id)
+        retriever = Retriever(
+            self.query_config,
+            doc_store,
+            api_key=self.operational_config.openai_api_key.get_secret_value(),
+        )
+
         # Retrieve relevant nodes
-        retrieval_result = await self.retriever.retrieve_async(
+        retrieval_result = await retriever.retrieve_async(
             query_text,
             num_seeds,
             budget,
@@ -124,7 +140,6 @@ class QueryService:
         )
 
         # Assemble summary with a document-scoped view for safety
-        doc_store: DocumentStore = self.store.for_document(document_id)
         assembler = Assembler(doc_store)
         summary = assembler.assemble(retrieval_result)
         token_count = assembler.get_token_count(summary)
@@ -160,7 +175,7 @@ class QueryService:
             # Update config
             self.query_config = self.query_config.replace(**updates)
 
-            # Recreate retriever with new config
+            # Recreate retriever with new config (system-wide)
             self.retriever = Retriever(
                 self.query_config,
                 self.store,

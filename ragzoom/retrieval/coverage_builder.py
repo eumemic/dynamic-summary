@@ -50,7 +50,6 @@ class CoverageBuilder:
                     pinned_nodes = [
                         n for n in all_pinned if n.document_id == document_id
                     ]
-
             for node in pinned_nodes:
                 coverage_map[node.id] = True
         except Exception as e:

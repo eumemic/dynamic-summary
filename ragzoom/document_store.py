@@ -145,6 +145,29 @@ class DocumentSearchService:
             query_embedding, candidates, lambda_param, k
         )
 
+    # Backward-compatible method names to match SearchService API
+    def search_similar(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        n_results: int,
+        where: dict[str, Any] | None = None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Compatibility wrapper matching SearchService signature (ignores where)."""
+        scoped_where = {"document_id": self.document_id} if self.document_id else None
+        return self._service.search_similar(query_embedding, n_results, scoped_where)
+
+    def compute_mmr_diverse_results(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        candidates: list[tuple[str, float, dict[str, Any]]],
+        lambda_param: float,
+        k: int,
+    ) -> list[str]:
+        """Compatibility wrapper matching SearchService method name."""
+        return self._service.compute_mmr_diverse_results(
+            query_embedding, candidates, lambda_param, k
+        )
+
 
 class DocumentTreeNavigator:
     """Tree navigation automatically scoped to a specific document."""

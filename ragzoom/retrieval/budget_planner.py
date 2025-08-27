@@ -4,6 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from ragzoom.document_store import DocumentStore
     from ragzoom.store import StoreManager
 
 logger = logging.getLogger(__name__)
@@ -12,11 +13,13 @@ logger = logging.getLogger(__name__)
 class BudgetPlanner:
     """Plans conservative seed counts to ensure budget compliance."""
 
-    def __init__(self, store: "StoreManager", default_chunk_tokens: int):
+    def __init__(
+        self, store: "StoreManager | DocumentStore", default_chunk_tokens: int
+    ):
         """Initialize budget planner.
 
         Args:
-            store: StoreManager instance for statistics
+            store: Store instance (system-wide or document-scoped) for statistics
             default_chunk_tokens: Default chunk size from config
         """
         self.store = store
