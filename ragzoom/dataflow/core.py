@@ -19,6 +19,94 @@ from ragzoom.utils.tokenization import tokenizer
 logger = logging.getLogger(__name__)
 
 
+class BatchAwareQueue:
+    """Queue that coordinates batching using condition variables.
+
+    Workers sleep until enough items are available for a batch, or the root
+    node signals completion. All sleeping workers wake when items are added.
+    """
+
+    def __init__(self, batch_size: int):
+        """Initialize the batch-aware queue.
+
+        Args:
+            batch_size: Target batch size for processing
+        """
+        self.queue: asyncio.Queue[TreeNode] = asyncio.Queue()
+        self.batch_size = batch_size
+        self.condition = asyncio.Condition()
+        self.root_seen = False
+
+    async def put(self, item: TreeNode) -> None:
+        """Add item to queue and notify waiting workers.
+
+        Args:
+            item: TreeNode to add to the queue
+        """
+        async with self.condition:
+            await self.queue.put(item)
+            if item.is_root():
+                self.root_seen = True
+            self.condition.notify_all()  # Wake ALL sleeping workers
+
+    async def get_batch(
+        self, shutdown: asyncio.Event | None = None
+    ) -> list[TreeNode] | None:
+        """Get a batch of items, sleeping until ready.
+
+        Args:
+            shutdown: Optional shutdown event to check
+
+        Returns:
+            List of TreeNodes for processing, or None if queue is closing
+        """
+        async with self.condition:
+            while True:
+                # Check for shutdown
+                if shutdown and shutdown.is_set():
+                    return None
+
+                size = self.queue.qsize()
+
+                # Check if we should process
+                should_process = False
+                if size >= self.batch_size:
+                    # Full batch available
+                    should_process = True
+                elif self.root_seen and size > 0:
+                    # Root has been added, process remaining items
+                    should_process = True
+                elif self.root_seen and size == 0:
+                    # Queue closed and empty, we're done
+                    return None
+
+                if should_process:
+                    batch = []
+                    for _ in range(min(size, self.batch_size)):
+                        try:
+                            item = self.queue.get_nowait()
+                            batch.append(item)
+                        except asyncio.QueueEmpty:
+                            break  # Shouldn't happen, but be safe
+
+                    if batch:
+                        return batch
+
+                # Otherwise sleep until notified (with timeout to check shutdown)
+                try:
+                    await asyncio.wait_for(self.condition.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue  # Loop back to check shutdown
+
+    def task_done(self) -> None:
+        """Mark a task as done for join() compatibility."""
+        self.queue.task_done()
+
+    async def join(self) -> None:
+        """Wait for all tasks to be marked done."""
+        await self.queue.join()
+
+
 def _generate_node_id() -> str:
     """Generate a unique node ID."""
     return str(uuid.uuid4())
@@ -239,7 +327,7 @@ async def summary_worker(
     worker_id: int,
     lookup: dict[str, TreeNode],
     summary_queue: asyncio.Queue,
-    embedding_queue: asyncio.Queue,
+    embedding_queue: BatchAwareQueue,
     llm_service: LLMService,
     shutdown: asyncio.Event,
     target_tokens: int = 200,
@@ -320,8 +408,8 @@ async def summary_worker(
                     if following_neighbor and following_neighbor.parent_id:
                         poke(following_neighbor.parent_id, lookup, summary_queue)
 
-                # Queue for embedding (use put_nowait - we have unlimited queue)
-                embedding_queue.put_nowait(node)
+                # Queue for embedding (will notify waiting workers)
+                await embedding_queue.put(node)
 
                 # Update progress synchronously
                 if progress:
@@ -343,76 +431,56 @@ async def summary_worker(
 # Similar structure to summary_worker but fundamentally different processing
 async def embedding_worker(
     worker_id: int,
-    embedding_queue: asyncio.Queue[TreeNode],
+    embedding_queue: BatchAwareQueue,
     llm_service: LLMService,
-    batch_size: int,
     shutdown: asyncio.Event,
-    embedding_complete: asyncio.Event,
     reporter: TelemetryCollector | None = None,
     progress: AsyncProgressWrapper | None = None,
 ) -> None:
     """Worker that processes embedding generation using batch-aware strategy.
     # jscpd:ignore-end
 
-    Only processes when there are enough items to make a full batch,
-    maximizing API efficiency by avoiding single-item calls.
+    Sleeps until a batch is available, processes it, and repeats.
+    Uses root node as a natural sentinel to detect completion.
 
     Args:
         worker_id: ID for logging
-        embedding_queue: Queue of TreeNode objects
+        embedding_queue: BatchAwareQueue that coordinates batching
         llm_service: Service for generating embeddings
-        batch_size: Target batch size for optimal API utilization
         shutdown: Event to signal shutdown
-        embedding_complete: Event to signal no more items will be added
     """
     while not shutdown.is_set():
         try:
-            # Check if we have enough items for a full batch
-            if embedding_queue.qsize() >= batch_size:
-                # Grab a full batch immediately
-                batch = []
-                for _ in range(batch_size):
-                    item = await embedding_queue.get()
-                    batch.append(item)
+            # Wait for a batch (sleeps until ready)
+            batch = await embedding_queue.get_batch(shutdown)
 
-                # Process full batch
-                await _process_embedding_batch(
-                    batch, llm_service, reporter, progress, worker_id
-                )
-
-                # Mark all items as done
-                for _ in batch:
-                    embedding_queue.task_done()
-
-            elif embedding_complete.is_set() and not embedding_queue.empty():
-                # All summaries are done but we have a partial batch - process it
-                batch = []
-                while not embedding_queue.empty():
-                    try:
-                        item = embedding_queue.get_nowait()
-                        batch.append(item)
-                    except asyncio.QueueEmpty:
-                        break
-
-                if batch:
-                    # Process partial batch
-                    await _process_embedding_batch(
-                        batch, llm_service, reporter, progress, worker_id
-                    )
-
-                    # Mark all items as done
-                    for _ in batch:
-                        embedding_queue.task_done()
-
-                # No more work to do
+            if batch is None:
+                # Queue is closed, no more work
+                logger.debug(f"Embedding worker {worker_id}: Queue closed, exiting")
                 break
 
-            else:
-                # Not enough items for full batch and not complete yet - wait briefly
-                await asyncio.sleep(0.01)  # Small sleep to avoid busy-waiting
+            # Process the batch
+            await _process_embedding_batch(
+                batch, llm_service, reporter, progress, worker_id
+            )
 
+            # Mark all items as done
+            for _ in batch:
+                embedding_queue.task_done()
+
+            # Check if we processed the root
+            if any(node.is_root() for node in batch):
+                logger.debug(
+                    f"Embedding worker {worker_id}: Root node processed, exiting"
+                )
+                break
+
+        except asyncio.CancelledError:
+            break
         except Exception as e:
             logger.error(f"Embedding worker {worker_id} error: {e}")
+            # Set shutdown to stop other workers
+            shutdown.set()
             raise
 
 
@@ -502,16 +570,15 @@ async def build_tree_dataflow(
 
     # Initialize queues and storage
     summary_queue: asyncio.Queue[str] = asyncio.Queue()
-    embedding_queue: asyncio.Queue[TreeNode] = asyncio.Queue()
+    embedding_queue = BatchAwareQueue(batch_size=embedding_batch_size)
 
     # Queue leaf embeddings immediately (they have text)
     for leaf in leaves:
         if leaf.text:  # Leaf nodes always have text
             await embedding_queue.put(leaf)
 
-    # Create shutdown and completion events
+    # Create shutdown event
     shutdown = asyncio.Event()
-    embedding_complete = asyncio.Event()
 
     # Start workers
     summary_workers = []
@@ -538,9 +605,7 @@ async def build_tree_dataflow(
                 i,
                 embedding_queue,
                 llm_service,
-                embedding_batch_size,
                 shutdown,
-                embedding_complete,
                 reporter,
                 progress,
             )
@@ -564,11 +629,9 @@ async def build_tree_dataflow(
         # Wait for all summaries to complete
         await summary_queue.join()
 
-        # Signal that no more embeddings will be added
-        embedding_complete.set()
-
         # Wait for all embeddings to complete
-        # This ensures all embeddings are processed before shutdown
+        # The root node acts as a natural sentinel, so workers will exit
+        # when they process it (always the last node)
         await embedding_queue.join()
 
         # NOW signal shutdown - all work is complete
