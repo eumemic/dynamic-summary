@@ -22,7 +22,12 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessingStrategy(Enum):
-    """Strategy for ordering nodes in the summary processing queue."""
+    """Strategy for prioritizing nodes in the summary processing queue.
+
+    Both strategies use dataflow parallelism - nodes process as soon as their
+    dependencies are ready. The strategy only affects the ordering when multiple
+    nodes are ready simultaneously.
+    """
 
     BOTTOM_TO_TOP = "bottom_to_top"  # Level-first, then left-to-right within level
     LEFT_TO_RIGHT = "left_to_right"  # Position-first regardless of level
