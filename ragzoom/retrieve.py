@@ -169,8 +169,17 @@ class Retriever:
             telemetry_collector.start_phase()
             telemetry_collector.record_metric("seeds_found", len(selected_ids))
 
-        # Phase 4: Build coverage map
-        coverage_map = self.coverage_builder.build_complete_coverage_map(selected_ids)
+        # Phase 4: Build coverage map (document-scoped when document_id is provided)
+        if document_id:
+            doc_store = self.store.for_document(document_id)
+            doc_coverage_builder = CoverageBuilder(doc_store)
+            coverage_map = doc_coverage_builder.build_complete_coverage_map(
+                selected_ids
+            )
+        else:
+            coverage_map = self.coverage_builder.build_complete_coverage_map(
+                selected_ids
+            )
         if telemetry_collector:
             telemetry_collector.end_phase("coverage_map")
             telemetry_collector.start_phase()

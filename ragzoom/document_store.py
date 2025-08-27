@@ -64,6 +64,12 @@ class DocumentNodeRepository:
             return node
         return None
 
+    # Backward-compatible alias to match NodeRepository interface
+    def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
+        """Get multiple nodes by IDs, filtered to this document only."""
+        nodes = self._repo.get_nodes(node_ids)
+        return [node for node in nodes if node.document_id == self.document_id]
+
     def get_many(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes, filtering to this document only."""
         nodes = self._repo.get_nodes(node_ids)
@@ -90,6 +96,12 @@ class DocumentNodeRepository:
         node = self.get(node_id)
         if node:
             self._repo.update_node_access(node_id)
+
+    # Additional helper used by CoverageBuilder sibling logic
+    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
+        """Get nodes by path values, filtered to this document only."""
+        nodes = self._repo.get_nodes_by_paths(paths)
+        return [node for node in nodes if node.document_id == self.document_id]
 
     def update_parent_references_batch(
         self, updates: list[tuple[str, str]], *, session: Any = None
