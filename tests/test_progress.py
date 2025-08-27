@@ -18,12 +18,14 @@ class TestGlobalProgressTracker:
                 mock_pbar = Mock()
                 mock_tqdm.return_value = mock_pbar
 
-                tracker = GlobalProgressTracker(10, show_progress=True)
+                tracker = GlobalProgressTracker(
+                    10, show_progress=True, embedding_batch_size=100
+                )
 
                 assert tracker.total_chunks == 10
+                assert tracker.embedding_batch_size == 100
                 assert tracker.show_progress is True
-                assert tracker.leaf_operations == 10
-                assert tracker.tree_operations > 0
+                assert tracker.total_operations > 0
                 assert tracker.pbar == mock_pbar
 
                 # Verify tqdm was called with correct parameters
@@ -49,20 +51,28 @@ class TestGlobalProgressTracker:
         assert tracker.show_progress is False
         assert tracker.pbar is None
 
-    def test_estimate_tree_operations(self):
-        """Test tree operation estimation."""
-        tracker = GlobalProgressTracker(1)
+    def test_calculate_total_operations(self):
+        """Test total operation calculation with new formula."""
+        # Test with batch_size=100
+        tracker = GlobalProgressTracker(1, embedding_batch_size=100)
+        # 1 chunk = 0 internal nodes + 1 embedding batch = 1 total
+        assert tracker._calculate_total_operations(1) == 1
 
-        # Test different chunk counts
-        assert tracker._estimate_tree_operations(1) == 0  # No tree needed for 1 chunk
-        assert (
-            tracker._estimate_tree_operations(2) == 2
-        )  # 1 parent node = 1 summary + 1 embedding
-        assert (
-            tracker._estimate_tree_operations(4) == 6
-        )  # 2 + 1 parent nodes = 3 * 2 ops
-        assert tracker._estimate_tree_operations(8) == 14  # 4 + 2 + 1 = 7 * 2 ops
-        assert tracker._estimate_tree_operations(10) == 22  # 5 + 3 + 2 + 1 = 11 * 2 ops
+        tracker = GlobalProgressTracker(2, embedding_batch_size=100)
+        # 2 chunks = 1 internal node + 2 embedding batches (2 non-root + 1 root) = 3 total
+        assert tracker._calculate_total_operations(2) == 3
+
+        tracker = GlobalProgressTracker(4, embedding_batch_size=100)
+        # 4 chunks = 3 internal nodes + 2 embedding batches (6 non-root + 1 root) = 5 total
+        assert tracker._calculate_total_operations(4) == 5
+
+        tracker = GlobalProgressTracker(100, embedding_batch_size=100)
+        # 100 chunks = 102 internal nodes + 4 embedding batches (201 non-root, 1 root) = 106 total
+        assert tracker._calculate_total_operations(100) == 106
+
+        tracker = GlobalProgressTracker(731, embedding_batch_size=100)
+        # 731 chunks = 734 internal nodes + 16 embedding batches = 750 total
+        assert tracker._calculate_total_operations(731) == 750
 
     def test_update_with_progress(self):
         """Test updating progress with tqdm."""

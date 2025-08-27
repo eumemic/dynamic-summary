@@ -46,6 +46,9 @@ class TreeNode(Base):
     preceding_neighbor_id: Mapped[str | None] = mapped_column(
         String, nullable=True
     )  # ID of the node that immediately precedes this one at the same tree level
+    following_neighbor_id: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # ID of the node that immediately follows this one at the same tree level
     height: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # Distance to furthest leaf (0 for leaves, incrementing upward)
@@ -65,7 +68,29 @@ class TreeNode(Base):
         Index("idx_tree_nodes_path", "path"),
         # Composite index for document-scoped path queries
         Index("idx_tree_nodes_document_path", "document_id", "path"),
+        # Index on following_neighbor_id for dataflow navigation
+        Index("idx_tree_nodes_following_neighbor_id", "following_neighbor_id"),
     )
+
+    def is_left_child(self) -> bool:
+        """Check if this node is a left child based on its path."""
+        return self.path.endswith("0")
+
+    def is_right_child(self) -> bool:
+        """Check if this node is a right child based on its path."""
+        return self.path.endswith("1")
+
+    def is_leaf(self) -> bool:
+        """Check if this node is a leaf node (has no children)."""
+        return self.height == 0
+
+    def is_root(self) -> bool:
+        """Check if this node is the root node (has no parent)."""
+        return self.parent_id is None
+
+    def get_depth(self) -> int:
+        """Return the depth of this node in the tree (0 for root)."""
+        return len(self.path)
 
 
 class Document(Base):
