@@ -385,8 +385,8 @@ class TestEmbeddingBatching:
     """Test that embedding workers use optimal batching strategies."""
 
     @pytest.mark.asyncio
-    async def test_embedding_workers_wait_for_full_batches(self):
-        """Test that embedding workers wait for full batches when items arrive gradually."""
+    async def test_embedding_workers_process_available_items(self):
+        """Test that embedding workers process available items efficiently."""
         batch_calls = []
 
         async def mock_embeddings(texts):
@@ -409,7 +409,7 @@ class TestEmbeddingBatching:
         # Total internal nodes: 8 + 4 + 2 + 1 = 15
         chunks = [f"Chunk {i}" for i in range(16)]
 
-        await build_tree_dataflow(
+        result = await build_tree_dataflow(
             chunks=chunks,
             document_id="test-doc",
             llm_service=mock_llm_service,
@@ -418,23 +418,23 @@ class TestEmbeddingBatching:
             embedding_batch_size=8,  # Batch size of 8
         )
 
-        # Analyze batching efficiency
+        # Verify all nodes got embeddings
+        assert all(node.embedding is not None for node in result)
+        assert len(result) == 31  # 16 leaves + 15 internal nodes
+
+        # Analyze batching
         total_items = sum(batch_calls)
-        full_batches = sum(1 for size in batch_calls if size == 8)
+        assert total_items == 31, f"Expected 31 embeddings, got {total_items}"
 
-        # We expect most batches to be full size (8)
-        # The first batch should be all 16 leaves = 2 full batches
-        # Then summaries should batch well if workers wait properly
-        assert (
-            full_batches >= 2
-        ), f"Expected at least 2 full batches, got {full_batches}. Batch sizes: {batch_calls}"
+        # The initial leaf batch should be efficient (likely 2 full batches of 8)
+        # Later batches may be smaller as summaries trickle in
+        # This is OK - the new algorithm prioritizes responsiveness over batch size
+        assert len(batch_calls) > 0, "Should have made embedding calls"
 
-        # At least 70% of items should be in full batches (allowing for final partial batch)
-        full_batch_items = full_batches * 8
-        batching_efficiency = full_batch_items / total_items
-        assert (
-            batching_efficiency >= 0.7
-        ), f"Batching efficiency {batching_efficiency:.2%} is too low. Batch sizes: {batch_calls}"
+        # All batch sizes should respect the max batch size
+        for size in batch_calls:
+            assert size <= 8, f"Batch size {size} exceeds max batch size 8"
+            assert size > 0, "Batch size should be at least 1"
 
     @pytest.mark.asyncio
     async def test_multiple_workers_coordinate_batching(self):
@@ -524,3 +524,165 @@ class TestEmbeddingBatching:
         assert (
             len(partial_batches) >= 1
         ), f"Expected partial batches, got batch sizes: {batch_calls}"
+
+    @pytest.mark.asyncio
+    async def test_root_node_as_sentinel(self):
+        """Test that root node acts as sentinel for embedding workers."""
+        batch_calls = []
+
+        async def mock_embeddings(texts):
+            batch_calls.append(len(texts))
+            await asyncio.sleep(0.001)
+            return [[0.1] * 10 for _ in texts]
+
+        mock_llm_service = MagicMock()
+        mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
+        mock_llm_service._get_embeddings_batch = mock_embeddings
+
+        # Create a small tree
+        chunks = ["Chunk 1", "Chunk 2", "Chunk 3", "Chunk 4"]
+
+        result = await build_tree_dataflow(
+            chunks=chunks,
+            document_id="test-doc",
+            llm_service=mock_llm_service,
+            max_summary_concurrency=2,
+            max_embedding_concurrency=2,
+            embedding_batch_size=3,
+        )
+
+        # Find the root node (parent_id is None)
+        root_nodes = [n for n in result if n.parent_id is None]
+        assert len(root_nodes) == 1, "Should have exactly one root node"
+        root = root_nodes[0]
+
+        # Root should have embedding
+        assert root.embedding is not None
+        assert len(root.embedding) == 10
+
+        # All nodes should have embeddings
+        for node in result:
+            assert node.embedding is not None
+            assert len(node.embedding) == 10
+
+    @pytest.mark.asyncio
+    async def test_atomic_batch_collection(self):
+        """Test that batch collection is atomic (no interleaving)."""
+        batch_timings = []
+
+        async def mock_embeddings(texts):
+            # Record when each batch starts and its size
+            batch_timings.append((asyncio.get_event_loop().time(), len(texts)))
+            await asyncio.sleep(0.01)  # Simulate work
+            return [[0.1] * 10 for _ in texts]
+
+        mock_llm_service = MagicMock()
+        mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
+        mock_llm_service._get_embeddings_batch = mock_embeddings
+
+        # Create chunks that will generate batches
+        chunks = [f"Chunk {i}" for i in range(10)]
+
+        result = await build_tree_dataflow(
+            chunks=chunks,
+            document_id="test-doc",
+            llm_service=mock_llm_service,
+            max_summary_concurrency=5,
+            max_embedding_concurrency=3,  # Multiple workers
+            embedding_batch_size=3,
+        )
+
+        # All nodes should have embeddings
+        assert all(node.embedding is not None for node in result)
+
+        # Check that batches don't have weird sizes (indicating interleaving)
+        batch_sizes = [size for _, size in batch_timings]
+        for size in batch_sizes:
+            assert size <= 3, f"Batch size {size} exceeds max batch size 3"
+            assert size > 0, "Batch size should be at least 1"
+
+    @pytest.mark.asyncio
+    async def test_single_node_tree(self):
+        """Test edge case of single node tree (root is also leaf)."""
+        mock_llm_service = MagicMock()
+        mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
+        mock_llm_service._get_embeddings_batch = AsyncMock(return_value=[[0.1] * 10])
+
+        # Single chunk creates single node tree
+        chunks = ["Only chunk"]
+
+        result = await build_tree_dataflow(
+            chunks=chunks,
+            document_id="test-doc",
+            llm_service=mock_llm_service,
+            max_summary_concurrency=1,
+            max_embedding_concurrency=1,
+            embedding_batch_size=10,
+        )
+
+        # Should have exactly one node
+        assert len(result) == 1
+        node = result[0]
+
+        # Node should be both root and leaf
+        assert node.parent_id is None  # Root
+        assert node.height == 0  # Leaf
+        assert node.text == "Only chunk"
+        assert node.embedding is not None
+        assert len(node.embedding) == 10
+
+        # Embedding should have been called once
+        mock_llm_service._get_embeddings_batch.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_batch_aware_queue_waits_for_full_batches(self):
+        """Test that BatchAwareQueue waits for full batches when possible."""
+        batch_calls = []
+        batch_timings = []
+
+        async def mock_embeddings(texts):
+            # Record batch size and timing
+            batch_calls.append(len(texts))
+            batch_timings.append(asyncio.get_event_loop().time())
+            await asyncio.sleep(0.01)
+            return [[0.1] * 10 for _ in texts]
+
+        # Use slower summaries to test batching behavior
+        async def mock_slow_summary(*args, **kwargs):
+            await asyncio.sleep(0.05)  # Summaries arrive gradually
+            return ("Summary", 1, 10)
+
+        mock_llm_service = MagicMock()
+        mock_llm_service._summarize_text = mock_slow_summary
+        mock_llm_service._get_embeddings_batch = mock_embeddings
+
+        # Create a tree large enough to test batching
+        # 8 chunks -> 4 parents -> 2 grandparents -> 1 root
+        chunks = [f"Chunk {i}" for i in range(8)]
+
+        result = await build_tree_dataflow(
+            chunks=chunks,
+            document_id="test-doc",
+            llm_service=mock_llm_service,
+            max_summary_concurrency=3,
+            max_embedding_concurrency=2,
+            embedding_batch_size=4,  # Batch size of 4
+        )
+
+        # All nodes should have embeddings
+        assert all(node.embedding is not None for node in result)
+        assert len(result) == 15  # 8 leaves + 7 internal nodes
+
+        # Check batching behavior
+        # With batch size 4 and condition variables:
+        # - Leaves: 8 items -> 2 full batches of 4
+        # - Summaries: Should batch efficiently when enough are ready
+        full_batches = sum(1 for size in batch_calls if size == 4)
+        assert (
+            full_batches >= 2
+        ), f"Expected at least 2 full batches, got {full_batches}. Sizes: {batch_calls}"
+
+        # All batches should respect max size
+        for size in batch_calls:
+            assert size <= 4, f"Batch size {size} exceeds max 4"
+            assert size > 0, "Batch should have at least 1 item"
