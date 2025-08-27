@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ragzoom.dataflow.core import (
+    ProcessingStrategy,
     build_tree_dataflow,
     poke,
 )
@@ -62,7 +63,7 @@ class TestPokeMechanism:
         lookup = {"left": left_child, "right": right_child, "parent": parent}
 
         # Poke the parent - should be queued since children have text
-        poke("parent", lookup, queue)
+        poke("parent", lookup, queue, ProcessingStrategy.BOTTOM_TO_TOP)
 
         assert queue.qsize() == 1
         queued_job = await queue.get()
@@ -114,7 +115,7 @@ class TestPokeMechanism:
         lookup = {"left": left_child, "right": right_child, "parent": parent}
 
         # Poke the parent - should NOT be queued since left child has no text
-        poke("parent", lookup, queue)
+        poke("parent", lookup, queue, ProcessingStrategy.BOTTOM_TO_TOP)
 
         assert queue.qsize() == 0
 
@@ -172,7 +173,7 @@ class TestPokeMechanism:
         lookup["node2"] = node2
 
         # Poke node2 - should be queued since all dependencies are ready
-        poke("node2", lookup, queue)
+        poke("node2", lookup, queue, ProcessingStrategy.BOTTOM_TO_TOP)
 
         assert queue.qsize() == 1
 
@@ -211,9 +212,9 @@ class TestPokeMechanism:
 
         lookup = {"left": node_left, "right": node_right}
 
-        # Poke nodes in reverse order (right first)
-        poke("right", lookup, queue)
-        poke("left", lookup, queue)
+        # Poke nodes in reverse order (right first) with LEFT_TO_RIGHT strategy
+        poke("right", lookup, queue, ProcessingStrategy.LEFT_TO_RIGHT)
+        poke("left", lookup, queue, ProcessingStrategy.LEFT_TO_RIGHT)
 
         # Left node should come out first despite being poked second
         first_job = await queue.get()
@@ -221,6 +222,54 @@ class TestPokeMechanism:
 
         second_job = await queue.get()
         assert second_job.node.id == "right"
+
+    @pytest.mark.asyncio
+    async def test_bottom_to_top_ordering(self):
+        """Test that BOTTOM_TO_TOP strategy processes by level first."""
+        queue = asyncio.PriorityQueue()
+        lookup = {}
+
+        # Create nodes at different heights with different span_start values
+        # Lower level node that is further right
+        node_low_right = TreeNode(
+            id="low_right",
+            text="Low right text",
+            height=1,  # Lower level
+            span_start=100,  # Further right
+            span_end=200,
+            path="1",
+            document_id="doc1",
+            embedding=[],
+            token_count=10,
+        )
+
+        # Higher level node that is further left
+        node_high_left = TreeNode(
+            id="high_left",
+            text="High left text",
+            height=2,  # Higher level
+            span_start=0,  # Further left
+            span_end=50,
+            path="0",
+            document_id="doc1",
+            embedding=[],
+            token_count=10,
+        )
+
+        lookup = {"high_left": node_high_left, "low_right": node_low_right}
+
+        # Poke nodes in reverse order with BOTTOM_TO_TOP strategy
+        poke("high_left", lookup, queue, ProcessingStrategy.BOTTOM_TO_TOP)
+        poke("low_right", lookup, queue, ProcessingStrategy.BOTTOM_TO_TOP)
+
+        # Low height node should come out first despite being further right
+        first_job = await queue.get()
+        assert first_job.node.id == "low_right"
+        assert first_job.node.height == 1
+
+        second_job = await queue.get()
+        assert second_job.node.id == "high_left"
+        assert second_job.node.height == 2
 
 
 class TestLeafNodeCreation:

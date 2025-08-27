@@ -9,6 +9,7 @@ from typing import Any, overload
 
 from ragzoom.config import IndexConfig, SecretStr
 from ragzoom.dataflow import build_tree_dataflow
+from ragzoom.dataflow.core import ProcessingStrategy
 from ragzoom.document_store import DocumentStore
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.services.llm_service import LLMService
@@ -344,6 +345,7 @@ class TreeBuilder:
                 max_summary_concurrency=30,  # Use default max_concurrent value
                 max_embedding_concurrency=10,  # Reasonable default
                 embedding_batch_size=self.config.embedding_batch_size,
+                processing_strategy=ProcessingStrategy(self.config.processing_strategy),
                 reporter=reporter,
                 progress=async_progress,
             )

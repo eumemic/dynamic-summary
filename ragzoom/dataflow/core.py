@@ -10,6 +10,7 @@ import math
 import time
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 
 from ragzoom.models import TreeNode
 from ragzoom.progress import AsyncProgressWrapper
@@ -18,6 +19,13 @@ from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
+
+
+class ProcessingStrategy(Enum):
+    """Strategy for ordering nodes in the summary processing queue."""
+
+    BOTTOM_TO_TOP = "bottom_to_top"  # Level-first, then left-to-right within level
+    LEFT_TO_RIGHT = "left_to_right"  # Position-first regardless of level
 
 
 class BatchAwareQueue:
@@ -113,15 +121,18 @@ class SummaryJob:
     """A summary generation job with priority ordering."""
 
     node: TreeNode
-    priority: int = field(init=False)
-
-    def __post_init__(self) -> None:
-        """Set priority based on node's document position."""
-        self.priority = self.node.span_start
+    strategy: ProcessingStrategy = field(default=ProcessingStrategy.BOTTOM_TO_TOP)
 
     def __lt__(self, other: "SummaryJob") -> bool:
-        """Compare jobs by priority (lower span_start = higher priority)."""
-        return self.priority < other.priority
+        """Compare jobs based on the processing strategy."""
+        if self.strategy == ProcessingStrategy.BOTTOM_TO_TOP:
+            # Process lower levels first, then leftmost within level
+            if self.node.height != other.node.height:
+                return self.node.height < other.node.height
+            return self.node.span_start < other.node.span_start
+        else:  # LEFT_TO_RIGHT
+            # Process leftmost first regardless of level
+            return self.node.span_start < other.node.span_start
 
 
 def _generate_node_id() -> str:
@@ -305,14 +316,18 @@ def build_internal_nodes(
 
 
 def poke(
-    node_id: str, lookup: dict[str, TreeNode], queue: asyncio.PriorityQueue[SummaryJob]
+    node_id: str,
+    lookup: dict[str, TreeNode],
+    queue: asyncio.PriorityQueue[SummaryJob],
+    strategy: ProcessingStrategy,
 ) -> None:
     """Check if node's dependencies are ready and queue if so.
 
     Args:
         node_id: ID of node to check
         lookup: Dictionary containing all nodes
-        queue: Queue to add node to if ready
+        queue: Priority queue to add node to if ready
+        strategy: Processing strategy for priority ordering
     """
     node = lookup.get(node_id)
     if not node:
@@ -337,9 +352,9 @@ def poke(
         if not right_child or not right_child.text:
             ready = False
 
-    # Queue if ready (priority by span_start - lower values processed first)
+    # Queue if ready with the specified processing strategy
     if ready:
-        queue.put_nowait(SummaryJob(node))
+        queue.put_nowait(SummaryJob(node, strategy))
 
 
 async def summary_worker(
@@ -349,6 +364,7 @@ async def summary_worker(
     embedding_queue: BatchAwareQueue,
     llm_service: LLMService,
     shutdown: asyncio.Event,
+    processing_strategy: ProcessingStrategy,
     target_tokens: int = 200,
     reporter: TelemetryCollector | None = None,
     progress: AsyncProgressWrapper | None = None,
@@ -418,14 +434,19 @@ async def summary_worker(
 
                 # Poke dependents IMMEDIATELY (no yielding between set and poke!)
                 if node.parent_id:
-                    poke(node.parent_id, lookup, summary_queue)
+                    poke(node.parent_id, lookup, summary_queue, processing_strategy)
 
                 # Only right children poke their following neighbor's parent
                 # (Left children's following neighbor shares the same parent)
                 if node.is_right_child() and node.following_neighbor_id:
                     following_neighbor = lookup.get(node.following_neighbor_id)
                     if following_neighbor and following_neighbor.parent_id:
-                        poke(following_neighbor.parent_id, lookup, summary_queue)
+                        poke(
+                            following_neighbor.parent_id,
+                            lookup,
+                            summary_queue,
+                            processing_strategy,
+                        )
 
                 # Queue for embedding (will notify waiting workers)
                 await embedding_queue.put(node)
@@ -562,6 +583,7 @@ async def build_tree_dataflow(
     max_summary_concurrency: int = 30,
     max_embedding_concurrency: int = 10,
     embedding_batch_size: int = 100,
+    processing_strategy: ProcessingStrategy = ProcessingStrategy.BOTTOM_TO_TOP,
     reporter: TelemetryCollector | None = None,
     progress: AsyncProgressWrapper | None = None,
 ) -> list[TreeNode]:
@@ -610,6 +632,7 @@ async def build_tree_dataflow(
                 embedding_queue,
                 llm_service,
                 shutdown,
+                processing_strategy,
                 target_tokens,
                 reporter,
                 progress,
@@ -643,7 +666,7 @@ async def build_tree_dataflow(
 
             # Poke all unique height 1 nodes in document order - they can all start immediately
             for node_id in height_1_nodes:
-                poke(node_id, lookup, summary_queue)
+                poke(node_id, lookup, summary_queue, processing_strategy)
 
         # Wait for all summaries to complete
         await summary_queue.join()
