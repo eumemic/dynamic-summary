@@ -256,7 +256,8 @@ fi
 if ! should_skip "bandit"; then
     if command -v bandit &> /dev/null; then
         # Filter out the "Test in comment" warnings which are just noise from nosec comments
-        run_check_background "Bandit" "bandit -r ragzoom/ -ll --quiet 2>&1 | grep -v 'WARNING.*Test in comment' || true"
+        # Using grep -E with ? to make the pattern optional, avoiding exit code 1 when all lines match
+        run_check_background "Bandit" "bandit -r ragzoom/ -ll --quiet 2>&1 | { grep -v 'WARNING.*Test in comment' || test \$? -eq 1; }"
     else
         echo "[Bandit] Skipped (not installed)"
     fi
