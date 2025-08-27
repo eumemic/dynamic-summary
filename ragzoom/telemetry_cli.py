@@ -20,6 +20,12 @@ FIXED_THRESHOLDS = {
     "Oversized summary rate": 9.0,  # Maximum 9%
     "Median node processing time": 3.0,  # Maximum 3 seconds
     "Cost per 1M source tokens": 1.0,  # Maximum $1
+    "Pipeline efficiency": 90.0,  # Minimum 90% parallelism utilization
+}
+
+# Metrics where higher values are better (minimum thresholds)
+HIGHER_IS_BETTER_METRICS = {
+    "Pipeline efficiency",
 }
 
 
@@ -189,6 +195,17 @@ def analyze(telemetry_file: Path) -> None:
         click.echo(f"  Completion tokens:   {cost.total_completion_tokens:,}")
         click.echo(f"  Total tokens:        {cost.total_tokens:,}")
         click.echo(f"  USD per node:        ${cost.usd_per_node:.4f}")
+
+        # Pipeline efficiency metrics
+        pipeline_eff = chunk_metrics.pipeline_efficiency
+        click.echo("\n⚡ Pipeline Efficiency")
+        click.echo(f"  Pipeline efficiency: {pipeline_eff:.1f}%")
+        if pipeline_eff >= 60:
+            click.echo("  🚀 High parallelism utilization")
+        elif pipeline_eff >= 20:
+            click.echo("  ✅ Moderate parallelism utilization")
+        else:
+            click.echo("  ⚠️  Low parallelism utilization")
 
         # Outlier detection message
         click.echo("\n💡 To analyze problematic summaries:")
@@ -460,9 +477,14 @@ def _check_single_chunk_for_regressions_with_thresholds(
 
     for metric_name, current_value in metrics_to_check:
         fixed_threshold = FIXED_THRESHOLDS.get(metric_name)
-        if fixed_threshold is not None and current_value > fixed_threshold:
-            has_regression = True
-            break
+        if fixed_threshold is not None:
+            is_higher_better = metric_name in HIGHER_IS_BETTER_METRICS
+            if is_higher_better and current_value < fixed_threshold:
+                has_regression = True
+                break
+            elif not is_higher_better and current_value > fixed_threshold:
+                has_regression = True
+                break
 
     return has_regression, None
 
@@ -567,9 +589,14 @@ def _compare_directories(baseline_dir: Path, current_dir: Path) -> tuple[bool, b
 
                 for metric_name, current_value in metrics_to_check:
                     fixed_threshold = FIXED_THRESHOLDS.get(metric_name)
-                    if fixed_threshold is not None and current_value > fixed_threshold:
-                        indexing_has_regression = True
-                        break
+                    if fixed_threshold is not None:
+                        is_higher_better = metric_name in HIGHER_IS_BETTER_METRICS
+                        if is_higher_better and current_value < fixed_threshold:
+                            indexing_has_regression = True
+                            break
+                        elif not is_higher_better and current_value > fixed_threshold:
+                            indexing_has_regression = True
+                            break
 
             # Format output with thresholds
             _format_markdown_comparison_with_thresholds(
@@ -1151,6 +1178,14 @@ def _format_metrics_for_chunk_with_thresholds(
         is_cost=True,
     )
 
+    # Pipeline efficiency (higher is better)
+    _format_comparison_row_with_threshold(
+        "Pipeline efficiency",
+        base_metrics.pipeline_efficiency,
+        curr_metrics.pipeline_efficiency,
+        higher_is_better=True,
+    )
+
 
 def _prepare_row_data(
     baseline: float,
@@ -1205,6 +1240,7 @@ def _format_comparison_row_with_threshold(
         "Oversized summary rate": "oversized_summary_rate",
         "Median node processing time": "median_seconds",
         "Cost per 1M source tokens": "cost",
+        "Pipeline efficiency": "pipeline_efficiency",
     }
 
     format_metric_name = metric_name_mapping.get(
@@ -1227,21 +1263,28 @@ def _format_comparison_row_with_threshold(
     # Check if regression using fixed threshold
     regression_emoji = ""
     fixed_threshold = FIXED_THRESHOLDS.get(metric)
-    if fixed_threshold is not None and current > fixed_threshold:
-        regression_emoji = "🔴 "  # Red circle for regression
+    if fixed_threshold is not None:
+        is_higher_better = metric in HIGHER_IS_BETTER_METRICS
+        if is_higher_better and current < fixed_threshold:
+            regression_emoji = "🔴 "  # Red circle for regression (below minimum)
+        elif not is_higher_better and current > fixed_threshold:
+            regression_emoji = "🔴 "  # Red circle for regression (above maximum)
 
     change_str = f"{regression_emoji}{abs_str}"
 
     # Format threshold value
     if fixed_threshold is not None:
+        is_higher_better = metric in HIGHER_IS_BETTER_METRICS
+        operator = "> " if is_higher_better else "< "
+
         if unit == "$":
-            threshold_str = f"< {unit}{fixed_threshold:.2f}"
+            threshold_str = f"{operator}{unit}{fixed_threshold:.2f}"
         elif unit == "%":
-            threshold_str = f"< {fixed_threshold:.0f}%"
+            threshold_str = f"{operator}{fixed_threshold:.0f}%"
         elif unit == "s":
-            threshold_str = f"< {fixed_threshold:.0f}s"
+            threshold_str = f"{operator}{fixed_threshold:.0f}s"
         else:
-            threshold_str = f"< {fixed_threshold:.1f}"
+            threshold_str = f"{operator}{fixed_threshold:.1f}"
     else:
         threshold_str = "—"  # No threshold defined
 
@@ -1431,6 +1474,7 @@ def _get_unit_for_metric(metric_name: str) -> str:
         MetricNames.TOTAL_COMPLETION_TOKENS: "tok",
         # Percentage-based metrics
         "mean_percent_deviation": "%",
+        "pipeline_efficiency": "%",
     }
     return units.get(metric_name, "")
 
