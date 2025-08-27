@@ -31,8 +31,9 @@ class ProcessingStrategy(Enum):
 class BatchAwareQueue:
     """Queue that coordinates batching using condition variables.
 
-    Workers sleep until enough items are available for a batch, or the root
-    node signals completion. All sleeping workers wake when items are added.
+    Workers sleep until enough items are available for a batch. The key insight
+    is that we must flush the penultimate batch as soon as both root children
+    complete (depth-1 nodes), not when the root arrives, to minimize latency.
     """
 
     def __init__(self, batch_size: int):
@@ -44,9 +45,9 @@ class BatchAwareQueue:
         self.queue: asyncio.Queue[TreeNode] = asyncio.Queue()
         self.batch_size = batch_size
         self.condition = asyncio.Condition()
-        self.root_seen = False
+        self.root_children_complete = False
+        self.root_queued = False
         self.depth_1_count = 0
-        self.penultimate_triggered = False
 
     async def put(self, item: TreeNode) -> None:
         """Add item to queue and notify waiting workers.
@@ -57,17 +58,17 @@ class BatchAwareQueue:
         async with self.condition:
             await self.queue.put(item)
 
-            # Check for depth-1 nodes (children of root)
-            # Use depth==0 to detect root, not is_root() which checks parent_id
             depth = item.get_depth()
             if depth == 0:
-                self.root_seen = True
-            elif depth == 1:
+                # Root has arrived
+                self.root_queued = True
+            elif depth == 1 and not self.root_children_complete:
+                # This is a child of root - increment counter
                 self.depth_1_count += 1
-                if self.depth_1_count == 2 and not self.penultimate_triggered:
-                    self.penultimate_triggered = True
+                if self.depth_1_count >= 2:
+                    self.root_children_complete = True
 
-            self.condition.notify_all()  # Wake ALL sleeping workers
+            self.condition.notify_all()
 
     async def get_batch(
         self, shutdown: asyncio.Event | None = None
@@ -82,44 +83,47 @@ class BatchAwareQueue:
         """
         async with self.condition:
             while True:
-                # Check for shutdown
                 if shutdown and shutdown.is_set():
                     return None
 
                 size = self.queue.qsize()
 
-                # Check if we should process
-                should_process = False
-                if size >= self.batch_size:
-                    # Full batch available
-                    should_process = True
-                elif self.penultimate_triggered and not self.root_seen and size > 0:
-                    # Both depth-1 nodes seen, flush everything before root
-                    should_process = True
-                elif self.root_seen and size > 0:
-                    # Root has been added, process remaining items (ideally just root)
-                    should_process = True
-                elif self.root_seen and size == 0:
-                    # Queue closed and empty, we're done
-                    return None
+                # Process if:
+                # 1. Full batch available
+                # 2. Root children complete -> flush penultimate batch immediately
+                # 3. Root queued -> process singleton root batch
+                should_process = (
+                    size >= self.batch_size
+                    or (
+                        self.root_children_complete
+                        and not self.root_queued
+                        and size > 0
+                    )
+                    or (self.root_queued and size > 0)
+                )
 
                 if should_process:
                     batch = []
-                    for _ in range(min(size, self.batch_size)):
+                    batch_size = min(size, self.batch_size)
+                    for _ in range(batch_size):
                         try:
                             item = self.queue.get_nowait()
                             batch.append(item)
                         except asyncio.QueueEmpty:
-                            break  # Shouldn't happen, but be safe
+                            break
 
                     if batch:
                         return batch
 
-                # Otherwise sleep until notified (with timeout to check shutdown)
+                elif self.root_queued and size == 0:
+                    # All work complete
+                    return None
+
+                # Sleep until notified (with timeout for shutdown check)
                 try:
                     await asyncio.wait_for(self.condition.wait(), timeout=0.5)
                 except asyncio.TimeoutError:
-                    continue  # Loop back to check shutdown
+                    continue
 
     def task_done(self) -> None:
         """Mark a task as done for join() compatibility."""
