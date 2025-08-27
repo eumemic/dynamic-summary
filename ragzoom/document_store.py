@@ -64,6 +64,11 @@ class DocumentNodeRepository:
             return node
         return None
 
+    # Alias for compatibility with repository naming
+    def get_node(self, node_id: str) -> TreeNode | None:
+        """Alias of get() to match NodeRepository interface methods."""
+        return self.get(node_id)
+
     # Backward-compatible alias to match NodeRepository interface
     def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes by IDs, filtered to this document only."""

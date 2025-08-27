@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import OperationalConfig, QueryConfig
+from ragzoom.document_store import DocumentStore
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
 
@@ -77,9 +78,11 @@ class QueryService:
             num_seeds=num_seeds,
         )
 
-        # Assemble summary
-        summary = self.assembler.assemble(retrieval_result)
-        token_count = self.assembler.get_token_count(summary)
+        # Assemble summary with a document-scoped view for safety
+        doc_store: DocumentStore = self.store.for_document(document_id)
+        assembler = Assembler(doc_store)
+        summary = assembler.assemble(retrieval_result)
+        token_count = assembler.get_token_count(summary)
 
         return QueryResult(
             summary=summary,
@@ -120,9 +123,11 @@ class QueryService:
             document_id=document_id,
         )
 
-        # Assemble summary
-        summary = self.assembler.assemble(retrieval_result)
-        token_count = self.assembler.get_token_count(summary)
+        # Assemble summary with a document-scoped view for safety
+        doc_store: DocumentStore = self.store.for_document(document_id)
+        assembler = Assembler(doc_store)
+        summary = assembler.assemble(retrieval_result)
+        token_count = assembler.get_token_count(summary)
 
         return QueryResult(
             summary=summary,
