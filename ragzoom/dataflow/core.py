@@ -29,8 +29,8 @@ class ProcessingStrategy(Enum):
     nodes are ready simultaneously.
     """
 
-    BOTTOM_TO_TOP = "bottom_to_top"  # Level-first, then left-to-right within level
-    LEFT_TO_RIGHT = "left_to_right"  # Position-first regardless of level
+    BottomToTop = "bottom_to_top"  # Level-first, then left-to-right within level
+    LeftToRight = "left_to_right"  # Position-first regardless of level
 
 
 class BatchAwareQueue:
@@ -144,11 +144,23 @@ class SummaryJob:
     """A summary generation job with priority ordering."""
 
     node: TreeNode
-    strategy: ProcessingStrategy = field(default=ProcessingStrategy.BOTTOM_TO_TOP)
+    strategy: ProcessingStrategy = field(default=ProcessingStrategy.BottomToTop)
 
     def __lt__(self, other: "SummaryJob") -> bool:
-        """Compare jobs based on the processing strategy."""
-        if self.strategy == ProcessingStrategy.BOTTOM_TO_TOP:
+        """Determine priority ordering between two summary jobs.
+
+        The comparison logic depends on the processing strategy:
+        - BottomToTop: Prioritize lower tree levels first (height 0 before height 1),
+          then leftmost nodes within each level (by span_start).
+          This ensures all nodes at one level complete before the next begins.
+        - LeftToRight: Prioritize strictly by document position (span_start),
+          regardless of tree level. This creates a left-to-right wave through
+          the document.
+
+        Returns:
+            True if this job should be processed before the other job.
+        """
+        if self.strategy == ProcessingStrategy.BottomToTop:
             # Process lower levels first, then leftmost within level
             if self.node.height != other.node.height:
                 return self.node.height < other.node.height
@@ -638,7 +650,7 @@ async def build_tree_dataflow(
     max_summary_concurrency: int = 30,
     max_embedding_concurrency: int = 10,
     embedding_batch_size: int = 100,
-    processing_strategy: ProcessingStrategy = ProcessingStrategy.BOTTOM_TO_TOP,
+    processing_strategy: ProcessingStrategy = ProcessingStrategy.BottomToTop,
     reporter: TelemetryCollector | None = None,
     progress: AsyncProgressWrapper | None = None,
 ) -> list[TreeNode]:

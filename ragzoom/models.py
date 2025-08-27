@@ -68,6 +68,8 @@ class TreeNode(Base):
         Index("idx_tree_nodes_path", "path"),
         # Composite index for document-scoped path queries
         Index("idx_tree_nodes_document_path", "document_id", "path"),
+        # Index on following_neighbor_id for dataflow navigation
+        Index("idx_tree_nodes_following_neighbor_id", "following_neighbor_id"),
     )
 
     def is_left_child(self) -> bool:

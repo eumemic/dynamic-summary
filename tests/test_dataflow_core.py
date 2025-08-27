@@ -63,7 +63,7 @@ class TestPokeMechanism:
         lookup = {"left": left_child, "right": right_child, "parent": parent}
 
         # Poke the parent - should be queued since children have text
-        poke("parent", lookup, queue, ProcessingStrategy.BOTTOM_TO_TOP)
+        poke("parent", lookup, queue, ProcessingStrategy.BottomToTop)
 
         assert queue.qsize() == 1
         queued_job = await queue.get()
@@ -115,7 +115,7 @@ class TestPokeMechanism:
         lookup = {"left": left_child, "right": right_child, "parent": parent}
 
         # Poke the parent - should NOT be queued since left child has no text
-        poke("parent", lookup, queue, ProcessingStrategy.BOTTOM_TO_TOP)
+        poke("parent", lookup, queue, ProcessingStrategy.BottomToTop)
 
         assert queue.qsize() == 0
 
@@ -173,7 +173,7 @@ class TestPokeMechanism:
         lookup["node2"] = node2
 
         # Poke node2 - should be queued since all dependencies are ready
-        poke("node2", lookup, queue, ProcessingStrategy.BOTTOM_TO_TOP)
+        poke("node2", lookup, queue, ProcessingStrategy.BottomToTop)
 
         assert queue.qsize() == 1
 
@@ -213,8 +213,8 @@ class TestPokeMechanism:
         lookup = {"left": node_left, "right": node_right}
 
         # Poke nodes in reverse order (right first) with LEFT_TO_RIGHT strategy
-        poke("right", lookup, queue, ProcessingStrategy.LEFT_TO_RIGHT)
-        poke("left", lookup, queue, ProcessingStrategy.LEFT_TO_RIGHT)
+        poke("right", lookup, queue, ProcessingStrategy.LeftToRight)
+        poke("left", lookup, queue, ProcessingStrategy.LeftToRight)
 
         # Left node should come out first despite being poked second
         first_job = await queue.get()
@@ -259,8 +259,8 @@ class TestPokeMechanism:
         lookup = {"high_left": node_high_left, "low_right": node_low_right}
 
         # Poke nodes in reverse order with BOTTOM_TO_TOP strategy
-        poke("high_left", lookup, queue, ProcessingStrategy.BOTTOM_TO_TOP)
-        poke("low_right", lookup, queue, ProcessingStrategy.BOTTOM_TO_TOP)
+        poke("high_left", lookup, queue, ProcessingStrategy.BottomToTop)
+        poke("low_right", lookup, queue, ProcessingStrategy.BottomToTop)
 
         # Low height node should come out first despite being further right
         first_job = await queue.get()
