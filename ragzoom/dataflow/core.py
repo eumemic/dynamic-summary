@@ -612,12 +612,9 @@ async def _process_embedding_batch(
                 start_time=start_time,
             )
 
-        # Update progress for leaf embeddings
+        # Update progress for each batch processed (not per node)
         if progress:
-            # Count how many are leaves
-            leaf_count = sum(1 for node in batch if node.is_leaf())
-            if leaf_count > 0:
-                await progress.update(leaf_count)
+            await progress.update(1)  # One batch processed
 
     except Exception as e:
         logger.error(f"Embedding worker {worker_id} batch processing error: {e}")

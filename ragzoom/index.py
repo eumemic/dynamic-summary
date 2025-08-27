@@ -274,7 +274,13 @@ class TreeBuilder:
         # Create progress tracker early so we can use it for logging
         # When progress bar is active, we suppress info logs to avoid disrupting the display
         progress = (
-            GlobalProgressTracker(chunk_count, show_progress) if show_progress else None
+            GlobalProgressTracker(
+                chunk_count,
+                show_progress,
+                embedding_batch_size=self.config.embedding_batch_size,
+            )
+            if show_progress
+            else None
         )
 
         # Create async wrapper for progress (tracker already created above)
@@ -411,9 +417,7 @@ class TreeBuilder:
             root_node = max(tree_nodes, key=lambda n: n.height)
             root_id = root_node.id
 
-            # Update progress if provided
-            if async_progress:
-                await async_progress.update(len(tree_nodes))
+            # Progress is already tracked within dataflow, no need for final update
 
             # Final completion logging with total elapsed time
             if root_id:
