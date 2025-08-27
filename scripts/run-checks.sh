@@ -229,7 +229,8 @@ fi
 # ruff
 if ! should_skip "ruff"; then
     if command -v ruff &> /dev/null; then
-        if [ -z "$modified_files" ] || [ -n "$modified_files" ]; then
+        # Run on all Python files in targets (modified_files is only for git context)
+        if true; then
             # Enhanced ruff command that detects auto-fixes
             ruff_cmd="(
                 # Capture initial state
@@ -275,7 +276,8 @@ fi
 # black
 if ! should_skip "black"; then
     if command -v black &> /dev/null; then
-        if [ -z "$modified_files" ] || [ -n "$modified_files" ]; then
+        # Run on all Python files in targets (modified_files is only for git context)
+        if true; then
             # Enhanced black command that detects formatting changes
             black_cmd="(
                 # Capture initial state
@@ -363,7 +365,16 @@ else
     done
 fi
 
-# Display results in order and check for auto-fixes
+# Check for auto-fixes after all background processes have completed
+for check in Ruff Black; do
+    check_lower=$(echo "$check" | tr '[:upper:]' '[:lower:]')
+    autofix_file="$tmpdir/${check_lower}_autofix"
+    if [ -f "$autofix_file" ]; then
+        AUTOFIXES_APPLIED=1
+    fi
+done
+
+# Display results in order
 for check in Tests Mypy Ruff Black JSCPD Bandit; do
     output_file="$tmpdir/${check}.output"
     result_file="$tmpdir/${check}.result"
@@ -374,13 +385,6 @@ for check in Tests Mypy Ruff Black JSCPD Bandit; do
         else
             cat "$output_file"
         fi
-    fi
-    
-    # Check if this tool applied auto-fixes
-    check_lower=$(echo "$check" | tr '[:upper:]' '[:lower:]')
-    autofix_file="$tmpdir/${check_lower}_autofix"
-    if [ -f "$autofix_file" ]; then
-        AUTOFIXES_APPLIED=1
     fi
 done
 
