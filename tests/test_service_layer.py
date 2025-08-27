@@ -218,5 +218,5 @@ class TestQueryService:
         assert service.query_config.budget_tokens == 2000
         assert service.query_config.mmr_lambda == 0.8
 
-        # Verify new retriever was created
-        assert service.retriever == mock_new_retriever
+        # Note: Retriever is now created per-request with DocumentStore
+        # so we don't check for service.retriever attribute

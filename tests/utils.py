@@ -453,6 +453,7 @@ def create_retriever(
     api_key="test-key",
     embedding_model=None,
     target_chunk_tokens=None,
+    client=None,
 ):
     """Create a Retriever instance with proper service dependencies.
 
@@ -463,12 +464,14 @@ def create_retriever(
         api_key: OpenAI API key (defaults to test key)
         embedding_model: Optional embedding model override
         target_chunk_tokens: Optional chunk size override
+        client: Optional OpenAI client instance (for testing with mocks)
 
     Returns:
         Retriever instance configured with proper dependencies
     """
-    # Create OpenAI client
-    client = OpenAI(api_key=api_key)
+    # Create OpenAI client if not provided
+    if client is None:
+        client = OpenAI(api_key=api_key)
 
     # Create services
     embedding_service = EmbeddingService(

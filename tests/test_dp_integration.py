@@ -82,6 +82,7 @@ class TestDPIntegration:
             config.query_config,
             store,
             api_key=config.openai_api_key.get_secret_value(),
+            client=mock_client,  # Pass the mocked client
         )
         query = "First chunk Second chunk"  # Query that should match the first half
         result = await retriever.retrieve_async(query, document_id="doc1")
@@ -135,6 +136,7 @@ class TestDPIntegration:
             config.query_config,
             store,
             api_key=config.openai_api_key.get_secret_value(),
+            client=mock_client,  # Pass the mocked client
         )
         result = await retriever.retrieve_async("test document", document_id="doc1")
 
@@ -182,6 +184,7 @@ class TestDPIntegration:
             config.query_config,
             store,
             api_key=config.openai_api_key.get_secret_value(),
+            client=mock_client,  # Pass the mocked client
         )
 
         # Patch retriever client for sync
@@ -230,6 +233,7 @@ class TestDPIntegration:
             small_query_config,
             store,
             api_key=config.openai_api_key.get_secret_value(),
+            client=mock_client,  # Pass the mocked client
         )
         result = await retriever.retrieve_async(
             "Sentence", document_id="doc1", budget_tokens=100
