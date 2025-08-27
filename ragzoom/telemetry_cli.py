@@ -20,7 +20,7 @@ FIXED_THRESHOLDS = {
     "Oversized summary rate": 9.0,  # Maximum 9%
     "Median node processing time": 3.0,  # Maximum 3 seconds
     "Cost per 1M source tokens": 1.0,  # Maximum $1
-    "Pipeline efficiency": 90.0,  # Minimum 90% parallelism utilization
+    "Pipeline efficiency": 95.0,  # Minimum 95% parallelism utilization
 }
 
 # Metrics where higher values are better (minimum thresholds)
