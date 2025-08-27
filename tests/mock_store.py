@@ -178,6 +178,8 @@ class SimpleMockStore(StoreInterface):
         mock_nodes.update_node_access = self.update_node_access
         mock_nodes.add_nodes_batch = self.add_nodes_batch
         mock_nodes.update_parent_references_batch = self.update_parent_references_batch
+        # Add get method that delegates to get_node for compatibility with Assembler
+        mock_nodes.get = self.get_node
         self.nodes = mock_nodes
 
         # Create a documents property that acts like both dict and repository
@@ -230,6 +232,14 @@ class SimpleMockStore(StoreInterface):
         mock_nodes = MagicMock()
         mock_nodes.get = lambda node_id: self.get_node(node_id)
         mock_nodes.get_many = lambda node_ids: self.get_nodes(node_ids)
+        # Add get_nodes alias for get_many (used by Retriever and CoverageBuilder)
+        mock_nodes.get_nodes = lambda node_ids: self.get_nodes(node_ids)
+        # Add get_nodes_by_paths (used by CoverageBuilder for siblings)
+        mock_nodes.get_nodes_by_paths = lambda paths: [
+            n
+            for n in self._nodes.values()
+            if hasattr(n, "path") and n.path in paths and n.document_id == document_id
+        ]
         mock_nodes.get_all = lambda: [
             n
             for n in self._nodes.values()
@@ -258,7 +268,12 @@ class SimpleMockStore(StoreInterface):
 
         mock_tree = MagicMock()
         mock_tree.get_children = self.get_children
-        mock_tree.get_ancestors = self.get_ancestors
+        # Filter ancestors by document_id for proper isolation
+        mock_tree.get_ancestors = lambda node_ids: [
+            ancestor
+            for ancestor in self.get_ancestors(node_ids)
+            if getattr(ancestor, "document_id", None) == document_id
+        ]
         mock_tree.get_root = lambda: self.get_root_node_for_document(document_id)
         mock_tree.get_depth = self.get_node_depth
         mock_tree.is_leaf = self.is_leaf_node
