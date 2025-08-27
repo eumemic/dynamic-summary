@@ -473,15 +473,7 @@ class LLMService:
                     )
                     best_attempt_index = actual_retries  # Track this is the best
 
-                retry_deviation = (
-                    abs(retry_tokens - target_tokens) / target_tokens
-                    if target_tokens > 0
-                    else float("inf")
-                )
-                logger.debug(
-                    f"Retry {attempt} for node {node_id}: {retry_tokens} tokens "
-                    f"(deviation: {retry_deviation:.1%})"
-                )
+                # Retry attempt completed - details tracked via telemetry
 
             except Exception as e:
                 logger.error(f"Retry attempt {attempt} failed for node {node_id}: {e}")
@@ -518,12 +510,8 @@ class LLMService:
         # Check if we need to summarize at all
         combined_tokens = tokenizer.count_tokens(combined_text)
         if combined_tokens <= target_tokens:
-            node_info = f"[{parent_id}] " if parent_id else ""
-            logger.debug(
-                f"{node_info}Combined text already under target: {combined_tokens} tokens "
-                f"(target: {target_tokens}). Skipping summarization."
-            )
-
+            # Skip summarization since text is already under target
+            # No need to log this as it's expected behavior for small inputs
             # Record passthrough as a summary attempt for telemetry visualization
             if reporter and parent_id:
                 start_time = time.time()
@@ -580,8 +568,6 @@ Here's the content to summarize:"""
             input_text_tokens = tokenizer.count_tokens(left_text)
             if right_text:
                 input_text_tokens += tokenizer.count_tokens(right_text)
-
-        node_info = f"[{parent_id}] " if parent_id else ""
 
         # Build messages in conversational format to match test expectations
         messages = [

@@ -151,12 +151,8 @@ def validate_chunk_sizes(
         for node_id, tokens in oversized[:5]:  # Show first 5
             logger.debug(f"  {node_id}: {tokens} tokens")
 
-    if undersized:
-        logger.debug(
-            f"Found {len(undersized)} undersized chunks (<{min_allowed} tokens)"
-        )
-        for node_id, tokens in undersized[:5]:  # Show first 5
-            logger.debug(f"  {node_id}: {tokens} tokens")
+    # Note: We still track undersized chunks but don't log details to reduce noise
+    # The count is sufficient for debugging purposes
 
     # Success - no need to log
     return None  # No errors

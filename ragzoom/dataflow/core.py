@@ -236,6 +236,11 @@ def create_leaf_nodes(
         leaves.append(leaf)
         lookup[node_id] = leaf
 
+        # Log node creation
+        logger.debug(
+            f"Created leaf {node_id[:8]} h=0 span=[{current_pos}:{leaf.span_end}] tokens={chunk_tokens}"
+        )
+
         # Track node creation for telemetry
         if reporter:
             reporter.track_node_created(
@@ -317,6 +322,12 @@ def build_internal_nodes(
 
             parents.append(parent)
             lookup[parent.id] = parent
+
+            # Log internal node creation
+            logger.debug(
+                f"Created node {parent.id[:8]} h={current_height} span=[{parent.span_start}:{parent.span_end}] "
+                f"children=({left.id[:8]},{right.id[:8] if right else 'None'})"
+            )
 
             # Track internal node creation for telemetry
             if reporter:
@@ -452,6 +463,11 @@ async def summary_worker(
                 node.text = summary
                 node.token_count = tokens
 
+                # Log summary completion
+                logger.debug(
+                    f"Summary {node.id[:8]} h={node.height} tokens={tokens} attempt={retry_count + 1}"
+                )
+
                 # Poke dependents IMMEDIATELY (no yielding between set and poke!)
                 if node.parent_id:
                     poke(node.parent_id, lookup, summary_queue, processing_strategy)
@@ -561,6 +577,19 @@ async def _process_embedding_batch(
         # Store embeddings directly on nodes
         for node, embedding in zip(batch, embeddings):
             node.embedding = embedding
+
+        # Log embedding batch processing
+        heights = [node.height for node in batch]
+        batch_type = (
+            "root"
+            if any(node.is_root() for node in batch)
+            else f"h{min(heights)}-{max(heights)}"
+        )
+        total_tokens = sum(tokenizer.count_tokens(node.text) for node in batch)
+        elapsed = time.time() - start_time
+        logger.debug(
+            f"Embedded batch size={len(batch)} type={batch_type} tokens={total_tokens} time={elapsed:.2f}s"
+        )
 
         # Track telemetry
         if reporter:
