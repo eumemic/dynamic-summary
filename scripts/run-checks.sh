@@ -10,6 +10,7 @@
 #   --fail-fast             Stop at first failure (useful for debugging)
 #   --include-slow-tests    Include slow and integration tests (auto-starts PostgreSQL)
 #   --ignore-lint-rules RULES  Ignore specific lint rules (comma-separated): F401,E402,etc.
+#   --fail-on-autofix       Exit with failure if any auto-fixes were applied
 #   --help                  Show this help message
 #
 # Exit codes:
@@ -24,6 +25,7 @@ TARGETS=""
 FAIL_FAST=false
 INCLUDE_SLOW_TESTS=false
 IGNORE_LINT_RULES=""
+FAIL_ON_AUTOFIX=false
 
 show_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# *//'
@@ -46,6 +48,10 @@ while [[ $# -gt 0 ]]; do
         --ignore-lint-rules)
             IGNORE_LINT_RULES="$2"
             shift 2
+            ;;
+        --fail-on-autofix)
+            FAIL_ON_AUTOFIX=true
+            shift
             ;;
         --help|-h)
             show_help
@@ -96,8 +102,9 @@ if [[ -z "$TARGETS" ]]; then
     TARGETS="ragzoom tests"
 fi
 
-# Track overall success
+# Track overall success and auto-fixes
 OVERALL_FAILED=0
+AUTOFIXES_APPLIED=0
 
 # Create temporary directory for storing results
 tmpdir=$(mktemp -d)
@@ -167,10 +174,16 @@ run_check_background() {
         echo "[$check_name] Starting..." > "$output_file"
         if eval "$check_cmd" >> "$output_file" 2>&1; then
             echo 0 > "$result_file"
-            echo "[$check_name] ✅ Passed!" >> "$output_file"
+            # Don't add generic "Passed!" message - let each check provide its own
+            if ! grep -q "✅\|✨" "$output_file"; then
+                echo "[$check_name] ✅ Passed!" >> "$output_file"
+            fi
         else
             echo 1 > "$result_file"
-            echo "[$check_name] ❌ Failed!" >> "$output_file"
+            # Don't add generic "Failed!" message if check already provided one
+            if ! grep -q "❌\|⚠️" "$output_file"; then
+                echo "[$check_name] ❌ Failed!" >> "$output_file"
+            fi
         fi
     ) &
     local pid=$!
@@ -216,11 +229,41 @@ fi
 # ruff
 if ! should_skip "ruff"; then
     if command -v ruff &> /dev/null; then
-        if [ -z "$modified_files" ] || [ -n "$modified_files" ]; then
-            ruff_cmd="ruff check $TARGETS --fix --quiet --output-format concise"
+        # Run on all Python files in targets (modified_files is only for git context)
+        if true; then
+            # Enhanced ruff command that detects auto-fixes
+            ruff_cmd="(
+                # Capture initial state
+                before_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+                
+                # Run ruff with auto-fix
+                if ruff check $TARGETS --fix --output-format concise"
             if [ -n "$IGNORE_LINT_RULES" ]; then
                 ruff_cmd="$ruff_cmd --ignore $IGNORE_LINT_RULES"
             fi
+            ruff_cmd="$ruff_cmd; then
+                    # Check if files were modified
+                    after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+                    if [ \"\$before_hash\" != \"\$after_hash\" ]; then
+                        echo '[Ruff] ✨ Auto-fixed all issues!'
+                        echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
+                    else
+                        echo '[Ruff] ✅ No issues found!'
+                    fi
+                    exit 0
+                else
+                    exit_code=\$?
+                    # Check if files were modified (partial fixes)
+                    after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+                    if [ \"\$before_hash\" != \"\$after_hash\" ]; then
+                        echo '[Ruff] ⚠️ Auto-fixed some issues, but manual fixes needed above'
+                        echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
+                    else
+                        echo '[Ruff] ❌ Issues found that need manual fixes (see above)'
+                    fi
+                    exit \$exit_code
+                fi
+            )"
             run_check_background "Ruff" "$ruff_cmd"
         else
             echo "[Ruff] Skipped (no Python files)"
@@ -233,8 +276,30 @@ fi
 # black
 if ! should_skip "black"; then
     if command -v black &> /dev/null; then
-        if [ -z "$modified_files" ] || [ -n "$modified_files" ]; then
-            run_check_background "Black" "black $TARGETS --quiet"
+        # Run on all Python files in targets (modified_files is only for git context)
+        if true; then
+            # Enhanced black command that detects formatting changes
+            black_cmd="(
+                # Capture initial state
+                before_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+                
+                # Run black (it auto-formats by default)
+                if black $TARGETS --quiet; then
+                    # Check if files were modified
+                    after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+                    if [ \"\$before_hash\" != \"\$after_hash\" ]; then
+                        echo '[Black] ✨ Reformatted files!'
+                        echo 'AUTOFIX_OCCURRED' > $tmpdir/black_autofix
+                    else
+                        echo '[Black] ✅ All files already formatted!'
+                    fi
+                    exit 0
+                else
+                    echo '[Black] ❌ Error during formatting'
+                    exit 1
+                fi
+            )"
+            run_check_background "Black" "$black_cmd"
         else
             echo "[Black] Skipped (no Python files)"
         fi
@@ -300,6 +365,15 @@ else
     done
 fi
 
+# Check for auto-fixes after all background processes have completed
+for check in Ruff Black; do
+    check_lower=$(echo "$check" | tr '[:upper:]' '[:lower:]')
+    autofix_file="$tmpdir/${check_lower}_autofix"
+    if [ -f "$autofix_file" ]; then
+        AUTOFIXES_APPLIED=1
+    fi
+done
+
 # Display results in order
 for check in Tests Mypy Ruff Black JSCPD Bandit; do
     output_file="$tmpdir/${check}.output"
@@ -314,8 +388,12 @@ for check in Tests Mypy Ruff Black JSCPD Bandit; do
     fi
 done
 
-# Exit with code 2 if any check failed (Claude-compatible)
+# Exit with code 2 if any check failed or auto-fixes were applied in strict mode
 if [ $OVERALL_FAILED -ne 0 ]; then
+    exit 2
+elif [ $AUTOFIXES_APPLIED -ne 0 ] && [ "$FAIL_ON_AUTOFIX" = true ]; then
+    echo "" >&2
+    echo "⚠️  Auto-fixes were applied. Please review and re-commit." >&2
     exit 2
 else
     exit 0
