@@ -10,6 +10,7 @@
 #   --fail-fast             Stop at first failure (useful for debugging)
 #   --include-slow-tests    Include slow and integration tests (auto-starts PostgreSQL)
 #   --ignore-lint-rules RULES  Ignore specific lint rules (comma-separated): F401,E402,etc.
+#   --fail-on-autofix       Exit with failure if any auto-fixes were applied
 #   --help                  Show this help message
 #
 # Exit codes:
@@ -24,6 +25,7 @@ TARGETS=""
 FAIL_FAST=false
 INCLUDE_SLOW_TESTS=false
 IGNORE_LINT_RULES=""
+FAIL_ON_AUTOFIX=false
 
 show_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# *//'
@@ -46,6 +48,10 @@ while [[ $# -gt 0 ]]; do
         --ignore-lint-rules)
             IGNORE_LINT_RULES="$2"
             shift 2
+            ;;
+        --fail-on-autofix)
+            FAIL_ON_AUTOFIX=true
+            shift
             ;;
         --help|-h)
             show_help
@@ -96,8 +102,9 @@ if [[ -z "$TARGETS" ]]; then
     TARGETS="ragzoom tests"
 fi
 
-# Track overall success
+# Track overall success and auto-fixes
 OVERALL_FAILED=0
+AUTOFIXES_APPLIED=0
 
 # Create temporary directory for storing results
 tmpdir=$(mktemp -d)
@@ -238,6 +245,7 @@ if ! should_skip "ruff"; then
                     after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
                     if [ \"\$before_hash\" != \"\$after_hash\" ]; then
                         echo '[Ruff] ✨ Auto-fixed all issues!'
+                        echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
                     else
                         echo '[Ruff] ✅ No issues found!'
                     fi
@@ -248,6 +256,7 @@ if ! should_skip "ruff"; then
                     after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
                     if [ \"\$before_hash\" != \"\$after_hash\" ]; then
                         echo '[Ruff] ⚠️ Auto-fixed some issues, but manual fixes needed above'
+                        echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
                     else
                         echo '[Ruff] ❌ Issues found that need manual fixes (see above)'
                     fi
@@ -278,6 +287,7 @@ if ! should_skip "black"; then
                     after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
                     if [ \"\$before_hash\" != \"\$after_hash\" ]; then
                         echo '[Black] ✨ Reformatted files!'
+                        echo 'AUTOFIX_OCCURRED' > $tmpdir/black_autofix
                     else
                         echo '[Black] ✅ All files already formatted!'
                     fi
@@ -353,7 +363,7 @@ else
     done
 fi
 
-# Display results in order
+# Display results in order and check for auto-fixes
 for check in Tests Mypy Ruff Black JSCPD Bandit; do
     output_file="$tmpdir/${check}.output"
     result_file="$tmpdir/${check}.result"
@@ -365,10 +375,21 @@ for check in Tests Mypy Ruff Black JSCPD Bandit; do
             cat "$output_file"
         fi
     fi
+    
+    # Check if this tool applied auto-fixes
+    check_lower=$(echo "$check" | tr '[:upper:]' '[:lower:]')
+    autofix_file="$tmpdir/${check_lower}_autofix"
+    if [ -f "$autofix_file" ]; then
+        AUTOFIXES_APPLIED=1
+    fi
 done
 
-# Exit with code 2 if any check failed (Claude-compatible)
+# Exit with code 2 if any check failed or auto-fixes were applied in strict mode
 if [ $OVERALL_FAILED -ne 0 ]; then
+    exit 2
+elif [ $AUTOFIXES_APPLIED -ne 0 ] && [ "$FAIL_ON_AUTOFIX" = true ]; then
+    echo "" >&2
+    echo "⚠️  Auto-fixes were applied. Please review and re-commit." >&2
     exit 2
 else
     exit 0
