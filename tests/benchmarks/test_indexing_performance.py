@@ -139,6 +139,17 @@ def test_indexing_performance(
                 print(f"  usd_per_node: ${c.usd_per_node:.4f}")
                 print(f"  total_tokens: {c.total_tokens:,}")
 
+            if hasattr(chunk_metrics, "pipeline_efficiency"):
+                print("\nPipeline Efficiency:")
+                eff = chunk_metrics.pipeline_efficiency
+                print(f"  pipeline_efficiency: {eff:.1f}%")
+                if eff >= 60:
+                    print("  🚀 High parallelism utilization")
+                elif eff >= 20:
+                    print("  ✅ Moderate parallelism utilization")
+                else:
+                    print("  ⚠️  Low parallelism utilization")
+
         # Summary accuracy (simplified - using only available properties)
         if hasattr(basic_metrics, "summary_stats") and basic_metrics.summary_stats:
             for target, stats in basic_metrics.summary_stats.items():

@@ -236,6 +236,7 @@ class ChunkMetrics:
     latency: LatencyMetrics
     cost: CostMetrics
     dispersion: DispersionMetrics
+    pipeline_efficiency: float
 
 
 @dataclass
@@ -321,6 +322,7 @@ def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetr
                     source_document_tokens,
                 ),
                 dispersion=compute_dispersion_metrics(chunk_nodes),
+                pipeline_efficiency=calculate_pipeline_efficiency(telemetry_data),
             )
 
     return SimplifiedMetrics(metrics_by_chunk_size=metrics_by_chunk_size)
@@ -776,6 +778,95 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> DispersionMetr
         cv=cv,
         std=std,
     )
+
+
+def calculate_pipeline_efficiency(telemetry_data: dict[str, Any]) -> float:
+    """Calculate pipeline efficiency as a percentage of parallelism utilization.
+
+    Pipeline Efficiency = (sequential_duration - actual_duration) /
+                         (sequential_duration - max_parallel_duration) × 100%
+
+    Args:
+        telemetry_data: Raw telemetry data
+
+    Returns:
+        Pipeline efficiency percentage (0.0-100.0). Higher values indicate
+        better parallelism utilization.
+    """
+    parsed_data = parse_telemetry_format(telemetry_data)
+    nodes = parsed_data.get("nodes", [])
+
+    if not nodes:
+        return 0.0
+
+    # Calculate wall clock time and collect unique operation durations
+    min_time = float("inf")
+    max_time = 0.0
+    all_durations = []
+    # Track unique operations to avoid counting batched operations multiple times
+    seen_operations: set[str] = set()
+
+    for node in nodes:
+        # Track overall time bounds from node creation times
+        created_at = node.get("created_at", 0)
+        if created_at > 0:
+            min_time = min(min_time, created_at)
+            max_time = max(max_time, created_at)
+
+        # Process embedding durations - deduplicate batched operations
+        embedding = node.get("embedding")
+        if embedding:
+            start_time = embedding.get("start_time", 0)
+            end_time = embedding.get("end_time", 0)
+            if start_time > 0 and end_time > start_time:
+                # Use (start_time, end_time) as key to identify unique embedding batches
+                operation_key = f"embedding_{start_time}_{end_time}"
+                if operation_key not in seen_operations:
+                    duration = end_time - start_time
+                    all_durations.append(duration)
+                    seen_operations.add(operation_key)
+                # Update wall clock bounds with actual API times
+                min_time = min(min_time, start_time)
+                max_time = max(max_time, end_time)
+
+        # Process summary attempt durations - each attempt is unique
+        for attempt_idx, attempt in enumerate(node.get("summary_attempts", [])):
+            start_time = attempt.get("start_time", 0)
+            end_time = attempt.get("end_time", 0)
+            if start_time > 0 and end_time > start_time:
+                # Summary attempts are unique per node, so include node_id and attempt_idx
+                operation_key = (
+                    f"summary_{node['node_id']}_{attempt_idx}_{start_time}_{end_time}"
+                )
+                if operation_key not in seen_operations:
+                    duration = end_time - start_time
+                    all_durations.append(duration)
+                    seen_operations.add(operation_key)
+                # Update wall clock bounds with actual API times
+                min_time = min(min_time, start_time)
+                max_time = max(max_time, end_time)
+
+    if not all_durations or min_time == float("inf") or max_time <= min_time:
+        return 0.0
+
+    # Calculate the three key durations
+    sequential_duration = sum(all_durations)  # Everything runs sequentially
+    max_parallel_duration = max(all_durations)  # Everything runs in parallel
+    actual_duration = max_time - min_time  # What actually happened
+
+    # Handle edge cases
+    if sequential_duration <= max_parallel_duration:
+        # Nothing to parallelize (only one operation or very close durations)
+        return 100.0
+
+    # Calculate efficiency percentage
+    efficiency = (
+        (sequential_duration - actual_duration)
+        / (sequential_duration - max_parallel_duration)
+    ) * 100.0
+
+    # Clamp to valid range
+    return max(0.0, min(100.0, efficiency))
 
 
 def detect_verbatim_concatenations(
