@@ -1,5 +1,6 @@
 """Document-scoped store that prevents cross-document contamination."""
 
+import hashlib
 from typing import Any
 
 import numpy as np
@@ -99,6 +100,15 @@ class DocumentNodeRepository:
         # as this is typically called during tree construction where document consistency is maintained
         self._repo.update_parent_references_batch(updates, session=session)
 
+    def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
+        """Get multiple nodes by ID, filtering to this document only."""
+        return self.get_many(node_ids)
+
+    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
+        """Get multiple nodes by their path values, filtering to this document only."""
+        all_nodes = self._repo.get_nodes_by_paths(paths)
+        return [node for node in all_nodes if node.document_id == self.document_id]
+
 
 class DocumentSearchService:
     """Search service automatically scoped to a specific document."""
@@ -193,6 +203,9 @@ class DocumentTreeNavigator:
 class DocumentStore:
     """Store scoped to a single document - prevents cross-contamination."""
 
+    # Class constants from StoreManager (for compatibility)
+    PIN_DEPTH_MAX = 2  # Maximum depth for pinned nodes
+
     def __init__(
         self,
         document_id: str | None,
@@ -209,8 +222,37 @@ class DocumentStore:
             tree_navigator: Tree navigator to wrap
         """
         self.document_id = document_id
+        self._node_repo = node_repo  # Keep reference for pinned node operations
 
         # Create document-scoped wrappers
         self.nodes = DocumentNodeRepository(document_id, node_repo)
         self.search = DocumentSearchService(document_id, search_service)
         self.tree = DocumentTreeNavigator(document_id, tree_navigator)
+
+    def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
+        """Get all pinned nodes for this document only."""
+        # Get all pinned nodes from repository
+        all_pinned = self._node_repo.get_pinned_nodes(depth_max)
+        # Filter to this document only
+        return [node for node in all_pinned if node.document_id == self.document_id]
+
+    @staticmethod
+    def compute_content_hash(content: str) -> str:
+        """Compute SHA256 hash of content."""
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    # Expose low-level database access for TreeBuilder's batch operations
+    @property
+    def session_local(self) -> Any:
+        """Access to database session factory for batch operations."""
+        return self._node_repo.db_manager.SessionLocal
+
+    @property
+    def node_cache(self) -> Any:
+        """Access to node cache for TreeBuilder cache invalidation."""
+        return self._node_repo.cache_manager.cache
+
+    @property
+    def cache_order(self) -> Any:
+        """Access to cache order for TreeBuilder cache invalidation."""
+        return self._node_repo.cache_manager.cache_order

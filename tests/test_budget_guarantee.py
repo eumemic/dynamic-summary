@@ -30,17 +30,35 @@ class TestBudgetGuarantee:
             mock_chat_sync, mock_chat_async = create_predictable_summary_mock()
             mock_index.chat.completions.create = mock_chat_async
 
+            from openai import OpenAI
+
+            from ragzoom.retrieval.budget_planner import BudgetPlanner
+            from ragzoom.retrieval.embedding_service import EmbeddingService
+
             tree_builder = TreeBuilder(
                 config.index_config,
                 store,
                 api_key=config.openai_api_key.get_secret_value(),
             )
+
+            # Create services for Retriever
+            client = OpenAI(api_key=config.openai_api_key.get_secret_value())
+            embedding_service = EmbeddingService(
+                client, store, config.query_config.embedding_model
+            )
+            budget_planner = BudgetPlanner(
+                store, config.index_config.target_chunk_tokens
+            )
+
+            # Note: Using store.for_document(None) for tests that don't specify document_id
+            doc_store = store.for_document(None)
             retriever = Retriever(
                 config.query_config,
-                store,
-                api_key=config.openai_api_key.get_secret_value(),
+                doc_store,
+                embedding_service,
+                budget_planner,
             )
-            assembler = Assembler(store)
+            assembler = Assembler(doc_store)
 
             yield (
                 config.index_config,
@@ -254,7 +272,7 @@ class TestBudgetGuarantee:
         from tests.mock_store import SimpleMockStore
 
         # Mock OpenAI clients
-        with (patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,):
+        with (patch("openai.OpenAI") as mock_openai_class,):
 
             # Setup sync mock for retrieval
             mock_embeddings = Mock()
@@ -262,11 +280,15 @@ class TestBudgetGuarantee:
                 return_value=Mock(data=[Mock(embedding=[0.5] * 1536)])
             )
 
-            instance_retrieve = Mock()
-            instance_retrieve.embeddings = mock_embeddings
-            mock_retrieve_client.return_value = instance_retrieve
+            instance_openai = Mock()
+            instance_openai.embeddings = mock_embeddings
+            mock_openai_class.return_value = instance_openai
 
             # No OpenAI setup needed for assembler
+            from openai import OpenAI
+
+            from ragzoom.retrieval.budget_planner import BudgetPlanner
+            from ragzoom.retrieval.embedding_service import EmbeddingService
 
             index_config = IndexConfig.load(target_chunk_tokens=200)
             query_config = QueryConfig(budget_tokens=1000)
@@ -274,12 +296,24 @@ class TestBudgetGuarantee:
             store = SimpleMockStore(
                 config=(index_config, query_config, operational_config)
             )
+
+            # Create services for Retriever
+            client = OpenAI(
+                api_key=operational_config.openai_api_key.get_secret_value()
+            )
+            embedding_service = EmbeddingService(
+                client, store, query_config.embedding_model
+            )
+            budget_planner = BudgetPlanner(store, index_config.target_chunk_tokens)
+
+            doc_store = store.for_document(None)
             retriever = Retriever(
                 query_config,
-                store,
-                api_key=operational_config.openai_api_key,
+                doc_store,
+                embedding_service,
+                budget_planner,
             )
-            assembler = Assembler(store)
+            assembler = Assembler(doc_store)
 
             # Create a simple tree structure
             # Root

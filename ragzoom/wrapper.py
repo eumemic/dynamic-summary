@@ -17,10 +17,11 @@ def _initialize_components(
     OperationalConfig,
     Store,
     TreeBuilder,
-    Retriever,
-    Assembler,
 ]:
     """Initialize common RagZoom components.
+
+    Note: Retriever and Assembler are no longer pre-initialized as they require
+    document-scoped stores. Create them per-request using store.for_document().
 
     Args:
         index_config: Configuration for document indexing
@@ -36,8 +37,6 @@ def _initialize_components(
 
     store = Store(operational_config)
     tree_builder = TreeBuilder(index_config, store, operational_config.openai_api_key)
-    retriever = Retriever(query_config, store, operational_config.openai_api_key)
-    assembler = Assembler(store)
 
     return (
         index_config,
@@ -45,8 +44,6 @@ def _initialize_components(
         operational_config,
         store,
         tree_builder,
-        retriever,
-        assembler,
     )
 
 
@@ -75,8 +72,6 @@ class RagZoom:
             self.operational_config,
             self.store,
             self.tree_builder,
-            self.retriever,
-            self.assembler,
         ) = _initialize_components(index_config, query_config, operational_config)
 
     def index(self, text: str, document_id: str) -> str:
@@ -91,6 +86,7 @@ class RagZoom:
         """
         return self.tree_builder.add_document(text, document_id=document_id)
 
+    # jscpd:ignore-start - Legitimate sync/async pattern duplication
     def query(self, query_text: str, document_id: str) -> str:
         """Query within a specific document.
 
@@ -101,8 +97,36 @@ class RagZoom:
         Returns:
             Generated summary response
         """
-        node_scores = self.retriever.retrieve(query_text, document_id=document_id)
-        return self.assembler.assemble(node_scores)
+        # Create document-scoped components
+        from openai import OpenAI
+
+        from ragzoom.retrieval.budget_planner import BudgetPlanner
+        from ragzoom.retrieval.embedding_service import EmbeddingService
+
+        client = OpenAI(
+            api_key=self.operational_config.openai_api_key.get_secret_value()
+        )
+        embedding_service = EmbeddingService(
+            client, self.store, self.query_config.embedding_model
+        )
+        budget_planner = BudgetPlanner(
+            self.store, self.index_config.target_chunk_tokens
+        )
+
+        document_store = self.store.for_document(document_id)
+        retriever = Retriever(
+            self.query_config,
+            document_store,
+            embedding_service,
+            budget_planner,
+        )
+        assembler = Assembler(document_store)
+
+        # Execute query
+        node_scores = retriever.retrieve(query_text, document_id=document_id)
+        return assembler.assemble(node_scores)
+
+    # jscpd:ignore-end
 
 
 class AsyncRagZoom:
@@ -130,8 +154,6 @@ class AsyncRagZoom:
             self.operational_config,
             self.store,
             self.tree_builder,
-            self.retriever,
-            self.assembler,
         ) = _initialize_components(index_config, query_config, operational_config)
 
     async def index_async(self, text: str, document_id: str) -> str:
@@ -146,6 +168,7 @@ class AsyncRagZoom:
         """
         return await self.tree_builder.add_document_async(text, document_id=document_id)
 
+    # jscpd:ignore-start - Legitimate sync/async pattern duplication
     async def query_async(self, query_text: str, document_id: str) -> str:
         """Query within a specific document asynchronously.
 
@@ -156,7 +179,35 @@ class AsyncRagZoom:
         Returns:
             Generated summary response
         """
-        node_scores = await self.retriever.retrieve_async(
+        # Create document-scoped components
+        from openai import OpenAI
+
+        from ragzoom.retrieval.budget_planner import BudgetPlanner
+        from ragzoom.retrieval.embedding_service import EmbeddingService
+
+        client = OpenAI(
+            api_key=self.operational_config.openai_api_key.get_secret_value()
+        )
+        embedding_service = EmbeddingService(
+            client, self.store, self.query_config.embedding_model
+        )
+        budget_planner = BudgetPlanner(
+            self.store, self.index_config.target_chunk_tokens
+        )
+
+        document_store = self.store.for_document(document_id)
+        retriever = Retriever(
+            self.query_config,
+            document_store,
+            embedding_service,
+            budget_planner,
+        )
+        assembler = Assembler(document_store)
+
+        # Execute query
+        node_scores = await retriever.retrieve_async(
             query_text, document_id=document_id
         )
-        return self.assembler.assemble(node_scores)
+        return assembler.assemble(node_scores)
+
+    # jscpd:ignore-end

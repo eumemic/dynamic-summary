@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ragzoom.store import StoreManager
+    from ragzoom.document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 class CoverageBuilder:
     """Builds coverage maps including selected nodes, ancestors, and siblings."""
 
-    def __init__(self, store: "StoreManager"):
+    def __init__(self, store: "DocumentStore"):
         """Initialize coverage builder.
 
         Args:
-            store: StoreManager instance for node operations
+            store: DocumentStore instance for node operations
         """
         self.store = store
 
@@ -57,7 +57,7 @@ class CoverageBuilder:
 
         coverage_map = {node_id: True for node_id in selected_ids}
         for node_id in selected_ids:
-            self.store.nodes.update_node_access(node_id)
+            self.store.nodes.update_access(node_id)
 
         ancestors = self.store.tree.get_ancestors(selected_ids)
         for ancestor in ancestors:

@@ -6,7 +6,6 @@ import pytest
 
 from ragzoom.dynamic_tiling import AsyncDynamicTilingGenerator, DynamicTilingGenerator
 from ragzoom.index import TreeBuilder
-from ragzoom.retrieve import Retriever
 from tests.utils import create_predictable_summary_mock, mock_openai_context
 
 
@@ -57,7 +56,11 @@ class TestParallelDPPerformance:
         )
 
         # Get test data
-        retriever = Retriever(config.query_config, store, config.openai_api_key)
+        from tests.utils import create_retriever
+
+        retriever = create_retriever(
+            config.query_config, store, api_key=config.openai_api_key.get_secret_value()
+        )
         result = await retriever.retrieve_async("test content", budget_tokens=1500)
 
         # Extract the data needed for DP
@@ -87,6 +90,8 @@ class TestParallelDPPerformance:
 
     async def test_async_dp_performance_benefit(self, large_document_setup):
         """Test that async DP provides performance benefit on larger trees."""
+        from tests.utils import create_retriever
+
         config, store, _ = large_document_setup
 
         # Create generators with low threshold to force parallelization
@@ -96,7 +101,9 @@ class TestParallelDPPerformance:
         )
 
         # Get test data
-        retriever = Retriever(config.query_config, store, config.openai_api_key)
+        retriever = create_retriever(
+            config.query_config, store, api_key=config.openai_api_key.get_secret_value()
+        )
         result = await retriever.retrieve_async("test content", budget_tokens=1800)
 
         nodes = result.nodes or {}
@@ -142,16 +149,19 @@ class TestParallelDPPerformance:
         config, store, _ = large_document_setup
 
         # Create retrievers with and without async DP
-        sync_retriever = Retriever(
-            config.query_config, store, config.openai_api_key, use_async_dp=False
+        from tests.utils import create_retriever
+
+        sync_retriever = create_retriever(
+            config.query_config, store, api_key=config.openai_api_key.get_secret_value()
         )
-        async_retriever = Retriever(
+        sync_retriever.use_async_dp = False
+
+        async_retriever = create_retriever(
             config.query_config,
             store,
-            config.openai_api_key,
-            use_async_dp=True,
-            min_nodes_for_parallel=5,
+            api_key=config.openai_api_key.get_secret_value(),
         )
+        async_retriever.use_async_dp = True
 
         # Test both retrievers produce same results
         sync_result = sync_retriever.retrieve("test content", budget_tokens=1200)
@@ -173,7 +183,11 @@ class TestParallelDPPerformance:
         )
 
         # Get test data
-        retriever = Retriever(config.query_config, store, config.openai_api_key)
+        from tests.utils import create_retriever
+
+        retriever = create_retriever(
+            config.query_config, store, api_key=config.openai_api_key.get_secret_value()
+        )
         result = await retriever.retrieve_async("test content", budget_tokens=1000)
 
         nodes = result.nodes or {}
@@ -194,6 +208,8 @@ class TestParallelDPPerformance:
 
     async def test_parallelization_threshold(self, large_document_setup):
         """Test that parallelization threshold works correctly."""
+        from tests.utils import create_retriever
+
         config, store, _ = large_document_setup
 
         # High threshold should disable parallelization for most trees
@@ -206,7 +222,9 @@ class TestParallelDPPerformance:
             config.query_config, min_nodes_for_parallel=1
         )
 
-        retriever = Retriever(config.query_config, store, config.openai_api_key)
+        retriever = create_retriever(
+            config.query_config, store, api_key=config.openai_api_key.get_secret_value()
+        )
         result = await retriever.retrieve_async("test content", budget_tokens=1000)
 
         nodes = result.nodes or {}

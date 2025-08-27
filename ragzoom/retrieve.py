@@ -5,9 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from openai import OpenAI
-
-from ragzoom.config import IndexConfig, QueryConfig, SecretStr
+from ragzoom.config import QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.retrieval import (
     BudgetPlanner,
@@ -16,10 +14,11 @@ from ragzoom.retrieval import (
     ScoringService,
 )
 from ragzoom.retrieval.telemetry_collector import TelemetryCollector
-from ragzoom.store import StoreManager, TreeNode
+from ragzoom.store import TreeNode
 from ragzoom.telemetry_query import QueryTelemetry
 
 if TYPE_CHECKING:
+    from ragzoom.document_store import DocumentStore
     from ragzoom.index import TreeBuilder
 
 logger = logging.getLogger(__name__)
@@ -42,8 +41,9 @@ class Retriever:
     def __init__(
         self,
         query_config: QueryConfig,
-        store: StoreManager,
-        api_key: str | SecretStr = "",
+        document_store: "DocumentStore",
+        embedding_service: EmbeddingService,
+        budget_planner: BudgetPlanner,
         tree_builder: Optional["TreeBuilder"] = None,
         use_async_dp: bool = False,
         min_nodes_for_parallel: int = 10,
@@ -52,14 +52,17 @@ class Retriever:
 
         Args:
             query_config: Query configuration
-            store: StoreManager instance
-            api_key: OpenAI API key as SecretStr or string (if not provided, reads from OPENAI_API_KEY env)
+            document_store: DocumentStore instance for document-scoped operations
+            embedding_service: Service for generating query embeddings
+            budget_planner: Service for calculating conservative seed counts
             tree_builder: Optional TreeBuilder instance
             use_async_dp: Whether to use async DP generator for parallelization
             min_nodes_for_parallel: Minimum nodes in subtree to enable parallelization
         """
         self.query_config = query_config
-        self.store = store
+        self.document_store = document_store
+        self.embedding_service = embedding_service
+        self.budget_planner = budget_planner
         self.use_async_dp = use_async_dp
 
         # Type annotation for async_dp_generator
@@ -67,12 +70,6 @@ class Retriever:
 
         self.async_dp_generator: AsyncDynamicTilingGenerator | None
 
-        # Get API key from parameter or environment
-        from ragzoom.config import ensure_secret_str
-
-        actual_key = ensure_secret_str(api_key, "Retriever")
-
-        self.client = OpenAI(api_key=actual_key)
         self.dp_generator = DynamicTilingGenerator(query_config)
 
         # Initialize async generator if requested
@@ -82,17 +79,6 @@ class Retriever:
             )
         else:
             self.async_dp_generator = None
-
-        # Initialize services
-        self.embedding_service = EmbeddingService(
-            self.client, store, query_config.embedding_model
-        )
-        self.coverage_builder = CoverageBuilder(store)
-        self.scoring_service = ScoringService(store)
-
-        # Get default chunk size from IndexConfig for budget planning
-        index_config = IndexConfig.load()
-        self.budget_planner = BudgetPlanner(store, index_config.target_chunk_tokens)
 
     async def retrieve_async(
         self,
@@ -151,17 +137,14 @@ class Retriever:
 
         # Phase 2: Initial retrieval
         k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
-        where_filter = {"document_id": document_id} if document_id else None
-        candidates = self.store.search.search_similar(
-            query_embedding, k_candidates, where=where_filter
-        )
+        candidates = self.document_store.search.similar(query_embedding, k_candidates)
         if telemetry_collector:
             telemetry_collector.end_phase("search")
             telemetry_collector.start_phase()
             telemetry_collector.record_metric("candidates_retrieved", len(candidates))
 
         # Phase 3: Apply MMR
-        selected_ids = self.store.search.compute_mmr_diverse_results(
+        selected_ids = self.document_store.search.mmr_diverse(
             query_embedding, candidates, self.query_config.mmr_lambda, num_seeds
         )
         if telemetry_collector:
@@ -170,14 +153,19 @@ class Retriever:
             telemetry_collector.record_metric("seeds_found", len(selected_ids))
 
         # Phase 4: Build coverage map
-        coverage_map = self.coverage_builder.build_complete_coverage_map(selected_ids)
+        # Use document-scoped coverage builder
+        doc_coverage_builder = CoverageBuilder(self.document_store)
+        coverage_map = doc_coverage_builder.build_complete_coverage_map(selected_ids)
+
         if telemetry_collector:
             telemetry_collector.end_phase("coverage_map")
             telemetry_collector.start_phase()
             telemetry_collector.record_metric("coverage_size", len(coverage_map))
 
         # Phase 5: Build scores map
-        scores = self.scoring_service.compute_scores(
+        # Use document-scoped scoring service
+        doc_scoring_service = ScoringService(self.document_store)
+        scores = doc_scoring_service.compute_scores(
             query_embedding, coverage_map, candidates
         )
         if telemetry_collector:
@@ -198,7 +186,7 @@ class Retriever:
         nodes: dict[str, TreeNode] = {}
         node_ids_to_load = list(coverage_map.keys())
         if node_ids_to_load:
-            loaded_nodes = self.store.nodes.get_nodes(node_ids_to_load)
+            loaded_nodes = self.document_store.nodes.get_nodes(node_ids_to_load)
             for node in loaded_nodes:
                 nodes[node.id] = node
 

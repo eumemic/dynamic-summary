@@ -9,7 +9,6 @@ import pytest
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.index import TreeBuilder
-from ragzoom.retrieve import Retriever
 from tests.utils import mock_openai_context
 
 
@@ -50,13 +49,17 @@ class TestIntegration:
             database_url=real_store.config.database_url,  # Use the store's database URL
         )
 
+        from tests.utils import create_retriever
+
         tree_builder = TreeBuilder(
             index_config, real_store, api_key=operational_config.openai_api_key
         )
-        retriever = Retriever(
-            query_config, real_store, api_key=operational_config.openai_api_key
+        retriever = create_retriever(
+            query_config,
+            real_store,
+            api_key=operational_config.openai_api_key.get_secret_value(),
         )
-        assembler = Assembler(real_store)
+        assembler = Assembler(real_store.for_document(None))
 
         # Create a config wrapper for backward compatibility
         from tests.conftest import BackwardCompatibilityConfig

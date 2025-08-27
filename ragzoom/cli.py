@@ -440,12 +440,29 @@ def query(
         result = None
         if debug:
             # We need the raw retrieval result for debug visualization
+            from openai import OpenAI
+
+            # Create services
+            from ragzoom.config import IndexConfig
+            from ragzoom.retrieval.budget_planner import BudgetPlanner
+            from ragzoom.retrieval.embedding_service import EmbeddingService
             from ragzoom.retrieve import Retriever
 
+            client = OpenAI(
+                api_key=operational_config.openai_api_key.get_secret_value()
+            )
+            embedding_service = EmbeddingService(
+                client, store, query_config.embedding_model
+            )
+            index_cfg = IndexConfig.load()
+            budget_planner = BudgetPlanner(store, index_cfg.target_chunk_tokens)
+
+            document_store = store.for_document(document_id)
             retriever = Retriever(
                 query_config,
-                store,
-                api_key=operational_config.openai_api_key.get_secret_value(),
+                document_store,
+                embedding_service,
+                budget_planner,
             )
             result = retriever.retrieve(
                 query_text,

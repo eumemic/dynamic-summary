@@ -11,7 +11,6 @@ import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.index import TreeBuilder
-from ragzoom.retrieve import Retriever
 from tests.utils import (
     create_hash_based_embedding_mock,
     create_predictable_summary_mock,
@@ -77,11 +76,12 @@ class TestDPIntegration:
         )
 
         # Retrieve with a query
-        retriever = Retriever(
+        from tests.utils import create_retriever
+
+        retriever = create_retriever(
             config.query_config,
             store,
             api_key=config.openai_api_key.get_secret_value(),
-            tree_builder=tree_builder,
         )
         query = "First chunk Second chunk"  # Query that should match the first half
         result = await retriever.retrieve_async(query, document_id="doc1")
@@ -110,6 +110,8 @@ class TestDPIntegration:
         self, config, store, mock_openai, monkeypatch
     ):
         """Test that DP tiling doesn't include both parent and child."""
+        from tests.utils import create_retriever
+
         mock_client, mock_async_client = mock_openai
 
         # Create a simple document
@@ -129,11 +131,10 @@ class TestDPIntegration:
         )
 
         # Retrieve
-        retriever = Retriever(
+        retriever = create_retriever(
             config.query_config,
             store,
             api_key=config.openai_api_key.get_secret_value(),
-            tree_builder=tree_builder,
         )
         result = await retriever.retrieve_async("test document", document_id="doc1")
 
@@ -156,6 +157,8 @@ class TestDPIntegration:
     @pytest.mark.asyncio
     async def test_span_coverage(self, config, store, mock_openai, monkeypatch):
         """Test that the assembled text covers the document span correctly."""
+        from tests.utils import create_retriever
+
         mock_client, mock_async_client = mock_openai
 
         # Create a document with known content
@@ -175,11 +178,10 @@ class TestDPIntegration:
         )
 
         # Retrieve with different queries
-        retriever = Retriever(
+        retriever = create_retriever(
             config.query_config,
             store,
             api_key=config.openai_api_key.get_secret_value(),
-            tree_builder=tree_builder,
         )
 
         # Patch retriever client for sync
@@ -203,6 +205,8 @@ class TestDPIntegration:
     @pytest.mark.asyncio
     async def test_budget_respected(self, config, store, mock_openai, monkeypatch):
         """Test that DP respects token budget."""
+        from tests.utils import create_retriever
+
         mock_client, mock_async_client = mock_openai
 
         # Create a large document
@@ -222,11 +226,10 @@ class TestDPIntegration:
         )
 
         # Retrieve with budget
-        retriever = Retriever(
+        retriever = create_retriever(
             small_query_config,
             store,
             api_key=config.openai_api_key.get_secret_value(),
-            tree_builder=tree_builder,
         )
         result = await retriever.retrieve_async(
             "Sentence", document_id="doc1", budget_tokens=100

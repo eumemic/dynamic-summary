@@ -40,12 +40,7 @@ class QueryService:
         self.store = store
         self.query_config = query_config
         self.operational_config = operational_config
-        self.retriever = Retriever(
-            query_config,
-            store,
-            api_key=operational_config.openai_api_key.get_secret_value(),
-        )
-        self.assembler = Assembler(store)
+        # Note: Retriever and Assembler are now created per-request with DocumentStore
 
     # jscpd:ignore-start - Legitimate sync/async pattern duplication
     def execute_query(
@@ -69,8 +64,33 @@ class QueryService:
         # Use provided budget or config default
         budget = token_budget or self.query_config.budget_tokens
 
+        # Create document-scoped store and components
+        from openai import OpenAI
+
+        from ragzoom.config import IndexConfig
+        from ragzoom.retrieval.budget_planner import BudgetPlanner
+        from ragzoom.retrieval.embedding_service import EmbeddingService
+
+        client = OpenAI(
+            api_key=self.operational_config.openai_api_key.get_secret_value()
+        )
+        embedding_service = EmbeddingService(
+            client, self.store, self.query_config.embedding_model
+        )
+        index_cfg = IndexConfig.load()
+        budget_planner = BudgetPlanner(self.store, index_cfg.target_chunk_tokens)
+
+        document_store = self.store.for_document(document_id)
+        retriever = Retriever(
+            self.query_config,
+            document_store,
+            embedding_service,
+            budget_planner,
+        )
+        assembler = Assembler(document_store)
+
         # Retrieve relevant nodes
-        retrieval_result = self.retriever.retrieve(
+        retrieval_result = retriever.retrieve(
             query_text,
             budget_tokens=budget,
             document_id=document_id,
@@ -78,8 +98,8 @@ class QueryService:
         )
 
         # Assemble summary
-        summary = self.assembler.assemble(retrieval_result)
-        token_count = self.assembler.get_token_count(summary)
+        summary = assembler.assemble(retrieval_result)
+        token_count = assembler.get_token_count(summary)
 
         return QueryResult(
             summary=summary,
@@ -112,8 +132,33 @@ class QueryService:
         # Use provided budget or config default
         budget = token_budget or self.query_config.budget_tokens
 
+        # Create document-scoped store and components
+        from openai import OpenAI
+
+        from ragzoom.config import IndexConfig
+        from ragzoom.retrieval.budget_planner import BudgetPlanner
+        from ragzoom.retrieval.embedding_service import EmbeddingService
+
+        client = OpenAI(
+            api_key=self.operational_config.openai_api_key.get_secret_value()
+        )
+        embedding_service = EmbeddingService(
+            client, self.store, self.query_config.embedding_model
+        )
+        index_cfg = IndexConfig.load()
+        budget_planner = BudgetPlanner(self.store, index_cfg.target_chunk_tokens)
+
+        document_store = self.store.for_document(document_id)
+        retriever = Retriever(
+            self.query_config,
+            document_store,
+            embedding_service,
+            budget_planner,
+        )
+        assembler = Assembler(document_store)
+
         # Retrieve relevant nodes
-        retrieval_result = await self.retriever.retrieve_async(
+        retrieval_result = await retriever.retrieve_async(
             query_text,
             num_seeds,
             budget,
@@ -121,8 +166,8 @@ class QueryService:
         )
 
         # Assemble summary
-        summary = self.assembler.assemble(retrieval_result)
-        token_count = self.assembler.get_token_count(summary)
+        summary = assembler.assemble(retrieval_result)
+        token_count = assembler.get_token_count(summary)
 
         return QueryResult(
             summary=summary,
@@ -154,10 +199,4 @@ class QueryService:
         if updates:
             # Update config
             self.query_config = self.query_config.replace(**updates)
-
-            # Recreate retriever with new config
-            self.retriever = Retriever(
-                self.query_config,
-                self.store,
-                api_key=self.operational_config.openai_api_key,
-            )
+            # Note: Retriever is now created per-request with latest config

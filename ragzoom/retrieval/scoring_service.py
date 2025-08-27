@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 if TYPE_CHECKING:
-    from ragzoom.store import StoreManager
+    from ragzoom.document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 class ScoringService:
     """Computes relevance scores for nodes in the coverage map."""
 
-    def __init__(self, store: "StoreManager"):
+    def __init__(self, store: "DocumentStore"):
         """Initialize scoring service.
 
         Args:
-            store: Store instance for node retrieval
+            store: DocumentStore instance for node retrieval
         """
         self.store = store
 

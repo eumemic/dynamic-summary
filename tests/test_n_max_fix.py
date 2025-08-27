@@ -3,7 +3,6 @@
 from unittest.mock import Mock, patch
 
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
-from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
 
@@ -92,7 +91,7 @@ class TestNumSeedsFix:
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         # Mock OpenAI client
-        with patch("ragzoom.retrieve.OpenAI") as mock_client:
+        with patch("openai.OpenAI") as mock_client:
             mock_embeddings = Mock()
             mock_embeddings.create = Mock(
                 return_value=Mock(data=[Mock(embedding=[0.9] * 1536)])
@@ -101,11 +100,12 @@ class TestNumSeedsFix:
             mock_instance.embeddings = mock_embeddings
             mock_client.return_value = mock_instance
 
-            retriever = Retriever(
+            from tests.utils import create_retriever
+
+            retriever = create_retriever(
                 query_config=query_config,
                 store=store,
-                api_key=operational_config.openai_api_key,
-                tree_builder=None,
+                api_key=operational_config.openai_api_key.get_secret_value(),
             )
 
             # Retrieve with num_seeds=1
