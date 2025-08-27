@@ -20,7 +20,7 @@ class TestPokeMechanism:
         """Test poke when all dependencies are ready."""
         # Create a simple lookup dict
         lookup = {}
-        queue = asyncio.Queue()
+        queue = asyncio.PriorityQueue()
 
         # Create nodes with satisfied dependencies
         left_child = TreeNode(
@@ -65,14 +65,14 @@ class TestPokeMechanism:
         poke("parent", lookup, queue)
 
         assert queue.qsize() == 1
-        queued_id = await queue.get()
-        assert queued_id == "parent"
+        queued_job = await queue.get()
+        assert queued_job.node.id == "parent"
 
     @pytest.mark.asyncio
     async def test_poke_with_missing_dependencies(self):
         """Test poke when dependencies are not ready."""
         lookup = {}
-        queue = asyncio.Queue()
+        queue = asyncio.PriorityQueue()
 
         # Create nodes where left child has no text yet
         left_child = TreeNode(
@@ -122,7 +122,7 @@ class TestPokeMechanism:
     async def test_poke_with_preceding_neighbor_dependency(self):
         """Test poke with preceding neighbor dependency."""
         lookup = {}
-        queue = asyncio.Queue()
+        queue = asyncio.PriorityQueue()
 
         # Create nodes with preceding neighbor dependency
         node1 = TreeNode(
@@ -175,6 +175,52 @@ class TestPokeMechanism:
         poke("node2", lookup, queue)
 
         assert queue.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_priority_queue_ordering(self):
+        """Test that nodes are processed in leftmost-first order."""
+        queue = asyncio.PriorityQueue()
+        lookup = {}
+
+        # Create nodes with different span_start values
+        node_right = TreeNode(
+            id="right",
+            text="Right text",
+            height=1,
+            span_start=100,  # Higher span_start (rightmost)
+            span_end=200,
+            path="1",
+            document_id="doc1",
+            embedding=[],
+            token_count=10,
+            # No dependencies - ready to process
+        )
+
+        node_left = TreeNode(
+            id="left",
+            text="Left text",
+            height=1,
+            span_start=0,  # Lower span_start (leftmost)
+            span_end=50,
+            path="0",
+            document_id="doc1",
+            embedding=[],
+            token_count=10,
+            # No dependencies - ready to process
+        )
+
+        lookup = {"left": node_left, "right": node_right}
+
+        # Poke nodes in reverse order (right first)
+        poke("right", lookup, queue)
+        poke("left", lookup, queue)
+
+        # Left node should come out first despite being poked second
+        first_job = await queue.get()
+        assert first_job.node.id == "left"
+
+        second_job = await queue.get()
+        assert second_job.node.id == "right"
 
 
 class TestLeafNodeCreation:

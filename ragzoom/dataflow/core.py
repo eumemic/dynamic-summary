@@ -9,6 +9,7 @@ import logging
 import math
 import time
 import uuid
+from dataclasses import dataclass, field
 
 from ragzoom.models import TreeNode
 from ragzoom.progress import AsyncProgressWrapper
@@ -105,6 +106,22 @@ class BatchAwareQueue:
     async def join(self) -> None:
         """Wait for all tasks to be marked done."""
         await self.queue.join()
+
+
+@dataclass
+class SummaryJob:
+    """A summary generation job with priority ordering."""
+
+    node: TreeNode
+    priority: int = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Set priority based on node's document position."""
+        self.priority = self.node.span_start
+
+    def __lt__(self, other: "SummaryJob") -> bool:
+        """Compare jobs by priority (lower span_start = higher priority)."""
+        return self.priority < other.priority
 
 
 def _generate_node_id() -> str:
@@ -287,7 +304,9 @@ def build_internal_nodes(
         current_height += 1
 
 
-def poke(node_id: str, lookup: dict[str, TreeNode], queue: asyncio.Queue) -> None:
+def poke(
+    node_id: str, lookup: dict[str, TreeNode], queue: asyncio.PriorityQueue[SummaryJob]
+) -> None:
     """Check if node's dependencies are ready and queue if so.
 
     Args:
@@ -318,15 +337,15 @@ def poke(node_id: str, lookup: dict[str, TreeNode], queue: asyncio.Queue) -> Non
         if not right_child or not right_child.text:
             ready = False
 
-    # Queue if ready
+    # Queue if ready (priority by span_start - lower values processed first)
     if ready:
-        queue.put_nowait(node_id)
+        queue.put_nowait(SummaryJob(node))
 
 
 async def summary_worker(
     worker_id: int,
     lookup: dict[str, TreeNode],
-    summary_queue: asyncio.Queue,
+    summary_queue: asyncio.PriorityQueue[SummaryJob],
     embedding_queue: BatchAwareQueue,
     llm_service: LLMService,
     shutdown: asyncio.Event,
@@ -348,12 +367,12 @@ async def summary_worker(
         try:
             # Get next node to process (with timeout for shutdown check)
             try:
-                node_id = await asyncio.wait_for(summary_queue.get(), timeout=0.1)
+                job = await asyncio.wait_for(summary_queue.get(), timeout=0.1)
+                node = job.node
             except asyncio.TimeoutError:
                 continue
 
             try:
-                node = lookup[node_id]
 
                 # Get child texts and token counts
                 left_text = ""
@@ -386,7 +405,7 @@ async def summary_worker(
                     left_text,
                     right_text,
                     target_tokens,
-                    parent_id=node_id,  # Pass node_id as parent_id for telemetry
+                    parent_id=node.id,  # Pass node.id as parent_id for telemetry
                     reporter=reporter,  # Pass reporter so telemetry works
                     prev_context=prev_context,
                     left_token_count=left_token_count,
@@ -569,7 +588,7 @@ async def build_tree_dataflow(
     build_internal_nodes(lookup, leaves, document_id, reporter)
 
     # Initialize queues and storage
-    summary_queue: asyncio.Queue[str] = asyncio.Queue()
+    summary_queue: asyncio.PriorityQueue[SummaryJob] = asyncio.PriorityQueue()
     embedding_queue = BatchAwareQueue(batch_size=embedding_batch_size)
 
     # Queue leaf embeddings immediately (they have text)
