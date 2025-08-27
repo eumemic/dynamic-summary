@@ -151,12 +151,8 @@ def validate_chunk_sizes(
         for node_id, tokens in oversized[:5]:  # Show first 5
             logger.debug(f"  {node_id}: {tokens} tokens")
 
-    if undersized:
-        logger.debug(
-            f"Found {len(undersized)} undersized chunks (<{min_allowed} tokens)"
-        )
-        for node_id, tokens in undersized[:5]:  # Show first 5
-            logger.debug(f"  {node_id}: {tokens} tokens")
+    # Note: We still track undersized chunks but don't log details to reduce noise
+    # The count is sufficient for debugging purposes
 
     # Success - no need to log
     return None  # No errors
@@ -324,7 +320,7 @@ def validate_tiling(
         # Find root node from preloaded nodes (node with no parent in the set)
         root_node = None
         for node in preloaded_nodes.values():
-            if node.parent_id is None or node.parent_id not in preloaded_nodes:
+            if node.is_root() or node.parent_id not in preloaded_nodes:
                 root_node = node
                 break
 
@@ -452,7 +448,7 @@ def validate_equal_leaf_depth(store: StoreManager, document_id: str) -> str | No
         # Find root node (node with no parent)
         root_node = None
         for node in nodes:
-            if node.parent_id is None:
+            if node.is_root():
                 root_node = node
                 break
 

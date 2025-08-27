@@ -131,6 +131,7 @@ class IndexConfig:
     max_retries: int
     embedding_batch_size: int
     use_anti_verbatim_vaccine: bool
+    processing_strategy: str
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -143,6 +144,13 @@ class IndexConfig:
         if self.embedding_batch_size <= 0:
             raise ValueError(
                 f"embedding_batch_size must be positive, got {self.embedding_batch_size}"
+            )
+
+        # Validate processing strategy
+        valid_strategies = {"bottom_to_top", "left_to_right"}
+        if self.processing_strategy not in valid_strategies:
+            raise ValueError(
+                f"processing_strategy must be one of {valid_strategies}, got '{self.processing_strategy}'"
             )
 
     @classmethod
@@ -166,6 +174,9 @@ class IndexConfig:
             "embedding_batch_size": config_dict["embedding_batch_size"],
             "use_anti_verbatim_vaccine": config_dict.get(
                 "use_anti_verbatim_vaccine", True
+            ),
+            "processing_strategy": config_dict.get(
+                "processing_strategy", "bottom_to_top"
             ),
         }
 

@@ -18,20 +18,25 @@ logger = logging.getLogger(__name__)
 class GlobalProgressTracker:
     """Tracks overall progress across all indexing stages."""
 
-    def __init__(self, total_chunks: int, show_progress: bool = True):
+    def __init__(
+        self,
+        total_chunks: int,
+        show_progress: bool = True,
+        embedding_batch_size: int = 100,
+    ):
         """Initialize progress tracker.
 
         Args:
             total_chunks: Number of leaf chunks
             show_progress: Whether to show progress bar
+            embedding_batch_size: Size of embedding batches for progress calculation
         """
         self.total_chunks = total_chunks
+        self.embedding_batch_size = embedding_batch_size
         self.show_progress = show_progress and HAS_TQDM
 
         # Calculate expected operations
-        self.leaf_operations = total_chunks  # Embeddings for leaves
-        self.tree_operations = self._estimate_tree_operations(total_chunks)
-        self.total_operations = self.leaf_operations + self.tree_operations
+        self.total_operations = self._calculate_total_operations(total_chunks)
 
         # Create progress bar
         if self.show_progress:
@@ -52,18 +57,36 @@ class GlobalProgressTracker:
         self.stage = "leaves"
         self.start_time = None
 
-    def _estimate_tree_operations(self, num_leaves: int) -> int:
-        """Estimate number of tree building operations."""
-        # Each level has half the nodes of the previous
-        # Each node needs 1 summary + 1 embedding
-        operations = 0
-        level_size = num_leaves
+    def _calculate_total_operations(self, num_leaves: int) -> int:
+        """Calculate total number of progress operations.
 
+        Progress units represent:
+        - One summary generation for each internal node
+        - One embedding batch (multiple nodes processed together)
+        """
+        import math
+
+        # Calculate number of internal nodes (all non-leaf nodes)
+        internal_nodes = 0
+        level_size = num_leaves
         while level_size > 1:
             level_size = (level_size + 1) // 2
-            operations += level_size * 2  # summary + embedding
+            internal_nodes += level_size
 
-        return operations
+        # Calculate total nodes
+        total_nodes = num_leaves + internal_nodes
+
+        # Calculate number of embedding batches
+        # Root gets its own batch, all others are batched together
+        if total_nodes == 1:
+            embedding_batches = 1
+        else:
+            embedding_batches = (
+                math.ceil((total_nodes - 1) / self.embedding_batch_size) + 1
+            )
+
+        # Total operations = summaries + embedding batches
+        return internal_nodes + embedding_batches
 
     def update(self, n: int = 1, stage: str | None = None) -> None:
         """Update progress."""
