@@ -86,6 +86,10 @@ class TreeNode(Base):
         """Check if this node is the root node (has no parent)."""
         return self.parent_id is None
 
+    def get_depth(self) -> int:
+        """Return the depth of this node in the tree (0 for root)."""
+        return len(self.path)
+
 
 class Document(Base):
     """Database model for documents."""

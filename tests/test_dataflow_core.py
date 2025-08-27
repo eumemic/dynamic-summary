@@ -781,3 +781,208 @@ class TestEmbeddingBatching:
         for size in batch_calls:
             assert size <= 4, f"Batch size {size} exceeds max 4"
             assert size > 0, "Batch should have at least 1 item"
+
+
+class TestBatchAwareQueuePenultimateBatch:
+    """Test penultimate batch optimization for root node latency."""
+
+    @pytest.mark.asyncio
+    async def test_penultimate_batch_triggers_on_depth_1_nodes(self):
+        """Test that both depth-1 nodes trigger penultimate batch."""
+        from ragzoom.dataflow.core import BatchAwareQueue
+
+        queue = BatchAwareQueue(batch_size=5)
+
+        # Add some regular nodes (depth > 1)
+        for i in range(3):
+            node = TreeNode(
+                id=f"node_{i}",
+                path=f"00{i}",  # depth=3
+                text=f"Node {i} text",
+                height=1,
+                span_start=i * 10,
+                span_end=(i + 1) * 10,
+                document_id="doc1",
+                embedding=[],
+                token_count=10,
+            )
+            await queue.put(node)
+
+        # First depth-1 node shouldn't trigger processing
+        left_child_root = TreeNode(
+            id="left_root",
+            path="0",  # depth=1
+            text="Left child of root",
+            height=2,
+            span_start=0,
+            span_end=50,
+            document_id="doc1",
+            embedding=[],
+            token_count=10,
+        )
+        await queue.put(left_child_root)
+
+        # Worker trying to get batch should still wait (only 4 items, need 5 for full batch)
+        get_task = asyncio.create_task(queue.get_batch())
+        await asyncio.sleep(0.1)
+        assert not get_task.done(), "Queue should wait for full batch or trigger"
+
+        # Second depth-1 node SHOULD trigger penultimate batch
+        right_child_root = TreeNode(
+            id="right_root",
+            path="1",  # depth=1
+            text="Right child of root",
+            height=2,
+            span_start=50,
+            span_end=100,
+            document_id="doc1",
+            embedding=[],
+            token_count=10,
+        )
+        await queue.put(right_child_root)
+
+        # Now worker should get all 5 items immediately (penultimate batch)
+        batch = await asyncio.wait_for(get_task, timeout=0.5)
+        assert (
+            len(batch) == 5
+        ), f"Expected 5 items in penultimate batch, got {len(batch)}"
+        assert all(
+            node.get_depth() > 0 for node in batch
+        ), "Root shouldn't be in penultimate batch (root has depth 0)"
+
+    @pytest.mark.asyncio
+    async def test_root_processed_alone_after_penultimate(self):
+        """Test that root gets processed in its own batch after penultimate."""
+        from ragzoom.dataflow.core import BatchAwareQueue
+
+        queue = BatchAwareQueue(batch_size=10)
+
+        # Add nodes to create a substantial batch
+        for i in range(8):
+            node = TreeNode(
+                id=f"n{i}",
+                path="000",  # depth=3
+                text=f"Node {i}",
+                height=1,
+                span_start=i * 10,
+                span_end=(i + 1) * 10,
+                document_id="doc1",
+                embedding=[],
+                token_count=10,
+            )
+            await queue.put(node)
+
+        # Add depth-1 nodes to trigger penultimate
+        left = TreeNode(
+            id="left",
+            path="0",
+            text="Left",
+            height=2,
+            span_start=0,
+            span_end=50,
+            document_id="doc1",
+            embedding=[],
+            token_count=10,
+        )
+        right = TreeNode(
+            id="right",
+            path="1",
+            text="Right",
+            height=2,
+            span_start=50,
+            span_end=100,
+            document_id="doc1",
+            embedding=[],
+            token_count=10,
+        )
+        await queue.put(left)
+        await queue.put(right)
+
+        # Get penultimate batch (should have all 10 non-root nodes)
+        batch1 = await queue.get_batch()
+        assert (
+            len(batch1) == 10
+        ), f"Expected 10 items in penultimate batch, got {len(batch1)}"
+        assert all(node.get_depth() > 0 for node in batch1)
+
+        # Add root
+        root = TreeNode(
+            id="root",
+            path="",  # Empty path for root
+            text="Root",
+            height=3,
+            span_start=0,
+            span_end=100,
+            document_id="doc1",
+            parent_id=None,
+            embedding=[],
+            token_count=10,
+        )
+        await queue.put(root)
+
+        # Root should be processed alone
+        batch2 = await queue.get_batch()
+        assert len(batch2) == 1, f"Expected root alone, got batch size {len(batch2)}"
+        assert (
+            batch2[0].get_depth() == 0
+        ), "Should have received the root node (depth=0)"
+
+    @pytest.mark.asyncio
+    async def test_single_depth_1_node_edge_case(self):
+        """Test trees with only one depth-1 node (edge case for odd leaf count)."""
+        from ragzoom.dataflow.core import BatchAwareQueue
+
+        queue = BatchAwareQueue(batch_size=5)
+
+        # Add some regular nodes
+        for i in range(3):
+            node = TreeNode(
+                id=f"n{i}",
+                path="00",  # depth=2
+                text=f"Node {i}",
+                height=1,
+                span_start=i * 10,
+                span_end=(i + 1) * 10,
+                document_id="doc1",
+                embedding=[],
+                token_count=10,
+            )
+            await queue.put(node)
+
+        # Only one depth-1 node (tree with odd number of leaves)
+        only_child = TreeNode(
+            id="only_child",
+            path="0",  # depth=1
+            text="Only child at depth 1",
+            height=2,
+            span_start=0,
+            span_end=100,
+            document_id="doc1",
+            embedding=[],
+            token_count=10,
+        )
+        await queue.put(only_child)
+
+        # Should NOT trigger penultimate (need 2 depth-1 nodes)
+        get_task = asyncio.create_task(queue.get_batch())
+        await asyncio.sleep(0.1)
+        assert not get_task.done(), "Single depth-1 node shouldn't trigger penultimate"
+
+        # Root should trigger processing of all items
+        root = TreeNode(
+            id="root",
+            path="",
+            text="Root",
+            height=3,
+            span_start=0,
+            span_end=100,
+            document_id="doc1",
+            parent_id=None,
+            embedding=[],
+            token_count=10,
+        )
+        await queue.put(root)
+
+        batch = await asyncio.wait_for(get_task, timeout=0.5)
+        assert len(batch) == 5, f"Expected all 5 nodes, got {len(batch)}"
+        # In this case, root is processed with others (fallback behavior)

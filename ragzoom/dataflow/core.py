@@ -45,6 +45,8 @@ class BatchAwareQueue:
         self.batch_size = batch_size
         self.condition = asyncio.Condition()
         self.root_seen = False
+        self.depth_1_count = 0
+        self.penultimate_triggered = False
 
     async def put(self, item: TreeNode) -> None:
         """Add item to queue and notify waiting workers.
@@ -54,8 +56,17 @@ class BatchAwareQueue:
         """
         async with self.condition:
             await self.queue.put(item)
-            if item.is_root():
+
+            # Check for depth-1 nodes (children of root)
+            # Use depth==0 to detect root, not is_root() which checks parent_id
+            depth = item.get_depth()
+            if depth == 0:
                 self.root_seen = True
+            elif depth == 1:
+                self.depth_1_count += 1
+                if self.depth_1_count == 2 and not self.penultimate_triggered:
+                    self.penultimate_triggered = True
+
             self.condition.notify_all()  # Wake ALL sleeping workers
 
     async def get_batch(
@@ -82,8 +93,11 @@ class BatchAwareQueue:
                 if size >= self.batch_size:
                     # Full batch available
                     should_process = True
+                elif self.penultimate_triggered and not self.root_seen and size > 0:
+                    # Both depth-1 nodes seen, flush everything before root
+                    should_process = True
                 elif self.root_seen and size > 0:
-                    # Root has been added, process remaining items
+                    # Root has been added, process remaining items (ideally just root)
                     should_process = True
                 elif self.root_seen and size == 0:
                     # Queue closed and empty, we're done
@@ -188,6 +202,12 @@ def create_leaf_nodes(
         # Calculate token count for this chunk
         chunk_tokens = tokenizer.count_tokens(chunk)
 
+        # Special case for single-node tree: use empty path (root)
+        if len(chunks) == 1:
+            path = ""  # Single node is both leaf and root
+        else:
+            path = _generate_leaf_path(i, tree_depth)
+
         # Create TreeNode with actual text for leaves
         leaf = TreeNode(
             id=node_id,
@@ -195,7 +215,7 @@ def create_leaf_nodes(
             height=0,  # Leaves are at height 0
             span_start=current_pos,
             span_end=current_pos + len(chunk),
-            path=_generate_leaf_path(i, tree_depth),
+            path=path,
             document_id=document_id,
             # No parent/children for leaves initially
             parent_id=None,
@@ -508,8 +528,8 @@ async def embedding_worker(
             for _ in batch:
                 embedding_queue.task_done()
 
-            # Check if we processed the root
-            if any(node.is_root() for node in batch):
+            # Check if we processed the root (depth==0)
+            if any(node.get_depth() == 0 for node in batch):
                 logger.debug(
                     f"Embedding worker {worker_id}: Root node processed, exiting"
                 )
