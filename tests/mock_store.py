@@ -14,6 +14,26 @@ from ragzoom.interfaces import StoreInterface
 from ragzoom.models import Document, TreeNode
 
 
+class MockTreeNode(SimpleNamespace):
+    """Mock TreeNode that extends SimpleNamespace with helper methods."""
+
+    def is_leaf(self) -> bool:
+        """Check if this node is a leaf node."""
+        return self.height == 0
+
+    def is_root(self) -> bool:
+        """Check if this node is the root node."""
+        return self.parent_id is None
+
+    def is_left_child(self) -> bool:
+        """Check if this node is a left child."""
+        return self.path.endswith("0") if self.path else False
+
+    def is_right_child(self) -> bool:
+        """Check if this node is a right child."""
+        return self.path.endswith("1") if self.path else False
+
+
 class SimpleMockStore(StoreInterface):
     """Lightweight mock of Store for unit testing.
 
@@ -264,6 +284,7 @@ class SimpleMockStore(StoreInterface):
         token_count: int = 0,
         height: int = 0,
         preceding_neighbor_id: str | None = None,
+        following_neighbor_id: str | None = None,
         path: str = "",
         is_left_child: bool | None = None,
     ) -> TreeNode:
@@ -307,7 +328,7 @@ class SimpleMockStore(StoreInterface):
                     # If neither matches, the relationship might not be established yet
                     # In that case, keep the empty path for now
 
-        node = SimpleNamespace(
+        node = MockTreeNode(
             id=node_id,
             parent_id=parent_id,
             left_child_id=left_child_id,
@@ -323,6 +344,7 @@ class SimpleMockStore(StoreInterface):
             access_count=0,
             created_at=None,
             preceding_neighbor_id=preceding_neighbor_id,
+            following_neighbor_id=following_neighbor_id,
             path=path,  # Binary tree path
             embedding=list(embedding),  # Store embedding in node
         )
@@ -357,6 +379,7 @@ class SimpleMockStore(StoreInterface):
                 token_count=data.get("token_count", 0),
                 height=data.get("height", 0),
                 preceding_neighbor_id=data.get("preceding_neighbor_id"),
+                following_neighbor_id=data.get("following_neighbor_id"),
                 path=data.get("path", ""),
             )
             nodes.append(node)
@@ -796,7 +819,7 @@ class SimpleMockStore(StoreInterface):
         all nodes have correct paths assigned based on their parent-child relationships.
         """
         # Find root nodes (nodes with no parent)
-        root_nodes = [node for node in self._nodes.values() if node.parent_id is None]
+        root_nodes = [node for node in self._nodes.values() if node.is_root()]
 
         # Update paths starting from root nodes
         visited = set()

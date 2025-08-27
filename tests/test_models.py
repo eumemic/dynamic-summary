@@ -15,6 +15,62 @@ class TestTreeNodeModel:
         """Test that TreeNode uses correct table name."""
         assert TreeNode.__tablename__ == "tree_nodes"
 
+    def test_get_depth_method(self):
+        """Test that TreeNode.get_depth() returns correct depth based on path."""
+        # Root node (empty path)
+        root = TreeNode(
+            id="root",
+            path="",
+            span_start=0,
+            span_end=100,
+            text="Root text",
+            embedding=[0.1] * 1536,
+        )
+        assert root.get_depth() == 0
+
+        # Depth 1 nodes (children of root)
+        left_child = TreeNode(
+            id="left",
+            path="0",
+            span_start=0,
+            span_end=50,
+            text="Left child",
+            embedding=[0.1] * 1536,
+        )
+        assert left_child.get_depth() == 1
+
+        right_child = TreeNode(
+            id="right",
+            path="1",
+            span_start=50,
+            span_end=100,
+            text="Right child",
+            embedding=[0.1] * 1536,
+        )
+        assert right_child.get_depth() == 1
+
+        # Deeper nodes
+        deep_node = TreeNode(
+            id="deep",
+            path="0101",
+            span_start=25,
+            span_end=30,
+            text="Deep node",
+            embedding=[0.1] * 1536,
+        )
+        assert deep_node.get_depth() == 4
+
+        # Another deep node
+        very_deep = TreeNode(
+            id="very_deep",
+            path="00110101",
+            span_start=10,
+            span_end=15,
+            text="Very deep",
+            embedding=[0.1] * 1536,
+        )
+        assert very_deep.get_depth() == 8
+
     def test_required_fields(self):
         """Test that TreeNode has all required fields."""
         # Test field existence and types

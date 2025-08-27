@@ -251,6 +251,25 @@ class DatabaseManager:
                     )
                 )
 
+                # Add following_neighbor_id column if it doesn't exist (dataflow optimization)
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'following_neighbor_id'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN following_neighbor_id VARCHAR;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist
