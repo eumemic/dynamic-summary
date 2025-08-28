@@ -358,15 +358,30 @@ class TestTransactionSafety:
             summary_model="gpt-4o-mini",
         )
 
-        # Mock a database error during node addition
-        with pytest.raises(Exception):
-            # This should trigger the rollback handling in the repository method
+        # First, add a node with correct dimension to establish expected dimension
+        store.node_repo.add_node(
+            node_id="valid-node",
+            text="Valid content",
+            embedding=[0.1] * 1536,  # Standard dimension
+            span_start=0,
+            span_end=13,
+            document_id="rollback-test-doc",
+            token_count=2,
+        )
+
+        # Test rollback by triggering an exception DURING the operation
+        # Use wrong embedding dimension to cause validation error
+        from ragzoom.exceptions import InvalidOperationError
+
+        # Real store raises InvalidOperationError, mock store raises ValueError
+        with pytest.raises((InvalidOperationError, ValueError), match="dimension"):
             store.node_repo.add_nodes_batch(
                 [
                     {
                         "node_id": "test-node-exception",
                         "text": "Test content",
-                        "embedding": [0.1] * 1536,  # This will work
+                        "embedding": [0.1]
+                        * 100,  # Wrong dimension - will cause exception
                         "span_start": 0,
                         "span_end": 12,
                         "document_id": "rollback-test-doc",
@@ -374,12 +389,14 @@ class TestTransactionSafety:
                     }
                 ]
             )
-            # Force an exception after adding to test rollback
-            raise ValueError("Simulated database error")
 
         # Verify the node was not persisted due to rollback
         node = store.nodes.get_node("test-node-exception")
         assert node is None
+
+        # Verify the valid node is still there
+        valid_node = store.nodes.get_node("valid-node")
+        assert valid_node is not None
 
     def test_nested_transaction_prevention(self, store):
         """Test that nested transactions are properly prevented."""
