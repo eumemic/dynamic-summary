@@ -491,8 +491,10 @@ def query(
         click.echo("SUMMARY")
         click.echo("=" * 60)
         if debug and result and getattr(result, "tiling", None) and result.tiling:
+            # Create document-scoped store for node access
+            doc_store = store.for_document(document_id)
             for idx, node_id in enumerate(result.tiling):
-                node = store.nodes.get_node(node_id)
+                node = doc_store.nodes.get(node_id)
                 if node:
                     # Node span is always the full span
                     span_start, span_end = node.span_start, node.span_end
@@ -568,9 +570,17 @@ def query(
 
 @cli.command()
 @click.argument("node_id")
+@click.option(
+    "--document-id",
+    help="Document ID (optional - will be auto-detected from node)",
+)
 @click.pass_context
-def pin(ctx: click.Context, node_id: str) -> None:
-    """Pin a node to always include it."""
+def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
+    """Pin a node to always include it.
+
+    The node must belong to a document and be within the allowed pinning depth.
+    Document ID is optional - it will be auto-detected from the node if not provided.
+    """
     try:
         # Create services for this command
         operational_config = ctx.obj["operational_config"]
@@ -578,10 +588,34 @@ def pin(ctx: click.Context, node_id: str) -> None:
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
-        document_service = DocumentService(store)
 
+        # If document_id not provided, detect it from the node
+        if not document_id:
+            node = store.node_repo.get_node(node_id)
+            if not node:
+                click.echo(f"❌ Node {node_id} not found")
+                sys.exit(1)
+            document_id = node.document_id
+            if document_id:
+                click.echo(f"Auto-detected document: {document_id}")
+
+        # Use document-scoped store for consistency (though pinning affects the node globally)
+        document_store = store.for_document(document_id)
+
+        # Verify the node belongs to this document
+        node = document_store.nodes.get(node_id)
+        if not node:
+            click.echo(
+                f"❌ Node {node_id} not found"
+                + (f" in document {document_id}" if document_id else "")
+            )
+            sys.exit(1)
+
+        # Pin the node using DocumentService (this affects the node globally)
+        document_service = DocumentService(store)
         document_service.pin_node(node_id)
         click.echo(f"✅ Node {node_id} pinned successfully!")
+
     except NodeNotFoundError:
         click.echo(f"❌ Node {node_id} not found")
         sys.exit(1)
