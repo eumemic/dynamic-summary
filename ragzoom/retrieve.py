@@ -105,10 +105,15 @@ class Retriever:
         if telemetry_collector:
             telemetry_collector.start_phase()
 
+        # Determine effective document scope
+        effective_doc_id = (
+            getattr(self.document_store, "document_id", None) or document_id
+        )
+
         # Determine which mode we're in
         if budget_tokens is not None and num_seeds is None:
             num_seeds = self.budget_planner.calculate_conservative_num_seeds(
-                budget_tokens, document_id
+                budget_tokens, effective_doc_id
             )
             logger.info(
                 f"Budget-only mode: calculated conservative num_seeds={num_seeds} for budget={budget_tokens}"
@@ -117,7 +122,7 @@ class Retriever:
             logger.info(f"Mixed mode: num_seeds={num_seeds}, budget={budget_tokens}")
         elif num_seeds is None:
             num_seeds = self.budget_planner.calculate_conservative_num_seeds(
-                self.query_config.budget_tokens, document_id
+                self.query_config.budget_tokens, effective_doc_id
             )
             logger.info(
                 f"Default mode: calculated conservative num_seeds={num_seeds} from budget={self.query_config.budget_tokens}"
@@ -127,7 +132,9 @@ class Retriever:
             telemetry_collector.record_metric("seeds_requested", num_seeds)
 
         # Phase 1: Get query embedding
-        query_embedding = self.embedding_service.get_query_embedding(query, document_id)
+        query_embedding = self.embedding_service.get_query_embedding(
+            query, effective_doc_id
+        )
         if telemetry_collector:
             telemetry_collector.end_phase("embedding")
             telemetry_collector.start_phase()
@@ -156,7 +163,6 @@ class Retriever:
         # Use document-scoped coverage builder
         doc_coverage_builder = CoverageBuilder(self.document_store)
         coverage_map = doc_coverage_builder.build_complete_coverage_map(selected_ids)
-
         if telemetry_collector:
             telemetry_collector.end_phase("coverage_map")
             telemetry_collector.start_phase()

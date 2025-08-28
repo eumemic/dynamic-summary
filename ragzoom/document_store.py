@@ -69,6 +69,17 @@ class DocumentNodeRepository:
             return node
         return None
 
+    # Alias for compatibility with repository naming
+    def get_node(self, node_id: str) -> TreeNode | None:
+        """Alias of get() to match NodeRepository interface methods."""
+        return self.get(node_id)
+
+    # Backward-compatible alias to match NodeRepository interface
+    def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
+        """Get multiple nodes by IDs, filtered to this document only."""
+        nodes = self._repo.get_nodes(node_ids)
+        return [node for node in nodes if node.document_id == self.document_id]
+
     def get_many(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes, filtering to this document only."""
         nodes = self._repo.get_nodes(node_ids)
@@ -96,6 +107,12 @@ class DocumentNodeRepository:
         if node:
             self._repo.update_node_access(node_id)
 
+    # Additional helper used by CoverageBuilder sibling logic
+    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
+        """Get nodes by path values, filtered to this document only."""
+        nodes = self._repo.get_nodes_by_paths(paths)
+        return [node for node in nodes if node.document_id == self.document_id]
+
     def update_parent_references_batch(
         self, updates: list[tuple[str, str]], *, session: Any = None
     ) -> None:
@@ -103,15 +120,6 @@ class DocumentNodeRepository:
         # Note: We trust that the caller is only updating nodes from this document
         # as this is typically called during tree construction where document consistency is maintained
         self._repo.update_parent_references_batch(updates, session=session)
-
-    def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
-        """Get multiple nodes by ID, filtering to this document only."""
-        return self.get_many(node_ids)
-
-    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
-        """Get multiple nodes by their path values, filtering to this document only."""
-        all_nodes = self._repo.get_nodes_by_paths(paths)
-        return [node for node in all_nodes if node.document_id == self.document_id]
 
 
 class DocumentSearchService:
@@ -138,6 +146,29 @@ class DocumentSearchService:
         k: int,
     ) -> list[str]:
         """Apply MMR to get diverse results from candidates."""
+        return self._service.compute_mmr_diverse_results(
+            query_embedding, candidates, lambda_param, k
+        )
+
+    # Backward-compatible method names to match SearchService API
+    def search_similar(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        n_results: int,
+        where: dict[str, Any] | None = None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Compatibility wrapper matching SearchService signature (ignores where)."""
+        scoped_where = {"document_id": self.document_id} if self.document_id else None
+        return self._service.search_similar(query_embedding, n_results, scoped_where)
+
+    def compute_mmr_diverse_results(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        candidates: list[tuple[str, float, dict[str, Any]]],
+        lambda_param: float,
+        k: int,
+    ) -> list[str]:
+        """Compatibility wrapper matching SearchService method name."""
         return self._service.compute_mmr_diverse_results(
             query_embedding, candidates, lambda_param, k
         )
