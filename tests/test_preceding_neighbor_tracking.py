@@ -31,8 +31,16 @@ class TestPrecedingNeighborTracking:
         test_document = "\n\n".join(test_chunks)
 
         # Create document-scoped store and tree builder
+        # Create document with proper metadata
+        store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         doc_store = store.for_document("test-doc")
-        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
@@ -85,8 +93,16 @@ class TestPrecedingNeighborTracking:
         test_document = "\n\n".join(test_chunks)
 
         # Create document-scoped store and tree builder
+        # Create document with proper metadata
+        store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         doc_store = store.for_document("test-doc")
-        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
@@ -164,8 +180,16 @@ class TestPrecedingNeighborTracking:
         test_document = " ".join(test_chunks)
 
         # Create document-scoped store and tree builder
+        # Create document with proper metadata
+        store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         doc_store = store.for_document("test-doc")
-        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 

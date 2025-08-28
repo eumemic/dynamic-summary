@@ -248,21 +248,26 @@ class DocumentStore:
         """Compute SHA256 hash of content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    # Expose low-level database access for TreeBuilder's batch operations
-    @property
-    def session_local(self) -> Any:
-        """Access to database session factory for batch operations."""
-        return self._node_repo.db_manager.SessionLocal
+    def update_parent_reference(self, node_id: str, parent_id: str) -> None:
+        """Update a node's parent reference and invalidate cache.
 
-    @property
-    def node_cache(self) -> Any:
-        """Access to node cache for TreeBuilder cache invalidation."""
-        return self._node_repo.cache_manager.cache
+        Args:
+            node_id: ID of the node to update
+            parent_id: New parent ID
+        """
+        with self._node_repo.db_manager.SessionLocal() as session:
+            from ragzoom.models import TreeNode as TreeNodeModel
 
-    @property
-    def cache_order(self) -> Any:
-        """Access to cache order for TreeBuilder cache invalidation."""
-        return self._node_repo.cache_manager.cache_order
+            session.query(TreeNodeModel).filter_by(id=node_id).update(
+                {"parent_id": parent_id}
+            )
+            session.commit()
+
+            # Invalidate the cache entry for this node since we've updated it
+            if node_id in self._node_repo.cache_manager.cache:
+                del self._node_repo.cache_manager.cache[node_id]
+                if node_id in self._node_repo.cache_manager.cache_order:
+                    self._node_repo.cache_manager.cache_order.remove(node_id)
 
     def clear(self) -> int:
         """Delete all nodes for this document.
@@ -273,34 +278,16 @@ class DocumentStore:
         if not self.document_id:
             raise ValueError("Cannot clear nodes without a document_id")
 
-        # Use the underlying document repository to clear the document
-        # This needs access to the document repository
+        # Delegate to the document repository's clear_document method
+        # This ensures consistent behavior with StoreManager.clear_document()
+        return self._doc_repo.clear_document(self.document_id)
 
-        # Get the document repository through the db_manager
-        with self._node_repo.db_manager.SessionLocal() as session:
-            from ragzoom.models import Document
-            from ragzoom.models import TreeNode as TreeNodeModel
-
-            # Delete all nodes for this document
-            deleted_count = (
-                session.query(TreeNodeModel)
-                .filter_by(document_id=self.document_id)
-                .delete()
-            )
-
-            # Also delete the document record itself
-            session.query(Document).filter_by(id=self.document_id).delete()
-
-            session.commit()
-
-        return deleted_count
-
-    def ensure_exists(self) -> None:
+    def _ensure_exists(self) -> None:
         """Ensure this document exists in the database.
 
-        Creates an empty document record if it doesn't exist.
-        This prepares the document container for future append operations,
-        aligning with the vision where all indexing is appending to documents.
+        Raises:
+            ValueError: If document_id is not set
+            RuntimeError: If document does not exist in the database
         """
         if not self.document_id:
             raise ValueError("Cannot ensure document exists without a document_id")
@@ -312,18 +299,24 @@ class DocumentStore:
             doc = session.query(Document).filter_by(id=self.document_id).first()
 
             if not doc:
-                # Create minimal document record with placeholder values
-                # Real values will be set later when content is indexed
-                doc = Document(
-                    id=self.document_id,
-                    file_path=None,
-                    content_hash="",  # Empty string placeholder for NOT NULL constraint
-                    chunk_count=0,
-                    embedding_model="",  # Empty string placeholder for NOT NULL constraint
-                    summary_model="",  # Empty string placeholder for NOT NULL constraint
+                raise RuntimeError(
+                    f"Document '{self.document_id}' does not exist. "
+                    "Documents must be created before operations can be performed on them."
                 )
-                session.add(doc)
-                session.commit()
+
+    def get_metadata(self) -> Any:
+        """Get the document metadata record.
+
+        Returns:
+            Document record if it exists, None otherwise
+        """
+        if not self.document_id:
+            return None
+
+        from ragzoom.models import Document
+
+        with self._node_repo.db_manager.SessionLocal() as session:
+            return session.query(Document).filter_by(id=self.document_id).first()
 
     def set_metadata(
         self,

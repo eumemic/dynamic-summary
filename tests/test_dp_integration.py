@@ -68,8 +68,16 @@ class TestDPIntegration:
         document = "\n".join(base_lines * 8)
 
         # Index the document
+        # Create document with proper metadata
+        store.add_document(
+            document_id="doc1",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         doc_store = store.for_document("doc1")
-        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(
             config.index_config, doc_store, api_key=config.openai_api_key
         )
@@ -126,8 +134,16 @@ class TestDPIntegration:
             target_chunk_tokens=10
         )  # Very small chunks
         # Create document-scoped store
+        # Create document with proper metadata
+        store.add_document(
+            document_id="doc1",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         doc_store = store.for_document("doc1")
-        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(
             config=small_config,
             document_store=doc_store,
@@ -178,8 +194,16 @@ class TestDPIntegration:
             target_chunk_tokens=5
         )  # One word per chunk approximately
         # Create document-scoped store
+        # Create document with proper metadata
+        store.add_document(
+            document_id="doc1",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         doc_store = store.for_document("doc1")
-        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(
             config=small_config,
             document_store=doc_store,
@@ -231,8 +255,16 @@ class TestDPIntegration:
 
         # Index
         # Create document-scoped store
+        # Create document with proper metadata
+        store.add_document(
+            document_id="doc1",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         doc_store = store.for_document("doc1")
-        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(
             config=config.index_config,
             document_store=doc_store,

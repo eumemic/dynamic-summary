@@ -26,9 +26,17 @@ class TestParallelDPPerformance:
             mock_chat_sync, mock_chat_async = create_predictable_summary_mock()
             mock_index.chat.completions.create = mock_chat_async
 
-            # Create document-scoped store and ensure document exists
+            # Create document with proper metadata
+            store.add_document(
+                document_id="large-test-doc",
+                file_path=None,
+                content_hash="test-hash",
+                chunk_count=0,
+                embedding_model="text-embedding-3-small",
+                summary_model="gpt-4o-mini",
+            )
+            # Create document-scoped store
             doc_store = store.for_document("large-test-doc")
-            doc_store.ensure_exists()  # Create document record for tree operations
             tree_builder = TreeBuilder(
                 config.index_config,
                 doc_store,

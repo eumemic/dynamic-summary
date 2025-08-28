@@ -2,6 +2,7 @@
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
@@ -84,9 +85,19 @@ class RagZoom:
         # Clear existing data if needed
         self.store.clear_document(document_id)
 
-        # Create document-scoped store and ensure document exists
+        # Create document with metadata BEFORE creating TreeBuilder
+        content_hash = DocumentStore.compute_content_hash(text)
+        self.store.add_document(
+            document_id=document_id,
+            file_path=None,
+            content_hash=content_hash,
+            chunk_count=0,  # Will be updated after indexing
+            embedding_model=self.index_config.embedding_model,
+            summary_model=self.index_config.summary_model,
+        )
+
+        # Create document-scoped store and TreeBuilder
         document_store = self.store.for_document(document_id)
-        document_store.ensure_exists()  # Create empty document record for tree operations
         tree_builder = TreeBuilder(
             self.index_config,
             document_store,
@@ -178,9 +189,19 @@ class AsyncRagZoom:
         # Clear existing data if needed
         self.store.clear_document(document_id)
 
-        # Create document-scoped store and ensure document exists
+        # Create document with metadata BEFORE creating TreeBuilder
+        content_hash = DocumentStore.compute_content_hash(text)
+        self.store.add_document(
+            document_id=document_id,
+            file_path=None,
+            content_hash=content_hash,
+            chunk_count=0,  # Will be updated after indexing
+            embedding_model=self.index_config.embedding_model,
+            summary_model=self.index_config.summary_model,
+        )
+
+        # Create document-scoped store and TreeBuilder
         document_store = self.store.for_document(document_id)
-        document_store.ensure_exists()  # Create empty document record for tree operations
         tree_builder = TreeBuilder(
             self.index_config,
             document_store,

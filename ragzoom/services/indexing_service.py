@@ -95,6 +95,17 @@ class IndexingService:
                 f"Cleared existing data for '{document_id}' ({deleted_count} nodes)"
             )
 
+        # Create document with full metadata BEFORE indexing
+        # This ensures the document exists with proper metadata before TreeBuilder runs
+        self.store.add_document(
+            document_id=document_id,
+            file_path=file_path,
+            content_hash=content_hash,
+            chunk_count=0,  # Will be updated after indexing
+            embedding_model=self.index_config.embedding_model,
+            summary_model=self.index_config.summary_model,
+        )
+
         # Create document-scoped store and TreeBuilder
         document_store = self.store.for_document(document_id)
 
@@ -120,7 +131,7 @@ class IndexingService:
             )
             telemetry = None
 
-        # Get document statistics
+        # Get document statistics and update metadata
         with self.store.SessionLocal() as session:
             # Get leaf nodes for this specific document
             doc_leaves = (
@@ -140,16 +151,15 @@ class IndexingService:
                 .first()
             )
 
-        tree_height = root.height if root else 0
+            # Update the document's chunk count now that indexing is complete
+            from ragzoom.models import Document
 
-        # Set complete document metadata after indexing
-        document_store.set_metadata(
-            file_path=file_path,
-            content_hash=content_hash,
-            chunk_count=len(doc_leaves),
-            embedding_model=self.index_config.embedding_model,
-            summary_model=self.index_config.summary_model,
-        )
+            doc = session.query(Document).filter_by(id=document_id).first()
+            if doc:
+                doc.chunk_count = len(doc_leaves)
+                session.commit()
+
+        tree_height = root.height if root else 0
 
         return IndexingResult(
             document_id=doc_id,

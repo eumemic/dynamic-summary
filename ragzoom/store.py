@@ -275,12 +275,7 @@ class StoreManager:
                 total_cleared += self.clear_document(doc.id, session=session)
         return total_cleared
 
-    # System-wide statistics and operations
-    def get_total_node_count(self) -> int:
-        """Get total number of nodes across all documents."""
-        with self.SessionLocal() as session:
-            return session.query(TreeNode).count()
-
+    # System-wide operations
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         """Get all pinned nodes across all documents."""
         return self.node_repo.get_pinned_nodes(depth_max)

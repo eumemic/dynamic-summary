@@ -768,34 +768,22 @@ class SimpleMockStore(StoreInterface):
         self._documents[document_id] = doc
         return doc
 
+    def update_parent_reference(self, node_id: str, parent_id: str) -> None:
+        """Update a node's parent reference and invalidate cache.
+
+        Args:
+            node_id: ID of the node to update
+            parent_id: New parent ID
+        """
+        if node_id in self._nodes:
+            self._nodes[node_id].parent_id = parent_id
+            # In mock store, we don't have a real cache to invalidate
+            # but we maintain consistency with the real implementation
+
     @staticmethod
     def compute_content_hash(content: str) -> str:
         """Compute SHA256 hash of content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-    def ensure_exists(self) -> None:
-        """Ensure this document exists in the mock store.
-
-        Creates an empty document record if it doesn't exist.
-        This prepares the document container for future append operations.
-        """
-        if not self.document_id:
-            return  # Can't ensure document without ID
-
-        if self.document_id not in self._documents:
-            # Create minimal document record
-            from datetime import datetime
-
-            doc = SimpleNamespace(
-                id=self.document_id,
-                file_path=None,
-                content_hash="",  # Empty string placeholder to match real store
-                chunk_count=0,
-                embedding_model="",  # Empty string placeholder to match real store
-                summary_model="",  # Empty string placeholder to match real store
-                indexed_at=datetime.utcnow(),
-            )
-            self._documents[self.document_id] = doc
 
     def set_metadata(
         self,

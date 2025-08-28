@@ -150,19 +150,8 @@ class TreeBuilder:
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference."""
-        with self.document_store.session_local() as session:
-            from ragzoom.store import TreeNode
-
-            node = session.query(TreeNode).filter_by(id=node_id).first()
-            if node:
-                node.parent_id = parent_id
-                session.commit()
-
-                # Invalidate the cache entry for this node since we've updated it
-                if node_id in self.document_store.node_cache:
-                    del self.document_store.node_cache[node_id]
-                    if node_id in self.document_store.cache_order:
-                        self.document_store.cache_order.remove(node_id)
+        # Use DocumentStore's proper interface instead of direct database access
+        self.document_store.update_parent_reference(node_id, parent_id)
 
     def _create_and_validate_chunks(
         self, text: str, show_progress: bool = True
