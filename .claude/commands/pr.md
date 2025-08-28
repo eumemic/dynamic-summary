@@ -75,6 +75,10 @@ Get code through CI successfully and request reviews intelligently. Fix CI issue
        - Telemetry/metrics collection code
    - If yes, include "/benchmark" in comment
    - Track that benchmarks were requested
+   - **WARNING**: Never mention command triggers in comment text! 
+     - Don't say "I've requested /benchmark" - this triggers another run
+     - Use alternatives: "I've requested benchmarks" or "benchmark command issued"
+     - Commands in backticks are safe: "`/benchmark`"
 
 ### Phase 4: Handle Feedback
 7. **Review Dialogue**:
