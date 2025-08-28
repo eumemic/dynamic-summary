@@ -18,60 +18,75 @@ Create PR if needed, monitor CI, and fix issues proactively. Assumes code is alr
 
 ## Core Intent
 
-Get code through CI successfully with minimal back-and-forth. Monitor CI, fix issues immediately, batch fixes to avoid CI churn.
+Get code through CI successfully and request reviews intelligently. Fix CI issues immediately, ensure clean state before reviews, batch changes to minimize CI runs.
 
 ## Workflow
 
+### Phase 1: Initial Setup & CI
 1. **Create PR**: If no PR exists, create one (reference related issues with "Fixes #123")
 
-2. **Monitor CI**: Poll for CI status with custom loop
+2. **Fix CI Issues**: Poll for CI status and fix any failures
    - Check status every 30 seconds with `gh pr checks`
    - Exit immediately on first failure to fix it
-   - Resume monitoring after fixes
+   - Commit fixes, push, resume monitoring
    - Continue until all checks pass
 
-3. **Request Code Review**: Once implementation is complete and all CI checks pass:
-   - Assess complexity of changes and identify areas needing review
-   - Post review request: "@claude please review this PR. [specific concerns or focus areas]"
-   - Example: "@claude please review this PR. I'm particularly concerned about the error handling in the retry logic and whether the caching approach is thread-safe."
-   - Wait for review completion (check comments periodically)
-   - Read review feedback and identify issues to address
+### Phase 2: Complete Implementation
+3. **Ensure Work is Complete**:
+   - Review PR objectives - is implementation complete?
+   - Check if any known work remains (TODOs, planned features)
+   - If work remains, complete it before proceeding
+   - Once truly done, move to clean state verification
 
-4. **Request Benchmarks if Needed**: Decide if performance testing is warranted:
-   - Check if changes affect performance-critical files:
+4. **Verify Clean State**:
+   - Check for uncommitted changes: `git status`
+   - If changes exist, commit them
+   - Check if commits need pushing: `git status`
+   - If unpushed commits exist, push them
+   - Monitor CI again until all checks pass
+
+### Phase 3: Request Reviews (Only When Ready)
+5. **Request Code Review** (only after clean state + CI passing):
+   - Review ALL accumulated changes since PR creation
+   - Identify areas of complexity or concern
+   - Post review request: "@claude please review this PR. [specific concerns]"
+   - Example: "@claude please review this PR. Key changes include [summary]. I'm particularly concerned about [specific areas]."
+
+6. **Request Benchmarks if Needed**:
+   - Check if ANY changes (accumulated) affect:
      - `ragzoom/dynamic_tiling.py` (core algorithm)
      - `ragzoom/index.py` (indexing pipeline)
      - `ragzoom/retrieve.py` (query performance)
-     - Config changes affecting defaults
-     - Parallel/async processing code
-   - If yes, include "/benchmark" in review comment or separate comment
-   - Track that benchmarks were requested to avoid duplicate requests
-   - When results arrive, assess if regressions are acceptable given PR goals
+     - Config defaults, parallel/async code
+   - If yes, include "/benchmark" in comment
+   - Track that benchmarks were requested
 
-5. **Handle Review Dialogue**:
-   - Discuss review findings with user: "The reviewer identified [issues]. Should I fix [specific issue]?"
-   - Fix agreed-upon issues, commit changes
-   - Post follow-up to reviewer: "@claude I've addressed [what was fixed]. Regarding [other issue], we're keeping it as-is because [justification]"
-   - Continue dialogue until consensus reached
-   - Track which issues were addressed vs. intentionally not fixed
+### Phase 4: Handle Feedback
+7. **Review Dialogue**:
+   - Read review feedback when it arrives
+   - Discuss with user: "The reviewer identified [issues]. Should I fix [X]?"
+   - Fix agreed issues, commit, push
+   - Post follow-up: "@claude I've addressed [what]. Regarding [other issue], keeping as-is because [reason]"
+   - Continue until consensus reached
 
-6. **Success Criteria**:
+8. **Success Criteria**:
    - All CI checks pass
-   - Code review requested and feedback addressed
-   - Consensus reached with reviewer on all issues
-   - Performance benchmarks run if needed, results acceptable
-   - No outstanding issues to fix
+   - No more work to do
+   - Clean state (everything committed and pushed)
+   - Reviews addressed and consensus reached
+   - Benchmarks acceptable (if run)
 
 ## Key Principles
 
-- **Fail fast**: Poll CI and exit on first failure for quick fixes
-- **Request reviews intelligently**: Only when implementation complete, CI passing
+- **Complete work first**: Finish all known tasks before requesting reviews
+- **Clean state required**: Everything committed and pushed before reviews
+- **CI must pass**: Don't request reviews with failing CI
+- **Review accumulated changes**: Consider ALL changes when requesting review, not just latest
+- **Batch operations**: Complete all work, then push once, minimizing CI runs
+- **Fail fast on CI**: Exit immediately on failures to fix them
 - **Guide the reviewer**: Provide context about areas of concern
 - **Request benchmarks selectively**: Only for performance-critical changes
 - **Engage in dialogue**: Work with reviewer to reach consensus
-- **Batch fixes**: Fix all issues before pushing
-- **Be proactive**: Auto-fix build/test/lint/security issues
-- **Ask first**: For style preferences and non-blocking suggestions
 
 ## Issue Priority
 

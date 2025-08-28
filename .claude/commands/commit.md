@@ -45,10 +45,16 @@ Clean up debug code, update docs, and create well-organized commits.
    - Each commit leaves app working
    - Message format: "verb: description" (50 chars)
 
-4. **Push**: `git push -u origin <branch>` (never force without asking)
+4. **Consider Before Pushing**:
+   - Do you have more changes to make? If yes, hold off on pushing
+   - Every push triggers CI runs - batch your pushes to minimize runs
+   - Only push when: all foreseeable work is complete, or you need feedback
+   
+5. **Push**: `git push -u origin <branch>` (never force without asking)
    - For worktree branches, this maintains the sequential PR workflow
+   - Remember: batch pushes to avoid unnecessary CI runs
 
-5. **Update PR (if needed)**: Check if PR title/description need updating
+6. **Update PR (if needed)**: Check if PR title/description need updating
    - Only for substantial changes that expand scope
    - Use context from what was just committed
    - Skip for fixes, CI issues, or review feedback
