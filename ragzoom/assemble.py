@@ -2,6 +2,7 @@
 
 import logging
 
+from ragzoom.document_store import DocumentStore
 from ragzoom.retrieve import RetrievalResult
 from ragzoom.store import StoreManager, TreeNode
 from ragzoom.utils.tokenization import tokenizer
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 class Assembler:
     """Assembles tiling nodes into coherent summary with optional smoothing."""
 
-    def __init__(self, store: StoreManager):
+    def __init__(self, store: StoreManager | DocumentStore):
         """Initialize assembler."""
         self.store = store
         self.tokenizer = tokenizer

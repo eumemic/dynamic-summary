@@ -442,9 +442,11 @@ def query(
             # We need the raw retrieval result for debug visualization
             from ragzoom.retrieve import Retriever
 
+            # Use a document-scoped Retriever for debug as well
+            doc_store = store.for_document(document_id)
             retriever = Retriever(
                 query_config,
-                store,
+                doc_store,
                 api_key=operational_config.openai_api_key.get_secret_value(),
             )
             result = retriever.retrieve(
