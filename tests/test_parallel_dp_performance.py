@@ -72,7 +72,10 @@ class TestParallelDPPerformance:
         if not root_id or len(nodes) < 3:
             pytest.skip("Not enough nodes for meaningful comparison")
 
-        # Run sync version in executor to avoid blocking event loop
+        # Run sync version in executor to avoid blocking event loop.
+        # This is necessary because calling synchronous code directly in an async
+        # function can block the event loop, preventing other async operations
+        # from running and potentially causing deadlocks.
         loop = asyncio.get_event_loop()
         sync_result = await loop.run_in_executor(
             None, sync_generator.find_optimal_tiling, 1500, scores, nodes, root_id
@@ -113,7 +116,9 @@ class TestParallelDPPerformance:
         if not root_id or len(nodes) < 3:
             pytest.skip("Not enough nodes for meaningful performance test")
 
-        # Benchmark sync version in executor to avoid blocking event loop
+        # Benchmark sync version in executor to avoid blocking event loop.
+        # run_in_executor() allows synchronous code to run in a thread pool
+        # without blocking the async event loop.
         loop = asyncio.get_event_loop()
         start_time = time.perf_counter()
         sync_result = await loop.run_in_executor(
@@ -160,7 +165,9 @@ class TestParallelDPPerformance:
         )
 
         # Test both retrievers produce same results
-        # Run sync version in executor to avoid blocking event loop
+        # Run sync version in executor to prevent event loop blocking.
+        # Without this, the synchronous retrieve() call would block all
+        # async operations in the test.
         loop = asyncio.get_event_loop()
         sync_result = await loop.run_in_executor(
             None, sync_retriever.retrieve, "test content", 1200

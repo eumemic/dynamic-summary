@@ -300,38 +300,6 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
 
         return self._build_result(tiling, nodes)
 
-    # jscpd:ignore-start - Override for async context (no threading lock needed)
-    def _get_subtree_relevance(
-        self, node: "TreeNode", scores: dict[str, float]
-    ) -> float:
-        """Calculate subtree relevance for async context.
-
-        Note: No locking needed since async code runs in a single thread
-        and we're not sharing state across different event loops.
-        """
-        # Check cache first
-        if node.id in self._subtree_relevance_cache:
-            return self._subtree_relevance_cache[node.id]
-
-        # Get this node's score
-        node_score = scores.get(node.id, 0.0)
-        total = node_score
-
-        # Add children's scores recursively
-        # Only traverse children that exist in our nodes dict
-        if node.left_child_id and node.left_child_id in self._nodes:
-            left_child = self._nodes[node.left_child_id]
-            total += self._get_subtree_relevance(left_child, scores)
-
-        if node.right_child_id and node.right_child_id in self._nodes:
-            right_child = self._nodes[node.right_child_id]
-            total += self._get_subtree_relevance(right_child, scores)
-
-        self._subtree_relevance_cache[node.id] = total
-        return total
-
-    # jscpd:ignore-end
-
     def _count_subtree_nodes(self, node: "TreeNode") -> int:
         """Count total nodes in a subtree."""
         count = 1
