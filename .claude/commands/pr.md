@@ -26,7 +26,8 @@ Get code through CI successfully and request reviews intelligently. Fix CI issue
 1. **Create PR**: If no PR exists, create one (reference related issues with "Fixes #123")
 
 2. **Fix CI Issues**: Poll for CI status and fix any failures
-   - Check status every 30 seconds with `gh pr checks`
+   - Check status every 30 seconds with `gh pr checks --json name,state`
+   - Look for state: SUCCESS, FAILURE, or IN_PROGRESS  
    - Exit immediately on first failure to fix it
    - Commit fixes, push, resume monitoring
    - Continue until all checks pass
