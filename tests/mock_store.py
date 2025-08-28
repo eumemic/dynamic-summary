@@ -72,6 +72,9 @@ class SimpleMockStore(StoreInterface):
         # Track expected embedding dimension
         self._expected_embedding_dim = None
 
+        # Add node_repo attribute for CLI pin command compatibility
+        self.node_repo = self  # SimpleMockStore acts as its own node repository
+
         # SessionLocal mock with filter_by support
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
@@ -257,7 +260,15 @@ class SimpleMockStore(StoreInterface):
 
         # Create mock nodes, search, tree that filter by document_id
         mock_nodes = MagicMock()
-        mock_nodes.get = lambda node_id: self.get_node(node_id)
+        mock_nodes.get = lambda node_id: (
+            self.get_node(node_id)
+            if document_id is None
+            or (
+                self.get_node(node_id)
+                and self.get_node(node_id).document_id == document_id
+            )
+            else None
+        )
         mock_nodes.get_many = lambda node_ids: self.get_nodes(node_ids)
         # Add get_nodes alias for get_many (used by Retriever and CoverageBuilder)
         mock_nodes.get_nodes = lambda node_ids: self.get_nodes(node_ids)
@@ -852,6 +863,8 @@ class SimpleMockStore(StoreInterface):
     def get_document_embedding_model(self, document_id: str) -> str | None:
         """Get the embedding model used for a specific document."""
         doc = self.get_document_by_id(document_id)
+        if isinstance(doc, dict):
+            return doc.get("embedding_model")
         return doc.embedding_model if doc else None
 
     def _get_avg_leaf_tokens_for_document(self, document_id: str) -> int | None:
