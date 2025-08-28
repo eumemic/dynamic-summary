@@ -293,12 +293,13 @@ def index(
                 ),
                 "chunk sizes",
             )
+            doc_store = store.for_document(result.document_id)
             run_validate(
-                lambda: validate_tree_structure(store, result.document_id, text),
+                lambda: validate_tree_structure(doc_store, text),
                 "tree structure",
             )
             run_validate(
-                lambda: validate_equal_leaf_depth(store, result.document_id),
+                lambda: validate_equal_leaf_depth(doc_store),
                 "equal leaf depth",
             )
 
@@ -476,10 +477,10 @@ def query(
         if validate and result and getattr(result, "tiling", None) and result.tiling:
             from ragzoom.validate import validate_tiling
 
+            doc_store = store.for_document(document_id)
             error = validate_tiling(
                 result.tiling,
-                store,
-                document_id,
+                doc_store,
                 budget_tokens=query_config.budget_tokens,
                 preloaded_nodes=result.nodes,
             )
@@ -533,10 +534,10 @@ def query(
                 click.echo("VISUALIZATION")
                 click.echo("=" * 60)
 
+                doc_store = store.for_document(document_id)
                 tree_viz = build_ascii_tree(
                     result.tiling,
-                    store,
-                    document_id,
+                    doc_store,
                     width=actual_viz_width,
                     coverage_map=result.coverage_map,
                     seed_node_ids=set(result.node_ids),

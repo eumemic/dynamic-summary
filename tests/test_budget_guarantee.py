@@ -411,7 +411,8 @@ class TestBudgetValidation:
         tiling = ["node1", "node2"]  # ~20 + ~30 = ~50 tokens
 
         # Validate with budget that's too small
-        error = validate_tiling(tiling, store, "test-doc", budget_tokens=40)
+        doc_store = store.for_document("test-doc")
+        error = validate_tiling(tiling, doc_store, budget_tokens=40)
 
         assert error is not None
         assert "exceeds budget" in error
@@ -441,7 +442,8 @@ class TestBudgetValidation:
         tiling = ["node1"]  # ~10 tokens
 
         # Validate with sufficient budget
-        error = validate_tiling(tiling, store, "test-doc", budget_tokens=100)
+        doc_store = store.for_document("test-doc")
+        error = validate_tiling(tiling, doc_store, budget_tokens=100)
 
         assert error is None
 
@@ -490,10 +492,12 @@ class TestBudgetValidation:
         tiling = ["left_child", "right_child"]  # ~20 tokens total
 
         # Should pass with budget of 50
-        error = validate_tiling(tiling, store, "test-doc", budget_tokens=50)
+        doc_store = store.for_document("test-doc")
+        error = validate_tiling(tiling, doc_store, budget_tokens=50)
         assert error is None
 
         # Should fail with budget of 15
-        error = validate_tiling(tiling, store, "test-doc", budget_tokens=15)
+        doc_store = store.for_document("test-doc")
+        error = validate_tiling(tiling, doc_store, budget_tokens=15)
         assert error is not None
         assert "exceeds budget" in error

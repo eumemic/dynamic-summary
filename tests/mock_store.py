@@ -260,15 +260,17 @@ class SimpleMockStore(StoreInterface):
 
         # Create mock nodes, search, tree that filter by document_id
         mock_nodes = MagicMock()
-        mock_nodes.get = lambda node_id: (
-            self.get_node(node_id)
-            if document_id is None
-            or (
-                self.get_node(node_id)
-                and self.get_node(node_id).document_id == document_id
-            )
-            else None
-        )
+
+        def get_node_fn(node_id):
+            if document_id is None:
+                return self.get_node(node_id)
+            node = self.get_node(node_id)
+            if node and node.document_id == document_id:
+                return node
+            return None
+
+        mock_nodes.get = get_node_fn
+        mock_nodes.get_node = get_node_fn  # Both get and get_node should work
         mock_nodes.get_many = lambda node_ids: self.get_nodes(node_ids)
         # Add get_nodes alias for get_many (used by Retriever and CoverageBuilder)
         mock_nodes.get_nodes = lambda node_ids: self.get_nodes(node_ids)
