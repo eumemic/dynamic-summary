@@ -1,18 +1,8 @@
 name: Performance Tests
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    branches: [ master ]
-    # Skip performance tests for docs-only changes (but run for code/test/dependency changes)
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.claude/**'
-      - 'LICENSE'
-      - '.gitignore'
-      - '.github/workflows/*'
-      - '!.github/workflows/performance-tests.yml'
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write      # Need write to push temporary branches
@@ -23,8 +13,11 @@ jobs:
   benchmark:
     name: Performance Report
     runs-on: ubuntu-latest
-    # Skip on draft PRs to save expensive benchmark runs
-    if: github.event.pull_request.draft != true
+    # Only run when /benchmark is in a comment on a PR
+    if: |
+      github.event_name == 'issue_comment' && 
+      contains(github.event.comment.body, '/benchmark') && 
+      github.event.issue.pull_request
     
     services:
       postgres:
@@ -46,60 +39,54 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
     
     steps:
-      - name: Checkout PR branch
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      
-      - name: Create or update PR comment with initial status
+      - name: Get PR branch
+        id: pr-info
         uses: actions/github-script@v7
         with:
           script: |
-            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const pr_number = context.issue.number;
+            
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr_number
+            });
+            
+            core.setOutput('head_ref', pr.head.ref);
+            core.setOutput('pr_number', pr_number);
+            
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr-info.outputs.head_ref }}
+          submodules: recursive
+      
+      - name: Create PR comment with initial status
+        id: create-comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
             const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
             
-            // Initial comment body
-            const body = `${identifier}
-            ## 📊 Performance Report
+            // Create new comment for each benchmark run
+            const body = `## 📊 Performance Report (${timestamp} UTC)
             
             _View [workflow run](${workflowUrl})_
             
             ⏳ **Running performance benchmarks...**`;
             
-            // Find existing comment
-            const { data: comments } = await github.rest.issues.listComments({
+            // Always create a new comment
+            const { data: newComment } = await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number
+              issue_number: context.issue.number,
+              body
             });
+            console.log(`Created new performance report comment: ${newComment.id}`);
             
-            console.log(`Found ${comments.length} total comments on PR`);
-            
-            const botComment = comments.find(comment => 
-              comment.body && comment.body.includes(identifier) &&
-              comment.user && comment.user.login === 'github-actions[bot]'
-            );
-            
-            if (botComment) {
-              // Update existing comment
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body
-              });
-              console.log(`Updated existing comment: ${botComment.id}`);
-            } else {
-              // Create new comment
-              console.log('No existing performance report comment found, creating new one');
-              const { data: newComment } = await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body
-              });
-              console.log(`Created new comment: ${newComment.id}`);
-            }
+            // Store comment ID for updates within this run
+            core.setOutput('comment_id', newComment.id);
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -204,11 +191,11 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
             const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            const comment_id = '${{ steps.create-comment.outputs.comment_id }}';
             
-            const body = `${identifier}
-            ## 📊 Performance Report
+            const body = `## 📊 Performance Report (${timestamp} UTC)
             
             _View [workflow run](${workflowUrl})_
             
@@ -216,22 +203,11 @@ jobs:
             - ✅ Indexing benchmark complete
             - ⏱️ Running query benchmarks...`;
             
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.body && comment.body.includes(identifier) &&
-              comment.user && comment.user.login === 'github-actions[bot]'
-            );
-            
-            if (botComment) {
+            if (comment_id) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                comment_id: botComment.id,
+                comment_id: parseInt(comment_id),
                 body
               });
             }
@@ -287,35 +263,24 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
             const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            const comment_id = '${{ steps.create-comment.outputs.comment_id }}';
             
-            const body = `${identifier}
-            ## 📊 Performance Report
+            const body = `## 📊 Performance Report (${timestamp} UTC)
             
             _View [workflow run](${workflowUrl})_
             
             ⏳ **Progress:**
             - ✅ Indexing benchmark complete
-            - ✅ Query benchmarks complete
+            - ✅ Query benchmarks complete  
             - ⏱️ Generating visualization...`;
             
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.body && comment.body.includes(identifier) &&
-              comment.user && comment.user.login === 'github-actions[bot]'
-            );
-            
-            if (botComment) {
+            if (comment_id) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                comment_id: botComment.id,
+                comment_id: parseInt(comment_id),
                 body
               });
             }
@@ -411,11 +376,11 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
             const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            const comment_id = '${{ steps.create-comment.outputs.comment_id }}';
             
-            const body = `${identifier}
-            ## 📊 Performance Report
+            const body = `## 📊 Performance Report (${timestamp} UTC)
             
             _View [workflow run](${workflowUrl})_
             
@@ -425,22 +390,11 @@ jobs:
             - ✅ Visualization generated
             - ⏱️ Generating comparison report...`;
             
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.body && comment.body.includes(identifier) &&
-              comment.user && comment.user.login === 'github-actions[bot]'
-            );
-            
-            if (botComment) {
+            if (comment_id) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                comment_id: botComment.id,
+                comment_id: parseInt(comment_id),
                 body
               });
             }
@@ -580,14 +534,15 @@ jobs:
           REPORT_CONTENT: ${{ steps.compare.outputs.report }}
         with:
           script: |
-            const identifier = '<!-- github-actions-perf-report-comment -->';
+            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
             const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            const comment_id = '${{ steps.create-comment.outputs.comment_id }}';
             // Get report from environment variable to avoid template literal issues
             const report = process.env.REPORT_CONTENT || '';
             const visualizationUrl = `${{ steps.visualize.outputs.VISUALIZATION_URL }}`;
             
             // Build final comment body
-            let body = `${identifier}\n## 📊 Performance Report\n\n`;
+            let body = `## 📊 Performance Report (${timestamp} UTC)\n\n`;
             body += `_View [workflow run](${workflowUrl})_\n\n`;
             
             // Check for benchmark errors first
@@ -626,29 +581,17 @@ jobs:
               body += 'Check the [workflow logs](' + workflowUrl + ') for details.';
             }
             
-            // Find existing comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.body && comment.body.includes(identifier) &&
-              comment.user && comment.user.login === 'github-actions[bot]'
-            );
-            
-            if (botComment) {
-              // Update existing comment
+            if (comment_id) {
+              // Update the comment created at the beginning
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                comment_id: botComment.id,
+                comment_id: parseInt(comment_id),
                 body
               });
-              console.log(`Updated comment with final results: ${botComment.id}`);
+              console.log(`Updated comment with final results: ${comment_id}`);
             } else {
-              // Create new comment if somehow the initial one wasn't created
+              // Fallback: create new comment if somehow we don't have the initial comment ID
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
