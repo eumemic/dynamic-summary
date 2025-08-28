@@ -29,29 +29,45 @@ Get code through CI successfully with minimal back-and-forth. Monitor CI, fix is
    - Fix the failure, commit, and resume monitoring
    - Continues until all checks pass
 
-3. **Read Reviews**: Once all CI checks pass (build complete):
-   - Check for reviews: `gh pr view --comments`
-   - Look for automated review feedback (e.g., claude-review)
-   - If issues found, fix them and return to step 2
+3. **Request Code Review**: Once implementation is complete and all CI checks pass:
+   - Assess complexity of changes and identify areas needing review
+   - Post review request: "@claude please review this PR. [specific concerns or focus areas]"
+   - Example: "@claude please review this PR. I'm particularly concerned about the error handling in the retry logic and whether the caching approach is thread-safe."
+   - Wait for review completion (check comments periodically)
+   - Read review feedback and identify issues to address
 
-4. **Assess Performance Tradeoffs**: After all CI checks pass:
-   - Find latest performance report in PR comments
-   - Analyze performance changes in context of PR objectives
-   - Consider acceptable tradeoffs (e.g., slightly higher cost for better accuracy)
-   - If tradeoffs seem reasonable for the PR's goals, proceed
-   - If concerning, discuss with user before declaring PR ready
+4. **Request Benchmarks if Needed**: Decide if performance testing is warranted:
+   - Check if changes affect performance-critical files:
+     - `ragzoom/dynamic_tiling.py` (core algorithm)
+     - `ragzoom/index.py` (indexing pipeline)
+     - `ragzoom/retrieve.py` (query performance)
+     - Config changes affecting defaults
+     - Parallel/async processing code
+   - If yes, include "/benchmark" in review comment or separate comment
+   - Track that benchmarks were requested to avoid duplicate requests
+   - When results arrive, assess if regressions are acceptable given PR goals
 
-5. **Success Criteria**:
+5. **Handle Review Dialogue**:
+   - Discuss review findings with user: "The reviewer identified [issues]. Should I fix [specific issue]?"
+   - Fix agreed-upon issues, commit changes
+   - Post follow-up to reviewer: "@claude I've addressed [what was fixed]. Regarding [other issue], we're keeping it as-is because [justification]"
+   - Continue dialogue until consensus reached
+   - Track which issues were addressed vs. intentionally not fixed
+
+6. **Success Criteria**:
    - All CI checks pass
-   - All review feedback read and addressed
-   - Performance changes are reasonable given PR objectives
-   - Any performance tradeoffs are justified by improvements elsewhere
+   - Code review requested and feedback addressed
+   - Consensus reached with reviewer on all issues
+   - Performance benchmarks run if needed, results acceptable
    - No outstanding issues to fix
 
 ## Key Principles
 
 - **Fail fast**: `--fail-fast` flag exits on first CI failure for quick fixes
-- **Reviews after CI**: Read reviews only after all checks pass
+- **Request reviews intelligently**: Only when implementation complete, CI passing
+- **Guide the reviewer**: Provide context about areas of concern
+- **Request benchmarks selectively**: Only for performance-critical changes
+- **Engage in dialogue**: Work with reviewer to reach consensus
 - **Batch fixes**: Fix all issues before pushing
 - **Be proactive**: Auto-fix build/test/lint/security issues
 - **Ask first**: For style preferences and non-blocking suggestions
@@ -98,29 +114,41 @@ Fixing import issue...
 Resuming CI monitoring...
 ✅ All CI checks passed!
 
-Checking for code reviews...
-📝 Found claude-review with feedback:
-- Temp file conflicts in pre-commit hook
-- Missing safety check for branch reset
+Implementation complete. Requesting code review...
+Posting: "@claude please review this PR. I'm particularly concerned about
+the new retry logic in index.py and whether the semaphore usage is correct."
 
-Fixing review issues...
-✅ Fixed all issues - ready to commit
+Also noticing changes to ragzoom/dynamic_tiling.py - requesting benchmarks...
+Including "/benchmark" in comment.
+
+Waiting for review completion...
+📝 Review complete! Found feedback:
+- Critical: Potential race condition in retry logic
+- Minor: Consider extracting magic number to constant
+
+Discussing with user: "The reviewer found a race condition in the retry logic.
+Should I add a lock to fix this?"
+
+User: "Yes, fix the race condition. The magic number is fine as-is."
+
+Fixing race condition...
+✅ Fixed and ready to commit
 (User runs /commit)
 
-Resuming CI monitoring...
-✅ All CI checks passed!
+Posting follow-up: "@claude I've addressed the race condition by adding
+a lock around the critical section. The magic number is intentional for
+consistency with existing patterns."
 
-Checking for code reviews...
-✅ No new issues found
+Reviewer responds: "✅ Changes look good, race condition resolved."
 
-Assessing performance changes...
+Checking benchmark results...
 📊 Performance Report Analysis:
-- Throughput: -4.3% on 200 tokens (acceptable variation)
-- Cost: +4.2% on 200 tokens (minor increase)
-- Context: PR adds improved accuracy features
-✅ Performance tradeoffs justified by accuracy improvements
+- Median processing time: 2.8s (under 3s threshold ✅)
+- Cost per 1M tokens: $0.95 (under $1 threshold ✅)
+✅ Performance within acceptable bounds
 
-✅ PR ready for review
+✅ All review comments addressed
+✅ PR ready for final review
 PR #42: https://github.com/owner/repo/pull/42
 ```
 
