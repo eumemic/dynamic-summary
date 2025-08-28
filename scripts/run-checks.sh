@@ -114,10 +114,23 @@ declare -a pids=()
 
 # Cleanup function
 cleanup() {
-    # Kill any remaining background processes
-    for pid in "${pids[@]}"; do
-        kill "$pid" 2>/dev/null || true
-    done
+    # Gracefully terminate any remaining background processes
+    if [ ${#pids[@]} -gt 0 ]; then
+        # First try SIGTERM for graceful shutdown
+        for pid in "${pids[@]}"; do
+            kill -TERM "$pid" 2>/dev/null || true
+        done
+        # Give processes a moment to exit cleanly
+        sleep 0.05
+        # Force kill any that are still running
+        for pid in "${pids[@]}"; do
+            kill -KILL "$pid" 2>/dev/null || true
+        done
+        # Wait for all to finish
+        for pid in "${pids[@]}"; do
+            wait "$pid" 2>/dev/null || true
+        done
+    fi
     rm -rf "$tmpdir"
 }
 trap cleanup EXIT
@@ -171,6 +184,9 @@ run_check_background() {
     local result_file="$tmpdir/${check_name}.result"
     
     (
+        # Handle SIGTERM gracefully in subshell
+        trap 'exit 143' TERM
+        
         echo "[$check_name] Starting..." > "$output_file"
         if eval "$check_cmd" >> "$output_file" 2>&1; then
             echo 0 > "$result_file"
@@ -339,13 +355,27 @@ if [ "$FAIL_FAST" = true ]; then
                 for check in Tests Mypy Ruff Black JSCPD Bandit; do
                     result_file="$tmpdir/${check}.result"
                     if [ -f "$result_file" ] && [ "$(cat "$result_file")" = "1" ]; then
-                        # Found a failure, kill all other processes
+                        # Found a failure, gracefully terminate all other processes
                         {
+                            # Send SIGTERM to all processes
                             for other_pid in "${pids[@]}"; do
-                                kill "$other_pid" || true
+                                if [ "$other_pid" != "$pid" ] && kill -0 "$other_pid" 2>/dev/null; then
+                                    kill -TERM "$other_pid" 2>/dev/null || true
+                                fi
                             done
-                            wait  # Wait for processes to die to avoid "Terminated" messages
-                        } 2>/dev/null
+                            # Give processes a moment to exit cleanly
+                            sleep 0.1
+                            # Force kill any stragglers
+                            for other_pid in "${pids[@]}"; do
+                                if [ "$other_pid" != "$pid" ] && kill -0 "$other_pid" 2>/dev/null; then
+                                    kill -KILL "$other_pid" 2>/dev/null || true
+                                fi
+                            done
+                            # Wait for all processes to exit
+                            for other_pid in "${pids[@]}"; do
+                                wait "$other_pid" 2>/dev/null || true
+                            done
+                        } &>/dev/null
                         # Output the failure
                         cat "$tmpdir/${check}.output" >&2
                         exit 2
