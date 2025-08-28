@@ -315,7 +315,8 @@ class TestEndToEndScenarios:
         assert secret.get_secret_value() == api_key
 
         # Should work with OpenAI client initialization (mocked)
-        with patch("openai.OpenAI") as mock_openai:
+        # Patch where OpenAI is imported in utils, not the original module
+        with patch("tests.utils.OpenAI") as mock_openai:
             from ragzoom.config import QueryConfig
             from tests.conftest import SimpleMockStore
             from tests.utils import create_retriever
@@ -326,7 +327,10 @@ class TestEndToEndScenarios:
             store.for_document = Mock(return_value=Mock())
 
             # This should pass the actual API key to the OpenAI client
-            create_retriever(query_config, store, api_key=secret.get_secret_value())
+            # Note: Don't pass a client so create_retriever creates one
+            create_retriever(
+                query_config, store, api_key=secret.get_secret_value(), client=None
+            )
 
             # Verify the OpenAI client was initialized with the actual key
             mock_openai.assert_called_once_with(api_key=api_key)

@@ -81,6 +81,7 @@ class TestDPIntegration:
         retriever = create_retriever(
             config.query_config,
             store,
+            document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key.get_secret_value(),
             client=mock_client,  # Pass the mocked client
         )
@@ -135,6 +136,7 @@ class TestDPIntegration:
         retriever = create_retriever(
             config.query_config,
             store,
+            document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key.get_secret_value(),
             client=mock_client,  # Pass the mocked client
         )
@@ -183,6 +185,7 @@ class TestDPIntegration:
         retriever = create_retriever(
             config.query_config,
             store,
+            document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key.get_secret_value(),
             client=mock_client,  # Pass the mocked client
         )
@@ -232,6 +235,7 @@ class TestDPIntegration:
         retriever = create_retriever(
             small_query_config,
             store,
+            document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key.get_secret_value(),
             client=mock_client,  # Pass the mocked client
         )

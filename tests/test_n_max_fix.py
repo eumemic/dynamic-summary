@@ -70,9 +70,9 @@ class TestNumSeedsFix:
                 embedding=[0.9] * 1536,  # High similarity
             )
 
-        # Mock the search_similar to return all leaves as candidates
-        # Note: search_similar now returns (id, similarity, metadata) tuples
-        store.search.search_similar = Mock(
+        # Mock the search_similar method on the store itself (not store.search)
+        # because for_document() creates a new search object that calls store.search_similar
+        store.search_similar = Mock(
             return_value=[
                 ("leaf1", 0.9, {}),  # High similarity, empty metadata
                 ("leaf2", 0.9, {}),
@@ -81,8 +81,8 @@ class TestNumSeedsFix:
             ]
         )
 
-        # Mock compute_mmr_diverse_results to select only leaf1
-        store.search.compute_mmr_diverse_results = Mock(return_value=["leaf1"])
+        # Mock compute_mmr_diverse_results on the store itself
+        store.compute_mmr_diverse_results = Mock(return_value=["leaf1"])
 
         # Let the mock store handle get_ancestors naturally - it has proper implementation
 
@@ -105,7 +105,9 @@ class TestNumSeedsFix:
             retriever = create_retriever(
                 query_config=query_config,
                 store=store,
+                document_id="doc1",  # Specify the document we're retrieving from
                 api_key=operational_config.openai_api_key.get_secret_value(),
+                client=mock_instance,  # Pass the mocked client
             )
 
             # Retrieve with num_seeds=1
