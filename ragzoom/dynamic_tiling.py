@@ -300,43 +300,6 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
 
         return self._build_result(tiling, nodes)
 
-    # jscpd:ignore-start - Thread-safe override for async context
-    def _get_subtree_relevance(
-        self, node: "TreeNode", scores: dict[str, float]
-    ) -> float:
-        """Thread-safe version for async context - synchronous since relevance calc is fast."""
-        # Use asyncio's thread-safe method to check and update cache
-        # Since subtree relevance calculation is typically fast and CPU-bound,
-        # we can safely use the sync version with minimal locking overhead
-        import threading
-
-        # Create a simple lock for this instance if it doesn't exist
-        if not hasattr(self, "_sync_relevance_lock"):
-            self._sync_relevance_lock = threading.Lock()
-
-        with self._sync_relevance_lock:
-            if node.id in self._subtree_relevance_cache:
-                return self._subtree_relevance_cache[node.id]
-
-            # Get this node's score
-            node_score = scores.get(node.id, 0.0)
-            total = node_score
-
-            # Add children's scores recursively
-            # Only traverse children that exist in our nodes dict
-            if node.left_child_id and node.left_child_id in self._nodes:
-                left_child = self._nodes[node.left_child_id]
-                total += self._get_subtree_relevance(left_child, scores)
-
-            if node.right_child_id and node.right_child_id in self._nodes:
-                right_child = self._nodes[node.right_child_id]
-                total += self._get_subtree_relevance(right_child, scores)
-
-            self._subtree_relevance_cache[node.id] = total
-            return total
-
-    # jscpd:ignore-end
-
     def _count_subtree_nodes(self, node: "TreeNode") -> int:
         """Count total nodes in a subtree."""
         count = 1
