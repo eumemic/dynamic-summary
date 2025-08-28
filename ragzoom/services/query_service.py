@@ -41,13 +41,14 @@ class QueryService:
         self.store = store
         self.query_config = query_config
         self.operational_config = operational_config
-        # Default components use system-wide store; per-request we scope them
+        # Keep defaults; per-request we construct document-scoped components
+        self.assembler = Assembler(store)
+        # Maintain retriever attribute for API compatibility (updated in update_config)
         self.retriever = Retriever(
             query_config,
-            store,
+            store.for_document(None),
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
-        self.assembler = Assembler(store)
 
     # jscpd:ignore-start - Legitimate sync/async pattern duplication
     def execute_query(
@@ -175,9 +176,9 @@ class QueryService:
             # Update config
             self.query_config = self.query_config.replace(**updates)
 
-            # Recreate retriever with new config (system-wide)
+            # Maintain attribute for tests; create a retriever bound to no specific document
             self.retriever = Retriever(
                 self.query_config,
-                self.store,
+                self.store.for_document(None),
                 api_key=self.operational_config.openai_api_key,
             )

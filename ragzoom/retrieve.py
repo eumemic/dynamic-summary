@@ -17,7 +17,7 @@ from ragzoom.retrieval import (
     ScoringService,
 )
 from ragzoom.retrieval.telemetry_collector import TelemetryCollector
-from ragzoom.store import StoreManager, TreeNode
+from ragzoom.store import TreeNode
 from ragzoom.telemetry_query import QueryTelemetry
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ class Retriever:
     def __init__(
         self,
         query_config: QueryConfig,
-        store: StoreManager | DocumentStore,
+        store: DocumentStore,
         api_key: str | SecretStr = "",
         tree_builder: Optional["TreeBuilder"] = None,
         use_async_dp: bool = False,
@@ -121,11 +121,7 @@ class Retriever:
             telemetry_collector.start_phase()
 
         # Determine effective document scope
-        effective_doc_id = (
-            getattr(self.store, "document_id", None)
-            if isinstance(self.store, DocumentStore)
-            else document_id
-        )
+        effective_doc_id = getattr(self.store, "document_id", None) or document_id
 
         # Determine which mode we're in
         if budget_tokens is not None and num_seeds is None:
@@ -179,21 +175,8 @@ class Retriever:
             telemetry_collector.start_phase()
             telemetry_collector.record_metric("seeds_found", len(selected_ids))
 
-        # Phase 4: Build coverage map with document scoping when available
-        if isinstance(self.store, DocumentStore) and effective_doc_id:
-            coverage_map = CoverageBuilder(self.store).build_complete_coverage_map(
-                selected_ids
-            )
-        elif effective_doc_id:
-            # self.store is StoreManager in this branch
-            doc_store = self.store.for_document(effective_doc_id)  # type: ignore[union-attr]
-            coverage_map = CoverageBuilder(doc_store).build_complete_coverage_map(
-                selected_ids
-            )
-        else:
-            coverage_map = self.coverage_builder.build_complete_coverage_map(
-                selected_ids
-            )
+        # Phase 4: Build coverage map (store is already document-scoped)
+        coverage_map = self.coverage_builder.build_complete_coverage_map(selected_ids)
         if telemetry_collector:
             telemetry_collector.end_phase("coverage_map")
             telemetry_collector.start_phase()

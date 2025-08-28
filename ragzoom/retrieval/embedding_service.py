@@ -7,7 +7,6 @@ from openai import OpenAI
 
 if TYPE_CHECKING:
     from ragzoom.document_store import DocumentStore
-    from ragzoom.store import StoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +14,12 @@ logger = logging.getLogger(__name__)
 class EmbeddingService:
     """Handles query embedding generation with model auto-detection."""
 
-    def __init__(
-        self, client: OpenAI, store: "StoreManager | DocumentStore", default_model: str
-    ):
+    def __init__(self, client: OpenAI, store: "DocumentStore", default_model: str):
         """Initialize embedding service.
 
         Args:
             client: OpenAI client for API calls
-            store: Store instance for model detection
+            store: DocumentStore for model detection
             default_model: Default embedding model from config
         """
         self.client = client

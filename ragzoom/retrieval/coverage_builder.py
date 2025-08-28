@@ -1,11 +1,10 @@
 """Service for building coverage maps during retrieval."""
 
 import logging
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ragzoom.document_store import DocumentStore
-    from ragzoom.store import StoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -13,11 +12,11 @@ logger = logging.getLogger(__name__)
 class CoverageBuilder:
     """Builds coverage maps including selected nodes, ancestors, and siblings."""
 
-    def __init__(self, store: Union["StoreManager", "DocumentStore"]):
+    def __init__(self, store: "DocumentStore"):
         """Initialize coverage builder.
 
         Args:
-            store: Store (system-wide) or DocumentStore (scoped) for node operations
+            store: DocumentStore (scoped) for node operations
         """
         self.store = store
 

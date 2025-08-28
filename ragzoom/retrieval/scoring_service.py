@@ -7,7 +7,6 @@ import numpy as np
 
 if TYPE_CHECKING:
     from ragzoom.document_store import DocumentStore
-    from ragzoom.store import StoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 class ScoringService:
     """Computes relevance scores for nodes in the coverage map."""
 
-    def __init__(self, store: "StoreManager | DocumentStore"):
+    def __init__(self, store: "DocumentStore"):
         """Initialize scoring service.
 
         Args:
