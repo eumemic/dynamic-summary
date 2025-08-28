@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from ragzoom.document_store import DocumentStore
-from ragzoom.store import StoreManager, TreeNode
+from ragzoom.store import TreeNode
 from ragzoom.utils.tokenization import tokenizer as default_tokenizer
 
 logger = logging.getLogger(__name__)
@@ -38,10 +38,10 @@ class CharacterPositionResolver(PositionResolver):
     def __init__(
         self,
         all_nodes: list[TreeNode],
-        store: StoreManager | DocumentStore,
+        doc_store: DocumentStore,
         preloaded_nodes: dict[str, "TreeNode"] | None = None,
     ):
-        self.store = store
+        self.doc_store = doc_store
         self.preloaded_nodes = preloaded_nodes or {}
         self.doc_start = min(node.span_start for node in all_nodes)
         self.doc_end = max(node.span_end for node in all_nodes)
@@ -76,7 +76,7 @@ class TokenPositionResolver(PositionResolver):
         self,
         node_infos: list[Any],  # List of NodeInfo from dynamic_tiling
         coverage_map: dict[str, bool],
-        store: StoreManager | DocumentStore,
+        doc_store: DocumentStore,
         tokenizer: Any = None,
         preloaded_nodes: dict[str, "TreeNode"] | None = None,
     ):
@@ -86,7 +86,7 @@ class TokenPositionResolver(PositionResolver):
         if not coverage_map:
             raise ValueError("coverage_map cannot be empty")
 
-        self.store = store
+        self.doc_store = doc_store
         self.node_infos = node_infos
         self.coverage_map = coverage_map
         self.tokenizer = tokenizer or default_tokenizer
