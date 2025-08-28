@@ -240,6 +240,8 @@ class SimpleMockStore(StoreInterface):
             for n in self._nodes.values()
             if hasattr(n, "path") and n.path in paths and n.document_id == document_id
         ]
+        # Add update_access method (used by CoverageBuilder)
+        mock_nodes.update_access = lambda node_id: self.update_node_access(node_id)
         mock_nodes.get_all = lambda: [
             n
             for n in self._nodes.values()
@@ -282,6 +284,14 @@ class SimpleMockStore(StoreInterface):
         mock_doc_store.nodes = mock_nodes
         mock_doc_store.search = mock_search
         mock_doc_store.tree = mock_tree
+
+        # Add DocumentStore methods needed by CoverageBuilder
+        mock_doc_store.PIN_DEPTH_MAX = self.PIN_DEPTH_MAX
+        mock_doc_store.get_pinned_nodes = lambda depth_max=None: [
+            node
+            for node in self.get_pinned_nodes(depth_max)
+            if node.document_id == document_id
+        ]
 
         return mock_doc_store
 
