@@ -109,6 +109,12 @@ class TestIndexingService:
         # Mock dependencies
         mock_store = Mock()
         mock_store.clear_document.return_value = 0
+        mock_store.get_document_by_path.return_value = None
+        mock_store.compute_content_hash.return_value = "hash123"
+        # Mock for_document to return a DocumentStore
+        mock_doc_store = Mock()
+        mock_doc_store.set_metadata = Mock()
+        mock_store.for_document.return_value = mock_doc_store
 
         # Mock TreeBuilder
         mock_tree_builder = Mock()
@@ -144,7 +150,7 @@ class TestIndexingService:
         assert result.telemetry is None
 
         mock_tree_builder.add_document.assert_called_once_with(
-            "test text", document_id="test-doc", file_path=None, show_progress=True
+            "test text", document_id="test-doc", show_progress=True
         )
 
 

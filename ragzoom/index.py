@@ -14,7 +14,7 @@ from ragzoom.document_store import DocumentStore
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.services.llm_service import LLMService
 from ragzoom.splitter import TextSplitter
-from ragzoom.store import StoreManager, TreeNode
+from ragzoom.store import TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
@@ -56,7 +56,7 @@ class TreeBuilder:
     def __init__(
         self,
         config: IndexConfig,
-        store: StoreManager,
+        document_store: DocumentStore,
         api_key: str | SecretStr = "",
         max_concurrent: int = 30,
     ):
@@ -64,12 +64,12 @@ class TreeBuilder:
 
         Args:
             config: Index configuration
-            store: StoreManager instance for persistence
+            document_store: DocumentStore instance for persistence within a single document
             api_key: OpenAI API key as SecretStr or string (if not provided, reads from OPENAI_API_KEY env)
             max_concurrent: Maximum concurrent API requests
         """
         self.config = config
-        self.store = store
+        self.document_store = document_store
         self.splitter = TextSplitter(config)
         # Convert string to SecretStr for security
         if isinstance(api_key, str) and not isinstance(api_key, SecretStr):
@@ -150,7 +150,7 @@ class TreeBuilder:
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference."""
-        with self.store.SessionLocal() as session:
+        with self.document_store.session_local() as session:
             from ragzoom.store import TreeNode
 
             node = session.query(TreeNode).filter_by(id=node_id).first()
@@ -159,67 +159,10 @@ class TreeBuilder:
                 session.commit()
 
                 # Invalidate the cache entry for this node since we've updated it
-                if node_id in self.store.node_cache:
-                    del self.store.node_cache[node_id]
-                    if node_id in self.store.cache_order:
-                        self.store.cache_order.remove(node_id)
-
-    def _prepare_document(
-        self,
-        text: str,
-        document_id: str | None = None,
-        file_path: str | None = None,
-    ) -> DocumentPreparationResult:
-        """Prepare document for indexing: validate models, check existence, determine ID.
-
-        Returns:
-            DocumentPreparationResult with clear semantics for next steps
-        """
-        # Validate model names to warn about potential issues
-        self._validate_model_names()
-
-        # Compute content hash
-        content_hash = self.store.compute_content_hash(text)
-
-        # Check if document already exists
-        existing_doc = None
-        if file_path:
-            existing_doc = self.store.get_document_by_path(file_path)
-            if existing_doc:
-                # Check if content changed
-                if existing_doc.content_hash == content_hash:
-                    logger.info(
-                        f"Document at {file_path} unchanged, skipping re-indexing"
-                    )
-                    return DocumentPreparationResult(
-                        document_id=existing_doc.id,
-                        content_hash=content_hash,
-                        skip_indexing=True,
-                        existing_doc_id=existing_doc.id,
-                    )
-                else:
-                    logger.info(f"Document at {file_path} has changed, re-indexing...")
-                    # Delete old nodes
-                    deleted = self.store.clear_document(existing_doc.id)
-                    logger.info(f"Deleted {deleted} old nodes")
-                    document_id = existing_doc.id
-
-        # Determine final document ID
-        if not document_id:
-            if file_path:
-                # Use filename (without path) as document_id
-                from pathlib import Path
-
-                document_id = Path(file_path).name
-            else:
-                document_id = self._generate_node_id()
-
-        return DocumentPreparationResult(
-            document_id=document_id,
-            content_hash=content_hash,
-            skip_indexing=False,
-            existing_doc_id=None,
-        )
+                if node_id in self.document_store.node_cache:
+                    del self.document_store.node_cache[node_id]
+                    if node_id in self.document_store.cache_order:
+                        self.document_store.cache_order.remove(node_id)
 
     def _create_and_validate_chunks(
         self, text: str, show_progress: bool = True
@@ -293,7 +236,6 @@ class TreeBuilder:
         self,
         text: str,
         document_id: str | None = None,
-        file_path: str | None = None,
         show_progress: bool = True,
         reporter: None = None,
     ) -> str: ...
@@ -303,7 +245,6 @@ class TreeBuilder:
         self,
         text: str,
         document_id: str | None = None,
-        file_path: str | None = None,
         show_progress: bool = True,
         reporter: TelemetryCollector = ...,  # jscpd:ignore-start
     ) -> tuple[str, dict[str, Any]]: ...  # jscpd:ignore-end
@@ -312,7 +253,6 @@ class TreeBuilder:
         self,
         text: str,
         document_id: str | None = None,
-        file_path: str | None = None,
         show_progress: bool = True,
         reporter: TelemetryCollector | None = None,
     ) -> str | tuple[str, dict[str, Any]]:
@@ -322,12 +262,10 @@ class TreeBuilder:
             If reporter is None: document_id
             If reporter is provided: (document_id, metrics)
         """
-        # Step 1: Prepare document (validation, hashing, existence check)
-        prep_result = self._prepare_document(text, document_id, file_path)
-
-        # Early return if document is unchanged
-        if prep_result.skip_indexing:
-            return prep_result.document_id
+        # Step 1: Validate models and get document ID
+        self._validate_model_names()
+        if not document_id:
+            document_id = self.document_store.document_id or self._generate_node_id()
 
         # Step 2: Create and validate chunks
         chunks = self._create_and_validate_chunks(text, show_progress)
@@ -345,7 +283,7 @@ class TreeBuilder:
             # This creates all nodes (leaves + internal) and generates all embeddings
             tree_nodes = await build_tree_dataflow(
                 chunks=chunks,
-                document_id=prep_result.document_id,
+                document_id=document_id,
                 llm_service=self.llm_service,
                 target_tokens=self.config.target_chunk_tokens,
                 max_summary_concurrency=30,  # Use default max_concurrent value
@@ -356,18 +294,17 @@ class TreeBuilder:
                 progress=async_progress,
             )
 
-            # Step 5: Create document record first (needed for foreign key constraint)
-            self.store.add_document(
-                document_id=prep_result.document_id,
-                file_path=file_path,
-                content_hash=prep_result.content_hash,
+            # Step 5: Set document metadata (if not already set)
+            content_hash = self.document_store.compute_content_hash(text)
+            self.document_store.set_metadata(
+                content_hash=content_hash,
                 chunk_count=len(chunks),
                 embedding_model=self.config.embedding_model,
                 summary_model=self.config.summary_model,
             )
 
-            # Step 6: Store all nodes
-            doc_store = self.store.for_document(prep_result.document_id)
+            # Step 6: Store all nodes using the document store
+            doc_store = self.document_store
 
             # Group nodes by height and insert level by level to respect foreign key constraints
             # Each batch insert is a single SQL statement, and parents must exist before children
@@ -425,15 +362,15 @@ class TreeBuilder:
                 mins, secs = divmod(int(total_elapsed), 60)
                 if not show_progress:
                     logger.info(
-                        f"Document indexed successfully: {prep_result.document_id} [{mins}m {secs}s total elapsed]"
+                        f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
                     )
 
             # Finalize telemetry if collector was used
             if reporter:
                 telemetry = reporter.finalize()
-                return prep_result.document_id, telemetry
+                return document_id, telemetry
 
-            return prep_result.document_id
+            return document_id
         finally:
             # Always close progress if it exists
             if progress:
@@ -443,19 +380,15 @@ class TreeBuilder:
         self,
         text: str,
         document_id: str | None = None,
-        file_path: str | None = None,
         show_progress: bool = True,
     ) -> str:
         """Sync wrapper for add_document."""
-        return asyncio.run(
-            self.add_document_async(text, document_id, file_path, show_progress)
-        )
+        return asyncio.run(self.add_document_async(text, document_id, show_progress))
 
     def add_document_with_telemetry(
         self,
         text: str,
         document_id: str | None = None,
-        file_path: str | None = None,
         show_progress: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Add document and return telemetry data. Used for benchmarking.
@@ -478,14 +411,12 @@ class TreeBuilder:
             document_id or "benchmark",
             source_tokens,
             self.config,
-            document_path=file_path,
+            document_path=None,
         )
 
         # Run indexing with collector - will return (doc_id, telemetry)
         result = asyncio.run(
-            self._add_document_impl(
-                text, document_id, file_path, show_progress, collector
-            )
+            self._add_document_impl(text, document_id, show_progress, collector)
         )
 
         # Extract tuple returned when collector is provided
@@ -497,13 +428,10 @@ class TreeBuilder:
         self,
         text: str,
         document_id: str | None = None,
-        file_path: str | None = None,
         show_progress: bool = True,
     ) -> str:
         """Async version of add_document - called by sync wrapper."""
-        result = await self._add_document_impl(
-            text, document_id, file_path, show_progress
-        )
+        result = await self._add_document_impl(text, document_id, show_progress)
         # Type checker knows result is a string when no reporter is provided
         return result
 
@@ -527,7 +455,7 @@ class TreeBuilder:
             Dictionary containing node data and parent updates to be applied later
         """
         if doc_store is None:
-            doc_store = self.store.for_document(document_id)
+            doc_store = self.document_store
 
         parent_id = self._generate_node_id()
 

@@ -86,7 +86,9 @@ class TestFollowingNeighbor:
 
         # Create tree builder with small chunk size to ensure multiple chunks
         config = base_config.index_config.replace(target_chunk_tokens=5)
-        tree_builder = TreeBuilder(config, store)
+        # Create document-scoped store
+        doc_store = store.for_document("neighbor-test")
+        tree_builder = TreeBuilder(config, doc_store)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
@@ -145,7 +147,9 @@ class TestFollowingNeighbor:
 
         # Create tree builder with small chunk size
         config = base_config.index_config.replace(target_chunk_tokens=3)
-        tree_builder = TreeBuilder(config, store)
+        # Create document-scoped store
+        doc_store = store.for_document("parent-neighbor-test")
+        tree_builder = TreeBuilder(config, doc_store)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document

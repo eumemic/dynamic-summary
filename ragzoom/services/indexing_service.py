@@ -41,12 +41,7 @@ class IndexingService:
         self.store = store
         self.index_config = index_config
         self.operational_config = operational_config
-        self.tree_builder = TreeBuilder(
-            index_config,
-            store,
-            api_key=operational_config.openai_api_key.get_secret_value(),
-            max_concurrent=30,  # Default concurrency for API calls
-        )
+        # TreeBuilder will be created per-request with a DocumentStore
 
     # jscpd:ignore-start - Legitimate sync/async and method pattern duplication
     def index_document(
@@ -76,6 +71,23 @@ class IndexingService:
             else:
                 raise ValueError("Either document_id or file_path must be provided")
 
+        # Check if document exists and needs re-indexing
+        existing_doc = self.store.get_document_by_path(file_path) if file_path else None
+        content_hash = self.store.compute_content_hash(text)
+
+        if existing_doc:
+            if existing_doc.content_hash == content_hash:
+                logger.info(f"Document at {file_path} unchanged, skipping re-indexing")
+                return IndexingResult(
+                    document_id=existing_doc.id,
+                    chunks_created=existing_doc.chunk_count or 0,
+                    tree_depth=0,  # We'd need to query for this
+                    telemetry=None,
+                )
+            else:
+                logger.info(f"Document at {file_path} has changed, re-indexing...")
+                document_id = existing_doc.id
+
         # Clear existing data for the document
         deleted_count = self.store.clear_document(document_id)
         if deleted_count > 0:
@@ -83,19 +95,33 @@ class IndexingService:
                 f"Cleared existing data for '{document_id}' ({deleted_count} nodes)"
             )
 
+        # Create document-scoped store and TreeBuilder
+        document_store = self.store.for_document(document_id)
+
+        # Set initial metadata including file_path
+        document_store.set_metadata(
+            file_path=file_path,
+            content_hash=content_hash,
+        )
+
+        tree_builder = TreeBuilder(
+            self.index_config,
+            document_store,
+            api_key=self.operational_config.openai_api_key.get_secret_value(),
+            max_concurrent=30,
+        )
+
         # Index with or without telemetry
         if collect_telemetry:
-            doc_id, telemetry = self.tree_builder.add_document_with_telemetry(
+            doc_id, telemetry = tree_builder.add_document_with_telemetry(
                 text,
                 document_id=document_id,
-                file_path=file_path,
                 show_progress=show_progress,
             )
         else:
-            doc_id = self.tree_builder.add_document(
+            doc_id = tree_builder.add_document(
                 text,
                 document_id=document_id,
-                file_path=file_path,
                 show_progress=show_progress,
             )
             telemetry = None
@@ -198,11 +224,26 @@ class IndexingService:
                 f"Cleared existing data for '{document_id}' ({deleted_count} nodes)"
             )
 
+        # Create document-scoped store and TreeBuilder
+        document_store = self.store.for_document(document_id)
+
+        # Set initial metadata including file_path
+        document_store.set_metadata(
+            file_path=file_path,
+            content_hash=self.store.compute_content_hash(text),
+        )
+
+        tree_builder = TreeBuilder(
+            self.index_config,
+            document_store,
+            api_key=self.operational_config.openai_api_key.get_secret_value(),
+            max_concurrent=30,
+        )
+
         # Index document
-        doc_id = await self.tree_builder.add_document_async(
+        doc_id = await tree_builder.add_document_async(
             text,
             document_id=document_id,
-            file_path=file_path,
             show_progress=show_progress,
         )
 

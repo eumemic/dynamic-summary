@@ -30,9 +30,11 @@ class TestWhitespaceReconstruction:
             openai_api_key=SecretStr("test-key"),
         )
 
+        # Create document-scoped store
+        doc_store = store.for_document("test-doc")
         tree_builder = TreeBuilder(
             index_config,
-            store,
+            doc_store,
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
 

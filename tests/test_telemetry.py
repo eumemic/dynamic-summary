@@ -248,9 +248,11 @@ class TestTelemetryIntegration:
         with patch(
             "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
         ):
+            # Create document-scoped store
+            doc_store = store.for_document("telemetry-test")
             builder = TreeBuilder(
                 index_config,
-                store,
+                doc_store,
                 operational_config.openai_api_key.get_secret_value(),
             )
 
@@ -262,11 +264,10 @@ class TestTelemetryIntegration:
                 config=index_config,
             )
 
-            # Index document
+            # Index document (file_path parameter removed in refactoring)
             _ = await builder._add_document_impl(
                 test_text,
                 document_id="telemetry-test",
-                file_path=None,
                 show_progress=False,
                 reporter=reporter,
             )

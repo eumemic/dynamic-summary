@@ -716,6 +716,21 @@ class SimpleMockStore(StoreInterface):
         """Compute SHA256 hash of content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    def set_metadata(
+        self,
+        file_path: str | None = None,
+        content_hash: str | None = None,
+        chunk_count: int = 0,
+        embedding_model: str | None = None,
+        summary_model: str | None = None,
+    ) -> None:
+        """Mock method for setting document metadata.
+
+        SimpleMockStore doesn't persist metadata, but this method
+        exists for API compatibility with DocumentStore.
+        """
+        # No-op for mock store - metadata is handled by add_document
+
     def pin_node(self, node_id: str) -> None:
         """Pin a node."""
         if node_id in self._nodes:

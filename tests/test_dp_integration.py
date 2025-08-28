@@ -123,9 +123,11 @@ class TestDPIntegration:
         small_config = config.index_config.replace(
             target_chunk_tokens=10
         )  # Very small chunks
+        # Create document-scoped store
+        doc_store = store.for_document("doc1")
         tree_builder = TreeBuilder(
             config=small_config,
-            store=store,
+            document_store=doc_store,
             api_key=config.openai_api_key.get_secret_value(),
         )
         await tree_builder.add_document_async(
@@ -172,9 +174,11 @@ class TestDPIntegration:
         small_config = config.index_config.replace(
             target_chunk_tokens=5
         )  # One word per chunk approximately
+        # Create document-scoped store
+        doc_store = store.for_document("doc1")
         tree_builder = TreeBuilder(
             config=small_config,
-            store=store,
+            document_store=doc_store,
             api_key=config.openai_api_key.get_secret_value(),
         )
         await tree_builder.add_document_async(
@@ -222,9 +226,11 @@ class TestDPIntegration:
         small_query_config = config.query_config.replace(budget_tokens=100)
 
         # Index
+        # Create document-scoped store
+        doc_store = store.for_document("doc1")
         tree_builder = TreeBuilder(
             config=config.index_config,
-            store=store,
+            document_store=doc_store,
             api_key=config.openai_api_key.get_secret_value(),
         )
         await tree_builder.add_document_async(

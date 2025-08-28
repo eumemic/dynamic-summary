@@ -256,3 +256,86 @@ class DocumentStore:
     def cache_order(self) -> Any:
         """Access to cache order for TreeBuilder cache invalidation."""
         return self._node_repo.cache_manager.cache_order
+
+    def clear(self) -> int:
+        """Delete all nodes for this document.
+
+        Returns:
+            Number of nodes deleted
+        """
+        if not self.document_id:
+            raise ValueError("Cannot clear nodes without a document_id")
+
+        # Use the underlying document repository to clear the document
+        # This needs access to the document repository
+
+        # Get the document repository through the db_manager
+        with self._node_repo.db_manager.SessionLocal() as session:
+            from ragzoom.models import Document
+            from ragzoom.models import TreeNode as TreeNodeModel
+
+            # Delete all nodes for this document
+            deleted_count = (
+                session.query(TreeNodeModel)
+                .filter_by(document_id=self.document_id)
+                .delete()
+            )
+
+            # Also delete the document record itself
+            session.query(Document).filter_by(id=self.document_id).delete()
+
+            session.commit()
+
+        return deleted_count
+
+    def set_metadata(
+        self,
+        file_path: str | None = None,
+        content_hash: str | None = None,
+        chunk_count: int = 0,
+        embedding_model: str | None = None,
+        summary_model: str | None = None,
+    ) -> None:
+        """Set or update metadata for this document.
+
+        Args:
+            file_path: Optional file path
+            content_hash: Optional content hash
+            chunk_count: Number of chunks/leaf nodes
+            embedding_model: Model used for embeddings
+            summary_model: Model used for summaries
+        """
+        if not self.document_id:
+            raise ValueError("Cannot set metadata without a document_id")
+
+        from ragzoom.models import Document
+
+        with self._node_repo.db_manager.SessionLocal() as session:
+            # Try to get existing document
+            doc = session.query(Document).filter_by(id=self.document_id).first()
+
+            if doc:
+                # Update existing document
+                if file_path is not None:
+                    doc.file_path = file_path
+                if content_hash is not None:
+                    doc.content_hash = content_hash
+                if chunk_count > 0:
+                    doc.chunk_count = chunk_count
+                if embedding_model is not None:
+                    doc.embedding_model = embedding_model
+                if summary_model is not None:
+                    doc.summary_model = summary_model
+            else:
+                # Create new document record
+                doc = Document(
+                    id=self.document_id,
+                    file_path=file_path,
+                    content_hash=content_hash,
+                    chunk_count=chunk_count,
+                    embedding_model=embedding_model,
+                    summary_model=summary_model,
+                )
+                session.add(doc)
+
+            session.commit()

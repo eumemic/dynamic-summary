@@ -30,8 +30,9 @@ class TestPrecedingNeighborTracking:
         ]
         test_document = "\n\n".join(test_chunks)
 
-        # Create tree builder and index
-        tree_builder = TreeBuilder(config, store, max_concurrent=5)
+        # Create document-scoped store and tree builder
+        doc_store = store.for_document("test-doc")
+        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
@@ -82,8 +83,9 @@ class TestPrecedingNeighborTracking:
         ]
         test_document = "\n\n".join(test_chunks)
 
-        # Create tree builder and index
-        tree_builder = TreeBuilder(config, store, max_concurrent=5)
+        # Create document-scoped store and tree builder
+        doc_store = store.for_document("test-doc")
+        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
@@ -159,8 +161,9 @@ class TestPrecedingNeighborTracking:
         ]
         test_document = " ".join(test_chunks)
 
-        # Create tree builder and index
-        tree_builder = TreeBuilder(config, store, max_concurrent=5)
+        # Create document-scoped store and tree builder
+        doc_store = store.for_document("test-doc")
+        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document

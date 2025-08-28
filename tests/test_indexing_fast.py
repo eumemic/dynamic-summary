@@ -30,8 +30,9 @@ class TestIndexingFast:
         # Use the mock OpenAI client from fixture
         mock_client = mock_openai_async_client
 
-        # Create tree builder and index
-        tree_builder = TreeBuilder(config, store, max_concurrent=5)
+        # Create document-scoped store and tree builder
+        doc_store = store.for_document("test-doc")
+        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_client
 
         # Index the document
@@ -104,8 +105,9 @@ class TestIndexingFast:
         # Use the mock OpenAI client from fixture
         mock_client = mock_openai_async_client
 
-        # Create tree builder and index
-        tree_builder = TreeBuilder(config, store, max_concurrent=1)
+        # Create document-scoped store and tree builder
+        doc_store = store.for_document("test-doc")
+        tree_builder = TreeBuilder(config, doc_store, max_concurrent=1)
         tree_builder.llm_service.client = mock_client
 
         # Index the document
@@ -161,8 +163,9 @@ class TestIndexingFast:
         mock_client = mock_openai_async_client
         mock_client.embeddings.create = mock_embeddings_create
 
-        # Create tree builder and index
-        tree_builder = TreeBuilder(config, store, max_concurrent=5)
+        # Create document-scoped store and tree builder
+        doc_store = store.for_document("test-doc")
+        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_client
 
         # Index the document

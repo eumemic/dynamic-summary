@@ -259,9 +259,11 @@ class TestIndexingCreatesValidTrees:
             openai_api_key=SecretStr("test-key-for-tests"),
         )
         store = SimpleMockStore(config=(index_config, query_config, operational_config))
+        # Create document-scoped store for tree builder
+        doc_store = store.for_document("test-doc")
         tree_builder = TreeBuilder(
             index_config,
-            store,
+            doc_store,
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
 

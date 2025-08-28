@@ -29,10 +29,6 @@ class TestDocumentIsolation:
         from ragzoom.retrieval.budget_planner import BudgetPlanner
         from ragzoom.retrieval.embedding_service import EmbeddingService
 
-        tree_builder = TreeBuilder(
-            base_config.index_config, store, api_key=base_config.openai_api_key
-        )
-
         # Create services for Retriever
         client = OpenAI(api_key=base_config.openai_api_key.get_secret_value())
         embedding_service = EmbeddingService(
@@ -42,19 +38,30 @@ class TestDocumentIsolation:
             store, base_config.index_config.target_chunk_tokens
         )
 
-        yield base_config, store, tree_builder, embedding_service, budget_planner
+        yield base_config, store, embedding_service, budget_planner
 
     def test_document_isolation(self, setup):
         """Test that queries only return results from the specified document."""
-        config, store, tree_builder, embedding_service, budget_planner = setup
+        config, store, embedding_service, budget_planner = setup
 
         # Index two different documents
         doc1_text = "The mighty dragon breathed fire upon the castle. Dragons are powerful creatures."
         doc2_text = "The wise wizard cast a spell. Wizards study magic for many years."
 
         # Index with explicit document IDs
-        doc1_id = tree_builder.add_document(doc1_text, document_id="dragons.txt")
-        doc2_id = tree_builder.add_document(doc2_text, document_id="wizards.txt")
+        # Create TreeBuilder for first document
+        doc1_store = store.for_document("dragons.txt")
+        tree_builder1 = TreeBuilder(
+            config.index_config, doc1_store, api_key=config.openai_api_key
+        )
+        doc1_id = tree_builder1.add_document(doc1_text, document_id="dragons.txt")
+
+        # Create TreeBuilder for second document
+        doc2_store = store.for_document("wizards.txt")
+        tree_builder2 = TreeBuilder(
+            config.index_config, doc2_store, api_key=config.openai_api_key
+        )
+        doc2_id = tree_builder2.add_document(doc2_text, document_id="wizards.txt")
 
         assert doc1_id == "dragons.txt"
         assert doc2_id == "wizards.txt"
@@ -125,11 +132,16 @@ class TestDocumentIsolation:
 
     def test_filename_as_default_document_id(self, setup):
         """Test that filename is used as document_id when not specified."""
-        config, store, tree_builder, embedding_service, budget_planner = setup
+        config, store, embedding_service, budget_planner = setup
 
         # Index with file_path but no explicit document_id
         text = "Test content for filename ID"
-        doc_id = tree_builder.add_document(text, file_path="/path/to/test_file.txt")
+        # Create TreeBuilder with document store for test_file.txt
+        doc_store = store.for_document("test_file.txt")
+        tree_builder = TreeBuilder(
+            config.index_config, doc_store, api_key=config.openai_api_key
+        )
+        doc_id = tree_builder.add_document(text, document_id="test_file.txt")
 
         # Should use filename as document_id
         assert doc_id == "test_file.txt"
@@ -154,11 +166,20 @@ class TestDocumentIsolation:
 
     def test_query_without_document_filter(self, setup):
         """Test that querying without document_id returns results from all documents."""
-        config, store, tree_builder, embedding_service, budget_planner = setup
+        config, store, embedding_service, budget_planner = setup
 
         # Index multiple documents
-        tree_builder.add_document("Dragons are fierce", document_id="doc1")
-        tree_builder.add_document("Wizards are wise", document_id="doc2")
+        doc1_store = store.for_document("doc1")
+        tree_builder1 = TreeBuilder(
+            config.index_config, doc1_store, api_key=config.openai_api_key
+        )
+        tree_builder1.add_document("Dragons are fierce", document_id="doc1")
+
+        doc2_store = store.for_document("doc2")
+        tree_builder2 = TreeBuilder(
+            config.index_config, doc2_store, api_key=config.openai_api_key
+        )
+        tree_builder2.add_document("Wizards are wise", document_id="doc2")
 
         # Create retriever without document filter (None)
         doc_store = store.for_document(None)
