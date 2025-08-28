@@ -755,6 +755,30 @@ class SimpleMockStore(StoreInterface):
         """Compute SHA256 hash of content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    def ensure_exists(self) -> None:
+        """Ensure this document exists in the mock store.
+
+        Creates an empty document record if it doesn't exist.
+        This prepares the document container for future append operations.
+        """
+        if not self.document_id:
+            return  # Can't ensure document without ID
+
+        if self.document_id not in self._documents:
+            # Create minimal document record
+            from datetime import datetime
+
+            doc = SimpleNamespace(
+                id=self.document_id,
+                file_path=None,
+                content_hash="",  # Empty string placeholder to match real store
+                chunk_count=0,
+                embedding_model="",  # Empty string placeholder to match real store
+                summary_model="",  # Empty string placeholder to match real store
+                indexed_at=datetime.utcnow(),
+            )
+            self._documents[self.document_id] = doc
+
     def set_metadata(
         self,
         file_path: str | None = None,

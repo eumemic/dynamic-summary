@@ -26,9 +26,12 @@ class TestParallelDPPerformance:
             mock_chat_sync, mock_chat_async = create_predictable_summary_mock()
             mock_index.chat.completions.create = mock_chat_async
 
+            # Create document-scoped store and ensure document exists
+            doc_store = store.for_document("large-test-doc")
+            doc_store.ensure_exists()  # Create document record for tree operations
             tree_builder = TreeBuilder(
                 config.index_config,
-                store,
+                doc_store,
                 api_key=config.openai_api_key,
             )
 
@@ -43,11 +46,11 @@ class TestParallelDPPerformance:
 
             tree_builder.add_document(large_document, "large-test-doc")
 
-            yield config, store, tree_builder
+            yield config, store, tree_builder, mock_retrieve
 
     async def test_sync_vs_async_dp_correctness(self, large_document_setup):
         """Test that sync and async DP generators produce identical results."""
-        config, store, _ = large_document_setup
+        config, store, _, mock_client = large_document_setup
 
         # Create both generators
         sync_generator = DynamicTilingGenerator(config.query_config)
@@ -59,9 +62,15 @@ class TestParallelDPPerformance:
         from tests.utils import create_retriever
 
         retriever = create_retriever(
-            config.query_config, store, api_key=config.openai_api_key.get_secret_value()
+            config.query_config,
+            store,
+            document_id="large-test-doc",
+            api_key=config.openai_api_key.get_secret_value(),
+            client=mock_client,
         )
-        result = await retriever.retrieve_async("test content", budget_tokens=1500)
+        result = await retriever.retrieve_async(
+            "test content", budget_tokens=1500, document_id="large-test-doc"
+        )
 
         # Extract the data needed for DP
         nodes = result.nodes or {}
@@ -92,7 +101,7 @@ class TestParallelDPPerformance:
         """Test that async DP provides performance benefit on larger trees."""
         from tests.utils import create_retriever
 
-        config, store, _ = large_document_setup
+        config, store, _, mock_client = large_document_setup
 
         # Create generators with low threshold to force parallelization
         sync_generator = DynamicTilingGenerator(config.query_config)
@@ -102,9 +111,15 @@ class TestParallelDPPerformance:
 
         # Get test data
         retriever = create_retriever(
-            config.query_config, store, api_key=config.openai_api_key.get_secret_value()
+            config.query_config,
+            store,
+            document_id="large-test-doc",
+            api_key=config.openai_api_key.get_secret_value(),
+            client=mock_client,
         )
-        result = await retriever.retrieve_async("test content", budget_tokens=1800)
+        result = await retriever.retrieve_async(
+            "test content", budget_tokens=1800, document_id="large-test-doc"
+        )
 
         nodes = result.nodes or {}
         scores = result.scores
@@ -146,28 +161,36 @@ class TestParallelDPPerformance:
 
     async def test_retriever_with_async_dp(self, large_document_setup):
         """Test retriever using async DP generator."""
-        config, store, _ = large_document_setup
+        config, store, _, mock_client = large_document_setup
 
         # Create retrievers with and without async DP
         from tests.utils import create_retriever
 
         sync_retriever = create_retriever(
-            config.query_config, store, api_key=config.openai_api_key.get_secret_value()
+            config.query_config,
+            store,
+            document_id="large-test-doc",
+            api_key=config.openai_api_key.get_secret_value(),
+            client=mock_client,
         )
         sync_retriever.use_async_dp = False
 
         async_retriever = create_retriever(
             config.query_config,
             store,
+            document_id="large-test-doc",
             api_key=config.openai_api_key.get_secret_value(),
+            client=mock_client,
         )
         async_retriever.use_async_dp = True
 
         # Test both retrievers produce same results
-        sync_result = sync_retriever.retrieve("test content", budget_tokens=1200)
+        sync_result = sync_retriever.retrieve(
+            "test content", budget_tokens=1200, document_id="large-test-doc"
+        )
 
         async_result = await async_retriever.retrieve_async(
-            "test content", budget_tokens=1200
+            "test content", budget_tokens=1200, document_id="large-test-doc"
         )
 
         # Results should be identical
@@ -176,7 +199,7 @@ class TestParallelDPPerformance:
 
     async def test_error_handling_in_parallel_dp(self, large_document_setup):
         """Test graceful error handling in parallel DP execution."""
-        config, store, _ = large_document_setup
+        config, store, _, mock_client = large_document_setup
 
         async_generator = AsyncDynamicTilingGenerator(
             config.query_config, min_nodes_for_parallel=1
@@ -186,9 +209,15 @@ class TestParallelDPPerformance:
         from tests.utils import create_retriever
 
         retriever = create_retriever(
-            config.query_config, store, api_key=config.openai_api_key.get_secret_value()
+            config.query_config,
+            store,
+            document_id="large-test-doc",
+            api_key=config.openai_api_key.get_secret_value(),
+            client=mock_client,
         )
-        result = await retriever.retrieve_async("test content", budget_tokens=1000)
+        result = await retriever.retrieve_async(
+            "test content", budget_tokens=1000, document_id="large-test-doc"
+        )
 
         nodes = result.nodes or {}
         scores = result.scores
@@ -210,7 +239,7 @@ class TestParallelDPPerformance:
         """Test that parallelization threshold works correctly."""
         from tests.utils import create_retriever
 
-        config, store, _ = large_document_setup
+        config, store, _, mock_client = large_document_setup
 
         # High threshold should disable parallelization for most trees
         high_threshold_generator = AsyncDynamicTilingGenerator(
@@ -223,9 +252,15 @@ class TestParallelDPPerformance:
         )
 
         retriever = create_retriever(
-            config.query_config, store, api_key=config.openai_api_key.get_secret_value()
+            config.query_config,
+            store,
+            document_id="large-test-doc",
+            api_key=config.openai_api_key.get_secret_value(),
+            client=mock_client,
         )
-        result = await retriever.retrieve_async("test content", budget_tokens=1000)
+        result = await retriever.retrieve_async(
+            "test content", budget_tokens=1000, document_id="large-test-doc"
+        )
 
         nodes = result.nodes or {}
         scores = result.scores

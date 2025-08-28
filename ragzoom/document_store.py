@@ -288,6 +288,36 @@ class DocumentStore:
 
         return deleted_count
 
+    def ensure_exists(self) -> None:
+        """Ensure this document exists in the database.
+
+        Creates an empty document record if it doesn't exist.
+        This prepares the document container for future append operations,
+        aligning with the vision where all indexing is appending to documents.
+        """
+        if not self.document_id:
+            raise ValueError("Cannot ensure document exists without a document_id")
+
+        from ragzoom.models import Document
+
+        with self._node_repo.db_manager.SessionLocal() as session:
+            # Check if document already exists
+            doc = session.query(Document).filter_by(id=self.document_id).first()
+
+            if not doc:
+                # Create minimal document record with placeholder values
+                # Real values will be set later when content is indexed
+                doc = Document(
+                    id=self.document_id,
+                    file_path=None,
+                    content_hash="",  # Empty string placeholder for NOT NULL constraint
+                    chunk_count=0,
+                    embedding_model="",  # Empty string placeholder for NOT NULL constraint
+                    summary_model="",  # Empty string placeholder for NOT NULL constraint
+                )
+                session.add(doc)
+                session.commit()
+
     def set_metadata(
         self,
         file_path: str | None = None,

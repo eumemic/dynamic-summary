@@ -68,8 +68,10 @@ class TestDPIntegration:
         document = "\n".join(base_lines * 8)
 
         # Index the document
+        doc_store = store.for_document("doc1")
+        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(
-            config.index_config, store, api_key=config.openai_api_key
+            config.index_config, doc_store, api_key=config.openai_api_key
         )
         await tree_builder.add_document_async(
             document, document_id="doc1", show_progress=False
@@ -125,6 +127,7 @@ class TestDPIntegration:
         )  # Very small chunks
         # Create document-scoped store
         doc_store = store.for_document("doc1")
+        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(
             config=small_config,
             document_store=doc_store,
@@ -176,6 +179,7 @@ class TestDPIntegration:
         )  # One word per chunk approximately
         # Create document-scoped store
         doc_store = store.for_document("doc1")
+        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(
             config=small_config,
             document_store=doc_store,
@@ -228,6 +232,7 @@ class TestDPIntegration:
         # Index
         # Create document-scoped store
         doc_store = store.for_document("doc1")
+        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(
             config=config.index_config,
             document_store=doc_store,

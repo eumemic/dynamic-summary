@@ -248,8 +248,9 @@ class TestTelemetryIntegration:
         with patch(
             "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
         ):
-            # Create document-scoped store
+            # Create document-scoped store and ensure document exists
             doc_store = store.for_document("telemetry-test")
+            doc_store.ensure_exists()  # Create document record for tree operations
             builder = TreeBuilder(
                 index_config,
                 doc_store,

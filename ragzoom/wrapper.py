@@ -84,8 +84,9 @@ class RagZoom:
         # Clear existing data if needed
         self.store.clear_document(document_id)
 
-        # Create document-scoped store and TreeBuilder
+        # Create document-scoped store and ensure document exists
         document_store = self.store.for_document(document_id)
+        document_store.ensure_exists()  # Create empty document record for tree operations
         tree_builder = TreeBuilder(
             self.index_config,
             document_store,
@@ -178,8 +179,9 @@ class AsyncRagZoom:
         # Clear existing data if needed
         self.store.clear_document(document_id)
 
-        # Create document-scoped store and TreeBuilder
+        # Create document-scoped store and ensure document exists
         document_store = self.store.for_document(document_id)
+        document_store.ensure_exists()  # Create empty document record for tree operations
         tree_builder = TreeBuilder(
             self.index_config,
             document_store,

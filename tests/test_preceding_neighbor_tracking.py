@@ -32,6 +32,7 @@ class TestPrecedingNeighborTracking:
 
         # Create document-scoped store and tree builder
         doc_store = store.for_document("test-doc")
+        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
@@ -85,6 +86,7 @@ class TestPrecedingNeighborTracking:
 
         # Create document-scoped store and tree builder
         doc_store = store.for_document("test-doc")
+        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
@@ -163,6 +165,7 @@ class TestPrecedingNeighborTracking:
 
         # Create document-scoped store and tree builder
         doc_store = store.for_document("test-doc")
+        doc_store.ensure_exists()  # Create document record for tree operations
         tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
