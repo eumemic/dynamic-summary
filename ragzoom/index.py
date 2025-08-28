@@ -294,16 +294,7 @@ class TreeBuilder:
                 progress=async_progress,
             )
 
-            # Step 5: Set document metadata (if not already set)
-            content_hash = self.document_store.compute_content_hash(text)
-            self.document_store.set_metadata(
-                content_hash=content_hash,
-                chunk_count=len(chunks),
-                embedding_model=self.config.embedding_model,
-                summary_model=self.config.summary_model,
-            )
-
-            # Step 6: Store all nodes using the document store
+            # Store all nodes using the document store
             doc_store = self.document_store
 
             # Group nodes by height and insert level by level to respect foreign key constraints
@@ -350,7 +341,7 @@ class TreeBuilder:
             if parent_updates:
                 doc_store.nodes.update_parent_references_batch(parent_updates)
 
-            # Step 7: Find root node ID
+            # Step 6: Find root node ID
             root_node = max(tree_nodes, key=lambda n: n.height)
             root_id = root_node.id
 

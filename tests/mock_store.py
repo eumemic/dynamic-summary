@@ -62,6 +62,9 @@ class SimpleMockStore(StoreInterface):
         self.pinned_nodes: set[str] = set()
         self.mock_scores: dict[str, float] = {}
 
+        # Track current document_id for set_metadata calls
+        self.document_id: str | None = None
+
         # Cache simulation
         self._node_cache = OrderedDict()
         self._cache_order = deque(maxlen=1000)
@@ -116,6 +119,30 @@ class SimpleMockStore(StoreInterface):
                         filtered_nodes[0] if filtered_nodes else None
                     )
                     filtered_query.delete.return_value = len(filtered_nodes)
+
+                    # Add support for chained .filter() calls
+                    def mock_filter(*args):
+                        # Filter for leaf nodes (left_child_id.is_(None), right_child_id.is_(None))
+                        further_filtered = []
+                        for node in filtered_nodes:
+                            # Check if it's a leaf node
+                            if (
+                                hasattr(node, "left_child_id")
+                                and hasattr(node, "right_child_id")
+                                and node.left_child_id is None
+                                and node.right_child_id is None
+                            ):
+                                further_filtered.append(node)
+
+                        result_query = MagicMock()
+                        result_query.all.return_value = further_filtered
+                        result_query.first.return_value = (
+                            further_filtered[0] if further_filtered else None
+                        )
+                        result_query.count.return_value = len(further_filtered)
+                        return result_query
+
+                    filtered_query.filter = mock_filter
 
                 elif is_document:
                     # Filter documents based on criteria
@@ -292,6 +319,18 @@ class SimpleMockStore(StoreInterface):
             for node in self.get_pinned_nodes(depth_max)
             if node.document_id == document_id
         ]
+
+        # Add set_metadata method needed by IndexingService
+        def _set_metadata(**kwargs):
+            # Save the current document_id, set it temporarily for the method call
+            old_doc_id = self.document_id
+            self.document_id = document_id
+            self.set_metadata(**kwargs)
+            self.document_id = old_doc_id
+
+        mock_doc_store.set_metadata = _set_metadata
+        mock_doc_store.compute_content_hash = self.compute_content_hash
+        mock_doc_store.session_local = self.SessionLocal
 
         return mock_doc_store
 
@@ -726,10 +765,39 @@ class SimpleMockStore(StoreInterface):
     ) -> None:
         """Mock method for setting document metadata.
 
-        SimpleMockStore doesn't persist metadata, but this method
-        exists for API compatibility with DocumentStore.
+        Creates or updates a Document record in the mock store.
         """
-        # No-op for mock store - metadata is handled by add_document
+        from datetime import datetime
+
+        if not self.document_id:
+            return  # Can't set metadata without a document ID
+
+        # Create or update the document record
+        if self.document_id not in self._documents:
+            # Create new document
+            doc = SimpleNamespace(
+                id=self.document_id,
+                file_path=file_path,
+                content_hash=content_hash,
+                chunk_count=chunk_count,
+                embedding_model=embedding_model,
+                summary_model=summary_model,
+                indexed_at=datetime.utcnow(),
+            )
+            self._documents[self.document_id] = doc
+        else:
+            # Update existing document
+            doc = self._documents[self.document_id]
+            if file_path is not None:
+                doc.file_path = file_path
+            if content_hash is not None:
+                doc.content_hash = content_hash
+            if chunk_count > 0:
+                doc.chunk_count = chunk_count
+            if embedding_model is not None:
+                doc.embedding_model = embedding_model
+            if summary_model is not None:
+                doc.summary_model = summary_model
 
     def pin_node(self, node_id: str) -> None:
         """Pin a node."""

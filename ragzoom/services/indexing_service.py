@@ -98,12 +98,6 @@ class IndexingService:
         # Create document-scoped store and TreeBuilder
         document_store = self.store.for_document(document_id)
 
-        # Set initial metadata including file_path
-        document_store.set_metadata(
-            file_path=file_path,
-            content_hash=content_hash,
-        )
-
         tree_builder = TreeBuilder(
             self.index_config,
             document_store,
@@ -147,6 +141,15 @@ class IndexingService:
             )
 
         tree_height = root.height if root else 0
+
+        # Set complete document metadata after indexing
+        document_store.set_metadata(
+            file_path=file_path,
+            content_hash=content_hash,
+            chunk_count=len(doc_leaves),
+            embedding_model=self.index_config.embedding_model,
+            summary_model=self.index_config.summary_model,
+        )
 
         return IndexingResult(
             document_id=doc_id,
@@ -227,12 +230,6 @@ class IndexingService:
         # Create document-scoped store and TreeBuilder
         document_store = self.store.for_document(document_id)
 
-        # Set initial metadata including file_path
-        document_store.set_metadata(
-            file_path=file_path,
-            content_hash=self.store.compute_content_hash(text),
-        )
-
         tree_builder = TreeBuilder(
             self.index_config,
             document_store,
@@ -246,6 +243,9 @@ class IndexingService:
             document_id=document_id,
             show_progress=show_progress,
         )
+
+        # Calculate content hash for metadata
+        content_hash = self.store.compute_content_hash(text)
 
         # Get document statistics
         with self.store.SessionLocal() as session:
@@ -268,6 +268,15 @@ class IndexingService:
             )
 
         tree_height = root.height if root else 0
+
+        # Set complete document metadata after indexing
+        document_store.set_metadata(
+            file_path=file_path,
+            content_hash=content_hash,
+            chunk_count=len(doc_leaves),
+            embedding_model=self.index_config.embedding_model,
+            summary_model=self.index_config.summary_model,
+        )
 
         return IndexingResult(
             document_id=doc_id,
