@@ -74,13 +74,12 @@ class QueryService:
         client = OpenAI(
             api_key=self.operational_config.openai_api_key.get_secret_value()
         )
+        document_store = self.store.for_document(document_id)
         embedding_service = EmbeddingService(
-            client, self.store, self.query_config.embedding_model
+            client, document_store, self.query_config.embedding_model
         )
         index_cfg = IndexConfig.load()
-        budget_planner = BudgetPlanner(self.store, index_cfg.target_chunk_tokens)
-
-        document_store = self.store.for_document(document_id)
+        budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
         retriever = Retriever(
             self.query_config,
             document_store,
@@ -142,13 +141,12 @@ class QueryService:
         client = OpenAI(
             api_key=self.operational_config.openai_api_key.get_secret_value()
         )
+        document_store = self.store.for_document(document_id)
         embedding_service = EmbeddingService(
-            client, self.store, self.query_config.embedding_model
+            client, document_store, self.query_config.embedding_model
         )
         index_cfg = IndexConfig.load()
-        budget_planner = BudgetPlanner(self.store, index_cfg.target_chunk_tokens)
-
-        document_store = self.store.for_document(document_id)
+        budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
         retriever = Retriever(
             self.query_config,
             document_store,

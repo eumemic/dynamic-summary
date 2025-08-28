@@ -116,14 +116,13 @@ class RagZoom:
         client = OpenAI(
             api_key=self.operational_config.openai_api_key.get_secret_value()
         )
+        document_store = self.store.for_document(document_id)
         embedding_service = EmbeddingService(
-            client, self.store, self.query_config.embedding_model
+            client, document_store, self.query_config.embedding_model
         )
         budget_planner = BudgetPlanner(
-            self.store, self.index_config.target_chunk_tokens
+            document_store, self.index_config.target_chunk_tokens
         )
-
-        document_store = self.store.for_document(document_id)
         retriever = Retriever(
             self.query_config,
             document_store,
@@ -211,14 +210,13 @@ class AsyncRagZoom:
         client = OpenAI(
             api_key=self.operational_config.openai_api_key.get_secret_value()
         )
+        document_store = self.store.for_document(document_id)
         embedding_service = EmbeddingService(
-            client, self.store, self.query_config.embedding_model
+            client, document_store, self.query_config.embedding_model
         )
         budget_planner = BudgetPlanner(
-            self.store, self.index_config.target_chunk_tokens
+            document_store, self.index_config.target_chunk_tokens
         )
-
-        document_store = self.store.for_document(document_id)
         retriever = Retriever(
             self.query_config,
             document_store,

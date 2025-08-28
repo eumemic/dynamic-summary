@@ -1,15 +1,19 @@
 """Document-scoped store that prevents cross-document contamination."""
 
 import hashlib
+import logging
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.models import TreeNode
+from ragzoom.repositories.document_repository import DocumentRepository
 from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.search_service import SearchService
 from ragzoom.services.tree_navigator import TreeNavigator
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentNodeRepository:
@@ -212,6 +216,7 @@ class DocumentStore:
         node_repo: NodeRepository,
         search_service: SearchService,
         tree_navigator: TreeNavigator,
+        doc_repo: DocumentRepository,
     ):
         """Initialize document-scoped store.
 
@@ -220,9 +225,11 @@ class DocumentStore:
             node_repo: Node repository to wrap
             search_service: Search service to wrap
             tree_navigator: Tree navigator to wrap
+            doc_repo: Document repository for metadata access
         """
         self.document_id = document_id
         self._node_repo = node_repo  # Keep reference for pinned node operations
+        self._doc_repo = doc_repo  # Keep reference for document metadata
 
         # Create document-scoped wrappers
         self.nodes = DocumentNodeRepository(document_id, node_repo)
@@ -369,3 +376,61 @@ class DocumentStore:
                 session.add(doc)
 
             session.commit()
+
+    def get_embedding_model(self) -> str | None:
+        """Get the embedding model used for this document.
+
+        Returns:
+            Embedding model name if document exists, None otherwise
+        """
+        if not self.document_id:
+            return None
+
+        return self._doc_repo.get_document_embedding_model(self.document_id)
+
+    def get_avg_leaf_tokens(self) -> int | None:
+        """Get average token count for leaf nodes in this document.
+
+        Returns:
+            Average token count for leaves, or None if no data
+        """
+        if not self.document_id:
+            logger.debug("No document_id provided for token statistics")
+            return None
+
+        # Use SQL aggregation for efficiency on large documents
+        from ragzoom.models import TreeNode as TreeNodeModel
+
+        with self._node_repo.db_manager.SessionLocal() as session:
+            # Query for average token count of leaf nodes (nodes with no children)
+            result = (
+                session.query(TreeNodeModel.token_count)
+                .filter(
+                    TreeNodeModel.document_id == self.document_id,
+                    TreeNodeModel.left_child_id.is_(None),
+                    TreeNodeModel.right_child_id.is_(None),
+                )
+                .all()
+            )
+
+            if not result:
+                logger.debug(
+                    f"No leaf nodes found for document {self.document_id} when calculating average tokens"
+                )
+                return None
+
+            # Calculate average from results
+            total_tokens = sum(row[0] for row in result if row[0] is not None)
+            count = len([r for r in result if r[0] is not None])
+
+            if count == 0:
+                logger.warning(
+                    f"Leaf nodes exist but have no token counts for document {self.document_id}"
+                )
+                return None
+
+            avg_tokens: int = total_tokens // count
+            logger.debug(
+                f"Calculated average leaf tokens: {avg_tokens} from {count} leaves for document {self.document_id}"
+            )
+            return avg_tokens

@@ -223,6 +223,7 @@ class StoreManager:
             node_repo=self.node_repo,
             search_service=self.search_service,
             tree_navigator=self.tree_navigator,
+            doc_repo=self.doc_repo,
         )
 
     # Multi-document management operations

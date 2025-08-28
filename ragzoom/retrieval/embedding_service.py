@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from openai import OpenAI
 
 if TYPE_CHECKING:
-    from ragzoom.store import StoreManager
+    from ragzoom.document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -14,16 +14,18 @@ logger = logging.getLogger(__name__)
 class EmbeddingService:
     """Handles query embedding generation with model auto-detection."""
 
-    def __init__(self, client: OpenAI, store: "StoreManager", default_model: str):
+    def __init__(
+        self, client: OpenAI, document_store: "DocumentStore | None", default_model: str
+    ):
         """Initialize embedding service.
 
         Args:
             client: OpenAI client for API calls
-            store: Store instance for model detection
+            document_store: Optional document store for model detection
             default_model: Default embedding model from config
         """
         self.client = client
-        self.store = store
+        self.document_store = document_store
         self.default_model = default_model
 
     def get_query_embedding(
@@ -57,12 +59,18 @@ class EmbeddingService:
 
     def _detect_embedding_model(self, document_id: str | None) -> str:
         """Auto-detect embedding model from document if provided."""
-        if not document_id:
+        if not document_id or not self.document_store:
             return self.default_model
 
-        doc_embedding_model = self.store.documents.get_document_embedding_model(
-            document_id
-        )
+        # Verify document store matches the requested document
+        if self.document_store.document_id != document_id:
+            logger.warning(
+                f"Document store is for document {self.document_store.document_id} "
+                f"but query is for document {document_id}. Using default model."
+            )
+            return self.default_model
+
+        doc_embedding_model = self.document_store.get_embedding_model()
         if doc_embedding_model:
             logger.debug(
                 f"Auto-detected embedding model '{doc_embedding_model}' for document {document_id}"

@@ -331,6 +331,13 @@ class SimpleMockStore(StoreInterface):
         mock_doc_store.set_metadata = _set_metadata
         mock_doc_store.compute_content_hash = self.compute_content_hash
         mock_doc_store.session_local = self.SessionLocal
+        # Add new methods for Phase 4 refactoring
+        mock_doc_store.get_embedding_model = lambda: (
+            self.get_document_embedding_model(document_id) if document_id else None
+        )
+        mock_doc_store.get_avg_leaf_tokens = lambda: (
+            self._get_avg_leaf_tokens_for_document(document_id) if document_id else None
+        )
 
         return mock_doc_store
 
@@ -846,6 +853,19 @@ class SimpleMockStore(StoreInterface):
         """Get the embedding model used for a specific document."""
         doc = self.get_document_by_id(document_id)
         return doc.embedding_model if doc else None
+
+    def _get_avg_leaf_tokens_for_document(self, document_id: str) -> int | None:
+        """Get average token count for leaf nodes in this document."""
+        leaf_nodes = [
+            node
+            for node in self._nodes.values()
+            if node.document_id == document_id and self.is_leaf_node(node.id)
+        ]
+        if not leaf_nodes:
+            return None
+
+        total_tokens = sum(node.token_count for node in leaf_nodes)
+        return total_tokens // len(leaf_nodes) if leaf_nodes else None
 
     def delete_document_nodes(self, document_id: str, *, session=None) -> int:
         """Delete all nodes for a document."""

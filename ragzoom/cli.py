@@ -451,13 +451,14 @@ def query(
             client = OpenAI(
                 api_key=operational_config.openai_api_key.get_secret_value()
             )
+            document_store = store.for_document(document_id)
             embedding_service = EmbeddingService(
-                client, store, query_config.embedding_model
+                client, document_store, query_config.embedding_model
             )
             index_cfg = IndexConfig.load()
-            budget_planner = BudgetPlanner(store, index_cfg.target_chunk_tokens)
-
-            document_store = store.for_document(document_id)
+            budget_planner = BudgetPlanner(
+                document_store, index_cfg.target_chunk_tokens
+            )
             retriever = Retriever(
                 query_config,
                 document_store,
