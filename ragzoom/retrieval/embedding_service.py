@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from openai import OpenAI
 
 if TYPE_CHECKING:
-    from ragzoom.store import StoreManager
+    from ragzoom.document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -14,12 +14,12 @@ logger = logging.getLogger(__name__)
 class EmbeddingService:
     """Handles query embedding generation with model auto-detection."""
 
-    def __init__(self, client: OpenAI, store: "StoreManager", default_model: str):
+    def __init__(self, client: OpenAI, store: "DocumentStore", default_model: str):
         """Initialize embedding service.
 
         Args:
             client: OpenAI client for API calls
-            store: Store instance for model detection
+            store: DocumentStore for model detection
             default_model: Default embedding model from config
         """
         self.client = client
@@ -60,10 +60,15 @@ class EmbeddingService:
         if not document_id:
             return self.default_model
 
-        doc_embedding_model = self.store.documents.get_document_embedding_model(
+        documents_repo = getattr(self.store, "documents", None)
+        if documents_repo is None:
+            # DocumentStore doesn't expose documents; fall back to default
+            return self.default_model
+
+        doc_embedding_model: str | None = documents_repo.get_document_embedding_model(
             document_id
         )
-        if doc_embedding_model:
+        if isinstance(doc_embedding_model, str) and doc_embedding_model:
             logger.debug(
                 f"Auto-detected embedding model '{doc_embedding_model}' for document {document_id}"
             )

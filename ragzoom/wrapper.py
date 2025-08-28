@@ -17,7 +17,6 @@ def _initialize_components(
     OperationalConfig,
     Store,
     TreeBuilder,
-    Retriever,
     Assembler,
 ]:
     """Initialize common RagZoom components.
@@ -36,7 +35,6 @@ def _initialize_components(
 
     store = Store(operational_config)
     tree_builder = TreeBuilder(index_config, store, operational_config.openai_api_key)
-    retriever = Retriever(query_config, store, operational_config.openai_api_key)
     assembler = Assembler(store)
 
     return (
@@ -45,7 +43,6 @@ def _initialize_components(
         operational_config,
         store,
         tree_builder,
-        retriever,
         assembler,
     )
 
@@ -75,7 +72,6 @@ class RagZoom:
             self.operational_config,
             self.store,
             self.tree_builder,
-            self.retriever,
             self.assembler,
         ) = _initialize_components(index_config, query_config, operational_config)
 
@@ -101,8 +97,14 @@ class RagZoom:
         Returns:
             Generated summary response
         """
-        node_scores = self.retriever.retrieve(query_text, document_id=document_id)
-        return self.assembler.assemble(node_scores)
+        # Create document-scoped retriever/assembler per request
+        doc_store = self.store.for_document(document_id)
+        retriever = Retriever(
+            self.query_config, doc_store, self.operational_config.openai_api_key
+        )
+        result = retriever.retrieve(query_text, document_id=document_id)
+        assembler = Assembler(doc_store)
+        return assembler.assemble(result)
 
 
 class AsyncRagZoom:
@@ -130,7 +132,6 @@ class AsyncRagZoom:
             self.operational_config,
             self.store,
             self.tree_builder,
-            self.retriever,
             self.assembler,
         ) = _initialize_components(index_config, query_config, operational_config)
 
@@ -156,7 +157,10 @@ class AsyncRagZoom:
         Returns:
             Generated summary response
         """
-        node_scores = await self.retriever.retrieve_async(
-            query_text, document_id=document_id
+        doc_store = self.store.for_document(document_id)
+        retriever = Retriever(
+            self.query_config, doc_store, self.operational_config.openai_api_key
         )
-        return self.assembler.assemble(node_scores)
+        result = await retriever.retrieve_async(query_text, document_id=document_id)
+        assembler = Assembler(doc_store)
+        return assembler.assemble(result)
