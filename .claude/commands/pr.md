@@ -24,10 +24,11 @@ Get code through CI successfully with minimal back-and-forth. Monitor CI, fix is
 
 1. **Create PR**: If no PR exists, create one (reference related issues with "Fixes #123")
 
-2. **Monitor CI with fail-fast**: Use `gh pr checks --watch --fail-fast`
-   - Exits immediately on first CI failure
-   - Fix the failure, commit, and resume monitoring
-   - Continues until all checks pass
+2. **Monitor CI**: Poll for CI status with custom loop
+   - Check status every 30 seconds with `gh pr checks`
+   - Exit immediately on first failure to fix it
+   - Resume monitoring after fixes
+   - Continue until all checks pass
 
 3. **Request Code Review**: Once implementation is complete and all CI checks pass:
    - Assess complexity of changes and identify areas needing review
@@ -63,7 +64,7 @@ Get code through CI successfully with minimal back-and-forth. Monitor CI, fix is
 
 ## Key Principles
 
-- **Fail fast**: `--fail-fast` flag exits on first CI failure for quick fixes
+- **Fail fast**: Poll CI and exit on first failure for quick fixes
 - **Request reviews intelligently**: Only when implementation complete, CI passing
 - **Guide the reviewer**: Provide context about areas of concern
 - **Request benchmarks selectively**: Only for performance-critical changes
@@ -104,7 +105,7 @@ PR #N: https://github.com/owner/repo/pull/N
 Creating PR...
 ✅ PR #42: https://github.com/owner/repo/pull/42
 
-Monitoring CI with fail-fast...
+Monitoring CI...
 ❌ Build failed: missing import
 
 Fixing import issue...
