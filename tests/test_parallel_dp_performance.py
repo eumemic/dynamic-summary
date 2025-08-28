@@ -1,5 +1,6 @@
 """Performance tests for parallel DP tiling algorithm."""
 
+import asyncio
 import time
 
 import pytest
@@ -10,7 +11,6 @@ from ragzoom.retrieve import Retriever
 from tests.utils import create_predictable_summary_mock, mock_openai_context
 
 
-@pytest.mark.benchmark
 @pytest.mark.asyncio
 class TestParallelDPPerformance:
     """Test parallel DP performance compared to sequential."""
@@ -72,8 +72,11 @@ class TestParallelDPPerformance:
         if not root_id or len(nodes) < 3:
             pytest.skip("Not enough nodes for meaningful comparison")
 
-        # Run sync version
-        sync_result = sync_generator.find_optimal_tiling(1500, scores, nodes, root_id)
+        # Run sync version in executor to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        sync_result = await loop.run_in_executor(
+            None, sync_generator.find_optimal_tiling, 1500, scores, nodes, root_id
+        )
 
         # Run async version
         async_result = await async_generator.find_optimal_tiling(
@@ -110,9 +113,12 @@ class TestParallelDPPerformance:
         if not root_id or len(nodes) < 3:
             pytest.skip("Not enough nodes for meaningful performance test")
 
-        # Benchmark sync version
+        # Benchmark sync version in executor to avoid blocking event loop
+        loop = asyncio.get_event_loop()
         start_time = time.perf_counter()
-        sync_result = sync_generator.find_optimal_tiling(1800, scores, nodes, root_id)
+        sync_result = await loop.run_in_executor(
+            None, sync_generator.find_optimal_tiling, 1800, scores, nodes, root_id
+        )
         sync_time = time.perf_counter() - start_time
 
         # Benchmark async version
@@ -154,7 +160,11 @@ class TestParallelDPPerformance:
         )
 
         # Test both retrievers produce same results
-        sync_result = sync_retriever.retrieve("test content", budget_tokens=1200)
+        # Run sync version in executor to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        sync_result = await loop.run_in_executor(
+            None, sync_retriever.retrieve, "test content", 1200
+        )
 
         async_result = await async_retriever.retrieve_async(
             "test content", budget_tokens=1200
