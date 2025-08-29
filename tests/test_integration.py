@@ -59,10 +59,10 @@ class TestIntegration:
         )
         retriever = create_retriever(
             query_config,
-            real_store,
+            doc_store,  # Pass DocumentStore, not StoreManager
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
-        assembler = Assembler(real_store.for_document(None))
+        assembler = Assembler(doc_store)  # Use same DocumentStore
 
         # Create a config wrapper for backward compatibility
         from tests.conftest import BackwardCompatibilityConfig

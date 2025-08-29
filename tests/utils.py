@@ -459,7 +459,7 @@ def create_retriever(
 
     Args:
         query_config: QueryConfig instance
-        store: StoreManager instance
+        store: StoreManager or DocumentStore instance
         document_id: Optional document ID to scope retriever to
         api_key: OpenAI API key (defaults to test key)
         embedding_model: Optional embedding model override
@@ -473,9 +473,17 @@ def create_retriever(
     if client is None:
         client = OpenAI(api_key=api_key)
 
-    # Create services
+    # Get document store - handle both StoreManager and DocumentStore
+    if hasattr(store, "for_document"):
+        # This is a StoreManager, create DocumentStore
+        doc_store = store.for_document(document_id)
+    else:
+        # This is already a DocumentStore
+        doc_store = store
+
+    # Create services with DocumentStore
     embedding_service = EmbeddingService(
-        client, store, embedding_model or query_config.embedding_model
+        client, doc_store, embedding_model or query_config.embedding_model
     )
 
     # Get chunk tokens from IndexConfig if not provided
@@ -483,15 +491,12 @@ def create_retriever(
         index_cfg = IndexConfig.load()
         target_chunk_tokens = index_cfg.target_chunk_tokens
 
-    budget_planner = BudgetPlanner(store, target_chunk_tokens)
-
-    # Create document-scoped store
-    document_store = store.for_document(document_id)
+    budget_planner = BudgetPlanner(doc_store, target_chunk_tokens)
 
     # Create and return retriever
     return Retriever(
         query_config,
-        document_store,
+        doc_store,
         embedding_service,
         budget_planner,
     )
