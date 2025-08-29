@@ -4,7 +4,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ragzoom.store import StoreManager, TreeNode
+from ragzoom.document_store import DocumentStore
+from ragzoom.store import TreeNode
 from ragzoom.utils.tokenization import tokenizer as default_tokenizer
 
 logger = logging.getLogger(__name__)
@@ -37,10 +38,10 @@ class CharacterPositionResolver(PositionResolver):
     def __init__(
         self,
         all_nodes: list[TreeNode],
-        store: StoreManager,
+        doc_store: DocumentStore,
         preloaded_nodes: dict[str, "TreeNode"] | None = None,
     ):
-        self.store = store
+        self.doc_store = doc_store
         self.preloaded_nodes = preloaded_nodes or {}
         self.doc_start = min(node.span_start for node in all_nodes)
         self.doc_end = max(node.span_end for node in all_nodes)
@@ -75,7 +76,7 @@ class TokenPositionResolver(PositionResolver):
         self,
         node_infos: list[Any],  # List of NodeInfo from dynamic_tiling
         coverage_map: dict[str, bool],
-        store: StoreManager,
+        doc_store: DocumentStore,
         tokenizer: Any = None,
         preloaded_nodes: dict[str, "TreeNode"] | None = None,
     ):
@@ -85,7 +86,7 @@ class TokenPositionResolver(PositionResolver):
         if not coverage_map:
             raise ValueError("coverage_map cannot be empty")
 
-        self.store = store
+        self.doc_store = doc_store
         self.node_infos = node_infos
         self.coverage_map = coverage_map
         self.tokenizer = tokenizer or default_tokenizer
@@ -235,8 +236,7 @@ class TokenPositionResolver(PositionResolver):
 
 def build_ascii_tree(
     tiling: list[str],  # List of node IDs in the tiling
-    store: StoreManager,
-    document_id: str,
+    doc_store: DocumentStore,
     width: int = 120,
     coverage_map: dict[str, bool] | None = None,
     seed_node_ids: set[str] | None = None,
@@ -249,8 +249,7 @@ def build_ascii_tree(
 
     Args:
         tiling: List of node IDs in the tiling
-        store: StoreManager instance
-        document_id: Document to visualize
+        doc_store: Document-scoped storage instance
         width: Terminal width for visualization
         coverage_map: Optional dict of covered node IDs
         seed_node_ids: Optional set of seed node IDs (marked with *)
@@ -259,6 +258,7 @@ def build_ascii_tree(
         use_token_coords: If True, use token-based positioning; if False, use character-based
     """
     # Use pre-loaded nodes if available
+    document_id = doc_store.document_id
     if preloaded_nodes:
         all_nodes = [
             node for node in preloaded_nodes.values() if node.document_id == document_id
@@ -280,7 +280,6 @@ def build_ascii_tree(
             return "No nodes found in coverage map"
     else:
         # Fallback to all nodes only if no coverage map provided
-        doc_store = store.for_document(document_id)
         all_nodes = doc_store.nodes.get_all()
         if not all_nodes:
             return "No nodes found for document"
@@ -330,11 +329,13 @@ def build_ascii_tree(
                 )
 
         position_resolver = TokenPositionResolver(
-            node_infos, coverage_map or {}, store, tokenizer, preloaded_nodes
+            node_infos, coverage_map or {}, doc_store, tokenizer, preloaded_nodes
         )
     else:
         # Default to character-based resolver
-        position_resolver = CharacterPositionResolver(all_nodes, store, preloaded_nodes)
+        position_resolver = CharacterPositionResolver(
+            all_nodes, doc_store, preloaded_nodes
+        )
 
     # Get coordinate space extent
     extent = position_resolver.get_extent()
@@ -397,7 +398,7 @@ def build_ascii_tree(
                 end_pos = start_pos + 1
             is_covered = coverage_map and node.id in coverage_map
             # Leaf node
-            if store.tree.is_leaf_node(node.id):
+            if not node.left_child_id and not node.right_child_id:
                 char_priority = (
                     1 if node.id in selected_nodes else 0 if is_covered else -1
                 )

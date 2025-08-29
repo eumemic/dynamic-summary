@@ -16,7 +16,7 @@ class CoverageBuilder:
         """Initialize coverage builder.
 
         Args:
-            store: DocumentStore (scoped) for node operations
+            store: DocumentStore instance for node operations
         """
         self.store = store
 
@@ -76,11 +76,7 @@ class CoverageBuilder:
 
         coverage_map = {node_id: True for node_id in selected_ids}
         for node_id in selected_ids:
-            # Support both StoreManager and DocumentStore
-            if hasattr(self.store.nodes, "update_node_access"):
-                self.store.nodes.update_node_access(node_id)
-            elif hasattr(self.store.nodes, "update_node_access_time"):
-                self.store.nodes.update_node_access_time(node_id)
+            self.store.nodes.update_access(node_id)
 
         ancestors = self.store.tree.get_ancestors(selected_ids)
         for ancestor in ancestors:

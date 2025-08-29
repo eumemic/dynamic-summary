@@ -1,14 +1,19 @@
 """Document-scoped store that prevents cross-document contamination."""
 
+import hashlib
+import logging
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.models import TreeNode
+from ragzoom.repositories.document_repository import DocumentRepository
 from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.search_service import SearchService
 from ragzoom.services.tree_navigator import TreeNavigator
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentNodeRepository:
@@ -233,12 +238,16 @@ class DocumentTreeNavigator:
 class DocumentStore:
     """Store scoped to a single document - prevents cross-contamination."""
 
+    # Class constants from StoreManager (for compatibility)
+    PIN_DEPTH_MAX = 2  # Maximum depth for pinned nodes
+
     def __init__(
         self,
         document_id: str | None,
         node_repo: NodeRepository,
         search_service: SearchService,
         tree_navigator: TreeNavigator,
+        doc_repo: DocumentRepository,
     ):
         """Initialize document-scoped store.
 
@@ -247,10 +256,205 @@ class DocumentStore:
             node_repo: Node repository to wrap
             search_service: Search service to wrap
             tree_navigator: Tree navigator to wrap
+            doc_repo: Document repository for metadata access
         """
         self.document_id = document_id
+        self._node_repo = node_repo  # Keep reference for pinned node operations
+        self._doc_repo = doc_repo  # Keep reference for document metadata
 
         # Create document-scoped wrappers
         self.nodes = DocumentNodeRepository(document_id, node_repo)
         self.search = DocumentSearchService(document_id, search_service)
         self.tree = DocumentTreeNavigator(document_id, tree_navigator)
+
+    def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
+        """Get all pinned nodes for this document only."""
+        # Get all pinned nodes from repository
+        all_pinned = self._node_repo.get_pinned_nodes(depth_max)
+        # Filter to this document only
+        return [node for node in all_pinned if node.document_id == self.document_id]
+
+    @staticmethod
+    def compute_content_hash(content: str) -> str:
+        """Compute SHA256 hash of content."""
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def update_parent_reference(self, node_id: str, parent_id: str) -> None:
+        """Update a node's parent reference and invalidate cache.
+
+        Args:
+            node_id: ID of the node to update
+            parent_id: New parent ID
+        """
+        with self._node_repo.db_manager.SessionLocal() as session:
+            from ragzoom.models import TreeNode as TreeNodeModel
+
+            session.query(TreeNodeModel).filter_by(id=node_id).update(
+                {"parent_id": parent_id}
+            )
+            session.commit()
+
+            # Invalidate the cache entry for this node since we've updated it
+            if node_id in self._node_repo.cache_manager.cache:
+                del self._node_repo.cache_manager.cache[node_id]
+                if node_id in self._node_repo.cache_manager.cache_order:
+                    self._node_repo.cache_manager.cache_order.remove(node_id)
+
+    def clear(self) -> int:
+        """Delete all nodes for this document.
+
+        Returns:
+            Number of nodes deleted
+        """
+        if not self.document_id:
+            raise ValueError("Cannot clear nodes without a document_id")
+
+        # Delegate to the document repository's clear_document method
+        # This ensures consistent behavior with StoreManager.clear_document()
+        return self._doc_repo.clear_document(self.document_id)
+
+    def _ensure_exists(self) -> None:
+        """Ensure this document exists in the database.
+
+        Raises:
+            ValueError: If document_id is not set
+            RuntimeError: If document does not exist in the database
+        """
+        if not self.document_id:
+            raise ValueError("Cannot ensure document exists without a document_id")
+
+        from ragzoom.models import Document
+
+        with self._node_repo.db_manager.SessionLocal() as session:
+            # Check if document already exists
+            doc = session.query(Document).filter_by(id=self.document_id).first()
+
+            if not doc:
+                raise RuntimeError(
+                    f"Document '{self.document_id}' does not exist. "
+                    "Documents must be created before operations can be performed on them."
+                )
+
+    def get_metadata(self) -> Any:
+        """Get the document metadata record.
+
+        Returns:
+            Document record if it exists, None otherwise
+        """
+        if not self.document_id:
+            return None
+
+        from ragzoom.models import Document
+
+        with self._node_repo.db_manager.SessionLocal() as session:
+            return session.query(Document).filter_by(id=self.document_id).first()
+
+    def set_metadata(
+        self,
+        file_path: str | None = None,
+        content_hash: str | None = None,
+        chunk_count: int = 0,
+        embedding_model: str | None = None,
+        summary_model: str | None = None,
+    ) -> None:
+        """Set or update metadata for this document.
+
+        Args:
+            file_path: Optional file path
+            content_hash: Optional content hash
+            chunk_count: Number of chunks/leaf nodes
+            embedding_model: Model used for embeddings
+            summary_model: Model used for summaries
+        """
+        if not self.document_id:
+            raise ValueError("Cannot set metadata without a document_id")
+
+        from ragzoom.models import Document
+
+        with self._node_repo.db_manager.SessionLocal() as session:
+            # Try to get existing document
+            doc = session.query(Document).filter_by(id=self.document_id).first()
+
+            if doc:
+                # Update existing document
+                if file_path is not None:
+                    doc.file_path = file_path
+                if content_hash is not None:
+                    doc.content_hash = content_hash
+                if chunk_count > 0:
+                    doc.chunk_count = chunk_count
+                if embedding_model is not None:
+                    doc.embedding_model = embedding_model
+                if summary_model is not None:
+                    doc.summary_model = summary_model
+            else:
+                # Create new document record
+                doc = Document(
+                    id=self.document_id,
+                    file_path=file_path,
+                    content_hash=content_hash,
+                    chunk_count=chunk_count,
+                    embedding_model=embedding_model,
+                    summary_model=summary_model,
+                )
+                session.add(doc)
+
+            session.commit()
+
+    def get_embedding_model(self) -> str | None:
+        """Get the embedding model used for this document.
+
+        Returns:
+            Embedding model name if document exists, None otherwise
+        """
+        if not self.document_id:
+            return None
+
+        return self._doc_repo.get_document_embedding_model(self.document_id)
+
+    def get_avg_leaf_tokens(self) -> int | None:
+        """Get average token count for leaf nodes in this document.
+
+        Returns:
+            Average token count for leaves, or None if no data
+        """
+        if not self.document_id:
+            logger.debug("No document_id provided for token statistics")
+            return None
+
+        # Use SQL aggregation for efficiency on large documents
+        from ragzoom.models import TreeNode as TreeNodeModel
+
+        with self._node_repo.db_manager.SessionLocal() as session:
+            # Query for average token count of leaf nodes (nodes with no children)
+            result = (
+                session.query(TreeNodeModel.token_count)
+                .filter(
+                    TreeNodeModel.document_id == self.document_id,
+                    TreeNodeModel.left_child_id.is_(None),
+                    TreeNodeModel.right_child_id.is_(None),
+                )
+                .all()
+            )
+
+            if not result:
+                logger.debug(
+                    f"No leaf nodes found for document {self.document_id} when calculating average tokens"
+                )
+                return None
+
+            # Calculate average from results
+            total_tokens = sum(row[0] for row in result if row[0] is not None)
+            count = len([r for r in result if r[0] is not None])
+
+            if count == 0:
+                logger.warning(
+                    f"Leaf nodes exist but have no token counts for document {self.document_id}"
+                )
+                return None
+
+            avg_tokens: int = total_tokens // count
+            logger.debug(
+                f"Calculated average leaf tokens: {avg_tokens} from {count} leaves for document {self.document_id}"
+            )
+            return avg_tokens

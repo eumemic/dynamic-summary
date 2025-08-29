@@ -5,7 +5,6 @@ import asyncio
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
-from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
 
@@ -115,11 +114,13 @@ class TestRetrieverBug:
         # Update paths after tree construction is complete
         store.update_node_paths_from_tree_structure()
 
-        retriever = Retriever(
+        from tests.utils import create_retriever
+
+        retriever = create_retriever(
             query_config=query_config,
             store=store,
-            api_key=operational_config.openai_api_key,
-            tree_builder=None,
+            document_id="test-doc",  # Specify the document we're working with
+            api_key=operational_config.openai_api_key.get_secret_value(),
         )
         return config, store, retriever
 
@@ -132,7 +133,9 @@ class TestRetrieverBug:
         def mock_search_similar(embedding, n_results, where=None):
             return [("L3", 0.95, {})]
 
-        store.search.search_similar = mock_search_similar
+        store.search_similar = mock_search_similar
+        # Also mock MMR to return L3 as selected
+        store.compute_mmr_diverse_results = lambda *args: ["L3"]
 
         # Mock the query embedding generation
         retriever.embedding_service.get_query_embedding = (
@@ -162,7 +165,9 @@ class TestRetrieverBug:
         def mock_search_similar(embedding, n_results, where=None):
             return [("L3", 0.95, {})]
 
-        store.search.search_similar = mock_search_similar
+        store.search_similar = mock_search_similar
+        # Also mock MMR to return L3 as selected
+        store.compute_mmr_diverse_results = lambda *args: ["L3"]
 
         # Mock the query embedding generation
         retriever.embedding_service.get_query_embedding = (
