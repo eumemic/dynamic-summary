@@ -74,8 +74,21 @@ def setup_test_document(store: StoreManager, api_key: str) -> str:
     print(f"  Document {doc_id} not found, indexing...")
     index_config = IndexConfig.load(target_chunk_tokens=200)
     test_doc, doc_name = get_test_document("narrative")
-    builder = TreeBuilder(index_config, store, api_key)
-    return builder.add_document(test_doc, document_id=doc_id)
+
+    # Create DocumentStore with the specific document_id
+    doc_store = store.add_document(
+        document_id=doc_id,
+        file_path=None,
+        content_hash=store.compute_content_hash(test_doc),
+        chunk_count=0,
+        embedding_model=index_config.embedding_model,
+        summary_model=index_config.summary_model,
+    )
+
+    # Create TreeBuilder with the DocumentStore
+    builder = TreeBuilder(index_config, doc_store, api_key)
+    # add_document returns the document_id from the DocumentStore
+    return builder.add_document(test_doc)
 
 
 @pytest.mark.slow
@@ -110,13 +123,32 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
         # Index document first (or reuse if exists)
         doc_id = setup_test_document(store, api_key)
 
+        # Create services for Retriever
+        from openai import OpenAI
+
+        from ragzoom.retrieval.budget_planner import BudgetPlanner
+        from ragzoom.retrieval.embedding_service import EmbeddingService
+
+        client = OpenAI(api_key=api_key)
+
+        # Get DocumentStore for the test document
+        doc_store = store.for_document(doc_id)
+
+        embedding_service = EmbeddingService(
+            client, doc_store, query_config.embedding_model
+        )
+        budget_planner = BudgetPlanner(
+            store, IndexConfig.load(target_chunk_tokens=200).target_chunk_tokens
+        )
+
         # Create retriever and assembler
         retriever = Retriever(
             query_config,
-            store,
-            api_key=api_key,
+            doc_store,
+            embedding_service,
+            budget_planner,
         )
-        assembler = Assembler(store)
+        assembler = Assembler(doc_store)
 
         # Collect telemetry from multiple runs
         all_telemetries = []
