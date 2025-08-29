@@ -7,15 +7,16 @@ on:
     types: [created]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-pr-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   claude-review:
-    # Only run when @claude is mentioned in a comment on a PR
+    # Only run when @claude is mentioned in a comment on a PR by a human (not a bot)
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && github.event.issue.pull_request) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+      github.event.comment.user.type != 'Bot' &&
+      ((github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && github.event.issue.pull_request) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')))
 
     # Optional: Filter by PR author
     # if: |
