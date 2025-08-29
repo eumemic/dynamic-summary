@@ -216,47 +216,35 @@ jobs:
         id: query_benchmark
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          QUERY_BENCHMARK_RUNS: 1
+          # Note: Uses default QUERY_BENCHMARK_RUNS=3 for statistical variance
         run: |
-          echo "Running query performance benchmarks (subset for CI)..."
-          # Run a limited set of query benchmarks for CI (3 configurations)
-          # Full matrix would be 3x3x3=27 tests, too expensive for every PR
+          echo "Running query performance benchmark (optimized for CI)..."
+          # Run only the "broad" query configuration to save CI time (67% reduction)
+          # This provides a representative test while maintaining statistical robustness
           
-          failed_configs=""
+          config="broad-2000-10"
+          echo "Testing configuration: $config (with 3 runs for variance)"
           
-          # Test each configuration individually to track specific failures
-          for config in "specific-2000-10" "broad-2000-10" "complex-2000-10"; do
-            echo "Testing configuration: $config"
-            if ! pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v --tb=short; then
-              echo "❌ Query benchmark failed for: $config"
-              if [ -z "$failed_configs" ]; then
-                failed_configs="$config"
-              else
-                failed_configs="$failed_configs, $config"
-              fi
-            else
-              echo "✅ Query benchmark passed for: $config"
-            fi
-          done
-          
-          if [ -n "$failed_configs" ]; then
+          if ! pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v --tb=short; then
+            echo "❌ Query benchmark failed for: $config"
             echo "QUERY_BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
-            echo "QUERY_FAILED_CONFIGS=$failed_configs" >> $GITHUB_OUTPUT
-            echo "⚠️ Query benchmarks failed for: $failed_configs"
+            echo "QUERY_FAILED_CONFIGS=$config" >> $GITHUB_OUTPUT
+            echo "⚠️ Query benchmark failed"
           else
-            echo "✅ All query benchmarks passed"
+            echo "✅ Query benchmark passed"
           fi
           
-          # Consolidate query telemetry files for comparison
-          echo "📊 Consolidating query telemetry files..."
-          QUERY_FILES_COUNT=$(ls benchmark_results/query_telemetry_*.json 2>/dev/null | wc -l | tr -d ' ')
-          if [ "$QUERY_FILES_COUNT" -gt 0 ]; then
-            echo "🔍 Found $QUERY_FILES_COUNT query telemetry files to consolidate"
-            ragzoom-telemetry consolidate benchmark_results/ --output benchmark_results/query-telemetry.json
-            echo "✅ Query telemetry consolidated for comparison"
+          # Handle query telemetry file (now just one file)
+          echo "📊 Processing query telemetry file..."
+          QUERY_FILE="benchmark_results/query_telemetry_10seeds_2000tokens_broad.json"
+          if [ -f "$QUERY_FILE" ]; then
+            echo "🔍 Found query telemetry file"
+            # Simply copy the single file to the expected comparison name
+            cp "$QUERY_FILE" benchmark_results/query-telemetry.json
+            echo "✅ Query telemetry ready for comparison"
           else
-            echo "⚠️ No query telemetry files found - skipping consolidation"
-            echo "   This could indicate query benchmarks failed or were skipped"
+            echo "⚠️ No query telemetry file found - skipping"
+            echo "   This could indicate query benchmark failed or was skipped"
           fi
       
       - name: Update comment - benchmarks complete

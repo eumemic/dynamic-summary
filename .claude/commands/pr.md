@@ -48,10 +48,19 @@ Get code through CI successfully and request reviews intelligently. Fix CI issue
 
 ### Phase 3: Request Reviews (Only When Ready)
 5. **Request Code Review** (only after clean state + CI passing):
-   - Review ALL accumulated changes since PR creation
-   - Identify areas of complexity or concern
-   - Post review request: "@claude please review this PR. [specific concerns]"
-   - Example: "@claude please review this PR. Key changes include [summary]. I'm particularly concerned about [specific areas]."
+   - **Decision logic**: Request review if:
+     - This is a complete, working implementation ready for merge
+     - All planned work for this PR is done
+     - You're confident the changes are correct
+   - **Skip review if**:
+     - You know there's more work to do
+     - You're still debugging or experimenting
+     - The PR is obviously incomplete
+   - When requesting:
+     - Review ALL accumulated changes since PR creation
+     - Identify areas of complexity or concern
+     - Post request: "@claude please review this PR. [specific concerns]"
+     - Example: "@claude please review this PR. Key changes include [summary]. I'm particularly concerned about [specific areas]."
 
 6. **Request Benchmarks if Needed**:
    - Check if ANY changes (accumulated) affect:
@@ -59,8 +68,17 @@ Get code through CI successfully and request reviews intelligently. Fix CI issue
      - `ragzoom/index.py` (indexing pipeline)
      - `ragzoom/retrieve.py` (query performance)
      - Config defaults, parallel/async code
+     - **Benchmark infrastructure itself**:
+       - `tests/benchmarks/` directory
+       - `.github/workflows/performance-tests.yml`
+       - `.github/workflows/baseline-benchmarks.yml`
+       - Telemetry/metrics collection code
    - If yes, include "/benchmark" in comment
    - Track that benchmarks were requested
+   - **WARNING**: Never mention command triggers in comment text! 
+     - Don't say "I've requested /benchmark" - this triggers another run
+     - Use alternatives: "I've requested benchmarks" or "benchmark command issued"
+     - Commands in backticks are safe: "`/benchmark`"
 
 ### Phase 4: Handle Feedback
 7. **Review Dialogue**:
@@ -86,8 +104,9 @@ Get code through CI successfully and request reviews intelligently. Fix CI issue
 - **Batch operations**: Complete all work, then push once, minimizing CI runs
 - **Fail fast on CI**: Exit immediately on failures to fix them
 - **Guide the reviewer**: Provide context about areas of concern
-- **Request benchmarks selectively**: Only for performance-critical changes
+- **Request benchmarks selectively**: Only for performance-critical changes AND changes to benchmark infrastructure
 - **Engage in dialogue**: Work with reviewer to reach consensus
+- **Recognize completion**: If the implementation fulfills the PR's purpose and CI passes, request review - don't wait unnecessarily
 
 ## Issue Priority
 
