@@ -1,6 +1,6 @@
 """Simple test to demonstrate the document clearing regression."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.services.indexing_service import IndexingService
@@ -26,7 +26,8 @@ def test_index_document_always_clears():
         "ragzoom.services.indexing_service.TreeBuilder"
     ) as mock_tree_builder_class:
         mock_tree_builder = Mock()
-        mock_tree_builder.add_document.return_value = "test.txt"
+        # Now we need to mock the async method since sync delegates to async
+        mock_tree_builder.add_document_async = AsyncMock(return_value="test.txt")
         mock_tree_builder_class.return_value = mock_tree_builder
 
         # Mock the session for document stats

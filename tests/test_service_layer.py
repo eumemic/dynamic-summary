@@ -118,7 +118,10 @@ class TestIndexingService:
 
         # Mock TreeBuilder
         mock_tree_builder = Mock()
-        mock_tree_builder.add_document.return_value = "doc-123"
+        # Since sync now delegates to async, mock the async method
+        from unittest.mock import AsyncMock
+
+        mock_tree_builder.add_document_async = AsyncMock(return_value="doc-123")
         mock_tree_builder_class.return_value = mock_tree_builder
 
         # Mock database session for stats
@@ -149,7 +152,7 @@ class TestIndexingService:
         assert result.tree_depth == 2
         assert result.telemetry is None
 
-        mock_tree_builder.add_document.assert_called_once_with(
+        mock_tree_builder.add_document_async.assert_called_once_with(
             "test text", document_id="test-doc", show_progress=True
         )
 

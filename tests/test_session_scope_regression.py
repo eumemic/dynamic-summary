@@ -30,7 +30,10 @@ def test_tree_height_accessed_within_session():
         "ragzoom.services.indexing_service.TreeBuilder"
     ) as mock_tree_builder_class:
         mock_tree_builder = Mock()
-        mock_tree_builder.add_document.return_value = "test.txt"
+        # Since sync now delegates to async, mock the async method
+        from unittest.mock import AsyncMock
+
+        mock_tree_builder.add_document_async = AsyncMock(return_value="test.txt")
         mock_tree_builder_class.return_value = mock_tree_builder
 
         # Create mock root that will raise error if accessed outside session
