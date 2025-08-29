@@ -96,7 +96,7 @@ class TestIssue150Demonstration:
         # Existing code that doesn't use transactions continues to work
 
         # Add document without session (existing API)
-        doc = store.add_document(
+        doc_store = store.add_document(
             document_id="backward-compat-doc",
             file_path="test.txt",
             content_hash="test-hash",
@@ -105,7 +105,7 @@ class TestIssue150Demonstration:
             summary_model="gpt-4o-mini",
             # No session parameter - uses existing behavior
         )
-        assert doc.id == "backward-compat-doc"
+        assert doc_store.document_id == "backward-compat-doc"
 
         # Add nodes without session (existing API)
         nodes_data = [

@@ -97,10 +97,10 @@ class TestTreeVisualization:
             if node:
                 preloaded_nodes[node_id] = node
 
+        doc_store = store.for_document("doc1")
         viz = build_ascii_tree(
             tiling,
-            store,
-            "doc1",
+            doc_store,
             width=40,
             coverage_map=coverage_map,
             preloaded_nodes=preloaded_nodes,
@@ -134,7 +134,8 @@ class TestTreeVisualization:
         # Empty tiling list
         tiling = []
 
-        viz = build_ascii_tree(tiling, store, "doc1", width=40)
+        doc_store = store.for_document("doc1")
+        viz = build_ascii_tree(tiling, doc_store, width=40)
 
         # Should still show document structure
         assert "H0 " in viz
@@ -144,7 +145,8 @@ class TestTreeVisualization:
         store = SimpleMockStore()
         tiling = []
 
-        viz = build_ascii_tree(tiling, store, "nonexistent", width=40)
+        doc_store = store.for_document("nonexistent")
+        viz = build_ascii_tree(tiling, doc_store, width=40)
 
         assert viz == "No nodes found for document"
 
@@ -200,10 +202,10 @@ class TestTreeVisualization:
             if node:
                 preloaded_nodes[node_id] = node
 
+        doc_store = store.for_document("doc1")
         viz = build_ascii_tree(
             tiling,
-            store,
-            "doc1",
+            doc_store,
             width=60,
             coverage_map=coverage_map,
             preloaded_nodes=preloaded_nodes,
@@ -301,7 +303,8 @@ class TestTreeVisualization:
         # Mixed height tiling
         tiling = ["l1", "l3", "r3_r"]
 
-        viz = build_ascii_tree(tiling, store, "doc1", width=80)
+        doc_store = store.for_document("doc1")
+        viz = build_ascii_tree(tiling, doc_store, width=80)
 
         # Should show all heights
         assert "H3 " in viz

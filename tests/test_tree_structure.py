@@ -122,16 +122,16 @@ class TestTreeValidation:
 
     def test_full_tree_passes_validation(self, mock_store_with_valid_tree):
         """Test that a full binary tree passes left-balanced validation."""
-        result = validate_tree_is_left_balanced(mock_store_with_valid_tree, "test-doc")
+        doc_store = mock_store_with_valid_tree.for_document("test-doc")
+        result = validate_tree_is_left_balanced(doc_store)
         assert result is None  # None means valid
 
     def test_single_left_child_passes_validation(
         self, mock_store_with_left_balanced_tree
     ):
         """Test that a tree with single left children passes validation."""
-        result = validate_tree_is_left_balanced(
-            mock_store_with_left_balanced_tree, "test-doc"
-        )
+        doc_store = mock_store_with_left_balanced_tree.for_document("test-doc")
+        result = validate_tree_is_left_balanced(doc_store)
         assert result is None  # Valid left-balanced tree
 
     def test_single_node_tree_passes(self):
@@ -159,7 +159,8 @@ class TestTreeValidation:
                 return doc_store
 
         store = MockStore()
-        result = validate_tree_is_left_balanced(store, "test-doc")
+        doc_store = store.for_document("test-doc")
+        result = validate_tree_is_left_balanced(doc_store)
         assert result is None  # Single node tree is valid
 
     def test_invalid_child_reference_fails(self):
@@ -188,7 +189,8 @@ class TestTreeValidation:
                 return doc_store
 
         store = MockStore()
-        result = validate_tree_is_left_balanced(store, "test-doc")
+        doc_store = store.for_document("test-doc")
+        result = validate_tree_is_left_balanced(doc_store)
         assert result is not None
         assert "Invalid tree" in result
         assert "non-existent" in result
@@ -237,7 +239,8 @@ class TestTreeValidation:
         store.add_node(MockNode("P1", "L1", "L2"))
         store.add_node(MockNode("root", None, "P1"))  # Only right child!
 
-        result = validate_tree_is_left_balanced(store, "test-doc")
+        doc_store = store.for_document("test-doc")
+        result = validate_tree_is_left_balanced(doc_store)
         assert result is not None
         assert "not left-balanced" in result
         assert "root" in result  # Should identify the problematic node
@@ -259,9 +262,18 @@ class TestIndexingCreatesValidTrees:
             openai_api_key=SecretStr("test-key-for-tests"),
         )
         store = SimpleMockStore(config=(index_config, query_config, operational_config))
+        # Create document-scoped store for tree builder
+        doc_store = store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash=store.compute_content_hash(""),
+            chunk_count=0,
+            embedding_model=index_config.embedding_model,
+            summary_model=index_config.summary_model,
+        )
         tree_builder = TreeBuilder(
             index_config,
-            store,
+            doc_store,
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
 
@@ -321,16 +333,16 @@ class TestIndexingCreatesValidTrees:
         #   L1  L2 L3  L4
 
         # Index the document
-        doc_id = tree_builder.add_document(
-            text, document_id="test-even", show_progress=False
-        )
+        doc_id = tree_builder.add_document(text, show_progress=False)
 
         # Verify it's left-balanced
-        result = validate_tree_is_left_balanced(store, doc_id)
+        doc_store = store.for_document(doc_id)
+        result = validate_tree_is_left_balanced(doc_store)
         assert result is None
 
         # Verify all leaves are at the same depth
-        result = validate_equal_leaf_depth(store, doc_id)
+        doc_store = store.for_document(doc_id)
+        result = validate_equal_leaf_depth(doc_store)
         assert result is None
 
     def test_odd_number_of_chunks_creates_valid_tree(self, setup_indexing):
@@ -353,16 +365,16 @@ class TestIndexingCreatesValidTrees:
         # P2 has only a left child (L3)
 
         # Index the document
-        doc_id = tree_builder.add_document(
-            text, document_id="test-odd", show_progress=False
-        )
+        doc_id = tree_builder.add_document(text, show_progress=False)
 
         # Verify it's left-balanced
-        result = validate_tree_is_left_balanced(store, doc_id)
+        doc_store = store.for_document(doc_id)
+        result = validate_tree_is_left_balanced(doc_store)
         assert result is None
 
         # Verify all leaves are at the same depth
-        result = validate_equal_leaf_depth(store, doc_id)
+        doc_store = store.for_document(doc_id)
+        result = validate_equal_leaf_depth(doc_store)
         assert result is None
 
     @pytest.mark.slow
@@ -377,16 +389,16 @@ class TestIndexingCreatesValidTrees:
         for i in range(7):
             text += f"Chapter {i+1} content here. " * 10  # ~40 tokens each
 
-        doc_id = tree_builder.add_document(
-            text, document_id="test-large", show_progress=False
-        )
+        doc_id = tree_builder.add_document(text, show_progress=False)
 
         # Verify it's left-balanced
-        result = validate_tree_is_left_balanced(store, doc_id)
+        doc_store = store.for_document(doc_id)
+        result = validate_tree_is_left_balanced(doc_store)
         assert result is None
 
         # Verify all leaves are at the same depth
-        result = validate_equal_leaf_depth(store, doc_id)
+        doc_store = store.for_document(doc_id)
+        result = validate_equal_leaf_depth(doc_store)
         assert result is None
 
         # Check we have multiple leaf nodes (exact count depends on tokenization)
@@ -433,16 +445,16 @@ class TestIndexingCreatesValidTrees:
         #   L1 L2 L3 L4
 
         # Index the document
-        doc_id = tree_builder.add_document(
-            text, document_id="test-2n-plus-1", show_progress=False
-        )
+        doc_id = tree_builder.add_document(text, show_progress=False)
 
         # Verify it's left-balanced
-        result = validate_tree_is_left_balanced(store, doc_id)
+        doc_store = store.for_document(doc_id)
+        result = validate_tree_is_left_balanced(doc_store)
         assert result is None
 
         # Verify all leaves are at the same depth
-        result = validate_equal_leaf_depth(store, doc_id)
+        doc_store = store.for_document(doc_id)
+        result = validate_equal_leaf_depth(doc_store)
         assert result is None
 
         # Verify we have exactly 5 leaf nodes

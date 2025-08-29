@@ -3,7 +3,6 @@
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
-from ragzoom.retrieve import Retriever
 from tests.mock_store import SimpleMockStore
 
 
@@ -113,11 +112,12 @@ class TestCoverageTreeCompleteness:
             right_child_id="P2",
         )
 
-        retriever = Retriever(
+        from tests.utils import create_retriever
+
+        retriever = create_retriever(
             query_config,
             store,
-            api_key=operational_config.openai_api_key,
-            tree_builder=None,
+            api_key=operational_config.openai_api_key.get_secret_value(),
         )
         dp_generator = retriever.dp_generator
 

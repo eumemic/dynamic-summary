@@ -62,12 +62,18 @@ class SimpleMockStore(StoreInterface):
         self.pinned_nodes: set[str] = set()
         self.mock_scores: dict[str, float] = {}
 
+        # Track current document_id for set_metadata calls
+        self.document_id: str | None = None
+
         # Cache simulation
         self._node_cache = OrderedDict()
         self._cache_order = deque(maxlen=1000)
 
         # Track expected embedding dimension
         self._expected_embedding_dim = None
+
+        # Add node_repo attribute for CLI pin command compatibility
+        self.node_repo = self  # SimpleMockStore acts as its own node repository
 
         # SessionLocal mock with filter_by support
         mock_session = MagicMock()
@@ -116,6 +122,30 @@ class SimpleMockStore(StoreInterface):
                         filtered_nodes[0] if filtered_nodes else None
                     )
                     filtered_query.delete.return_value = len(filtered_nodes)
+
+                    # Add support for chained .filter() calls
+                    def mock_filter(*args):
+                        # Filter for leaf nodes (left_child_id.is_(None), right_child_id.is_(None))
+                        further_filtered = []
+                        for node in filtered_nodes:
+                            # Check if it's a leaf node
+                            if (
+                                hasattr(node, "left_child_id")
+                                and hasattr(node, "right_child_id")
+                                and node.left_child_id is None
+                                and node.right_child_id is None
+                            ):
+                                further_filtered.append(node)
+
+                        result_query = MagicMock()
+                        result_query.all.return_value = further_filtered
+                        result_query.first.return_value = (
+                            further_filtered[0] if further_filtered else None
+                        )
+                        result_query.count.return_value = len(further_filtered)
+                        return result_query
+
+                    filtered_query.filter = mock_filter
 
                 elif is_document:
                     # Filter documents based on criteria
@@ -178,6 +208,8 @@ class SimpleMockStore(StoreInterface):
         mock_nodes.update_node_access = self.update_node_access
         mock_nodes.add_nodes_batch = self.add_nodes_batch
         mock_nodes.update_parent_references_batch = self.update_parent_references_batch
+        # Add get method that delegates to get_node for compatibility with Assembler
+        mock_nodes.get = self.get_node
         self.nodes = mock_nodes
 
         # Create a documents property that acts like both dict and repository
@@ -228,8 +260,28 @@ class SimpleMockStore(StoreInterface):
 
         # Create mock nodes, search, tree that filter by document_id
         mock_nodes = MagicMock()
-        mock_nodes.get = lambda node_id: self.get_node(node_id)
+
+        def get_node_fn(node_id):
+            if document_id is None:
+                return self.get_node(node_id)
+            node = self.get_node(node_id)
+            if node and node.document_id == document_id:
+                return node
+            return None
+
+        mock_nodes.get = get_node_fn
+        mock_nodes.get_node = get_node_fn  # Both get and get_node should work
         mock_nodes.get_many = lambda node_ids: self.get_nodes(node_ids)
+        # Add get_nodes alias for get_many (used by Retriever and CoverageBuilder)
+        mock_nodes.get_nodes = lambda node_ids: self.get_nodes(node_ids)
+        # Add get_nodes_by_paths (used by CoverageBuilder for siblings)
+        mock_nodes.get_nodes_by_paths = lambda paths: [
+            n
+            for n in self._nodes.values()
+            if hasattr(n, "path") and n.path in paths and n.document_id == document_id
+        ]
+        # Add update_access method (used by CoverageBuilder)
+        mock_nodes.update_access = lambda node_id: self.update_node_access(node_id)
         mock_nodes.get_all = lambda: [
             n
             for n in self._nodes.values()
@@ -258,7 +310,12 @@ class SimpleMockStore(StoreInterface):
 
         mock_tree = MagicMock()
         mock_tree.get_children = self.get_children
-        mock_tree.get_ancestors = self.get_ancestors
+        # Filter ancestors by document_id for proper isolation
+        mock_tree.get_ancestors = lambda node_ids: [
+            ancestor
+            for ancestor in self.get_ancestors(node_ids)
+            if getattr(ancestor, "document_id", None) == document_id
+        ]
         mock_tree.get_root = lambda: self.get_root_node_for_document(document_id)
         mock_tree.get_depth = self.get_node_depth
         mock_tree.is_leaf = self.is_leaf_node
@@ -267,6 +324,33 @@ class SimpleMockStore(StoreInterface):
         mock_doc_store.nodes = mock_nodes
         mock_doc_store.search = mock_search
         mock_doc_store.tree = mock_tree
+
+        # Add DocumentStore methods needed by CoverageBuilder
+        mock_doc_store.PIN_DEPTH_MAX = self.PIN_DEPTH_MAX
+        mock_doc_store.get_pinned_nodes = lambda depth_max=None: [
+            node
+            for node in self.get_pinned_nodes(depth_max)
+            if node.document_id == document_id
+        ]
+
+        # Add set_metadata method needed by IndexingService
+        def _set_metadata(**kwargs):
+            # Save the current document_id, set it temporarily for the method call
+            old_doc_id = self.document_id
+            self.document_id = document_id
+            self.set_metadata(**kwargs)
+            self.document_id = old_doc_id
+
+        mock_doc_store.set_metadata = _set_metadata
+        mock_doc_store.compute_content_hash = self.compute_content_hash
+        mock_doc_store.session_local = self.SessionLocal
+        # Add new methods for Phase 4 refactoring
+        mock_doc_store.get_embedding_model = lambda: (
+            self.get_document_embedding_model(document_id) if document_id else None
+        )
+        mock_doc_store.get_avg_leaf_tokens = lambda: (
+            self._get_avg_leaf_tokens_for_document(document_id) if document_id else None
+        )
 
         return mock_doc_store
 
@@ -669,8 +753,8 @@ class SimpleMockStore(StoreInterface):
         summary_model: str,
         *,
         session=None,
-    ) -> Document:
-        """Mock add document."""
+    ):
+        """Mock add document and return a DocumentStore for it."""
         from datetime import datetime
 
         doc = SimpleNamespace(
@@ -684,12 +768,68 @@ class SimpleMockStore(StoreInterface):
             indexed_at=datetime.now(),  # Add missing attribute
         )
         self._documents[document_id] = doc
-        return doc
+        return self.for_document(document_id)
+
+    def update_parent_reference(self, node_id: str, parent_id: str) -> None:
+        """Update a node's parent reference and invalidate cache.
+
+        Args:
+            node_id: ID of the node to update
+            parent_id: New parent ID
+        """
+        if node_id in self._nodes:
+            self._nodes[node_id].parent_id = parent_id
+            # In mock store, we don't have a real cache to invalidate
+            # but we maintain consistency with the real implementation
 
     @staticmethod
     def compute_content_hash(content: str) -> str:
         """Compute SHA256 hash of content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def set_metadata(
+        self,
+        file_path: str | None = None,
+        content_hash: str | None = None,
+        chunk_count: int = 0,
+        embedding_model: str | None = None,
+        summary_model: str | None = None,
+    ) -> None:
+        """Mock method for setting document metadata.
+
+        Creates or updates a Document record in the mock store.
+        """
+        from datetime import datetime
+
+        if not self.document_id:
+            return  # Can't set metadata without a document ID
+
+        # Create or update the document record
+        if self.document_id not in self._documents:
+            # Create new document
+            doc = SimpleNamespace(
+                id=self.document_id,
+                file_path=file_path,
+                content_hash=content_hash,
+                chunk_count=chunk_count,
+                embedding_model=embedding_model,
+                summary_model=summary_model,
+                indexed_at=datetime.utcnow(),
+            )
+            self._documents[self.document_id] = doc
+        else:
+            # Update existing document
+            doc = self._documents[self.document_id]
+            if file_path is not None:
+                doc.file_path = file_path
+            if content_hash is not None:
+                doc.content_hash = content_hash
+            if chunk_count > 0:
+                doc.chunk_count = chunk_count
+            if embedding_model is not None:
+                doc.embedding_model = embedding_model
+            if summary_model is not None:
+                doc.summary_model = summary_model
 
     def pin_node(self, node_id: str) -> None:
         """Pin a node."""
@@ -713,7 +853,22 @@ class SimpleMockStore(StoreInterface):
     def get_document_embedding_model(self, document_id: str) -> str | None:
         """Get the embedding model used for a specific document."""
         doc = self.get_document_by_id(document_id)
+        if isinstance(doc, dict):
+            return doc.get("embedding_model")
         return doc.embedding_model if doc else None
+
+    def _get_avg_leaf_tokens_for_document(self, document_id: str) -> int | None:
+        """Get average token count for leaf nodes in this document."""
+        leaf_nodes = [
+            node
+            for node in self._nodes.values()
+            if node.document_id == document_id and self.is_leaf_node(node.id)
+        ]
+        if not leaf_nodes:
+            return None
+
+        total_tokens = sum(node.token_count for node in leaf_nodes)
+        return total_tokens // len(leaf_nodes) if leaf_nodes else None
 
     def delete_document_nodes(self, document_id: str, *, session=None) -> int:
         """Delete all nodes for a document."""

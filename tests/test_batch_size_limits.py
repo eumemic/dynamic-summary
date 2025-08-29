@@ -22,9 +22,15 @@ class TestBatchSizeLimits:
     @pytest.fixture
     def tree_builder(self, config):
         """Create tree builder with mocked dependencies."""
-        with patch("ragzoom.index.StoreManager"):
-            mock_store = Mock()
-            builder = TreeBuilder(config, mock_store, api_key="test-key")
+        with patch("ragzoom.document_store.DocumentStore"):
+            mock_doc_store = Mock()
+            mock_doc_store.document_id = "test-doc"
+            mock_doc_store.compute_content_hash = Mock(return_value="hash123")
+            mock_doc_store.set_metadata = Mock()
+            mock_doc_store.session_local = Mock
+            mock_doc_store.node_cache = {}
+            mock_doc_store.cache_order = []
+            builder = TreeBuilder(config, mock_doc_store, api_key="test-key")
 
             # Mock the OpenAI client on the LLM service
             builder.llm_service.client = Mock()

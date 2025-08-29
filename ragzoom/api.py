@@ -19,7 +19,15 @@ logger = logging.getLogger(__name__)
 
 # Service container for dependency injection
 class ServiceContainer:
-    """Container for RagZoom services."""
+    """Container for RagZoom services.
+
+    Document Isolation Architecture:
+    - Services are initialized with the multi-document Store
+    - Each service internally creates DocumentStore instances as needed
+    - This ensures document isolation is enforced at the service layer
+    - IndexingService and QueryService handle document scoping transparently
+    - This pattern prevents cross-document contamination through the type system
+    """
 
     def __init__(self) -> None:
         # Create configurations
@@ -27,12 +35,17 @@ class ServiceContainer:
         self.query_config = QueryConfig()
         self.operational_config = OperationalConfig()
 
-        # Initialize store
+        # Initialize multi-document store
+        # Services will create document-scoped stores internally as needed
         self.store = Store(
             self.operational_config, embedding_model=self.index_config.embedding_model
         )
 
-        # Initialize services
+        # Initialize services with the multi-document store
+        # Each service handles document isolation internally:
+        # - DocumentService: manages document metadata across all documents
+        # - IndexingService: creates DocumentStore for each indexing operation
+        # - QueryService: creates DocumentStore for each query operation
         self.document_service = DocumentService(self.store)
         self.indexing_service = IndexingService(
             self.store, self.index_config, self.operational_config

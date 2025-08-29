@@ -3,6 +3,12 @@
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from openai import OpenAI
+
+from ragzoom.config import IndexConfig
+from ragzoom.retrieval.budget_planner import BudgetPlanner
+from ragzoom.retrieval.embedding_service import EmbeddingService
+from ragzoom.retrieve import Retriever
 
 
 def create_mock_openai_clients():
@@ -96,7 +102,7 @@ class MockOpenAIContext:
     def __enter__(self):
         """Enter context and set up mocks."""
         self.index_patcher = patch("ragzoom.services.llm_service.AsyncOpenAI")
-        self.retrieve_patcher = patch("ragzoom.retrieve.OpenAI")
+        self.retrieve_patcher = patch("openai.OpenAI")
 
         mock_index_class = self.index_patcher.start()
         mock_retrieve_class = self.retrieve_patcher.start()
@@ -156,7 +162,7 @@ def mock_openai_fixture(embedding_rules=None):
     """
     with (
         patch("ragzoom.services.llm_service.AsyncOpenAI") as mock_index,
-        patch("ragzoom.retrieve.OpenAI") as mock_retrieve,
+        patch("openai.OpenAI") as mock_retrieve,
     ):
         if embedding_rules:
             mock_index_client, mock_retrieve_client, mock_assemble_client = (
@@ -438,3 +444,59 @@ def create_specialized_openai_mocks(embedding_rules=None):
     )
 
     return mock_index_client, mock_retrieve_client, mock_assemble_client
+
+
+def create_retriever(
+    query_config,
+    store,
+    document_id=None,
+    api_key="test-key",
+    embedding_model=None,
+    target_chunk_tokens=None,
+    client=None,
+):
+    """Create a Retriever instance with proper service dependencies.
+
+    Args:
+        query_config: QueryConfig instance
+        store: StoreManager or DocumentStore instance
+        document_id: Optional document ID to scope retriever to
+        api_key: OpenAI API key (defaults to test key)
+        embedding_model: Optional embedding model override
+        target_chunk_tokens: Optional chunk size override
+        client: Optional OpenAI client instance (for testing with mocks)
+
+    Returns:
+        Retriever instance configured with proper dependencies
+    """
+    # Create OpenAI client if not provided
+    if client is None:
+        client = OpenAI(api_key=api_key)
+
+    # Get document store - handle both StoreManager and DocumentStore
+    if hasattr(store, "for_document"):
+        # This is a StoreManager, create DocumentStore
+        doc_store = store.for_document(document_id)
+    else:
+        # This is already a DocumentStore
+        doc_store = store
+
+    # Create services with DocumentStore
+    embedding_service = EmbeddingService(
+        client, doc_store, embedding_model or query_config.embedding_model
+    )
+
+    # Get chunk tokens from IndexConfig if not provided
+    if target_chunk_tokens is None:
+        index_cfg = IndexConfig.load()
+        target_chunk_tokens = index_cfg.target_chunk_tokens
+
+    budget_planner = BudgetPlanner(doc_store, target_chunk_tokens)
+
+    # Create and return retriever
+    return Retriever(
+        query_config,
+        doc_store,
+        embedding_service,
+        budget_planner,
+    )
