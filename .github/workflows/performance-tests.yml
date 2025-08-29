@@ -13,8 +13,9 @@ jobs:
   benchmark:
     name: Performance Report
     runs-on: ubuntu-latest
-    # Only run when /benchmark is in a comment on a PR
+    # Only run when /benchmark is in a comment on a PR by a human (not a bot)
     if: |
+      github.event.comment.user.type != 'Bot' &&
       github.event_name == 'issue_comment' && 
       contains(github.event.comment.body, '/benchmark') && 
       github.event.issue.pull_request
