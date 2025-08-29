@@ -224,7 +224,6 @@ class TreeBuilder:
     async def _add_document_impl(
         self,
         text: str,
-        document_id: str | None = None,
         show_progress: bool = True,
         reporter: None = None,
     ) -> str: ...
@@ -233,7 +232,6 @@ class TreeBuilder:
     async def _add_document_impl(
         self,
         text: str,
-        document_id: str | None = None,
         show_progress: bool = True,
         reporter: TelemetryCollector = ...,  # jscpd:ignore-start
     ) -> tuple[str, dict[str, Any]]: ...  # jscpd:ignore-end
@@ -241,7 +239,6 @@ class TreeBuilder:
     async def _add_document_impl(
         self,
         text: str,
-        document_id: str | None = None,
         show_progress: bool = True,
         reporter: TelemetryCollector | None = None,
     ) -> str | tuple[str, dict[str, Any]]:
@@ -251,10 +248,11 @@ class TreeBuilder:
             If reporter is None: document_id
             If reporter is provided: (document_id, metrics)
         """
-        # Step 1: Validate models and get document ID
+        # Step 1: Validate models and get document ID from DocumentStore
         self._validate_model_names()
+        document_id = self.document_store.document_id
         if not document_id:
-            document_id = self.document_store.document_id or self._generate_node_id()
+            raise ValueError("DocumentStore must have a document_id set")
 
         # Step 2: Create and validate chunks
         chunks = self._create_and_validate_chunks(text, show_progress)
@@ -359,16 +357,14 @@ class TreeBuilder:
     def add_document(
         self,
         text: str,
-        document_id: str | None = None,
         show_progress: bool = True,
     ) -> str:
         """Sync wrapper for add_document."""
-        return asyncio.run(self.add_document_async(text, document_id, show_progress))
+        return asyncio.run(self.add_document_async(text, show_progress))
 
     def add_document_with_telemetry(
         self,
         text: str,
-        document_id: str | None = None,
         show_progress: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Add document and return telemetry data. Used for benchmarking.
@@ -388,16 +384,14 @@ class TreeBuilder:
         # Create collector internally with config for pricing
         source_tokens = tokenizer.count_tokens(text)
         collector = TelemetryCollector(
-            document_id or "benchmark",
+            self.document_store.document_id or "benchmark",
             source_tokens,
             self.config,
             document_path=None,
         )
 
         # Run indexing with collector - will return (doc_id, telemetry)
-        result = asyncio.run(
-            self._add_document_impl(text, document_id, show_progress, collector)
-        )
+        result = asyncio.run(self._add_document_impl(text, show_progress, collector))
 
         # Extract tuple returned when collector is provided
         # Type checker knows result is a tuple because we passed a collector
@@ -407,11 +401,10 @@ class TreeBuilder:
     async def add_document_async(
         self,
         text: str,
-        document_id: str | None = None,
         show_progress: bool = True,
     ) -> str:
         """Async version of add_document - called by sync wrapper."""
-        result = await self._add_document_impl(text, document_id, show_progress)
+        result = await self._add_document_impl(text, show_progress)
         # Type checker knows result is a string when no reporter is provided
         return result
 

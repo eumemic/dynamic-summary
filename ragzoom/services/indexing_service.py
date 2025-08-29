@@ -184,7 +184,6 @@ class IndexingService:
             func = partial(
                 tree_builder.add_document_with_telemetry,
                 text,
-                document_id=document_id,
                 show_progress=show_progress,
             )
             loop = asyncio.get_event_loop()
@@ -192,7 +191,6 @@ class IndexingService:
         else:
             doc_id = await tree_builder.add_document_async(
                 text,
-                document_id=document_id,
                 show_progress=show_progress,
             )
             telemetry = None

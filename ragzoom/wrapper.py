@@ -104,7 +104,7 @@ class RagZoom:
             self.operational_config.openai_api_key,
         )
 
-        return tree_builder.add_document(text, document_id=document_id)
+        return tree_builder.add_document(text)
         # jscpd:ignore-end
 
     # jscpd:ignore-start - Legitimate sync/async pattern duplication
@@ -208,7 +208,7 @@ class AsyncRagZoom:
             self.operational_config.openai_api_key,
         )
 
-        return await tree_builder.add_document_async(text, document_id=document_id)
+        return await tree_builder.add_document_async(text)
         # jscpd:ignore-end
 
     # jscpd:ignore-start - Legitimate sync/async pattern duplication
