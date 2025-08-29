@@ -141,8 +141,10 @@ class TestChunkSizeRegression:
         with patch(
             "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
         ):
+            # TreeBuilder needs a DocumentStore, not StoreManager
+            doc_store = store.for_document(None)
             builder = TreeBuilder(
-                index_config, store, api_key=operational_config.openai_api_key
+                index_config, doc_store, api_key=operational_config.openai_api_key
             )
             await builder.add_document_async(test_doc, document_id="test-doc")
 

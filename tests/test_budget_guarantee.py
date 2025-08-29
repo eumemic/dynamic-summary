@@ -35,23 +35,23 @@ class TestBudgetGuarantee:
             from ragzoom.retrieval.budget_planner import BudgetPlanner
             from ragzoom.retrieval.embedding_service import EmbeddingService
 
+            # Note: Using store.for_document(None) for tests that don't specify document_id
+            doc_store = store.for_document(None)
+
             tree_builder = TreeBuilder(
                 config.index_config,
-                store,
+                doc_store,
                 api_key=config.openai_api_key.get_secret_value(),
             )
 
             # Create services for Retriever
             client = OpenAI(api_key=config.openai_api_key.get_secret_value())
             embedding_service = EmbeddingService(
-                client, store, config.query_config.embedding_model
+                client, doc_store, config.query_config.embedding_model
             )
             budget_planner = BudgetPlanner(
-                store, config.index_config.target_chunk_tokens
+                doc_store, config.index_config.target_chunk_tokens
             )
-
-            # Note: Using store.for_document(None) for tests that don't specify document_id
-            doc_store = store.for_document(None)
             retriever = Retriever(
                 config.query_config,
                 doc_store,

@@ -51,8 +51,11 @@ class TestIntegration:
 
         from tests.utils import create_retriever
 
+        # TreeBuilder needs a DocumentStore, not StoreManager
+        # Use None for document_id since TreeBuilder will create documents
+        doc_store = real_store.for_document(None)
         tree_builder = TreeBuilder(
-            index_config, real_store, api_key=operational_config.openai_api_key
+            index_config, doc_store, api_key=operational_config.openai_api_key
         )
         retriever = create_retriever(
             query_config,
