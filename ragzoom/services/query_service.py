@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import OperationalConfig, QueryConfig
-from ragzoom.document_store import DocumentStore
 from ragzoom.retrieve import Retriever
 from ragzoom.store import Store
 
@@ -41,14 +40,7 @@ class QueryService:
         self.store = store
         self.query_config = query_config
         self.operational_config = operational_config
-        # Keep defaults; per-request we construct document-scoped components
-        self.assembler = Assembler(store)
-        # Maintain retriever attribute for API compatibility (updated in update_config)
-        self.retriever = Retriever(
-            query_config,
-            store.for_document(None),
-            api_key=operational_config.openai_api_key.get_secret_value(),
-        )
+        # Note: Retriever and Assembler are now created per-request with DocumentStore
 
     # jscpd:ignore-start - Legitimate sync/async pattern duplication
     def execute_query(
@@ -72,13 +64,29 @@ class QueryService:
         # Use provided budget or config default
         budget = token_budget or self.query_config.budget_tokens
 
-        # Create a document-scoped retriever for isolation
-        doc_store: DocumentStore = self.store.for_document(document_id)
+        # Create document-scoped store and components
+        from openai import OpenAI
+
+        from ragzoom.config import IndexConfig
+        from ragzoom.retrieval.budget_planner import BudgetPlanner
+        from ragzoom.retrieval.embedding_service import EmbeddingService
+
+        client = OpenAI(
+            api_key=self.operational_config.openai_api_key.get_secret_value()
+        )
+        document_store = self.store.for_document(document_id)
+        embedding_service = EmbeddingService(
+            client, document_store, self.query_config.embedding_model
+        )
+        index_cfg = IndexConfig.load()
+        budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
         retriever = Retriever(
             self.query_config,
-            doc_store,
-            api_key=self.operational_config.openai_api_key.get_secret_value(),
+            document_store,
+            embedding_service,
+            budget_planner,
         )
+        assembler = Assembler(document_store)
 
         # Retrieve relevant nodes
         retrieval_result = retriever.retrieve(
@@ -88,8 +96,7 @@ class QueryService:
             num_seeds=num_seeds,
         )
 
-        # Assemble summary with a document-scoped view for safety
-        assembler = Assembler(doc_store)
+        # Assemble summary
         summary = assembler.assemble(retrieval_result)
         token_count = assembler.get_token_count(summary)
 
@@ -124,13 +131,29 @@ class QueryService:
         # Use provided budget or config default
         budget = token_budget or self.query_config.budget_tokens
 
-        # Create a document-scoped retriever for isolation
-        doc_store: DocumentStore = self.store.for_document(document_id)
+        # Create document-scoped store and components
+        from openai import OpenAI
+
+        from ragzoom.config import IndexConfig
+        from ragzoom.retrieval.budget_planner import BudgetPlanner
+        from ragzoom.retrieval.embedding_service import EmbeddingService
+
+        client = OpenAI(
+            api_key=self.operational_config.openai_api_key.get_secret_value()
+        )
+        document_store = self.store.for_document(document_id)
+        embedding_service = EmbeddingService(
+            client, document_store, self.query_config.embedding_model
+        )
+        index_cfg = IndexConfig.load()
+        budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
         retriever = Retriever(
             self.query_config,
-            doc_store,
-            api_key=self.operational_config.openai_api_key.get_secret_value(),
+            document_store,
+            embedding_service,
+            budget_planner,
         )
+        assembler = Assembler(document_store)
 
         # Retrieve relevant nodes
         retrieval_result = await retriever.retrieve_async(
@@ -140,8 +163,7 @@ class QueryService:
             document_id=document_id,
         )
 
-        # Assemble summary with a document-scoped view for safety
-        assembler = Assembler(doc_store)
+        # Assemble summary
         summary = assembler.assemble(retrieval_result)
         token_count = assembler.get_token_count(summary)
 
@@ -175,10 +197,4 @@ class QueryService:
         if updates:
             # Update config
             self.query_config = self.query_config.replace(**updates)
-
-            # Maintain attribute for tests; create a retriever bound to no specific document
-            self.retriever = Retriever(
-                self.query_config,
-                self.store.for_document(None),
-                api_key=self.operational_config.openai_api_key,
-            )
+            # Note: Retriever is now created per-request with latest config

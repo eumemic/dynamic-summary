@@ -4,7 +4,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from ragzoom.store import StoreManager, TreeNode
+from ragzoom.document_store import DocumentStore
+from ragzoom.store import TreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -43,23 +44,20 @@ def validate(validation_fn: Callable[[], str | None], context: str = "") -> None
 
 
 def _validate_with_nodes(
-    store: StoreManager,
-    document_id: str,
+    doc_store: DocumentStore,
     validator: Callable[[list[TreeNode]], str | None],
     empty_error: str = "No nodes found for document",
 ) -> str | None:
     """Base validation helper that handles common node retrieval.
 
     Args:
-        store: Storage instance
-        document_id: Document to validate
+        doc_store: Document-scoped storage instance
         validator: Function that validates the nodes
         empty_error: Error message if no nodes found
 
     Returns:
         Error message if invalid, None if valid
     """
-    doc_store = store.for_document(document_id)
     nodes = doc_store.nodes.get_all()
     if not nodes:
         return empty_error
@@ -159,22 +157,19 @@ def validate_chunk_sizes(
 
 
 def validate_tree_structure(
-    store: StoreManager, document_id: str, original_text: str | None = None
+    doc_store: DocumentStore, original_text: str | None = None
 ) -> str | None:
     """Validate tree structure integrity.
 
     Args:
-        store: Storage instance
-        document_id: Document to validate
+        doc_store: Document-scoped storage instance
+        original_text: Optional original text for gap validation
 
     Returns:
         Error message if invalid, None if valid
     """
     # Get all nodes for document
-    with store.SessionLocal() as session:
-        from ragzoom.store import TreeNode as TreeNodeModel
-
-        nodes = session.query(TreeNodeModel).filter_by(document_id=document_id).all()
+    nodes = doc_store.nodes.get_all()
 
     if not nodes:
         return "No nodes found for document"
@@ -264,8 +259,7 @@ def validate_tree_structure(
 
 def validate_tiling(
     tiling: list[str],  # List of node IDs
-    store: StoreManager,
-    document_id: str,
+    doc_store: DocumentStore,
     original_text: str | None = None,
     budget_tokens: int | None = None,
     preloaded_nodes: dict[str, TreeNode] | None = None,
@@ -274,8 +268,7 @@ def validate_tiling(
 
     Args:
         tiling: List of node IDs in the tiling
-        store: StoreManager instance
-        document_id: Document ID
+        doc_store: Document-scoped storage instance
         original_text: Optional original text for gap validation
         budget_tokens: Optional token budget to validate against
         preloaded_nodes: Optional preloaded nodes to avoid redundant DB queries
@@ -293,7 +286,7 @@ def validate_tiling(
         if node_id in seen_nodes:
             return f"Duplicate node: {node_id}"
         seen_nodes.add(node_id)
-        node = store.nodes.get_node(node_id)
+        node = doc_store.nodes.get_node(node_id)
         if not node:
             return f"Node {node_id} not found in store"
 
@@ -333,7 +326,6 @@ def validate_tiling(
             doc_end = max(n.span_end for n in preloaded_nodes.values())
     else:
         # Only fall back to loading all nodes if no preloaded nodes provided
-        doc_store = store.for_document(document_id)
         doc_nodes = doc_store.nodes.get_all()
         if doc_nodes:
             doc_start = min(n.span_start for n in doc_nodes)
@@ -364,7 +356,7 @@ def validate_tiling(
     if budget_tokens is not None:
         total_tokens = 0
         for node_id in tiling:
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             if not node:
                 continue
 
@@ -380,7 +372,7 @@ def validate_tiling(
     return None  # Valid tiling
 
 
-def validate_tree_is_left_balanced(store: StoreManager, document_id: str) -> str | None:
+def validate_tree_is_left_balanced(doc_store: DocumentStore) -> str | None:
     """Validate that the indexed tree is left-balanced.
 
     A left-balanced tree means internal nodes have either:
@@ -422,10 +414,10 @@ def validate_tree_is_left_balanced(store: StoreManager, document_id: str) -> str
 
         return None  # Tree is left-balanced
 
-    return _validate_with_nodes(store, document_id, check_balance)
+    return _validate_with_nodes(doc_store, check_balance)
 
 
-def validate_equal_leaf_depth(store: StoreManager, document_id: str) -> str | None:
+def validate_equal_leaf_depth(doc_store: DocumentStore) -> str | None:
     """Validate that all leaf nodes are at the same (maximal) depth.
 
     This ensures consistent abstraction levels across the tree and prevents
@@ -488,7 +480,7 @@ def validate_equal_leaf_depth(store: StoreManager, document_id: str) -> str | No
 
         return None  # All leaves at same depth
 
-    return _validate_with_nodes(store, document_id, check_leaf_depths)
+    return _validate_with_nodes(doc_store, check_leaf_depths)
 
 
 async def validate_summary_faithfulness(

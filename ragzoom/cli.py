@@ -293,12 +293,13 @@ def index(
                 ),
                 "chunk sizes",
             )
+            doc_store = store.for_document(result.document_id)
             run_validate(
-                lambda: validate_tree_structure(store, result.document_id, text),
+                lambda: validate_tree_structure(doc_store, text),
                 "tree structure",
             )
             run_validate(
-                lambda: validate_equal_leaf_depth(store, result.document_id),
+                lambda: validate_equal_leaf_depth(doc_store),
                 "equal leaf depth",
             )
 
@@ -440,14 +441,30 @@ def query(
         result = None
         if debug:
             # We need the raw retrieval result for debug visualization
+            from openai import OpenAI
+
+            # Create services
+            from ragzoom.config import IndexConfig
+            from ragzoom.retrieval.budget_planner import BudgetPlanner
+            from ragzoom.retrieval.embedding_service import EmbeddingService
             from ragzoom.retrieve import Retriever
 
-            # Use a document-scoped Retriever for debug as well
-            doc_store = store.for_document(document_id)
+            client = OpenAI(
+                api_key=operational_config.openai_api_key.get_secret_value()
+            )
+            document_store = store.for_document(document_id)
+            embedding_service = EmbeddingService(
+                client, document_store, query_config.embedding_model
+            )
+            index_cfg = IndexConfig.load()
+            budget_planner = BudgetPlanner(
+                document_store, index_cfg.target_chunk_tokens
+            )
             retriever = Retriever(
                 query_config,
-                doc_store,
-                api_key=operational_config.openai_api_key.get_secret_value(),
+                document_store,
+                embedding_service,
+                budget_planner,
             )
             result = retriever.retrieve(
                 query_text,
@@ -460,10 +477,10 @@ def query(
         if validate and result and getattr(result, "tiling", None) and result.tiling:
             from ragzoom.validate import validate_tiling
 
+            doc_store = store.for_document(document_id)
             error = validate_tiling(
                 result.tiling,
-                store,
-                document_id,
+                doc_store,
                 budget_tokens=query_config.budget_tokens,
                 preloaded_nodes=result.nodes,
             )
@@ -475,8 +492,10 @@ def query(
         click.echo("SUMMARY")
         click.echo("=" * 60)
         if debug and result and getattr(result, "tiling", None) and result.tiling:
+            # Create document-scoped store for node access
+            doc_store = store.for_document(document_id)
             for idx, node_id in enumerate(result.tiling):
-                node = store.nodes.get_node(node_id)
+                node = doc_store.nodes.get(node_id)
                 if node:
                     # Node span is always the full span
                     span_start, span_end = node.span_start, node.span_end
@@ -515,10 +534,10 @@ def query(
                 click.echo("VISUALIZATION")
                 click.echo("=" * 60)
 
+                doc_store = store.for_document(document_id)
                 tree_viz = build_ascii_tree(
                     result.tiling,
-                    store,
-                    document_id,
+                    doc_store,
                     width=actual_viz_width,
                     coverage_map=result.coverage_map,
                     seed_node_ids=set(result.node_ids),
@@ -552,9 +571,17 @@ def query(
 
 @cli.command()
 @click.argument("node_id")
+@click.option(
+    "--document-id",
+    help="Document ID (optional - will be auto-detected from node)",
+)
 @click.pass_context
-def pin(ctx: click.Context, node_id: str) -> None:
-    """Pin a node to always include it."""
+def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
+    """Pin a node to always include it.
+
+    The node must belong to a document and be within the allowed pinning depth.
+    Document ID is optional - it will be auto-detected from the node if not provided.
+    """
     try:
         # Create services for this command
         operational_config = ctx.obj["operational_config"]
@@ -562,10 +589,34 @@ def pin(ctx: click.Context, node_id: str) -> None:
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
-        document_service = DocumentService(store)
 
+        # If document_id not provided, detect it from the node
+        if not document_id:
+            node = store.node_repo.get_node(node_id)
+            if not node:
+                click.echo(f"❌ Node {node_id} not found")
+                sys.exit(1)
+            document_id = node.document_id
+            if document_id:
+                click.echo(f"Auto-detected document: {document_id}")
+
+        # Use document-scoped store for consistency (though pinning affects the node globally)
+        document_store = store.for_document(document_id)
+
+        # Verify the node belongs to this document
+        node = document_store.nodes.get(node_id)
+        if not node:
+            click.echo(
+                f"❌ Node {node_id} not found"
+                + (f" in document {document_id}" if document_id else "")
+            )
+            sys.exit(1)
+
+        # Pin the node using DocumentService (this affects the node globally)
+        document_service = DocumentService(store)
         document_service.pin_node(node_id)
         click.echo(f"✅ Node {node_id} pinned successfully!")
+
     except NodeNotFoundError:
         click.echo(f"❌ Node {node_id} not found")
         sys.exit(1)

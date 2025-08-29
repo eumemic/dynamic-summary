@@ -11,7 +11,6 @@ import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.index import TreeBuilder
-from ragzoom.retrieve import Retriever
 from tests.utils import (
     create_hash_based_embedding_mock,
     create_predictable_summary_mock,
@@ -69,19 +68,29 @@ class TestDPIntegration:
         document = "\n".join(base_lines * 8)
 
         # Index the document
+        # Create document with proper metadata
+        doc_store = store.add_document(
+            document_id="doc1",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         tree_builder = TreeBuilder(
-            config.index_config, store, api_key=config.openai_api_key
+            config.index_config, doc_store, api_key=config.openai_api_key
         )
-        await tree_builder.add_document_async(
-            document, document_id="doc1", show_progress=False
-        )
+        await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve with a query
-        retriever = Retriever(
+        from tests.utils import create_retriever
+
+        retriever = create_retriever(
             config.query_config,
             store,
+            document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key.get_secret_value(),
-            tree_builder=tree_builder,
+            client=mock_client,  # Pass the mocked client
         )
         query = "First chunk Second chunk"  # Query that should match the first half
         result = await retriever.retrieve_async(query, document_id="doc1")
@@ -110,6 +119,8 @@ class TestDPIntegration:
         self, config, store, mock_openai, monkeypatch
     ):
         """Test that DP tiling doesn't include both parent and child."""
+        from tests.utils import create_retriever
+
         mock_client, mock_async_client = mock_openai
 
         # Create a simple document
@@ -119,21 +130,30 @@ class TestDPIntegration:
         small_config = config.index_config.replace(
             target_chunk_tokens=10
         )  # Very small chunks
+        # Create document-scoped store
+        # Create document with proper metadata
+        doc_store = store.add_document(
+            document_id="doc1",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         tree_builder = TreeBuilder(
             config=small_config,
-            store=store,
+            document_store=doc_store,
             api_key=config.openai_api_key.get_secret_value(),
         )
-        await tree_builder.add_document_async(
-            document, document_id="doc1", show_progress=False
-        )
+        await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve
-        retriever = Retriever(
+        retriever = create_retriever(
             config.query_config,
             store,
+            document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key.get_secret_value(),
-            tree_builder=tree_builder,
+            client=mock_client,  # Pass the mocked client
         )
         result = await retriever.retrieve_async("test document", document_id="doc1")
 
@@ -156,6 +176,8 @@ class TestDPIntegration:
     @pytest.mark.asyncio
     async def test_span_coverage(self, config, store, mock_openai, monkeypatch):
         """Test that the assembled text covers the document span correctly."""
+        from tests.utils import create_retriever
+
         mock_client, mock_async_client = mock_openai
 
         # Create a document with known content
@@ -165,21 +187,30 @@ class TestDPIntegration:
         small_config = config.index_config.replace(
             target_chunk_tokens=5
         )  # One word per chunk approximately
+        # Create document-scoped store
+        # Create document with proper metadata
+        doc_store = store.add_document(
+            document_id="doc1",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         tree_builder = TreeBuilder(
             config=small_config,
-            store=store,
+            document_store=doc_store,
             api_key=config.openai_api_key.get_secret_value(),
         )
-        await tree_builder.add_document_async(
-            document, document_id="doc1", show_progress=False
-        )
+        await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve with different queries
-        retriever = Retriever(
+        retriever = create_retriever(
             config.query_config,
             store,
+            document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key.get_secret_value(),
-            tree_builder=tree_builder,
+            client=mock_client,  # Pass the mocked client
         )
 
         # Patch retriever client for sync
@@ -203,6 +234,8 @@ class TestDPIntegration:
     @pytest.mark.asyncio
     async def test_budget_respected(self, config, store, mock_openai, monkeypatch):
         """Test that DP respects token budget."""
+        from tests.utils import create_retriever
+
         mock_client, mock_async_client = mock_openai
 
         # Create a large document
@@ -212,21 +245,30 @@ class TestDPIntegration:
         small_query_config = config.query_config.replace(budget_tokens=100)
 
         # Index
+        # Create document-scoped store
+        # Create document with proper metadata
+        doc_store = store.add_document(
+            document_id="doc1",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         tree_builder = TreeBuilder(
             config=config.index_config,
-            store=store,
+            document_store=doc_store,
             api_key=config.openai_api_key.get_secret_value(),
         )
-        await tree_builder.add_document_async(
-            document, document_id="doc1", show_progress=False
-        )
+        await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve with budget
-        retriever = Retriever(
+        retriever = create_retriever(
             small_query_config,
             store,
+            document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key.get_secret_value(),
-            tree_builder=tree_builder,
+            client=mock_client,  # Pass the mocked client
         )
         result = await retriever.retrieve_async(
             "Sentence", document_id="doc1", budget_tokens=100

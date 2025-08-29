@@ -30,17 +30,42 @@ class TestBudgetGuarantee:
             mock_chat_sync, mock_chat_async = create_predictable_summary_mock()
             mock_index.chat.completions.create = mock_chat_async
 
+            from openai import OpenAI
+
+            from ragzoom.retrieval.budget_planner import BudgetPlanner
+            from ragzoom.retrieval.embedding_service import EmbeddingService
+
+            # Create a document and get its DocumentStore
+            doc_store = store.add_document(
+                document_id="test-doc",
+                file_path=None,
+                content_hash=store.compute_content_hash(""),
+                chunk_count=0,
+                embedding_model=config.index_config.embedding_model,
+                summary_model=config.index_config.summary_model,
+            )
+
             tree_builder = TreeBuilder(
                 config.index_config,
-                store,
+                doc_store,
                 api_key=config.openai_api_key.get_secret_value(),
+            )
+
+            # Create services for Retriever
+            client = OpenAI(api_key=config.openai_api_key.get_secret_value())
+            embedding_service = EmbeddingService(
+                client, doc_store, config.query_config.embedding_model
+            )
+            budget_planner = BudgetPlanner(
+                doc_store, config.index_config.target_chunk_tokens
             )
             retriever = Retriever(
                 config.query_config,
-                store,
-                api_key=config.openai_api_key.get_secret_value(),
+                doc_store,
+                embedding_service,
+                budget_planner,
             )
-            assembler = Assembler(store)
+            assembler = Assembler(doc_store)
 
             yield (
                 config.index_config,
@@ -63,7 +88,7 @@ class TestBudgetGuarantee:
         chunk_text = "This is test content. " * 40  # ~200 tokens
         document = " ".join([chunk_text for _ in range(8)])  # 8 chunks = 3 levels
 
-        tree_builder.add_document(document, "test-doc")
+        tree_builder.add_document(document)
 
         # Test multiple queries with budget-only mode
         test_queries = [
@@ -227,7 +252,7 @@ class TestBudgetGuarantee:
 
         # Create a document
         document = "Test content. " * 200
-        tree_builder.add_document(document, "test-doc")
+        tree_builder.add_document(document)
 
         # Specify both budget and num_seeds
         budget = 800
@@ -254,7 +279,7 @@ class TestBudgetGuarantee:
         from tests.mock_store import SimpleMockStore
 
         # Mock OpenAI clients
-        with (patch("ragzoom.retrieve.OpenAI") as mock_retrieve_client,):
+        with (patch("openai.OpenAI") as mock_openai_class,):
 
             # Setup sync mock for retrieval
             mock_embeddings = Mock()
@@ -262,11 +287,15 @@ class TestBudgetGuarantee:
                 return_value=Mock(data=[Mock(embedding=[0.5] * 1536)])
             )
 
-            instance_retrieve = Mock()
-            instance_retrieve.embeddings = mock_embeddings
-            mock_retrieve_client.return_value = instance_retrieve
+            instance_openai = Mock()
+            instance_openai.embeddings = mock_embeddings
+            mock_openai_class.return_value = instance_openai
 
             # No OpenAI setup needed for assembler
+            from openai import OpenAI
+
+            from ragzoom.retrieval.budget_planner import BudgetPlanner
+            from ragzoom.retrieval.embedding_service import EmbeddingService
 
             index_config = IndexConfig.load(target_chunk_tokens=200)
             query_config = QueryConfig(budget_tokens=1000)
@@ -274,12 +303,24 @@ class TestBudgetGuarantee:
             store = SimpleMockStore(
                 config=(index_config, query_config, operational_config)
             )
+
+            # Create services for Retriever
+            client = OpenAI(
+                api_key=operational_config.openai_api_key.get_secret_value()
+            )
+            embedding_service = EmbeddingService(
+                client, store, query_config.embedding_model
+            )
+            budget_planner = BudgetPlanner(store, index_config.target_chunk_tokens)
+
+            doc_store = store.for_document(None)
             retriever = Retriever(
                 query_config,
-                store,
-                api_key=operational_config.openai_api_key,
+                doc_store,
+                embedding_service,
+                budget_planner,
             )
-            assembler = Assembler(store)
+            assembler = Assembler(doc_store)
 
             # Create a simple tree structure
             # Root
@@ -377,7 +418,8 @@ class TestBudgetValidation:
         tiling = ["node1", "node2"]  # ~20 + ~30 = ~50 tokens
 
         # Validate with budget that's too small
-        error = validate_tiling(tiling, store, "test-doc", budget_tokens=40)
+        doc_store = store.for_document("test-doc")
+        error = validate_tiling(tiling, doc_store, budget_tokens=40)
 
         assert error is not None
         assert "exceeds budget" in error
@@ -407,7 +449,8 @@ class TestBudgetValidation:
         tiling = ["node1"]  # ~10 tokens
 
         # Validate with sufficient budget
-        error = validate_tiling(tiling, store, "test-doc", budget_tokens=100)
+        doc_store = store.for_document("test-doc")
+        error = validate_tiling(tiling, doc_store, budget_tokens=100)
 
         assert error is None
 
@@ -456,10 +499,12 @@ class TestBudgetValidation:
         tiling = ["left_child", "right_child"]  # ~20 tokens total
 
         # Should pass with budget of 50
-        error = validate_tiling(tiling, store, "test-doc", budget_tokens=50)
+        doc_store = store.for_document("test-doc")
+        error = validate_tiling(tiling, doc_store, budget_tokens=50)
         assert error is None
 
         # Should fail with budget of 15
-        error = validate_tiling(tiling, store, "test-doc", budget_tokens=15)
+        doc_store = store.for_document("test-doc")
+        error = validate_tiling(tiling, doc_store, budget_tokens=15)
         assert error is not None
         assert "exceeds budget" in error
