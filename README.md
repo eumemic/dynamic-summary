@@ -26,7 +26,7 @@ Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system tha
 - **Docker** (for PostgreSQL database)
 - **OpenAI API key**
 
-### Quick Setup 
+### Quick Setup
 
 ```bash
 # Clone the repository
