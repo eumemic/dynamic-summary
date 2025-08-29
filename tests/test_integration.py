@@ -23,8 +23,8 @@ class TestIntegration:
     @pytest.fixture
     def mock_openai(self):
         """Mock OpenAI API calls using centralized utilities."""
-        with mock_openai_context():
-            yield
+        with mock_openai_context() as mocks:
+            yield mocks
 
     @pytest.fixture
     def temp_system(self, request, mock_openai, base_config):
@@ -57,10 +57,14 @@ class TestIntegration:
         tree_builder = TreeBuilder(
             index_config, doc_store, api_key=operational_config.openai_api_key
         )
+
+        # Use the mocked OpenAI client for retriever
+        mock_index_client, mock_retrieve_client, mock_assemble_client = mock_openai
         retriever = create_retriever(
             query_config,
             doc_store,  # Pass DocumentStore, not StoreManager
             api_key=operational_config.openai_api_key.get_secret_value(),
+            client=mock_retrieve_client,  # Pass the mocked client
         )
         assembler = Assembler(doc_store)  # Use same DocumentStore
 
