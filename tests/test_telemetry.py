@@ -276,7 +276,6 @@ class TestTelemetryIntegration:
             # Index document (file_path parameter removed in refactoring)
             _ = await builder._add_document_impl(
                 test_text,
-                document_id="telemetry-test",
                 show_progress=False,
                 reporter=reporter,
             )

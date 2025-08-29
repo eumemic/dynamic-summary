@@ -24,7 +24,7 @@ class TestTransactionContext:
 
         with store.transaction() as session:
             # Add document
-            doc = store.add_document(
+            doc_store = store.add_document(
                 document_id=doc_id,
                 file_path="test.txt",
                 content_hash="test-hash",
@@ -38,7 +38,7 @@ class TestTransactionContext:
             nodes = store.nodes.add_nodes_batch(nodes_data, session=session)
 
             # Both should be available within the transaction
-            assert doc.id == doc_id
+            assert doc_store.document_id == doc_id
             assert len(nodes) == 1
             assert nodes[0].id == "node-1"
 
@@ -161,7 +161,7 @@ class TestBackwardCompatibility:
 
     def test_add_document_without_session(self, store):
         """Test add_document works without session parameter."""
-        doc = store.add_document(
+        doc_store = store.add_document(
             document_id="test-doc-no-session",
             file_path="test.txt",
             content_hash="test-hash",
@@ -170,7 +170,7 @@ class TestBackwardCompatibility:
             summary_model="gpt-4o-mini",
         )
 
-        assert doc.id == "test-doc-no-session"
+        assert doc_store.document_id == "test-doc-no-session"
 
         # Verify it was persisted
         persisted_doc = store.get_document_by_id("test-doc-no-session")

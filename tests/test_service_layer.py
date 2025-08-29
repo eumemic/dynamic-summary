@@ -153,7 +153,7 @@ class TestIndexingService:
         assert result.telemetry is None
 
         mock_tree_builder.add_document_async.assert_called_once_with(
-            "test text", document_id="test-doc", show_progress=True
+            "test text", show_progress=True
         )
 
 

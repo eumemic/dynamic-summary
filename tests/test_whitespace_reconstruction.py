@@ -111,7 +111,7 @@ class TestWhitespaceReconstruction:
         test_text = "Paragraph one with content.\n\nParagraph two with more content.\n\n\nParagraph three after gaps."
 
         # Index the document
-        doc_id = tree_builder.add_document(test_text, document_id="test-doc")
+        doc_id = tree_builder.add_document(test_text)
 
         # Verify all nodes have valid spans
         with store.SessionLocal() as session:
@@ -188,7 +188,7 @@ class TestWhitespaceReconstruction:
             )
 
             # This should not raise any validation errors
-            doc_id = tree_builder.add_document(test_text, document_id="test-doc")
+            doc_id = tree_builder.add_document(test_text)
 
             # Verify document was indexed successfully
             assert doc_id == "test-doc"

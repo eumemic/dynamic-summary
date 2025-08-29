@@ -50,18 +50,32 @@ class TestDocumentIsolation:
 
         # Index with explicit document IDs
         # Create TreeBuilder for first document
-        doc1_store = store.for_document("dragons.txt")
+        doc1_store = store.add_document(
+            document_id="dragons.txt",
+            file_path=None,
+            content_hash=store.compute_content_hash(doc1_text),
+            chunk_count=0,
+            embedding_model=config.index_config.embedding_model,
+            summary_model=config.index_config.summary_model,
+        )
         tree_builder1 = TreeBuilder(
             config.index_config, doc1_store, api_key=config.openai_api_key
         )
-        doc1_id = tree_builder1.add_document(doc1_text, document_id="dragons.txt")
+        doc1_id = tree_builder1.add_document(doc1_text)
 
         # Create TreeBuilder for second document
-        doc2_store = store.for_document("wizards.txt")
+        doc2_store = store.add_document(
+            document_id="wizards.txt",
+            file_path=None,
+            content_hash=store.compute_content_hash(doc2_text),
+            chunk_count=0,
+            embedding_model=config.index_config.embedding_model,
+            summary_model=config.index_config.summary_model,
+        )
         tree_builder2 = TreeBuilder(
             config.index_config, doc2_store, api_key=config.openai_api_key
         )
-        doc2_id = tree_builder2.add_document(doc2_text, document_id="wizards.txt")
+        doc2_id = tree_builder2.add_document(doc2_text)
 
         assert doc1_id == "dragons.txt"
         assert doc2_id == "wizards.txt"
@@ -137,11 +151,18 @@ class TestDocumentIsolation:
         # Index with file_path but no explicit document_id
         text = "Test content for filename ID"
         # Create TreeBuilder with document store for test_file.txt
-        doc_store = store.for_document("test_file.txt")
+        doc_store = store.add_document(
+            document_id="test_file.txt",
+            file_path="test_file.txt",
+            content_hash=store.compute_content_hash(text),
+            chunk_count=0,
+            embedding_model=config.index_config.embedding_model,
+            summary_model=config.index_config.summary_model,
+        )
         tree_builder = TreeBuilder(
             config.index_config, doc_store, api_key=config.openai_api_key
         )
-        doc_id = tree_builder.add_document(text, document_id="test_file.txt")
+        doc_id = tree_builder.add_document(text)
 
         # Should use filename as document_id
         assert doc_id == "test_file.txt"
@@ -169,17 +190,31 @@ class TestDocumentIsolation:
         config, store, embedding_service, budget_planner = setup
 
         # Index multiple documents
-        doc1_store = store.for_document("doc1")
+        doc1_store = store.add_document(
+            document_id="doc1",
+            file_path=None,
+            content_hash=store.compute_content_hash("Dragons are fierce"),
+            chunk_count=0,
+            embedding_model=config.index_config.embedding_model,
+            summary_model=config.index_config.summary_model,
+        )
         tree_builder1 = TreeBuilder(
             config.index_config, doc1_store, api_key=config.openai_api_key
         )
-        tree_builder1.add_document("Dragons are fierce", document_id="doc1")
+        tree_builder1.add_document("Dragons are fierce")
 
-        doc2_store = store.for_document("doc2")
+        doc2_store = store.add_document(
+            document_id="doc2",
+            file_path=None,
+            content_hash=store.compute_content_hash("Wizards are wise"),
+            chunk_count=0,
+            embedding_model=config.index_config.embedding_model,
+            summary_model=config.index_config.summary_model,
+        )
         tree_builder2 = TreeBuilder(
             config.index_config, doc2_store, api_key=config.openai_api_key
         )
-        tree_builder2.add_document("Wizards are wise", document_id="doc2")
+        tree_builder2.add_document("Wizards are wise")
 
         # Create retriever without document filter (None)
         doc_store = store.for_document(None)

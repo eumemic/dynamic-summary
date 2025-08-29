@@ -35,8 +35,15 @@ class TestBudgetGuarantee:
             from ragzoom.retrieval.budget_planner import BudgetPlanner
             from ragzoom.retrieval.embedding_service import EmbeddingService
 
-            # Note: Using store.for_document(None) for tests that don't specify document_id
-            doc_store = store.for_document(None)
+            # Create a document and get its DocumentStore
+            doc_store = store.add_document(
+                document_id="test-doc",
+                file_path=None,
+                content_hash=store.compute_content_hash(""),
+                chunk_count=0,
+                embedding_model=config.index_config.embedding_model,
+                summary_model=config.index_config.summary_model,
+            )
 
             tree_builder = TreeBuilder(
                 config.index_config,
@@ -81,7 +88,7 @@ class TestBudgetGuarantee:
         chunk_text = "This is test content. " * 40  # ~200 tokens
         document = " ".join([chunk_text for _ in range(8)])  # 8 chunks = 3 levels
 
-        tree_builder.add_document(document, "test-doc")
+        tree_builder.add_document(document)
 
         # Test multiple queries with budget-only mode
         test_queries = [
@@ -245,7 +252,7 @@ class TestBudgetGuarantee:
 
         # Create a document
         document = "Test content. " * 200
-        tree_builder.add_document(document, "test-doc")
+        tree_builder.add_document(document)
 
         # Specify both budget and num_seeds
         budget = 800

@@ -250,9 +250,9 @@ class StoreManager:
         summary_model: str,
         *,
         session=None,
-    ) -> Document:
-        """Add a document record."""
-        return self.doc_repo.add_document(
+    ) -> DocumentStore:
+        """Add a document record and return a DocumentStore for it."""
+        self.doc_repo.add_document(
             document_id,
             file_path,
             content_hash,
@@ -261,6 +261,7 @@ class StoreManager:
             summary_model,
             session=session,
         )
+        return self.for_document(document_id)
 
     def clear_document(self, document_id: str, *, session=None) -> int:
         """Clear all data for a document, including orphaned nodes and document record."""

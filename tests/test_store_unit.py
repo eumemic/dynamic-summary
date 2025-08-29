@@ -63,7 +63,7 @@ class TestStoreMock:
     def test_document_operations(self, mock_store):
         """Test document operations."""
         # Create document directly
-        doc = mock_store.add_document(
+        doc_store = mock_store.add_document(
             document_id="test-doc",
             file_path="/test/file.txt",
             content_hash="abc123",
@@ -72,14 +72,13 @@ class TestStoreMock:
             summary_model="gpt-4o-mini",
         )
 
-        assert doc.id == "test-doc"
-        assert doc.file_path == "/test/file.txt"
-        assert doc.chunk_count == 3
+        assert doc_store.document_id == "test-doc"
 
-        # Test retrieval if method exists
-        if hasattr(mock_store, "get_document_by_id"):
-            retrieved = mock_store.get_document_by_id("test-doc")
-            assert retrieved.id == "test-doc"
+        # Verify the document was created with correct properties
+        retrieved = mock_store.get_document_by_id("test-doc")
+        assert retrieved.id == "test-doc"
+        assert retrieved.file_path == "/test/file.txt"
+        assert retrieved.chunk_count == 3
 
     def test_interface_compliance(self, mock_store):
         """Test that mock store implements the core interface."""

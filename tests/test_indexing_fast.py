@@ -31,14 +31,19 @@ class TestIndexingFast:
         mock_client = mock_openai_async_client
 
         # Create document-scoped store and tree builder
-        doc_store = store.for_document("test-doc")
+        doc_store = store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_client
 
         # Index the document
-        asyncio.run(
-            tree_builder.add_document_async(test_document, document_id="test-doc")
-        )
+        asyncio.run(tree_builder.add_document_async(test_document))
 
         # Verify: Check that the entire document was indexed
         # Get all leaf nodes and check their spans
@@ -106,14 +111,19 @@ class TestIndexingFast:
         mock_client = mock_openai_async_client
 
         # Create document-scoped store and tree builder
-        doc_store = store.for_document("test-doc")
+        doc_store = store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         tree_builder = TreeBuilder(config, doc_store, max_concurrent=1)
         tree_builder.llm_service.client = mock_client
 
         # Index the document
-        asyncio.run(
-            tree_builder.add_document_async(test_document, document_id="test-doc")
-        )
+        asyncio.run(tree_builder.add_document_async(test_document))
 
         # Check that we indexed the whole thing
         leaf_nodes = store.get_leaf_nodes()
@@ -164,14 +174,19 @@ class TestIndexingFast:
         mock_client.embeddings.create = mock_embeddings_create
 
         # Create document-scoped store and tree builder
-        doc_store = store.for_document("test-doc")
+        doc_store = store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_client
 
         # Index the document
-        asyncio.run(
-            tree_builder.add_document_async(test_document, document_id="test-doc")
-        )
+        asyncio.run(tree_builder.add_document_async(test_document))
 
         # Check results
         leaf_nodes = store.get_leaf_nodes()

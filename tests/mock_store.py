@@ -753,8 +753,8 @@ class SimpleMockStore(StoreInterface):
         summary_model: str,
         *,
         session=None,
-    ) -> Document:
-        """Mock add document."""
+    ):
+        """Mock add document and return a DocumentStore for it."""
         from datetime import datetime
 
         doc = SimpleNamespace(
@@ -768,7 +768,7 @@ class SimpleMockStore(StoreInterface):
             indexed_at=datetime.now(),  # Add missing attribute
         )
         self._documents[document_id] = doc
-        return doc
+        return self.for_document(document_id)
 
     def update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference and invalidate cache.

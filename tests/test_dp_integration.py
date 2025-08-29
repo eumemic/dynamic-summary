@@ -69,7 +69,7 @@ class TestDPIntegration:
 
         # Index the document
         # Create document with proper metadata
-        store.add_document(
+        doc_store = store.add_document(
             document_id="doc1",
             file_path=None,
             content_hash="test-hash",
@@ -77,13 +77,10 @@ class TestDPIntegration:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        doc_store = store.for_document("doc1")
         tree_builder = TreeBuilder(
             config.index_config, doc_store, api_key=config.openai_api_key
         )
-        await tree_builder.add_document_async(
-            document, document_id="doc1", show_progress=False
-        )
+        await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve with a query
         from tests.utils import create_retriever
@@ -135,7 +132,7 @@ class TestDPIntegration:
         )  # Very small chunks
         # Create document-scoped store
         # Create document with proper metadata
-        store.add_document(
+        doc_store = store.add_document(
             document_id="doc1",
             file_path=None,
             content_hash="test-hash",
@@ -143,15 +140,12 @@ class TestDPIntegration:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        doc_store = store.for_document("doc1")
         tree_builder = TreeBuilder(
             config=small_config,
             document_store=doc_store,
             api_key=config.openai_api_key.get_secret_value(),
         )
-        await tree_builder.add_document_async(
-            document, document_id="doc1", show_progress=False
-        )
+        await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve
         retriever = create_retriever(
@@ -195,7 +189,7 @@ class TestDPIntegration:
         )  # One word per chunk approximately
         # Create document-scoped store
         # Create document with proper metadata
-        store.add_document(
+        doc_store = store.add_document(
             document_id="doc1",
             file_path=None,
             content_hash="test-hash",
@@ -203,15 +197,12 @@ class TestDPIntegration:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        doc_store = store.for_document("doc1")
         tree_builder = TreeBuilder(
             config=small_config,
             document_store=doc_store,
             api_key=config.openai_api_key.get_secret_value(),
         )
-        await tree_builder.add_document_async(
-            document, document_id="doc1", show_progress=False
-        )
+        await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve with different queries
         retriever = create_retriever(
@@ -256,7 +247,7 @@ class TestDPIntegration:
         # Index
         # Create document-scoped store
         # Create document with proper metadata
-        store.add_document(
+        doc_store = store.add_document(
             document_id="doc1",
             file_path=None,
             content_hash="test-hash",
@@ -264,15 +255,12 @@ class TestDPIntegration:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        doc_store = store.for_document("doc1")
         tree_builder = TreeBuilder(
             config=config.index_config,
             document_store=doc_store,
             api_key=config.openai_api_key.get_secret_value(),
         )
-        await tree_builder.add_document_async(
-            document, document_id="doc1", show_progress=False
-        )
+        await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve with budget
         retriever = create_retriever(

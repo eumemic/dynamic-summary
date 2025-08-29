@@ -263,7 +263,14 @@ class TestIndexingCreatesValidTrees:
         )
         store = SimpleMockStore(config=(index_config, query_config, operational_config))
         # Create document-scoped store for tree builder
-        doc_store = store.for_document("test-doc")
+        doc_store = store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash=store.compute_content_hash(""),
+            chunk_count=0,
+            embedding_model=index_config.embedding_model,
+            summary_model=index_config.summary_model,
+        )
         tree_builder = TreeBuilder(
             index_config,
             doc_store,
@@ -326,9 +333,7 @@ class TestIndexingCreatesValidTrees:
         #   L1  L2 L3  L4
 
         # Index the document
-        doc_id = tree_builder.add_document(
-            text, document_id="test-even", show_progress=False
-        )
+        doc_id = tree_builder.add_document(text, show_progress=False)
 
         # Verify it's left-balanced
         doc_store = store.for_document(doc_id)
@@ -360,9 +365,7 @@ class TestIndexingCreatesValidTrees:
         # P2 has only a left child (L3)
 
         # Index the document
-        doc_id = tree_builder.add_document(
-            text, document_id="test-odd", show_progress=False
-        )
+        doc_id = tree_builder.add_document(text, show_progress=False)
 
         # Verify it's left-balanced
         doc_store = store.for_document(doc_id)
@@ -386,9 +389,7 @@ class TestIndexingCreatesValidTrees:
         for i in range(7):
             text += f"Chapter {i+1} content here. " * 10  # ~40 tokens each
 
-        doc_id = tree_builder.add_document(
-            text, document_id="test-large", show_progress=False
-        )
+        doc_id = tree_builder.add_document(text, show_progress=False)
 
         # Verify it's left-balanced
         doc_store = store.for_document(doc_id)
@@ -444,9 +445,7 @@ class TestIndexingCreatesValidTrees:
         #   L1 L2 L3 L4
 
         # Index the document
-        doc_id = tree_builder.add_document(
-            text, document_id="test-2n-plus-1", show_progress=False
-        )
+        doc_id = tree_builder.add_document(text, show_progress=False)
 
         # Verify it's left-balanced
         doc_store = store.for_document(doc_id)

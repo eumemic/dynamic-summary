@@ -41,8 +41,15 @@ class TestFollowingNeighbor:
             }
             nodes_data.append(node_data)
 
-        # Add nodes to store
-        doc_store = store.for_document("test-doc")
+        # Create document with proper metadata and get document store
+        doc_store = store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         created_nodes = doc_store.nodes.add_batch(nodes_data)
 
         # Verify bidirectional consistency
@@ -86,18 +93,22 @@ class TestFollowingNeighbor:
 
         # Create tree builder with small chunk size to ensure multiple chunks
         config = base_config.index_config.replace(target_chunk_tokens=5)
-        # Create document-scoped store
-        doc_store = store.for_document("neighbor-test")
+        # Create document with proper metadata
+        doc_store = store.add_document(
+            document_id="neighbor-test",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         tree_builder = TreeBuilder(config, doc_store)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
-        doc_id = asyncio.run(
-            tree_builder.add_document_async(test_doc, document_id="neighbor-test")
-        )
+        asyncio.run(tree_builder.add_document_async(test_doc))
 
         # Get all leaf nodes (height=0)
-        doc_store = store.for_document(doc_id)
         all_nodes = doc_store.nodes.get_all()
         leaf_nodes = [node for node in all_nodes if node.height == 0]
 
@@ -147,20 +158,22 @@ class TestFollowingNeighbor:
 
         # Create tree builder with small chunk size
         config = base_config.index_config.replace(target_chunk_tokens=3)
-        # Create document-scoped store
-        doc_store = store.for_document("parent-neighbor-test")
+        # Create document with proper metadata
+        doc_store = store.add_document(
+            document_id="parent-neighbor-test",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
         tree_builder = TreeBuilder(config, doc_store)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
-        doc_id = asyncio.run(
-            tree_builder.add_document_async(
-                test_doc, document_id="parent-neighbor-test"
-            )
-        )
+        asyncio.run(tree_builder.add_document_async(test_doc))
 
         # Get all nodes and group by height
-        doc_store = store.for_document(doc_id)
         all_nodes = doc_store.nodes.get_all()
 
         nodes_by_height = {}
