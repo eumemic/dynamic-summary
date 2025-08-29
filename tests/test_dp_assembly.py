@@ -9,7 +9,6 @@ import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
-from ragzoom.retrieve import Retriever
 
 
 class TestDPAssembly:
@@ -252,10 +251,12 @@ class TestDPAssembly:
         )
 
         # Use the store fixture instead of SimpleMockStore for consistency
-        retriever = Retriever(
+        from tests.utils import create_retriever
+
+        retriever = create_retriever(
             query_config=query_config,
             store=store,
-            api_key=operational_config.openai_api_key,
+            api_key=operational_config.openai_api_key.get_secret_value(),
         )
         dp_generator = retriever.dp_generator
 

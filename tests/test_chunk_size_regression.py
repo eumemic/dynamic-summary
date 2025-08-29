@@ -141,10 +141,19 @@ class TestChunkSizeRegression:
         with patch(
             "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
         ):
-            builder = TreeBuilder(
-                index_config, store, api_key=operational_config.openai_api_key
+            # TreeBuilder needs a DocumentStore, not StoreManager
+            doc_store = store.add_document(
+                document_id="test-doc",
+                file_path=None,
+                content_hash=store.compute_content_hash(test_doc),
+                chunk_count=0,
+                embedding_model=index_config.embedding_model,
+                summary_model=index_config.summary_model,
             )
-            await builder.add_document_async(test_doc, document_id="test-doc")
+            builder = TreeBuilder(
+                index_config, doc_store, api_key=operational_config.openai_api_key
+            )
+            await builder.add_document_async(test_doc)
 
         # Check leaf node sizes
         leaf_nodes = []

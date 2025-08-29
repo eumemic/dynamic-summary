@@ -9,7 +9,6 @@ import pytest
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.index import TreeBuilder
-from ragzoom.retrieve import Retriever
 from tests.utils import mock_openai_context
 
 
@@ -24,8 +23,8 @@ class TestIntegration:
     @pytest.fixture
     def mock_openai(self):
         """Mock OpenAI API calls using centralized utilities."""
-        with mock_openai_context():
-            yield
+        with mock_openai_context() as mocks:
+            yield mocks
 
     @pytest.fixture
     def temp_system(self, request, mock_openai, base_config):
@@ -50,13 +49,29 @@ class TestIntegration:
             database_url=real_store.config.database_url,  # Use the store's database URL
         )
 
-        tree_builder = TreeBuilder(
-            index_config, real_store, api_key=operational_config.openai_api_key
-        )
-        retriever = Retriever(
-            query_config, real_store, api_key=operational_config.openai_api_key
-        )
-        assembler = Assembler(real_store)
+        # Don't create TreeBuilder here - tests will create their own
+        # after creating documents
+
+        # Use the mocked OpenAI client
+        mock_index_client, mock_retrieve_client, mock_assemble_client = mock_openai
+
+        # Helper function to create TreeBuilder for a specific document
+        def create_tree_builder(document_id):
+            # Create document in store first
+            real_store.add_document(
+                document_id=document_id,
+                file_path=None,
+                content_hash=real_store.compute_content_hash(""),
+                chunk_count=0,
+                embedding_model=index_config.embedding_model,
+                summary_model=index_config.summary_model,
+            )
+            # Create DocumentStore for that document
+            doc_store = real_store.for_document(document_id)
+            # Create TreeBuilder with that DocumentStore
+            return TreeBuilder(
+                index_config, doc_store, api_key=operational_config.openai_api_key
+            )
 
         # Create a config wrapper for backward compatibility
         from tests.conftest import BackwardCompatibilityConfig
@@ -65,7 +80,7 @@ class TestIntegration:
             index_config, query_config, operational_config
         )
 
-        yield config, real_store, tree_builder, retriever, assembler
+        yield config, real_store, create_tree_builder, mock_retrieve_client
 
         # Cleanup PostgreSQL store and unique database
         if hasattr(real_store, "_test_db_cleanup"):
@@ -94,11 +109,14 @@ class TestIntegration:
 
     def test_index_and_query(self, temp_system):
         """Test indexing a document and querying it."""
-        config, store, tree_builder, retriever, assembler = temp_system
+        config, store, create_tree_builder, mock_client = temp_system
+
+        # Create TreeBuilder for this specific document
+        tree_builder = create_tree_builder("test-doc")
 
         # Index a simple document
         text = "The quick brown fox jumps over the lazy dog. " * 20
-        doc_id = tree_builder.add_document(text, "test-doc")
+        doc_id = tree_builder.add_document(text)
 
         assert doc_id == "test-doc"
 
@@ -109,6 +127,16 @@ class TestIntegration:
 
         root = doc_store.tree.get_root()
         assert root is not None
+
+        # Create retriever and assembler for this document
+        from tests.utils import create_retriever
+
+        retriever = create_retriever(
+            config.query_config,
+            doc_store,
+            client=mock_client,
+        )
+        assembler = Assembler(doc_store)
 
         # Query the system
         query = "Tell me about the fox"
@@ -125,19 +153,21 @@ class TestIntegration:
 
     def test_multiple_documents(self, temp_system):
         """Test indexing multiple documents."""
-        config, store, tree_builder, retriever, assembler = temp_system
+        config, store, create_tree_builder, mock_client = temp_system
 
-        # Index initial document
+        # Create TreeBuilder and index first document
         text1 = "First document content. " * 10
-        tree_builder.add_document(text1, "doc1")
+        tree_builder1 = create_tree_builder("doc1")
+        tree_builder1.add_document(text1)
 
         # Get initial leaf count from doc1
         doc1_store = store.for_document("doc1")
         initial_leaf_count = len(doc1_store.nodes.get_leaves())
 
-        # Index second document
+        # Create TreeBuilder and index second document
         text2 = "Second document content. " * 10
-        tree_builder.add_document(text2, "doc2")
+        tree_builder2 = create_tree_builder("doc2")
+        tree_builder2.add_document(text2)
 
         # Check new leaves were added by checking both documents
         doc2_store = store.for_document("doc2")
@@ -154,19 +184,30 @@ class TestIntegration:
 
     def test_mmr_diversity(self, temp_system):
         """Test that MMR returns diverse results."""
-        config, store, tree_builder, retriever, assembler = temp_system
+        config, store, create_tree_builder, mock_client = temp_system
 
-        # Create documents with different topics
-        texts = [
-            "The cat sat on the mat. Cats are feline animals.",
-            "Dogs are loyal pets. The dog barked loudly.",
-            "Birds can fly. Eagles are large birds.",
-            "Fish swim in water. Salmon swim upstream.",
-            "Cats and dogs are common pets. Many people love cats.",
-        ]
+        # Create a single document with different topics
+        combined_text = """
+        The cat sat on the mat. Cats are feline animals.
+        Dogs are loyal pets. The dog barked loudly.
+        Birds can fly. Eagles are large birds.
+        Fish swim in water. Salmon swim upstream.
+        Cats and dogs are common pets. Many people love cats.
+        """
 
-        for i, text in enumerate(texts):
-            tree_builder.add_document(text, f"doc-{i}")
+        # Create TreeBuilder and index the document
+        tree_builder = create_tree_builder("doc-diverse")
+        tree_builder.add_document(combined_text)
+
+        # Create retriever for this document
+        from tests.utils import create_retriever
+
+        doc_store = store.for_document("doc-diverse")
+        retriever = create_retriever(
+            config.query_config,
+            doc_store,
+            client=mock_client,
+        )
 
         # Query about cats (should get diverse cat-related content)
         result = retriever.retrieve("Tell me about cats", num_seeds=3)
@@ -177,11 +218,23 @@ class TestIntegration:
 
     def test_token_budget_enforcement(self, temp_system):
         """Test that assembly respects token budget."""
-        config, store, tree_builder, retriever, assembler = temp_system
+        config, store, create_tree_builder, mock_client = temp_system
 
-        # Create a large document
+        # Create TreeBuilder and index a large document
         text = "This is a test sentence. " * 200
+        tree_builder = create_tree_builder("budget-test")
         tree_builder.add_document(text)
+
+        # Create retriever for this document
+        from tests.utils import create_retriever
+
+        doc_store = store.for_document("budget-test")
+        retriever = create_retriever(
+            config.query_config,
+            doc_store,
+            client=mock_client,
+        )
+        assembler = Assembler(doc_store)
 
         # Query with small budget
         result = retriever.retrieve("test sentence", budget_tokens=100)
@@ -194,19 +247,30 @@ class TestIntegration:
 
     def test_node_pinning(self, temp_system):
         """Test that pinned nodes are always included."""
-        config, store, tree_builder, retriever, assembler = temp_system
+        config, store, create_tree_builder, mock_client = temp_system
 
-        # Create documents
-        texts = ["Important content.", "Other content.", "More content."]
-        for i, text in enumerate(texts):
-            tree_builder.add_document(text * 10, f"doc-{i}")
+        # Create a single document with multiple content sections
+        combined_text = (
+            "Important content. " * 10 + "Other content. " * 10 + "More content. " * 10
+        )
+        tree_builder = create_tree_builder("doc-pinning")
+        tree_builder.add_document(combined_text)
 
-        # Pin a specific node from the first document
-        doc0_store = store.for_document("doc-0")
-        all_nodes = doc0_store.nodes.get_leaves()
+        # Pin a specific node from the document
+        doc_store = store.for_document("doc-pinning")
+        all_nodes = doc_store.nodes.get_leaves()
         if all_nodes:
             important_node = all_nodes[0]
             store.pin_node(important_node.id)
+
+            # Create retriever for this document
+            from tests.utils import create_retriever
+
+            retriever = create_retriever(
+                config.query_config,
+                doc_store,
+                client=mock_client,
+            )
 
             # Query for unrelated content
             result = retriever.retrieve("unrelated query")

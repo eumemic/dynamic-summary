@@ -18,7 +18,7 @@ class ScoringService:
         """Initialize scoring service.
 
         Args:
-            store: Store instance for node retrieval
+            store: DocumentStore instance for node retrieval
         """
         self.store = store
 

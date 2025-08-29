@@ -109,10 +109,19 @@ class TestIndexingService:
         # Mock dependencies
         mock_store = Mock()
         mock_store.clear_document.return_value = 0
+        mock_store.get_document_by_path.return_value = None
+        mock_store.compute_content_hash.return_value = "hash123"
+        # Mock for_document to return a DocumentStore
+        mock_doc_store = Mock()
+        mock_doc_store.set_metadata = Mock()
+        mock_store.for_document.return_value = mock_doc_store
 
         # Mock TreeBuilder
         mock_tree_builder = Mock()
-        mock_tree_builder.add_document.return_value = "doc-123"
+        # Since sync now delegates to async, mock the async method
+        from unittest.mock import AsyncMock
+
+        mock_tree_builder.add_document_async = AsyncMock(return_value="doc-123")
         mock_tree_builder_class.return_value = mock_tree_builder
 
         # Mock database session for stats
@@ -143,8 +152,8 @@ class TestIndexingService:
         assert result.tree_depth == 2
         assert result.telemetry is None
 
-        mock_tree_builder.add_document.assert_called_once_with(
-            "test text", document_id="test-doc", file_path=None, show_progress=True
+        mock_tree_builder.add_document_async.assert_called_once_with(
+            "test text", show_progress=True
         )
 
 
@@ -218,5 +227,5 @@ class TestQueryService:
         assert service.query_config.budget_tokens == 2000
         assert service.query_config.mmr_lambda == 0.8
 
-        # Verify new retriever was created
-        assert service.retriever == mock_new_retriever
+        # Note: Retriever is now created per-request with DocumentStore
+        # so we don't check for service.retriever attribute

@@ -116,17 +116,13 @@ class TestTreeStructure:
             text="test",
         )
 
-        # Mock the query
-        mock_session = MagicMock()
-        mock_query = MagicMock()
-        mock_query.filter_by.return_value.all.return_value = [node]
-        mock_session.query.return_value = mock_query
-        store.SessionLocal.return_value.__enter__.return_value = mock_session
+        # Create a mock DocumentStore
+        doc_store = MagicMock()
+        doc_store.nodes.get_all.return_value = [node]
+        store.for_document.return_value = doc_store
 
-        # Mock is_leaf_node to return True for node without children
-        store.is_leaf_node.return_value = True
-
-        error = validate_tree_structure(store, "doc1")
+        doc_store = store.for_document("doc1")
+        error = validate_tree_structure(doc_store)
         assert error is not None
         assert "validation failed" in error
 
@@ -156,24 +152,21 @@ class TestTreeStructure:
             span_end=100,
         )
 
-        # Mock the query
-        mock_session = MagicMock()
-        mock_query = MagicMock()
-        mock_query.filter_by.return_value.all.return_value = [parent]
-        mock_session.query.return_value = mock_query
-        store.SessionLocal.return_value.__enter__.return_value = mock_session
+        # Add missing fields to children
+        child1.text = "Some text"
+        child1.left_child_id = None
+        child1.right_child_id = None
 
-        # Mock get_node to return children
-        def get_node_side_effect(node_id):
-            if node_id == "child1":
-                return child1
-            elif node_id == "child2":
-                return child2
-            return None
+        child2.text = "Some text"
+        child2.left_child_id = None
+        child2.right_child_id = None
 
-        store.get_node.side_effect = get_node_side_effect
-        store.is_leaf_node.return_value = False
+        # Create a mock DocumentStore
+        doc_store = MagicMock()
+        doc_store.nodes.get_all.return_value = [parent, child1, child2]
+        store.for_document.return_value = doc_store
 
-        error = validate_tree_structure(store, "doc1")
+        doc_store = store.for_document("doc1")
+        error = validate_tree_structure(doc_store)
         assert error is not None
         assert "validation failed" in error

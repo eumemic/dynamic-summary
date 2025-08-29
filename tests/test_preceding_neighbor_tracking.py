@@ -30,17 +30,23 @@ class TestPrecedingNeighborTracking:
         ]
         test_document = "\n\n".join(test_chunks)
 
-        # Create tree builder and index
-        tree_builder = TreeBuilder(config, store, max_concurrent=5)
+        # Create document-scoped store and tree builder
+        # Create document with proper metadata
+        doc_store = store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
-        asyncio.run(
-            tree_builder.add_document_async(test_document, document_id="test-doc")
-        )
+        asyncio.run(tree_builder.add_document_async(test_document))
 
         # Get all leaf nodes for the document
-        doc_store = store.for_document("test-doc")
         leaf_nodes = doc_store.nodes.get_leaves()
 
         # Sort by span_start to get document order
@@ -82,21 +88,27 @@ class TestPrecedingNeighborTracking:
         ]
         test_document = "\n\n".join(test_chunks)
 
-        # Create tree builder and index
-        tree_builder = TreeBuilder(config, store, max_concurrent=5)
+        # Create document-scoped store and tree builder
+        # Create document with proper metadata
+        doc_store = store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
-        asyncio.run(
-            tree_builder.add_document_async(test_document, document_id="test-doc")
-        )
+        asyncio.run(tree_builder.add_document_async(test_document))
 
         # Get all nodes (different approach for real vs mock store)
         if hasattr(store, "get_all_nodes"):
             all_nodes = store.get_all_nodes()
         else:
             # For real store, get nodes from document
-            doc_store = store.for_document("test-doc")
             all_nodes = []
             # Get leaf nodes
             leaf_nodes = doc_store.nodes.get_leaves()
@@ -159,14 +171,21 @@ class TestPrecedingNeighborTracking:
         ]
         test_document = " ".join(test_chunks)
 
-        # Create tree builder and index
-        tree_builder = TreeBuilder(config, store, max_concurrent=5)
+        # Create document-scoped store and tree builder
+        # Create document with proper metadata
+        doc_store = store.add_document(
+            document_id="test-doc",
+            file_path=None,
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
-        asyncio.run(
-            tree_builder.add_document_async(test_document, document_id="test-doc")
-        )
+        asyncio.run(tree_builder.add_document_async(test_document))
 
         # Get leaf nodes for the document
         if hasattr(store, "get_leaf_nodes"):
@@ -174,7 +193,6 @@ class TestPrecedingNeighborTracking:
             leaf_nodes = store.get_leaf_nodes()
         else:
             # Real store - use document store
-            doc_store = store.for_document("test-doc")
             leaf_nodes = doc_store.nodes.get_leaves()
         leaf_nodes.sort(key=lambda n: n.span_start)
 
