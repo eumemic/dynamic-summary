@@ -71,22 +71,8 @@ class IndexingService:
             else:
                 raise ValueError("Either document_id or file_path must be provided")
 
-        # Check if document exists and needs re-indexing
-        existing_doc = self.store.get_document_by_path(file_path) if file_path else None
+        # Compute content hash for metadata
         content_hash = self.store.compute_content_hash(text)
-
-        if existing_doc:
-            if existing_doc.content_hash == content_hash:
-                logger.info(f"Document at {file_path} unchanged, skipping re-indexing")
-                return IndexingResult(
-                    document_id=existing_doc.id,
-                    chunks_created=existing_doc.chunk_count or 0,
-                    tree_depth=0,  # We'd need to query for this
-                    telemetry=None,
-                )
-            else:
-                logger.info(f"Document at {file_path} has changed, re-indexing...")
-                document_id = existing_doc.id
 
         # Clear existing data for the document
         deleted_count = self.store.clear_document(document_id)
