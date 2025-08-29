@@ -145,7 +145,7 @@ class IndexingService:
                 doc.chunk_count = len(doc_leaves)
                 session.commit()
 
-        tree_height = root.height if root else 0
+            tree_height = root.height if root else 0
 
         return IndexingResult(
             document_id=doc_id,
