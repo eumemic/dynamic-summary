@@ -6,10 +6,6 @@ on:
   pull_request_review_comment:
     types: [created]
 
-concurrency:
-  group: ${{ github.workflow }}-pr-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.event.comment.user.login || 'direct' }}
-  cancel-in-progress: true
-
 jobs:
   claude-review:
     # Only run when @claude is mentioned in a comment on a PR by a human (not a bot)
