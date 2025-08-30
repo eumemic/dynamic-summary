@@ -1,6 +1,7 @@
 """Test Phase 5 entry point isolation (CLI commands with DocumentStore)."""
 
-from unittest.mock import Mock, patch
+from typing import cast
+from unittest.mock import MagicMock, Mock, patch
 
 from click.testing import CliRunner
 
@@ -18,7 +19,7 @@ class TestCLIPinCommandIsolation:
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
             # Create mock store
             store = SimpleMockStore()
-            mock_create_store.return_value = store
+            cast(MagicMock, mock_create_store).return_value = store
 
             # Add nodes to different documents
             store.add_node(
@@ -52,7 +53,7 @@ class TestCLIPinCommandIsolation:
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
             # Create mock store
             store = SimpleMockStore()
-            mock_create_store.return_value = store
+            cast(MagicMock, mock_create_store).return_value = store
 
             # Add node
             store.add_node(
@@ -81,7 +82,7 @@ class TestCLIPinCommandIsolation:
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
             # Create mock store
             store = SimpleMockStore()
-            mock_create_store.return_value = store
+            cast(MagicMock, mock_create_store).return_value = store
 
             # Add node to doc1
             store.add_node(
@@ -110,7 +111,7 @@ class TestCLIPinCommandIsolation:
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
             # Create mock store
             store = SimpleMockStore()
-            mock_create_store.return_value = store
+            cast(MagicMock, mock_create_store).return_value = store
 
             # Try to pin non-existent node
             result = runner.invoke(cli, ["pin", "nonexistent_node"])
@@ -136,7 +137,7 @@ class SkipTestQueryVisualizationIsolation:
 
         # Create mock store
         store = SimpleMockStore()
-        mock_create_store.return_value = store
+        cast(MagicMock, mock_create_store).return_value = store
 
         # Add nodes for doc1
         store.add_node(

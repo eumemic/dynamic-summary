@@ -1,6 +1,11 @@
 """Tests for following_neighbor_id column and bidirectional neighbor relationships."""
 
+from typing import Any
+
+from openai import AsyncOpenAI
+
 from ragzoom.models import TreeNode
+from ragzoom.store import StoreManager
 
 
 class TestFollowingNeighbor:
@@ -19,7 +24,7 @@ class TestFollowingNeighbor:
         )  # Should be nullable (last node has no following)
 
     def test_bidirectional_neighbor_consistency(
-        self, base_config: object, store: object
+        self, base_config: Any, store: StoreManager
     ) -> None:
         """Verify bidirectional consistency: if A.following = B, then B.preceding = A."""
         # Create some test nodes with neighbor relationships
@@ -44,7 +49,7 @@ class TestFollowingNeighbor:
             nodes_data.append(node_data)
 
         # Create document with proper metadata and get document store
-        doc_store = store.add_document(
+        doc_store = store.add_document(  # type: ignore[attr-defined]
             document_id="test-doc",
             file_path=None,
             content_hash="test-hash",
@@ -83,7 +88,10 @@ class TestFollowingNeighbor:
                 )
 
     def test_leaf_nodes_have_correct_neighbor_relationships(
-        self, base_config: object, store: object, mock_openai_async_client: object
+        self,
+        base_config: Any,
+        store: StoreManager,
+        mock_openai_async_client: AsyncOpenAI,
     ) -> None:
         """Test that leaf nodes created during indexing have correct neighbor relationships."""
         import asyncio
@@ -94,9 +102,9 @@ class TestFollowingNeighbor:
         test_doc = "First chunk. Second chunk. Third chunk. Fourth chunk."
 
         # Create tree builder with small chunk size to ensure multiple chunks
-        config = base_config.index_config.replace(target_chunk_tokens=5)
+        config = base_config.index_config.replace(target_chunk_tokens=5)  # type: ignore[attr-defined]
         # Create document with proper metadata
-        doc_store = store.add_document(
+        doc_store = store.add_document(  # type: ignore[attr-defined]
             document_id="neighbor-test",
             file_path=None,
             content_hash="test-hash",
@@ -148,7 +156,10 @@ class TestFollowingNeighbor:
                 ), f"Leaf {i} following should be leaf {i+1}"
 
     def test_parent_nodes_have_correct_neighbor_relationships(
-        self, base_config: object, store: object, mock_openai_async_client: object
+        self,
+        base_config: Any,
+        store: StoreManager,
+        mock_openai_async_client: AsyncOpenAI,
     ) -> None:
         """Test that parent nodes at each level have correct neighbor relationships."""
         import asyncio
@@ -159,9 +170,9 @@ class TestFollowingNeighbor:
         test_doc = " ".join([f"Chunk {i}." for i in range(8)])  # 8 chunks -> 3 levels
 
         # Create tree builder with small chunk size
-        config = base_config.index_config.replace(target_chunk_tokens=3)
+        config = base_config.index_config.replace(target_chunk_tokens=3)  # type: ignore[attr-defined]
         # Create document with proper metadata
-        doc_store = store.add_document(
+        doc_store = store.add_document(  # type: ignore[attr-defined]
             document_id="parent-neighbor-test",
             file_path=None,
             content_hash="test-hash",
@@ -178,7 +189,7 @@ class TestFollowingNeighbor:
         # Get all nodes and group by height
         all_nodes = doc_store.nodes.get_all()
 
-        nodes_by_height: dict[int, list[object]] = {}
+        nodes_by_height: dict[int, list[Any]] = {}
         for node in all_nodes:
             if node.height not in nodes_by_height:
                 nodes_by_height[node.height] = []
@@ -187,28 +198,28 @@ class TestFollowingNeighbor:
         # Check each level
         for height, level_nodes in nodes_by_height.items():
             # Sort by span_start to get logical order
-            level_nodes.sort(key=lambda n: n.span_start)
+            level_nodes.sort(key=lambda n: n.span_start)  # type: ignore[attr-defined]
 
             for i, node in enumerate(level_nodes):
                 if i == 0:
                     assert (
-                        node.preceding_neighbor_id is None
+                        node.preceding_neighbor_id is None  # type: ignore[attr-defined]
                     ), f"First node at height {height} should have no preceding"
                     if len(level_nodes) > 1:
                         assert (
-                            node.following_neighbor_id == level_nodes[i + 1].id
+                            node.following_neighbor_id == level_nodes[i + 1].id  # type: ignore[attr-defined]
                         ), f"First node at height {height} should point to second"
                 elif i == len(level_nodes) - 1:
                     assert (
-                        node.following_neighbor_id is None
+                        node.following_neighbor_id is None  # type: ignore[attr-defined]
                     ), f"Last node at height {height} should have no following"
                     assert (
-                        node.preceding_neighbor_id == level_nodes[i - 1].id
+                        node.preceding_neighbor_id == level_nodes[i - 1].id  # type: ignore[attr-defined]
                     ), f"Last node at height {height} should have preceding"
                 else:
                     assert (
-                        node.preceding_neighbor_id == level_nodes[i - 1].id
+                        node.preceding_neighbor_id == level_nodes[i - 1].id  # type: ignore[attr-defined]
                     ), f"Node {i} at height {height} has wrong preceding"
                     assert (
-                        node.following_neighbor_id == level_nodes[i + 1].id
+                        node.following_neighbor_id == level_nodes[i + 1].id  # type: ignore[attr-defined]
                     ), f"Node {i} at height {height} has wrong following"

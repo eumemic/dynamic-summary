@@ -12,7 +12,7 @@ from tests.mock_store import SimpleMockStore
 class TestEmbeddingServiceIsolation:
     """Test that EmbeddingService properly uses DocumentStore for isolation."""
 
-    def test_embedding_service_uses_document_store(self):
+    def test_embedding_service_uses_document_store(self) -> None:
         """Test that EmbeddingService gets embedding model from DocumentStore."""
         # Create mock store with documents having different embedding models
         store = SimpleMockStore()
@@ -62,7 +62,7 @@ class TestEmbeddingServiceIsolation:
             input="test query",
         )
 
-    def test_embedding_service_fallback_to_default(self):
+    def test_embedding_service_fallback_to_default(self) -> None:
         """Test that EmbeddingService falls back to default when no document model."""
         store = SimpleMockStore()
 
@@ -95,7 +95,7 @@ class TestEmbeddingServiceIsolation:
 class TestBudgetPlannerIsolation:
     """Test that BudgetPlanner properly uses DocumentStore for isolation."""
 
-    def test_budget_planner_uses_document_store(self):
+    def test_budget_planner_uses_document_store(self) -> None:
         """Test that BudgetPlanner gets token stats from DocumentStore."""
         # Create mock store with documents having different token sizes
         store = SimpleMockStore()
@@ -142,7 +142,7 @@ class TestBudgetPlannerIsolation:
         # With 200-token chunks, 500 budget should give ~2 seeds
         assert seeds2 == 2
 
-    def test_budget_planner_without_document_id(self):
+    def test_budget_planner_without_document_id(self) -> None:
         """Test that BudgetPlanner handles cross-document queries properly."""
         store = SimpleMockStore()
 
@@ -157,7 +157,7 @@ class TestBudgetPlannerIsolation:
         # Should use default chunk size for estimation
         assert seeds == 500 // default_chunk_tokens
 
-    def test_budget_planner_minimum_seeds(self):
+    def test_budget_planner_minimum_seeds(self) -> None:
         """Test that BudgetPlanner always returns at least 1 seed."""
         store = SimpleMockStore()
 

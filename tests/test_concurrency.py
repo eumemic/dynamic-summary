@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Generator
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -49,12 +50,12 @@ class TestConcurrency:
                 from ragzoom.services.indexing_service import IndexingService
                 from ragzoom.services.query_service import QueryService
 
-                self.document_service = DocumentService(self.store)
+                self.document_service = DocumentService(cast(Any, self.store))
                 self.indexing_service = IndexingService(
-                    self.store, self.index_config, self.operational_config
+                    cast(Any, self.store), self.index_config, self.operational_config
                 )
                 self.query_service = QueryService(
-                    self.store, self.query_config, self.operational_config
+                    cast(Any, self.store), self.query_config, self.operational_config
                 )
 
             def close(self) -> None:
@@ -88,7 +89,7 @@ class TestConcurrency:
         assert response.status_code == 200
 
         # Make concurrent queries
-        async def make_query(query_num: int) -> object:
+        async def make_query(query_num: int) -> Any:
             response = client.post(
                 "/query",
                 json={"query": f"Test query {query_num}", "document_id": "test-doc"},
@@ -101,8 +102,8 @@ class TestConcurrency:
 
         # All should succeed
         for response in responses:
-            assert response.status_code == 200
-            data = response.json()
+            assert response.status_code == 200  # type: ignore[attr-defined]
+            data = response.json()  # type: ignore[attr-defined]
             assert "summary" in data
 
     @pytest.mark.integration
@@ -129,7 +130,7 @@ class TestConcurrency:
     async def test_concurrent_indexing(self, client: TestClient) -> None:
         """Test concurrent document indexing."""
 
-        async def index_doc(doc_num: int) -> object:
+        async def index_doc(doc_num: int) -> Any:
             response = client.post(
                 "/index",
                 json={
@@ -145,8 +146,8 @@ class TestConcurrency:
 
         # All should succeed
         for i, response in enumerate(responses):
-            assert response.status_code == 200
-            data = response.json()
+            assert response.status_code == 200  # type: ignore[attr-defined]
+            data = response.json()  # type: ignore[attr-defined]
             assert data["document_id"] == f"doc-{i}"
 
     def test_no_shared_state(self, client: TestClient) -> None:

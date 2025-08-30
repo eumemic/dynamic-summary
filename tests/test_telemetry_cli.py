@@ -2,6 +2,7 @@
 
 import copy
 import json
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -14,8 +15,8 @@ class TestTelemetryCompare:
 
     @pytest.fixture
     def create_test_files(
-        self, tmp_path, sample_telemetry_data
-    ) -> tuple[object, object]:
+        self, tmp_path: Any, sample_telemetry_data: Any
+    ) -> tuple[Any, Any]:
         """Create test telemetry files in temporary directories."""
         baseline_dir = tmp_path / "baseline"
         current_dir = tmp_path / "current"
@@ -98,7 +99,7 @@ class TestTelemetryCompare:
 
         return baseline_dir, current_dir
 
-    def test_compare_single_files(self, create_test_files) -> None:
+    def test_compare_single_files(self, create_test_files: Any) -> None:
         """Test comparing two individual files."""
         baseline_dir, current_dir = create_test_files
         baseline_file = baseline_dir / "telemetry_100_tokens.json"
@@ -126,7 +127,7 @@ class TestTelemetryCompare:
         # Chunk size should appear in configuration section
         assert "Target Chunk Tokens" in result.output
 
-    def test_compare_directories(self, create_test_files) -> None:
+    def test_compare_directories(self, create_test_files: Any) -> None:
         """Test comparing two directories with matching files."""
         baseline_dir, current_dir = create_test_files
 
@@ -146,7 +147,9 @@ class TestTelemetryCompare:
         assert "Cost per 1M source tokens" in result.output
         # Should be a unified table with simplified format
 
-    def test_compare_directories_with_output(self, create_test_files, tmp_path) -> None:
+    def test_compare_directories_with_output(
+        self, create_test_files: Any, tmp_path: Any
+    ) -> None:
         """Test comparing directories with markdown output."""
         baseline_dir, current_dir = create_test_files
 
@@ -164,7 +167,7 @@ class TestTelemetryCompare:
         # Check for markdown format
         assert "| Chunk Size |" in result.output or "| Metric |" in result.output
 
-    def test_compare_directories_no_matches(self, tmp_path) -> None:
+    def test_compare_directories_no_matches(self, tmp_path: Any) -> None:
         """Test comparing directories with no matching files."""
         baseline_dir = tmp_path / "baseline"
         current_dir = tmp_path / "current"
@@ -181,7 +184,9 @@ class TestTelemetryCompare:
         assert result.exit_code == 1
         assert "No matching telemetry files found" in result.output
 
-    def test_compare_mixed_types_error(self, tmp_path, sample_telemetry_data) -> None:
+    def test_compare_mixed_types_error(
+        self, tmp_path: Any, sample_telemetry_data: Any
+    ) -> None:
         """Test error when comparing a file with a directory."""
         test_dir = tmp_path / "test_dir"
         test_dir.mkdir()
@@ -196,7 +201,7 @@ class TestTelemetryCompare:
             "Error: Both arguments must be either files or directories" in result.output
         )
 
-    def test_file_matching_logic(self, tmp_path) -> None:
+    def test_file_matching_logic(self, tmp_path: Any) -> None:
         """Test the file matching logic handles various naming patterns."""
         from ragzoom.telemetry_cli import _match_telemetry_files
 
@@ -229,7 +234,9 @@ class TestTelemetryCompare:
         assert "other_file.json" not in match_names
         assert "telemetry_300_tokens.json" not in match_names
 
-    def test_compare_with_regression(self, tmp_path, sample_telemetry_data) -> None:
+    def test_compare_with_regression(
+        self, tmp_path: Any, sample_telemetry_data: Any
+    ) -> None:
         """Test that regressions are detected and exit code is 1."""
         # Use the same approach as create_test_files fixture - adapt shared telemetry data
         cli_data = copy.deepcopy(sample_telemetry_data)
@@ -300,7 +307,7 @@ class TestTelemetryCompare:
         assert "Target Chunk Tokens" in result.output
 
     def test_dynamic_thresholds_computation(
-        self, tmp_path, sample_telemetry_data
+        self, tmp_path: Any, sample_telemetry_data: Any
     ) -> None:
         """Test that dynamic thresholds are computed from baseline variance."""
         import pytest
@@ -308,14 +315,16 @@ class TestTelemetryCompare:
         pytest.skip("Dynamic thresholds removed - using fixed thresholds")
 
     def test_dynamic_thresholds_emoji_logic(
-        self, tmp_path, sample_telemetry_data
+        self, tmp_path: Any, sample_telemetry_data: Any
     ) -> None:
         """Test emoji assignment based on variance thresholds."""
         import pytest
 
         pytest.skip("Dynamic thresholds removed - using fixed thresholds")
 
-    def test_variance_metrics_in_output(self, tmp_path, sample_telemetry_data) -> None:
+    def test_variance_metrics_in_output(
+        self, tmp_path: Any, sample_telemetry_data: Any
+    ) -> None:
         """Test that variance metrics are displayed in output."""
         import pytest
 

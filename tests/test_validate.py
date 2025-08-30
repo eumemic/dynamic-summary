@@ -1,7 +1,9 @@
 """Tests for validation functions."""
 
+from typing import cast
 from unittest.mock import MagicMock
 
+from ragzoom.models import TreeNode
 from ragzoom.validate import (
     validate_chunk_sizes,
     validate_document_coverage,
@@ -22,7 +24,7 @@ class TestDocumentCoverage:
         ]
 
         original_text = "x" * 300
-        error = validate_document_coverage(original_text, leaves)
+        error = validate_document_coverage(original_text, cast(list[TreeNode], leaves))
         assert error is None  # Should be valid
 
     def test_missing_start_coverage(self) -> None:
@@ -33,7 +35,7 @@ class TestDocumentCoverage:
         ]
 
         original_text = "x" * 200
-        error = validate_document_coverage(original_text, leaves)
+        error = validate_document_coverage(original_text, cast(list[TreeNode], leaves))
         assert error is not None
         assert "First leaf node starts at 10" in error
 
@@ -45,7 +47,7 @@ class TestDocumentCoverage:
         ]
 
         original_text = "x" * 200
-        error = validate_document_coverage(original_text, leaves)
+        error = validate_document_coverage(original_text, cast(list[TreeNode], leaves))
         assert error is not None
         assert "Last leaf node ends at 180" in error
 
@@ -57,7 +59,7 @@ class TestDocumentCoverage:
         ]
 
         original_text = "x" * 200
-        error = validate_document_coverage(original_text, leaves)
+        error = validate_document_coverage(original_text, cast(list[TreeNode], leaves))
         assert error is not None
         assert "Non-contiguous chunks found" in error
 
@@ -73,7 +75,7 @@ class TestChunkSizes:
             MagicMock(text="x" * 780, id="node3"),  # ~195 tokens
         ]
 
-        error = validate_chunk_sizes(leaves, target_tokens=200)
+        error = validate_chunk_sizes(cast(list[TreeNode], leaves), target_tokens=200)
         assert error is None  # Should be valid
 
     def test_oversized_chunks(self) -> None:
@@ -84,7 +86,9 @@ class TestChunkSizes:
         ]
 
         # Should log warning but not raise
-        error = validate_chunk_sizes(leaves, target_tokens=200, tolerance=0.2)
+        error = validate_chunk_sizes(
+            cast(list[TreeNode], leaves), target_tokens=200, tolerance=0.2
+        )
         assert error is None  # Should still return None, just log warnings
 
     def test_undersized_chunks(self) -> None:
@@ -95,7 +99,9 @@ class TestChunkSizes:
         ]
 
         # Should log warning but not raise
-        error = validate_chunk_sizes(leaves, target_tokens=200, tolerance=0.2)
+        error = validate_chunk_sizes(
+            cast(list[TreeNode], leaves), target_tokens=200, tolerance=0.2
+        )
         assert error is None  # Should still return None, just log warnings
 
 

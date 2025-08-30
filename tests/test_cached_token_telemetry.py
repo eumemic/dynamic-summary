@@ -1,11 +1,11 @@
 """Test that cached tokens are properly tracked in telemetry."""
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import TelemetryCollector
 
@@ -72,7 +72,9 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store: Any) -> None:
     # Create a config wrapper for backward compatibility with telemetry
     from tests.conftest import BackwardCompatibilityConfig
 
-    config = BackwardCompatibilityConfig(index_config, None, operational_config)
+    config = BackwardCompatibilityConfig(
+        index_config, cast(QueryConfig, None), operational_config  # type: ignore[arg-type]
+    )
 
     indexer = TreeBuilder(
         index_config, mock_store, api_key=operational_config.openai_api_key
@@ -148,7 +150,9 @@ async def test_backward_compatibility_without_cached_tokens(mock_store: Any) -> 
     # Create a config wrapper for backward compatibility with telemetry
     from tests.conftest import BackwardCompatibilityConfig
 
-    config = BackwardCompatibilityConfig(index_config, None, operational_config)
+    config = BackwardCompatibilityConfig(
+        index_config, cast(QueryConfig, None), operational_config  # type: ignore[arg-type]
+    )
 
     indexer = TreeBuilder(
         index_config, mock_store, api_key=operational_config.openai_api_key
@@ -222,7 +226,9 @@ async def test_cached_tokens_across_multiple_retries(mock_store: Any) -> None:
     # Create a config wrapper for backward compatibility with telemetry
     from tests.conftest import BackwardCompatibilityConfig
 
-    config = BackwardCompatibilityConfig(index_config, None, operational_config)
+    config = BackwardCompatibilityConfig(
+        index_config, cast(QueryConfig, None), operational_config  # type: ignore[arg-type]
+    )
 
     indexer = TreeBuilder(
         index_config, mock_store, api_key=operational_config.openai_api_key
@@ -306,7 +312,9 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store: Any) -> None
     # Create a config wrapper for backward compatibility with telemetry
     from tests.conftest import BackwardCompatibilityConfig
 
-    config = BackwardCompatibilityConfig(index_config, None, operational_config)
+    config = BackwardCompatibilityConfig(
+        index_config, cast(QueryConfig, None), operational_config  # type: ignore[arg-type]
+    )
 
     indexer = TreeBuilder(
         index_config, mock_store, api_key=operational_config.openai_api_key
@@ -362,7 +370,9 @@ async def test_cached_tokens_with_high_cache_rate(mock_store: Any) -> None:
     # Create a config wrapper for backward compatibility with telemetry
     from tests.conftest import BackwardCompatibilityConfig
 
-    config = BackwardCompatibilityConfig(index_config, None, operational_config)
+    config = BackwardCompatibilityConfig(
+        index_config, cast(QueryConfig, None), operational_config  # type: ignore[arg-type]
+    )
 
     indexer = TreeBuilder(
         index_config, mock_store, api_key=operational_config.openai_api_key

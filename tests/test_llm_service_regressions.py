@@ -1,10 +1,12 @@
 """Test for LLMService refactor regressions to ensure behavior matches original."""
 
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ragzoom.config import IndexConfig
+from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.services.llm_service import LLMService
 from ragzoom.telemetry_collection import TelemetryCollector
@@ -37,7 +39,7 @@ async def test_mark_accepted_attempt_is_called(mock_store: object) -> None:
         target_chunk_tokens=100,
     )
 
-    indexer = TreeBuilder(config, mock_store)
+    indexer = TreeBuilder(config, cast(DocumentStore, mock_store))
 
     # Track API calls and telemetry calls
     api_calls = []
@@ -78,7 +80,7 @@ async def test_mark_accepted_attempt_is_called(mock_store: object) -> None:
         mark_accepted_calls.append((node_id, attempt_index))
         return original_mark_accepted(node_id, attempt_index)
 
-    reporter.mark_accepted_attempt = track_mark_accepted
+    reporter.mark_accepted_attempt = track_mark_accepted  # type: ignore[method-assign]
 
     # Pre-track the test node
     reporter.track_node_created("test_node", height=1)
@@ -181,7 +183,7 @@ async def test_retry_selection_uses_proper_logic(mock_store: object) -> None:
         target_chunk_tokens=100,
     )
 
-    indexer = TreeBuilder(config, mock_store)
+    indexer = TreeBuilder(config, cast(DocumentStore, mock_store))
 
     api_calls = []
     summaries_returned = []

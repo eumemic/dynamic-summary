@@ -1,5 +1,7 @@
 """Tests for coverage tree completeness requirements."""
 
+from typing import Any
+
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
@@ -10,7 +12,7 @@ class TestCoverageTreeCompleteness:
     """Tests that ensure coverage trees maintain left-balanced properties."""
 
     @pytest.fixture
-    def setup_incomplete_tree(self):
+    def setup_incomplete_tree(self) -> tuple[Any, Any, Any, Any]:
         """Set up a system with a tree that will produce incomplete coverage."""
         index_config = IndexConfig.load(
             target_chunk_tokens=100, preceding_context_tokens=50
@@ -20,7 +22,12 @@ class TestCoverageTreeCompleteness:
 
         # Create config wrapper for SimpleMockStore compatibility
         class LocalTestConfig:
-            def __init__(self, index_config, query_config, operational_config):
+            def __init__(
+                self,
+                index_config: IndexConfig,
+                query_config: QueryConfig,
+                operational_config: OperationalConfig,
+            ) -> None:
                 self.index_config = index_config
                 self.query_config = query_config
                 self.operational_config = operational_config
@@ -123,7 +130,9 @@ class TestCoverageTreeCompleteness:
 
         return config, store, retriever, dp_generator
 
-    def test_left_balanced_tree_single_child_handling(self, setup_incomplete_tree):
+    def test_left_balanced_tree_single_child_handling(
+        self, setup_incomplete_tree: Any
+    ) -> None:
         """Test that left-balanced trees with single children are handled correctly."""
         config, store, retriever, dp_generator = setup_incomplete_tree
 
@@ -179,7 +188,7 @@ class TestCoverageTreeCompleteness:
         assert result.tiling.node_ids  # Should have some result
         assert result.total_quality >= 0  # Should have non-negative quality
 
-    def test_complete_coverage_tree_works(self, setup_incomplete_tree):
+    def test_complete_coverage_tree_works(self, setup_incomplete_tree: Any) -> None:
         """Test that complete coverage trees work correctly."""
         config, store, retriever, dp_generator = setup_incomplete_tree
 
@@ -202,7 +211,9 @@ class TestCoverageTreeCompleteness:
         assert result.tiling is not None
         assert len(result.tiling.node_ids) > 0
 
-    def test_coverage_tree_with_siblings_included(self, setup_incomplete_tree):
+    def test_coverage_tree_with_siblings_included(
+        self, setup_incomplete_tree: Any
+    ) -> None:
         """Test the correct way to build coverage tree with siblings."""
         config, store, retriever, dp_generator = setup_incomplete_tree
 

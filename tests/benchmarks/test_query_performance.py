@@ -4,11 +4,13 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, QueryConfig
+from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import StoreManager
@@ -74,15 +76,15 @@ def setup_test_document(store: StoreManager, api_key: str) -> str:
     print(f"  Document {doc_id} not found, indexing...")
     index_config = IndexConfig.load(target_chunk_tokens=200)
     test_doc, doc_name = get_test_document("narrative")
-    builder = TreeBuilder(index_config, store, api_key)
-    return builder.add_document(test_doc, document_id=doc_id)
+    builder = TreeBuilder(index_config, cast(DocumentStore, store), api_key)
+    return builder.add_document(test_doc)
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("num_seeds", [5, 10, 20])
 @pytest.mark.parametrize("budget_tokens", [1000, 2000, 4000])
 @pytest.mark.parametrize("query_type", ["specific", "broad", "complex"])
-def test_query_performance(num_seeds, budget_tokens, query_type):
+def test_query_performance(num_seeds: int, budget_tokens: int, query_type: str) -> None:
     """Benchmark query performance at different parameter combinations."""
     # Create config for this specific test
     api_key = os.getenv("OPENAI_API_KEY", "test-key")
@@ -110,13 +112,26 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
         # Index document first (or reuse if exists)
         doc_id = setup_test_document(store, api_key)
 
-        # Create retriever and assembler
+        # Create retriever and assembler using the proper pattern
+        from openai import OpenAI
+
+        from ragzoom.retrieval.budget_planner import BudgetPlanner
+        from ragzoom.retrieval.embedding_service import EmbeddingService
+
+        client = OpenAI(api_key=api_key)
+        document_store = store.for_document(doc_id)
+        embedding_service = EmbeddingService(
+            client, document_store, "text-embedding-3-small"
+        )
+        index_cfg = IndexConfig.load()
+        budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
         retriever = Retriever(
             query_config,
-            store,
-            api_key=api_key,
+            document_store,
+            embedding_service,
+            budget_planner,
         )
-        assembler = Assembler(store)
+        assembler = Assembler(document_store)
 
         # Collect telemetry from multiple runs
         all_telemetries = []
@@ -167,7 +182,7 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
             "total_time",
         ]
 
-        statistics_summary = {"num_runs": num_runs}
+        statistics_summary: dict[str, Any] = {"num_runs": num_runs}
 
         # Calculate statistics for each phase
         for phase in timing_phases:
@@ -231,15 +246,13 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
             f"\n=== Query Performance ({query_type}, seeds={num_seeds}, budget={budget_tokens}) ==="
         )
         print(f"Runs: {num_runs}")
-        print(f"Total time: {statistics_summary['total_time']['median']:.3f}s (median)")
-        print(f"  ± {statistics_summary['total_time']['std_dev']:.3f}s std dev")
-        print(
-            f"  Range: {statistics_summary['total_time']['min']:.3f}s - {statistics_summary['total_time']['max']:.3f}s"
-        )
-        print(
-            f"Embedding time: {statistics_summary['embedding_time']['median']:.3f}s (median)"
-        )
-        print(f"  ± {statistics_summary['embedding_time']['std_dev']:.3f}s std dev")
+        total_stats = statistics_summary["total_time"]
+        embedding_stats = statistics_summary["embedding_time"]
+        print(f"Total time: {total_stats['median']:.3f}s (median)")
+        print(f"  ± {total_stats['std_dev']:.3f}s std dev")
+        print(f"  Range: {total_stats['min']:.3f}s - {total_stats['max']:.3f}s")
+        print(f"Embedding time: {embedding_stats['median']:.3f}s (median)")
+        print(f"  ± {embedding_stats['std_dev']:.3f}s std dev")
 
         # Show median phase breakdown from middle run
         median_run_idx = len(all_telemetries) // 2
@@ -267,15 +280,16 @@ def test_query_performance(num_seeds, budget_tokens, query_type):
         )
 
         # Basic validation using median run
+        median_metrics: dict[str, Any] = median_telemetry["metrics"]
         assert (
-            median_telemetry["metrics"]["output_tokens"] <= budget_tokens
-        ), f"Output exceeded budget: {median_telemetry['metrics']['output_tokens']} > {budget_tokens}"
-        assert median_telemetry["metrics"]["tiling_size"] > 0, "No nodes in tiling"
-        assert statistics_summary["total_time"]["median"] > 0, "Invalid timing"
+            median_metrics["output_tokens"] <= budget_tokens
+        ), f"Output exceeded budget: {median_metrics['output_tokens']} > {budget_tokens}"
+        assert median_metrics["tiling_size"] > 0, "No nodes in tiling"
+        assert total_stats["median"] > 0, "Invalid timing"
 
 
 @pytest.mark.slow
-def test_query_performance_comparison():
+def test_query_performance_comparison() -> None:
     """Compare query benchmark results if available."""
     output_dir = Path("benchmark_results")
     if not output_dir.exists():

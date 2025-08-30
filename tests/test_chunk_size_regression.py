@@ -1,5 +1,6 @@
 """Regression test for chunk size issue where chunks were 4x larger than configured."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,13 +15,13 @@ class TestChunkSizeRegression:
     """Test that chunks are created at the correct token size."""
 
     @pytest.fixture
-    def config(self):
+    def config(self) -> IndexConfig:
         """Create test config with specific leaf token size."""
         return IndexConfig.load(
             target_chunk_tokens=200,
         )
 
-    def test_splitter_creates_correct_chunk_size(self, config):
+    def test_splitter_creates_correct_chunk_size(self, config: IndexConfig) -> None:
         """Test that text splitter creates chunks of approximately the configured token size."""
         splitter = TextSplitter(config)
         # Use shared tokenizer instead of creating new instance
@@ -89,7 +90,9 @@ class TestChunkSizeRegression:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_indexed_chunks_have_correct_size(self, store, monkeypatch):
+    async def test_indexed_chunks_have_correct_size(
+        self, store: Any, monkeypatch: Any
+    ) -> None:
         """Test that indexed chunks in the database have the correct token size."""
         # Set up test environment
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -117,7 +120,7 @@ class TestChunkSizeRegression:
         mock_async_client = MagicMock()
 
         # Mock embeddings (one per chunk) - needs to be async
-        async def mock_embeddings(*args, **kwargs):
+        async def mock_embeddings(*args: Any, **kwargs: Any) -> MagicMock:
             # Get the actual number of input texts
             input_texts = kwargs.get("input", [])
             if isinstance(input_texts, str):
@@ -130,7 +133,7 @@ class TestChunkSizeRegression:
         mock_async_client.embeddings.create.side_effect = mock_embeddings
 
         # Mock summaries with mid delimiters - needs to be async
-        async def mock_chat_completion(*args, **kwargs):
+        async def mock_chat_completion(*args: Any, **kwargs: Any) -> MagicMock:
             response = MagicMock()
             response.choices[0].message.content = "Summary of part 1 and part 2"
             return response

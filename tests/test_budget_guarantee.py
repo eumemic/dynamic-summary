@@ -1,7 +1,7 @@
 """Test budget guarantees in retrieval and assembly."""
 
 from collections.abc import Generator
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
@@ -66,10 +66,10 @@ class TestBudgetGuarantee:
             # Create services for Retriever
             client = OpenAI(api_key=config.openai_api_key.get_secret_value())
             embedding_service = EmbeddingService(
-                client, doc_store, config.query_config.embedding_model
+                client, cast(Any, doc_store), config.query_config.embedding_model
             )
             budget_planner = BudgetPlanner(
-                doc_store, config.index_config.target_chunk_tokens
+                cast(Any, doc_store), config.index_config.target_chunk_tokens
             )
             retriever = Retriever(
                 config.query_config,
@@ -321,9 +321,11 @@ class TestBudgetGuarantee:
                 api_key=operational_config.openai_api_key.get_secret_value()
             )
             embedding_service = EmbeddingService(
-                client, store, query_config.embedding_model
+                client, cast(Any, store), query_config.embedding_model
             )
-            budget_planner = BudgetPlanner(store, index_config.target_chunk_tokens)
+            budget_planner = BudgetPlanner(
+                cast(Any, store), index_config.target_chunk_tokens
+            )
 
             doc_store = store.for_document(None)
             retriever = Retriever(

@@ -9,7 +9,7 @@ from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from tests.mock_store import SimpleMockStore
 
 
-def test_zero_score_collapse_empty_result():
+def test_zero_score_collapse_empty_result() -> None:
     """Test that algorithm correctly uses root node when deeper nodes don't fit budget."""
 
     # Create configuration and store
@@ -83,6 +83,8 @@ def test_zero_score_collapse_empty_result():
             root_id = node_id
             break
 
+    assert root_id is not None, "No root node found"
+
     # Get actual token costs
     leaf = nodes["leaf"]
     parent = nodes["parent"]
@@ -126,7 +128,7 @@ def test_zero_score_collapse_empty_result():
     ), f"Should use root node ({root_cost} tokens), but used {total_tokens}"
 
 
-def test_zero_score_collapse_to_root():
+def test_zero_score_collapse_to_root() -> None:
     """Test algorithm correctly chooses root node due to budget splitting constraints."""
 
     index_config = IndexConfig.load(target_chunk_tokens=100)
@@ -231,6 +233,8 @@ def test_zero_score_collapse_to_root():
         if node.parent_id is None or node.parent_id not in nodes:
             root_id = node_id
             break
+
+    assert root_id is not None, "No root node found"
 
     # Get token costs
     leaf = nodes["leaf"]

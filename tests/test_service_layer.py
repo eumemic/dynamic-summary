@@ -1,7 +1,8 @@
 """Tests for the service layer implementation."""
 
 from datetime import datetime
-from unittest.mock import Mock, patch
+from typing import cast
+from unittest.mock import MagicMock, Mock, patch
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.services.document_service import (
@@ -122,7 +123,7 @@ class TestIndexingService:
         from unittest.mock import AsyncMock
 
         mock_tree_builder.add_document_async = AsyncMock(return_value="doc-123")
-        mock_tree_builder_class.return_value = mock_tree_builder
+        cast(MagicMock, mock_tree_builder_class).return_value = mock_tree_builder
 
         # Mock database session for stats
         mock_session = Mock()
@@ -175,13 +176,13 @@ class TestQueryService:
         mock_retrieval_result.node_ids = ["node1", "node2"]
         mock_retrieval_result.tiling = ["node1", "node3", "node2"]
         mock_retriever.retrieve.return_value = mock_retrieval_result
-        mock_retriever_class.return_value = mock_retriever
+        cast(MagicMock, mock_retriever_class).return_value = mock_retriever
 
         # Mock Assembler
         mock_assembler = Mock()
         mock_assembler.assemble.return_value = "This is the summary"
         mock_assembler.get_token_count.return_value = 50
-        mock_assembler_class.return_value = mock_assembler
+        cast(MagicMock, mock_assembler_class).return_value = mock_assembler
 
         # Create configs
         query_config = QueryConfig(budget_tokens=1000)
@@ -209,7 +210,7 @@ class TestQueryService:
 
         # Mock original retriever
         mock_original_retriever = Mock()
-        mock_retriever_class.return_value = mock_original_retriever
+        cast(MagicMock, mock_retriever_class).return_value = mock_original_retriever
 
         # Create configs
         query_config = QueryConfig(budget_tokens=1000, mmr_lambda=0.7)
@@ -220,7 +221,7 @@ class TestQueryService:
 
         # Mock new retriever for updated config
         mock_new_retriever = Mock()
-        mock_retriever_class.return_value = mock_new_retriever
+        cast(MagicMock, mock_retriever_class).return_value = mock_new_retriever
 
         # Update config
         service.update_config(budget_tokens=2000, mmr_lambda=0.8)
