@@ -4,13 +4,13 @@ import hashlib
 from collections import OrderedDict, defaultdict, deque
 from contextlib import contextmanager
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import numpy as np
 from numpy.typing import NDArray
 
-from ragzoom.interfaces import StoreInterface
+from ragzoom.interfaces import NodeData, SearchMetadata, StoreInterface
 from ragzoom.models import Document, TreeNode
 
 
@@ -448,26 +448,33 @@ class SimpleMockStore(StoreInterface):
         return node  # type: ignore[return-value]  # Mock returns SimpleNamespace for test flexibility
 
     def add_nodes_batch(
-        self, nodes_data: list[dict[str, Any]], *, session: Any = None
+        self, nodes_data: list[NodeData], *, session: Any = None
     ) -> list[TreeNode]:
         """Add multiple nodes in batch - mock implementation."""
         nodes = []
         for data in nodes_data:
+            # Handle both dict[str, Any] and NodeData formats for backward compatibility
+            node_data = data if isinstance(data, dict) else data.__dict__
             node = self.add_node(
-                node_id=data["node_id"],
-                text=data["text"],
-                embedding=data["embedding"],
-                span_start=data["span_start"],
-                span_end=data["span_end"],
-                parent_id=data.get("parent_id"),
-                left_child_id=data.get("left_child_id"),
-                right_child_id=data.get("right_child_id"),
-                document_id=data.get("document_id"),
-                token_count=data.get("token_count", 0),
-                height=data.get("height", 0),
-                preceding_neighbor_id=data.get("preceding_neighbor_id"),
-                following_neighbor_id=data.get("following_neighbor_id"),
-                path=data.get("path", ""),
+                node_id=node_data["node_id"],
+                text=node_data["text"],
+                embedding=node_data["embedding"],
+                span_start=node_data["span_start"],
+                span_end=node_data["span_end"],
+                parent_id=node_data.get("parent_id"),
+                left_child_id=node_data.get("left_child_id"),
+                right_child_id=node_data.get("right_child_id"),
+                document_id=node_data.get("document_id"),
+                token_count=node_data.get("token_count", 0),
+                height=node_data.get("height", 0),
+                is_left_child=node_data.get("is_left_child"),
+                # Preserve test-specific neighbor IDs if provided
+                preceding_neighbor_id=cast(
+                    str | None, node_data.get("preceding_neighbor_id")
+                ),
+                following_neighbor_id=cast(
+                    str | None, node_data.get("following_neighbor_id")
+                ),
             )
             nodes.append(node)
         return nodes
@@ -636,8 +643,8 @@ class SimpleMockStore(StoreInterface):
         self,
         query_embedding: list[float] | NDArray[np.float64],
         n_results: int,
-        where: dict[str, Any] | None = None,
-    ) -> list[tuple[str, float, dict[str, Any]]]:
+        where: dict[str, str | int | float | bool | None] | None = None,
+    ) -> list[tuple[str, float, SearchMetadata]]:
         """Search for similar nodes using cosine similarity."""
         if isinstance(query_embedding, np.ndarray):
             query_embedding = query_embedding.tolist()
@@ -659,7 +666,7 @@ class SimpleMockStore(StoreInterface):
                 similarity = self.mock_scores[node_id]
 
             node = self._nodes[node_id]
-            metadata = {
+            metadata: SearchMetadata = {
                 "span_start": node.span_start,
                 "span_end": node.span_end,
                 "parent_id": node.parent_id or "",
@@ -681,7 +688,7 @@ class SimpleMockStore(StoreInterface):
     def compute_mmr_diverse_results(
         self,
         query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, Any]]],
+        candidates: list[tuple[str, float, SearchMetadata]],
         lambda_param: float,
         k: int,
     ) -> list[str]:

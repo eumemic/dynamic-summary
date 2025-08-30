@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from ragzoom.config import OperationalConfig, SecretStr
 from ragzoom.error_utils import (
     RedactionFilter,
+    SanitizableValue,
     format_structured_error,
     sanitize_dict,
     sanitize_list,
@@ -112,7 +113,7 @@ class TestSanitizationFunctions:
 
     def test_sanitize_dict_nested(self) -> None:
         """sanitize_dict should recursively sanitize nested structures."""
-        data = {
+        data: dict[str, SanitizableValue] = {
             "config": {
                 "api_key": "sk-1234567890123456789012345678901234567890123456789",
                 "model": "gpt-4",
@@ -125,14 +126,21 @@ class TestSanitizationFunctions:
 
         result = sanitize_dict(data)
 
-        assert result["config"]["api_key"] == "***REDACTED***"
-        assert result["config"]["model"] == "gpt-4"
-        assert result["config"]["nested"]["auth"] == "Bearer ***REDACTED***"
+        # Type narrow the nested structures before indexing
+        config_value = result["config"]
+        assert isinstance(config_value, dict)
+        assert config_value["api_key"] == "***REDACTED***"
+        assert config_value["model"] == "gpt-4"
+
+        nested_value = config_value["nested"]
+        assert isinstance(nested_value, dict)
+        assert nested_value["auth"] == "Bearer ***REDACTED***"
+
         assert result["safe_field"] == "normal value"
 
     def test_sanitize_list_mixed_types(self) -> None:
         """sanitize_list should handle mixed types in lists."""
-        data = [
+        data: list[SanitizableValue] = [
             "sk-1234567890123456789012345678901234567890123456789",
             {"key": "sk-2222222222222222222222222222222222222222222222222"},
             ["nested", "sk-3333333333333333333333333333333333333333333333333"],
@@ -143,9 +151,18 @@ class TestSanitizationFunctions:
         result = sanitize_list(data)
 
         assert result[0] == "***REDACTED***"
-        assert result[1]["key"] == "***REDACTED***"
-        assert result[2][0] == "nested"
-        assert result[2][1] == "***REDACTED***"
+
+        # Type narrow before indexing into dict
+        item1 = result[1]
+        assert isinstance(item1, dict)
+        assert item1["key"] == "***REDACTED***"
+
+        # Type narrow before indexing into nested list
+        item2 = result[2]
+        assert isinstance(item2, list)
+        assert item2[0] == "nested"
+        assert item2[1] == "***REDACTED***"
+
         assert result[3] == 42
         assert result[4] is None
 
@@ -235,8 +252,10 @@ class TestErrorHandlingRedaction:
 
         result = format_structured_error(exc)
 
-        assert "***REDACTED***" in result["message"]
-        assert api_key not in result["message"]
+        message = result["message"]
+        assert isinstance(message, str)
+        assert "***REDACTED***" in message
+        assert api_key not in message
 
     def test_format_structured_error_redacts_context(self) -> None:
         """format_structured_error should redact API keys in exception context."""
@@ -246,8 +265,11 @@ class TestErrorHandlingRedaction:
 
         result = format_structured_error(exc)
 
-        assert result["context"]["api_key"] == "***REDACTED***"
-        assert result["context"]["model"] == "gpt-4"
+        # Type narrow the context before indexing
+        context_value = result["context"]
+        assert isinstance(context_value, dict)
+        assert context_value["api_key"] == "***REDACTED***"
+        assert context_value["model"] == "gpt-4"
 
     def test_format_structured_error_redacts_traceback(self) -> None:
         """format_structured_error should redact API keys in tracebacks."""
@@ -258,8 +280,10 @@ class TestErrorHandlingRedaction:
         except ValueError as exc:
             result = format_structured_error(exc, include_traceback=True)
 
-            assert "***REDACTED***" in result["traceback"]
-            assert api_key not in result["traceback"]
+            traceback = result["traceback"]
+            assert isinstance(traceback, str)
+            assert "***REDACTED***" in traceback
+            assert api_key not in traceback
 
 
 class TestEndToEndScenarios:

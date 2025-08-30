@@ -14,6 +14,7 @@ pytest.importorskip("matplotlib")
 pytest.importorskip("seaborn")
 pytest.importorskip("pandas")
 
+from ragzoom.telemetry_types import NodeTelemetryDict, TelemetryDataDict
 from ragzoom.telemetry_viz import TelemetryVisualizer
 
 
@@ -34,7 +35,7 @@ class TestTelemetryVisualizer:
 
     @pytest.fixture
     def sample_benchmark_data(
-        self, sample_telemetry_data: dict[str, object]
+        self, sample_telemetry_data: TelemetryDataDict
     ) -> dict[str, object]:
         """Create sample benchmark data including telemetry."""
         return {
@@ -68,7 +69,7 @@ class TestTelemetryVisualizer:
             json.dump(test_data, f)
 
         loaded_data = visualizer.load_benchmark_data(test_file)
-        assert loaded_data == test_data
+        assert cast(Any, loaded_data) == test_data
 
     def test_calculate_histogram_bins_small_discrete(
         self, visualizer: TelemetryVisualizer
@@ -122,7 +123,7 @@ class TestTelemetryVisualizer:
     ) -> None:
         """Test that visualize_single_benchmark creates expected outputs."""
         # Create minimal telemetry data that won't trigger complex plotting
-        minimal_data = {
+        minimal_data: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 0,
@@ -134,7 +135,11 @@ class TestTelemetryVisualizer:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [],
         }
 
@@ -180,7 +185,7 @@ class TestTelemetryVisualizer:
 
         # Test empty batch efficiency
         fig, ax = plt.subplots()
-        empty_telemetry = {
+        empty_telemetry: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "empty",
             "source_document_tokens": 0,
@@ -192,7 +197,11 @@ class TestTelemetryVisualizer:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [],
         }
         visualizer._plot_batch_efficiency(empty_telemetry, ax)
@@ -208,7 +217,7 @@ class TestTelemetryVisualizer:
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots()
-        telemetry = {
+        telemetry: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 100,
@@ -220,7 +229,11 @@ class TestTelemetryVisualizer:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
                     "node_id": "node-1",
@@ -252,7 +265,7 @@ class TestTelemetryVisualizer:
         plt.close(fig)
 
     def test_token_distributions_with_data(
-        self, visualizer: TelemetryVisualizer, sample_telemetry_data: dict[str, Any]
+        self, visualizer: TelemetryVisualizer, sample_telemetry_data: TelemetryDataDict
     ) -> None:
         """Test token distribution plot with actual data."""
         import matplotlib.pyplot as plt
@@ -315,7 +328,7 @@ class TestTelemetryVisualizer:
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots()
-        telemetry = {
+        telemetry: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 300,
@@ -327,28 +340,50 @@ class TestTelemetryVisualizer:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
+                    "node_id": "node-1",
+                    "height": 0,
+                    "created_at": 1.0,
                     "embedding": {
                         "text_tokens": 100,
                         "batch_size": 1,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
                         "start_time": 1.0,
-                    }
+                        "end_time": 1.1,
+                    },
                 },
                 {
+                    "node_id": "node-2",
+                    "height": 0,
+                    "created_at": 2.0,
                     "embedding": {
                         "text_tokens": 100,
                         "batch_size": 5,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
                         "start_time": 2.0,
-                    }
+                        "end_time": 2.1,
+                    },
                 },
                 {
+                    "node_id": "node-3",
+                    "height": 0,
+                    "created_at": 3.0,
                     "embedding": {
                         "text_tokens": 100,
                         "batch_size": 1,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
                         "start_time": 3.0,
-                    }
+                        "end_time": 3.1,
+                    },
                 },
             ],
         }
@@ -371,9 +406,9 @@ class TestTelemetryVisualizer:
         assert visualizer.LARGE_BIN_COUNT == 20
 
 
-def generate_test_telemetry(num_nodes: int) -> dict[str, object]:
+def generate_test_telemetry(num_nodes: int) -> TelemetryDataDict:
     """Generate test telemetry data with specified number of nodes."""
-    nodes = []
+    nodes: list[NodeTelemetryDict] = []
     for i in range(num_nodes):
         if i % 2 == 0:
             # Leaf node with embedding
@@ -385,6 +420,7 @@ def generate_test_telemetry(num_nodes: int) -> dict[str, object]:
                     "embedding": {
                         "text_tokens": 195,
                         "batch_size": (i % 10) + 1,
+                        "batch_position": 0,
                         "model": "text-embedding-3-small",
                         "start_time": 1234567890.0 + i,
                         "end_time": 1234567891.0 + i,
@@ -400,15 +436,16 @@ def generate_test_telemetry(num_nodes: int) -> dict[str, object]:
                     "created_at": 1234567892.0 + i,
                     "summary_attempts": [
                         {
-                            "status": "accepted",
-                            "is_retry": False,
+                            "target_tokens": 100,
                             "prompt_tokens": 400 + i,
                             "completion_tokens": 100 + i % 50,
-                            "input_text_tokens": 195,
                             "actual_tokens": 98 + i % 10,
-                            "target_tokens": 100,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567892.0 + i,
+                            "end_time": 1234567893.0 + i,
                         }
                     ],
+                    "accepted_attempt": 0,
                 }
             )
 
@@ -424,7 +461,11 @@ def generate_test_telemetry(num_nodes: int) -> dict[str, object]:
         },
         "model_metadata": {},
         "system_prompts": {},
-        "runtime_info": {},
+        "runtime_info": {
+            "python_version": "3.11.0",
+            "platform": "test",
+            "ragzoom_version": "1.0.0",
+        },
         "nodes": nodes,
     }
 

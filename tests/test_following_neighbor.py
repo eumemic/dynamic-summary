@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import numpy as np
+from numpy.typing import NDArray
 from openai import AsyncOpenAI
 
 from ragzoom.models import TreeNode
@@ -28,11 +30,17 @@ class TestFollowingNeighbor:
     ) -> None:
         """Verify bidirectional consistency: if A.following = B, then B.preceding = A."""
         # Create some test nodes with neighbor relationships
-        nodes_data = []
+        nodes_data: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = []
         node_ids = ["node1", "node2", "node3", "node4"]
 
         for i, node_id in enumerate(node_ids):
-            node_data = {
+            node_data: dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ] = {
                 "node_id": node_id,
                 "text": f"Node {i} text",
                 "embedding": [0.1] * 10,  # Simple embedding

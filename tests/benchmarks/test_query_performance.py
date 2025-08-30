@@ -14,6 +14,7 @@ from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import StoreManager
+from ragzoom.telemetry_query import QueryMetricsDict
 
 # Skip benchmarks by default unless explicitly requested
 pytestmark = pytest.mark.benchmark
@@ -186,9 +187,12 @@ def test_query_performance(num_seeds: int, budget_tokens: int, query_type: str) 
 
         # Calculate statistics for each phase
         for phase in timing_phases:
-            phase_times = [
-                t["timings"][phase] for t in all_telemetries if phase in t["timings"]
-            ]
+            phase_times = []
+            for t in all_telemetries:
+                if phase in t["timings"]:
+                    # Use cast to access timing values with dynamic keys
+                    timings_dict = cast(dict[str, float], t["timings"])
+                    phase_times.append(timings_dict[phase])
 
             if phase_times:
                 # Calculate basic statistics
@@ -280,7 +284,7 @@ def test_query_performance(num_seeds: int, budget_tokens: int, query_type: str) 
         )
 
         # Basic validation using median run
-        median_metrics: dict[str, Any] = median_telemetry["metrics"]
+        median_metrics: QueryMetricsDict = median_telemetry["metrics"]
         assert (
             median_metrics["output_tokens"] <= budget_tokens
         ), f"Output exceeded budget: {median_metrics['output_tokens']} > {budget_tokens}"

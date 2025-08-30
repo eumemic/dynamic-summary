@@ -10,6 +10,7 @@ import pytest
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
 from ragzoom.store import StoreManager
+from ragzoom.telemetry_types import TelemetryDataDict
 from tests.mock_store import SimpleMockStore
 from tests.test_builders import DocumentBuilder, TreeNodeBuilder
 
@@ -401,7 +402,7 @@ def mock_openai_async_client() -> MagicMock:
 
 
 @pytest.fixture
-def sample_telemetry_data() -> dict[str, Any]:
+def sample_telemetry_data() -> TelemetryDataDict:
     """Centralized telemetry data fixture for all telemetry tests.
 
     This fixture provides consistent test data across all telemetry test files,
@@ -419,60 +420,69 @@ def sample_telemetry_data() -> dict[str, Any]:
         },
         "model_metadata": {},
         "system_prompts": {},
-        "runtime_info": {},
+        "runtime_info": {
+            "python_version": "3.11.0",
+            "platform": "linux",
+            "ragzoom_version": "1.0.0",
+        },
         "nodes": [
             {
                 "node_id": "leaf-1",
                 "height": 0,
                 "created_at": 1234567890.0,
                 "embedding": {
-                    "create": {
-                        "input_tokens": 50,
-                        "total_tokens": 50,
-                        "cost_usd": 0.001,
-                    }
+                    "text_tokens": 50,
+                    "batch_size": 1,
+                    "batch_position": 0,
+                    "model": "text-embedding-3-small",
+                    "start_time": 1234567890.0,
+                    "end_time": 1234567890.1,
                 },
-                "summary": None,
             },
             {
                 "node_id": "leaf-2",
                 "height": 0,
                 "created_at": 1234567890.1,
                 "embedding": {
-                    "create": {
-                        "input_tokens": 60,
-                        "total_tokens": 60,
-                        "cost_usd": 0.0012,
-                    }
+                    "text_tokens": 60,
+                    "batch_size": 2,
+                    "batch_position": 0,
+                    "model": "text-embedding-3-small",
+                    "start_time": 1234567890.1,
+                    "end_time": 1234567890.2,
                 },
-                "summary": None,
             },
             {
                 "node_id": "internal-1",
                 "height": 1,
                 "created_at": 1234567890.2,
                 "embedding": {
-                    "create": {
-                        "input_tokens": 30,
-                        "total_tokens": 30,
-                        "cost_usd": 0.0006,
-                    }
+                    "text_tokens": 30,
+                    "batch_size": 1,
+                    "batch_position": 0,
+                    "model": "text-embedding-3-small",
+                    "start_time": 1234567890.2,
+                    "end_time": 1234567890.3,
                 },
-                "summary": {
-                    "create": {
-                        "input_tokens": 100,
-                        "output_tokens": 25,
-                        "total_tokens": 125,
-                        "cost_usd": 0.005,
+                "summary_attempts": [
+                    {
+                        "target_tokens": 100,
+                        "prompt_tokens": 100,
+                        "completion_tokens": 25,
+                        "actual_tokens": 25,
+                        "model": "gpt-4o-mini",
+                        "start_time": 1234567890.3,
+                        "end_time": 1234567890.4,
                     }
-                },
+                ],
+                "accepted_attempt": 0,
             },
         ],
     }
 
 
 @pytest.fixture
-def empty_telemetry_data() -> dict[str, Any]:
+def empty_telemetry_data() -> TelemetryDataDict:
     """Shared empty telemetry data fixture for testing edge cases.
 
     Provides consistent empty telemetry structure for testing how analysis
@@ -490,6 +500,10 @@ def empty_telemetry_data() -> dict[str, Any]:
         },
         "model_metadata": {},
         "system_prompts": {},
-        "runtime_info": {},
+        "runtime_info": {
+            "python_version": "3.11.0",
+            "platform": "test",
+            "ragzoom_version": "1.0.0",
+        },
         "nodes": [],
     }

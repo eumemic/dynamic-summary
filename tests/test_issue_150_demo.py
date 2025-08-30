@@ -1,5 +1,6 @@
 """Demonstration test for issue #150 atomic multi-operation functionality."""
 
+from ragzoom.repositories.node_repository import NodeDataDict
 from ragzoom.store import StoreManager
 
 
@@ -28,7 +29,7 @@ class TestIssue150Demonstration:
             summary_model="gpt-4o-mini",
         )
 
-        old_nodes_data = [
+        old_nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "old-node",
                 "text": "Old content",
@@ -55,7 +56,7 @@ class TestIssue150Demonstration:
             "summary_model": "gpt-4o-mini",
         }
 
-        new_nodes_data = [
+        new_nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "new-node",
                 "text": "New content",
@@ -118,7 +119,7 @@ class TestIssue150Demonstration:
         assert doc_store.document_id == "backward-compat-doc"
 
         # Add nodes without session (existing API)
-        nodes_data = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "compat-node",
                 "text": "Test content",

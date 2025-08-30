@@ -80,7 +80,7 @@ app.add_middleware(create_error_handling_middleware(include_traceback=False))
 
 
 # Request/Response models
-class IndexDocumentRequest(BaseModel):  # type: ignore[explicit-any]
+class IndexDocumentRequest(BaseModel):
     """Request to index a new document."""
 
     model_config = ConfigDict(extra="forbid")
@@ -92,7 +92,7 @@ class IndexDocumentRequest(BaseModel):  # type: ignore[explicit-any]
     )
 
 
-class IndexDocumentResponse(BaseModel):  # type: ignore[explicit-any]
+class IndexDocumentResponse(BaseModel):
     """Response from document indexing."""
 
     model_config = ConfigDict(extra="forbid")
@@ -102,7 +102,7 @@ class IndexDocumentResponse(BaseModel):  # type: ignore[explicit-any]
     tree_depth: int
 
 
-class QueryRequest(BaseModel):  # type: ignore[explicit-any]
+class QueryRequest(BaseModel):
     """Request to query the system."""
 
     model_config = ConfigDict(extra="forbid")
@@ -113,7 +113,7 @@ class QueryRequest(BaseModel):  # type: ignore[explicit-any]
     token_budget: int | None = Field(None, description="Override token budget")
 
 
-class QueryResponse(BaseModel):  # type: ignore[explicit-any]
+class QueryResponse(BaseModel):
     """Response from query."""
 
     model_config = ConfigDict(extra="forbid")
@@ -124,7 +124,7 @@ class QueryResponse(BaseModel):  # type: ignore[explicit-any]
     tiling_size: int
 
 
-class PinNodeRequest(BaseModel):  # type: ignore[explicit-any]
+class PinNodeRequest(BaseModel):
     """Request to pin a node."""
 
     model_config = ConfigDict(extra="forbid")
@@ -132,7 +132,7 @@ class PinNodeRequest(BaseModel):  # type: ignore[explicit-any]
     node_id: str = Field(description="Node ID to pin")
 
 
-class UpdateConfigRequest(BaseModel):  # type: ignore[explicit-any]
+class UpdateConfigRequest(BaseModel):
     """Request to update configuration."""
 
     model_config = ConfigDict(extra="forbid")
@@ -173,7 +173,7 @@ class SystemConfigDict(TypedDict):
     operational: OperationalConfigDict
 
 
-class SystemStatusResponse(BaseModel):  # type: ignore[explicit-any]
+class SystemStatusResponse(BaseModel):
     """System status information."""
 
     model_config = ConfigDict(extra="forbid")
@@ -185,7 +185,7 @@ class SystemStatusResponse(BaseModel):  # type: ignore[explicit-any]
     config: SystemConfigDict
 
 
-class DocumentInfoResponse(BaseModel):  # type: ignore[explicit-any]
+class DocumentInfoResponse(BaseModel):
     """Information about an indexed document for API response."""
 
     model_config = ConfigDict(extra="forbid")
@@ -208,7 +208,7 @@ class DocumentInfoResponse(BaseModel):  # type: ignore[explicit-any]
         )
 
 
-class DocumentsResponse(BaseModel):  # type: ignore[explicit-any]
+class DocumentsResponse(BaseModel):
     """Response listing all indexed documents."""
 
     model_config = ConfigDict(extra="forbid")

@@ -108,7 +108,11 @@ class TestErrorUtils:
         assert formatted["type"] == "LLMError"
         assert formatted["category"] == "llm"
         assert formatted["operation"] == "summarize"
-        assert formatted["context"]["tokens"] == 500
+
+        # Type narrow the context before indexing
+        context_value = formatted["context"]
+        assert isinstance(context_value, dict)
+        assert context_value["tokens"] == 500
 
     def test_preserve_exception_chain(self) -> None:
         """Exception chaining should preserve original cause."""

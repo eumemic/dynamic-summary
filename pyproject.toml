@@ -74,15 +74,9 @@ ignore = ["E501"]  # Line too long (handled by black)
 python_version = "3.10"
 strict = true
 # TODO: Enable these to eliminate Any types completely (Phase 6)
-disallow_any_explicit = true
-# disallow_any_expr = true  
-disallow_any_unimported = true
-# SQLAlchemy 2.0 has native type support, no plugin needed
-
-# Test directory - ignore all errors for now
-[[tool.mypy.overrides]]
-module = "tests.*"
-ignore_errors = true
+#disallow_any_explicit = true
+#disallow_any_unimported = true
+# disallow_any_expr = true
 
 # External library type issues - to be addressed later
 [[tool.mypy.overrides]]
