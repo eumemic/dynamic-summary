@@ -84,17 +84,6 @@ warn_unreachable = true
 strict_equality = true
 # SQLAlchemy 2.0 has native type support, no plugin needed
 
-# Temporarily keep overrides while we fix incrementally
-[[tool.mypy.overrides]]
-module = "ragzoom.retrieve"
-disallow_untyped_defs = false
-warn_return_any = false
-
-[[tool.mypy.overrides]]
-module = "ragzoom.assemble"
-disallow_untyped_defs = false
-warn_return_any = false
-
 # External library type issues - to be addressed later
 [[tool.mypy.overrides]]
 module = "pgvector.*"
