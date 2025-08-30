@@ -2,6 +2,7 @@
 
 import threading
 import time
+from collections.abc import Generator
 
 import pytest
 
@@ -241,7 +242,7 @@ class TestPerformance:
 
 
 @pytest.fixture(autouse=True)
-def reset_singleton() -> None:
+def reset_singleton() -> Generator[None, None, None]:
     """Reset singleton state after each test to avoid interference."""
     yield
     # Don't reset after tests as it would break other parts of the system

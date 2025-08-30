@@ -1,18 +1,24 @@
 """Fast version of indexing tests using mock store."""
 
 import asyncio
-from unittest.mock import Mock
+from typing import Any
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
 from ragzoom.index import TreeBuilder
+from ragzoom.store import StoreManager
+from tests.conftest import BackwardCompatibilityConfig
 
 
 class TestIndexingFast:
     """Fast indexing tests using mock store instead of real database."""
 
     def test_full_document_gets_indexed(
-        self, base_config, store, mock_openai_async_client
+        self,
+        base_config: BackwardCompatibilityConfig,
+        store: StoreManager,
+        mock_openai_async_client: MagicMock,
     ) -> None:
         """Test that the entire document is indexed, not just first 37%."""
         config = base_config.index_config
@@ -47,7 +53,7 @@ class TestIndexingFast:
 
         # Verify: Check that the entire document was indexed
         # Get all leaf nodes and check their spans
-        leaf_nodes = store.get_leaf_nodes()
+        leaf_nodes = store.nodes.get_leaf_nodes()
 
         # Sort by span_start
         leaf_nodes.sort(key=lambda n: n.span_start)
@@ -97,7 +103,10 @@ class TestIndexingFast:
                 ), f"Large gap found: {gap} chars between positions {prev_end} and {curr_start}"
 
     def test_small_document_indexing(
-        self, base_config, store, mock_openai_async_client
+        self,
+        base_config: BackwardCompatibilityConfig,
+        store: StoreManager,
+        mock_openai_async_client: MagicMock,
     ) -> None:
         """Test indexing a very small document to isolate the issue."""
         config = base_config.index_config
@@ -126,7 +135,7 @@ class TestIndexingFast:
         asyncio.run(tree_builder.add_document_async(test_document))
 
         # Check that we indexed the whole thing
-        leaf_nodes = store.get_leaf_nodes()
+        leaf_nodes = store.nodes.get_leaf_nodes()
 
         if leaf_nodes:
             leaf_nodes.sort(key=lambda n: n.span_start)
@@ -143,7 +152,10 @@ class TestIndexingFast:
 
     @pytest.mark.slow
     def test_check_api_batch_limits(
-        self, base_config, store, mock_openai_async_client
+        self,
+        base_config: BackwardCompatibilityConfig,
+        store: StoreManager,
+        mock_openai_async_client: MagicMock,
     ) -> None:
         """Test if there's a limit on API batching causing truncation."""
         config = base_config.index_config
@@ -160,7 +172,7 @@ class TestIndexingFast:
         api_call_count = 0
         texts_per_call = []
 
-        async def mock_embeddings_create(**kwargs) -> Mock:
+        async def mock_embeddings_create(**kwargs: Any) -> Mock:
             nonlocal api_call_count, texts_per_call
             api_call_count += 1
             input_texts = kwargs.get("input", [])
@@ -191,7 +203,7 @@ class TestIndexingFast:
         asyncio.run(tree_builder.add_document_async(test_document))
 
         # Check results
-        leaf_nodes = store.get_leaf_nodes()
+        leaf_nodes = store.nodes.get_leaf_nodes()
 
         print(f"API calls made: {api_call_count}")
         print(f"Texts per call: {texts_per_call}")

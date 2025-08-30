@@ -72,7 +72,7 @@ class TestNumSeedsFix:
 
         # Mock the search_similar method on the store itself (not store.search)
         # because for_document() creates a new search object that calls store.search_similar
-        store.search_similar = Mock(
+        store.search_similar = Mock(  # type: ignore[method-assign]
             return_value=[
                 ("leaf1", 0.9, {}),  # High similarity, empty metadata
                 ("leaf2", 0.9, {}),
@@ -82,7 +82,7 @@ class TestNumSeedsFix:
         )
 
         # Mock compute_mmr_diverse_results on the store itself
-        store.compute_mmr_diverse_results = Mock(return_value=["leaf1"])
+        store.compute_mmr_diverse_results = Mock(return_value=["leaf1"])  # type: ignore[method-assign]
 
         # Let the mock store handle get_ancestors naturally - it has proper implementation
 

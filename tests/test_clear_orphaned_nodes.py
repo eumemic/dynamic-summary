@@ -68,7 +68,7 @@ class TestAutomaticClearing:
             span_start = i * 100
             span_end = (i + 1) * 100
 
-            store.add_node(
+            store.nodes.add_node(
                 node_id=f"node_{i}",
                 text=f"Text content {i}",
                 embedding=[0.1] * 1536,  # Dummy embedding
@@ -132,7 +132,7 @@ class TestAutomaticClearing:
                     store.clear_document(document_id)
 
                     # Add a mock root node so CLI stats calculation works
-                    store.add_node(
+                    store.nodes.add_node(
                         node_id="mock_root",
                         text="Mock root node",
                         span_start=0,
@@ -255,7 +255,7 @@ class TestAutomaticClearing:
                     store.clear_document(document_id)
 
                     # Add a mock root node so CLI stats calculation works
-                    store.add_node(
+                    store.nodes.add_node(
                         node_id="mock_root",
                         text="Mock root node",
                         span_start=0,

@@ -53,7 +53,7 @@ class TestParallelDPPerformance:
                 [chunk_text for _ in range(4)]
             )  # 4 chunks = 2-3 levels
 
-            tree_builder.add_document(large_document, "large-test-doc")
+            tree_builder.add_document(large_document)
 
             yield config, store, tree_builder, mock_retrieve
 

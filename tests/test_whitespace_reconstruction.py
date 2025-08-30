@@ -49,7 +49,7 @@ class TestWhitespaceReconstruction:
         config = BackwardCompatibilityConfig(
             index_config, query_config, operational_config
         )
-        splitter = TextSplitter(config)
+        splitter = TextSplitter(index_config)
 
         yield config, store, tree_builder, splitter
 

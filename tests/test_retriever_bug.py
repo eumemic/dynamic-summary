@@ -126,7 +126,7 @@ class TestRetrieverBug:
             document_id="test-doc",  # Specify the document we're working with
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
-        return config, store, retriever
+        yield config, store, retriever
 
     def test_retriever_bug_with_num_seeds_1(
         self, setup_tree_for_bug_demo: tuple[Any, SimpleMockStore, Any]
@@ -141,12 +141,12 @@ class TestRetrieverBug:
         ) -> list[tuple[str, float, dict[str, Any]]]:
             return [("L3", 0.95, {})]
 
-        store.search_similar = mock_search_similar
+        store.search_similar = mock_search_similar  # type: ignore[method-assign, assignment]
         # Also mock MMR to return L3 as selected
-        store.compute_mmr_diverse_results = lambda *args: ["L3"]
+        store.compute_mmr_diverse_results = lambda *args: ["L3"]  # type: ignore[method-assign]
 
         # Mock the query embedding generation
-        retriever.embedding_service.get_query_embedding = (
+        retriever.embedding_service.get_query_embedding = (  # type: ignore[method-assign]
             lambda query, document_id=None: [0.3] * 1536
         )
 
@@ -177,12 +177,12 @@ class TestRetrieverBug:
         ) -> list[tuple[str, float, dict[str, Any]]]:
             return [("L3", 0.95, {})]
 
-        store.search_similar = mock_search_similar
+        store.search_similar = mock_search_similar  # type: ignore[method-assign, assignment]
         # Also mock MMR to return L3 as selected
-        store.compute_mmr_diverse_results = lambda *args: ["L3"]
+        store.compute_mmr_diverse_results = lambda *args: ["L3"]  # type: ignore[method-assign]
 
         # Mock the query embedding generation
-        retriever.embedding_service.get_query_embedding = (
+        retriever.embedding_service.get_query_embedding = (  # type: ignore[method-assign]
             lambda query, document_id=None: [0.3] * 1536
         )
 

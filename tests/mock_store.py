@@ -209,6 +209,9 @@ class SimpleMockStore(StoreInterface):
         mock_nodes.update_parent_references_batch = self.update_parent_references_batch
         # Add get method that delegates to get_node for compatibility with Assembler
         mock_nodes.get = self.get_node
+        # Add missing methods for StoreManager compatibility
+        mock_nodes.add_node = self.add_node
+        mock_nodes.get_leaf_nodes = self.get_leaf_nodes
         self.nodes = mock_nodes
 
         # Create a documents property that acts like both dict and repository
