@@ -86,11 +86,6 @@ strict_equality = true
 
 # Temporarily keep overrides while we fix incrementally
 [[tool.mypy.overrides]]
-module = "ragzoom.store"
-disallow_untyped_defs = false
-warn_return_any = false
-
-[[tool.mypy.overrides]]
 module = "ragzoom.retrieve"
 disallow_untyped_defs = false
 warn_return_any = false
