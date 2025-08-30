@@ -5,18 +5,19 @@ prev_context, left_token_count, and right_token_count to LLMService,
 causing a 102% increase in retry rate.
 """
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ragzoom.config import IndexConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.store import TreeNode
+from ragzoom.models import TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
 
 
 @pytest.fixture
-def mock_nodes():
+def mock_nodes() -> tuple[MagicMock, MagicMock]:
     """Create mock tree nodes with token counts."""
     left_node = MagicMock(spec=TreeNode)
     left_node.token_count = 150
@@ -32,7 +33,7 @@ def mock_nodes():
 
 
 @pytest.fixture
-def mock_reporter():
+def mock_reporter() -> MagicMock:
     """Create a mock telemetry collector."""
     reporter = MagicMock(spec=TelemetryCollector)
     reporter._current_height = 1
@@ -42,8 +43,8 @@ def mock_reporter():
 
 @pytest.mark.asyncio
 async def test_process_node_pair_passes_all_parameters(
-    mock_store, mock_nodes, mock_reporter
-):
+    mock_store: Any, mock_nodes: tuple[MagicMock, MagicMock], mock_reporter: MagicMock
+) -> None:
     """Regression test: ensure _process_node_pair passes all parameters to LLMService.
 
     This test would have caught the bug where prev_context, left_token_count,
@@ -55,9 +56,11 @@ async def test_process_node_pair_passes_all_parameters(
     builder = TreeBuilder(config, mock_store)
 
     # Capture parameters passed to LLMService._summarize_text
-    captured_params = {}
+    captured_params: dict[str, Any] = {}
 
-    async def capture_summarize_params(*args, **kwargs):
+    async def capture_summarize_params(
+        *args: Any, **kwargs: Any
+    ) -> tuple[str, int, int]:
         """Capture all parameters passed to _summarize_text."""
         captured_params.clear()
         captured_params.update(kwargs)
@@ -109,7 +112,9 @@ async def test_process_node_pair_passes_all_parameters(
 
 
 @pytest.mark.asyncio
-async def test_prev_context_affects_prompt(mock_store, mock_nodes, mock_reporter):
+async def test_prev_context_affects_prompt(
+    mock_store: Any, mock_nodes: tuple[MagicMock, MagicMock], mock_reporter: MagicMock
+) -> None:
     """Test that prev_context actually changes the generated prompt."""
     left_node, right_node = mock_nodes
 
@@ -119,7 +124,7 @@ async def test_prev_context_affects_prompt(mock_store, mock_nodes, mock_reporter
     # Test by capturing the parameters passed to _summarize_text
     captured_params_list = []
 
-    async def capture_params(*args, **kwargs):
+    async def capture_params(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
         """Capture parameters for each call."""
         captured_params_list.append(kwargs.copy())
         return ("Mock summary", 0, 100)
@@ -170,8 +175,8 @@ async def test_prev_context_affects_prompt(mock_store, mock_nodes, mock_reporter
 
 @pytest.mark.asyncio
 async def test_parameter_validation_would_catch_bug(
-    mock_store, mock_nodes, mock_reporter
-):
+    mock_store: Any, mock_nodes: tuple[MagicMock, MagicMock], mock_reporter: MagicMock
+) -> None:
     """Test that demonstrates how the bug could be caught with parameter validation."""
     left_node, right_node = mock_nodes
 
@@ -181,7 +186,7 @@ async def test_parameter_validation_would_catch_bug(
     # Track what parameters were actually passed to _summarize_text
     actual_calls = []
 
-    async def track_calls(*args, **kwargs):
+    async def track_calls(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
         actual_calls.append(
             {
                 "prev_context": kwargs.get("prev_context"),
@@ -222,7 +227,7 @@ async def test_parameter_validation_would_catch_bug(
 
 # Integration test showing the impact of the bug
 @pytest.mark.asyncio
-async def test_bug_would_cause_missing_parameters():
+async def test_bug_would_cause_missing_parameters() -> None:
     """Demonstrate that the bug would cause parameters to be missing."""
 
     # Simulate the "buggy" version by showing what would happen
@@ -236,7 +241,7 @@ async def test_bug_would_cause_missing_parameters():
 
     captured_calls = []
 
-    async def capture_llm_calls(*args, **kwargs):
+    async def capture_llm_calls(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
         """Capture what parameters LLMService actually receives."""
         captured_calls.append(
             {

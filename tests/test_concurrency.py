@@ -1,6 +1,7 @@
 """Concurrency tests for thread safety."""
 
 import asyncio
+from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,13 +14,15 @@ class TestConcurrency:
     """Test thread safety and concurrent requests."""
 
     @pytest.fixture
-    def mock_openai(self):
+    def mock_openai(self) -> Generator[None, None, None]:
         """Mock OpenAI for tests using centralized utilities."""
         with mock_openai_context():
             yield
 
     @pytest.fixture
-    def client(self, mock_openai, monkeypatch, mock_store):
+    def client(
+        self, mock_openai: None, monkeypatch: pytest.MonkeyPatch, mock_store: object
+    ) -> Generator[TestClient, None, None]:
         """Create test client with mocked dependencies."""
         from ragzoom.api import get_service_container
         from ragzoom.config import (
@@ -33,7 +36,7 @@ class TestConcurrency:
 
         # Create a mock service container that uses our mock store
         class MockServiceContainer:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.index_config = IndexConfig.load()
                 self.query_config = QueryConfig()
                 self.operational_config = OperationalConfig(
@@ -54,11 +57,11 @@ class TestConcurrency:
                     self.store, self.query_config, self.operational_config
                 )
 
-            def close(self):
+            def close(self) -> None:
                 """Mock close method."""
                 pass
 
-        def mock_get_service_container():
+        def mock_get_service_container() -> MockServiceContainer:
             return MockServiceContainer()
 
         # Override the dependency
@@ -72,7 +75,7 @@ class TestConcurrency:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_concurrent_queries(self, client):
+    async def test_concurrent_queries(self, client: TestClient) -> None:
         """Test multiple concurrent query requests."""
         # First index some data
         response = client.post(
@@ -85,7 +88,7 @@ class TestConcurrency:
         assert response.status_code == 200
 
         # Make concurrent queries
-        async def make_query(query_num):
+        async def make_query(query_num: int) -> object:
             response = client.post(
                 "/query",
                 json={"query": f"Test query {query_num}", "document_id": "test-doc"},
@@ -103,7 +106,9 @@ class TestConcurrency:
             assert "summary" in data
 
     @pytest.mark.integration
-    def test_service_isolation(self, mock_openai, monkeypatch):
+    def test_service_isolation(
+        self, mock_openai: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that each request gets its own service instance."""
         from ragzoom.api import get_service_container
 
@@ -121,10 +126,10 @@ class TestConcurrency:
         assert service1.store is not service2.store
 
     @pytest.mark.asyncio
-    async def test_concurrent_indexing(self, client):
+    async def test_concurrent_indexing(self, client: TestClient) -> None:
         """Test concurrent document indexing."""
 
-        async def index_doc(doc_num):
+        async def index_doc(doc_num: int) -> object:
             response = client.post(
                 "/index",
                 json={
@@ -144,7 +149,7 @@ class TestConcurrency:
             data = response.json()
             assert data["document_id"] == f"doc-{i}"
 
-    def test_no_shared_state(self, client):
+    def test_no_shared_state(self, client: TestClient) -> None:
         """Verify no shared mutable state between requests."""
         # Make a config update
         response1 = client.patch("/config", json={"budget_tokens": 5000})

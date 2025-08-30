@@ -1,5 +1,7 @@
 """Test telemetry analysis functions."""
 
+from typing import Any
+
 import pytest
 
 from ragzoom.telemetry_analysis import (
@@ -58,7 +60,7 @@ class TestTelemetryFormatParsing:
 
     def test_parse_missing_format_version(self) -> None:
         """Test parsing telemetry without format version."""
-        telemetry_data = {"documents": {}}
+        telemetry_data: dict[str, Any] = {"documents": {}}
 
         with pytest.raises(TelemetryAnalysisError, match="Missing format_version"):
             parse_telemetry_format(telemetry_data)
@@ -75,7 +77,7 @@ class TestTelemetryFormatParsing:
     def test_parse_invalid_data_type(self) -> None:
         """Test parsing non-dictionary data."""
         with pytest.raises(TelemetryAnalysisError, match="must be a dictionary"):
-            parse_telemetry_format("invalid")
+            parse_telemetry_format("invalid")  # type: ignore[arg-type]
 
 
 class TestTargetFitMetrics:
@@ -148,7 +150,7 @@ class TestTargetFitMetrics:
 
         from ragzoom.telemetry_analysis import compute_target_fit_metrics
 
-        result = compute_target_fit_metrics(nodes, target_size=100)
+        result = compute_target_fit_metrics(nodes, target_size=100)  # type: ignore[arg-type]
 
         # Errors should be: -5 (95-100), +5 (105-100), -2 (98-100)
         # Median of [-5, -2, 5] = -2
@@ -187,7 +189,7 @@ class TestTargetFitMetrics:
 
         from ragzoom.telemetry_analysis import compute_target_fit_metrics
 
-        result = compute_target_fit_metrics(nodes, target_size=100)
+        result = compute_target_fit_metrics(nodes, target_size=100)  # type: ignore[arg-type]
 
         # Should use the last attempt (90 tokens)
         # Error should be: -10 (90-100)
@@ -201,7 +203,7 @@ class TestSimplifiedMetrics:
     # Config fixture removed - telemetry functions no longer need config
 
     @pytest.fixture
-    def sample_telemetry(self) -> dict:
+    def sample_telemetry(self) -> dict[str, Any]:
         """Create sample telemetry data with summary attempts."""
         return {
             "format_version": "4.2",
@@ -254,7 +256,7 @@ class TestSimplifiedMetrics:
             ],
         }
 
-    def test_compute_simplified_metrics(self, sample_telemetry: dict) -> None:
+    def test_compute_simplified_metrics(self, sample_telemetry: dict[str, Any]) -> None:
         """Test computing simplified metrics from telemetry."""
         result = compute_simplified_metrics(sample_telemetry)
 
@@ -280,7 +282,9 @@ class TestSimplifiedMetrics:
             assert hasattr(metrics.retries, "retry_rate")
             assert hasattr(metrics.retries, "max_retries")
 
-    def test_simplified_metrics_empty_data(self, empty_telemetry_data) -> None:
+    def test_simplified_metrics_empty_data(
+        self, empty_telemetry_data: dict[str, Any]
+    ) -> None:
         """Test simplified metrics with empty telemetry."""
         result = compute_simplified_metrics(empty_telemetry_data)
 
@@ -316,7 +320,9 @@ class TestSimplifiedMetrics:
         # Should return empty metrics (no summary attempts)
         assert result.metrics_by_chunk_size == {}
 
-    def test_simplified_metrics_cost_calculations(self, sample_telemetry: dict) -> None:
+    def test_simplified_metrics_cost_calculations(
+        self, sample_telemetry: dict[str, Any]
+    ) -> None:
         """Test that cost calculations in simplified metrics are correct."""
         result = compute_simplified_metrics(sample_telemetry)
 
@@ -420,7 +426,9 @@ class TestBatchEfficiency:
         # Total batched: 3, Total embeddings: 3 → 100% efficiency
         assert result["batch_utilization"] == pytest.approx(100.0, rel=0.01)
 
-    def test_batch_efficiency_empty_data(self, empty_telemetry_data) -> None:
+    def test_batch_efficiency_empty_data(
+        self, empty_telemetry_data: dict[str, Any]
+    ) -> None:
         """Test batch efficiency with empty telemetry."""
         result = compute_batch_efficiency(empty_telemetry_data)
 
@@ -766,7 +774,7 @@ class TestFullMetricsComputation:
     # Config fixture removed - telemetry functions no longer need config
 
     @pytest.fixture
-    def full_telemetry(self) -> dict:
+    def full_telemetry(self) -> dict[str, Any]:
         """Create comprehensive telemetry data."""
         return {
             "format_version": "4.2",
@@ -836,7 +844,9 @@ class TestFullMetricsComputation:
             ],
         }
 
-    def test_compute_full_metrics_from_telemetry(self, full_telemetry: dict) -> None:
+    def test_compute_full_metrics_from_telemetry(
+        self, full_telemetry: dict[str, Any]
+    ) -> None:
         """Test computing full metrics from telemetry."""
         metrics = compute_metrics_from_telemetry(full_telemetry)
 
@@ -960,7 +970,7 @@ class TestVerbatimDetection:
             },
         ]
 
-        result = detect_verbatim_concatenations(nodes)
+        result = detect_verbatim_concatenations(nodes)  # type: ignore[arg-type]
         assert result["total_summaries"] == 2
         assert result["verbatim_count"] == 0
         assert result["verbatim_percentage"] == 0.0
@@ -1004,7 +1014,7 @@ class TestVerbatimDetection:
             },
         ]
 
-        result = detect_verbatim_concatenations(nodes)
+        result = detect_verbatim_concatenations(nodes)  # type: ignore[arg-type]
         assert result["total_summaries"] == 3
         assert result["verbatim_count"] == 2
         assert result["verbatim_percentage"] == pytest.approx(66.67, 0.1)
@@ -1044,11 +1054,11 @@ class TestVerbatimDetection:
         ]
 
         # With default 2% tolerance
-        result = detect_verbatim_concatenations(nodes, tolerance=0.02)
+        result = detect_verbatim_concatenations(nodes, tolerance=0.02)  # type: ignore[arg-type]
         assert result["verbatim_count"] == 1  # Only the 0.98 ratio
 
         # With 5% tolerance
-        result = detect_verbatim_concatenations(nodes, tolerance=0.05)
+        result = detect_verbatim_concatenations(nodes, tolerance=0.05)  # type: ignore[arg-type]
         assert result["verbatim_count"] == 2  # Both are caught
 
     def test_height_distribution(self) -> None:
@@ -1070,7 +1080,7 @@ class TestVerbatimDetection:
             for i in range(6)
         ]
 
-        result = detect_verbatim_concatenations(nodes)
+        result = detect_verbatim_concatenations(nodes)  # type: ignore[arg-type]
         assert result["verbatim_count"] == 4
         assert result["height_distribution"] == {1: 2, 2: 1, 3: 1}
 
@@ -1094,5 +1104,5 @@ class TestVerbatimDetection:
             },
         ]
 
-        result = detect_verbatim_concatenations(nodes)
+        result = detect_verbatim_concatenations(nodes)  # type: ignore[arg-type]
         assert result["verbatim_count"] == 0  # Accepted attempt is not verbatim

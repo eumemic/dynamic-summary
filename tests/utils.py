@@ -1,5 +1,7 @@
 """Shared test utilities and mock setups."""
 
+from collections.abc import Generator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -11,7 +13,7 @@ from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
 
 
-def create_mock_openai_clients():
+def create_mock_openai_clients() -> tuple[Mock, Mock, Mock]:
     """Create standard mock OpenAI clients for testing.
 
     Returns a tuple of (mock_index_client, mock_retrieve_client, mock_assemble_client)
@@ -19,14 +21,14 @@ def create_mock_openai_clients():
     """
 
     # Standard embedding response
-    async def mock_embeddings_create_async(*args, **kwargs):
+    async def mock_embeddings_create_async(*args: Any, **kwargs: Any) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
             return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
         else:
             return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
-    def mock_embeddings_create_sync(*args, **kwargs):
+    def mock_embeddings_create_sync(*args: Any, **kwargs: Any) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
             return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
@@ -34,12 +36,12 @@ def create_mock_openai_clients():
             return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
     # Standard chat completion response
-    async def mock_chat_create_async(*args, **kwargs):
+    async def mock_chat_create_async(*args: Any, **kwargs: Any) -> Mock:
         return Mock(
             choices=[Mock(message=Mock(content="Summary of left and right content"))]
         )
 
-    def mock_chat_create_sync(*args, **kwargs):
+    def mock_chat_create_sync(*args: Any, **kwargs: Any) -> Mock:
         return Mock(
             choices=[Mock(message=Mock(content="Summary of left and right content"))]
         )
@@ -72,7 +74,7 @@ def create_mock_openai_clients():
     return mock_index_client, mock_retrieve_client, mock_assemble_client
 
 
-def create_test_documents():
+def create_test_documents() -> dict[str, str]:
     """Create standard test documents for testing.
 
     Returns a dict with different document types and sizes.
@@ -95,11 +97,11 @@ Third paragraph with yet more content.""",
 class MockOpenAIContext:
     """Context manager that provides OpenAI mocking for tests."""
 
-    def __init__(self, embedding_rules=None):
+    def __init__(self, embedding_rules: dict[str, list[float]] | None = None) -> None:
         """Initialize with optional specialized embedding rules."""
         self.embedding_rules = embedding_rules
 
-    def __enter__(self):
+    def __enter__(self) -> tuple[Mock, Mock, Mock]:
         """Enter context and set up mocks."""
         self.index_patcher = patch("ragzoom.services.llm_service.AsyncOpenAI")
         self.retrieve_patcher = patch("openai.OpenAI")
@@ -121,13 +123,15 @@ class MockOpenAIContext:
 
         return mock_index_client, mock_retrieve_client, mock_assemble_client
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit context and clean up mocks."""
         self.index_patcher.stop()
         self.retrieve_patcher.stop()
 
 
-def mock_openai_context(embedding_rules=None):
+def mock_openai_context(
+    embedding_rules: dict[str, list[float]] | None = None,
+) -> MockOpenAIContext:
     """Context manager that mocks all OpenAI clients.
 
     Args:
@@ -149,7 +153,9 @@ def mock_openai_context(embedding_rules=None):
     return MockOpenAIContext(embedding_rules)
 
 
-def mock_openai_fixture(embedding_rules=None):
+def mock_openai_fixture(
+    embedding_rules: dict[str, list[float]] | None = None,
+) -> Generator[tuple[Mock, Mock, Mock], None, None]:
     """Pytest fixture that mocks all OpenAI clients.
 
     Args:
@@ -181,7 +187,7 @@ def mock_openai_fixture(embedding_rules=None):
 
 
 @pytest.fixture
-def openai_mocks():
+def openai_mocks() -> Generator[tuple[Mock, Mock, Mock], None, None]:
     """Centralized pytest fixture for OpenAI mocking.
 
     This fixture provides consistent OpenAI mocking across all tests.
@@ -190,11 +196,12 @@ def openai_mocks():
     Returns:
         tuple: (mock_index_client, mock_retrieve_client, mock_assemble_client)
     """
-    with mock_openai_fixture() as mocks:
-        yield mocks
+    yield from mock_openai_fixture()
 
 
-def create_mock_embedding_response(texts, embedding_dim=1536):
+def create_mock_embedding_response(
+    texts: str | list[str], embedding_dim: int = 1536
+) -> Mock:
     """Create a mock embedding response for given texts.
 
     Args:
@@ -210,7 +217,7 @@ def create_mock_embedding_response(texts, embedding_dim=1536):
     return Mock(data=[Mock(embedding=[0.1] * embedding_dim) for _ in texts])
 
 
-def create_mock_chat_response(content):
+def create_mock_chat_response(content: str) -> Mock:
     """Create a mock chat completion response.
 
     Args:
@@ -222,14 +229,14 @@ def create_mock_chat_response(content):
     return Mock(choices=[Mock(message=Mock(content=content))])
 
 
-def create_predictable_summary_mock():
+def create_predictable_summary_mock() -> tuple[Any, Any]:
     """Create a mock that returns predictable summaries based on content.
 
     This is useful for tests that need consistent, deterministic summaries
     based on the input content patterns.
     """
 
-    def mock_chat_create(*args, **kwargs):
+    def mock_chat_create(*args: Any, **kwargs: Any) -> Mock:
         messages = kwargs.get("messages", [])
         content = messages[-1]["content"] if messages else ""
 
@@ -279,24 +286,24 @@ def create_predictable_summary_mock():
                 ]
             )
 
-    async def mock_chat_create_async(*args, **kwargs):
+    async def mock_chat_create_async(*args: Any, **kwargs: Any) -> Mock:
         return mock_chat_create(*args, **kwargs)
 
     return mock_chat_create, mock_chat_create_async
 
 
-def create_hash_based_embedding_mock():
+def create_hash_based_embedding_mock() -> tuple[Any, Any]:
     """Create an embedding mock that returns deterministic hash-based embeddings.
 
     This is useful for tests that need consistent, deterministic embeddings
     based on text content.
     """
 
-    def calculate_hash_embedding(text):
+    def calculate_hash_embedding(text: str) -> list[float]:
         hash_val = sum(ord(c) for c in text) % 100
         return [hash_val / 100.0] * 1536
 
-    async def hash_embeddings_create_async(*args, **kwargs):
+    async def hash_embeddings_create_async(*args: Any, **kwargs: Any) -> Mock:
         texts = kwargs.get("input")
         if texts is None and len(args) > 0:
             texts = args[0]
@@ -308,7 +315,7 @@ def create_hash_based_embedding_mock():
             embeddings.append(Mock(embedding=embedding))
         return Mock(data=embeddings)
 
-    def hash_embeddings_create_sync(*args, **kwargs):
+    def hash_embeddings_create_sync(*args: Any, **kwargs: Any) -> Mock:
         texts = kwargs.get("input")
         if texts is None and len(args) > 0:
             texts = args[0]
@@ -323,13 +330,13 @@ def create_hash_based_embedding_mock():
     return hash_embeddings_create_sync, hash_embeddings_create_async
 
 
-def create_telemetry_summary_mock():
+def create_telemetry_summary_mock() -> tuple[Any, Any]:
     """Create a mock for telemetry tests that includes usage data.
 
     This mock returns summaries with token usage information needed for telemetry collection.
     """
 
-    async def mock_chat_completion_with_usage(*args, **kwargs):
+    async def mock_chat_completion_with_usage(*args: Any, **kwargs: Any) -> MagicMock:
         response = MagicMock()
         response.choices = [MagicMock()]
         response.choices[0].message = MagicMock()
@@ -343,7 +350,7 @@ def create_telemetry_summary_mock():
         response.usage.completion_tokens = 50
         return response
 
-    def mock_chat_completion_with_usage_sync(*args, **kwargs):
+    def mock_chat_completion_with_usage_sync(*args: Any, **kwargs: Any) -> MagicMock:
         response = MagicMock()
         response.choices = [MagicMock()]
         response.choices[0].message = MagicMock()
@@ -358,7 +365,9 @@ def create_telemetry_summary_mock():
     return mock_chat_completion_with_usage_sync, mock_chat_completion_with_usage
 
 
-def _calculate_embedding_from_rules(text, embedding_rules):
+def _calculate_embedding_from_rules(
+    text: str, embedding_rules: dict[str, list[float]]
+) -> list[float]:
     """Calculate embedding vector based on text patterns and rules.
 
     Args:
@@ -376,7 +385,9 @@ def _calculate_embedding_from_rules(text, embedding_rules):
     return embedding
 
 
-def create_specialized_openai_mocks(embedding_rules=None):
+def create_specialized_openai_mocks(
+    embedding_rules: dict[str, list[float]] | None = None,
+) -> tuple[Mock, Mock, Mock]:
     """Create OpenAI mocks with specialized embedding behavior.
 
     Args:
@@ -390,7 +401,7 @@ def create_specialized_openai_mocks(embedding_rules=None):
         return create_mock_openai_clients()
 
     # Create specialized embedding functions
-    async def specialized_embeddings_create_async(*args, **kwargs):
+    async def specialized_embeddings_create_async(*args: Any, **kwargs: Any) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
             embeddings = []
@@ -402,18 +413,18 @@ def create_specialized_openai_mocks(embedding_rules=None):
             embedding = _calculate_embedding_from_rules(input_data, embedding_rules)
             return Mock(data=[Mock(embedding=embedding)])
 
-    def specialized_embeddings_create_sync(*args, **kwargs):
+    def specialized_embeddings_create_sync(*args: Any, **kwargs: Any) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         embedding = _calculate_embedding_from_rules(input_data, embedding_rules)
         return Mock(data=[Mock(embedding=embedding)])
 
     # Standard chat completion
-    async def mock_chat_create_async(*args, **kwargs):
+    async def mock_chat_create_async(*args: Any, **kwargs: Any) -> Mock:
         return Mock(
             choices=[Mock(message=Mock(content="Summary of left and right content"))]
         )
 
-    def mock_chat_create_sync(*args, **kwargs):
+    def mock_chat_create_sync(*args: Any, **kwargs: Any) -> Mock:
         return Mock(
             choices=[Mock(message=Mock(content="Summary of left and right content"))]
         )
@@ -447,14 +458,14 @@ def create_specialized_openai_mocks(embedding_rules=None):
 
 
 def create_retriever(
-    query_config,
-    store,
-    document_id=None,
-    api_key="test-key",
-    embedding_model=None,
-    target_chunk_tokens=None,
-    client=None,
-):
+    query_config: Any,
+    store: Any,
+    document_id: str | None = None,
+    api_key: str = "test-key",
+    embedding_model: str | None = None,
+    target_chunk_tokens: int | None = None,
+    client: Any | None = None,
+) -> Any:
     """Create a Retriever instance with proper service dependencies.
 
     Args:

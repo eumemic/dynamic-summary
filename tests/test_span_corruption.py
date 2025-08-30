@@ -81,7 +81,7 @@ class TestSpanCorruption:
 
         # Check for span corruption
         with store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
+            from ragzoom.models import TreeNode
 
             # Get all nodes
             all_nodes = session.query(TreeNode).filter_by(document_id=doc_id).all()
@@ -156,7 +156,7 @@ class TestSpanCorruption:
 
         # Verify tree structure
         with store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
+            from ragzoom.models import TreeNode
 
             # Get nodes by depth
             nodes_by_depth = {}

@@ -17,23 +17,23 @@ from ragzoom.utils.tokenization import (
 class TestTokenizerUtil:
     """Test the TokenizerUtil singleton class."""
 
-    def test_singleton_pattern(self):
+    def test_singleton_pattern(self) -> None:
         """Test that TokenizerUtil follows singleton pattern."""
         t1 = TokenizerUtil()
         t2 = TokenizerUtil()
         assert t1 is t2, "TokenizerUtil should return same instance"
 
-    def test_singleton_with_global_instance(self):
+    def test_singleton_with_global_instance(self) -> None:
         """Test that global tokenizer instance is same as class instance."""
         t1 = TokenizerUtil()
         assert tokenizer is t1, "Global tokenizer should be same as class instance"
 
-    def test_thread_safety(self):
+    def test_thread_safety(self) -> None:
         """Test that TokenizerUtil is thread-safe."""
         instances = []
         results = []
 
-        def create_tokenizer():
+        def create_tokenizer() -> None:
             """Worker function to create tokenizer instances."""
             instances.append(TokenizerUtil())
             # Also test encoding in parallel
@@ -60,7 +60,7 @@ class TestTokenizerUtil:
         assert len(set(results)) == 1, "All tokenization results should be identical"
         assert results[0] == 2, "Token count should be correct"
 
-    def test_lazy_initialization(self):
+    def test_lazy_initialization(self) -> None:
         """Test that encoder is only created when first accessed."""
         # Note: Can't fully test lazy initialization in isolation since
         # other tests may have already initialized the encoder.
@@ -79,11 +79,11 @@ class TestTokenizerUtil:
         # (though it may have been set by other tests already)
         assert TokenizerUtil._encoder is not None, "Class encoder should be initialized"
 
-    def test_encoder_initialization_thread_safety(self):
+    def test_encoder_initialization_thread_safety(self) -> None:
         """Test that encoder initialization is thread-safe."""
         encoders = []
 
-        def access_encoder():
+        def access_encoder() -> None:
             """Worker function to access encoder."""
             t = TokenizerUtil()
             encoders.append(t.encoder)
@@ -104,7 +104,7 @@ class TestTokenizerUtil:
             len(set(id(enc) for enc in encoders)) == 1
         ), "All encoders should be same object"
 
-    def test_count_tokens(self):
+    def test_count_tokens(self) -> None:
         """Test token counting functionality."""
         t = TokenizerUtil()
 
@@ -119,7 +119,7 @@ class TestTokenizerUtil:
         assert count > 0
         assert isinstance(count, int)
 
-    def test_encode_decode_roundtrip(self):
+    def test_encode_decode_roundtrip(self) -> None:
         """Test encoding and decoding roundtrip."""
         t = TokenizerUtil()
 
@@ -131,7 +131,7 @@ class TestTokenizerUtil:
         assert all(isinstance(token, int) for token in tokens)
         assert decoded == test_text
 
-    def test_edge_cases(self):
+    def test_edge_cases(self) -> None:
         """Test edge cases for tokenization."""
         t = TokenizerUtil()
 
@@ -152,7 +152,7 @@ class TestTokenizerUtil:
 class TestConvenienceFunctions:
     """Test the convenience functions."""
 
-    def test_count_tokens_function(self):
+    def test_count_tokens_function(self) -> None:
         """Test count_tokens convenience function."""
         count = count_tokens("hello world")
         assert count == 2
@@ -161,7 +161,7 @@ class TestConvenienceFunctions:
         t = TokenizerUtil()
         assert count == t.count_tokens("hello world")
 
-    def test_encode_text_function(self):
+    def test_encode_text_function(self) -> None:
         """Test encode_text convenience function."""
         tokens = encode_text("hello world")
         assert isinstance(tokens, list)
@@ -171,7 +171,7 @@ class TestConvenienceFunctions:
         t = TokenizerUtil()
         assert tokens == t.encode("hello world")
 
-    def test_decode_tokens_function(self):
+    def test_decode_tokens_function(self) -> None:
         """Test decode_tokens convenience function."""
         text = "hello world"
         tokens = encode_text(text)
@@ -183,7 +183,7 @@ class TestConvenienceFunctions:
         t = TokenizerUtil()
         assert decoded == t.decode(tokens)
 
-    def test_consistency_across_functions(self):
+    def test_consistency_across_functions(self) -> None:
         """Test that all functions give consistent results."""
         test_text = "This is a test of consistency across different APIs."
 
@@ -209,7 +209,7 @@ class TestConvenienceFunctions:
 class TestPerformance:
     """Test performance characteristics."""
 
-    def test_singleton_performance(self):
+    def test_singleton_performance(self) -> None:
         """Test that singleton creation is consistently fast."""
         # Measure creation time multiple times
         times = []
@@ -224,7 +224,7 @@ class TestPerformance:
             max_time < 0.001
         ), f"Singleton creation should be fast, got {max_time:.6f}s"
 
-    def test_encoder_caching_performance(self):
+    def test_encoder_caching_performance(self) -> None:
         """Test that encoder access is consistently fast."""
         t = TokenizerUtil()
 
@@ -241,7 +241,7 @@ class TestPerformance:
 
 
 @pytest.fixture(autouse=True)
-def reset_singleton():
+def reset_singleton() -> None:
     """Reset singleton state after each test to avoid interference."""
     yield
     # Don't reset after tests as it would break other parts of the system

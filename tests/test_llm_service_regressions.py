@@ -29,7 +29,7 @@ class MockOpenAIResponse:
 
 
 @pytest.mark.asyncio
-async def test_mark_accepted_attempt_is_called(mock_store):
+async def test_mark_accepted_attempt_is_called(mock_store: object) -> None:
     """Test that mark_accepted_attempt is called after summarization completes."""
     config = IndexConfig.load(
         retry_threshold=0.2,  # 20% deviation triggers retry
@@ -43,7 +43,7 @@ async def test_mark_accepted_attempt_is_called(mock_store):
     api_calls = []
     mark_accepted_calls = []
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: object) -> MockOpenAIResponse:
         """Mock OpenAI API calls."""
         api_calls.append(kwargs)
 
@@ -74,7 +74,7 @@ async def test_mark_accepted_attempt_is_called(mock_store):
     # Track calls to mark_accepted_attempt
     original_mark_accepted = reporter.mark_accepted_attempt
 
-    def track_mark_accepted(node_id, attempt_index):
+    def track_mark_accepted(node_id: str, attempt_index: int) -> None:
         mark_accepted_calls.append((node_id, attempt_index))
         return original_mark_accepted(node_id, attempt_index)
 
@@ -122,7 +122,7 @@ async def test_mark_accepted_attempt_is_called(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_is_better_summary_logic(mock_store):
+async def test_is_better_summary_logic(mock_store: object) -> None:
     """Test that _is_better_summary logic correctly prioritizes under-target summaries."""
     config = IndexConfig.load(
         retry_threshold=0.2,
@@ -173,7 +173,7 @@ async def test_is_better_summary_logic(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_retry_selection_uses_proper_logic(mock_store):
+async def test_retry_selection_uses_proper_logic(mock_store: object) -> None:
     """Test that retry selection uses the proper _is_better_summary logic."""
     config = IndexConfig.load(
         retry_threshold=0.2,
@@ -186,7 +186,7 @@ async def test_retry_selection_uses_proper_logic(mock_store):
     api_calls = []
     summaries_returned = []
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: object) -> MockOpenAIResponse:
         """Mock OpenAI API calls with specific token counts."""
         api_calls.append(kwargs)
 

@@ -11,7 +11,7 @@ from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 class TestGlobalProgressTracker:
     """Test the global progress tracker."""
 
-    def test_init_with_tqdm(self):
+    def test_init_with_tqdm(self) -> None:
         """Test initialization with tqdm available."""
         with patch("ragzoom.progress.HAS_TQDM", True):
             with patch("ragzoom.progress.tqdm") as mock_tqdm:
@@ -35,7 +35,7 @@ class TestGlobalProgressTracker:
                 assert call_args["unit"] == " ops"
                 assert call_args["leave"] is False
 
-    def test_init_without_tqdm(self):
+    def test_init_without_tqdm(self) -> None:
         """Test initialization when tqdm is not available."""
         with patch("ragzoom.progress.HAS_TQDM", False):
             tracker = GlobalProgressTracker(10, show_progress=True)
@@ -44,14 +44,14 @@ class TestGlobalProgressTracker:
             assert tracker.show_progress is False
             assert tracker.pbar is None
 
-    def test_init_no_progress(self):
+    def test_init_no_progress(self) -> None:
         """Test initialization with progress disabled."""
         tracker = GlobalProgressTracker(10, show_progress=False)
 
         assert tracker.show_progress is False
         assert tracker.pbar is None
 
-    def test_calculate_total_operations(self):
+    def test_calculate_total_operations(self) -> None:
         """Test total operation calculation with new formula."""
         # Test with batch_size=100
         tracker = GlobalProgressTracker(1, embedding_batch_size=100)
@@ -74,7 +74,7 @@ class TestGlobalProgressTracker:
         # 731 chunks = 734 internal nodes + 16 embedding batches = 750 total
         assert tracker._calculate_total_operations(731) == 750
 
-    def test_update_with_progress(self):
+    def test_update_with_progress(self) -> None:
         """Test updating progress with tqdm."""
         with patch("ragzoom.progress.HAS_TQDM", True):
             with patch("ragzoom.progress.tqdm") as mock_tqdm:
@@ -91,7 +91,7 @@ class TestGlobalProgressTracker:
                 assert tracker.current == 8
                 assert mock_pbar.update.call_count == 2
 
-    def test_update_without_progress(self):
+    def test_update_without_progress(self) -> None:
         """Test updating progress without tqdm."""
         tracker = GlobalProgressTracker(10, show_progress=False)
 
@@ -101,7 +101,7 @@ class TestGlobalProgressTracker:
         tracker.update(3)
         assert tracker.current == 8
 
-    def test_close(self):
+    def test_close(self) -> None:
         """Test closing progress bar."""
         with patch("ragzoom.progress.HAS_TQDM", True):
             with patch("ragzoom.progress.tqdm") as mock_tqdm:
@@ -113,7 +113,7 @@ class TestGlobalProgressTracker:
 
                 mock_pbar.close.assert_called_once()
 
-    def test_context_manager(self):
+    def test_context_manager(self) -> None:
         """Test context manager support."""
         with patch("ragzoom.progress.HAS_TQDM", True):
             with patch("ragzoom.progress.tqdm") as mock_tqdm:
@@ -131,7 +131,7 @@ class TestAsyncProgressWrapper:
     """Test the async progress wrapper."""
 
     @pytest.mark.asyncio
-    async def test_async_update(self):
+    async def test_async_update(self) -> None:
         """Test async update method."""
         mock_tracker = Mock()
         wrapper = AsyncProgressWrapper(mock_tracker)
@@ -143,7 +143,7 @@ class TestAsyncProgressWrapper:
         assert mock_tracker.update.call_count == 2
         mock_tracker.update.assert_called_with(3, "tree")
 
-    def test_sync_update(self):
+    def test_sync_update(self) -> None:
         """Test sync update method."""
         mock_tracker = Mock()
         wrapper = AsyncProgressWrapper(mock_tracker)
@@ -156,13 +156,13 @@ class TestAsyncProgressWrapper:
         mock_tracker.update.assert_called_with(3, "tree")
 
     @pytest.mark.asyncio
-    async def test_concurrent_updates(self):
+    async def test_concurrent_updates(self) -> None:
         """Test that concurrent updates are properly synchronized."""
         mock_tracker = Mock()
         wrapper = AsyncProgressWrapper(mock_tracker)
 
         # Simulate concurrent updates
-        async def update_task(n):
+        async def update_task(n: int) -> None:
             await wrapper.update(n)
 
         # Run multiple updates concurrently
@@ -185,7 +185,7 @@ class TestAsyncProgressWrapper:
 class TestProgressIntegration:
     """Test progress tracking integration scenarios."""
 
-    def test_full_indexing_scenario(self):
+    def test_full_indexing_scenario(self) -> None:
         """Test a full indexing scenario with progress tracking."""
         with patch("ragzoom.progress.HAS_TQDM", True):
             with patch("ragzoom.progress.tqdm") as mock_tqdm:
@@ -212,7 +212,7 @@ class TestProgressIntegration:
                 # Verify progress bar was closed
                 mock_pbar.close.assert_called_once()
 
-    def test_error_handling(self):
+    def test_error_handling(self) -> None:
         """Test that progress bar is closed even on error."""
         with patch("ragzoom.progress.HAS_TQDM", True):
             with patch("ragzoom.progress.tqdm") as mock_tqdm:

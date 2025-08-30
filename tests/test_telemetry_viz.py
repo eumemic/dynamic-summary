@@ -2,7 +2,9 @@
 
 import json
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,7 +21,7 @@ class TestTelemetryVisualizer:
     """Test TelemetryVisualizer class."""
 
     @pytest.fixture
-    def temp_output_dir(self) -> Path:
+    def temp_output_dir(self) -> Generator[Path, None, None]:
         """Create a temporary output directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             yield Path(tmpdir)
@@ -31,7 +33,9 @@ class TestTelemetryVisualizer:
         return TelemetryVisualizer(output_path)
 
     @pytest.fixture
-    def sample_benchmark_data(self, sample_telemetry_data: dict) -> dict:
+    def sample_benchmark_data(
+        self, sample_telemetry_data: dict[str, object]
+    ) -> dict[str, object]:
         """Create sample benchmark data including telemetry."""
         return {
             "config": {"leaf_tokens": 200},
@@ -70,7 +74,7 @@ class TestTelemetryVisualizer:
         self, visualizer: TelemetryVisualizer
     ) -> None:
         """Test histogram bin calculation for small discrete values."""
-        batch_sizes = [1, 1, 1, 2, 2, 3]
+        batch_sizes: list[float] = [1.0, 1.0, 1.0, 2.0, 2.0, 3.0]
         bins, align = visualizer._calculate_histogram_bins(batch_sizes)
 
         assert align == "left"
@@ -81,7 +85,18 @@ class TestTelemetryVisualizer:
         self, visualizer: TelemetryVisualizer
     ) -> None:
         """Test histogram bin calculation for medium range values."""
-        batch_sizes = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45]
+        batch_sizes: list[float] = [
+            1.0,
+            5.0,
+            10.0,
+            15.0,
+            20.0,
+            25.0,
+            30.0,
+            35.0,
+            40.0,
+            45.0,
+        ]
         bins, align = visualizer._calculate_histogram_bins(batch_sizes)
 
         assert align == "left"
@@ -93,7 +108,9 @@ class TestTelemetryVisualizer:
         self, visualizer: TelemetryVisualizer
     ) -> None:
         """Test histogram bin calculation for large range values."""
-        batch_sizes = list(range(1, 150, 10))  # 1, 11, 21, ..., 141
+        batch_sizes: list[float] = [
+            float(x) for x in range(1, 150, 10)
+        ]  # 1, 11, 21, ..., 141
         bins, align = visualizer._calculate_histogram_bins(batch_sizes)
 
         assert align == "mid"
@@ -139,7 +156,7 @@ class TestTelemetryVisualizer:
         # PNG creation is mocked, so we just verify the method was called
 
     def test_visualize_benchmark_without_telemetry(
-        self, visualizer: TelemetryVisualizer, temp_output_dir: Path, capsys
+        self, visualizer: TelemetryVisualizer, temp_output_dir: Path, capsys: object
     ) -> None:
         """Test handling of benchmark file without telemetry data."""
         test_data = {"config": {"leaf_tokens": 200}, "metrics": {}}
@@ -151,7 +168,7 @@ class TestTelemetryVisualizer:
         visualizer.visualize_single_benchmark(test_file)
 
         # Check warning was printed
-        captured = capsys.readouterr()
+        captured = cast(Any, capsys).readouterr()
         assert "No telemetry data found" in captured.out
 
     @patch("matplotlib.pyplot.show")
@@ -235,7 +252,7 @@ class TestTelemetryVisualizer:
         plt.close(fig)
 
     def test_token_distributions_with_data(
-        self, visualizer: TelemetryVisualizer, sample_telemetry_data: dict
+        self, visualizer: TelemetryVisualizer, sample_telemetry_data: dict[str, Any]
     ) -> None:
         """Test token distribution plot with actual data."""
         import matplotlib.pyplot as plt
@@ -354,7 +371,7 @@ class TestTelemetryVisualizer:
         assert visualizer.LARGE_BIN_COUNT == 20
 
 
-def generate_test_telemetry(num_nodes: int) -> dict:
+def generate_test_telemetry(num_nodes: int) -> dict[str, object]:
     """Generate test telemetry data with specified number of nodes."""
     nodes = []
     for i in range(num_nodes):
@@ -416,7 +433,7 @@ class TestVisualizationPerformance:
     """Test performance improvements in axis synchronization."""
 
     @pytest.fixture
-    def temp_files(self):
+    def temp_files(self) -> Generator[dict[int, tuple[Path, Path]], None, None]:
         """Create temporary telemetry files for testing."""
         import json
         import tempfile
@@ -443,7 +460,9 @@ class TestVisualizationPerformance:
             yield files
 
     @pytest.mark.slow
-    def test_axis_synchronization_performance(self, temp_files):
+    def test_axis_synchronization_performance(
+        self, temp_files: dict[int, tuple[Path, Path]]
+    ) -> None:
         """Benchmark the performance of axis synchronization with the new implementation."""
         import time
         from unittest.mock import patch
@@ -485,7 +504,7 @@ class TestVisualizationPerformance:
             ), f"Time scaling ({time_ratio:.2f}x) should be better than linear size scaling ({size_ratio}x)"
 
     @pytest.mark.slow
-    def test_axis_operation_count(self):
+    def test_axis_operation_count(self) -> None:
         """Verify that the optimized implementation reduces axis operations."""
         import json
         import tempfile
@@ -518,22 +537,30 @@ class TestVisualizationPerformance:
             original_get_xlim = Axes.get_xlim
             original_get_ylim = Axes.get_ylim
 
-            def counting_set_xlim(self, *args, **kwargs):
+            def counting_set_xlim(self: Any, *args: object, **kwargs: object) -> None:
                 nonlocal set_lim_count
                 set_lim_count += 1
-                return original_set_xlim(self, *args, **kwargs)
+                original_set_xlim(
+                    self, *cast(tuple[Any, ...], args), **cast(dict[str, Any], kwargs)
+                )
 
-            def counting_set_ylim(self, *args, **kwargs):
+            def counting_set_ylim(self: Any, *args: object, **kwargs: object) -> None:
                 nonlocal set_lim_count
                 set_lim_count += 1
-                return original_set_ylim(self, *args, **kwargs)
+                original_set_ylim(
+                    self, *cast(tuple[Any, ...], args), **cast(dict[str, Any], kwargs)
+                )
 
-            def counting_get_xlim(self, *args, **kwargs):
+            def counting_get_xlim(
+                self: Any, *args: object, **kwargs: object
+            ) -> tuple[float, float]:
                 nonlocal get_lim_count
                 get_lim_count += 1
                 return original_get_xlim(self, *args, **kwargs)
 
-            def counting_get_ylim(self, *args, **kwargs):
+            def counting_get_ylim(
+                self: Any, *args: object, **kwargs: object
+            ) -> tuple[float, float]:
                 nonlocal get_lim_count
                 get_lim_count += 1
                 return original_get_ylim(self, *args, **kwargs)

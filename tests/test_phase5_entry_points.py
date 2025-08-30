@@ -11,7 +11,7 @@ from tests.mock_store import SimpleMockStore
 class TestCLIPinCommandIsolation:
     """Test that CLI pin command properly uses DocumentStore for isolation."""
 
-    def test_pin_command_with_document_id(self):
+    def test_pin_command_with_document_id(self) -> None:
         """Test pin command with explicit document ID."""
         runner = CliRunner()
 
@@ -45,7 +45,7 @@ class TestCLIPinCommandIsolation:
             assert result.exit_code == 0
             assert "doc1_node" in store.pinned_nodes
 
-    def test_pin_command_auto_detects_document(self):
+    def test_pin_command_auto_detects_document(self) -> None:
         """Test pin command auto-detects document from node ID."""
         runner = CliRunner()
 
@@ -74,7 +74,7 @@ class TestCLIPinCommandIsolation:
             assert result.exit_code == 0
             assert "doc1_node" in store.pinned_nodes
 
-    def test_pin_command_validates_document_ownership(self):
+    def test_pin_command_validates_document_ownership(self) -> None:
         """Test pin command validates node belongs to specified document."""
         runner = CliRunner()
 
@@ -103,7 +103,7 @@ class TestCLIPinCommandIsolation:
                 or "node not found" in result.output.lower()
             )
 
-    def test_pin_command_error_on_nonexistent_node(self):
+    def test_pin_command_error_on_nonexistent_node(self) -> None:
         """Test pin command handles non-existent nodes gracefully."""
         runner = CliRunner()
 
@@ -129,8 +129,8 @@ class SkipTestQueryVisualizationIsolation:
     @patch("ragzoom.cli.click.echo")
     @patch("ragzoom.cli.create_store_with_docker")
     def test_query_tree_visualization_scoped_to_document(
-        self, mock_create_store, mock_echo
-    ):
+        self, mock_create_store: object, mock_echo: object
+    ) -> None:
         """Test that tree visualization only shows specified document."""
         runner = CliRunner()
 

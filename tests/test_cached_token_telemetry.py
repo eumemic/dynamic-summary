@@ -1,14 +1,16 @@
 """Test that cached tokens are properly tracked in telemetry."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.index import TreeBuilder
+from ragzoom.telemetry_collection import TelemetryCollector
 
 
-def create_test_reporter(config):
+def create_test_reporter(config: Any) -> TelemetryCollector:
     """Create a test reporter with common test nodes pre-tracked."""
     from ragzoom.telemetry_collection import TelemetryCollector
 
@@ -56,7 +58,7 @@ class MockOpenAIResponseWithCache:
 
 
 @pytest.mark.asyncio
-async def test_cached_tokens_recorded_in_telemetry(mock_store):
+async def test_cached_tokens_recorded_in_telemetry(mock_store: Any) -> None:
     """Test that cached tokens from OpenAI response are properly recorded."""
     index_config = IndexConfig.load(
         retry_threshold=0.1,
@@ -79,7 +81,7 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store):
 
     api_calls = []
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MockOpenAIResponseWithCache:
         api_calls.append(kwargs)
         call_num = len(api_calls)
 
@@ -138,7 +140,7 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_backward_compatibility_without_cached_tokens(mock_store):
+async def test_backward_compatibility_without_cached_tokens(mock_store: Any) -> None:
     """Test that telemetry works correctly when OpenAI doesn't return cached_tokens."""
     index_config = IndexConfig.load(target_chunk_tokens=100)
     operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
@@ -163,14 +165,14 @@ async def test_backward_compatibility_without_cached_tokens(mock_store):
     # Explicitly no prompt_tokens_details
     response.usage.prompt_tokens_details = None
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MagicMock:
         return response
 
     with patch.object(
         indexer.llm_service.client.chat.completions, "create", new=mock_create
     ):
         # Mock encode to return appropriate lengths - combined text should exceed target
-        def mock_encode(text):
+        def mock_encode(text: str) -> list[int]:
             if "Test content" in text and "More content" in text:
                 # Combined text
                 return [0] * 200  # Greater than target of 100
@@ -208,7 +210,7 @@ async def test_backward_compatibility_without_cached_tokens(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_cached_tokens_across_multiple_retries(mock_store):
+async def test_cached_tokens_across_multiple_retries(mock_store: Any) -> None:
     """Test that cached tokens increase with each retry as conversation grows."""
     index_config = IndexConfig.load(
         retry_threshold=0.05,  # Very strict
@@ -229,7 +231,7 @@ async def test_cached_tokens_across_multiple_retries(mock_store):
 
     api_calls = []
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MockOpenAIResponseWithCache:
         api_calls.append(kwargs)
         call_num = len(api_calls)
 
@@ -296,7 +298,7 @@ async def test_cached_tokens_across_multiple_retries(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_passthrough_summary_has_no_cached_tokens(mock_store):
+async def test_passthrough_summary_has_no_cached_tokens(mock_store: Any) -> None:
     """Test that passthrough summaries correctly report 0 cached tokens."""
     index_config = IndexConfig.load(target_chunk_tokens=100)
     operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
@@ -314,7 +316,7 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store):
     # No API calls should be made
     api_calls = []
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MockOpenAIResponseWithCache:
         api_calls.append(kwargs)
         pytest.fail("Should not call API for passthrough")
 
@@ -348,7 +350,7 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_cached_tokens_with_high_cache_rate(mock_store):
+async def test_cached_tokens_with_high_cache_rate(mock_store: Any) -> None:
     """Test scenario with very high cache hit rate (95%+)."""
     index_config = IndexConfig.load(
         retry_threshold=0.1,
@@ -367,7 +369,7 @@ async def test_cached_tokens_with_high_cache_rate(mock_store):
     )
     reporter = create_test_reporter(config)
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MockOpenAIResponseWithCache:
         messages = kwargs.get("messages", [])
 
         if len(messages) == 4:  # Initial call (with vaccine)

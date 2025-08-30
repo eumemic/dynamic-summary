@@ -6,7 +6,7 @@ from tests.mock_store import SimpleMockStore
 class TestDocumentStoreMethods:
     """Test the new methods added to DocumentStore for Phase 4."""
 
-    def test_get_embedding_model(self):
+    def test_get_embedding_model(self) -> None:
         """Test that DocumentStore correctly retrieves embedding model."""
         store = SimpleMockStore()
 
@@ -24,7 +24,7 @@ class TestDocumentStoreMethods:
         model = doc_store.get_embedding_model()
         assert model == "text-embedding-3-small"
 
-    def test_get_embedding_model_missing(self):
+    def test_get_embedding_model_missing(self) -> None:
         """Test that DocumentStore returns None when embedding model is missing."""
         store = SimpleMockStore()
 
@@ -41,7 +41,7 @@ class TestDocumentStoreMethods:
         model = doc_store.get_embedding_model()
         assert model is None
 
-    def test_get_avg_leaf_tokens(self):
+    def test_get_avg_leaf_tokens(self) -> None:
         """Test that DocumentStore correctly calculates average leaf tokens."""
         store = SimpleMockStore()
 
@@ -78,7 +78,7 @@ class TestDocumentStoreMethods:
         # Average of 100, 150, 200 = 150
         assert avg_tokens == 150
 
-    def test_get_avg_leaf_tokens_no_leaves(self):
+    def test_get_avg_leaf_tokens_no_leaves(self) -> None:
         """Test that DocumentStore returns None when no leaf nodes exist."""
         store = SimpleMockStore()
 
@@ -89,7 +89,7 @@ class TestDocumentStoreMethods:
         avg_tokens = doc_store.get_avg_leaf_tokens()
         assert avg_tokens is None
 
-    def test_document_id_mismatch_safety(self):
+    def test_document_id_mismatch_safety(self) -> None:
         """Test that DocumentStore validates document ID matches."""
         store = SimpleMockStore()
 
@@ -123,7 +123,7 @@ class TestDocumentStoreMethods:
         node2 = doc1_store.nodes.get("doc2_node")
         assert node2 is None  # Should be filtered out
 
-    def test_cross_document_store(self):
+    def test_cross_document_store(self) -> None:
         """Test that DocumentStore with None document_id allows cross-document access."""
         store = SimpleMockStore()
 

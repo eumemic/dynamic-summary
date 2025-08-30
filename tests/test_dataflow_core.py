@@ -1,6 +1,7 @@
 """Tests for dataflow core implementation."""
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,11 +18,11 @@ class TestPokeMechanism:
     """Test the poke mechanism for dependency checking."""
 
     @pytest.mark.asyncio
-    async def test_poke_with_all_dependencies_ready(self):
+    async def test_poke_with_all_dependencies_ready(self) -> None:
         """Test poke when all dependencies are ready."""
         # Create a simple lookup dict
-        lookup = {}
-        queue = asyncio.PriorityQueue()
+        lookup: dict[str, TreeNode] = {}
+        queue: asyncio.PriorityQueue[Any] = asyncio.PriorityQueue()
 
         # Create nodes with satisfied dependencies
         left_child = TreeNode(
@@ -70,10 +71,10 @@ class TestPokeMechanism:
         assert queued_job.node.id == "parent"
 
     @pytest.mark.asyncio
-    async def test_poke_with_missing_dependencies(self):
+    async def test_poke_with_missing_dependencies(self) -> None:
         """Test poke when dependencies are not ready."""
-        lookup = {}
-        queue = asyncio.PriorityQueue()
+        lookup: dict[str, TreeNode] = {}
+        queue: asyncio.PriorityQueue[Any] = asyncio.PriorityQueue()
 
         # Create nodes where left child has no text yet
         left_child = TreeNode(
@@ -120,10 +121,10 @@ class TestPokeMechanism:
         assert queue.qsize() == 0
 
     @pytest.mark.asyncio
-    async def test_poke_with_preceding_neighbor_dependency(self):
+    async def test_poke_with_preceding_neighbor_dependency(self) -> None:
         """Test poke with preceding neighbor dependency."""
-        lookup = {}
-        queue = asyncio.PriorityQueue()
+        lookup: dict[str, TreeNode] = {}
+        queue: asyncio.PriorityQueue[Any] = asyncio.PriorityQueue()
 
         # Create nodes with preceding neighbor dependency
         node1 = TreeNode(
@@ -178,10 +179,10 @@ class TestPokeMechanism:
         assert queue.qsize() == 1
 
     @pytest.mark.asyncio
-    async def test_priority_queue_ordering(self):
+    async def test_priority_queue_ordering(self) -> None:
         """Test that nodes are processed in leftmost-first order."""
-        queue = asyncio.PriorityQueue()
-        lookup = {}
+        queue: asyncio.PriorityQueue[Any] = asyncio.PriorityQueue()
+        lookup: dict[str, TreeNode] = {}
 
         # Create nodes with different span_start values
         node_right = TreeNode(
@@ -224,10 +225,10 @@ class TestPokeMechanism:
         assert second_job.node.id == "right"
 
     @pytest.mark.asyncio
-    async def test_bottom_to_top_ordering(self):
+    async def test_bottom_to_top_ordering(self) -> None:
         """Test that BOTTOM_TO_TOP strategy processes by level first."""
-        queue = asyncio.PriorityQueue()
-        lookup = {}
+        queue: asyncio.PriorityQueue[Any] = asyncio.PriorityQueue()
+        lookup: dict[str, TreeNode] = {}
 
         # Create nodes at different heights with different span_start values
         # Lower level node that is further right
@@ -275,7 +276,7 @@ class TestPokeMechanism:
 class TestLeafNodeCreation:
     """Test leaf node creation in dataflow."""
 
-    def test_create_leaf_nodes_sets_correct_token_count(self):
+    def test_create_leaf_nodes_sets_correct_token_count(self) -> None:
         """Test that leaf nodes are created with correct token counts."""
         from ragzoom.dataflow.core import create_leaf_nodes
 
@@ -299,7 +300,7 @@ class TestLeafNodeCreation:
         assert leaves[1].token_count >= 4  # longer text should have more tokens
         assert leaves[2].token_count >= 1
 
-    def test_parent_input_token_calculation(self):
+    def test_parent_input_token_calculation(self) -> None:
         """Test that parent nodes can correctly calculate input tokens from children."""
 
         from ragzoom.dataflow.core import create_leaf_nodes
@@ -335,7 +336,7 @@ class TestDataflowIntegration:
     """Test the complete dataflow implementation."""
 
     @pytest.mark.asyncio
-    async def test_build_tree_dataflow_simple(self):
+    async def test_build_tree_dataflow_simple(self) -> None:
         """Test building a simple tree with dataflow."""
         # Create mock LLM service
         mock_llm_service = MagicMock()
@@ -344,7 +345,7 @@ class TestDataflowIntegration:
         )
 
         # Mock should return embeddings for each text in the batch
-        async def mock_embeddings(texts):
+        async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             return [[0.1] * 10 for _ in texts]
 
         mock_llm_service._get_embeddings_batch = AsyncMock(side_effect=mock_embeddings)
@@ -369,7 +370,7 @@ class TestDataflowIntegration:
             assert len(node.embedding) > 0
 
     @pytest.mark.asyncio
-    async def test_dataflow_respects_concurrency_limits(self):
+    async def test_dataflow_respects_concurrency_limits(self) -> None:
         """Test that dataflow respects concurrency limits."""
         call_count = {"summary": 0, "embedding": 0}
         max_concurrent_summary = {"value": 0}
@@ -377,7 +378,7 @@ class TestDataflowIntegration:
         current_summary = {"value": 0}
         current_embedding = {"value": 0}
 
-        async def mock_summary(*args, **kwargs):
+        async def mock_summary(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
             call_count["summary"] += 1
             current_summary["value"] += 1
             max_concurrent_summary["value"] = max(
@@ -387,7 +388,7 @@ class TestDataflowIntegration:
             current_summary["value"] -= 1
             return "Summary", 1, 10
 
-        async def mock_embeddings(*args, **kwargs):
+        async def mock_embeddings(*args: Any, **kwargs: Any) -> list[list[float]]:
             call_count["embedding"] += 1
             current_embedding["value"] += 1
             max_concurrent_embedding["value"] = max(
@@ -419,13 +420,13 @@ class TestDataflowIntegration:
         assert max_concurrent_embedding["value"] <= 1
 
     @pytest.mark.asyncio
-    async def test_dataflow_error_handling(self):
+    async def test_dataflow_error_handling(self) -> None:
         """Test that dataflow handles errors appropriately."""
         mock_llm_service = MagicMock()
         mock_llm_service._summarize_text = AsyncMock(side_effect=Exception("API error"))
 
         # Mock should return embeddings for each text in the batch
-        async def mock_embeddings(texts):
+        async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             return [[0.1] * 10 for _ in texts]
 
         mock_llm_service._get_embeddings_batch = AsyncMock(side_effect=mock_embeddings)
@@ -444,13 +445,13 @@ class TestDataflowIntegration:
             )
 
     @pytest.mark.asyncio
-    async def test_dataflow_produces_complete_tree(self):
+    async def test_dataflow_produces_complete_tree(self) -> None:
         """Test that dataflow produces a complete tree with all nodes."""
         mock_llm_service = MagicMock()
         mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
 
         # Mock should return embeddings for each text in the batch
-        async def mock_embeddings(texts):
+        async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             return [[0.1] * 10 for _ in texts]
 
         mock_llm_service._get_embeddings_batch = AsyncMock(side_effect=mock_embeddings)
@@ -480,17 +481,17 @@ class TestEmbeddingBatching:
     """Test that embedding workers use optimal batching strategies."""
 
     @pytest.mark.asyncio
-    async def test_embedding_workers_process_available_items(self):
+    async def test_embedding_workers_process_available_items(self) -> None:
         """Test that embedding workers process available items efficiently."""
         batch_calls = []
 
-        async def mock_embeddings(texts):
+        async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             # Record the batch size for analysis
             batch_calls.append(len(texts))
             await asyncio.sleep(0.01)  # Simulate API call
             return [[0.1] * 10 for _ in texts]
 
-        async def mock_slow_summary(*args, **kwargs):
+        async def mock_slow_summary(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
             # Simulate realistic API timing - summaries arrive spaced out
             await asyncio.sleep(0.1)  # Much slower than embedding batching
             return ("Summary", 1, 10)
@@ -532,12 +533,12 @@ class TestEmbeddingBatching:
             assert size > 0, "Batch size should be at least 1"
 
     @pytest.mark.asyncio
-    async def test_multiple_workers_coordinate_batching(self):
+    async def test_multiple_workers_coordinate_batching(self) -> None:
         """Test that multiple embedding workers coordinate to take full batches."""
         batch_calls = []
-        worker_calls = {}
+        worker_calls: dict[Any, list[int]] = {}
 
-        async def mock_embeddings(texts):
+        async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             # Use asyncio context to identify which worker made the call
             worker_id = id(asyncio.current_task())
             if worker_id not in worker_calls:
@@ -581,11 +582,11 @@ class TestEmbeddingBatching:
         ), f"Multi-worker batching efficiency {batching_efficiency:.2%} too low. Batch sizes: {batch_calls}"
 
     @pytest.mark.asyncio
-    async def test_final_partial_batch_processed(self):
+    async def test_final_partial_batch_processed(self) -> None:
         """Test that final partial batches are processed correctly."""
         batch_calls = []
 
-        async def mock_embeddings(texts):
+        async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             batch_calls.append(len(texts))
             await asyncio.sleep(0.01)
             return [[0.1] * 10 for _ in texts]
@@ -621,11 +622,11 @@ class TestEmbeddingBatching:
         ), f"Expected partial batches, got batch sizes: {batch_calls}"
 
     @pytest.mark.asyncio
-    async def test_root_node_as_sentinel(self):
+    async def test_root_node_as_sentinel(self) -> None:
         """Test that root node acts as sentinel for embedding workers."""
         batch_calls = []
 
-        async def mock_embeddings(texts):
+        async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             batch_calls.append(len(texts))
             await asyncio.sleep(0.001)
             return [[0.1] * 10 for _ in texts]
@@ -661,11 +662,11 @@ class TestEmbeddingBatching:
             assert len(node.embedding) == 10
 
     @pytest.mark.asyncio
-    async def test_atomic_batch_collection(self):
+    async def test_atomic_batch_collection(self) -> None:
         """Test that batch collection is atomic (no interleaving)."""
         batch_timings = []
 
-        async def mock_embeddings(texts):
+        async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             # Record when each batch starts and its size
             batch_timings.append((asyncio.get_event_loop().time(), len(texts)))
             await asyncio.sleep(0.01)  # Simulate work
@@ -697,7 +698,7 @@ class TestEmbeddingBatching:
             assert size > 0, "Batch size should be at least 1"
 
     @pytest.mark.asyncio
-    async def test_single_node_tree(self):
+    async def test_single_node_tree(self) -> None:
         """Test edge case of single node tree (root is also leaf)."""
         mock_llm_service = MagicMock()
         mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
@@ -730,12 +731,12 @@ class TestEmbeddingBatching:
         mock_llm_service._get_embeddings_batch.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_batch_aware_queue_waits_for_full_batches(self):
+    async def test_batch_aware_queue_waits_for_full_batches(self) -> None:
         """Test that BatchAwareQueue waits for full batches when possible."""
         batch_calls = []
         batch_timings = []
 
-        async def mock_embeddings(texts):
+        async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             # Record batch size and timing
             batch_calls.append(len(texts))
             batch_timings.append(asyncio.get_event_loop().time())
@@ -743,7 +744,7 @@ class TestEmbeddingBatching:
             return [[0.1] * 10 for _ in texts]
 
         # Use slower summaries to test batching behavior
-        async def mock_slow_summary(*args, **kwargs):
+        async def mock_slow_summary(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
             await asyncio.sleep(0.05)  # Summaries arrive gradually
             return ("Summary", 1, 10)
 
@@ -787,7 +788,7 @@ class TestBatchAwareQueuePenultimateBatch:
     """Test penultimate batch optimization for root node latency."""
 
     @pytest.mark.asyncio
-    async def test_penultimate_batch_triggers_on_depth_1_nodes(self):
+    async def test_penultimate_batch_triggers_on_depth_1_nodes(self) -> None:
         """Test that both depth-1 nodes trigger penultimate batch."""
         from ragzoom.dataflow.core import BatchAwareQueue
 
@@ -843,6 +844,7 @@ class TestBatchAwareQueuePenultimateBatch:
 
         # Now worker should get all 5 items immediately (penultimate batch)
         batch = await asyncio.wait_for(get_task, timeout=0.5)
+        assert batch is not None, "Expected batch to be not None"
         assert (
             len(batch) == 5
         ), f"Expected 5 items in penultimate batch, got {len(batch)}"
@@ -851,7 +853,7 @@ class TestBatchAwareQueuePenultimateBatch:
         ), "Root shouldn't be in penultimate batch (root has depth 0)"
 
     @pytest.mark.asyncio
-    async def test_root_processed_alone_after_penultimate(self):
+    async def test_root_processed_alone_after_penultimate(self) -> None:
         """Test that root gets processed in its own batch after penultimate."""
         from ragzoom.dataflow.core import BatchAwareQueue
 
@@ -900,6 +902,7 @@ class TestBatchAwareQueuePenultimateBatch:
 
         # Get penultimate batch (should have all 10 non-root nodes)
         batch1 = await queue.get_batch()
+        assert batch1 is not None, "Expected batch1 to be not None"
         assert (
             len(batch1) == 10
         ), f"Expected 10 items in penultimate batch, got {len(batch1)}"
@@ -922,13 +925,14 @@ class TestBatchAwareQueuePenultimateBatch:
 
         # Root should be processed alone
         batch2 = await queue.get_batch()
+        assert batch2 is not None, "Expected batch2 to be not None"
         assert len(batch2) == 1, f"Expected root alone, got batch size {len(batch2)}"
         assert (
             batch2[0].get_depth() == 0
         ), "Should have received the root node (depth=0)"
 
     @pytest.mark.asyncio
-    async def test_single_depth_1_node_edge_case(self):
+    async def test_single_depth_1_node_edge_case(self) -> None:
         """Test trees with only one depth-1 node (edge case for odd leaf count)."""
         from ragzoom.dataflow.core import BatchAwareQueue
 
@@ -984,5 +988,6 @@ class TestBatchAwareQueuePenultimateBatch:
         await queue.put(root)
 
         batch = await asyncio.wait_for(get_task, timeout=0.5)
+        assert batch is not None, "Expected batch to be not None"
         assert len(batch) == 5, f"Expected all 5 nodes, got {len(batch)}"
         # In this case, root is processed with others (fallback behavior)

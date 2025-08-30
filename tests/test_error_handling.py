@@ -1,5 +1,6 @@
 """Tests for error handling patterns and anti-patterns."""
 
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -26,7 +27,7 @@ from ragzoom.exceptions import (
 class TestCustomExceptions:
     """Test structured exception types."""
 
-    def test_validation_error_structure(self):
+    def test_validation_error_structure(self) -> None:
         """ValidationError should have structured context."""
         error = ValidationError(
             field="email", value="invalid-email", reason="missing @ symbol"
@@ -37,7 +38,7 @@ class TestCustomExceptions:
         assert error.reason == "missing @ symbol"
         assert "email='invalid-email'" in str(error)
 
-    def test_database_error_structure(self):
+    def test_database_error_structure(self) -> None:
         """DatabaseError should have operation context."""
         error = DatabaseError(
             operation="insert_document",
@@ -51,7 +52,7 @@ class TestCustomExceptions:
         assert error.context["table"] == "documents"
         assert error.context["query_id"] == "abc123"
 
-    def test_llm_error_structure(self):
+    def test_llm_error_structure(self) -> None:
         """LLMError should have model and operation context."""
         error = LLMError(
             operation="generate_summary",
@@ -69,7 +70,7 @@ class TestCustomExceptions:
 class TestErrorUtils:
     """Test error utility functions."""
 
-    def test_error_context_builder(self):
+    def test_error_context_builder(self) -> None:
         """ErrorContext should build rich error context."""
         context = ErrorContext("user_registration")
         context.add("user_id", "123").add("email", "test@example.com")
@@ -82,13 +83,13 @@ class TestErrorUtils:
             reason="domain not allowed",
         )
 
-        assert exc.operation == "user_registration"
+        assert getattr(exc, "operation", None) == "user_registration"
         assert hasattr(exc, "request_id")
         assert len(exc.request_id) == 8  # Short UUID
-        assert exc.user_id == "123"
-        assert exc.email == "test@example.com"
+        assert getattr(exc, "user_id", None) == "123"
+        assert getattr(exc, "email", None) == "test@example.com"
 
-    def test_categorize_exception(self):
+    def test_categorize_exception(self) -> None:
         """Exception categorization should work correctly."""
         assert categorize_exception(DatabaseError("op", "msg")) == "storage"
         assert categorize_exception(ValidationError("f", "v", "r")) == "validation"
@@ -96,7 +97,7 @@ class TestErrorUtils:
         assert categorize_exception(NodeNotFoundError("123")) == "not_found"
         assert categorize_exception(ValueError("test")) == "unknown"
 
-    def test_format_structured_error(self):
+    def test_format_structured_error(self) -> None:
         """Error formatting should include all relevant context."""
         error = LLMError(
             operation="summarize", model="gpt-4o", message="API error", tokens=500
@@ -109,7 +110,7 @@ class TestErrorUtils:
         assert formatted["operation"] == "summarize"
         assert formatted["context"]["tokens"] == 500
 
-    def test_preserve_exception_chain(self):
+    def test_preserve_exception_chain(self) -> None:
         """Exception chaining should preserve original cause."""
         original = ValueError("Original error")
         new_error = LLMError("op", "model", "New error")
@@ -119,7 +120,7 @@ class TestErrorUtils:
         assert chained.__cause__ is original
         assert isinstance(chained, LLMError)
 
-    def test_log_error_with_context(self):
+    def test_log_error_with_context(self) -> None:
         """Error logging should include structured context."""
         logger = Mock()
         error = ValidationError("email", "bad@email", "invalid format")
@@ -139,7 +140,7 @@ class TestErrorUtils:
 class TestAPIMiddleware:
     """Test API error handling middleware."""
 
-    def test_http_status_mapping(self):
+    def test_http_status_mapping(self) -> None:
         """Middleware should map exceptions to correct HTTP status codes."""
         middleware = ErrorHandlingMiddleware(Mock())
 
@@ -168,13 +169,13 @@ class TestAPIMiddleware:
         http_exc = middleware._convert_to_http_exception(llm_error, "req123")
         assert http_exc.status_code == 502
 
-    def test_error_response_structure(self):
+    def test_error_response_structure(self) -> None:
         """Error responses should have consistent structure."""
         middleware = ErrorHandlingMiddleware(Mock())
         error = ValidationError("email", "invalid", "bad format")
 
         http_exc = middleware._convert_to_http_exception(error, "req123")
-        detail = http_exc.detail
+        detail: dict[str, Any] = http_exc.detail  # type: ignore[assignment]
 
         assert detail["type"] == "ValidationError"
         assert detail["category"] == "validation"
@@ -188,7 +189,7 @@ class TestNoSilentFailures:
     """Test that silent failures have been eliminated."""
 
     @pytest.mark.asyncio
-    async def test_validation_failures_propagate(self):
+    async def test_validation_failures_propagate(self) -> None:
         """Validation errors should propagate, not return None."""
         from ragzoom.validate import (
             set_validation_enabled,
@@ -215,7 +216,7 @@ class TestNoSilentFailures:
             # Restore validation state
             set_validation_enabled(False)
 
-    def test_no_generic_exception_catches_in_api(self):
+    def test_no_generic_exception_catches_in_api(self) -> None:
         """API endpoints should not have generic Exception catches."""
         import inspect
 
@@ -234,7 +235,7 @@ class TestNoSilentFailures:
             "ErrorHandlingMiddleware" in api_source
         ), "API should use error handling middleware"
 
-    def test_cli_uses_specific_error_handling(self):
+    def test_cli_uses_specific_error_handling(self) -> None:
         """CLI should use specific error handling patterns."""
         from ragzoom.cli import handle_cli_error
 
@@ -248,7 +249,7 @@ class TestNoSilentFailures:
 class TestErrorBoundaries:
     """Test error boundaries and fail-fast behavior."""
 
-    def test_invalid_config_fails_fast(self):
+    def test_invalid_config_fails_fast(self) -> None:
         """Invalid configuration should fail immediately."""
         with pytest.raises(ConfigurationError) as exc_info:
             raise ConfigurationError(
@@ -259,7 +260,7 @@ class TestErrorBoundaries:
         assert exc_info.value.expected == "valid API key"
         assert exc_info.value.actual == "invalid"
 
-    def test_resource_exhaustion_fails_fast(self):
+    def test_resource_exhaustion_fails_fast(self) -> None:
         """Resource exhaustion should fail immediately."""
         with pytest.raises(ResourceError) as exc_info:
             raise ResourceError(

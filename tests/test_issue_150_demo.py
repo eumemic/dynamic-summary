@@ -4,7 +4,7 @@
 class TestIssue150Demonstration:
     """Demonstrate the exact usage pattern requested in issue #150."""
 
-    def test_usage_pattern_from_issue(self, store):
+    def test_usage_pattern_from_issue(self, store) -> None:
         """Test the exact usage pattern described in issue #150."""
         # This demonstrates the usage pattern from the issue description:
         #
@@ -91,7 +91,7 @@ class TestIssue150Demonstration:
         assert store.nodes.get_node("old-node") is None  # Old node deleted
         assert store.nodes.get_node("new-node") is not None  # New node added
 
-    def test_backward_compatibility_demonstration(self, store):
+    def test_backward_compatibility_demonstration(self, store) -> None:
         """Demonstrate that existing code works unchanged (backward compatibility)."""
         # Existing code that doesn't use transactions continues to work
 

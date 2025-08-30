@@ -2,6 +2,8 @@
 
 import os
 import tempfile
+from collections.abc import Generator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,14 +11,16 @@ from click.testing import CliRunner
 
 from ragzoom.cli import cli
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
-from ragzoom.store import Document, StoreManager, TreeNode
+from ragzoom.models import Document, TreeNode
+from ragzoom.services.indexing_service import IndexingResult
+from ragzoom.store import StoreManager
 
 
 class TestAutomaticClearing:
     """Test that automatic clearing properly handles orphaned nodes from interrupted indexing."""
 
     @pytest.fixture
-    def temp_db(self, tmp_path):
+    def temp_db(self, tmp_path: Any) -> Generator[str, None, None]:
         """Create a temporary database for testing."""
         db_path = tmp_path / "test_ragzoom.db"
         original_db = os.environ.get("RAGZOOM_DB_PATH")
@@ -28,7 +32,7 @@ class TestAutomaticClearing:
             os.environ.pop("RAGZOOM_DB_PATH", None)
 
     @pytest.fixture
-    def config(self):
+    def config(self) -> IndexConfig:
         """Create a test configuration."""
         return IndexConfig(
             target_chunk_tokens=200,
@@ -43,7 +47,7 @@ class TestAutomaticClearing:
         )
 
     @pytest.fixture
-    def operational_config(self, temp_db):
+    def operational_config(self, temp_db: str) -> OperationalConfig:
         """Create operational configuration for test database."""
         return OperationalConfig(
             openai_api_key=SecretStr("test-key"),
@@ -52,8 +56,8 @@ class TestAutomaticClearing:
         )
 
     def simulate_interrupted_indexing(
-        self, store: StoreManager, document_id: str, num_nodes: int = 248
-    ):
+        self, store: "StoreManager", document_id: str, num_nodes: int = 248
+    ) -> None:
         """Simulate an interrupted indexing run that leaves orphaned nodes.
 
         This simulates what happens when indexing is interrupted after storing nodes
@@ -79,8 +83,12 @@ class TestAutomaticClearing:
         # (which happens at the end of indexing)
 
     def test_automatic_clearing_deletes_orphaned_nodes(
-        self, temp_db, config, operational_config, store
-    ):
+        self,
+        temp_db: str,
+        config: IndexConfig,
+        operational_config: OperationalConfig,
+        store: StoreManager,
+    ) -> None:
         """Test that automatic clearing deletes orphaned nodes from interrupted indexing."""
         runner = CliRunner()
         document_id = "test_document.txt"
@@ -117,7 +125,9 @@ class TestAutomaticClearing:
                 mock_indexing_service.return_value = mock_instance
 
                 # Mock index_from_file to simulate the full indexing process including clearing
-                def mock_index_from_file_side_effect(*args, **kwargs):
+                def mock_index_from_file_side_effect(
+                    *args: object, **kwargs: object
+                ) -> IndexingResult:
                     # First, perform clearing like the real service would
                     store.clear_document(document_id)
 
@@ -191,8 +201,12 @@ class TestAutomaticClearing:
             os.unlink(temp_file)
 
     def test_automatic_clearing_works_with_document_record(
-        self, temp_db, config, operational_config, store
-    ):
+        self,
+        temp_db: str,
+        config: IndexConfig,
+        operational_config: OperationalConfig,
+        store: StoreManager,
+    ) -> None:
         """Test that automatic clearing works correctly when a Document record exists."""
         runner = CliRunner()
         document_id = "test_document.txt"
@@ -234,7 +248,9 @@ class TestAutomaticClearing:
                 mock_indexing_service.return_value = mock_instance
 
                 # Mock index_from_file to simulate the full indexing process including clearing
-                def mock_index_from_file_side_effect(*args, **kwargs):
+                def mock_index_from_file_side_effect(
+                    *args: object, **kwargs: object
+                ) -> IndexingResult:
                     # First, perform clearing like the real service would
                     store.clear_document(document_id)
 

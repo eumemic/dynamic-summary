@@ -6,7 +6,7 @@ from ragzoom.models import TreeNode
 class TestFollowingNeighbor:
     """Test following_neighbor_id column and relationships."""
 
-    def test_tree_node_has_following_neighbor_id_column(self):
+    def test_tree_node_has_following_neighbor_id_column(self) -> None:
         """TreeNode model should have following_neighbor_id column."""
         # Verify the column exists on the model
         assert hasattr(TreeNode, "following_neighbor_id")
@@ -18,7 +18,9 @@ class TestFollowingNeighbor:
             column.nullable is True
         )  # Should be nullable (last node has no following)
 
-    def test_bidirectional_neighbor_consistency(self, base_config, store):
+    def test_bidirectional_neighbor_consistency(
+        self, base_config: object, store: object
+    ) -> None:
         """Verify bidirectional consistency: if A.following = B, then B.preceding = A."""
         # Create some test nodes with neighbor relationships
         nodes_data = []
@@ -81,8 +83,8 @@ class TestFollowingNeighbor:
                 )
 
     def test_leaf_nodes_have_correct_neighbor_relationships(
-        self, base_config, store, mock_openai_async_client
-    ):
+        self, base_config: object, store: object, mock_openai_async_client: object
+    ) -> None:
         """Test that leaf nodes created during indexing have correct neighbor relationships."""
         import asyncio
 
@@ -146,8 +148,8 @@ class TestFollowingNeighbor:
                 ), f"Leaf {i} following should be leaf {i+1}"
 
     def test_parent_nodes_have_correct_neighbor_relationships(
-        self, base_config, store, mock_openai_async_client
-    ):
+        self, base_config: object, store: object, mock_openai_async_client: object
+    ) -> None:
         """Test that parent nodes at each level have correct neighbor relationships."""
         import asyncio
 
@@ -176,7 +178,7 @@ class TestFollowingNeighbor:
         # Get all nodes and group by height
         all_nodes = doc_store.nodes.get_all()
 
-        nodes_by_height = {}
+        nodes_by_height: dict[int, list[object]] = {}
         for node in all_nodes:
             if node.height not in nodes_by_height:
                 nodes_by_height[node.height] = []

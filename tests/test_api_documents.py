@@ -1,5 +1,8 @@
 """Tests for document API endpoints."""
 
+from collections.abc import Generator
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -11,14 +14,16 @@ class TestDocumentAPI:
     """Test document-related API endpoints."""
 
     @pytest.fixture
-    def mock_openai(self):
+    def mock_openai(self) -> Generator[None, None, None]:
         """Mock OpenAI for tests with dragon/wizard specialized embeddings."""
         embedding_rules = {"dragon": [0.9] * 1536, "wizard": [0.8] * 1536}
         with mock_openai_context(embedding_rules):
             yield
 
     @pytest.fixture
-    def client(self, mock_openai, monkeypatch, mock_store):
+    def client(
+        self, mock_openai: None, monkeypatch: pytest.MonkeyPatch, mock_store: Any
+    ) -> Generator[TestClient, None, None]:
         """Create test client with mocked dependencies."""
         from ragzoom.api import get_service_container
         from ragzoom.config import (
@@ -35,7 +40,7 @@ class TestDocumentAPI:
 
         # Create a mock service container that uses our mock store
         class MockServiceContainer:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.index_config = IndexConfig.load()
                 self.query_config = QueryConfig()
                 self.operational_config = OperationalConfig(
@@ -51,11 +56,11 @@ class TestDocumentAPI:
                     self.store, self.query_config, self.operational_config
                 )
 
-            def close(self):
+            def close(self) -> None:
                 """Mock close method."""
                 pass
 
-        def mock_get_service_container():
+        def mock_get_service_container() -> MockServiceContainer:
             return MockServiceContainer()
 
         # Override the dependency
@@ -68,7 +73,7 @@ class TestDocumentAPI:
             # Clean up the override
             app.dependency_overrides.clear()
 
-    def test_index_with_filename_as_default_id(self, client):
+    def test_index_with_filename_as_default_id(self, client: TestClient) -> None:
         """Test that filename is used as document_id when not specified."""
         response = client.post(
             "/index",
@@ -82,7 +87,7 @@ class TestDocumentAPI:
         data = response.json()
         assert data["document_id"] == "dragons.txt"
 
-    def test_list_documents_empty(self, client):
+    def test_list_documents_empty(self, client: TestClient) -> None:
         """Test listing documents when none are indexed."""
         response = client.get("/documents")
 
@@ -90,7 +95,7 @@ class TestDocumentAPI:
         data = response.json()
         assert data["documents"] == []
 
-    def test_list_documents_with_data(self, client):
+    def test_list_documents_with_data(self, client: TestClient) -> None:
         """Test listing documents after indexing."""
         # Index two documents
         response1 = client.post(
@@ -138,14 +143,14 @@ class TestDocumentAPI:
         assert wizards_doc["chunk_count"] > 0
         assert wizards_doc["node_count"] > 0
 
-    def test_query_requires_document_id(self, client):
+    def test_query_requires_document_id(self, client: TestClient) -> None:
         """Test that query endpoint requires document_id."""
         # Try to query without document_id (should fail)
         response = client.post("/query", json={"query": "Tell me about dragons"})
 
         assert response.status_code == 422  # Unprocessable Entity
 
-    def test_query_with_document_isolation(self, client):
+    def test_query_with_document_isolation(self, client: TestClient) -> None:
         """Test that queries are isolated to specific documents."""
         # Index two documents
         response1 = client.post(
@@ -183,11 +188,11 @@ class TestDocumentAPI:
         # The summary should be about wizards, not dragons
         # (exact content depends on the mock responses)
 
-    def test_concurrent_document_operations(self, client):
+    def test_concurrent_document_operations(self, client: TestClient) -> None:
         """Test concurrent operations on different documents."""
         import asyncio
 
-        async def index_and_query(doc_id, content):
+        async def index_and_query(doc_id: str, content: str) -> dict[str, object]:
             # Index document
             response = client.post(
                 "/index", json={"text": content, "document_id": doc_id}
@@ -199,10 +204,10 @@ class TestDocumentAPI:
                 "/query", json={"query": "summarize", "document_id": doc_id}
             )
             assert response.status_code == 200
-            return response.json()
+            return response.json()  # type: ignore[no-any-return]
 
         # Run operations on 3 documents concurrently
-        async def run_test():
+        async def run_test() -> list[dict[str, object]]:
             tasks = [
                 index_and_query("doc1", "Document 1 about dragons"),
                 index_and_query("doc2", "Document 2 about wizards"),

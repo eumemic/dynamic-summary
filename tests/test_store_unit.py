@@ -5,6 +5,8 @@ Basic CRUD tests have been removed to eliminate duplication with test_store.py,
 which provides comprehensive integration testing.
 """
 
+from typing import Any
+
 import pytest
 
 from tests.mock_store import SimpleMockStore
@@ -18,7 +20,7 @@ class TestStoreMock:
     """
 
     @pytest.fixture
-    def mock_store(self):
+    def mock_store(self) -> SimpleMockStore:
         """Create a mock store for testing."""
         return SimpleMockStore()
 
@@ -26,7 +28,7 @@ class TestStoreMock:
     # test_search_similar) have been removed to eliminate duplication with test_store.py.
     # See test_store.py for comprehensive integration testing of these operations.
 
-    def test_session_local_count(self, mock_store):
+    def test_session_local_count(self, mock_store: Any) -> None:
         """Test that SessionLocal mock properly returns count."""
         # Add some nodes
         for i in range(3):
@@ -40,12 +42,12 @@ class TestStoreMock:
 
         # Test SessionLocal count query (used by api.py and cli.py)
         with mock_store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
+            from ragzoom.models import TreeNode
 
             count = session.query(TreeNode).count()
             assert count == 3
 
-    def test_add_node_returns_node(self, mock_store):
+    def test_add_node_returns_node(self, mock_store: Any) -> None:
         """Test that add_node returns the created node."""
         node = mock_store.add_node(
             node_id="return-test",
@@ -60,7 +62,7 @@ class TestStoreMock:
         assert node.id == "return-test"
         assert node.text == "Return test text"
 
-    def test_document_operations(self, mock_store):
+    def test_document_operations(self, mock_store: Any) -> None:
         """Test document operations."""
         # Create document directly
         doc_store = mock_store.add_document(
@@ -80,7 +82,7 @@ class TestStoreMock:
         assert retrieved.file_path == "/test/file.txt"
         assert retrieved.chunk_count == 3
 
-    def test_interface_compliance(self, mock_store):
+    def test_interface_compliance(self, mock_store: Any) -> None:
         """Test that mock store implements the core interface."""
         # Test that core methods exist (only those actually implemented)
         core_methods = [
@@ -97,7 +99,7 @@ class TestStoreMock:
                 getattr(mock_store, method_name)
             ), f"Not callable: {method_name}"
 
-    def test_real_store_interface_compliance(self):
+    def test_real_store_interface_compliance(self) -> None:
         """Test that real Store class has the same interface as mock."""
         from ragzoom.store import StoreManager
 
@@ -121,7 +123,9 @@ class TestStoreMock:
         # Mock should provide compatibility with new patterns
         assert "for_document" in mock_methods, "Mock missing for_document factory"
 
-    def test_builder_advanced_features(self, mock_store, tree_node_builder):
+    def test_builder_advanced_features(
+        self, mock_store: Any, tree_node_builder: Any
+    ) -> None:
         """Test advanced builder features with mock store."""
         # Test complex node creation with builder
         node_data = (

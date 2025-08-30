@@ -158,7 +158,7 @@ class TestChunkSizeRegression:
         # Check leaf node sizes
         leaf_nodes = []
         with store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
+            from ragzoom.models import TreeNode
 
             # Leaf nodes have no children
             leaf_nodes = (

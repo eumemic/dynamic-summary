@@ -6,7 +6,7 @@ from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.services.indexing_service import IndexingService
 
 
-def test_tree_height_accessed_within_session():
+def test_tree_height_accessed_within_session() -> None:
     """Test that root.height is accessed while session is still open.
 
     This is a regression test for a bug where root.height was accessed after
@@ -67,11 +67,11 @@ def test_tree_height_accessed_within_session():
         # Create context manager that tracks whether we're inside it
         mock_context = Mock()
 
-        def enter_context():
+        def enter_context() -> Mock:
             mock_context._in_context = True
             return mock_session
 
-        def exit_context(*args):
+        def exit_context(*args: object) -> None:
             # Mark that we've exited the context
             delattr(mock_context, "_in_context")
             return None

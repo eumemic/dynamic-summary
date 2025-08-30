@@ -12,7 +12,7 @@ from ragzoom.validate import (
 class TestDocumentCoverage:
     """Test document coverage validation."""
 
-    def test_valid_coverage(self):
+    def test_valid_coverage(self) -> None:
         """Test valid document coverage passes."""
         # Create mock leaf nodes - now with exact adjacency (no gaps, no overlaps)
         leaves = [
@@ -25,7 +25,7 @@ class TestDocumentCoverage:
         error = validate_document_coverage(original_text, leaves)
         assert error is None  # Should be valid
 
-    def test_missing_start_coverage(self):
+    def test_missing_start_coverage(self) -> None:
         """Test detection of missing coverage at start."""
         leaves = [
             MagicMock(span_start=10, span_end=100, id="node1"),  # Doesn't start at 0
@@ -37,7 +37,7 @@ class TestDocumentCoverage:
         assert error is not None
         assert "First leaf node starts at 10" in error
 
-    def test_missing_end_coverage(self):
+    def test_missing_end_coverage(self) -> None:
         """Test detection of missing coverage at end."""
         leaves = [
             MagicMock(span_start=0, span_end=100, id="node1"),
@@ -49,7 +49,7 @@ class TestDocumentCoverage:
         assert error is not None
         assert "Last leaf node ends at 180" in error
 
-    def test_gap_in_coverage(self):
+    def test_gap_in_coverage(self) -> None:
         """Test detection of gaps between nodes."""
         leaves = [
             MagicMock(span_start=0, span_end=100, id="node1"),
@@ -65,7 +65,7 @@ class TestDocumentCoverage:
 class TestChunkSizes:
     """Test chunk size validation."""
 
-    def test_valid_chunk_sizes(self):
+    def test_valid_chunk_sizes(self) -> None:
         """Test chunks within tolerance pass."""
         leaves = [
             MagicMock(text="x" * 800, id="node1"),  # ~200 tokens
@@ -76,7 +76,7 @@ class TestChunkSizes:
         error = validate_chunk_sizes(leaves, target_tokens=200)
         assert error is None  # Should be valid
 
-    def test_oversized_chunks(self):
+    def test_oversized_chunks(self) -> None:
         """Test detection of oversized chunks."""
         leaves = [
             MagicMock(text="x" * 800, id="node1"),
@@ -87,7 +87,7 @@ class TestChunkSizes:
         error = validate_chunk_sizes(leaves, target_tokens=200, tolerance=0.2)
         assert error is None  # Should still return None, just log warnings
 
-    def test_undersized_chunks(self):
+    def test_undersized_chunks(self) -> None:
         """Test detection of undersized chunks."""
         leaves = [
             MagicMock(text="x" * 600, id="node1"),  # ~150 tokens - too small
@@ -102,7 +102,7 @@ class TestChunkSizes:
 class TestTreeStructure:
     """Test tree structure validation."""
 
-    def test_invalid_span(self):
+    def test_invalid_span(self) -> None:
         """Test detection of invalid spans."""
         store = MagicMock()
 
@@ -126,7 +126,7 @@ class TestTreeStructure:
         assert error is not None
         assert "validation failed" in error
 
-    def test_missing_summary(self):
+    def test_missing_summary(self) -> None:
         """Test detection of missing text content on nodes."""
         store = MagicMock()
 

@@ -1,5 +1,7 @@
 """Tests for storage functionality."""
 
+from typing import Any
+
 import pytest
 
 from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
@@ -10,13 +12,13 @@ class TestStore:
     """Test the Store class."""
 
     @pytest.fixture
-    def temp_store(self, store):
+    def temp_store(self, store: Any) -> Any:
         """Create a temporary store for testing using conftest store fixture."""
         # For integration tests, use the store fixture from conftest.py
         # which handles PostgreSQL with proper isolation or SQLite fallback
         return store
 
-    def test_add_node(self, temp_store):
+    def test_add_node(self, temp_store: Any) -> None:
         """Test adding a node to the store."""
         # Create document first to satisfy foreign key constraint
         temp_store.add_document(
@@ -43,7 +45,7 @@ class TestStore:
         assert node.span_start == 0
         assert node.span_end == 10
 
-    def test_get_node(self, temp_store):
+    def test_get_node(self, temp_store: Any) -> None:
         """Test retrieving a node."""
         # Add a node
         temp_store.nodes.add_node(
@@ -64,7 +66,7 @@ class TestStore:
         node = temp_store.nodes.get_node("non-existent")
         assert node is None
 
-    def test_node_relationships(self, temp_store):
+    def test_node_relationships(self, temp_store: Any) -> None:
         """Test parent-child relationships."""
         # Create parent and children
         temp_store.nodes.add_node(
@@ -104,7 +106,7 @@ class TestStore:
         assert len(ancestors) == 1
         assert ancestors[0].id == "parent"
 
-    def test_search_similar(self, temp_store):
+    def test_search_similar(self, temp_store: Any) -> None:
         """Test vector similarity search."""
         # Add some nodes
         for i in range(5):
@@ -125,10 +127,10 @@ class TestStore:
         assert all(isinstance(r, tuple) for r in results)
         assert all(len(r) == 3 for r in results)  # (id, distance, metadata)
 
-    def test_mmr_diverse_results(self, temp_store):
+    def test_mmr_diverse_results(self, temp_store: Any) -> None:
         """Test MMR diversity computation."""
         # Create candidates with different similarities
-        candidates = [
+        candidates: list[tuple[str, float, dict[str, Any]]] = [
             ("node-1", 0.1, {}),  # Very similar
             ("node-2", 0.15, {}),  # Similar
             ("node-3", 0.5, {}),  # Less similar
@@ -168,7 +170,7 @@ class TestStore:
         # Should include some diversity
         assert len(set(selected)) == 3
 
-    def test_pinned_nodes(self, temp_store):
+    def test_pinned_nodes(self, temp_store: Any) -> None:
         """Test node pinning functionality."""
         # Create a tree structure with proper depths
         # Root node (depth 0)
@@ -238,7 +240,7 @@ class TestStore:
         pinned = temp_store.get_pinned_nodes(depth_max=1)
         assert len(pinned) == 1  # Still only root (level2 has depth 2)
 
-    def test_cache_functionality(self, temp_store):
+    def test_cache_functionality(self, temp_store: Any) -> None:
         """Test LRU cache behavior."""
         # Add a node
         temp_store.nodes.add_node(
@@ -261,7 +263,7 @@ class TestStore:
         # Check cache contains the node
         assert "cached" in temp_store.node_cache
 
-    def test_node_depth_calculation(self, temp_store):
+    def test_node_depth_calculation(self, temp_store: Any) -> None:
         """Test dynamic depth calculation."""
         # Create a tree structure:
         #     root
@@ -351,7 +353,7 @@ class TestStore:
         with pytest.raises(NodeNotFoundError):
             temp_store.tree.get_node_depth("non-existent")
 
-    def test_node_height_calculation(self, temp_store):
+    def test_node_height_calculation(self, temp_store: Any) -> None:
         """Test dynamic height calculation."""
         # Create the same tree structure
         temp_store.nodes.add_node(
@@ -442,7 +444,7 @@ class TestStore:
         # Test non-existent node
         assert temp_store.nodes.get_node("non-existent") is None
 
-    def test_depth_height_edge_cases(self, temp_store):
+    def test_depth_height_edge_cases(self, temp_store: Any) -> None:
         """Test edge cases for depth/height calculation."""
         # Test single node (both root and leaf)
         temp_store.nodes.add_node(
@@ -507,7 +509,7 @@ class TestStore:
         assert temp_store.nodes.get_node("parent_right_only").height == 1
         assert temp_store.tree.is_leaf_node("parent_right_only") is False
 
-    def test_depth_calculation_performance(self, temp_store):
+    def test_depth_calculation_performance(self, temp_store: Any) -> None:
         """Test that depth calculation is O(log n) by creating a deep tree."""
         # Create a linear chain of nodes to test worst case
         nodes = []
@@ -536,7 +538,7 @@ class TestStore:
         # This is O(depth) = O(log n) for balanced trees
         assert temp_store.tree.get_node_depth("chain_9") == 9
 
-    def test_error_handling_patterns(self, temp_store):
+    def test_error_handling_patterns(self, temp_store: Any) -> None:
         """Test consistent error handling patterns."""
         # Create a simple tree for testing
         temp_store.nodes.add_node(

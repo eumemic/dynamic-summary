@@ -1,12 +1,14 @@
 """Test transactional operations for the Store class."""
 
+from typing import Any
+
 import pytest
 
 
 class TestTransactionContext:
     """Test the transaction context manager."""
 
-    def test_transaction_context_manager_success(self, store):
+    def test_transaction_context_manager_success(self, store: Any) -> None:
         """Test successful transaction commits all operations."""
         # Use transaction to add document and nodes atomically
         doc_id = "test-doc"
@@ -52,7 +54,7 @@ class TestTransactionContext:
         assert persisted_node.id == "node-1"
 
     @pytest.mark.integration
-    def test_transaction_context_manager_rollback(self, store):
+    def test_transaction_context_manager_rollback(self, store: Any) -> None:
         """Test failed transaction rolls back all operations."""
         if hasattr(store, "__class__") and "Mock" in store.__class__.__name__:
             pytest.skip("Mock store doesn't support true rollback behavior")
@@ -80,7 +82,7 @@ class TestTransactionContext:
         persisted_doc = store.get_document_by_id(doc_id)
         assert persisted_doc is None
 
-    def test_transaction_with_parent_references(self, store):
+    def test_transaction_with_parent_references(self, store: Any) -> None:
         """Test transaction with parent reference updates."""
         doc_id = "test-doc-parents"
 
@@ -159,7 +161,7 @@ class TestTransactionContext:
 class TestBackwardCompatibility:
     """Test that existing code still works without transactions."""
 
-    def test_add_document_without_session(self, store):
+    def test_add_document_without_session(self, store: Any) -> None:
         """Test add_document works without session parameter."""
         doc_store = store.add_document(
             document_id="test-doc-no-session",
@@ -176,7 +178,7 @@ class TestBackwardCompatibility:
         persisted_doc = store.get_document_by_id("test-doc-no-session")
         assert persisted_doc is not None
 
-    def test_add_nodes_batch_without_session(self, store):
+    def test_add_nodes_batch_without_session(self, store: Any) -> None:
         """Test add_nodes_batch works without session parameter."""
         nodes_data = [
             {
@@ -199,7 +201,7 @@ class TestBackwardCompatibility:
         persisted_node = store.nodes.get_node("node-no-session")
         assert persisted_node is not None
 
-    def test_delete_document_nodes_without_session(self, store):
+    def test_delete_document_nodes_without_session(self, store: Any) -> None:
         """Test clear_document works without session parameter."""
         # First add a document with nodes
         doc_id = "test-doc-delete"
@@ -238,7 +240,7 @@ class TestBackwardCompatibility:
 class TestAtomicReindexing:
     """Test atomic re-indexing scenario from issue #150."""
 
-    def test_atomic_reindexing_success(self, store):
+    def test_atomic_reindexing_success(self, store: Any) -> None:
         """Test successful atomic re-indexing of a document."""
         doc_id = "test-doc-reindex"
 
@@ -295,7 +297,7 @@ class TestAtomicReindexing:
         assert store.nodes.get_node("new-node-1") is not None
 
     @pytest.mark.integration
-    def test_atomic_reindexing_rollback(self, store):
+    def test_atomic_reindexing_rollback(self, store: Any) -> None:
         """Test atomic re-indexing rolls back on failure."""
         if hasattr(store, "__class__") and "Mock" in store.__class__.__name__:
             pytest.skip("Mock store doesn't support true rollback behavior")
@@ -346,7 +348,7 @@ class TestAtomicReindexing:
 class TestTransactionSafety:
     """Test transaction safety improvements addressing code review feedback."""
 
-    def test_repository_method_rollback_on_exception(self, store):
+    def test_repository_method_rollback_on_exception(self, store: Any) -> None:
         """Test that repository methods properly rollback on exceptions when managing their own session."""
         # Add initial data
         store.add_document(
@@ -398,7 +400,7 @@ class TestTransactionSafety:
         valid_node = store.nodes.get_node("valid-node")
         assert valid_node is not None
 
-    def test_nested_transaction_prevention(self, store):
+    def test_nested_transaction_prevention(self, store: Any) -> None:
         """Test that nested transactions are properly prevented."""
         with store.transaction():
             # Attempt to start nested transaction should fail
@@ -408,7 +410,7 @@ class TestTransactionSafety:
                 with store.transaction():
                     pass
 
-    def test_mock_store_rollback_simulation(self, mock_store):
+    def test_mock_store_rollback_simulation(self, mock_store: Any) -> None:
         """Test that mock store properly simulates rollback behavior."""
         # Add initial data
         mock_store.add_document(
@@ -438,7 +440,7 @@ class TestTransactionSafety:
         # Verify document was restored after rollback
         assert "mock-rollback-test" in mock_store.documents
 
-    def test_mock_store_nested_transaction_prevention(self, mock_store):
+    def test_mock_store_nested_transaction_prevention(self, mock_store: Any) -> None:
         """Test that mock store prevents nested transactions like real store."""
         with mock_store.transaction():
             # Attempt to start nested transaction should fail
@@ -448,7 +450,7 @@ class TestTransactionSafety:
                 with mock_store.transaction():
                     pass
 
-    def test_session_scope_context_manager(self, store):
+    def test_session_scope_context_manager(self, store: Any) -> None:
         """Test the new _session_scope context manager in BaseRepository."""
         # Only test with real store (mock store doesn't have repository structure)
         if hasattr(store, "doc_repo"):

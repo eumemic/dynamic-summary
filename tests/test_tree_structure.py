@@ -5,6 +5,10 @@ This module consolidates tests for:
 2. Tree structure created by indexing process
 """
 
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import MagicMock
+
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
@@ -21,30 +25,33 @@ class TestTreeValidation:
     """Tests for left-balanced tree validation function."""
 
     @pytest.fixture
-    def mock_store_with_valid_tree(self):
+    def mock_store_with_valid_tree(self) -> Any:
         """Create a mock store with a valid left-balanced tree."""
 
         # Using a simple mock instead of the real Store
         class MockNode:
-            def __init__(self, id, left_child_id=None, right_child_id=None):
+            def __init__(
+                self,
+                id: str,
+                left_child_id: str | None = None,
+                right_child_id: str | None = None,
+            ) -> None:
                 self.id = id
                 self.left_child_id = left_child_id
                 self.right_child_id = right_child_id
 
         class MockStore:
-            def __init__(self):
-                self.nodes = {}
+            def __init__(self) -> None:
+                self.nodes: dict[str, MockNode] = {}
 
-            def add_node(self, node):
+            def add_node(self, node: MockNode) -> None:
                 self.nodes[node.id] = node
 
-            def get_all_nodes_for_document(self, doc_id):
+            def get_all_nodes_for_document(self, doc_id: str) -> list[MockNode]:
                 return list(self.nodes.values())
 
-            def for_document(self, document_id):
+            def for_document(self, document_id: str) -> SimpleNamespace:
                 """Return a mock document store that delegates to this store."""
-                from types import SimpleNamespace
-
                 doc_store = SimpleNamespace()
                 doc_store.nodes = SimpleNamespace()
                 doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
@@ -72,29 +79,32 @@ class TestTreeValidation:
         return store
 
     @pytest.fixture
-    def mock_store_with_left_balanced_tree(self):
+    def mock_store_with_left_balanced_tree(self) -> Any:
         """Create a mock store with a valid left-balanced tree (single left child)."""
 
         class MockNode:
-            def __init__(self, id, left_child_id=None, right_child_id=None):
+            def __init__(
+                self,
+                id: str,
+                left_child_id: str | None = None,
+                right_child_id: str | None = None,
+            ) -> None:
                 self.id = id
                 self.left_child_id = left_child_id
                 self.right_child_id = right_child_id
 
         class MockStore:
-            def __init__(self):
-                self.nodes = {}
+            def __init__(self) -> None:
+                self.nodes: dict[str, MockNode] = {}
 
-            def add_node(self, node):
+            def add_node(self, node: MockNode) -> None:
                 self.nodes[node.id] = node
 
-            def get_all_nodes_for_document(self, doc_id):
+            def get_all_nodes_for_document(self, doc_id: str) -> list[MockNode]:
                 return list(self.nodes.values())
 
-            def for_document(self, document_id):
+            def for_document(self, document_id: str) -> SimpleNamespace:
                 """Return a mock document store that delegates to this store."""
-                from types import SimpleNamespace
-
                 doc_store = SimpleNamespace()
                 doc_store.nodes = SimpleNamespace()
                 doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
@@ -120,37 +130,35 @@ class TestTreeValidation:
 
         return store
 
-    def test_full_tree_passes_validation(self, mock_store_with_valid_tree):
+    def test_full_tree_passes_validation(self, mock_store_with_valid_tree: Any) -> None:
         """Test that a full binary tree passes left-balanced validation."""
         doc_store = mock_store_with_valid_tree.for_document("test-doc")
-        result = validate_tree_is_left_balanced(doc_store)
+        result = validate_tree_is_left_balanced(cast(Any, doc_store))
         assert result is None  # None means valid
 
     def test_single_left_child_passes_validation(
-        self, mock_store_with_left_balanced_tree
-    ):
+        self, mock_store_with_left_balanced_tree: Any
+    ) -> None:
         """Test that a tree with single left children passes validation."""
         doc_store = mock_store_with_left_balanced_tree.for_document("test-doc")
-        result = validate_tree_is_left_balanced(doc_store)
+        result = validate_tree_is_left_balanced(cast(Any, doc_store))
         assert result is None  # Valid left-balanced tree
 
-    def test_single_node_tree_passes(self):
+    def test_single_node_tree_passes(self) -> None:
         """Test that a tree with just one node (root) is valid."""
 
         class MockNode:
-            def __init__(self, id):
+            def __init__(self, id: str) -> None:
                 self.id = id
                 self.left_child_id = None
                 self.right_child_id = None
 
         class MockStore:
-            def get_all_nodes_for_document(self, doc_id):
+            def get_all_nodes_for_document(self, doc_id: str) -> list[MockNode]:
                 return [MockNode("root")]
 
-            def for_document(self, document_id):
+            def for_document(self, document_id: str) -> SimpleNamespace:
                 """Return a mock document store that delegates to this store."""
-                from types import SimpleNamespace
-
                 doc_store = SimpleNamespace()
                 doc_store.nodes = SimpleNamespace()
                 doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
@@ -160,27 +168,30 @@ class TestTreeValidation:
 
         store = MockStore()
         doc_store = store.for_document("test-doc")
-        result = validate_tree_is_left_balanced(doc_store)
+        result = validate_tree_is_left_balanced(cast(Any, doc_store))
         assert result is None  # Single node tree is valid
 
-    def test_invalid_child_reference_fails(self):
+    def test_invalid_child_reference_fails(self) -> None:
         """Test that referencing non-existent children fails validation."""
 
         class MockNode:
-            def __init__(self, id, left_child_id=None, right_child_id=None):
+            def __init__(
+                self,
+                id: str,
+                left_child_id: str | None = None,
+                right_child_id: str | None = None,
+            ) -> None:
                 self.id = id
                 self.left_child_id = left_child_id
                 self.right_child_id = right_child_id
 
         class MockStore:
-            def get_all_nodes_for_document(self, doc_id):
+            def get_all_nodes_for_document(self, doc_id: str) -> list[MockNode]:
                 # Node references children that don't exist
                 return [MockNode("root", "missing-left", "missing-right")]
 
-            def for_document(self, document_id):
+            def for_document(self, document_id: str) -> SimpleNamespace:
                 """Return a mock document store that delegates to this store."""
-                from types import SimpleNamespace
-
                 doc_store = SimpleNamespace()
                 doc_store.nodes = SimpleNamespace()
                 doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
@@ -190,34 +201,37 @@ class TestTreeValidation:
 
         store = MockStore()
         doc_store = store.for_document("test-doc")
-        result = validate_tree_is_left_balanced(doc_store)
+        result = validate_tree_is_left_balanced(cast(Any, doc_store))
         assert result is not None
         assert "Invalid tree" in result
         assert "non-existent" in result
 
-    def test_right_child_without_left_child_fails(self):
+    def test_right_child_without_left_child_fails(self) -> None:
         """Test that a node with only a right child fails validation."""
 
         class MockNode:
-            def __init__(self, id, left_child_id=None, right_child_id=None):
+            def __init__(
+                self,
+                id: str,
+                left_child_id: str | None = None,
+                right_child_id: str | None = None,
+            ) -> None:
                 self.id = id
                 self.left_child_id = left_child_id
                 self.right_child_id = right_child_id
 
         class MockStore:
-            def __init__(self):
-                self.nodes = {}
+            def __init__(self) -> None:
+                self.nodes: dict[str, MockNode] = {}
 
-            def add_node(self, node):
+            def add_node(self, node: MockNode) -> None:
                 self.nodes[node.id] = node
 
-            def get_all_nodes_for_document(self, doc_id):
+            def get_all_nodes_for_document(self, doc_id: str) -> list[MockNode]:
                 return list(self.nodes.values())
 
-            def for_document(self, document_id):
+            def for_document(self, document_id: str) -> SimpleNamespace:
                 """Return a mock document store that delegates to this store."""
-                from types import SimpleNamespace
-
                 doc_store = SimpleNamespace()
                 doc_store.nodes = SimpleNamespace()
                 doc_store.nodes.get_all = lambda: self.get_all_nodes_for_document(
@@ -240,7 +254,7 @@ class TestTreeValidation:
         store.add_node(MockNode("root", None, "P1"))  # Only right child!
 
         doc_store = store.for_document("test-doc")
-        result = validate_tree_is_left_balanced(doc_store)
+        result = validate_tree_is_left_balanced(cast(Any, doc_store))
         assert result is not None
         assert "not left-balanced" in result
         assert "root" in result  # Should identify the problematic node
@@ -251,7 +265,9 @@ class TestIndexingCreatesValidTrees:
     """Tests to ensure indexing produces valid left-balanced trees."""
 
     @pytest.fixture
-    def setup_indexing(self):
+    def setup_indexing(
+        self,
+    ) -> tuple[tuple[IndexConfig, QueryConfig, OperationalConfig], Any, Any]:
         """Set up indexing system with validation enabled."""
         index_config = IndexConfig.load(
             target_chunk_tokens=50,  # Small chunks for testing
@@ -261,7 +277,9 @@ class TestIndexingCreatesValidTrees:
         operational_config = OperationalConfig(
             openai_api_key=SecretStr("test-key-for-tests"),
         )
-        store = SimpleMockStore(config=(index_config, query_config, operational_config))
+        store: Any = cast(Any, SimpleMockStore)(
+            config=(index_config, query_config, operational_config)
+        )
         # Create document-scoped store for tree builder
         doc_store = store.add_document(
             document_id="test-doc",
@@ -278,42 +296,50 @@ class TestIndexingCreatesValidTrees:
         )
 
         # Mock the API calls - need to mock the async methods
-        async def mock_get_embedding(text):
+        async def mock_get_embedding(text: str) -> list[float]:
             return [0.1] * 1536
 
-        async def mock_get_batch_embeddings(texts):
+        async def mock_get_batch_embeddings(texts: list[str]) -> list[list[float]]:
             return [[0.1] * 1536 for _ in texts]
 
         async def mock_summarize_text(
-            left,
-            right,
-            target,
+            left: str,
+            right: str | None,
+            target: int,
             *,
-            parent_id=None,
-            reporter=None,
-            prev_context=None,
-            left_token_count=None,
-            right_token_count=None,
-        ):
+            parent_id: str | None = None,
+            reporter: Any = None,
+            prev_context: str | None = None,
+            left_token_count: int | None = None,
+            right_token_count: int | None = None,
+        ) -> tuple[str, int, int]:
             if right:  # Two children
                 return f"Summary of: {left[:20]}... and {right[:20]}...", 0, 100
             else:  # Single child
                 return f"Summary of: {left[:20]}...", 0, 50
 
-        tree_builder.llm_service._get_embedding = mock_get_embedding
-        tree_builder.llm_service._get_embeddings_batch = mock_get_batch_embeddings
-        tree_builder.llm_service._summarize_text = mock_summarize_text
+        # Use MagicMock to properly handle method assignment type checking
+        mock_llm_service = MagicMock()
+        mock_llm_service._get_embedding = mock_get_embedding
+        mock_llm_service._get_embeddings_batch = mock_get_batch_embeddings
+        mock_llm_service._summarize_text = mock_summarize_text
+        tree_builder.llm_service = mock_llm_service
 
         # Enable validation
         set_validation_enabled(True)
 
         return (index_config, query_config, operational_config), store, tree_builder
 
-    def teardown_method(self):
+    def teardown_method(self) -> None:
         """Disable validation after each test."""
         set_validation_enabled(False)
 
-    def test_even_number_of_chunks_creates_valid_tree(self, setup_indexing):
+    def test_even_number_of_chunks_creates_valid_tree(
+        self,
+        setup_indexing: tuple[
+            tuple[IndexConfig, QueryConfig, OperationalConfig], Any, Any
+        ],
+    ) -> None:
         """Test that indexing with even number of chunks creates a valid left-balanced tree."""
         (index_config, query_config, operational_config), store, tree_builder = (
             setup_indexing
@@ -337,15 +363,20 @@ class TestIndexingCreatesValidTrees:
 
         # Verify it's left-balanced
         doc_store = store.for_document(doc_id)
-        result = validate_tree_is_left_balanced(doc_store)
+        result = validate_tree_is_left_balanced(cast(Any, doc_store))
         assert result is None
 
         # Verify all leaves are at the same depth
         doc_store = store.for_document(doc_id)
-        result = validate_equal_leaf_depth(doc_store)
+        result = validate_equal_leaf_depth(cast(Any, doc_store))
         assert result is None
 
-    def test_odd_number_of_chunks_creates_valid_tree(self, setup_indexing):
+    def test_odd_number_of_chunks_creates_valid_tree(
+        self,
+        setup_indexing: tuple[
+            tuple[IndexConfig, QueryConfig, OperationalConfig], Any, Any
+        ],
+    ) -> None:
         """Test that indexing with odd number of chunks creates a valid left-balanced tree."""
         (index_config, query_config, operational_config), store, tree_builder = (
             setup_indexing
@@ -369,16 +400,21 @@ class TestIndexingCreatesValidTrees:
 
         # Verify it's left-balanced
         doc_store = store.for_document(doc_id)
-        result = validate_tree_is_left_balanced(doc_store)
+        result = validate_tree_is_left_balanced(cast(Any, doc_store))
         assert result is None
 
         # Verify all leaves are at the same depth
         doc_store = store.for_document(doc_id)
-        result = validate_equal_leaf_depth(doc_store)
+        result = validate_equal_leaf_depth(cast(Any, doc_store))
         assert result is None
 
     @pytest.mark.slow
-    def test_large_document_creates_valid_tree(self, setup_indexing):
+    def test_large_document_creates_valid_tree(
+        self,
+        setup_indexing: tuple[
+            tuple[IndexConfig, QueryConfig, OperationalConfig], Any, Any
+        ],
+    ) -> None:
         """Test that a large document with many chunks creates a valid left-balanced tree."""
         (index_config, query_config, operational_config), store, tree_builder = (
             setup_indexing
@@ -393,12 +429,12 @@ class TestIndexingCreatesValidTrees:
 
         # Verify it's left-balanced
         doc_store = store.for_document(doc_id)
-        result = validate_tree_is_left_balanced(doc_store)
+        result = validate_tree_is_left_balanced(cast(Any, doc_store))
         assert result is None
 
         # Verify all leaves are at the same depth
         doc_store = store.for_document(doc_id)
-        result = validate_equal_leaf_depth(doc_store)
+        result = validate_equal_leaf_depth(cast(Any, doc_store))
         assert result is None
 
         # Check we have multiple leaf nodes (exact count depends on tokenization)
@@ -419,7 +455,12 @@ class TestIndexingCreatesValidTrees:
             if node.right_child_id is not None:
                 assert node.left_child_id is not None
 
-    def test_power_of_two_plus_one_chunks_creates_valid_tree(self, setup_indexing):
+    def test_power_of_two_plus_one_chunks_creates_valid_tree(
+        self,
+        setup_indexing: tuple[
+            tuple[IndexConfig, QueryConfig, OperationalConfig], Any, Any
+        ],
+    ) -> None:
         """Test that indexing with 2^n + 1 chunks creates a valid tree with equal leaf depth."""
         (index_config, query_config, operational_config), store, tree_builder = (
             setup_indexing
@@ -449,12 +490,12 @@ class TestIndexingCreatesValidTrees:
 
         # Verify it's left-balanced
         doc_store = store.for_document(doc_id)
-        result = validate_tree_is_left_balanced(doc_store)
+        result = validate_tree_is_left_balanced(cast(Any, doc_store))
         assert result is None
 
         # Verify all leaves are at the same depth
         doc_store = store.for_document(doc_id)
-        result = validate_equal_leaf_depth(doc_store)
+        result = validate_equal_leaf_depth(cast(Any, doc_store))
         assert result is None
 
         # Verify we have exactly 5 leaf nodes

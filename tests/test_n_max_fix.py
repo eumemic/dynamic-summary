@@ -9,7 +9,7 @@ from tests.mock_store import SimpleMockStore
 class TestNumSeedsFix:
     """Test that the fix for num_seeds constraint works correctly."""
 
-    def test_retrieve_respects_coverage_tree(self):
+    def test_retrieve_respects_coverage_tree(self) -> None:
         """Test that retrieve() only passes coverage tree nodes to DP."""
         # Create a mock store
         store = SimpleMockStore()

@@ -12,7 +12,9 @@ MODEL_PRICING = {
 }
 
 
-def calculate_summary_attempt_cost(attempt: dict[str, Any], pricing: dict) -> float:
+def calculate_summary_attempt_cost(
+    attempt: dict[str, Any], pricing: dict[str, Any]
+) -> float:
     """Calculate the cost of a single summary attempt with cache discount support."""
     model = attempt.get("model", "")
 
@@ -43,20 +45,20 @@ def calculate_summary_attempt_cost(attempt: dict[str, Any], pricing: dict) -> fl
         + (completion_tokens * model_pricing["output"])
     ) / 1000
 
-    return cost
+    return float(cost)
 
 
-def analyze_summary_costs(telemetry_data: dict) -> dict:
+def analyze_summary_costs(telemetry_data: dict[str, Any]) -> dict[str, Any]:
     """Analyze summary costs from telemetry data."""
     pricing = MODEL_PRICING
 
-    costs = {
+    costs: dict[str, Any] = {
         "by_node": {},
-        "total": {"total_cost": 0, "total_attempts": 0},
+        "total": {"total_cost": 0.0, "total_attempts": 0},
         "cache_efficiency": {
             "total_cached_tokens": 0,
             "total_prompt_tokens": 0,
-            "cache_rate": 0,
+            "cache_rate": 0.0,
         },
     }
 
@@ -65,8 +67,8 @@ def analyze_summary_costs(telemetry_data: dict) -> dict:
             node_id = node["node_id"]
             attempts = node.get("summary_attempts", [])
 
-            node_cost = 0
-            node_cost_without_cache = 0
+            node_cost = 0.0
+            node_cost_without_cache = 0.0
 
             for attempt in attempts:
                 # Calculate actual cost
@@ -89,19 +91,16 @@ def analyze_summary_costs(telemetry_data: dict) -> dict:
                     "prompt_tokens", 0
                 )
 
+            savings_pct = (
+                ((node_cost_without_cache - node_cost) / node_cost_without_cache * 100)
+                if node_cost_without_cache > 0
+                else 0.0
+            )
             costs["by_node"][node_id] = {
                 "total_cost": node_cost,
                 "cost_without_cache": node_cost_without_cache,
                 "cache_savings": node_cost_without_cache - node_cost,
-                "cache_savings_pct": (
-                    (
-                        (node_cost_without_cache - node_cost)
-                        / node_cost_without_cache
-                        * 100
-                    )
-                    if node_cost_without_cache > 0
-                    else 0
-                ),
+                "cache_savings_pct": savings_pct,
                 "attempts": len(attempts),
             }
 
@@ -118,7 +117,7 @@ def analyze_summary_costs(telemetry_data: dict) -> dict:
     return costs
 
 
-def test_calculate_cost_with_cached_tokens():
+def test_calculate_cost_with_cached_tokens() -> None:
     """Test that cached tokens receive appropriate discount."""
     # Use pricing constants
     pricing = MODEL_PRICING
@@ -149,7 +148,7 @@ def test_calculate_cost_with_cached_tokens():
     assert cost == pytest.approx(expected_cost, rel=1e-6)
 
 
-def test_calculate_cost_without_cached_tokens():
+def test_calculate_cost_without_cached_tokens() -> None:
     """Test backward compatibility when cached_tokens is not present."""
     pricing = MODEL_PRICING
 
@@ -171,7 +170,7 @@ def test_calculate_cost_without_cached_tokens():
     assert cost == pytest.approx(expected_cost, rel=1e-6)
 
 
-def test_calculate_cost_with_zero_cached_tokens():
+def test_calculate_cost_with_zero_cached_tokens() -> None:
     """Test that zero cached tokens works correctly."""
     pricing = MODEL_PRICING
 
@@ -193,7 +192,7 @@ def test_calculate_cost_with_zero_cached_tokens():
     assert cost == pytest.approx(expected_cost, rel=1e-6)
 
 
-def test_calculate_cost_with_high_cache_rate():
+def test_calculate_cost_with_high_cache_rate() -> None:
     """Test cost savings with very high cache hit rate."""
     pricing = MODEL_PRICING
 
@@ -225,7 +224,7 @@ def test_calculate_cost_with_high_cache_rate():
     assert savings_ratio > 0.3, f"Expected >30% savings, got {savings_ratio:.1%}"
 
 
-def test_analyze_summary_costs_with_cached_tokens():
+def test_analyze_summary_costs_with_cached_tokens() -> None:
     """Test that analyze_summary_costs correctly aggregates cached token costs."""
     telemetry_data = {
         "documents": {
@@ -288,7 +287,7 @@ def test_analyze_summary_costs_with_cached_tokens():
     assert 0.2 < cache_rate < 0.3  # ~900/3200 ≈ 28%
 
 
-def test_cost_calculation_with_missing_model():
+def test_cost_calculation_with_missing_model() -> None:
     """Test graceful handling when model pricing is not available."""
     pricing = {
         "gpt-4o-mini": {
@@ -312,7 +311,7 @@ def test_cost_calculation_with_missing_model():
     assert cost == 0
 
 
-def test_cost_calculation_with_passthrough_model():
+def test_cost_calculation_with_passthrough_model() -> None:
     """Test that passthrough summaries have zero cost."""
     pricing = MODEL_PRICING
 
@@ -327,7 +326,7 @@ def test_cost_calculation_with_passthrough_model():
     assert cost == 0
 
 
-def test_cost_savings_calculation():
+def test_cost_savings_calculation() -> None:
     """Test calculation of cost savings from caching."""
     telemetry_data = {
         "documents": {
@@ -362,7 +361,7 @@ def test_cost_savings_calculation():
     assert savings_pct > 30  # Should save at least 30%
 
 
-def test_aggregate_costs_across_documents():
+def test_aggregate_costs_across_documents() -> None:
     """Test that costs are correctly aggregated across multiple documents."""
     telemetry_data = {
         "documents": {

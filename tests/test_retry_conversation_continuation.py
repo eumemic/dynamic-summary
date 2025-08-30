@@ -1,5 +1,6 @@
 """Test that retry mechanism maintains conversation context."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,7 +10,7 @@ from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import TelemetryCollector
 
 
-def create_test_reporter(config):
+def create_test_reporter(config: Any) -> TelemetryCollector:
     """Create a test reporter with common test nodes pre-tracked."""
     # TelemetryCollector expects IndexConfig, so extract it if needed
     index_config = config.index_config if hasattr(config, "index_config") else config
@@ -41,7 +42,7 @@ class MockOpenAIResponse:
 
 
 @pytest.mark.asyncio
-async def test_retry_maintains_conversation_history(mock_store):
+async def test_retry_maintains_conversation_history(mock_store: Any) -> None:
     """Test that retries append to existing conversation instead of creating new ones."""
     config = IndexConfig.load(
         retry_threshold=0.2,  # 20% deviation
@@ -54,7 +55,7 @@ async def test_retry_maintains_conversation_history(mock_store):
     # Track all API calls
     api_calls = []
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
         """Capture API calls and return appropriate responses."""
         # Make a deep copy of kwargs to avoid mutation issues
         import copy
@@ -143,7 +144,7 @@ async def test_retry_maintains_conversation_history(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_retry_preserves_original_context(mock_store):
+async def test_retry_preserves_original_context(mock_store: Any) -> None:
     """Test that retry requests can still see the original text being summarized."""
     config = IndexConfig.load(
         retry_threshold=0.1,  # 10% deviation
@@ -158,7 +159,7 @@ async def test_retry_preserves_original_context(mock_store):
         "This is the original text that needs to be summarized properly. " * 5
     )  # Make it long enough
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
         import copy
 
         api_calls.append(copy.deepcopy(kwargs))
@@ -213,7 +214,7 @@ async def test_retry_preserves_original_context(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_multiple_retries_build_conversation(mock_store):
+async def test_multiple_retries_build_conversation(mock_store: Any) -> None:
     """Test that multiple retries continue building on the same conversation."""
     config = IndexConfig.load(
         retry_threshold=0.1,
@@ -224,7 +225,7 @@ async def test_multiple_retries_build_conversation(mock_store):
     indexer = TreeBuilder(config, mock_store)
     api_calls = []
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
         import copy
 
         api_calls.append(copy.deepcopy(kwargs))
@@ -281,7 +282,7 @@ async def test_multiple_retries_build_conversation(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_no_retry_when_within_threshold(mock_store):
+async def test_no_retry_when_within_threshold(mock_store: Any) -> None:
     """Test that no retry occurs when initial summary is within threshold."""
     config = IndexConfig.load(
         retry_threshold=0.2,
@@ -291,7 +292,7 @@ async def test_no_retry_when_within_threshold(mock_store):
     indexer = TreeBuilder(config, mock_store)
     api_calls = []
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
         import copy
 
         api_calls.append(copy.deepcopy(kwargs))
@@ -319,7 +320,7 @@ async def test_no_retry_when_within_threshold(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_accept_retry_within_threshold_immediately(mock_store):
+async def test_accept_retry_within_threshold_immediately(mock_store: Any) -> None:
     """Test that we accept a retry attempt immediately when it's within threshold.
 
     This tests the bug where attempts within the threshold were being ignored
@@ -334,7 +335,7 @@ async def test_accept_retry_within_threshold_immediately(mock_store):
     indexer = TreeBuilder(config, mock_store)
     api_calls = []
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
         """Return different responses based on call number."""
         import copy
 
@@ -381,14 +382,14 @@ async def test_accept_retry_within_threshold_immediately(mock_store):
 
 
 @pytest.mark.asyncio
-async def test_passthrough_for_text_under_target(mock_store):
+async def test_passthrough_for_text_under_target(mock_store: Any) -> None:
     """Test that text under target tokens is passed through without LLM call."""
     config = IndexConfig.load(target_chunk_tokens=100)
     indexer = TreeBuilder(config, mock_store)
 
     api_calls = []
 
-    async def mock_create(**kwargs):
+    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
         import copy
 
         api_calls.append(copy.deepcopy(kwargs))

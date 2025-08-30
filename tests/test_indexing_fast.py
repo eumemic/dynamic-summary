@@ -13,7 +13,7 @@ class TestIndexingFast:
 
     def test_full_document_gets_indexed(
         self, base_config, store, mock_openai_async_client
-    ):
+    ) -> None:
         """Test that the entire document is indexed, not just first 37%."""
         config = base_config.index_config
 
@@ -98,7 +98,7 @@ class TestIndexingFast:
 
     def test_small_document_indexing(
         self, base_config, store, mock_openai_async_client
-    ):
+    ) -> None:
         """Test indexing a very small document to isolate the issue."""
         config = base_config.index_config
         # Create a minimal document
@@ -142,7 +142,9 @@ class TestIndexingFast:
             ), f"Document not fully indexed: {last_span_end} < {doc_length}"
 
     @pytest.mark.slow
-    def test_check_api_batch_limits(self, base_config, store, mock_openai_async_client):
+    def test_check_api_batch_limits(
+        self, base_config, store, mock_openai_async_client
+    ) -> None:
         """Test if there's a limit on API batching causing truncation."""
         config = base_config.index_config
         # Create document with many chunks to test batching
@@ -158,7 +160,7 @@ class TestIndexingFast:
         api_call_count = 0
         texts_per_call = []
 
-        async def mock_embeddings_create(**kwargs):
+        async def mock_embeddings_create(**kwargs) -> Mock:
             nonlocal api_call_count, texts_per_call
             api_call_count += 1
             input_texts = kwargs.get("input", [])

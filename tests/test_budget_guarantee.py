@@ -1,5 +1,7 @@
 """Test budget guarantees in retrieval and assembly."""
 
+from collections.abc import Generator
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -15,7 +17,17 @@ class TestBudgetGuarantee:
     """Test that budget guarantees are enforced by construction."""
 
     @pytest.fixture
-    def setup_system(self, store, config_factory):
+    def setup_system(self, store: Any, config_factory: Any) -> Generator[
+        tuple[
+            tuple[IndexConfig, QueryConfig, OperationalConfig],
+            Any,
+            TreeBuilder,
+            Retriever,
+            Assembler,
+        ],
+        None,
+        None,
+    ]:
         """Set up a test system with mocked API."""
         # Create custom config for budget testing
         config = config_factory(
@@ -73,7 +85,7 @@ class TestBudgetGuarantee:
                 config.operational_config,
             ), store, tree_builder, retriever, assembler
 
-    def test_budget_never_exceeded_worst_case(self, setup_system):
+    def test_budget_never_exceeded_worst_case(self, setup_system: Any) -> None:
         """Test that assembly never exceeds budget even in worst case."""
         (
             (index_config, query_config, operational_config),
@@ -117,7 +129,7 @@ class TestBudgetGuarantee:
                 len(actual_tokens) <= query_config.budget_tokens
             ), f"Actual token count exceeds budget: {len(actual_tokens)} > {query_config.budget_tokens}"
 
-    def test_worst_case_parent_child_extraction(self, setup_system):
+    def test_worst_case_parent_child_extraction(self, setup_system: Any) -> None:
         """Test worst case where parent-child extraction could double content."""
         (
             (index_config, query_config, operational_config),
@@ -166,7 +178,7 @@ class TestBudgetGuarantee:
 
         # Update parent to reference children
         with store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
+            from ragzoom.models import TreeNode
 
             parent_node = session.query(TreeNode).filter_by(id="1_0_400_parent").first()
             if parent_node:
@@ -194,7 +206,7 @@ class TestBudgetGuarantee:
             assembled_text.count("First leaf content.") <= 40
         ), "Content was duplicated"
 
-    def test_conservative_num_seeds_calculation(self, setup_system):
+    def test_conservative_num_seeds_calculation(self, setup_system: Any) -> None:
         """Test that the conservative num_seeds calculation is reasonable and respects budget."""
         (
             (index_config, query_config, operational_config),
@@ -240,7 +252,7 @@ class TestBudgetGuarantee:
                 final_token_count <= budget
             ), f"Budget {budget} exceeded with conservative_num_seeds={conservative_num_seeds}, final tokens={final_token_count}"
 
-    def test_mixed_mode_budget_plus_num_seeds(self, setup_system):
+    def test_mixed_mode_budget_plus_num_seeds(self, setup_system: Any) -> None:
         """Test mixed mode where both budget and num_seeds are specified."""
         (
             (index_config, query_config, operational_config),
@@ -271,7 +283,7 @@ class TestBudgetGuarantee:
             token_count <= budget
         ), f"Budget exceeded with mixed mode: {token_count} > {budget}"
 
-    def test_num_seeds_only_mode(self):
+    def test_num_seeds_only_mode(self) -> None:
         """Test num_seeds only mode (no budget enforcement)."""
 
         from unittest.mock import patch
@@ -384,7 +396,7 @@ class TestBudgetGuarantee:
 class TestBudgetValidation:
     """Test that budget validation catches overflows."""
 
-    def test_budget_validation_catches_overflow(self):
+    def test_budget_validation_catches_overflow(self) -> None:
         """Test that validation fails when tiling exceeds budget."""
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
@@ -425,7 +437,7 @@ class TestBudgetValidation:
         assert "exceeds budget" in error
         assert "> 40 budget" in error
 
-    def test_budget_validation_passes_within_budget(self):
+    def test_budget_validation_passes_within_budget(self) -> None:
         """Test that validation passes when tiling is within budget."""
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore
@@ -454,7 +466,7 @@ class TestBudgetValidation:
 
         assert error is None
 
-    def test_budget_validation_with_parent_child(self):
+    def test_budget_validation_with_parent_child(self) -> None:
         """Test budget validation with parent and child nodes."""
         from ragzoom.validate import validate_tiling
         from tests.mock_store import SimpleMockStore

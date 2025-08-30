@@ -16,7 +16,7 @@ from ragzoom.services.query_service import QueryResult, QueryService
 class TestDocumentService:
     """Test the DocumentService."""
 
-    def test_list_documents(self):
+    def test_list_documents(self) -> None:
         """Test listing documents returns formatted results."""
         # Create mock store with documents
         mock_store = Mock()
@@ -47,7 +47,7 @@ class TestDocumentService:
         assert documents[0].chunk_count == 5
         assert documents[0].node_count == 10
 
-    def test_get_system_status(self):
+    def test_get_system_status(self) -> None:
         """Test getting system status."""
         mock_store = Mock()
         mock_session = Mock()
@@ -88,7 +88,7 @@ class TestDocumentService:
         assert status.tree_depth == 5
         assert status.pinned_nodes == 2
 
-    def test_clear_document(self):
+    def test_clear_document(self) -> None:
         """Test clearing a document."""
         mock_store = Mock()
         mock_store.clear_document.return_value = 15
@@ -104,7 +104,7 @@ class TestIndexingService:
     """Test the IndexingService."""
 
     @patch("ragzoom.services.indexing_service.TreeBuilder")
-    def test_index_document(self, mock_tree_builder_class):
+    def test_index_document(self, mock_tree_builder_class: object) -> None:
         """Test indexing a document."""
         # Mock dependencies
         mock_store = Mock()
@@ -162,7 +162,9 @@ class TestQueryService:
 
     @patch("ragzoom.services.query_service.Retriever")
     @patch("ragzoom.services.query_service.Assembler")
-    def test_execute_query(self, mock_assembler_class, mock_retriever_class):
+    def test_execute_query(
+        self, mock_assembler_class: object, mock_retriever_class: object
+    ) -> None:
         """Test executing a query."""
         # Mock dependencies
         mock_store = Mock()
@@ -201,7 +203,7 @@ class TestQueryService:
         mock_assembler.assemble.assert_called_once_with(mock_retrieval_result)
 
     @patch("ragzoom.services.query_service.Retriever")
-    def test_update_config(self, mock_retriever_class):
+    def test_update_config(self, mock_retriever_class: object) -> None:
         """Test updating query configuration."""
         mock_store = Mock()
 

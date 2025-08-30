@@ -1,6 +1,8 @@
 """Test that demonstrates the current bug in Retriever - creates incomplete coverage trees."""
 
 import asyncio
+from collections.abc import Generator
+from typing import Any
 
 import pytest
 
@@ -12,7 +14,9 @@ class TestRetrieverBug:
     """Tests that show the current Retriever creates incomplete coverage trees."""
 
     @pytest.fixture
-    def setup_tree_for_bug_demo(self):
+    def setup_tree_for_bug_demo(
+        self,
+    ) -> Generator[tuple[Any, SimpleMockStore, Any], None, None]:
         """Set up a system with a tree structure to demonstrate the bug."""
         index_config = IndexConfig.load(
             target_chunk_tokens=100, preceding_context_tokens=50
@@ -22,7 +26,7 @@ class TestRetrieverBug:
 
         # Create a simple config object with properties for backward compatibility
         class Config:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.target_chunk_tokens = index_config.target_chunk_tokens
                 self.preceding_context_tokens = index_config.preceding_context_tokens
                 self.openai_api_key = (
@@ -124,13 +128,17 @@ class TestRetrieverBug:
         )
         return config, store, retriever
 
-    def test_retriever_bug_with_num_seeds_1(self, setup_tree_for_bug_demo):
+    def test_retriever_bug_with_num_seeds_1(
+        self, setup_tree_for_bug_demo: tuple[Any, SimpleMockStore, Any]
+    ) -> None:
         """Test that the retriever should build complete coverage trees but currently doesn't."""
         config, store, retriever = setup_tree_for_bug_demo
 
         # Mock the vector search to return only L3
         # This simulates what happens with --num-seeds 1 when L3 is most relevant
-        def mock_search_similar(embedding, n_results, where=None):
+        def mock_search_similar(
+            embedding: list[float], n_results: int, where: Any = None
+        ) -> list[tuple[str, float, dict[str, Any]]]:
             return [("L3", 0.95, {})]
 
         store.search_similar = mock_search_similar
@@ -157,12 +165,16 @@ class TestRetrieverBug:
         assert result.tiling is not None
         assert len(result.tiling) > 0
 
-    def test_retriever_builds_complete_coverage_trees(self, setup_tree_for_bug_demo):
+    def test_retriever_builds_complete_coverage_trees(
+        self, setup_tree_for_bug_demo: tuple[Any, SimpleMockStore, Any]
+    ) -> None:
         """Test that retriever should include siblings to build complete coverage trees."""
         config, store, retriever = setup_tree_for_bug_demo
 
         # Mock vector search to return only L3
-        def mock_search_similar(embedding, n_results, where=None):
+        def mock_search_similar(
+            embedding: list[float], n_results: int, where: Any = None
+        ) -> list[tuple[str, float, dict[str, Any]]]:
             return [("L3", 0.95, {})]
 
         store.search_similar = mock_search_similar
@@ -178,7 +190,12 @@ class TestRetrieverBug:
         captured_nodes = {}
         original_find_optimal = retriever.dp_generator.find_optimal_tiling
 
-        def capture_and_pass_through(budget_tokens, scores, nodes, root_id):
+        def capture_and_pass_through(
+            budget_tokens: int,
+            scores: dict[str, float],
+            nodes: dict[str, Any],
+            root_id: str,
+        ) -> Any:
             captured_nodes.update(nodes)
             return original_find_optimal(budget_tokens, scores, nodes, root_id)
 

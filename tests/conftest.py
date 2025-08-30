@@ -1,7 +1,8 @@
 """Pytest configuration and fixtures for RagZoom tests."""
 
 import os
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -53,7 +54,7 @@ if "OPENAI_API_KEY" not in os.environ:
     os.environ["OPENAI_API_KEY"] = "test-key-for-tests"
 
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: pytest.Parser) -> None:
     """Add command-line options for test configuration."""
     parser.addoption(
         "--use-real-store",
@@ -69,7 +70,7 @@ def pytest_addoption(parser):
     )
 
 
-def pytest_configure(config):
+def pytest_configure(config: pytest.Config) -> None:
     """Configure pytest with custom markers."""
     config.addinivalue_line(
         "markers", "integration: mark test as integration test requiring real Store"
@@ -78,7 +79,7 @@ def pytest_configure(config):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def ensure_api_key():
+def ensure_api_key() -> Generator[None, None, None]:
     """Ensure API key is set for all tests."""
     # Set test API key for tests
     if "OPENAI_API_KEY" not in os.environ:
@@ -87,7 +88,9 @@ def ensure_api_key():
     # Don't clean up - let other tests use it
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     """Modify test collection based on command-line options."""
     if config.getoption("--integration-only"):
         # Skip tests that are NOT marked as integration
@@ -134,7 +137,7 @@ def base_config() -> BackwardCompatibilityConfig:
 
 
 @pytest.fixture
-def config_factory():
+def config_factory() -> Callable[..., BackwardCompatibilityConfig]:
     """Factory fixture for creating custom test configurations.
 
     Returns a function that can create BackwardCompatibilityConfig with custom parameters.
@@ -145,12 +148,12 @@ def config_factory():
     """
 
     def _create_config(
-        target_chunk_tokens=50,
-        preceding_context_tokens=25,
-        budget_tokens=1000,
-        openai_api_key="test-key",
-        database_url=None,
-    ):
+        target_chunk_tokens: int = 50,
+        preceding_context_tokens: int = 25,
+        budget_tokens: int = 1000,
+        openai_api_key: str = "test-key",
+        database_url: str | None = None,
+    ) -> BackwardCompatibilityConfig:
         if database_url is None:
             database_url = os.getenv(
                 "RAGZOOM_DATABASE_URL",
@@ -180,15 +183,19 @@ def config_factory():
 
 
 @pytest.fixture
-def mock_store(base_config) -> Generator[SimpleMockStore, None, None]:
+def mock_store(
+    base_config: BackwardCompatibilityConfig,
+) -> Generator[SimpleMockStore, None, None]:
     """Create a mock store for fast testing."""
-    store = SimpleMockStore(base_config)
+    store = SimpleMockStore(base_config)  # type: ignore[no-untyped-call]
     yield store
     store.close()
 
 
 @pytest.fixture
-def real_store(base_config) -> Generator[StoreManager | None, None, None]:
+def real_store(
+    base_config: BackwardCompatibilityConfig,
+) -> Generator[StoreManager | None, None, None]:
     """Create a real store for integration testing (lazy loading)."""
     # Only attempt to create real store when fixture is actually requested
     real_store_instance = _create_real_store(base_config)
@@ -204,7 +211,11 @@ def real_store(base_config) -> Generator[StoreManager | None, None, None]:
 
 
 @pytest.fixture
-def store(request, base_config, mock_store):
+def store(
+    request: pytest.FixtureRequest,
+    base_config: BackwardCompatibilityConfig,
+    mock_store: SimpleMockStore,
+) -> Generator[SimpleMockStore | StoreManager, None, None]:
     """Provide either mock or real store based on test requirements.
 
     This fixture automatically selects the appropriate store:
@@ -261,7 +272,7 @@ def store(request, base_config, mock_store):
     yield mock_store
 
 
-def _create_real_store(base_config) -> StoreManager | None:
+def _create_real_store(base_config: BackwardCompatibilityConfig) -> StoreManager | None:
     """Create a real store for integration testing, or return None if unavailable."""
     try:
         # Use test-specific database URL or create unique one
@@ -291,7 +302,7 @@ def _create_real_store(base_config) -> StoreManager | None:
 
         try:
             operational_config = OperationalConfig(
-                openai_api_key=base_config.openai_api_key,
+                openai_api_key=SecretStr(base_config.openai_api_key),
                 database_url=test_db_url,  # Use the unique database URL
             )
         finally:
@@ -307,7 +318,7 @@ def _create_real_store(base_config) -> StoreManager | None:
 
         # Store cleanup info for later
         if test_db_name:
-            store._test_db_cleanup = {
+            store._test_db_cleanup = {  # type: ignore[attr-defined]
                 "db_name": test_db_name,
                 "admin_url": admin_url,
             }
@@ -320,24 +331,24 @@ def _create_real_store(base_config) -> StoreManager | None:
 
 
 @pytest.fixture
-def tree_node_builder():
+def tree_node_builder() -> TreeNodeBuilder:
     """Provide a TreeNodeBuilder for creating test nodes."""
     return TreeNodeBuilder()
 
 
 @pytest.fixture
-def document_builder():
+def document_builder() -> DocumentBuilder:
     """Provide a DocumentBuilder for creating test documents."""
     return DocumentBuilder()
 
 
 @pytest.fixture
-def mock_openai_client():
+def mock_openai_client() -> MagicMock:
     """Create a mock OpenAI client for testing."""
     mock_client = MagicMock()
 
     # Mock embeddings
-    async def mock_embeddings_create(**kwargs):
+    async def mock_embeddings_create(**kwargs: Any) -> MagicMock:
         input_texts = kwargs.get("input", [])
         if isinstance(input_texts, str):
             input_texts = [input_texts]
@@ -360,21 +371,21 @@ def mock_openai_client():
 
 
 @pytest.fixture
-def mock_openai_async_client():
+def mock_openai_async_client() -> MagicMock:
     """Create a mock AsyncOpenAI client for testing."""
     from unittest.mock import AsyncMock
 
     mock_client = AsyncMock()
 
     # Mock embeddings
-    async def mock_embeddings_create(**kwargs):
+    async def mock_async_embeddings_create(**kwargs: Any) -> MagicMock:
         input_texts = kwargs.get("input", [])
         if isinstance(input_texts, str):
             input_texts = [input_texts]
         # Return one embedding for each input text
         return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts])
 
-    mock_client.embeddings.create = mock_embeddings_create
+    mock_client.embeddings.create = mock_async_embeddings_create
 
     # Mock chat completions for summarization
     mock_summary_response = MagicMock()
@@ -390,7 +401,7 @@ def mock_openai_async_client():
 
 
 @pytest.fixture
-def sample_telemetry_data():
+def sample_telemetry_data() -> dict[str, Any]:
     """Centralized telemetry data fixture for all telemetry tests.
 
     This fixture provides consistent test data across all telemetry test files,
@@ -461,7 +472,7 @@ def sample_telemetry_data():
 
 
 @pytest.fixture
-def empty_telemetry_data():
+def empty_telemetry_data() -> dict[str, Any]:
     """Shared empty telemetry data fixture for testing edge cases.
 
     Provides consistent empty telemetry structure for testing how analysis

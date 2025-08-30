@@ -353,7 +353,7 @@ class TestTelemetryIntegration:
                         # the last attempt should be the one used
                         assert len(node_data["summary_attempts"]) > 0
 
-    def test_telemetry_serialization(self, base_config) -> None:
+    def test_telemetry_serialization(self, base_config: Any) -> None:
         """Test that telemetry can be serialized to JSON."""
         import json
 

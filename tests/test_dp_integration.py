@@ -7,6 +7,8 @@ These tests verify the DP tiling algorithm's correctness, including:
 - Budget constraints
 """
 
+from typing import Any
+
 import pytest
 
 from ragzoom.assemble import Assembler
@@ -26,7 +28,7 @@ class TestDPIntegration:
     """
 
     @pytest.fixture
-    def config(self, config_factory):
+    def config(self, config_factory: Any) -> Any:
         """Create test configuration."""
         return config_factory(
             target_chunk_tokens=50,
@@ -35,7 +37,7 @@ class TestDPIntegration:
         )
 
     @pytest.fixture
-    def mock_openai(self, monkeypatch):
+    def mock_openai(self, monkeypatch: Any) -> Any:
         """Mock OpenAI for consistent embeddings and summaries."""
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
@@ -53,7 +55,9 @@ class TestDPIntegration:
             yield mock_retrieve, mock_index
 
     @pytest.mark.asyncio
-    async def test_no_duplicate_content(self, config, store, mock_openai, monkeypatch):
+    async def test_no_duplicate_content(
+        self, config: Any, store: Any, mock_openai: Any, monkeypatch: Any
+    ) -> None:
         """Test that the full DP pipeline produces no duplicate content."""
         mock_client, mock_async_client = mock_openai
 
@@ -116,8 +120,8 @@ class TestDPIntegration:
 
     @pytest.mark.asyncio
     async def test_parent_child_deduplication(
-        self, config, store, mock_openai, monkeypatch
-    ):
+        self, config: Any, store: Any, mock_openai: Any, monkeypatch: Any
+    ) -> None:
         """Test that DP tiling doesn't include both parent and child."""
         from tests.utils import create_retriever
 
@@ -174,7 +178,9 @@ class TestDPIntegration:
                         )
 
     @pytest.mark.asyncio
-    async def test_span_coverage(self, config, store, mock_openai, monkeypatch):
+    async def test_span_coverage(
+        self, config: Any, store: Any, mock_openai: Any, monkeypatch: Any
+    ) -> None:
         """Test that the assembled text covers the document span correctly."""
         from tests.utils import create_retriever
 
@@ -232,7 +238,9 @@ class TestDPIntegration:
         assert assembled2  # Just check we got something back
 
     @pytest.mark.asyncio
-    async def test_budget_respected(self, config, store, mock_openai, monkeypatch):
+    async def test_budget_respected(
+        self, config: Any, store: Any, mock_openai: Any, monkeypatch: Any
+    ) -> None:
         """Test that DP respects token budget."""
         from tests.utils import create_retriever
 

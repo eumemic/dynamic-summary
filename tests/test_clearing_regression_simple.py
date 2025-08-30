@@ -6,7 +6,7 @@ from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.services.indexing_service import IndexingService
 
 
-def test_index_document_always_clears():
+def test_index_document_always_clears() -> None:
     """Test that index_document ALWAYS clears, even when content hash matches."""
 
     config = OperationalConfig(openai_api_key=SecretStr("test-key"))

@@ -4,6 +4,9 @@ These tests verify the complete pipeline from document indexing through
 retrieval to final assembly, using mock OpenAI clients.
 """
 
+from collections.abc import Generator
+from typing import Any
+
 import pytest
 
 from ragzoom.assemble import Assembler
@@ -21,13 +24,15 @@ class TestIntegration:
     """
 
     @pytest.fixture
-    def mock_openai(self):
+    def mock_openai(self) -> Generator[tuple[Any, Any, Any], None, None]:
         """Mock OpenAI API calls using centralized utilities."""
         with mock_openai_context() as mocks:
             yield mocks
 
     @pytest.fixture
-    def temp_system(self, request, mock_openai, base_config):
+    def temp_system(
+        self, request: Any, mock_openai: tuple[Any, Any, Any], base_config: Any
+    ) -> Generator[tuple[Any, Any, Any, Any], None, None]:
         """Create a complete temporary RagZoom system."""
         # Always use real PostgreSQL store for integration tests
         from tests.conftest import _create_real_store
@@ -56,7 +61,7 @@ class TestIntegration:
         mock_index_client, mock_retrieve_client, mock_assemble_client = mock_openai
 
         # Helper function to create TreeBuilder for a specific document
-        def create_tree_builder(document_id):
+        def create_tree_builder(document_id: str) -> "TreeBuilder":
             # Create document in store first
             real_store.add_document(
                 document_id=document_id,
@@ -107,7 +112,7 @@ class TestIntegration:
                 pass  # Ignore cleanup errors
             real_store.close()
 
-    def test_index_and_query(self, temp_system):
+    def test_index_and_query(self, temp_system: tuple[Any, Any, Any, Any]) -> None:
         """Test indexing a document and querying it."""
         config, store, create_tree_builder, mock_client = temp_system
 
@@ -151,7 +156,7 @@ class TestIntegration:
         assert isinstance(summary, str)
         assert len(summary) > 0
 
-    def test_multiple_documents(self, temp_system):
+    def test_multiple_documents(self, temp_system: tuple[Any, Any, Any, Any]) -> None:
         """Test indexing multiple documents."""
         config, store, create_tree_builder, mock_client = temp_system
 
@@ -182,7 +187,7 @@ class TestIntegration:
         assert len(doc1_nodes) > 0
         assert len(doc2_nodes) > 0
 
-    def test_mmr_diversity(self, temp_system):
+    def test_mmr_diversity(self, temp_system: tuple[Any, Any, Any, Any]) -> None:
         """Test that MMR returns diverse results."""
         config, store, create_tree_builder, mock_client = temp_system
 
@@ -216,7 +221,9 @@ class TestIntegration:
         # Should get results from different documents, not just repeated similar ones
         assert len(set(result.node_ids)) == len(result.node_ids)
 
-    def test_token_budget_enforcement(self, temp_system):
+    def test_token_budget_enforcement(
+        self, temp_system: tuple[Any, Any, Any, Any]
+    ) -> None:
         """Test that assembly respects token budget."""
         config, store, create_tree_builder, mock_client = temp_system
 
@@ -245,7 +252,7 @@ class TestIntegration:
         assert token_count <= 110  # Allow 10% tolerance
         assert len(summary) > 0
 
-    def test_node_pinning(self, temp_system):
+    def test_node_pinning(self, temp_system: tuple[Any, Any, Any, Any]) -> None:
         """Test that pinned nodes are always included."""
         config, store, create_tree_builder, mock_client = temp_system
 

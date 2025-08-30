@@ -63,7 +63,7 @@ def setup_test_document(store: StoreManager, api_key: str) -> str:
 
     # Check if document already exists from earlier benchmark
     with store.SessionLocal() as session:
-        from ragzoom.store import Document
+        from ragzoom.models import Document
 
         doc = session.query(Document).filter_by(id=doc_id).first()
         if doc:

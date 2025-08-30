@@ -4,10 +4,10 @@ from ragzoom.retrieval.coverage_builder import CoverageBuilder
 from tests.mock_store import SimpleMockStore
 
 
-def test_document_isolation_prevents_contamination():
+def test_document_isolation_prevents_contamination() -> None:
     """Test that coverage builder only includes nodes from the specified document."""
     # Create store with nodes from multiple documents
-    store = SimpleMockStore()
+    store = SimpleMockStore()  # type: ignore[no-untyped-call]
 
     # Add nodes for doc1
     store.add_node(
