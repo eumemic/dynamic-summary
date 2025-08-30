@@ -2,11 +2,16 @@
 
 import asyncio
 from collections.abc import Generator
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 
+if TYPE_CHECKING:
+    from ragzoom.retrieve import Retriever
+    from tests.mock_store import SimpleMockStore
+
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.models import TreeNode
 from tests.mock_store import SimpleMockStore
 
 
@@ -16,7 +21,7 @@ class TestRetrieverBug:
     @pytest.fixture
     def setup_tree_for_bug_demo(
         self,
-    ) -> Generator[tuple[Any, SimpleMockStore, Any], None, None]:
+    ) -> Generator[tuple[object, SimpleMockStore, "Retriever"], None, None]:
         """Set up a system with a tree structure to demonstrate the bug."""
         index_config = IndexConfig.load(
             target_chunk_tokens=100, preceding_context_tokens=50
@@ -24,17 +29,8 @@ class TestRetrieverBug:
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
-        # Create a simple config object with properties for backward compatibility
-        class Config:
-            def __init__(self) -> None:
-                self.target_chunk_tokens = index_config.target_chunk_tokens
-                self.preceding_context_tokens = index_config.preceding_context_tokens
-                self.openai_api_key = (
-                    operational_config.openai_api_key.get_secret_value()
-                )
-
-        config = Config()
-        store = SimpleMockStore(config=config)
+        # Use index_config directly for SimpleMockStore compatibility
+        store = SimpleMockStore(config=index_config)
 
         # Create same tree structure as before
         #         root
@@ -122,31 +118,31 @@ class TestRetrieverBug:
 
         retriever = create_retriever(
             query_config=query_config,
-            store=store,
+            store=store,  # type: ignore[arg-type]
             document_id="test-doc",  # Specify the document we're working with
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
-        yield config, store, retriever
+        yield index_config, store, retriever
 
     def test_retriever_bug_with_num_seeds_1(
-        self, setup_tree_for_bug_demo: tuple[Any, SimpleMockStore, Any]
+        self, setup_tree_for_bug_demo: tuple[object, SimpleMockStore, "Retriever"]
     ) -> None:
         """Test that the retriever should build complete coverage trees but currently doesn't."""
-        config, store, retriever = setup_tree_for_bug_demo
+        index_config, store, retriever = setup_tree_for_bug_demo
 
         # Mock the vector search to return only L3
         # This simulates what happens with --num-seeds 1 when L3 is most relevant
         def mock_search_similar(
-            embedding: list[float], n_results: int, where: Any = None
-        ) -> list[tuple[str, float, dict[str, Any]]]:
+            embedding: list[float], n_results: int, where: object = None
+        ) -> list[tuple[str, float, dict[str, object]]]:
             return [("L3", 0.95, {})]
 
-        store.search_similar = mock_search_similar  # type: ignore[method-assign, assignment]
+        store.search_similar = mock_search_similar  # type: ignore[method-assign,assignment]
         # Also mock MMR to return L3 as selected
         store.compute_mmr_diverse_results = lambda *args: ["L3"]  # type: ignore[method-assign]
 
         # Mock the query embedding generation
-        retriever.embedding_service.get_query_embedding = (
+        retriever.embedding_service.get_query_embedding = (  # type: ignore[method-assign]
             lambda query, document_id=None: [0.3] * 1536
         )
 
@@ -166,23 +162,23 @@ class TestRetrieverBug:
         assert len(result.tiling) > 0
 
     def test_retriever_builds_complete_coverage_trees(
-        self, setup_tree_for_bug_demo: tuple[Any, SimpleMockStore, Any]
+        self, setup_tree_for_bug_demo: tuple[object, SimpleMockStore, "Retriever"]
     ) -> None:
         """Test that retriever should include siblings to build complete coverage trees."""
-        config, store, retriever = setup_tree_for_bug_demo
+        index_config, store, retriever = setup_tree_for_bug_demo
 
         # Mock vector search to return only L3
         def mock_search_similar(
-            embedding: list[float], n_results: int, where: Any = None
-        ) -> list[tuple[str, float, dict[str, Any]]]:
+            embedding: list[float], n_results: int, where: object = None
+        ) -> list[tuple[str, float, dict[str, object]]]:
             return [("L3", 0.95, {})]
 
-        store.search_similar = mock_search_similar  # type: ignore[method-assign, assignment]
+        store.search_similar = mock_search_similar  # type: ignore[method-assign,assignment]
         # Also mock MMR to return L3 as selected
         store.compute_mmr_diverse_results = lambda *args: ["L3"]  # type: ignore[method-assign]
 
         # Mock the query embedding generation
-        retriever.embedding_service.get_query_embedding = (
+        retriever.embedding_service.get_query_embedding = (  # type: ignore[method-assign]
             lambda query, document_id=None: [0.3] * 1536
         )
 
@@ -193,13 +189,13 @@ class TestRetrieverBug:
         def capture_and_pass_through(
             budget_tokens: int,
             scores: dict[str, float],
-            nodes: dict[str, Any],
+            nodes: dict[str, TreeNode],
             root_id: str,
-        ) -> Any:
+        ) -> object:
             captured_nodes.update(nodes)
             return original_find_optimal(budget_tokens, scores, nodes, root_id)
 
-        retriever.dp_generator.find_optimal_tiling = capture_and_pass_through
+        retriever.dp_generator.find_optimal_tiling = capture_and_pass_through  # type: ignore[method-assign,assignment]
 
         # Run retriever - should work without errors
         result = asyncio.run(

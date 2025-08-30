@@ -2,7 +2,8 @@
 
 import os
 from collections.abc import Callable, Generator
-from typing import Any
+
+# from typing import Any  # Removed - using object instead
 from unittest.mock import MagicMock
 
 import pytest
@@ -138,7 +139,9 @@ def base_config() -> BackwardCompatibilityConfig:
 
 
 @pytest.fixture
-def config_factory() -> Callable[..., BackwardCompatibilityConfig]:
+def config_factory() -> (
+    Callable[[int, int, int, str, str | None], BackwardCompatibilityConfig]
+):
     """Factory fixture for creating custom test configurations.
 
     Returns a function that can create BackwardCompatibilityConfig with custom parameters.
@@ -188,7 +191,7 @@ def mock_store(
     base_config: BackwardCompatibilityConfig,
 ) -> Generator[SimpleMockStore, None, None]:
     """Create a mock store for fast testing."""
-    store = SimpleMockStore(base_config)
+    store = SimpleMockStore()
     yield store
     store.close()
 
@@ -349,12 +352,13 @@ def mock_openai_client() -> MagicMock:
     mock_client = MagicMock()
 
     # Mock embeddings
-    async def mock_embeddings_create(**kwargs: Any) -> MagicMock:
+    async def mock_embeddings_create(**kwargs: object) -> MagicMock:
         input_texts = kwargs.get("input", [])
         if isinstance(input_texts, str):
             input_texts = [input_texts]
         # Return one embedding for each input text
-        return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts])
+        input_list = input_texts if isinstance(input_texts, list) else [input_texts]
+        return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in input_list])
 
     mock_client.embeddings.create = mock_embeddings_create
 
@@ -379,12 +383,13 @@ def mock_openai_async_client() -> MagicMock:
     mock_client = AsyncMock()
 
     # Mock embeddings
-    async def mock_async_embeddings_create(**kwargs: Any) -> MagicMock:
+    async def mock_async_embeddings_create(**kwargs: object) -> MagicMock:
         input_texts = kwargs.get("input", [])
         if isinstance(input_texts, str):
             input_texts = [input_texts]
         # Return one embedding for each input text
-        return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts])
+        input_list = input_texts if isinstance(input_texts, list) else [input_texts]
+        return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in input_list])
 
     mock_client.embeddings.create = mock_async_embeddings_create
 

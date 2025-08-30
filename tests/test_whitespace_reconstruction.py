@@ -1,9 +1,15 @@
 """Test whitespace gap reconstruction in text splitter."""
 
 from collections.abc import Generator
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from ragzoom.index import TreeBuilder
+    from ragzoom.splitter import TextSplitter
+    from tests.conftest import BackwardCompatibilityConfig
+    from tests.mock_store import SimpleMockStore
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.index import TreeBuilder
@@ -21,9 +27,16 @@ class TestWhitespaceReconstruction:
             yield
 
     @pytest.fixture
-    def setup(
-        self, mock_openai: Any, store: Any
-    ) -> Generator[tuple[Any, Any, Any, Any], None, None]:
+    def setup(self, mock_openai: None, store: "SimpleMockStore") -> Generator[
+        tuple[
+            "BackwardCompatibilityConfig",
+            "SimpleMockStore",
+            "TreeBuilder",
+            "TextSplitter",
+        ],
+        None,
+        None,
+    ]:
         """Setup test environment."""
         # Create separate configs
         index_config = IndexConfig.load(
@@ -53,7 +66,15 @@ class TestWhitespaceReconstruction:
 
         yield config, store, tree_builder, splitter
 
-    def test_whitespace_gap_reconstruction(self, setup: Any) -> None:
+    def test_whitespace_gap_reconstruction(
+        self,
+        setup: tuple[
+            "BackwardCompatibilityConfig",
+            "SimpleMockStore",
+            "TreeBuilder",
+            "TextSplitter",
+        ],
+    ) -> None:
         """Test that whitespace gaps between chunks are properly reconstructed."""
         config, store, tree_builder, splitter = setup
 
@@ -74,7 +95,15 @@ class TestWhitespaceReconstruction:
             test_text
         ), f"Length mismatch: expected {len(test_text)}, got {len(reconstructed)}"
 
-    def test_newline_preservation(self, setup: Any) -> None:
+    def test_newline_preservation(
+        self,
+        setup: tuple[
+            "BackwardCompatibilityConfig",
+            "SimpleMockStore",
+            "TreeBuilder",
+            "TextSplitter",
+        ],
+    ) -> None:
         """Test that newlines are preserved in chunks."""
         config, store, tree_builder, splitter = setup
 
@@ -91,7 +120,15 @@ class TestWhitespaceReconstruction:
         assert "\n\n" in reconstructed
         assert "\n\n\n" in reconstructed
 
-    def test_mixed_whitespace_preservation(self, setup: Any) -> None:
+    def test_mixed_whitespace_preservation(
+        self,
+        setup: tuple[
+            "BackwardCompatibilityConfig",
+            "SimpleMockStore",
+            "TreeBuilder",
+            "TextSplitter",
+        ],
+    ) -> None:
         """Test preservation of mixed whitespace (spaces, tabs, newlines)."""
         config, store, tree_builder, splitter = setup
 
@@ -108,7 +145,15 @@ class TestWhitespaceReconstruction:
         assert "\n\t\n" in reconstructed
         assert "\n    \n" in reconstructed
 
-    def test_indexing_with_whitespace_gaps(self, setup: Any) -> None:
+    def test_indexing_with_whitespace_gaps(
+        self,
+        setup: tuple[
+            "BackwardCompatibilityConfig",
+            "SimpleMockStore",
+            "TreeBuilder",
+            "TextSplitter",
+        ],
+    ) -> None:
         """Test that indexing works correctly with whitespace gap reconstruction."""
         config, store, tree_builder, splitter = setup
 
@@ -146,7 +191,15 @@ class TestWhitespaceReconstruction:
                     current_end == next_start
                 ), f"Gap found between nodes: {current_end} to {next_start}"
 
-    def test_single_chunk_no_reconstruction(self, setup: Any) -> None:
+    def test_single_chunk_no_reconstruction(
+        self,
+        setup: tuple[
+            "BackwardCompatibilityConfig",
+            "SimpleMockStore",
+            "TreeBuilder",
+            "TextSplitter",
+        ],
+    ) -> None:
         """Test that single chunks don't get modified."""
         config, store, tree_builder, splitter = setup
 
@@ -159,7 +212,15 @@ class TestWhitespaceReconstruction:
         assert len(chunks) == 1
         assert chunks[0] == test_text
 
-    def test_edge_case_only_whitespace_gaps(self, setup: Any) -> None:
+    def test_edge_case_only_whitespace_gaps(
+        self,
+        setup: tuple[
+            "BackwardCompatibilityConfig",
+            "SimpleMockStore",
+            "TreeBuilder",
+            "TextSplitter",
+        ],
+    ) -> None:
         """Test edge case where gaps are only whitespace."""
         config, store, tree_builder, splitter = setup
 
@@ -177,7 +238,15 @@ class TestWhitespaceReconstruction:
         assert "Word2" in reconstructed
         assert "Word3" in reconstructed
 
-    def test_validation_passes_with_reconstruction(self, setup: Any) -> None:
+    def test_validation_passes_with_reconstruction(
+        self,
+        setup: tuple[
+            "BackwardCompatibilityConfig",
+            "SimpleMockStore",
+            "TreeBuilder",
+            "TextSplitter",
+        ],
+    ) -> None:
         """Test that validation passes when whitespace gaps are reconstructed."""
         config, store, tree_builder, splitter = setup
 

@@ -2,7 +2,12 @@
 
 import asyncio
 import time
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ragzoom.interfaces import StoreInterface
+    from tests.conftest import BackwardCompatibilityConfig
 
 import pytest
 
@@ -16,7 +21,13 @@ class TestParallelDPPerformance:
     """Test parallel DP performance compared to sequential."""
 
     @pytest.fixture
-    def large_document_setup(self, store: Any, config_factory: Any) -> Any:
+    def large_document_setup(
+        self,
+        store: "StoreInterface",
+        config_factory: Callable[
+            [int, int, int, str, str | None], "BackwardCompatibilityConfig"
+        ],
+    ) -> tuple["BackwardCompatibilityConfig", "StoreInterface", object, object]:
         """Set up a test system with a larger document for performance testing."""
         config = config_factory(
             target_chunk_tokens=200,
@@ -58,7 +69,10 @@ class TestParallelDPPerformance:
             yield config, store, tree_builder, mock_retrieve
 
     async def test_sync_vs_async_dp_correctness(
-        self, large_document_setup: Any
+        self,
+        large_document_setup: tuple[
+            "BackwardCompatibilityConfig", "StoreInterface", object, object
+        ],
     ) -> None:
         """Test that sync and async DP generators produce identical results."""
         config, store, _, mock_client = large_document_setup
@@ -115,7 +129,10 @@ class TestParallelDPPerformance:
         assert len(sync_result.node_infos) == len(async_result.node_infos)
 
     async def test_async_dp_performance_benefit(
-        self, large_document_setup: Any
+        self,
+        large_document_setup: tuple[
+            "BackwardCompatibilityConfig", "StoreInterface", object, object
+        ],
     ) -> None:
         """Test that async DP provides performance benefit on larger trees."""
         from tests.utils import create_retriever
@@ -183,7 +200,12 @@ class TestParallelDPPerformance:
                 async_time <= sync_time * 1.2
             ), f"Async ({async_time:.4f}s) much slower than sync ({sync_time:.4f}s) on large tree"
 
-    async def test_retriever_with_async_dp(self, large_document_setup: Any) -> None:
+    async def test_retriever_with_async_dp(
+        self,
+        large_document_setup: tuple[
+            "BackwardCompatibilityConfig", "StoreInterface", object, object
+        ],
+    ) -> None:
         """Test retriever using async DP generator."""
         config, store, _, mock_client = large_document_setup
 
@@ -215,7 +237,7 @@ class TestParallelDPPerformance:
         loop = asyncio.get_event_loop()
 
         # Create a wrapper function to handle keyword arguments properly
-        def sync_retrieve() -> Any:
+        def sync_retrieve() -> object:
             return sync_retriever.retrieve(
                 "test content", budget_tokens=1200, document_id="large-test-doc"
             )
@@ -231,7 +253,10 @@ class TestParallelDPPerformance:
         assert sync_result.scores == async_result.scores
 
     async def test_error_handling_in_parallel_dp(
-        self, large_document_setup: Any
+        self,
+        large_document_setup: tuple[
+            "BackwardCompatibilityConfig", "StoreInterface", object, object
+        ],
     ) -> None:
         """Test graceful error handling in parallel DP execution."""
         config, store, _, mock_client = large_document_setup
@@ -270,7 +295,12 @@ class TestParallelDPPerformance:
         assert result is not None
         assert result.tiling is not None
 
-    async def test_parallelization_threshold(self, large_document_setup: Any) -> None:
+    async def test_parallelization_threshold(
+        self,
+        large_document_setup: tuple[
+            "BackwardCompatibilityConfig", "StoreInterface", object, object
+        ],
+    ) -> None:
         """Test that parallelization threshold works correctly."""
         from tests.utils import create_retriever
 

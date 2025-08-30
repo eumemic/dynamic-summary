@@ -1,7 +1,7 @@
 """Fast version of indexing tests using mock store."""
 
 import asyncio
-from typing import Any
+from typing import cast
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -172,10 +172,10 @@ class TestIndexingFast:
         api_call_count = 0
         texts_per_call = []
 
-        async def mock_embeddings_create(**kwargs: Any) -> Mock:
+        async def mock_embeddings_create(**kwargs: object) -> Mock:
             nonlocal api_call_count, texts_per_call
             api_call_count += 1
-            input_texts = kwargs.get("input", [])
+            input_texts = cast(list[str] | str, kwargs.get("input", []))
             if isinstance(input_texts, str):
                 input_texts = [input_texts]
             texts_per_call.append(len(input_texts))

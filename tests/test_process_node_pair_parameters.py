@@ -5,7 +5,10 @@ prev_context, left_token_count, and right_token_count to LLMService,
 causing a 102% increase in retry rate.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ragzoom.interfaces import StoreInterface
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -43,7 +46,9 @@ def mock_reporter() -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_process_node_pair_passes_all_parameters(
-    mock_store: Any, mock_nodes: tuple[MagicMock, MagicMock], mock_reporter: MagicMock
+    mock_store: "StoreInterface",
+    mock_nodes: tuple[MagicMock, MagicMock],
+    mock_reporter: MagicMock,
 ) -> None:
     """Regression test: ensure _process_node_pair passes all parameters to LLMService.
 
@@ -56,10 +61,10 @@ async def test_process_node_pair_passes_all_parameters(
     builder = TreeBuilder(config, mock_store)
 
     # Capture parameters passed to LLMService._summarize_text
-    captured_params: dict[str, Any] = {}
+    captured_params: dict[str, object] = {}
 
     async def capture_summarize_params(
-        *args: Any, **kwargs: Any
+        *args: object, **kwargs: object
     ) -> tuple[str, int, int]:
         """Capture all parameters passed to _summarize_text."""
         captured_params.clear()
@@ -113,7 +118,9 @@ async def test_process_node_pair_passes_all_parameters(
 
 @pytest.mark.asyncio
 async def test_prev_context_affects_prompt(
-    mock_store: Any, mock_nodes: tuple[MagicMock, MagicMock], mock_reporter: MagicMock
+    mock_store: "StoreInterface",
+    mock_nodes: tuple[MagicMock, MagicMock],
+    mock_reporter: MagicMock,
 ) -> None:
     """Test that prev_context actually changes the generated prompt."""
     left_node, right_node = mock_nodes
@@ -124,7 +131,7 @@ async def test_prev_context_affects_prompt(
     # Test by capturing the parameters passed to _summarize_text
     captured_params_list = []
 
-    async def capture_params(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
+    async def capture_params(*args: object, **kwargs: object) -> tuple[str, int, int]:
         """Capture parameters for each call."""
         captured_params_list.append(kwargs.copy())
         return ("Mock summary", 0, 100)
@@ -175,7 +182,9 @@ async def test_prev_context_affects_prompt(
 
 @pytest.mark.asyncio
 async def test_parameter_validation_would_catch_bug(
-    mock_store: Any, mock_nodes: tuple[MagicMock, MagicMock], mock_reporter: MagicMock
+    mock_store: "StoreInterface",
+    mock_nodes: tuple[MagicMock, MagicMock],
+    mock_reporter: MagicMock,
 ) -> None:
     """Test that demonstrates how the bug could be caught with parameter validation."""
     left_node, right_node = mock_nodes
@@ -186,7 +195,7 @@ async def test_parameter_validation_would_catch_bug(
     # Track what parameters were actually passed to _summarize_text
     actual_calls = []
 
-    async def track_calls(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
+    async def track_calls(*args: object, **kwargs: object) -> tuple[str, int, int]:
         actual_calls.append(
             {
                 "prev_context": kwargs.get("prev_context"),
@@ -241,7 +250,9 @@ async def test_bug_would_cause_missing_parameters() -> None:
 
     captured_calls = []
 
-    async def capture_llm_calls(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
+    async def capture_llm_calls(
+        *args: object, **kwargs: object
+    ) -> tuple[str, int, int]:
         """Capture what parameters LLMService actually receives."""
         captured_calls.append(
             {

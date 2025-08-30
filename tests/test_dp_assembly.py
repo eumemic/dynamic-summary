@@ -5,12 +5,11 @@ The DP algorithm test was moved here from test_dp_tiling.py to consolidate
 all DP-related testing in one place.
 """
 
-from typing import Any
-
 import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
+from ragzoom.interfaces import StoreInterface
 
 
 class TestDPAssembly:
@@ -31,12 +30,19 @@ class TestDPAssembly:
         return OperationalConfig(openai_api_key=SecretStr("test-key"))
 
     @pytest.fixture
-    def assembler(self, store: Any) -> Assembler:
+    def assembler(self, store: StoreInterface) -> Assembler:
         """Create assembler with mock store."""
-        return Assembler(store)
+        # Convert StoreInterface to DocumentStore for Assembler
+        if hasattr(store, "for_document"):
+            # This is a StoreManager
+            doc_store = store.for_document("doc1")
+        else:
+            # Assume this is already a DocumentStore-like object
+            doc_store = store
+        return Assembler(doc_store)
 
     @pytest.fixture
-    def mock_nodes(self, store: Any) -> None:
+    def mock_nodes(self, store: StoreInterface) -> None:
         """Create mock nodes in the store."""
         # Create a simple tree structure
         # Root (depth=2)
@@ -116,7 +122,7 @@ class TestDPAssembly:
             document_id="doc1",
         )
 
-    def test_basic_dp_assembly(self, assembler: Any, mock_nodes: Any) -> None:
+    def test_basic_dp_assembly(self, assembler: Assembler, mock_nodes: None) -> None:
         """Test basic DP assembly with leaf nodes."""
         # List of node IDs
         tiling = ["leaf1", "leaf2"]
@@ -126,7 +132,9 @@ class TestDPAssembly:
         # Leaf nodes return full text
         assert result == "First chunk of text.\n\nSecond chunk of text."
 
-    def test_internal_node_assembly(self, assembler: Any, mock_nodes: Any) -> None:
+    def test_internal_node_assembly(
+        self, assembler: Assembler, mock_nodes: None
+    ) -> None:
         """Test assembly with internal nodes (atomic units)."""
         tiling = ["left", "leaf3"]
 
@@ -135,7 +143,7 @@ class TestDPAssembly:
         # Internal nodes return their full summary
         assert result == "Summary of first and second chunks.\n\nThird chunk of text."
 
-    def test_mixed_nodes_assembly(self, assembler: Any, mock_nodes: Any) -> None:
+    def test_mixed_nodes_assembly(self, assembler: Assembler, mock_nodes: None) -> None:
         """Test assembly with mix of leaf and internal nodes."""
         tiling = ["leaf1", "right"]
 
@@ -144,7 +152,7 @@ class TestDPAssembly:
         # Each node returns its full text
         assert result == "First chunk of text.\n\nSummary of third and fourth chunks."
 
-    def test_all_internal_nodes(self, assembler: Any, mock_nodes: Any) -> None:
+    def test_all_internal_nodes(self, assembler: Assembler, mock_nodes: None) -> None:
         """Test assembly with only internal nodes."""
         tiling = ["left", "right", "root"]
 
@@ -153,7 +161,7 @@ class TestDPAssembly:
         expected = "Summary of first and second chunks.\n\nSummary of third and fourth chunks.\n\nOverall document summary."
         assert result == expected
 
-    def test_all_leaf_nodes(self, assembler: Any, mock_nodes: Any) -> None:
+    def test_all_leaf_nodes(self, assembler: Assembler, mock_nodes: None) -> None:
         """Test assembly with all leaf nodes."""
         tiling = ["leaf1", "leaf2", "leaf3", "leaf4"]
 
@@ -163,7 +171,7 @@ class TestDPAssembly:
         expected = "First chunk of text.\n\nSecond chunk of text.\n\nThird chunk of text.\n\nFourth chunk of text."
         assert result == expected
 
-    def test_empty_tiling(self, assembler: Any, mock_nodes: Any) -> None:
+    def test_empty_tiling(self, assembler: Assembler, mock_nodes: None) -> None:
         """Test handling of empty tiling list."""
         tiling: list[str] = []
 
@@ -171,7 +179,7 @@ class TestDPAssembly:
 
         assert result == ""
 
-    def test_missing_node(self, assembler: Any, mock_nodes: Any) -> None:
+    def test_missing_node(self, assembler: Assembler, mock_nodes: None) -> None:
         """Test handling when tiling references a missing node."""
         tiling = ["leaf1", "missing", "leaf3"]
 
@@ -181,7 +189,7 @@ class TestDPAssembly:
         assert result == "First chunk of text.\n\nThird chunk of text."
 
     def test_node_with_no_text(
-        self, assembler: Any, mock_nodes: Any, store: Any
+        self, assembler: Assembler, mock_nodes: None, store: StoreInterface
     ) -> None:
         """Test handling of nodes with empty text."""
         # Add a node with empty text
@@ -201,7 +209,7 @@ class TestDPAssembly:
         # Should skip empty node
         assert result == "First chunk of text.\n\nThird chunk of text."
 
-    def test_single_root_node(self, assembler: Any, mock_nodes: Any) -> None:
+    def test_single_root_node(self, assembler: Assembler, mock_nodes: None) -> None:
         """Test assembly with just the root node."""
         tiling = ["root"]
 
@@ -210,7 +218,9 @@ class TestDPAssembly:
         # Should return root's full summary
         assert result == "Overall document summary."
 
-    def test_complex_tiling_assembly(self, assembler: Any, mock_nodes: Any) -> None:
+    def test_complex_tiling_assembly(
+        self, assembler: Assembler, mock_nodes: None
+    ) -> None:
         """Test a complex tiling that resembles real DP output."""
         # Simulate a tiling that might come from DP algorithm
         # Mix of internal and leaf nodes
@@ -225,7 +235,9 @@ class TestDPAssembly:
         )
         assert result == expected
 
-    def test_ordering_preservation(self, assembler: Any, mock_nodes: Any) -> None:
+    def test_ordering_preservation(
+        self, assembler: Assembler, mock_nodes: None
+    ) -> None:
         """Test that tiling order is preserved in output."""
         # Nodes in non-sequential order
         tiling = ["leaf3", "leaf1", "leaf4", "leaf2"]
@@ -241,7 +253,7 @@ class TestDPAssembly:
         )
         assert result == expected
 
-    def test_dp_single_node_tree(self, store: Any) -> None:
+    def test_dp_single_node_tree(self, store: StoreInterface) -> None:
         """Test the DP algorithm on a tree with only a single node.
 
         This test was moved from test_dp_tiling.py to consolidate DP tests.
@@ -257,9 +269,17 @@ class TestDPAssembly:
         # Use the store fixture instead of SimpleMockStore for consistency
         from tests.utils import create_retriever
 
+        # Create document store for retriever
+        if hasattr(store, "for_document"):
+            # This is a StoreManager
+            doc_store = store.for_document("test-doc-single")
+        else:
+            # Assume this is already a DocumentStore-like object
+            doc_store = store
+
         retriever = create_retriever(
             query_config=query_config,
-            store=store,
+            store=doc_store,
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
         dp_generator = retriever.dp_generator
@@ -284,7 +304,7 @@ class TestDPAssembly:
         # Load nodes from coverage map
         nodes = {}
         for node_id in coverage_map:
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 

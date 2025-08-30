@@ -3,7 +3,6 @@
 import os
 import tempfile
 from collections.abc import Iterator
-from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -22,7 +21,7 @@ class TestCLI:
         return CliRunner()
 
     @pytest.fixture
-    def mock_ragzoom(self) -> Iterator[dict[str, Any]]:
+    def mock_ragzoom(self) -> Iterator[dict[str, object]]:
         """Mock RagZoom components."""
         with (
             patch("ragzoom.cli.IndexConfig") as mock_index_config,
@@ -205,7 +204,7 @@ class TestCLI:
         assert "Commands:" in result.output
 
     def test_status_command(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test status command."""
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
@@ -219,7 +218,7 @@ class TestCLI:
             assert "Pinned nodes: 0" in result.output
 
     def test_index_command_with_file(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test indexing a file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -246,7 +245,7 @@ class TestCLI:
             os.unlink(temp_file)
 
     def test_index_command_with_text(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test indexing with document ID."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -272,7 +271,7 @@ class TestCLI:
             os.unlink(temp_file)
 
     def test_query_command(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test query command."""
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
@@ -285,7 +284,7 @@ class TestCLI:
             assert "This is a summary of the content." in result.output
 
     def test_query_with_options(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test query command with options."""
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
@@ -315,9 +314,13 @@ class TestCLI:
                 token_budget=1000,
             )
 
-    def test_pin_command(self, runner: CliRunner, mock_ragzoom: dict[str, Any]) -> None:
+    def test_pin_command(
+        self, runner: CliRunner, mock_ragzoom: dict[str, object]
+    ) -> None:
         """Test pin command."""
-        mock_ragzoom["document_service_instance"].pin_node.return_value = None
+        mock_service_instance = mock_ragzoom["document_service_instance"]
+        assert hasattr(mock_service_instance, "pin_node")
+        mock_service_instance.pin_node.return_value = None
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
             result = runner.invoke(cli, ["pin", "node-123"])
@@ -326,7 +329,7 @@ class TestCLI:
             assert "✅ Node node-123 pinned successfully!" in result.output
 
     def test_pin_command_failure(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test pin command when pinning fails."""
         mock_ragzoom["document_service_instance"].pin_node.side_effect = (
@@ -341,7 +344,7 @@ class TestCLI:
             assert "Failed to pin node node-999" in result.output
 
     def test_serve_command(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test serve command."""
         with patch("uvicorn.run") as mock_uvicorn:
@@ -356,7 +359,7 @@ class TestCLI:
                 )
 
     def test_documents_command(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test documents command."""
         # Mock document results using the document service
@@ -400,7 +403,7 @@ class TestCLI:
                 assert result.exit_code == 0 or result.exception is not None
 
     def test_index_with_automatic_clearing(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test that indexing automatically clears existing data."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -422,7 +425,7 @@ class TestCLI:
             os.unlink(temp_file)
 
     def test_index_automatic_clearing_no_nodes(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test that automatic clearing works when no nodes exist."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -443,7 +446,9 @@ class TestCLI:
         finally:
             os.unlink(temp_file)
 
-    def test_index_basic(self, runner: CliRunner, mock_ragzoom: dict[str, Any]) -> None:
+    def test_index_basic(
+        self, runner: CliRunner, mock_ragzoom: dict[str, object]
+    ) -> None:
         """Test basic indexing command."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Test content.")
@@ -456,14 +461,14 @@ class TestCLI:
                 assert result.exit_code == 0
 
                 # Verify index_from_file was called
-                mock_ragzoom[
-                    "indexing_service_instance"
-                ].index_from_file.assert_called_once()
+                mock_indexing_service = mock_ragzoom["indexing_service_instance"]
+                assert hasattr(mock_indexing_service, "index_from_file")
+                mock_indexing_service.index_from_file.assert_called_once()
         finally:
             os.unlink(temp_file)
 
     def test_clear_specific_document(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test clearing a specific document."""
         # Mock document exists
@@ -494,7 +499,7 @@ class TestCLI:
             ].clear_document.assert_called_once_with("test-doc")
 
     def test_clear_document_with_orphaned_nodes(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test clearing orphaned nodes (no Document record)."""
         # Mock document service clearing orphaned nodes
@@ -516,7 +521,7 @@ class TestCLI:
             ].clear_document.assert_called_once_with("orphaned-doc")
 
     def test_clear_all_data(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Any]
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
     ) -> None:
         """Test clearing all data."""
         # Mock database state

@@ -1,13 +1,13 @@
 """Tests for dataflow core implementation."""
 
 import asyncio
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from ragzoom.dataflow.core import (
     ProcessingStrategy,
+    SummaryJob,
     build_tree_dataflow,
     poke,
 )
@@ -22,7 +22,7 @@ class TestPokeMechanism:
         """Test poke when all dependencies are ready."""
         # Create a simple lookup dict
         lookup: dict[str, TreeNode] = {}
-        queue: asyncio.PriorityQueue[Any] = asyncio.PriorityQueue()
+        queue: asyncio.PriorityQueue[SummaryJob] = asyncio.PriorityQueue()
 
         # Create nodes with satisfied dependencies
         left_child = TreeNode(
@@ -74,7 +74,7 @@ class TestPokeMechanism:
     async def test_poke_with_missing_dependencies(self) -> None:
         """Test poke when dependencies are not ready."""
         lookup: dict[str, TreeNode] = {}
-        queue: asyncio.PriorityQueue[Any] = asyncio.PriorityQueue()
+        queue: asyncio.PriorityQueue[SummaryJob] = asyncio.PriorityQueue()
 
         # Create nodes where left child has no text yet
         left_child = TreeNode(
@@ -124,7 +124,7 @@ class TestPokeMechanism:
     async def test_poke_with_preceding_neighbor_dependency(self) -> None:
         """Test poke with preceding neighbor dependency."""
         lookup: dict[str, TreeNode] = {}
-        queue: asyncio.PriorityQueue[Any] = asyncio.PriorityQueue()
+        queue: asyncio.PriorityQueue[SummaryJob] = asyncio.PriorityQueue()
 
         # Create nodes with preceding neighbor dependency
         node1 = TreeNode(
@@ -181,7 +181,7 @@ class TestPokeMechanism:
     @pytest.mark.asyncio
     async def test_priority_queue_ordering(self) -> None:
         """Test that nodes are processed in leftmost-first order."""
-        queue: asyncio.PriorityQueue[Any] = asyncio.PriorityQueue()
+        queue: asyncio.PriorityQueue[SummaryJob] = asyncio.PriorityQueue()
         lookup: dict[str, TreeNode] = {}
 
         # Create nodes with different span_start values
@@ -227,7 +227,7 @@ class TestPokeMechanism:
     @pytest.mark.asyncio
     async def test_bottom_to_top_ordering(self) -> None:
         """Test that BOTTOM_TO_TOP strategy processes by level first."""
-        queue: asyncio.PriorityQueue[Any] = asyncio.PriorityQueue()
+        queue: asyncio.PriorityQueue[SummaryJob] = asyncio.PriorityQueue()
         lookup: dict[str, TreeNode] = {}
 
         # Create nodes at different heights with different span_start values
@@ -378,7 +378,7 @@ class TestDataflowIntegration:
         current_summary = {"value": 0}
         current_embedding = {"value": 0}
 
-        async def mock_summary(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
+        async def mock_summary(*args: object, **kwargs: object) -> tuple[str, int, int]:
             call_count["summary"] += 1
             current_summary["value"] += 1
             max_concurrent_summary["value"] = max(
@@ -388,7 +388,7 @@ class TestDataflowIntegration:
             current_summary["value"] -= 1
             return "Summary", 1, 10
 
-        async def mock_embeddings(*args: Any, **kwargs: Any) -> list[list[float]]:
+        async def mock_embeddings(*args: object, **kwargs: object) -> list[list[float]]:
             call_count["embedding"] += 1
             current_embedding["value"] += 1
             max_concurrent_embedding["value"] = max(
@@ -396,7 +396,11 @@ class TestDataflowIntegration:
             )
             await asyncio.sleep(0.01)  # Simulate work
             current_embedding["value"] -= 1
-            return [[0.1] * 10] * len(args[0])
+            texts = args[0] if args else []
+            if hasattr(texts, "__len__"):
+                return [[0.1] * 10] * len(texts)
+            else:
+                return [[0.1] * 10]
 
         mock_llm_service = MagicMock()
         mock_llm_service._summarize_text = mock_summary
@@ -491,7 +495,9 @@ class TestEmbeddingBatching:
             await asyncio.sleep(0.01)  # Simulate API call
             return [[0.1] * 10 for _ in texts]
 
-        async def mock_slow_summary(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
+        async def mock_slow_summary(
+            *args: object, **kwargs: object
+        ) -> tuple[str, int, int]:
             # Simulate realistic API timing - summaries arrive spaced out
             await asyncio.sleep(0.1)  # Much slower than embedding batching
             return ("Summary", 1, 10)
@@ -536,7 +542,7 @@ class TestEmbeddingBatching:
     async def test_multiple_workers_coordinate_batching(self) -> None:
         """Test that multiple embedding workers coordinate to take full batches."""
         batch_calls = []
-        worker_calls: dict[Any, list[int]] = {}
+        worker_calls: dict[object, list[int]] = {}
 
         async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             # Use asyncio context to identify which worker made the call
@@ -744,7 +750,9 @@ class TestEmbeddingBatching:
             return [[0.1] * 10 for _ in texts]
 
         # Use slower summaries to test batching behavior
-        async def mock_slow_summary(*args: Any, **kwargs: Any) -> tuple[str, int, int]:
+        async def mock_slow_summary(
+            *args: object, **kwargs: object
+        ) -> tuple[str, int, int]:
             await asyncio.sleep(0.05)  # Summaries arrive gradually
             return ("Summary", 1, 10)
 

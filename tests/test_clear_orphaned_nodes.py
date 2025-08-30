@@ -3,7 +3,6 @@
 import os
 import tempfile
 from collections.abc import Generator
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,12 +19,17 @@ class TestAutomaticClearing:
     """Test that automatic clearing properly handles orphaned nodes from interrupted indexing."""
 
     @pytest.fixture
-    def temp_db(self, tmp_path: Any) -> Generator[str, None, None]:
+    def temp_db(self, tmp_path: object) -> Generator[str, None, None]:
         """Create a temporary database for testing."""
-        db_path = tmp_path / "test_ragzoom.db"
+        from pathlib import Path
+
+        tmp_path_obj = (
+            Path(str(tmp_path)) if not isinstance(tmp_path, Path) else tmp_path
+        )
+        db_path = tmp_path_obj / "test_ragzoom.db"
         original_db = os.environ.get("RAGZOOM_DB_PATH")
         os.environ["RAGZOOM_DB_PATH"] = str(db_path)
-        yield db_path
+        yield str(db_path)
         if original_db:
             os.environ["RAGZOOM_DB_PATH"] = original_db
         else:

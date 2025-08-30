@@ -1,19 +1,32 @@
 """Test that retry mechanism maintains conversation context."""
 
-from typing import Any
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from typing_extensions import TypedDict
 
 from ragzoom.config import IndexConfig
+from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import TelemetryCollector
 
 
-def create_test_reporter(config: Any) -> TelemetryCollector:
+class OpenAIMockParams(TypedDict, total=False):
+    """Type for OpenAI API parameters in test mocks."""
+
+    messages: list[dict[str, str | object]]
+    model: str
+    temperature: float
+    max_tokens: int
+
+
+def create_test_reporter(config: IndexConfig) -> TelemetryCollector:
     """Create a test reporter with common test nodes pre-tracked."""
     # TelemetryCollector expects IndexConfig, so extract it if needed
-    index_config = config.index_config if hasattr(config, "index_config") else config
+    index_config: IndexConfig = (
+        config.index_config if hasattr(config, "index_config") else config
+    )
     reporter = TelemetryCollector(
         document_id="test_doc", source_tokens=1000, config=index_config
     )
@@ -42,7 +55,7 @@ class MockOpenAIResponse:
 
 
 @pytest.mark.asyncio
-async def test_retry_maintains_conversation_history(mock_store: Any) -> None:
+async def test_retry_maintains_conversation_history(mock_store: DocumentStore) -> None:
     """Test that retries append to existing conversation instead of creating new ones."""
     config = IndexConfig.load(
         retry_threshold=0.2,  # 20% deviation
@@ -55,7 +68,7 @@ async def test_retry_maintains_conversation_history(mock_store: Any) -> None:
     # Track all API calls
     api_calls = []
 
-    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
+    async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
         """Capture API calls and return appropriate responses."""
         # Make a deep copy of kwargs to avoid mutation issues
         import copy
@@ -124,27 +137,27 @@ async def test_retry_maintains_conversation_history(mock_store: Any) -> None:
     assert summary == "B" * 95, "Should return the adjusted summary"
 
     # Verify first call structure - with vaccine it has 4 messages
-    first_call = api_calls[0]
-    assert (
-        len(first_call["messages"]) == 4
-    )  # system + user + vaccine_assistant + vaccine_user
+    first_call = cast(dict[str, object], api_calls[0])
+    first_messages = cast(list[dict[str, object]], first_call["messages"])
+    assert len(first_messages) == 4  # system + user + vaccine_assistant + vaccine_user
 
     # Verify second call has the full conversation (messages were appended)
-    second_call = api_calls[1]
+    second_call = cast(dict[str, object], api_calls[1])
+    second_messages = cast(list[dict[str, object]], second_call["messages"])
     assert (
-        len(second_call["messages"]) == 6
+        len(second_messages) == 6
     )  # system + user + vaccine_ass + vaccine_user + assistant + user
-    assert second_call["messages"][0]["role"] == "system"
-    assert second_call["messages"][1]["role"] == "user"  # Original prompt
-    assert second_call["messages"][2]["role"] == "assistant"  # Vaccine response
-    assert second_call["messages"][3]["role"] == "user"  # Vaccine correction
-    assert second_call["messages"][4]["role"] == "assistant"  # First attempt response
-    assert second_call["messages"][4]["content"] == "A" * 150  # Previous summary
-    assert second_call["messages"][5]["role"] == "user"  # Retry instruction
+    assert second_messages[0]["role"] == "system"
+    assert second_messages[1]["role"] == "user"  # Original prompt
+    assert second_messages[2]["role"] == "assistant"  # Vaccine response
+    assert second_messages[3]["role"] == "user"  # Vaccine correction
+    assert second_messages[4]["role"] == "assistant"  # First attempt response
+    assert second_messages[4]["content"] == "A" * 150  # Previous summary
+    assert second_messages[5]["role"] == "user"  # Retry instruction
 
 
 @pytest.mark.asyncio
-async def test_retry_preserves_original_context(mock_store: Any) -> None:
+async def test_retry_preserves_original_context(mock_store: DocumentStore) -> None:
     """Test that retry requests can still see the original text being summarized."""
     config = IndexConfig.load(
         retry_threshold=0.1,  # 10% deviation
@@ -159,17 +172,17 @@ async def test_retry_preserves_original_context(mock_store: Any) -> None:
         "This is the original text that needs to be summarized properly. " * 5
     )  # Make it long enough
 
-    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
+    async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
         import copy
 
         api_calls.append(copy.deepcopy(kwargs))
-        messages = kwargs.get("messages", [])
+        messages = cast(list[dict[str, object]], kwargs.get("messages", []))
 
         if len(api_calls) == 1:
             # Verify parts of original text are in the first prompt
             # (text is split between left and right)
             user_content = " ".join(
-                msg["content"] for msg in messages if msg["role"] == "user"
+                cast(str, msg["content"]) for msg in messages if msg["role"] == "user"
             )
             # Check that at least part of the original text is there
             assert any(
@@ -180,14 +193,17 @@ async def test_retry_preserves_original_context(mock_store: Any) -> None:
 
         elif len(api_calls) == 2:
             # Verify original text is STILL accessible in conversation history
-            user_messages = [msg for msg in messages if msg["role"] == "user"]
+            user_messages = cast(
+                list[dict[str, object]],
+                [msg for msg in messages if msg["role"] == "user"],
+            )
             assert (
                 len(user_messages) == 3
             )  # Original + vaccine correction + retry prompt
 
             # Original prompt should still contain parts of the text
             assert any(
-                part in user_messages[0]["content"]
+                part in cast(str, user_messages[0]["content"])
                 for part in [original_text[:30], original_text[-30:]]
             )
 
@@ -214,7 +230,7 @@ async def test_retry_preserves_original_context(mock_store: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_multiple_retries_build_conversation(mock_store: Any) -> None:
+async def test_multiple_retries_build_conversation(mock_store: DocumentStore) -> None:
     """Test that multiple retries continue building on the same conversation."""
     config = IndexConfig.load(
         retry_threshold=0.1,
@@ -225,11 +241,11 @@ async def test_multiple_retries_build_conversation(mock_store: Any) -> None:
     indexer = TreeBuilder(config, mock_store)
     api_calls = []
 
-    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
+    async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
         import copy
 
         api_calls.append(copy.deepcopy(kwargs))
-        messages = kwargs.get("messages", [])
+        messages = cast(list[dict[str, object]], kwargs.get("messages", []))
         call_num = len(api_calls)
 
         if call_num == 1:
@@ -275,14 +291,15 @@ async def test_multiple_retries_build_conversation(mock_store: Any) -> None:
     assert summary == "C" * 105
 
     # Verify conversation grew correctly (with vaccine)
-    final_messages = api_calls[-1]["messages"]
+    final_call = cast(dict[str, object], api_calls[-1])
+    final_messages = cast(list[dict[str, object]], final_call["messages"])
     assert (
         len(final_messages) == 8
     )  # system + user + vaccine_ass + vaccine_user + 2x(ass + user)
 
 
 @pytest.mark.asyncio
-async def test_no_retry_when_within_threshold(mock_store: Any) -> None:
+async def test_no_retry_when_within_threshold(mock_store: DocumentStore) -> None:
     """Test that no retry occurs when initial summary is within threshold."""
     config = IndexConfig.load(
         retry_threshold=0.2,
@@ -292,7 +309,7 @@ async def test_no_retry_when_within_threshold(mock_store: Any) -> None:
     indexer = TreeBuilder(config, mock_store)
     api_calls = []
 
-    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
+    async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
         import copy
 
         api_calls.append(copy.deepcopy(kwargs))
@@ -320,7 +337,9 @@ async def test_no_retry_when_within_threshold(mock_store: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_accept_retry_within_threshold_immediately(mock_store: Any) -> None:
+async def test_accept_retry_within_threshold_immediately(
+    mock_store: DocumentStore,
+) -> None:
     """Test that we accept a retry attempt immediately when it's within threshold.
 
     This tests the bug where attempts within the threshold were being ignored
@@ -335,7 +354,7 @@ async def test_accept_retry_within_threshold_immediately(mock_store: Any) -> Non
     indexer = TreeBuilder(config, mock_store)
     api_calls = []
 
-    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
+    async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
         """Return different responses based on call number."""
         import copy
 
@@ -382,14 +401,14 @@ async def test_accept_retry_within_threshold_immediately(mock_store: Any) -> Non
 
 
 @pytest.mark.asyncio
-async def test_passthrough_for_text_under_target(mock_store: Any) -> None:
+async def test_passthrough_for_text_under_target(mock_store: DocumentStore) -> None:
     """Test that text under target tokens is passed through without LLM call."""
     config = IndexConfig.load(target_chunk_tokens=100)
     indexer = TreeBuilder(config, mock_store)
 
     api_calls = []
 
-    async def mock_create(**kwargs: Any) -> MockOpenAIResponse:
+    async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
         import copy
 
         api_calls.append(copy.deepcopy(kwargs))

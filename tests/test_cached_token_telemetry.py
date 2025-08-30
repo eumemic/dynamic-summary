@@ -1,21 +1,37 @@
 """Test that cached tokens are properly tracked in telemetry."""
 
-from typing import Any, cast
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from typing_extensions import TypedDict
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import TelemetryCollector
+from tests.conftest import BackwardCompatibilityConfig
 
 
-def create_test_reporter(config: Any) -> TelemetryCollector:
+class OpenAIMockParams(TypedDict, total=False):
+    """Type for OpenAI API parameters in test mocks."""
+
+    messages: list[dict[str, str | object]]
+    model: str
+    temperature: float
+    max_tokens: int
+
+
+def create_test_reporter(
+    config: IndexConfig | BackwardCompatibilityConfig,
+) -> TelemetryCollector:
     """Create a test reporter with common test nodes pre-tracked."""
     from ragzoom.telemetry_collection import TelemetryCollector
 
     # If config is a wrapper, extract the IndexConfig
-    index_config = config.index_config if hasattr(config, "index_config") else config
+    index_config: IndexConfig = (
+        config.index_config if hasattr(config, "index_config") else config
+    )
 
     reporter = TelemetryCollector(
         document_id="test_doc", source_tokens=1000, config=index_config
@@ -58,7 +74,7 @@ class MockOpenAIResponseWithCache:
 
 
 @pytest.mark.asyncio
-async def test_cached_tokens_recorded_in_telemetry(mock_store: Any) -> None:
+async def test_cached_tokens_recorded_in_telemetry(mock_store: DocumentStore) -> None:
     """Test that cached tokens from OpenAI response are properly recorded."""
     index_config = IndexConfig.load(
         retry_threshold=0.1,
@@ -83,7 +99,7 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store: Any) -> None:
 
     api_calls = []
 
-    async def mock_create(**kwargs: Any) -> MockOpenAIResponseWithCache:
+    async def mock_create(**kwargs) -> MockOpenAIResponseWithCache:  # type: ignore[no-untyped-def]
         api_calls.append(kwargs)
         call_num = len(api_calls)
 
@@ -142,7 +158,9 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_backward_compatibility_without_cached_tokens(mock_store: Any) -> None:
+async def test_backward_compatibility_without_cached_tokens(
+    mock_store: DocumentStore,
+) -> None:
     """Test that telemetry works correctly when OpenAI doesn't return cached_tokens."""
     index_config = IndexConfig.load(target_chunk_tokens=100)
     operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
@@ -169,7 +187,7 @@ async def test_backward_compatibility_without_cached_tokens(mock_store: Any) -> 
     # Explicitly no prompt_tokens_details
     response.usage.prompt_tokens_details = None
 
-    async def mock_create(**kwargs: Any) -> MagicMock:
+    async def mock_create(**kwargs) -> MagicMock:  # type: ignore[no-untyped-def]
         return response
 
     with patch.object(
@@ -214,7 +232,7 @@ async def test_backward_compatibility_without_cached_tokens(mock_store: Any) -> 
 
 
 @pytest.mark.asyncio
-async def test_cached_tokens_across_multiple_retries(mock_store: Any) -> None:
+async def test_cached_tokens_across_multiple_retries(mock_store: DocumentStore) -> None:
     """Test that cached tokens increase with each retry as conversation grows."""
     index_config = IndexConfig.load(
         retry_threshold=0.05,  # Very strict
@@ -237,7 +255,7 @@ async def test_cached_tokens_across_multiple_retries(mock_store: Any) -> None:
 
     api_calls = []
 
-    async def mock_create(**kwargs: Any) -> MockOpenAIResponseWithCache:
+    async def mock_create(**kwargs) -> MockOpenAIResponseWithCache:  # type: ignore[no-untyped-def]
         api_calls.append(kwargs)
         call_num = len(api_calls)
 
@@ -304,7 +322,9 @@ async def test_cached_tokens_across_multiple_retries(mock_store: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_passthrough_summary_has_no_cached_tokens(mock_store: Any) -> None:
+async def test_passthrough_summary_has_no_cached_tokens(
+    mock_store: DocumentStore,
+) -> None:
     """Test that passthrough summaries correctly report 0 cached tokens."""
     index_config = IndexConfig.load(target_chunk_tokens=100)
     operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
@@ -324,7 +344,7 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store: Any) -> None
     # No API calls should be made
     api_calls = []
 
-    async def mock_create(**kwargs: Any) -> MockOpenAIResponseWithCache:
+    async def mock_create(**kwargs) -> MockOpenAIResponseWithCache:  # type: ignore[no-untyped-def]
         api_calls.append(kwargs)
         pytest.fail("Should not call API for passthrough")
 
@@ -358,7 +378,7 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store: Any) -> None
 
 
 @pytest.mark.asyncio
-async def test_cached_tokens_with_high_cache_rate(mock_store: Any) -> None:
+async def test_cached_tokens_with_high_cache_rate(mock_store: DocumentStore) -> None:
     """Test scenario with very high cache hit rate (95%+)."""
     index_config = IndexConfig.load(
         retry_threshold=0.1,
@@ -379,8 +399,8 @@ async def test_cached_tokens_with_high_cache_rate(mock_store: Any) -> None:
     )
     reporter = create_test_reporter(config)
 
-    async def mock_create(**kwargs: Any) -> MockOpenAIResponseWithCache:
-        messages = kwargs.get("messages", [])
+    async def mock_create(**kwargs) -> MockOpenAIResponseWithCache:  # type: ignore[no-untyped-def]
+        messages = cast(list[dict[str, object]], kwargs.get("messages", []))
 
         if len(messages) == 4:  # Initial call (with vaccine)
             return MockOpenAIResponseWithCache(

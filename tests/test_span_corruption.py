@@ -1,19 +1,31 @@
 """Test for span corruption bug in tree building."""
 
-from typing import Any
+from collections.abc import Generator
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.index import TreeBuilder
+from ragzoom.store import StoreManager
+from tests.conftest import BackwardCompatibilityConfig
+from tests.mock_store import SimpleMockStore
 
 
 class TestSpanCorruption:
     """Test span corruption issues in tree building."""
 
     @pytest.fixture
-    def setup_system(self, store: Any) -> Any:
+    def setup_system(self, store: SimpleMockStore | StoreManager) -> Generator[
+        tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            TreeBuilder,
+            AsyncMock,
+        ],
+        None,
+        None,
+    ]:
         """Set up test system."""
         # Create separate configs
         index_config = IndexConfig.load(
@@ -47,7 +59,15 @@ class TestSpanCorruption:
         yield config, store, tree_builder, mock_client
 
     @pytest.mark.asyncio
-    async def test_odd_nodes_create_invalid_spans(self, setup_system: Any) -> None:
+    async def test_odd_nodes_create_invalid_spans(
+        self,
+        setup_system: tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            TreeBuilder,
+            AsyncMock,
+        ],
+    ) -> None:
         """Test that odd number of nodes creates span corruption."""
         config, store, tree_builder, mock_client = setup_system
 
@@ -125,7 +145,15 @@ class TestSpanCorruption:
             ), f"Found {len(corrupt_nodes)} nodes with invalid spans"
 
     @pytest.mark.asyncio
-    async def test_wraparound_pairing(self, setup_system: Any) -> None:
+    async def test_wraparound_pairing(
+        self,
+        setup_system: tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            TreeBuilder,
+            AsyncMock,
+        ],
+    ) -> None:
         """Test that demonstrates wraparound pairing issue."""
         config, store, tree_builder, mock_client = setup_system
 
@@ -160,7 +188,9 @@ class TestSpanCorruption:
             from ragzoom.models import TreeNode
 
             # Get nodes by depth
-            nodes_by_depth: dict[int, list[Any]] = {}
+            from ragzoom.models import TreeNode as TreeNodeModel
+
+            nodes_by_depth: dict[int, list[TreeNodeModel]] = {}
             all_nodes = session.query(TreeNode).filter_by(document_id=doc_id).all()
 
             for node in all_nodes:

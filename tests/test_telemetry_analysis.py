@@ -1,7 +1,5 @@
 """Test telemetry analysis functions."""
 
-from typing import Any
-
 import pytest
 
 from ragzoom.telemetry_analysis import (
@@ -65,14 +63,14 @@ class TestTelemetryFormatParsing:
 
     def test_parse_missing_format_version(self) -> None:
         """Test parsing telemetry without format version."""
-        telemetry_data: dict[str, Any] = {"documents": {}}
+        telemetry_data: dict[str, object] = {"documents": {}}
 
         with pytest.raises(TelemetryAnalysisError, match="Missing format_version"):
             parse_telemetry_format(telemetry_data)  # type: ignore[arg-type]
 
     def test_parse_unsupported_format_version(self) -> None:
         """Test parsing telemetry with unsupported format version."""
-        telemetry_data: dict[str, Any] = {"format_version": "4.1", "nodes": []}
+        telemetry_data: dict[str, object] = {"format_version": "4.1", "nodes": []}
 
         with pytest.raises(
             TelemetryAnalysisError, match="Unsupported telemetry format version"

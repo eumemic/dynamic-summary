@@ -1,6 +1,6 @@
 """Tests for following_neighbor_id column and bidirectional neighbor relationships."""
 
-from typing import Any
+# Type imports for test configuration
 
 import numpy as np
 from numpy.typing import NDArray
@@ -8,6 +8,7 @@ from openai import AsyncOpenAI
 
 from ragzoom.models import TreeNode
 from ragzoom.store import StoreManager
+from tests.conftest import BackwardCompatibilityConfig
 
 
 class TestFollowingNeighbor:
@@ -26,7 +27,7 @@ class TestFollowingNeighbor:
         )  # Should be nullable (last node has no following)
 
     def test_bidirectional_neighbor_consistency(
-        self, base_config: Any, store: StoreManager
+        self, base_config: BackwardCompatibilityConfig, store: StoreManager
     ) -> None:
         """Verify bidirectional consistency: if A.following = B, then B.preceding = A."""
         # Create some test nodes with neighbor relationships
@@ -97,7 +98,7 @@ class TestFollowingNeighbor:
 
     def test_leaf_nodes_have_correct_neighbor_relationships(
         self,
-        base_config: Any,
+        base_config: BackwardCompatibilityConfig,
         store: StoreManager,
         mock_openai_async_client: AsyncOpenAI,
     ) -> None:
@@ -165,7 +166,7 @@ class TestFollowingNeighbor:
 
     def test_parent_nodes_have_correct_neighbor_relationships(
         self,
-        base_config: Any,
+        base_config: BackwardCompatibilityConfig,
         store: StoreManager,
         mock_openai_async_client: AsyncOpenAI,
     ) -> None:
@@ -198,7 +199,7 @@ class TestFollowingNeighbor:
         # Get all nodes and group by height
         all_nodes = doc_store.nodes.get_all()
 
-        nodes_by_height: dict[int, list[Any]] = {}
+        nodes_by_height: dict[int, list[TreeNode]] = {}
         for node in all_nodes:
             if node.height not in nodes_by_height:
                 nodes_by_height[node.height] = []

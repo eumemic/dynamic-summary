@@ -2,12 +2,15 @@
 
 import asyncio
 from collections.abc import Generator
-from typing import Any, cast
+from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import Response
 
 from ragzoom.api import app
+from ragzoom.store import StoreManager
+from tests.mock_store import SimpleMockStore
 from tests.utils import mock_openai_context
 
 
@@ -22,7 +25,10 @@ class TestConcurrency:
 
     @pytest.fixture
     def client(
-        self, mock_openai: None, monkeypatch: pytest.MonkeyPatch, mock_store: object
+        self,
+        mock_openai: None,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_store: SimpleMockStore,
     ) -> Generator[TestClient, None, None]:
         """Create test client with mocked dependencies."""
         from ragzoom.api import get_service_container
@@ -50,12 +56,16 @@ class TestConcurrency:
                 from ragzoom.services.indexing_service import IndexingService
                 from ragzoom.services.query_service import QueryService
 
-                self.document_service = DocumentService(cast(Any, self.store))
+                self.document_service = DocumentService(cast(StoreManager, self.store))
                 self.indexing_service = IndexingService(
-                    cast(Any, self.store), self.index_config, self.operational_config
+                    cast(StoreManager, self.store),
+                    self.index_config,
+                    self.operational_config,
                 )
                 self.query_service = QueryService(
-                    cast(Any, self.store), self.query_config, self.operational_config
+                    cast(StoreManager, self.store),
+                    self.query_config,
+                    self.operational_config,
                 )
 
             def close(self) -> None:
@@ -89,7 +99,7 @@ class TestConcurrency:
         assert response.status_code == 200
 
         # Make concurrent queries
-        async def make_query(query_num: int) -> Any:
+        async def make_query(query_num: int) -> Response:
             response = client.post(
                 "/query",
                 json={"query": f"Test query {query_num}", "document_id": "test-doc"},
@@ -130,7 +140,7 @@ class TestConcurrency:
     async def test_concurrent_indexing(self, client: TestClient) -> None:
         """Test concurrent document indexing."""
 
-        async def index_doc(doc_num: int) -> Any:
+        async def index_doc(doc_num: int) -> Response:
             response = client.post(
                 "/index",
                 json={

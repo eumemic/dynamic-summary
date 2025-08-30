@@ -1,7 +1,11 @@
 """Test budget guarantees in retrieval and assembly."""
 
-from collections.abc import Generator
-from typing import Any, cast
+from collections.abc import Callable, Generator
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ragzoom.interfaces import StoreInterface
+    from tests.conftest import BackwardCompatibilityConfig
 from unittest.mock import Mock
 
 import pytest
@@ -17,10 +21,16 @@ class TestBudgetGuarantee:
     """Test that budget guarantees are enforced by construction."""
 
     @pytest.fixture
-    def setup_system(self, store: Any, config_factory: Any) -> Generator[
+    def setup_system(
+        self,
+        store: "StoreInterface",
+        config_factory: Callable[
+            [int, int, int, str, str | None], "BackwardCompatibilityConfig"
+        ],
+    ) -> Generator[
         tuple[
             tuple[IndexConfig, QueryConfig, OperationalConfig],
-            Any,
+            "StoreInterface",
             TreeBuilder,
             Retriever,
             Assembler,
@@ -66,10 +76,10 @@ class TestBudgetGuarantee:
             # Create services for Retriever
             client = OpenAI(api_key=config.openai_api_key.get_secret_value())
             embedding_service = EmbeddingService(
-                client, cast(Any, doc_store), config.query_config.embedding_model
+                client, doc_store, config.query_config.embedding_model
             )
             budget_planner = BudgetPlanner(
-                cast(Any, doc_store), config.index_config.target_chunk_tokens
+                doc_store, config.index_config.target_chunk_tokens
             )
             retriever = Retriever(
                 config.query_config,
@@ -85,7 +95,16 @@ class TestBudgetGuarantee:
                 config.operational_config,
             ), store, tree_builder, retriever, assembler
 
-    def test_budget_never_exceeded_worst_case(self, setup_system: Any) -> None:
+    def test_budget_never_exceeded_worst_case(
+        self,
+        setup_system: tuple[
+            tuple[IndexConfig, QueryConfig, OperationalConfig],
+            "StoreInterface",
+            TreeBuilder,
+            Retriever,
+            Assembler,
+        ],
+    ) -> None:
         """Test that assembly never exceeds budget even in worst case."""
         (
             (index_config, query_config, operational_config),
@@ -129,7 +148,16 @@ class TestBudgetGuarantee:
                 len(actual_tokens) <= query_config.budget_tokens
             ), f"Actual token count exceeds budget: {len(actual_tokens)} > {query_config.budget_tokens}"
 
-    def test_worst_case_parent_child_extraction(self, setup_system: Any) -> None:
+    def test_worst_case_parent_child_extraction(
+        self,
+        setup_system: tuple[
+            tuple[IndexConfig, QueryConfig, OperationalConfig],
+            "StoreInterface",
+            TreeBuilder,
+            Retriever,
+            Assembler,
+        ],
+    ) -> None:
         """Test worst case where parent-child extraction could double content."""
         (
             (index_config, query_config, operational_config),
@@ -206,7 +234,16 @@ class TestBudgetGuarantee:
             assembled_text.count("First leaf content.") <= 40
         ), "Content was duplicated"
 
-    def test_conservative_num_seeds_calculation(self, setup_system: Any) -> None:
+    def test_conservative_num_seeds_calculation(
+        self,
+        setup_system: tuple[
+            tuple[IndexConfig, QueryConfig, OperationalConfig],
+            "StoreInterface",
+            TreeBuilder,
+            Retriever,
+            Assembler,
+        ],
+    ) -> None:
         """Test that the conservative num_seeds calculation is reasonable and respects budget."""
         (
             (index_config, query_config, operational_config),
@@ -252,7 +289,16 @@ class TestBudgetGuarantee:
                 final_token_count <= budget
             ), f"Budget {budget} exceeded with conservative_num_seeds={conservative_num_seeds}, final tokens={final_token_count}"
 
-    def test_mixed_mode_budget_plus_num_seeds(self, setup_system: Any) -> None:
+    def test_mixed_mode_budget_plus_num_seeds(
+        self,
+        setup_system: tuple[
+            tuple[IndexConfig, QueryConfig, OperationalConfig],
+            "StoreInterface",
+            TreeBuilder,
+            Retriever,
+            Assembler,
+        ],
+    ) -> None:
         """Test mixed mode where both budget and num_seeds are specified."""
         (
             (index_config, query_config, operational_config),
@@ -321,11 +367,9 @@ class TestBudgetGuarantee:
                 api_key=operational_config.openai_api_key.get_secret_value()
             )
             embedding_service = EmbeddingService(
-                client, cast(Any, store), query_config.embedding_model
+                client, store, query_config.embedding_model
             )
-            budget_planner = BudgetPlanner(
-                cast(Any, store), index_config.target_chunk_tokens
-            )
+            budget_planner = BudgetPlanner(store, index_config.target_chunk_tokens)
 
             doc_store = store.for_document(None)
             retriever = Retriever(

@@ -1,12 +1,12 @@
 """Tests for document API endpoints."""
 
 from collections.abc import Generator
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from ragzoom.api import app
+from tests.mock_store import SimpleMockStore
 from tests.utils import mock_openai_context
 
 
@@ -22,7 +22,10 @@ class TestDocumentAPI:
 
     @pytest.fixture
     def client(
-        self, mock_openai: None, monkeypatch: pytest.MonkeyPatch, mock_store: Any
+        self,
+        mock_openai: None,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_store: SimpleMockStore,
     ) -> Generator[TestClient, None, None]:
         """Create test client with mocked dependencies."""
         from ragzoom.api import get_service_container
@@ -47,13 +50,18 @@ class TestDocumentAPI:
                     openai_api_key=SecretStr("test-key")
                 )
 
+                from typing import cast
+
+                from ragzoom.store import StoreManager
+
                 self.store = mock_store
-                self.document_service = DocumentService(self.store)
+                store_manager = cast(StoreManager, self.store)
+                self.document_service = DocumentService(store_manager)
                 self.indexing_service = IndexingService(
-                    self.store, self.index_config, self.operational_config
+                    store_manager, self.index_config, self.operational_config
                 )
                 self.query_service = QueryService(
-                    self.store, self.query_config, self.operational_config
+                    store_manager, self.query_config, self.operational_config
                 )
 
             def close(self) -> None:

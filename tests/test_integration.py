@@ -5,9 +5,19 @@ retrieval to final assembly, using mock OpenAI clients.
 """
 
 from collections.abc import Generator
-from typing import Any
+from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ragzoom.index import TreeBuilder
+    from ragzoom.store import StoreManager
+    from tests.conftest import BackwardCompatibilityConfig
+
+    TreeBuilderFactory = Callable[[str], TreeBuilder]
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
@@ -24,15 +34,24 @@ class TestIntegration:
     """
 
     @pytest.fixture
-    def mock_openai(self) -> Generator[tuple[Any, Any, Any], None, None]:
+    def mock_openai(self) -> Generator[tuple[Mock, Mock, Mock], None, None]:
         """Mock OpenAI API calls using centralized utilities."""
         with mock_openai_context() as mocks:
             yield mocks
 
     @pytest.fixture
     def temp_system(
-        self, request: Any, mock_openai: tuple[Any, Any, Any], base_config: Any
-    ) -> Generator[tuple[Any, Any, Any, Any], None, None]:
+        self,
+        request: pytest.FixtureRequest,
+        mock_openai: tuple[Mock, Mock, Mock],
+        base_config: "BackwardCompatibilityConfig",
+    ) -> Generator[
+        tuple[
+            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+        ],
+        None,
+        None,
+    ]:
         """Create a complete temporary RagZoom system."""
         # Always use real PostgreSQL store for integration tests
         from tests.conftest import _create_real_store
@@ -112,7 +131,12 @@ class TestIntegration:
                 pass  # Ignore cleanup errors
             real_store.close()
 
-    def test_index_and_query(self, temp_system: tuple[Any, Any, Any, Any]) -> None:
+    def test_index_and_query(
+        self,
+        temp_system: tuple[
+            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+        ],
+    ) -> None:
         """Test indexing a document and querying it."""
         config, store, create_tree_builder, mock_client = temp_system
 
@@ -156,7 +180,12 @@ class TestIntegration:
         assert isinstance(summary, str)
         assert len(summary) > 0
 
-    def test_multiple_documents(self, temp_system: tuple[Any, Any, Any, Any]) -> None:
+    def test_multiple_documents(
+        self,
+        temp_system: tuple[
+            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+        ],
+    ) -> None:
         """Test indexing multiple documents."""
         config, store, create_tree_builder, mock_client = temp_system
 
@@ -187,7 +216,12 @@ class TestIntegration:
         assert len(doc1_nodes) > 0
         assert len(doc2_nodes) > 0
 
-    def test_mmr_diversity(self, temp_system: tuple[Any, Any, Any, Any]) -> None:
+    def test_mmr_diversity(
+        self,
+        temp_system: tuple[
+            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+        ],
+    ) -> None:
         """Test that MMR returns diverse results."""
         config, store, create_tree_builder, mock_client = temp_system
 
@@ -222,7 +256,10 @@ class TestIntegration:
         assert len(set(result.node_ids)) == len(result.node_ids)
 
     def test_token_budget_enforcement(
-        self, temp_system: tuple[Any, Any, Any, Any]
+        self,
+        temp_system: tuple[
+            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+        ],
     ) -> None:
         """Test that assembly respects token budget."""
         config, store, create_tree_builder, mock_client = temp_system
@@ -252,7 +289,12 @@ class TestIntegration:
         assert token_count <= 110  # Allow 10% tolerance
         assert len(summary) > 0
 
-    def test_node_pinning(self, temp_system: tuple[Any, Any, Any, Any]) -> None:
+    def test_node_pinning(
+        self,
+        temp_system: tuple[
+            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+        ],
+    ) -> None:
         """Test that pinned nodes are always included."""
         config, store, create_tree_builder, mock_client = temp_system
 

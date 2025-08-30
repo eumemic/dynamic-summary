@@ -1,8 +1,13 @@
 """Tests for coverage tree completeness requirements."""
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from ragzoom.dynamic_tiling import DynamicTilingGenerator
+    from ragzoom.retrieve import Retriever
+    from tests.mock_store import SimpleMockStore
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from tests.mock_store import SimpleMockStore
@@ -12,7 +17,9 @@ class TestCoverageTreeCompleteness:
     """Tests that ensure coverage trees maintain left-balanced properties."""
 
     @pytest.fixture
-    def setup_incomplete_tree(self) -> tuple[Any, Any, Any, Any]:
+    def setup_incomplete_tree(
+        self,
+    ) -> tuple[IndexConfig, "SimpleMockStore", "Retriever", "DynamicTilingGenerator"]:
         """Set up a system with a tree that will produce incomplete coverage."""
         index_config = IndexConfig.load(
             target_chunk_tokens=100, preceding_context_tokens=50
@@ -20,23 +27,8 @@ class TestCoverageTreeCompleteness:
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
-        # Create config wrapper for SimpleMockStore compatibility
-        class LocalTestConfig:
-            def __init__(
-                self,
-                index_config: IndexConfig,
-                query_config: QueryConfig,
-                operational_config: OperationalConfig,
-            ) -> None:
-                self.index_config = index_config
-                self.query_config = query_config
-                self.operational_config = operational_config
-                self.target_chunk_tokens = index_config.target_chunk_tokens
-                self.preceding_context_tokens = index_config.preceding_context_tokens
-                self.budget_tokens = query_config.budget_tokens
-
-        config = LocalTestConfig(index_config, query_config, operational_config)
-        store = SimpleMockStore(config=config)
+        # Use index_config directly for SimpleMockStore compatibility
+        store = SimpleMockStore(config=index_config)
 
         # Create a simple tree structure:
         #         root
@@ -123,18 +115,21 @@ class TestCoverageTreeCompleteness:
 
         retriever = create_retriever(
             query_config,
-            store,
+            store,  # type: ignore[arg-type]
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
         dp_generator = retriever.dp_generator
 
-        return config, store, retriever, dp_generator
+        return index_config, store, retriever, dp_generator
 
     def test_left_balanced_tree_single_child_handling(
-        self, setup_incomplete_tree: Any
+        self,
+        setup_incomplete_tree: tuple[
+            IndexConfig, "SimpleMockStore", "Retriever", "DynamicTilingGenerator"
+        ],
     ) -> None:
         """Test that left-balanced trees with single children are handled correctly."""
-        config, store, retriever, dp_generator = setup_incomplete_tree
+        index_config, store, retriever, dp_generator = setup_incomplete_tree
 
         # Simulate what happens with --num-seeds 1: only L3 is selected
         # This creates a left-balanced coverage tree where P2 has only its left child
@@ -188,9 +183,14 @@ class TestCoverageTreeCompleteness:
         assert result.tiling.node_ids  # Should have some result
         assert result.total_quality >= 0  # Should have non-negative quality
 
-    def test_complete_coverage_tree_works(self, setup_incomplete_tree: Any) -> None:
+    def test_complete_coverage_tree_works(
+        self,
+        setup_incomplete_tree: tuple[
+            IndexConfig, "SimpleMockStore", "Retriever", "DynamicTilingGenerator"
+        ],
+    ) -> None:
         """Test that complete coverage trees work correctly."""
-        config, store, retriever, dp_generator = setup_incomplete_tree
+        index_config, store, retriever, dp_generator = setup_incomplete_tree
 
         # Create a complete coverage tree by including all nodes
         nodes = {}
@@ -212,10 +212,13 @@ class TestCoverageTreeCompleteness:
         assert len(result.tiling.node_ids) > 0
 
     def test_coverage_tree_with_siblings_included(
-        self, setup_incomplete_tree: Any
+        self,
+        setup_incomplete_tree: tuple[
+            IndexConfig, "SimpleMockStore", "Retriever", "DynamicTilingGenerator"
+        ],
     ) -> None:
         """Test the correct way to build coverage tree with siblings."""
-        config, store, retriever, dp_generator = setup_incomplete_tree
+        index_config, store, retriever, dp_generator = setup_incomplete_tree
 
         # Start with selected node
         selected_nodes = ["L3"]

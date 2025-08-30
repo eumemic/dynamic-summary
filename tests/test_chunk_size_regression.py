@@ -1,6 +1,6 @@
 """Regression test for chunk size issue where chunks were 4x larger than configured."""
 
-from typing import Any
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,7 +8,9 @@ import pytest
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
+from ragzoom.store import StoreManager
 from ragzoom.utils.tokenization import tokenizer
+from tests.mock_store import SimpleMockStore
 
 
 class TestChunkSizeRegression:
@@ -91,7 +93,7 @@ class TestChunkSizeRegression:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_indexed_chunks_have_correct_size(
-        self, store: Any, monkeypatch: Any
+        self, store: SimpleMockStore | StoreManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Test that indexed chunks in the database have the correct token size."""
         # Set up test environment
@@ -120,12 +122,12 @@ class TestChunkSizeRegression:
         mock_async_client = MagicMock()
 
         # Mock embeddings (one per chunk) - needs to be async
-        async def mock_embeddings(*args: Any, **kwargs: Any) -> MagicMock:
+        async def mock_embeddings(*args: object, **kwargs: object) -> MagicMock:
             # Get the actual number of input texts
             input_texts = kwargs.get("input", [])
             if isinstance(input_texts, str):
                 input_texts = [input_texts]
-            num_embeddings = len(input_texts)
+            num_embeddings = len(cast(list[str], input_texts))
             return MagicMock(
                 data=[MagicMock(embedding=[0.1] * 1536) for _ in range(num_embeddings)]
             )
@@ -133,7 +135,7 @@ class TestChunkSizeRegression:
         mock_async_client.embeddings.create.side_effect = mock_embeddings
 
         # Mock summaries with mid delimiters - needs to be async
-        async def mock_chat_completion(*args: Any, **kwargs: Any) -> MagicMock:
+        async def mock_chat_completion(*args: object, **kwargs: object) -> MagicMock:
             response = MagicMock()
             response.choices[0].message.content = "Summary of part 1 and part 2"
             return response
@@ -159,12 +161,11 @@ class TestChunkSizeRegression:
             await builder.add_document_async(test_doc)
 
         # Check leaf node sizes
-        leaf_nodes = []
         with store.SessionLocal() as session:
             from ragzoom.models import TreeNode
 
             # Leaf nodes have no children
-            leaf_nodes = (
+            leaf_nodes: list[TreeNode] = (
                 session.query(TreeNode)
                 .filter(
                     TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
@@ -197,10 +198,11 @@ class TestChunkSizeRegression:
             ), f"Leaf node {node.id} (chunk {i+1}/{len(leaf_nodes)}) has {token_count} tokens, expected ~{index_config.target_chunk_tokens}"
 
         # Check that parent nodes (summaries) are also reasonable size
-        parent_nodes = []
         with store.SessionLocal() as session:
+            from ragzoom.models import TreeNode
+
             # Parent nodes have children
-            parent_nodes = (
+            parent_nodes: list[TreeNode] = (
                 session.query(TreeNode)
                 .filter(
                     (TreeNode.left_child_id.isnot(None))

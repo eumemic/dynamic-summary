@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
@@ -183,7 +183,7 @@ def test_query_performance(num_seeds: int, budget_tokens: int, query_type: str) 
             "total_time",
         ]
 
-        statistics_summary: dict[str, Any] = {"num_runs": num_runs}
+        statistics_summary: dict[str, object] = {"num_runs": num_runs}
 
         # Calculate statistics for each phase
         for phase in timing_phases:
@@ -250,8 +250,8 @@ def test_query_performance(num_seeds: int, budget_tokens: int, query_type: str) 
             f"\n=== Query Performance ({query_type}, seeds={num_seeds}, budget={budget_tokens}) ==="
         )
         print(f"Runs: {num_runs}")
-        total_stats = statistics_summary["total_time"]
-        embedding_stats = statistics_summary["embedding_time"]
+        total_stats = cast(dict[str, float], statistics_summary["total_time"])
+        embedding_stats = cast(dict[str, float], statistics_summary["embedding_time"])
         print(f"Total time: {total_stats['median']:.3f}s (median)")
         print(f"  ± {total_stats['std_dev']:.3f}s std dev")
         print(f"  Range: {total_stats['min']:.3f}s - {total_stats['max']:.3f}s")
@@ -285,9 +285,15 @@ def test_query_performance(num_seeds: int, budget_tokens: int, query_type: str) 
 
         # Basic validation using median run
         median_metrics: QueryMetricsDict = median_telemetry["metrics"]
+        output_tokens_val = median_metrics["output_tokens"]
+        output_tokens = (
+            output_tokens_val
+            if isinstance(output_tokens_val, int)
+            else int(output_tokens_val)
+        )
         assert (
-            median_metrics["output_tokens"] <= budget_tokens
-        ), f"Output exceeded budget: {median_metrics['output_tokens']} > {budget_tokens}"
+            output_tokens <= budget_tokens
+        ), f"Output exceeded budget: {output_tokens} > {budget_tokens}"
         assert median_metrics["tiling_size"] > 0, "No nodes in tiling"
         assert total_stats["median"] > 0, "Invalid timing"
 

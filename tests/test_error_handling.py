@@ -1,6 +1,5 @@
 """Tests for error handling patterns and anti-patterns."""
 
-from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -179,7 +178,7 @@ class TestAPIMiddleware:
         error = ValidationError("email", "invalid", "bad format")
 
         http_exc = middleware._convert_to_http_exception(error, "req123")
-        detail: dict[str, Any] = http_exc.detail  # type: ignore[assignment]
+        detail: dict[str, object] = http_exc.detail  # type: ignore[assignment]
 
         assert detail["type"] == "ValidationError"
         assert detail["category"] == "validation"

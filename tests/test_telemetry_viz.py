@@ -4,10 +4,13 @@ import json
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
 
 # Skip all tests in this module if matplotlib is not available
 pytest.importorskip("matplotlib")
@@ -62,14 +65,14 @@ class TestTelemetryVisualizer:
         self, visualizer: TelemetryVisualizer, temp_output_dir: Path
     ) -> None:
         """Test loading benchmark data from JSON."""
-        test_data = {"test": "data"}
+        test_data: dict[str, object] = {"test": "data"}
         test_file = temp_output_dir / "test.json"
 
         with open(test_file, "w") as f:
             json.dump(test_data, f)
 
         loaded_data = visualizer.load_benchmark_data(test_file)
-        assert cast(Any, loaded_data) == test_data
+        assert loaded_data == test_data
 
     def test_calculate_histogram_bins_small_discrete(
         self, visualizer: TelemetryVisualizer
@@ -161,7 +164,10 @@ class TestTelemetryVisualizer:
         # PNG creation is mocked, so we just verify the method was called
 
     def test_visualize_benchmark_without_telemetry(
-        self, visualizer: TelemetryVisualizer, temp_output_dir: Path, capsys: object
+        self,
+        visualizer: TelemetryVisualizer,
+        temp_output_dir: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Test handling of benchmark file without telemetry data."""
         test_data = {"config": {"leaf_tokens": 200}, "metrics": {}}
@@ -173,7 +179,7 @@ class TestTelemetryVisualizer:
         visualizer.visualize_single_benchmark(test_file)
 
         # Check warning was printed
-        captured = cast(Any, capsys).readouterr()
+        captured = capsys.readouterr()
         assert "No telemetry data found" in captured.out
 
     @patch("matplotlib.pyplot.show")
@@ -578,33 +584,33 @@ class TestVisualizationPerformance:
             original_get_xlim = Axes.get_xlim
             original_get_ylim = Axes.get_ylim
 
-            def counting_set_xlim(self: Any, *args: object, **kwargs: object) -> None:
+            def counting_set_xlim(
+                self: "Axes", *args: object, **kwargs: object
+            ) -> object:
                 nonlocal set_lim_count
                 set_lim_count += 1
-                original_set_xlim(
-                    self, *cast(tuple[Any, ...], args), **cast(dict[str, Any], kwargs)
-                )
+                return original_set_xlim(self, *args, **kwargs)  # type: ignore[arg-type]
 
-            def counting_set_ylim(self: Any, *args: object, **kwargs: object) -> None:
+            def counting_set_ylim(
+                self: "Axes", *args: object, **kwargs: object
+            ) -> object:
                 nonlocal set_lim_count
                 set_lim_count += 1
-                original_set_ylim(
-                    self, *cast(tuple[Any, ...], args), **cast(dict[str, Any], kwargs)
-                )
+                return original_set_ylim(self, *args, **kwargs)  # type: ignore[arg-type]
 
             def counting_get_xlim(
-                self: Any, *args: object, **kwargs: object
+                self: "Axes", *args: object, **kwargs: object
             ) -> tuple[float, float]:
                 nonlocal get_lim_count
                 get_lim_count += 1
-                return original_get_xlim(self, *args, **kwargs)
+                return original_get_xlim(self, *args, **kwargs)  # type: ignore[arg-type]
 
             def counting_get_ylim(
-                self: Any, *args: object, **kwargs: object
+                self: "Axes", *args: object, **kwargs: object
             ) -> tuple[float, float]:
                 nonlocal get_lim_count
                 get_lim_count += 1
-                return original_get_ylim(self, *args, **kwargs)
+                return original_get_ylim(self, *args, **kwargs)  # type: ignore[arg-type]
 
             with (
                 patch.object(Axes, "set_xlim", counting_set_xlim),

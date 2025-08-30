@@ -7,12 +7,16 @@ These tests verify the DP tiling algorithm's correctness, including:
 - Budget constraints
 """
 
-from typing import Any
+from collections.abc import Generator
+from unittest.mock import Mock
 
 import pytest
+from pytest import MonkeyPatch
 
 from ragzoom.assemble import Assembler
 from ragzoom.index import TreeBuilder
+from ragzoom.interfaces import StoreInterface
+from tests.conftest import BackwardCompatibilityConfig
 from tests.utils import (
     create_hash_based_embedding_mock,
     create_predictable_summary_mock,
@@ -28,16 +32,19 @@ class TestDPIntegration:
     """
 
     @pytest.fixture
-    def config(self, config_factory: Any) -> Any:
+    def config(self, config_factory: object) -> BackwardCompatibilityConfig:
         """Create test configuration."""
-        return config_factory(
+        config = config_factory(  # type: ignore[operator]
             target_chunk_tokens=50,
             preceding_context_tokens=0,
             budget_tokens=500,
         )
+        return config  # type: ignore[no-any-return]
 
     @pytest.fixture
-    def mock_openai(self, monkeypatch: Any) -> Any:
+    def mock_openai(
+        self, monkeypatch: MonkeyPatch
+    ) -> Generator[tuple[Mock, Mock], None, None]:
         """Mock OpenAI for consistent embeddings and summaries."""
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
@@ -56,7 +63,11 @@ class TestDPIntegration:
 
     @pytest.mark.asyncio
     async def test_no_duplicate_content(
-        self, config: Any, store: Any, mock_openai: Any, monkeypatch: Any
+        self,
+        config: BackwardCompatibilityConfig,
+        store: StoreInterface,
+        mock_openai: tuple[object, object],
+        monkeypatch: MonkeyPatch,
     ) -> None:
         """Test that the full DP pipeline produces no duplicate content."""
         mock_client, mock_async_client = mock_openai
@@ -81,8 +92,10 @@ class TestDPIntegration:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
+        # Type assertion for test compatibility
+        assert hasattr(doc_store, "nodes"), "Expected DocumentStore-like object"
         tree_builder = TreeBuilder(
-            config.index_config, doc_store, api_key=config.openai_api_key
+            config.index_config, doc_store, api_key=config.openai_api_key  # type: ignore[arg-type]
         )
         await tree_builder.add_document_async(document, show_progress=False)
 
@@ -91,16 +104,16 @@ class TestDPIntegration:
 
         retriever = create_retriever(
             config.query_config,
-            store,
+            doc_store,  # type: ignore[arg-type]
             document_id="doc1",  # Specify the document we indexed
-            api_key=config.openai_api_key.get_secret_value(),
-            client=mock_client,  # Pass the mocked client
+            api_key=config.openai_api_key,
+            client=mock_client,  # type: ignore[arg-type]
         )
         query = "First chunk Second chunk"  # Query that should match the first half
         result = await retriever.retrieve_async(query, document_id="doc1")
 
         # Assemble the result
-        assembler = Assembler(store)
+        assembler = Assembler(doc_store)  # type: ignore[arg-type]
         assembled = assembler.assemble(result)
         # With the new leaf node behavior, check for no duplicate content
         # Count occurrences of each unique line
@@ -120,7 +133,11 @@ class TestDPIntegration:
 
     @pytest.mark.asyncio
     async def test_parent_child_deduplication(
-        self, config: Any, store: Any, mock_openai: Any, monkeypatch: Any
+        self,
+        config: BackwardCompatibilityConfig,
+        store: StoreInterface,
+        mock_openai: tuple[object, object],
+        monkeypatch: MonkeyPatch,
     ) -> None:
         """Test that DP tiling doesn't include both parent and child."""
         from tests.utils import create_retriever
@@ -146,27 +163,31 @@ class TestDPIntegration:
         )
         tree_builder = TreeBuilder(
             config=small_config,
-            document_store=doc_store,
-            api_key=config.openai_api_key.get_secret_value(),
+            document_store=doc_store,  # type: ignore[arg-type]
+            api_key=config.openai_api_key,
         )
         await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve
         retriever = create_retriever(
             config.query_config,
-            store,
+            doc_store,  # type: ignore[arg-type]
             document_id="doc1",  # Specify the document we indexed
-            api_key=config.openai_api_key.get_secret_value(),
-            client=mock_client,  # Pass the mocked client
+            api_key=config.openai_api_key,
+            client=mock_client,  # type: ignore[arg-type]
         )
         result = await retriever.retrieve_async("test document", document_id="doc1")
 
         # Check tiling doesn't have both parent and child
         # Extract unique node IDs from tiling
-        tiling_node_ids = list(set(result.tiling))  # tiling is now a list of node IDs
-        tiling_nodes = [store.nodes.get_node(nid) for nid in tiling_node_ids]
-        for i, node in enumerate(tiling_nodes):
-            for j, other in enumerate(tiling_nodes):
+        tiling_node_ids = list(
+            set(result.tiling or [])
+        )  # tiling is now a list of node IDs
+        tiling_nodes = [doc_store.nodes.get_node(nid) for nid in tiling_node_ids]  # type: ignore[attr-defined]
+        # Filter out None nodes for type safety
+        valid_nodes = [node for node in tiling_nodes if node is not None]
+        for i, node in enumerate(valid_nodes):
+            for j, other in enumerate(valid_nodes):
                 if i != j:
                     # Check if one is ancestor of the other
                     if (
@@ -179,7 +200,11 @@ class TestDPIntegration:
 
     @pytest.mark.asyncio
     async def test_span_coverage(
-        self, config: Any, store: Any, mock_openai: Any, monkeypatch: Any
+        self,
+        config: BackwardCompatibilityConfig,
+        store: StoreInterface,
+        mock_openai: tuple[object, object],
+        monkeypatch: MonkeyPatch,
     ) -> None:
         """Test that the assembled text covers the document span correctly."""
         from tests.utils import create_retriever
@@ -205,24 +230,24 @@ class TestDPIntegration:
         )
         tree_builder = TreeBuilder(
             config=small_config,
-            document_store=doc_store,
-            api_key=config.openai_api_key.get_secret_value(),
+            document_store=doc_store,  # type: ignore[arg-type]
+            api_key=config.openai_api_key,
         )
         await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve with different queries
         retriever = create_retriever(
             config.query_config,
-            store,
+            doc_store,  # type: ignore[arg-type]
             document_id="doc1",  # Specify the document we indexed
-            api_key=config.openai_api_key.get_secret_value(),
-            client=mock_client,  # Pass the mocked client
+            api_key=config.openai_api_key,
+            client=mock_client,  # type: ignore[arg-type]
         )
 
         # Patch retriever client for sync
         # Query for first half
         result1 = await retriever.retrieve_async("AAAA BBBB", document_id="doc1")
-        assembler = Assembler(store)
+        assembler = Assembler(doc_store)  # type: ignore[arg-type]
         assembled1 = assembler.assemble(result1)
         # Should contain content from first half
         # Note: This test might be flaky due to how the tree is built with very small chunks
@@ -239,7 +264,11 @@ class TestDPIntegration:
 
     @pytest.mark.asyncio
     async def test_budget_respected(
-        self, config: Any, store: Any, mock_openai: Any, monkeypatch: Any
+        self,
+        config: BackwardCompatibilityConfig,
+        store: StoreInterface,
+        mock_openai: tuple[object, object],
+        monkeypatch: MonkeyPatch,
     ) -> None:
         """Test that DP respects token budget."""
         from tests.utils import create_retriever
@@ -265,25 +294,25 @@ class TestDPIntegration:
         )
         tree_builder = TreeBuilder(
             config=config.index_config,
-            document_store=doc_store,
-            api_key=config.openai_api_key.get_secret_value(),
+            document_store=doc_store,  # type: ignore[arg-type]
+            api_key=config.openai_api_key,
         )
         await tree_builder.add_document_async(document, show_progress=False)
 
         # Retrieve with budget
         retriever = create_retriever(
             small_query_config,
-            store,
+            doc_store,  # type: ignore[arg-type]
             document_id="doc1",  # Specify the document we indexed
-            api_key=config.openai_api_key.get_secret_value(),
-            client=mock_client,  # Pass the mocked client
+            api_key=config.openai_api_key,
+            client=mock_client,  # type: ignore[arg-type]
         )
         result = await retriever.retrieve_async(
             "Sentence", document_id="doc1", budget_tokens=100
         )
 
         # Assemble
-        assembler = Assembler(store)
+        assembler = Assembler(doc_store)  # type: ignore[arg-type]
         assembled = assembler.assemble(result)
 
         # Count tokens

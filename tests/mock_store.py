@@ -2,14 +2,16 @@
 
 import hashlib
 from collections import OrderedDict, defaultdict, deque
+from collections.abc import Iterator
 from contextlib import contextmanager
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import cast
 from unittest.mock import MagicMock
 
 import numpy as np
 from numpy.typing import NDArray
 
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.interfaces import NodeData, SearchMetadata, StoreInterface
 from ragzoom.models import Document, TreeNode
 
@@ -46,7 +48,9 @@ class SimpleMockStore(StoreInterface):
 
     PIN_DEPTH_MAX = 2  # Match Store class constant
 
-    def __init__(self, config: Any = None) -> None:
+    def __init__(
+        self, config: IndexConfig | QueryConfig | OperationalConfig | None = None
+    ) -> None:
         self.config = config
         self._nodes: dict[str, SimpleNamespace] = {}
         self.embeddings: dict[str, list[float]] = {}
@@ -56,7 +60,7 @@ class SimpleMockStore(StoreInterface):
         # Transaction state tracking
         self._active_transaction = False
         # Transaction snapshot for rollback simulation
-        self._transaction_snapshot: dict[str, Any] | None = None
+        self._transaction_snapshot: dict[str, object] | None = None
 
         # State tracking
         self.pinned_nodes: set[str] = set()
@@ -66,7 +70,7 @@ class SimpleMockStore(StoreInterface):
         self.document_id: str | None = None
 
         # Cache simulation
-        self._node_cache: OrderedDict[str, Any] = OrderedDict()
+        self._node_cache: OrderedDict[str, SimpleNamespace] = OrderedDict()
         self._cache_order: deque[str] = deque(maxlen=1000)
 
         # Track expected embedding dimension
@@ -80,7 +84,7 @@ class SimpleMockStore(StoreInterface):
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=None)
 
-        def mock_query(model_class: Any) -> Any:
+        def mock_query(model_class: type[TreeNode] | type[Document]) -> MagicMock:
             query_mock = MagicMock()
 
             # Determine model type
@@ -100,7 +104,7 @@ class SimpleMockStore(StoreInterface):
                 query_mock.count.return_value = 0
 
             # Add filter_by support
-            def mock_filter_by(**kwargs: Any) -> Any:
+            def mock_filter_by(**kwargs: str | int | float | bool | None) -> MagicMock:
                 filtered_query = MagicMock()
 
                 if is_treenode:
@@ -124,7 +128,7 @@ class SimpleMockStore(StoreInterface):
                     filtered_query.delete.return_value = len(filtered_nodes)
 
                     # Add support for chained .filter() calls
-                    def mock_filter(*args: Any) -> Any:
+                    def mock_filter(*args: object) -> MagicMock:
                         # Filter for leaf nodes (left_child_id.is_(None), right_child_id.is_(None))
                         further_filtered = []
                         for node in filtered_nodes:
@@ -222,10 +226,10 @@ class SimpleMockStore(StoreInterface):
                     mock_store.get_document_embedding_model
                 )
 
-            def __getitem__(self, key: str) -> Any:
+            def __getitem__(self, key: str) -> SimpleNamespace:
                 return self._store._documents[key]
 
-            def __setitem__(self, key: str, value: Any) -> None:
+            def __setitem__(self, key: str, value: SimpleNamespace) -> None:
                 self._store._documents[key] = value
 
             def __delitem__(self, key: str) -> None:
@@ -234,27 +238,29 @@ class SimpleMockStore(StoreInterface):
             def __contains__(self, key: str) -> bool:
                 return key in self._store._documents
 
-            def __iter__(self) -> Any:
+            def __iter__(self) -> Iterator[str]:
                 return iter(self._store._documents)
 
             def __len__(self) -> int:
                 return len(self._store._documents)
 
-            def values(self) -> Any:
-                return self._store._documents.values()
+            def values(self) -> Iterator[SimpleNamespace]:
+                return iter(self._store._documents.values())
 
-            def keys(self) -> Any:
-                return self._store._documents.keys()
+            def keys(self) -> Iterator[str]:
+                return iter(self._store._documents.keys())
 
-            def items(self) -> Any:
-                return self._store._documents.items()
+            def items(self) -> Iterator[tuple[str, SimpleNamespace]]:
+                return iter(self._store._documents.items())
 
-            def get(self, key: str, default: Any = None) -> Any:
+            def get(
+                self, key: str, default: SimpleNamespace | None = None
+            ) -> SimpleNamespace | None:
                 return self._store._documents.get(key, default)
 
-        self.documents: Any = DocumentsProperty(self)
+        self.documents: DocumentsProperty = DocumentsProperty(self)
 
-    def for_document(self, document_id: str | None) -> Any:
+    def for_document(self, document_id: str | None) -> MagicMock:
         """Create a mock document store for testing."""
         # Return a mock DocumentStore-like object that delegates to this mock store
         mock_doc_store = MagicMock()
@@ -336,11 +342,23 @@ class SimpleMockStore(StoreInterface):
         ]
 
         # Add set_metadata method needed by IndexingService
-        def _set_metadata(**kwargs: Any) -> None:
+        def _set_metadata(
+            file_path: str | None = None,
+            content_hash: str | None = None,
+            chunk_count: int = 0,
+            embedding_model: str | None = None,
+            summary_model: str | None = None,
+        ) -> None:
             # Save the current document_id, set it temporarily for the method call
             old_doc_id = self.document_id
             self.document_id = document_id
-            self.set_metadata(**kwargs)
+            self.set_metadata(
+                file_path=file_path,
+                content_hash=content_hash,
+                chunk_count=chunk_count,
+                embedding_model=embedding_model,
+                summary_model=summary_model,
+            )
             self.document_id = old_doc_id
 
         mock_doc_store.set_metadata = _set_metadata
@@ -448,7 +466,7 @@ class SimpleMockStore(StoreInterface):
         return node  # type: ignore[return-value]  # Mock returns SimpleNamespace for test flexibility
 
     def add_nodes_batch(
-        self, nodes_data: list[NodeData], *, session: Any = None
+        self, nodes_data: list[NodeData], *, session: object = None
     ) -> list[TreeNode]:
         """Add multiple nodes in batch - mock implementation."""
         nodes = []
@@ -480,7 +498,7 @@ class SimpleMockStore(StoreInterface):
         return nodes
 
     def update_parent_references_batch(
-        self, updates: list[tuple[str, str]], *, session: Any = None
+        self, updates: list[tuple[str, str]], *, session: object = None
     ) -> None:
         """Update parent references in batch - mock implementation."""
         for node_id, parent_id in updates:
@@ -748,12 +766,12 @@ class SimpleMockStore(StoreInterface):
         """Get a document by file path."""
         for doc in self.documents.values():
             if doc.file_path == file_path:
-                return doc  # type: ignore[no-any-return]  # Mock document store compatibility
+                return doc  # type: ignore[return-value]  # Mock document store compatibility
         return None
 
     def get_document_by_id(self, document_id: str) -> Document | None:
         """Get a document by ID."""
-        return self.documents.get(document_id)  # type: ignore[no-any-return]  # Mock document store compatibility
+        return self.documents.get(document_id)  # type: ignore[return-value]  # Mock document store compatibility
 
     def add_document(
         self,
@@ -764,8 +782,8 @@ class SimpleMockStore(StoreInterface):
         embedding_model: str,
         summary_model: str,
         *,
-        session: Any = None,
-    ) -> Any:
+        session: object = None,
+    ) -> MagicMock:
         """Mock add document and return a DocumentStore for it."""
         from datetime import datetime
 
@@ -882,7 +900,7 @@ class SimpleMockStore(StoreInterface):
         total_tokens = sum(node.token_count for node in leaf_nodes)
         return total_tokens // len(leaf_nodes) if leaf_nodes else None
 
-    def delete_document_nodes(self, document_id: str, *, session: Any = None) -> int:
+    def delete_document_nodes(self, document_id: str, *, session: object = None) -> int:
         """Delete all nodes for a document."""
         if document_id not in self.document_nodes:
             return 0
@@ -915,7 +933,7 @@ class SimpleMockStore(StoreInterface):
             "avg_tokens": avg_tokens,
         }
 
-    def clear_document(self, document_id: str, *, session: Any = None) -> int:
+    def clear_document(self, document_id: str, *, session: object = None) -> int:
         """Clear all data for a document, including orphaned nodes and document record."""
         deleted_count = self.delete_document_nodes(document_id, session=session)
         if document_id in self.documents:
@@ -923,7 +941,7 @@ class SimpleMockStore(StoreInterface):
         return deleted_count
 
     @contextmanager
-    def transaction(self) -> Any:
+    def transaction(self) -> Iterator[MagicMock]:
         """Mock transaction context manager with rollback simulation.
 
         Simulates transaction behavior by:
@@ -956,10 +974,18 @@ class SimpleMockStore(StoreInterface):
         except Exception:
             # Rollback - restore from snapshot
             if self._transaction_snapshot:
-                self._documents = self._transaction_snapshot["documents"]
-                self._nodes = self._transaction_snapshot["nodes"]
-                self.embeddings = self._transaction_snapshot["embeddings"]
-                self.document_nodes = self._transaction_snapshot["document_nodes"]
+                self._documents = cast(
+                    dict[str, SimpleNamespace], self._transaction_snapshot["documents"]
+                )
+                self._nodes = cast(
+                    dict[str, SimpleNamespace], self._transaction_snapshot["nodes"]
+                )
+                self.embeddings = cast(
+                    dict[str, list[float]], self._transaction_snapshot["embeddings"]
+                )
+                self.document_nodes = cast(
+                    dict[str, set[str]], self._transaction_snapshot["document_nodes"]
+                )
                 self._transaction_snapshot = None
             raise
         finally:
@@ -970,7 +996,7 @@ class SimpleMockStore(StoreInterface):
         pass  # No-op for mock
 
     @property
-    def node_cache(self) -> OrderedDict[str, Any]:
+    def node_cache(self) -> OrderedDict[str, SimpleNamespace]:
         """Access to node cache for backward compatibility."""
         return self._node_cache
 
@@ -994,7 +1020,7 @@ class SimpleMockStore(StoreInterface):
             self._update_node_path_recursive(root, "", visited)
 
     def _update_node_path_recursive(
-        self, node: Any, path: str, visited: set[str]
+        self, node: SimpleNamespace, path: str, visited: set[str]
     ) -> None:
         """Recursively update node paths in the tree.
 
@@ -1019,7 +1045,7 @@ class SimpleMockStore(StoreInterface):
             right_child = self._nodes[node.right_child_id]
             self._update_node_path_recursive(right_child, path + "1", visited)
 
-    def _add_to_cache(self, node: Any) -> None:
+    def _add_to_cache(self, node: SimpleNamespace) -> None:
         """Add a node to the cache."""
         if len(self._node_cache) >= 1000:
             # Remove oldest item

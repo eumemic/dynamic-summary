@@ -1,7 +1,6 @@
 """Test data builders for creating test fixtures easily."""
 
 from types import SimpleNamespace
-from typing import Any
 
 from ragzoom.models import Document, TreeNode
 
@@ -75,7 +74,7 @@ class TreeNodeBuilder:
 
     def build(
         self, target: str = "model"
-    ) -> TreeNode | SimpleNamespace | dict[str, Any]:
+    ) -> TreeNode | SimpleNamespace | dict[str, object]:
         """Build the node in the specified format.
 
         Args:
@@ -121,7 +120,7 @@ class TreeNodeBuilder:
         assert isinstance(result, SimpleNamespace)
         return result
 
-    def build_dict(self) -> dict[str, Any]:
+    def build_dict(self) -> dict[str, object]:
         """Build a dictionary for batch operations. [DEPRECATED: Use build('dict')]"""
         result = self.build("dict")
         assert isinstance(result, dict)

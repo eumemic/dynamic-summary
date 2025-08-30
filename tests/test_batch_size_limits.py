@@ -1,6 +1,6 @@
 """Test handling of large embedding batches."""
 
-from typing import Any
+from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -61,8 +61,8 @@ class TestBatchSizeLimits:
         """Test that large batches are automatically split."""
 
         # Mock response that returns embeddings matching the input batch size
-        def mock_create(**kwargs: Any) -> Mock:
-            batch_size = len(kwargs["input"])
+        def mock_create(**kwargs: object) -> Mock:
+            batch_size = len(cast(list[str], kwargs["input"]))
             mock_response = Mock()
             mock_response.data = [
                 Mock(embedding=[0.1, 0.2, 0.3]) for _ in range(batch_size)
@@ -98,8 +98,8 @@ class TestBatchSizeLimits:
         """Test that the batch size limit is set correctly."""
 
         # Mock response that returns embeddings matching the input batch size
-        def mock_create(**kwargs: Any) -> Mock:
-            batch_size = len(kwargs["input"])
+        def mock_create(**kwargs: object) -> Mock:
+            batch_size = len(cast(list[str], kwargs["input"]))
             mock_response = Mock()
             mock_response.data = [
                 Mock(embedding=[0.1, 0.2, 0.3]) for _ in range(batch_size)

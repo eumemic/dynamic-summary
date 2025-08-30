@@ -1,6 +1,9 @@
 """Test for session scope regression in IndexingService."""
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
 from unittest.mock import Mock, patch
 
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
@@ -39,7 +42,7 @@ def test_tree_height_accessed_within_session() -> None:
 
         # Create mock root that will raise error if accessed outside session
         class MockRoot:
-            def __getattr__(self, name: str) -> Any:
+            def __getattr__(self, name: str) -> object:
                 if name == "height":
                     # Check if we're still in the context manager
                     if not hasattr(mock_context, "_in_context"):

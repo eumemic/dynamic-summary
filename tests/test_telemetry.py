@@ -1,7 +1,6 @@
 """Test node-level telemetry collection."""
 
 import time
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -228,8 +227,10 @@ class TestTelemetryIntegration:
         mock_async_client = MagicMock()
 
         # Mock embeddings with store-type specific behavior
-        async def mock_embeddings(*args: Any, **kwargs: Any) -> Any:
-            input_texts = kwargs.get("input", [])
+        async def mock_embeddings(*args: object, **kwargs: object) -> object:
+            from typing import cast
+
+            input_texts = cast(list[str] | str, kwargs.get("input", []))
             if isinstance(input_texts, str):
                 input_texts = [input_texts]
             # Return appropriate number of embeddings based on store type
@@ -353,11 +354,15 @@ class TestTelemetryIntegration:
                         # the last attempt should be the one used
                         assert len(node_data["summary_attempts"]) > 0
 
-    def test_telemetry_serialization(self, base_config: Any) -> None:
+    def test_telemetry_serialization(self, base_config: object) -> None:
         """Test that telemetry can be serialized to JSON."""
         import json
+        from typing import cast
 
-        reporter = TelemetryCollector("test", 1000, base_config.index_config)
+        from tests.conftest import BackwardCompatibilityConfig
+
+        config = cast(BackwardCompatibilityConfig, base_config)
+        reporter = TelemetryCollector("test", 1000, config.index_config)
 
         # Create some telemetry
         reporter.track_node_created("node-1", 0)

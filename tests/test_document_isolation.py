@@ -1,12 +1,17 @@
 """Test document isolation - queries should only return results from specified document."""
 
-from typing import Any
+from collections.abc import Generator
 
 import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.index import TreeBuilder
+from ragzoom.retrieval.budget_planner import BudgetPlanner
+from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
+from ragzoom.store import StoreManager
+from tests.conftest import BackwardCompatibilityConfig
+from tests.mock_store import SimpleMockStore
 from tests.utils import mock_openai_context
 
 
@@ -14,7 +19,7 @@ class TestDocumentIsolation:
     """Test that queries are properly isolated to specific documents."""
 
     @pytest.fixture
-    def mock_openai(self) -> Any:
+    def mock_openai(self) -> Generator[dict[str, list[float]], None, None]:
         """Mock OpenAI API calls with specialized embedding rules."""
         embedding_rules = {
             "dragon": [0.9] * 1536,
@@ -24,7 +29,17 @@ class TestDocumentIsolation:
             yield mocks
 
     @pytest.fixture
-    def setup(self, mock_openai: Any, store: Any, base_config: Any) -> Any:
+    def setup(
+        self,
+        mock_openai: dict[str, list[float]],
+        store: SimpleMockStore | StoreManager,
+        base_config: BackwardCompatibilityConfig,
+    ) -> tuple[
+        BackwardCompatibilityConfig,
+        SimpleMockStore | StoreManager,
+        EmbeddingService,
+        BudgetPlanner,
+    ]:
         """Create test environment."""
         from openai import OpenAI
 
@@ -42,7 +57,15 @@ class TestDocumentIsolation:
 
         yield base_config, store, embedding_service, budget_planner
 
-    def test_document_isolation(self, setup: Any) -> None:
+    def test_document_isolation(
+        self,
+        setup: tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            EmbeddingService,
+            BudgetPlanner,
+        ],
+    ) -> None:
         """Test that queries only return results from the specified document."""
         config, store, embedding_service, budget_planner = setup
 
@@ -146,7 +169,15 @@ class TestDocumentIsolation:
             "dragon" not in summary.lower()
         ), "Should not return dragon content when querying wizards doc"
 
-    def test_filename_as_default_document_id(self, setup: Any) -> None:
+    def test_filename_as_default_document_id(
+        self,
+        setup: tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            EmbeddingService,
+            BudgetPlanner,
+        ],
+    ) -> None:
         """Test that filename is used as document_id when not specified."""
         config, store, embedding_service, budget_planner = setup
 
@@ -187,7 +218,15 @@ class TestDocumentIsolation:
             node = store.nodes.get_node(node_id)
             assert node.document_id == "test_file.txt"
 
-    def test_query_without_document_filter(self, setup: Any) -> None:
+    def test_query_without_document_filter(
+        self,
+        setup: tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            EmbeddingService,
+            BudgetPlanner,
+        ],
+    ) -> None:
         """Test that querying without document_id returns results from all documents."""
         config, store, embedding_service, budget_planner = setup
 
