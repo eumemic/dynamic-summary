@@ -1474,29 +1474,20 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
     """Analyze query performance telemetry.
 
     Args:
-        telemetry_data: Query telemetry data or list of telemetry data
+        telemetry_data: Query telemetry data dictionary
 
     Returns:
         QueryPhaseMetrics with aggregated performance metrics
     """
-    # Handle both single telemetry and list of telemetries
-    if isinstance(telemetry_data, dict):
-        format_version = telemetry_data.get("format_version")
-        if format_version in ("1.1", "1.2") and "telemetries" in telemetry_data:
-            # v1.1/v1.2 format with multiple runs and optional pre-calculated statistics
-            telemetries = telemetry_data["telemetries"]
-            statistics_data = telemetry_data.get("statistics", {})
-        elif "telemetry" in telemetry_data:
-            # v1.0 format - single telemetry file
-            telemetries = [telemetry_data["telemetry"]]
-            statistics_data = {}
-        else:
-            # Assume it's already the telemetry dict
-            telemetries = [telemetry_data]
-            statistics_data = {}
-    elif isinstance(telemetry_data, list):
-        # List of telemetry data
-        telemetries = telemetry_data
+    # Handle different telemetry formats
+    format_version = telemetry_data.get("format_version")
+    if format_version in ("1.1", "1.2") and "telemetries" in telemetry_data:
+        # v1.1/v1.2 format with multiple runs and optional pre-calculated statistics
+        telemetries = telemetry_data["telemetries"]
+        statistics_data = telemetry_data.get("statistics", {})
+    elif "telemetry" in telemetry_data:
+        # v1.0 format - single telemetry file
+        telemetries = [telemetry_data["telemetry"]]
         statistics_data = {}
     else:
         # Assume it's already the telemetry dict

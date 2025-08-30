@@ -78,7 +78,7 @@ class ScoringService:
 
         # Collect valid embeddings
         for node in nodes:
-            if node.embedding is not None:
+            if node.embedding:  # Check for non-empty embedding list
                 valid_embeddings.append(node.embedding)
                 valid_node_ids.append(node.id)
             else:

@@ -38,8 +38,7 @@ def sanitize_message(message: str) -> str:
 
 def sanitize_dict(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively sanitize dictionary values to redact sensitive information."""
-    if not isinstance(data, dict):
-        return data
+    # Type annotation ensures data is a dict, no need for runtime check
 
     result: dict[str, Any] = {}
     for key, value in data.items():
@@ -57,8 +56,7 @@ def sanitize_dict(data: dict[str, Any]) -> dict[str, Any]:
 
 def sanitize_list(data: list[Any]) -> list[Any]:
     """Recursively sanitize list values to redact sensitive information."""
-    if not isinstance(data, list):
-        return data
+    # Type annotation ensures data is a list, no need for runtime check
 
     result: list[Any] = []
     for item in data:
@@ -162,11 +160,11 @@ def format_structured_error(
     if hasattr(exc, "document_id"):
         error_data["document_id"] = exc.document_id
     if hasattr(exc, "field"):
-        error_data["field"] = exc.field  # type: ignore[attr-defined]
+        error_data["field"] = exc.field
         if hasattr(exc, "value"):
-            error_data["value"] = sanitize_message(str(exc.value))  # type: ignore[attr-defined]
+            error_data["value"] = sanitize_message(str(exc.value))
         if hasattr(exc, "reason"):
-            error_data["reason"] = sanitize_message(str(exc.reason))  # type: ignore[attr-defined]
+            error_data["reason"] = sanitize_message(str(exc.reason))
 
     if include_traceback:
         import traceback

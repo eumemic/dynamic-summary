@@ -44,6 +44,13 @@ telemetry = [
     "pandas>=1.4.0",
     "numpy>=1.24.0",
 ]
+dev = [
+    "types-tqdm",
+    "pandas-stubs",
+    "types-psutil",
+    "types-seaborn",
+    "tomli>=1.0.0; python_version < '3.11'",
+]
 
 [project.scripts]
 ragzoom = "ragzoom.cli:cli"
@@ -68,10 +75,16 @@ python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-ignore_missing_imports = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
 # SQLAlchemy 2.0 has native type support, no plugin needed
 
-# Per-module options for SQLAlchemy ORM files
+# Temporarily keep overrides while we fix incrementally
 [[tool.mypy.overrides]]
 module = "ragzoom.store"
 disallow_untyped_defs = false
@@ -86,6 +99,28 @@ warn_return_any = false
 module = "ragzoom.assemble"
 disallow_untyped_defs = false
 warn_return_any = false
+
+# External library type issues - to be addressed later
+[[tool.mypy.overrides]]
+module = "pgvector.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tomli"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tomllib"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tqdm"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "ragzoom.progress"
+# Ignore tqdm-related type errors in this module
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

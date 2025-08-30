@@ -719,7 +719,10 @@ class TelemetryCollector:
                 # Fallback: try to read from pyproject.toml in development
                 from pathlib import Path
 
-                import tomllib
+                try:
+                    import tomllib  # Python 3.11+
+                except ImportError:
+                    import tomli as tomllib  # Python 3.10 fallback
 
                 pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
                 if pyproject_path.exists():
