@@ -328,7 +328,9 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     return has_regression
 
 
-def _compare_query_files_silent(baseline_file: Path, current_file: Path) -> dict:
+def _compare_query_files_silent(
+    baseline_file: Path, current_file: Path
+) -> dict[str, Any]:
     """Compare two query telemetry files silently and return results.
 
     Returns:

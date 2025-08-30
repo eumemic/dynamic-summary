@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ragzoom.document_store import DocumentStore
-from ragzoom.store import TreeNode
+from ragzoom.models import TreeNode
 
 logger = logging.getLogger(__name__)
 

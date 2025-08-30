@@ -7,7 +7,8 @@ from typing import Any
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.store import Store, TreeNode
+from ragzoom.models import TreeNode
+from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
 

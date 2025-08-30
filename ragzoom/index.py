@@ -11,10 +11,10 @@ from ragzoom.config import IndexConfig, SecretStr
 from ragzoom.dataflow import build_tree_dataflow
 from ragzoom.dataflow.core import ProcessingStrategy
 from ragzoom.document_store import DocumentStore
+from ragzoom.models import TreeNode
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.services.llm_service import LLMService
 from ragzoom.splitter import TextSplitter
-from ragzoom.store import TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 

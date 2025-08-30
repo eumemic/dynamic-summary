@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 from ragzoom.config import QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
+from ragzoom.models import TreeNode
 from ragzoom.retrieval import (
     BudgetPlanner,
     CoverageBuilder,
@@ -14,7 +15,6 @@ from ragzoom.retrieval import (
     ScoringService,
 )
 from ragzoom.retrieval.telemetry_collector import TelemetryCollector
-from ragzoom.store import TreeNode
 from ragzoom.telemetry_query import QueryTelemetry
 
 if TYPE_CHECKING:

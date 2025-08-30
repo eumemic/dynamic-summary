@@ -208,7 +208,7 @@ class TelemetryVisualizer:
             raise ValueError(f"Unknown plot type: {plot_type}")
 
     def _combine_bounds(
-        self, bounds_list: list[dict]
+        self, bounds_list: list[dict[str, Any]]
     ) -> dict[str, tuple[float, float]]:
         """Combine multiple bounds dicts into unified bounds using min/max.
 
@@ -228,7 +228,7 @@ class TelemetryVisualizer:
         return combined
 
     def _get_plot_bounds(
-        self, telemetries: dict | list[dict], plot_type: str
+        self, telemetries: dict[str, Any] | list[dict[str, Any]], plot_type: str
     ) -> dict[str, tuple[float, float]]:
         """Get combined bounds for a plot type from one or more telemetries.
 
@@ -719,7 +719,7 @@ class TelemetryVisualizer:
         ax.grid(True, alpha=0.3, axis="y")
 
     def _plot_cost_breakdown(
-        self, telemetry: dict[str, Any], ax: Axes, bounds: dict | None = None
+        self, telemetry: dict[str, Any], ax: Axes, bounds: dict[str, Any] | None = None
     ) -> None:
         """Plot cost breakdown by attempt number as vertical stacked bar."""
         # Get cost functions for models in telemetry
@@ -1037,7 +1037,7 @@ class TelemetryVisualizer:
         return deviations
 
     def _plot_summary_scatter(
-        self, telemetry: dict[str, Any], ax: Axes, bounds: dict | None = None
+        self, telemetry: dict[str, Any], ax: Axes, bounds: dict[str, Any] | None = None
     ) -> None:
         """Plot input vs output token scatter plot, color-coded by attempt number."""
         # Extract chunk size (target) and nodes from telemetry data
@@ -1449,7 +1449,7 @@ class TelemetryVisualizer:
         telemetry: dict[str, Any],
         ax: Axes,
         max_y_limit: float | None = None,
-        bounds: dict | None = None,
+        bounds: dict[str, Any] | None = None,
     ) -> None:
         """Plot tree construction as rectangles showing span coverage over time.
 

@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from ragzoom.document_store import DocumentStore
-from ragzoom.store import TreeNode
+from ragzoom.models import TreeNode
 from ragzoom.utils.tokenization import tokenizer as default_tokenizer
 
 logger = logging.getLogger(__name__)

@@ -4,7 +4,8 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
-from ragzoom.store import Document, Store, TreeNode
+from ragzoom.models import Document, TreeNode
+from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
 

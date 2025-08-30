@@ -4,6 +4,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 if TYPE_CHECKING:
     from ragzoom.document_store import DocumentStore
@@ -110,8 +111,8 @@ class ScoringService:
 
     @staticmethod
     def _compute_cosine_similarities_batch(
-        query_vec: np.ndarray, embeddings_matrix: np.ndarray
-    ) -> np.ndarray:
+        query_vec: NDArray[np.float64], embeddings_matrix: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
         """Compute cosine similarities between query and multiple embeddings.
 
         Args:

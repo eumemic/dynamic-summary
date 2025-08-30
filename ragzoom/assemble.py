@@ -3,8 +3,8 @@
 import logging
 
 from ragzoom.document_store import DocumentStore
+from ragzoom.models import TreeNode
 from ragzoom.retrieve import RetrievalResult
-from ragzoom.store import TreeNode
 from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
