@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ragzoom.interfaces import StoreInterface
+    from ragzoom.store import StoreManager
 
 import pytest
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 @pytest.fixture
 def large_document_data() -> (
     Generator[
-        dict[str, list[dict[str, int | str | list[float]]] | str | int], None, None
+        dict[str, list[dict[str, str | int | list[float]]] | str | int], None, None
     ]
 ):
     """Generate test data for a large document with many nodes."""
@@ -30,7 +31,7 @@ def large_document_data() -> (
     document_id = "large_test_document"
 
     # Generate node data
-    nodes_data = []
+    nodes_data: list[dict[str, str | int | list[float]]] = []
     for i in range(num_nodes):
         span_start = i * 10  # 10-character spans
         span_end = span_start + 10
@@ -56,14 +57,14 @@ def large_document_data() -> (
 @pytest.fixture
 def small_document_data() -> (
     Generator[
-        dict[str, list[dict[str, int | str | list[float]]] | str | int], None, None
+        dict[str, list[dict[str, str | int | list[float]]] | str | int], None, None
     ]
 ):
     """Generate test data for a small document to compare performance."""
     num_nodes = 100
     document_id = "small_test_document"
 
-    nodes_data = []
+    nodes_data: list[dict[str, str | int | list[float]]] = []
     for i in range(num_nodes):
         span_start = i * 10
         span_end = span_start + 10
@@ -92,7 +93,7 @@ class TestDatabaseScalability:
     def add_test_nodes(
         self,
         store: "StoreInterface",
-        nodes_data: list[dict[str, int | str | list[float]]],
+        nodes_data: list[dict[str, str | int | list[float]]],
     ) -> None:
         """Helper to add test nodes to the store."""
         for node_data in nodes_data:
@@ -111,13 +112,13 @@ class TestDatabaseScalability:
         self,
         store: "StoreInterface",
         large_document_data: dict[
-            str, list[dict[str, int | str | list[float]]] | str | int
+            str, list[dict[str, str | int | list[float]]] | str | int
         ],
     ) -> None:
         """Test that deletion of 50,000 nodes completes in reasonable time."""
         document_id = cast(str, large_document_data["document_id"])
         nodes_data = cast(
-            list[dict[str, int | str | list[float]]], large_document_data["nodes"]
+            list[dict[str, str | int | list[float]]], large_document_data["nodes"]
         )
         expected_count = cast(int, large_document_data["expected_count"])
 
@@ -129,7 +130,8 @@ class TestDatabaseScalability:
         logger.info(f"Added {expected_count} nodes in {add_duration:.2f}s")
 
         # Verify nodes were added
-        count_before = len(store.for_document(document_id).nodes.get_all())
+        store_manager = cast("StoreManager", store)
+        count_before = len(store_manager.for_document(document_id).nodes.get_all())
         assert count_before == expected_count
 
         # Test deletion performance
@@ -140,7 +142,7 @@ class TestDatabaseScalability:
 
         # Verify deletion
         assert deleted_count == expected_count
-        count_after = len(store.for_document(document_id).nodes.get_all())
+        count_after = len(store_manager.for_document(document_id).nodes.get_all())
         assert count_after == 0
 
         # Performance assertions
@@ -159,13 +161,13 @@ class TestDatabaseScalability:
         self,
         store: "StoreInterface",
         small_document_data: dict[
-            str, list[dict[str, int | str | list[float]]] | str | int
+            str, list[dict[str, str | int | list[float]]] | str | int
         ],
     ) -> None:
         """Test deletion performance with small document for comparison."""
         document_id = cast(str, small_document_data["document_id"])
         nodes_data = cast(
-            list[dict[str, int | str | list[float]]], small_document_data["nodes"]
+            list[dict[str, str | int | list[float]]], small_document_data["nodes"]
         )
         expected_count = cast(int, small_document_data["expected_count"])
 
@@ -188,13 +190,13 @@ class TestDatabaseScalability:
         self,
         store: "StoreInterface",
         large_document_data: dict[
-            str, list[dict[str, int | str | list[float]]] | str | int
+            str, list[dict[str, str | int | list[float]]] | str | int
         ],
     ) -> None:
         """Test that paginated retrieval works correctly with large documents."""
         document_id = cast(str, large_document_data["document_id"])
         nodes_data = cast(
-            list[dict[str, int | str | list[float]]], large_document_data["nodes"]
+            list[dict[str, str | int | list[float]]], large_document_data["nodes"]
         )
         expected_count = cast(int, large_document_data["expected_count"])
 
@@ -209,7 +211,8 @@ class TestDatabaseScalability:
             logger.info(f"Testing paginated retrieval with page_size={page_size}")
             start_time = time.perf_counter()
 
-            batches = store.for_document(document_id).nodes.get_all_paginated(
+            store_manager = cast("StoreManager", store)
+            batches = store_manager.for_document(document_id).nodes.get_all_paginated(
                 page_size=page_size
             )
 
@@ -254,7 +257,8 @@ class TestDatabaseScalability:
         document_id = "boundary_test_doc"
 
         # Test with no nodes
-        batches = store.for_document(document_id).nodes.get_all_paginated()
+        store_manager = cast("StoreManager", store)
+        batches = store_manager.for_document(document_id).nodes.get_all_paginated()
         assert len(batches) == 0
 
         # Add exactly one page worth of nodes
@@ -271,7 +275,7 @@ class TestDatabaseScalability:
             )
 
         # Test retrieval
-        batches = store.for_document(document_id).nodes.get_all_paginated(
+        batches = store_manager.for_document(document_id).nodes.get_all_paginated(
             page_size=page_size
         )
         assert len(batches) == 1
@@ -288,7 +292,7 @@ class TestDatabaseScalability:
             token_count=10,
         )
 
-        batches = store.for_document(document_id).nodes.get_all_paginated(
+        batches = store_manager.for_document(document_id).nodes.get_all_paginated(
             page_size=page_size
         )
         assert len(batches) == 2
@@ -300,11 +304,12 @@ class TestDatabaseScalability:
 
     def test_invalid_page_size(self, store: "StoreInterface") -> None:
         """Test that invalid page sizes are rejected."""
+        store_manager = cast("StoreManager", store)
         with pytest.raises(ValueError, match="page_size must be positive"):
-            store.for_document("test_doc").nodes.get_all_paginated(page_size=0)
+            store_manager.for_document("test_doc").nodes.get_all_paginated(page_size=0)
 
         with pytest.raises(ValueError, match="page_size must be positive"):
-            store.for_document("test_doc").nodes.get_all_paginated(page_size=-1)
+            store_manager.for_document("test_doc").nodes.get_all_paginated(page_size=-1)
 
 
 class TestMemoryEfficiency:
@@ -367,7 +372,8 @@ class TestRegressionPrevention:
         )
 
         # Load into cache
-        node = store.nodes.get_node(node_id)
+        store_manager = cast("StoreManager", store)
+        node = store_manager.nodes.get_node(node_id)
         assert node is not None
         assert node.text == "Cache test node"
 
@@ -376,7 +382,7 @@ class TestRegressionPrevention:
         assert deleted_count == 1
 
         # Node should no longer be accessible
-        node_after_deletion = store.nodes.get_node(node_id)
+        node_after_deletion = store_manager.nodes.get_node(node_id)
         assert node_after_deletion is None
 
     def test_transaction_support_maintained(self, store: "StoreInterface") -> None:
@@ -401,5 +407,6 @@ class TestRegressionPrevention:
         assert deleted_count == 5
 
         # After deletion, nodes should be gone
-        remaining_nodes = store.for_document(document_id).nodes.get_all()
+        store_manager = cast("StoreManager", store)
+        remaining_nodes = store_manager.for_document(document_id).nodes.get_all()
         assert len(remaining_nodes) == 0

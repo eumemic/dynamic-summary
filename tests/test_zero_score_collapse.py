@@ -7,6 +7,7 @@ tiling when ancestors have zero quality scores.
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from tests.mock_store import SimpleMockStore
+from tests.utils import extract_single_config
 
 
 def test_zero_score_collapse_empty_result() -> None:
@@ -16,7 +17,11 @@ def test_zero_score_collapse_empty_result() -> None:
     index_config = IndexConfig.load(target_chunk_tokens=100)
     query_config = QueryConfig()
     operational_config = OperationalConfig()
-    store = SimpleMockStore(config=(index_config, query_config, operational_config))
+    store = SimpleMockStore(
+        config=extract_single_config(
+            (index_config, query_config, operational_config), IndexConfig
+        )
+    )
 
     # Create a tree where only the leaf has a score
     # But the leaf is too expensive for the budget
@@ -134,7 +139,11 @@ def test_zero_score_collapse_to_root() -> None:
     index_config = IndexConfig.load(target_chunk_tokens=100)
     query_config = QueryConfig()
     operational_config = OperationalConfig()
-    store = SimpleMockStore(config=(index_config, query_config, operational_config))
+    store = SimpleMockStore(
+        config=extract_single_config(
+            (index_config, query_config, operational_config), IndexConfig
+        )
+    )
 
     # Create a deeper tree to show collapse behavior
 

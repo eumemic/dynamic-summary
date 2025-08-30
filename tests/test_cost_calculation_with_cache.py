@@ -1,5 +1,6 @@
 """Test cost calculations with cached token discounts."""
 
+from collections.abc import Mapping
 from typing import cast
 
 import pytest
@@ -7,8 +8,8 @@ import pytest
 # Type definitions for telemetry structures
 AttemptDict = dict[str, int | str | float]
 NodeDict = dict[str, str | list[AttemptDict]]
-DocumentDict = dict[str, list[NodeDict]]
-TelemetryDict = dict[str, DocumentDict]
+DocumentDict = list[NodeDict]
+TelemetryDict = dict[str, dict[str, DocumentDict]]
 NodeCostDict = dict[str, float | int]
 CostAnalysisDict = dict[str, dict[str, NodeCostDict] | dict[str, float | int]]
 
@@ -21,7 +22,7 @@ MODEL_PRICING = {
 
 
 def calculate_summary_attempt_cost(
-    attempt: dict[str, object], pricing: dict[str, dict[str, float]]
+    attempt: Mapping[str, object], pricing: dict[str, dict[str, float]]
 ) -> float:
     """Calculate the cost of a single summary attempt with cache discount support."""
     model = attempt.get("model", "")
@@ -31,14 +32,14 @@ def calculate_summary_attempt_cost(
         return 0.0
 
     # Get pricing for the model
-    if model not in pricing:
+    if not isinstance(model, str) or model not in pricing:
         return 0.0
     model_pricing = pricing[model]
 
     # Get token counts
-    prompt_tokens = attempt.get("prompt_tokens", 0)
-    cached_tokens = attempt.get("cached_tokens", 0)
-    completion_tokens = attempt.get("completion_tokens", 0)
+    prompt_tokens = cast(int, attempt.get("prompt_tokens", 0))
+    cached_tokens = cast(int, attempt.get("cached_tokens", 0))
+    completion_tokens = cast(int, attempt.get("completion_tokens", 0))
 
     # Calculate non-cached prompt tokens
     non_cached_tokens = prompt_tokens - cached_tokens
@@ -69,7 +70,10 @@ def analyze_summary_costs(telemetry_data: TelemetryDict) -> CostAnalysisDict:
     }
 
     for doc_id, doc_data in telemetry_data.get("documents", {}).items():
-        for node in doc_data.get("nodes", []):
+        nodes = doc_data
+        if not isinstance(nodes, list):
+            continue
+        for node in nodes:
             node_id = cast(str, node["node_id"])
             attempts = cast(list[AttemptDict], node.get("summary_attempts", []))
 
@@ -238,43 +242,41 @@ def test_calculate_cost_with_high_cache_rate() -> None:
 
 def test_analyze_summary_costs_with_cached_tokens() -> None:
     """Test that analyze_summary_costs correctly aggregates cached token costs."""
-    telemetry_data = {
+    telemetry_data: TelemetryDict = {
         "documents": {
-            "doc1": {
-                "nodes": [
-                    {
-                        "node_id": "node1",
-                        "summary_attempts": [
-                            {
-                                "model": "gpt-4o-mini",
-                                "prompt_tokens": 1000,
-                                "cached_tokens": 0,
-                                "completion_tokens": 100,
-                                "status": "rejected_over",
-                            },
-                            {
-                                "model": "gpt-4o-mini",
-                                "prompt_tokens": 1200,
-                                "cached_tokens": 900,  # 75% cached on retry
-                                "completion_tokens": 95,
-                                "status": "accepted",
-                            },
-                        ],
-                    },
-                    {
-                        "node_id": "node2",
-                        "summary_attempts": [
-                            {
-                                "model": "gpt-4o-mini",
-                                "prompt_tokens": 1000,
-                                "cached_tokens": 0,
-                                "completion_tokens": 100,
-                                "status": "accepted",
-                            }
-                        ],
-                    },
-                ],
-            }
+            "doc1": [
+                {
+                    "node_id": "node1",
+                    "summary_attempts": [
+                        {
+                            "model": "gpt-4o-mini",
+                            "prompt_tokens": 1000,
+                            "cached_tokens": 0,
+                            "completion_tokens": 100,
+                            "status": "rejected_over",
+                        },
+                        {
+                            "model": "gpt-4o-mini",
+                            "prompt_tokens": 1200,
+                            "cached_tokens": 900,  # 75% cached on retry
+                            "completion_tokens": 95,
+                            "status": "accepted",
+                        },
+                    ],
+                },
+                {
+                    "node_id": "node2",
+                    "summary_attempts": [
+                        {
+                            "model": "gpt-4o-mini",
+                            "prompt_tokens": 1000,
+                            "cached_tokens": 0,
+                            "completion_tokens": 100,
+                            "status": "accepted",
+                        }
+                    ],
+                },
+            ]
         }
     }
 
@@ -342,24 +344,22 @@ def test_cost_calculation_with_passthrough_model() -> None:
 
 def test_cost_savings_calculation() -> None:
     """Test calculation of cost savings from caching."""
-    telemetry_data = {
+    telemetry_data: TelemetryDict = {
         "documents": {
-            "doc1": {
-                "nodes": [
-                    {
-                        "node_id": "node1",
-                        "summary_attempts": [
-                            {
-                                "model": "gpt-4o",
-                                "prompt_tokens": 2000,
-                                "cached_tokens": 1800,  # 90% cached
-                                "completion_tokens": 200,
-                                "status": "accepted",
-                            }
-                        ],
-                    }
-                ],
-            }
+            "doc1": [
+                {
+                    "node_id": "node1",
+                    "summary_attempts": [
+                        {
+                            "model": "gpt-4o",
+                            "prompt_tokens": 2000,
+                            "cached_tokens": 1800,  # 90% cached
+                            "completion_tokens": 200,
+                            "status": "accepted",
+                        }
+                    ],
+                }
+            ],
         }
     }
 
@@ -378,40 +378,36 @@ def test_cost_savings_calculation() -> None:
 
 def test_aggregate_costs_across_documents() -> None:
     """Test that costs are correctly aggregated across multiple documents."""
-    telemetry_data = {
+    telemetry_data: TelemetryDict = {
         "documents": {
-            "doc1": {
-                "nodes": [
-                    {
-                        "node_id": "d1_n1",
-                        "summary_attempts": [
-                            {
-                                "model": "gpt-4o-mini",
-                                "prompt_tokens": 1000,
-                                "cached_tokens": 500,
-                                "completion_tokens": 100,
-                                "status": "accepted",
-                            }
-                        ],
-                    }
-                ],
-            },
-            "doc2": {
-                "nodes": [
-                    {
-                        "node_id": "d2_n1",
-                        "summary_attempts": [
-                            {
-                                "model": "gpt-4o-mini",
-                                "prompt_tokens": 1200,
-                                "cached_tokens": 1000,
-                                "completion_tokens": 120,
-                                "status": "accepted",
-                            }
-                        ],
-                    }
-                ],
-            },
+            "doc1": [
+                {
+                    "node_id": "d1_n1",
+                    "summary_attempts": [
+                        {
+                            "model": "gpt-4o-mini",
+                            "prompt_tokens": 1000,
+                            "cached_tokens": 500,
+                            "completion_tokens": 100,
+                            "status": "accepted",
+                        }
+                    ],
+                }
+            ],
+            "doc2": [
+                {
+                    "node_id": "d2_n1",
+                    "summary_attempts": [
+                        {
+                            "model": "gpt-4o-mini",
+                            "prompt_tokens": 1200,
+                            "cached_tokens": 1000,
+                            "completion_tokens": 120,
+                            "status": "accepted",
+                        }
+                    ],
+                }
+            ],
         }
     }
 

@@ -5,7 +5,7 @@ prev_context, left_token_count, and right_token_count to LLMService,
 causing a 102% increase in retry rate.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ragzoom.interfaces import StoreInterface
@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ragzoom.config import IndexConfig
+from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.models import TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
@@ -58,7 +59,7 @@ async def test_process_node_pair_passes_all_parameters(
     left_node, right_node = mock_nodes
 
     config = IndexConfig.load(preceding_context_tokens=75, target_chunk_tokens=200)
-    builder = TreeBuilder(config, mock_store)
+    builder = TreeBuilder(config, cast(DocumentStore, mock_store))
 
     # Capture parameters passed to LLMService._summarize_text
     captured_params: dict[str, object] = {}
@@ -109,7 +110,7 @@ async def test_process_node_pair_passes_all_parameters(
     assert captured_params["reporter"] is mock_reporter
 
     # Verify positional args are correct (self is not included when patching)
-    args = captured_params["args"]
+    args = cast(tuple[object, ...], captured_params["args"])
     assert len(args) == 3  # left_text, right_text, target_tokens
     assert args[0] == "This is the left text content."
     assert args[1] == "This is the right text content."
@@ -126,7 +127,7 @@ async def test_prev_context_affects_prompt(
     left_node, right_node = mock_nodes
 
     config = IndexConfig.load(preceding_context_tokens=75, target_chunk_tokens=200)
-    builder = TreeBuilder(config, mock_store)
+    builder = TreeBuilder(config, cast(DocumentStore, mock_store))
 
     # Test by capturing the parameters passed to _summarize_text
     captured_params_list = []
@@ -190,7 +191,7 @@ async def test_parameter_validation_would_catch_bug(
     left_node, right_node = mock_nodes
 
     config = IndexConfig.load(target_chunk_tokens=200)
-    builder = TreeBuilder(config, mock_store)
+    builder = TreeBuilder(config, cast(DocumentStore, mock_store))
 
     # Track what parameters were actually passed to _summarize_text
     actual_calls = []

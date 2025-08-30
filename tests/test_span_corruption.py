@@ -107,10 +107,19 @@ class TestSpanCorruption:
             # Get all nodes
             all_nodes = session.query(TreeNode).filter_by(document_id=doc_id).all()
 
+            # Get document-scoped store for node depth queries
+            from ragzoom.store import StoreManager
+
+            if isinstance(store, StoreManager):
+                doc_store = store.for_document(doc_id)
+                get_depth = doc_store.tree.get_depth
+            else:
+                get_depth = store.get_node_depth
+
             # Check for invalid spans
             corrupt_nodes = []
             for node in all_nodes:
-                node_depth = store.get_node_depth(node.id)
+                node_depth = get_depth(node.id)
                 if node.span_end < node.span_start:
                     corrupt_nodes.append(
                         {
@@ -190,11 +199,20 @@ class TestSpanCorruption:
             # Get nodes by depth
             from ragzoom.models import TreeNode as TreeNodeModel
 
+            # Get document-scoped store for node depth queries
+            from ragzoom.store import StoreManager
+
+            if isinstance(store, StoreManager):
+                doc_store = store.for_document(doc_id)
+                get_depth = doc_store.tree.get_depth
+            else:
+                get_depth = store.get_node_depth
+
             nodes_by_depth: dict[int, list[TreeNodeModel]] = {}
             all_nodes = session.query(TreeNode).filter_by(document_id=doc_id).all()
 
             for node in all_nodes:
-                node_depth = store.get_node_depth(node.id)
+                node_depth = get_depth(node.id)
                 if node_depth not in nodes_by_depth:
                     nodes_by_depth[node_depth] = []
                 nodes_by_depth[node_depth].append(node)
@@ -228,7 +246,10 @@ class TestSpanCorruption:
 
             # Check all parent nodes have valid spans
             for node in all_nodes:
-                node_depth = store.get_node_depth(node.id)
+                if isinstance(store, StoreManager):
+                    node_depth = store.tree_navigator.get_node_depth(node.id)
+                else:
+                    node_depth = store.get_node_depth(node.id)
                 if node_depth > 0:
                     assert (
                         node.span_end >= node.span_start

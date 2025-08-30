@@ -18,16 +18,18 @@ class TestEmbeddingServiceIsolation:
         store = SimpleMockStore()
 
         # Add document metadata
-        store.documents["doc1"] = {
-            "id": "doc1",
-            "embedding_model": "text-embedding-3-small",
-            "summary_model": "gpt-4",
-        }
-        store.documents["doc2"] = {
-            "id": "doc2",
-            "embedding_model": "text-embedding-3-large",
-            "summary_model": "gpt-4",
-        }
+        from types import SimpleNamespace
+
+        store.documents["doc1"] = SimpleNamespace(
+            id="doc1",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4",
+        )
+        store.documents["doc2"] = SimpleNamespace(
+            id="doc2",
+            embedding_model="text-embedding-3-large",
+            summary_model="gpt-4",
+        )
 
         # Create document stores
         doc1_store = store.for_document("doc1")
@@ -67,10 +69,12 @@ class TestEmbeddingServiceIsolation:
         store = SimpleMockStore()
 
         # Document without embedding_model metadata
-        store.documents["doc1"] = {
-            "id": "doc1",
-            "summary_model": "gpt-4",
-        }
+        from types import SimpleNamespace
+
+        store.documents["doc1"] = SimpleNamespace(
+            id="doc1",
+            summary_model="gpt-4",
+        )
 
         doc_store = store.for_document("doc1")
 

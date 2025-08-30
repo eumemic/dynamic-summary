@@ -1,8 +1,10 @@
 """Test that verifies the num_seeds constraint fix works correctly."""
 
+from typing import cast
 from unittest.mock import Mock, patch
 
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
+from ragzoom.document_store import DocumentStore
 from tests.mock_store import SimpleMockStore
 
 
@@ -104,7 +106,7 @@ class TestNumSeedsFix:
 
             retriever = create_retriever(
                 query_config=query_config,
-                store=store,
+                store=cast(DocumentStore, store),
                 document_id="doc1",  # Specify the document we're retrieving from
                 api_key=operational_config.openai_api_key.get_secret_value(),
                 client=mock_instance,  # Pass the mocked client

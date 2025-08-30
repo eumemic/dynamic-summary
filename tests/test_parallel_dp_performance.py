@@ -2,17 +2,21 @@
 
 import asyncio
 import time
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Generator
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from openai import OpenAI
+
     from ragzoom.interfaces import StoreInterface
+    from ragzoom.retrieve import RetrievalResult
     from tests.conftest import BackwardCompatibilityConfig
 
 import pytest
 
 from ragzoom.dynamic_tiling import AsyncDynamicTilingGenerator, DynamicTilingGenerator
 from ragzoom.index import TreeBuilder
+from ragzoom.store import StoreManager
 from tests.utils import create_predictable_summary_mock, mock_openai_context
 
 
@@ -27,11 +31,18 @@ class TestParallelDPPerformance:
         config_factory: Callable[
             [int, int, int, str, str | None], "BackwardCompatibilityConfig"
         ],
-    ) -> tuple["BackwardCompatibilityConfig", "StoreInterface", object, object]:
+    ) -> Generator[
+        tuple["BackwardCompatibilityConfig", "StoreInterface", object, object],
+        None,
+        None,
+    ]:
         """Set up a test system with a larger document for performance testing."""
         config = config_factory(
-            target_chunk_tokens=200,
-            budget_tokens=2000,  # Larger budget for more complex trees
+            200,
+            25,
+            2000,
+            "test-key",
+            None,  # target_chunk_tokens, preceding_context_tokens, budget_tokens, api_key, database_url
         )
 
         with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
@@ -48,7 +59,7 @@ class TestParallelDPPerformance:
                 summary_model="gpt-4o-mini",
             )
             # Create document-scoped store
-            doc_store = store.for_document("large-test-doc")
+            doc_store = cast(StoreManager, store).for_document("large-test-doc")
             tree_builder = TreeBuilder(
                 config.index_config,
                 doc_store,
@@ -88,10 +99,10 @@ class TestParallelDPPerformance:
 
         retriever = create_retriever(
             config.query_config,
-            store,
+            cast(StoreManager, store),
             document_id="large-test-doc",
-            api_key=config.openai_api_key.get_secret_value(),
-            client=mock_client,
+            api_key=config.openai_api_key,
+            client=cast("OpenAI", mock_client),
         )
         result = await retriever.retrieve_async(
             "test content", budget_tokens=1500, document_id="large-test-doc"
@@ -148,10 +159,10 @@ class TestParallelDPPerformance:
         # Get test data
         retriever = create_retriever(
             config.query_config,
-            store,
+            cast(StoreManager, store),
             document_id="large-test-doc",
-            api_key=config.openai_api_key.get_secret_value(),
-            client=mock_client,
+            api_key=config.openai_api_key,
+            client=cast("OpenAI", mock_client),
         )
         result = await retriever.retrieve_async(
             "test content", budget_tokens=1800, document_id="large-test-doc"
@@ -214,19 +225,19 @@ class TestParallelDPPerformance:
 
         sync_retriever = create_retriever(
             config.query_config,
-            store,
+            cast(StoreManager, store),
             document_id="large-test-doc",
-            api_key=config.openai_api_key.get_secret_value(),
-            client=mock_client,
+            api_key=config.openai_api_key,
+            client=cast("OpenAI", mock_client),
         )
         sync_retriever.use_async_dp = False
 
         async_retriever = create_retriever(
             config.query_config,
-            store,
+            cast(StoreManager, store),
             document_id="large-test-doc",
-            api_key=config.openai_api_key.get_secret_value(),
-            client=mock_client,
+            api_key=config.openai_api_key,
+            client=cast("OpenAI", mock_client),
         )
         async_retriever.use_async_dp = True
 
@@ -237,7 +248,7 @@ class TestParallelDPPerformance:
         loop = asyncio.get_event_loop()
 
         # Create a wrapper function to handle keyword arguments properly
-        def sync_retrieve() -> object:
+        def sync_retrieve() -> "RetrievalResult":
             return sync_retriever.retrieve(
                 "test content", budget_tokens=1200, document_id="large-test-doc"
             )
@@ -270,10 +281,10 @@ class TestParallelDPPerformance:
 
         retriever = create_retriever(
             config.query_config,
-            store,
+            cast(StoreManager, store),
             document_id="large-test-doc",
-            api_key=config.openai_api_key.get_secret_value(),
-            client=mock_client,
+            api_key=config.openai_api_key,
+            client=cast("OpenAI", mock_client),
         )
         result = await retriever.retrieve_async(
             "test content", budget_tokens=1000, document_id="large-test-doc"
@@ -291,9 +302,11 @@ class TestParallelDPPerformance:
             pytest.skip("No valid root found")
 
         # Should handle errors gracefully and still produce a result
-        result = await async_generator.find_optimal_tiling(1000, scores, nodes, root_id)
-        assert result is not None
-        assert result.tiling is not None
+        dp_result = await async_generator.find_optimal_tiling(
+            1000, scores, nodes, root_id
+        )
+        assert dp_result is not None
+        assert dp_result.tiling is not None
 
     async def test_parallelization_threshold(
         self,
@@ -318,10 +331,10 @@ class TestParallelDPPerformance:
 
         retriever = create_retriever(
             config.query_config,
-            store,
+            cast(StoreManager, store),
             document_id="large-test-doc",
-            api_key=config.openai_api_key.get_secret_value(),
-            client=mock_client,
+            api_key=config.openai_api_key,
+            client=cast("OpenAI", mock_client),
         )
         result = await retriever.retrieve_async(
             "test content", budget_tokens=1000, document_id="large-test-doc"

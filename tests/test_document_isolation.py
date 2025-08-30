@@ -1,6 +1,7 @@
 """Test document isolation - queries should only return results from specified document."""
 
 from collections.abc import Generator
+from unittest.mock import Mock
 
 import pytest
 
@@ -19,7 +20,7 @@ class TestDocumentIsolation:
     """Test that queries are properly isolated to specific documents."""
 
     @pytest.fixture
-    def mock_openai(self) -> Generator[dict[str, list[float]], None, None]:
+    def mock_openai(self) -> Generator[tuple[Mock, Mock, Mock], None, None]:
         """Mock OpenAI API calls with specialized embedding rules."""
         embedding_rules = {
             "dragon": [0.9] * 1536,
@@ -31,14 +32,18 @@ class TestDocumentIsolation:
     @pytest.fixture
     def setup(
         self,
-        mock_openai: dict[str, list[float]],
+        mock_openai: tuple[Mock, Mock, Mock],
         store: SimpleMockStore | StoreManager,
         base_config: BackwardCompatibilityConfig,
-    ) -> tuple[
-        BackwardCompatibilityConfig,
-        SimpleMockStore | StoreManager,
-        EmbeddingService,
-        BudgetPlanner,
+    ) -> Generator[
+        tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            EmbeddingService,
+            BudgetPlanner,
+        ],
+        None,
+        None,
     ]:
         """Create test environment."""
         from openai import OpenAI
@@ -47,12 +52,14 @@ class TestDocumentIsolation:
         from ragzoom.retrieval.embedding_service import EmbeddingService
 
         # Create services for Retriever
-        client = OpenAI(api_key=base_config.openai_api_key.get_secret_value())
+        client = OpenAI(api_key=base_config.openai_api_key)
+        # Create a document store for services (None means all documents)
+        doc_store = store.for_document(None)
         embedding_service = EmbeddingService(
-            client, store, base_config.query_config.embedding_model
+            client, doc_store, base_config.query_config.embedding_model
         )
         budget_planner = BudgetPlanner(
-            store, base_config.index_config.target_chunk_tokens
+            doc_store, base_config.index_config.target_chunk_tokens
         )
 
         yield base_config, store, embedding_service, budget_planner
@@ -122,6 +129,7 @@ class TestDocumentIsolation:
         # Check that all returned nodes are from dragons.txt
         for node_id in result1.node_ids:
             node = store.nodes.get_node(node_id)
+            assert node is not None, f"Node {node_id} not found"
             assert (
                 node.document_id == "dragons.txt"
             ), f"Node {node_id} is from wrong document: {node.document_id}"
@@ -143,6 +151,7 @@ class TestDocumentIsolation:
         # Check that all returned nodes are from wizards.txt
         for node_id in result2.node_ids:
             node = store.nodes.get_node(node_id)
+            assert node is not None, f"Node {node_id} not found"
             assert (
                 node.document_id == "wizards.txt"
             ), f"Node {node_id} is from wrong document: {node.document_id}"
@@ -155,6 +164,7 @@ class TestDocumentIsolation:
 
         for node_id in result3.node_ids:
             node = store.nodes.get_node(node_id)
+            assert node is not None, f"Node {node_id} not found"
             assert (
                 node.document_id == "wizards.txt"
             ), f"Cross-query failed: got node from {node.document_id}"
@@ -216,6 +226,7 @@ class TestDocumentIsolation:
         # Check all nodes have correct document_id
         for node_id in result.node_ids:
             node = store.nodes.get_node(node_id)
+            assert node is not None, f"Node {node_id} not found"
             assert node.document_id == "test_file.txt"
 
     def test_query_without_document_filter(
@@ -273,6 +284,7 @@ class TestDocumentIsolation:
         doc_ids = set()
         for node_id in result.node_ids:
             node = store.nodes.get_node(node_id)
+            assert node is not None, f"Node {node_id} not found"
             doc_ids.add(node.document_id)
 
         # Could have nodes from either or both documents

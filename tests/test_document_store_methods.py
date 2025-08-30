@@ -11,11 +11,13 @@ class TestDocumentStoreMethods:
         store = SimpleMockStore()
 
         # Add document with metadata
-        store.documents["doc1"] = {
-            "id": "doc1",
-            "embedding_model": "text-embedding-3-small",
-            "summary_model": "gpt-4",
-        }
+        from types import SimpleNamespace
+
+        store.documents["doc1"] = SimpleNamespace(
+            id="doc1",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4",
+        )
 
         # Create document store
         doc_store = store.for_document("doc1")
@@ -29,10 +31,12 @@ class TestDocumentStoreMethods:
         store = SimpleMockStore()
 
         # Add document without embedding_model
-        store.documents["doc1"] = {
-            "id": "doc1",
-            "summary_model": "gpt-4",
-        }
+        from types import SimpleNamespace
+
+        store.documents["doc1"] = SimpleNamespace(
+            id="doc1",
+            summary_model="gpt-4",
+        )
 
         # Create document store
         doc_store = store.for_document("doc1")

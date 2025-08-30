@@ -885,7 +885,7 @@ class SimpleMockStore(StoreInterface):
         doc = self.get_document_by_id(document_id)
         if isinstance(doc, dict):
             return doc.get("embedding_model")
-        return doc.embedding_model if doc else None
+        return getattr(doc, "embedding_model", None) if doc else None
 
     def _get_avg_leaf_tokens_for_document(self, document_id: str) -> int | None:
         """Get average token count for leaf nodes in this document."""

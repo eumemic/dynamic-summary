@@ -1,17 +1,22 @@
 """Shared test utilities and mock setups."""
 
 from collections.abc import Generator
+from types import SimpleNamespace
+from typing import TypeGuard, cast
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from openai import OpenAI
 
-from ragzoom.config import IndexConfig, QueryConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.document_store import DocumentStore
+from ragzoom.interfaces import StoreInterface
+from ragzoom.models import TreeNode
 from ragzoom.retrieval.budget_planner import BudgetPlanner
 from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
 from ragzoom.store import StoreManager
+from tests.mock_store import SimpleMockStore
 
 
 def create_mock_openai_clients() -> tuple[Mock, Mock, Mock]:
@@ -530,3 +535,234 @@ def create_retriever(
         embedding_service,
         budget_planner,
     )
+
+
+# Type conversion utilities for common test patterns
+
+
+def ensure_document_store(
+    store: StoreInterface | DocumentStore | None,
+) -> DocumentStore:
+    """Safely convert StoreInterface to DocumentStore for tests.
+
+    Args:
+        store: Store instance that might be StoreInterface, DocumentStore, or None
+
+    Returns:
+        DocumentStore instance
+
+    Raises:
+        TypeError: If store cannot be converted to DocumentStore
+    """
+    if store is None:
+        raise TypeError("Store cannot be None")
+
+    # If it's already a DocumentStore, return it
+    if isinstance(store, DocumentStore):
+        return store
+
+    # If it's a StoreManager with for_document method, create document store
+    if hasattr(store, "for_document") and callable(getattr(store, "for_document")):
+        return store.for_document(None)  # type: ignore[return-value,no-any-return]  # StoreManager.for_document returns DocumentStore
+
+    # If it's a SimpleMockStore, use for_document method
+    if isinstance(store, SimpleMockStore):
+        return store.for_document(None)  # type: ignore[return-value]  # Mock returns compatible interface
+
+    # Otherwise, assume it implements DocumentStore interface
+    return cast(DocumentStore, store)
+
+
+def ensure_store_interface(
+    store: DocumentStore | StoreInterface | None,
+) -> StoreInterface:
+    """Safely convert DocumentStore to StoreInterface for tests.
+
+    Args:
+        store: Store instance that might be DocumentStore, StoreInterface, or None
+
+    Returns:
+        StoreInterface instance
+
+    Raises:
+        TypeError: If store cannot be converted to StoreInterface
+    """
+    if store is None:
+        raise TypeError("Store cannot be None")
+
+    # DocumentStore implements StoreInterface, so we can safely cast
+    return cast(StoreInterface, store)
+
+
+def extract_single_config(
+    config: (
+        tuple[IndexConfig, QueryConfig, OperationalConfig]
+        | IndexConfig
+        | QueryConfig
+        | OperationalConfig
+        | None
+    ),
+    config_type: (
+        type[IndexConfig] | type[QueryConfig] | type[OperationalConfig] | None
+    ) = None,
+) -> IndexConfig | QueryConfig | OperationalConfig | None:
+    """Extract single config from tuple or pass through single config.
+
+    Args:
+        config: Either a tuple of configs or a single config
+        config_type: Preferred config type to extract from tuple (optional)
+
+    Returns:
+        Single config instance or None
+    """
+    if config is None:
+        return None
+
+    if isinstance(config, tuple):
+        # If specific type requested, find it in the tuple
+        if config_type is not None:
+            for cfg in config:
+                if isinstance(cfg, config_type):
+                    return cfg
+        # Otherwise return first config
+        return config[0] if config else None
+
+    # Already a single config
+    return config
+
+
+def ensure_secret_str_value(
+    value: str | SecretStr | None, default: str = "test-key"
+) -> str:
+    """Safely extract value from SecretStr or regular string.
+
+    Args:
+        value: String or SecretStr value
+        default: Default value if input is None or empty
+
+    Returns:
+        Actual string value
+    """
+    if value is None:
+        return default
+
+    if hasattr(value, "get_secret_value"):
+        return value.get_secret_value() or default
+
+    return str(value) or default
+
+
+def is_tree_node(value: object) -> TypeGuard[TreeNode]:
+    """Type guard to check if value is a TreeNode.
+
+    Args:
+        value: Value to check
+
+    Returns:
+        True if value is a TreeNode
+    """
+    # Check for TreeNode attributes
+    return (
+        hasattr(value, "id")
+        and hasattr(value, "text")
+        and hasattr(value, "span_start")
+        and hasattr(value, "span_end")
+    )
+
+
+def ensure_tree_node(value: object, node_id: str = "unknown") -> TreeNode:
+    """Safely convert object to TreeNode or raise informative error.
+
+    Args:
+        value: Object that should be a TreeNode
+        node_id: ID for error messages
+
+    Returns:
+        TreeNode instance
+
+    Raises:
+        TypeError: If value is not a TreeNode
+    """
+    if value is None:
+        raise TypeError(f"Expected TreeNode for {node_id}, got None")
+
+    if not is_tree_node(value):
+        raise TypeError(f"Expected TreeNode for {node_id}, got {type(value)}")
+
+    return value  # Type guard ensures this is TreeNode
+
+
+def safe_tree_node_access(value: object) -> TreeNode | None:
+    """Safely access TreeNode attributes, returning None if not a TreeNode.
+
+    Args:
+        value: Object that might be a TreeNode
+
+    Returns:
+        TreeNode if valid, None otherwise
+    """
+    if is_tree_node(value):
+        return value  # Type guard ensures this is TreeNode
+    return None
+
+
+def create_mock_config_tuple() -> tuple[IndexConfig, QueryConfig, OperationalConfig]:
+    """Create a standard tuple of mock configs for testing.
+
+    Returns:
+        Tuple of (IndexConfig, QueryConfig, OperationalConfig)
+    """
+    index_config = IndexConfig.load()
+    query_config = QueryConfig()
+    operational_config = OperationalConfig()
+
+    return (index_config, query_config, operational_config)
+
+
+def cast_simple_namespace_to_dict(ns: SimpleNamespace) -> dict[str, object]:
+    """Convert SimpleNamespace to dict for type compatibility.
+
+    Args:
+        ns: SimpleNamespace object
+
+    Returns:
+        Dictionary representation
+    """
+    return ns.__dict__
+
+
+def create_test_store_with_config(
+    config: IndexConfig | QueryConfig | OperationalConfig | None = None,
+) -> SimpleMockStore:
+    """Create a SimpleMockStore with proper config handling.
+
+    Args:
+        config: Single config to use, or None for default
+
+    Returns:
+        SimpleMockStore instance
+    """
+    # If no config provided, use IndexConfig as default
+    if config is None:
+        config = IndexConfig.load()
+
+    return SimpleMockStore(config=config)
+
+
+def assert_compatible_store_types(
+    store1: StoreInterface | DocumentStore, store2: StoreInterface | DocumentStore
+) -> None:
+    """Assert that two stores are type-compatible for testing.
+
+    Args:
+        store1: First store
+        store2: Second store
+
+    Raises:
+        AssertionError: If stores are not compatible
+    """
+    # Both should be either StoreInterface or DocumentStore compatible
+    assert hasattr(store1, "get_node"), f"Store1 missing get_node: {type(store1)}"
+    assert hasattr(store2, "get_node"), f"Store2 missing get_node: {type(store2)}"
+    assert hasattr(store1, "add_node"), f"Store1 missing add_node: {type(store1)}"
+    assert hasattr(store2, "add_node"), f"Store2 missing add_node: {type(store2)}"
