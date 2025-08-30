@@ -146,7 +146,7 @@ class TestRetrieverBug:
         store.compute_mmr_diverse_results = lambda *args: ["L3"]  # type: ignore[method-assign]
 
         # Mock the query embedding generation
-        retriever.embedding_service.get_query_embedding = (  # type: ignore[method-assign]
+        retriever.embedding_service.get_query_embedding = (
             lambda query, document_id=None: [0.3] * 1536
         )
 
@@ -182,7 +182,7 @@ class TestRetrieverBug:
         store.compute_mmr_diverse_results = lambda *args: ["L3"]  # type: ignore[method-assign]
 
         # Mock the query embedding generation
-        retriever.embedding_service.get_query_embedding = (  # type: ignore[method-assign]
+        retriever.embedding_service.get_query_embedding = (
             lambda query, document_id=None: [0.3] * 1536
         )
 

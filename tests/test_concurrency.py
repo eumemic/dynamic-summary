@@ -102,8 +102,8 @@ class TestConcurrency:
 
         # All should succeed
         for response in responses:
-            assert response.status_code == 200  # type: ignore[attr-defined]
-            data = response.json()  # type: ignore[attr-defined]
+            assert response.status_code == 200
+            data = response.json()
             assert "summary" in data
 
     @pytest.mark.integration
@@ -146,8 +146,8 @@ class TestConcurrency:
 
         # All should succeed
         for i, response in enumerate(responses):
-            assert response.status_code == 200  # type: ignore[attr-defined]
-            data = response.json()  # type: ignore[attr-defined]
+            assert response.status_code == 200
+            data = response.json()
             assert data["document_id"] == f"doc-{i}"
 
     def test_no_shared_state(self, client: TestClient) -> None:

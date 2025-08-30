@@ -187,7 +187,7 @@ def mock_store(
     base_config: BackwardCompatibilityConfig,
 ) -> Generator[SimpleMockStore, None, None]:
     """Create a mock store for fast testing."""
-    store = SimpleMockStore(base_config)  # type: ignore[no-untyped-call]
+    store = SimpleMockStore(base_config)
     yield store
     store.close()
 

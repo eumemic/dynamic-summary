@@ -73,7 +73,7 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store: Any) -> None:
     from tests.conftest import BackwardCompatibilityConfig
 
     config = BackwardCompatibilityConfig(
-        index_config, cast(QueryConfig, None), operational_config  # type: ignore[arg-type]
+        index_config, cast(QueryConfig, None), operational_config
     )
 
     indexer = TreeBuilder(
@@ -151,7 +151,7 @@ async def test_backward_compatibility_without_cached_tokens(mock_store: Any) -> 
     from tests.conftest import BackwardCompatibilityConfig
 
     config = BackwardCompatibilityConfig(
-        index_config, cast(QueryConfig, None), operational_config  # type: ignore[arg-type]
+        index_config, cast(QueryConfig, None), operational_config
     )
 
     indexer = TreeBuilder(
@@ -227,7 +227,7 @@ async def test_cached_tokens_across_multiple_retries(mock_store: Any) -> None:
     from tests.conftest import BackwardCompatibilityConfig
 
     config = BackwardCompatibilityConfig(
-        index_config, cast(QueryConfig, None), operational_config  # type: ignore[arg-type]
+        index_config, cast(QueryConfig, None), operational_config
     )
 
     indexer = TreeBuilder(
@@ -313,7 +313,7 @@ async def test_passthrough_summary_has_no_cached_tokens(mock_store: Any) -> None
     from tests.conftest import BackwardCompatibilityConfig
 
     config = BackwardCompatibilityConfig(
-        index_config, cast(QueryConfig, None), operational_config  # type: ignore[arg-type]
+        index_config, cast(QueryConfig, None), operational_config
     )
 
     indexer = TreeBuilder(
@@ -371,7 +371,7 @@ async def test_cached_tokens_with_high_cache_rate(mock_store: Any) -> None:
     from tests.conftest import BackwardCompatibilityConfig
 
     config = BackwardCompatibilityConfig(
-        index_config, cast(QueryConfig, None), operational_config  # type: ignore[arg-type]
+        index_config, cast(QueryConfig, None), operational_config
     )
 
     indexer = TreeBuilder(

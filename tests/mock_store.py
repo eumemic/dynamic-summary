@@ -741,12 +741,12 @@ class SimpleMockStore(StoreInterface):
         """Get a document by file path."""
         for doc in self.documents.values():
             if doc.file_path == file_path:
-                return doc  # type: ignore[return-value,no-any-return]  # Mock document store compatibility
+                return doc  # type: ignore[no-any-return]  # Mock document store compatibility
         return None
 
     def get_document_by_id(self, document_id: str) -> Document | None:
         """Get a document by ID."""
-        return self.documents.get(document_id)  # type: ignore[return-value,no-any-return]  # Mock document store compatibility
+        return self.documents.get(document_id)  # type: ignore[no-any-return]  # Mock document store compatibility
 
     def add_document(
         self,
@@ -865,7 +865,7 @@ class SimpleMockStore(StoreInterface):
     def _get_avg_leaf_tokens_for_document(self, document_id: str) -> int | None:
         """Get average token count for leaf nodes in this document."""
         leaf_nodes = [
-            node  # type: ignore[misc]  # Mock returns SimpleNamespace for test flexibility
+            node  # Mock returns SimpleNamespace for test flexibility
             for node in self._nodes.values()
             if node.document_id == document_id and self.is_leaf_node(node.id)
         ]

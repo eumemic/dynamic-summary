@@ -49,7 +49,7 @@ class TestFollowingNeighbor:
             nodes_data.append(node_data)
 
         # Create document with proper metadata and get document store
-        doc_store = store.add_document(  # type: ignore[attr-defined]
+        doc_store = store.add_document(
             document_id="test-doc",
             file_path=None,
             content_hash="test-hash",
@@ -102,9 +102,9 @@ class TestFollowingNeighbor:
         test_doc = "First chunk. Second chunk. Third chunk. Fourth chunk."
 
         # Create tree builder with small chunk size to ensure multiple chunks
-        config = base_config.index_config.replace(target_chunk_tokens=5)  # type: ignore[attr-defined]
+        config = base_config.index_config.replace(target_chunk_tokens=5)
         # Create document with proper metadata
-        doc_store = store.add_document(  # type: ignore[attr-defined]
+        doc_store = store.add_document(
             document_id="neighbor-test",
             file_path=None,
             content_hash="test-hash",
@@ -170,9 +170,10 @@ class TestFollowingNeighbor:
         test_doc = " ".join([f"Chunk {i}." for i in range(8)])  # 8 chunks -> 3 levels
 
         # Create tree builder with small chunk size
-        config = base_config.index_config.replace(target_chunk_tokens=3)  # type: ignore[attr-defined]
-        # Create document with proper metadata
-        doc_store = store.add_document(  # type: ignore[attr-defined]
+        config = base_config.index_config.replace(
+            target_chunk_tokens=3
+        )  # Create document with proper metadata
+        doc_store = store.add_document(
             document_id="parent-neighbor-test",
             file_path=None,
             content_hash="test-hash",
@@ -198,28 +199,27 @@ class TestFollowingNeighbor:
         # Check each level
         for height, level_nodes in nodes_by_height.items():
             # Sort by span_start to get logical order
-            level_nodes.sort(key=lambda n: n.span_start)  # type: ignore[attr-defined]
-
+            level_nodes.sort(key=lambda n: n.span_start)
             for i, node in enumerate(level_nodes):
                 if i == 0:
                     assert (
-                        node.preceding_neighbor_id is None  # type: ignore[attr-defined]
+                        node.preceding_neighbor_id is None
                     ), f"First node at height {height} should have no preceding"
                     if len(level_nodes) > 1:
                         assert (
-                            node.following_neighbor_id == level_nodes[i + 1].id  # type: ignore[attr-defined]
+                            node.following_neighbor_id == level_nodes[i + 1].id
                         ), f"First node at height {height} should point to second"
                 elif i == len(level_nodes) - 1:
                     assert (
-                        node.following_neighbor_id is None  # type: ignore[attr-defined]
+                        node.following_neighbor_id is None
                     ), f"Last node at height {height} should have no following"
                     assert (
-                        node.preceding_neighbor_id == level_nodes[i - 1].id  # type: ignore[attr-defined]
+                        node.preceding_neighbor_id == level_nodes[i - 1].id
                     ), f"Last node at height {height} should have preceding"
                 else:
                     assert (
-                        node.preceding_neighbor_id == level_nodes[i - 1].id  # type: ignore[attr-defined]
+                        node.preceding_neighbor_id == level_nodes[i - 1].id
                     ), f"Node {i} at height {height} has wrong preceding"
                     assert (
-                        node.following_neighbor_id == level_nodes[i + 1].id  # type: ignore[attr-defined]
+                        node.following_neighbor_id == level_nodes[i + 1].id
                     ), f"Node {i} at height {height} has wrong following"

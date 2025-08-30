@@ -323,7 +323,7 @@ class TestEndToEndScenarios:
         with patch("tests.utils.OpenAI") as mock_openai:
             from ragzoom.config import QueryConfig
             from tests.conftest import SimpleMockStore  # type: ignore
-            from tests.utils import create_retriever  # type: ignore
+            from tests.utils import create_retriever
 
             query_config = QueryConfig()
             store = Mock(spec=SimpleMockStore)
