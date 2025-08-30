@@ -232,7 +232,7 @@ class TestNoSilentFailures:
 
         # Should use middleware for error handling
         assert (
-            "ErrorHandlingMiddleware" in api_source
+            "create_error_handling_middleware" in api_source
         ), "API should use error handling middleware"
 
     def test_cli_uses_specific_error_handling(self) -> None:

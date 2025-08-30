@@ -10,12 +10,20 @@ import logging
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    pass  # Imports moved to telemetry_types
 
 import psutil
 
 from ragzoom.config import IndexConfig
-from ragzoom.telemetry_types import NodeTelemetryDict
+from ragzoom.telemetry_types import (
+    ModelMetadataDict,
+    NodeTelemetryDict,
+    RuntimeInfoDict,
+    TelemetryDataDict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +514,7 @@ class TelemetryCollector:
         self.tree_height = max(self.tree_height, height)
         self._update_memory_usage()
 
-    def finalize(self) -> dict[str, Any]:
+    def finalize(self) -> TelemetryDataDict:
         """Finalize telemetry collection and return raw telemetry data.
 
         Returns:
@@ -531,7 +539,9 @@ class TelemetryCollector:
             self.document_id, self.config.target_chunk_tokens
         )
 
-    def get_telemetry_data(self, document_id: str, chunk_size: int) -> dict[str, Any]:
+    def get_telemetry_data(
+        self, document_id: str, chunk_size: int
+    ) -> TelemetryDataDict:
         """Export raw telemetry data in standard format for analysis.
 
         Args:
@@ -577,9 +587,9 @@ class TelemetryCollector:
         if self.document_path:
             telemetry_data["document_path"] = self.document_path
 
-        return telemetry_data
+        return cast(TelemetryDataDict, telemetry_data)
 
-    def _get_model_metadata(self) -> dict[str, Any]:
+    def _get_model_metadata(self) -> ModelMetadataDict:
         """Get complete model metadata for reproducibility.
 
         Returns:
@@ -590,7 +600,7 @@ class TelemetryCollector:
 
             model_info = ModelInfo()
 
-            metadata = {}
+            metadata: dict[str, object] = {}
 
             # Get embedding model metadata
             try:
@@ -633,7 +643,9 @@ class TelemetryCollector:
                     cache_discount = model_info.get_cache_discount(
                         self.config.summary_model
                     )
-                    metadata["summary"]["cache_discount"] = cache_discount
+                    cast(dict[str, object], metadata["summary"])[
+                        "cache_discount"
+                    ] = cache_discount
                 except ValueError:
                     pass  # Cache discount not available for this model
 
@@ -648,12 +660,12 @@ class TelemetryCollector:
             try:
                 models_data = model_info._data
                 if "last_updated" in models_data:
-                    metadata["models_last_updated"] = models_data["last_updated"]
+                    metadata["models_last_updated"] = str(models_data["last_updated"])
             except Exception as e:
                 logger.debug(f"Failed to parse model metadata response: {e}")
                 # Optional metadata, continue without it
 
-            return metadata
+            return cast(ModelMetadataDict, metadata)
 
         except Exception as e:
             logger.warning(f"Failed to collect model metadata: {e}")
@@ -671,7 +683,7 @@ class TelemetryCollector:
             "summary_system_prompt": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text."
         }
 
-    def _get_runtime_info(self) -> dict[str, Any]:
+    def _get_runtime_info(self) -> RuntimeInfoDict:
         """Get runtime environment information for reproducibility.
 
         Returns:
@@ -701,7 +713,7 @@ class TelemetryCollector:
         except (ImportError, AttributeError):
             pass
 
-        return runtime_info
+        return cast(RuntimeInfoDict, runtime_info)
 
     def _get_ragzoom_version(self) -> str:
         """Get RagZoom version for telemetry.

@@ -1,7 +1,7 @@
 """Service for computing node relevance scores."""
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
@@ -22,12 +22,13 @@ class ScoringService:
             store: DocumentStore instance for node retrieval
         """
         self.store = store
+        self.logger = logger
 
     def compute_scores(
         self,
         query_embedding: list[float],
         coverage_map: dict[str, bool],
-        candidates: list[tuple[str, float, dict[str, Any]]],
+        candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
     ) -> dict[str, float]:
         """Compute similarity scores for all nodes in coverage map.
 
@@ -104,7 +105,7 @@ class ScoringService:
                     scores[node_id] = similarity
 
             except Exception as e:
-                logger.warning(f"Failed to compute batch similarities: {e}")
+                self.logger.warning(f"Failed to compute batch similarities: {e}")
                 # Fallback to individual computation
                 for node_id in valid_node_ids:
                     scores[node_id] = 0.0

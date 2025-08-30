@@ -5,7 +5,10 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, overload
+from typing import overload
+
+import numpy as np
+from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, SecretStr
 from ragzoom.dataflow import build_tree_dataflow
@@ -16,6 +19,7 @@ from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.services.llm_service import LLMService
 from ragzoom.splitter import TextSplitter
 from ragzoom.telemetry_collection import TelemetryCollector
+from ragzoom.telemetry_types import TelemetryDataDict
 from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
@@ -234,14 +238,14 @@ class TreeBuilder:
         text: str,
         show_progress: bool = True,
         reporter: TelemetryCollector = ...,  # jscpd:ignore-start
-    ) -> tuple[str, dict[str, Any]]: ...  # jscpd:ignore-end
+    ) -> tuple[str, TelemetryDataDict]: ...  # jscpd:ignore-end
 
     async def _add_document_impl(
         self,
         text: str,
         show_progress: bool = True,
         reporter: TelemetryCollector | None = None,
-    ) -> str | tuple[str, dict[str, Any]]:
+    ) -> str | tuple[str, TelemetryDataDict]:
         """Add a document to the tree using dataflow parallelism.
 
         Returns:
@@ -295,9 +299,29 @@ class TreeBuilder:
                 nodes_list = list(nodes_at_height)  # Consume the iterator
                 logger.debug(f"Inserting {len(nodes_list)} nodes at height {height}")
                 # Prepare node data for this height level
-                nodes_data = []
+                nodes_data: list[
+                    dict[
+                        str,
+                        str
+                        | int
+                        | float
+                        | bool
+                        | list[float]
+                        | NDArray[np.float64]
+                        | None,
+                    ]
+                ] = []
                 for node in nodes_list:
-                    node_data = {
+                    node_data: dict[
+                        str,
+                        str
+                        | int
+                        | float
+                        | bool
+                        | list[float]
+                        | NDArray[np.float64]
+                        | None,
+                    ] = {
                         "node_id": node.id,
                         "text": node.text,
                         "document_id": node.document_id,
@@ -345,7 +369,7 @@ class TreeBuilder:
 
             # Finalize telemetry if collector was used
             if reporter:
-                telemetry = reporter.finalize()
+                telemetry: TelemetryDataDict = reporter.finalize()
                 return document_id, telemetry
 
             return document_id
@@ -366,7 +390,7 @@ class TreeBuilder:
         self,
         text: str,
         show_progress: bool = False,
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[str, TelemetryDataDict]:
         """Add document and return telemetry data. Used for benchmarking.
 
         This is a convenience method that creates a TelemetryCollector internally
@@ -421,7 +445,7 @@ class TreeBuilder:
         left_node: TreeNode | None = None,  # Pre-fetched node data
         right_node: TreeNode | None = None,  # Pre-fetched node data
         doc_store: DocumentStore | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """Process a single node pair - generate summary and embedding.
 
         Returns:

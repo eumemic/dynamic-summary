@@ -3,7 +3,10 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from ragzoom.telemetry_types import TelemetryDataDict
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.index import TreeBuilder
@@ -20,7 +23,7 @@ class IndexingResult:
     document_id: str
     chunks_created: int
     tree_depth: int
-    telemetry: dict[str, Any] | None = None
+    telemetry: Optional["TelemetryDataDict"] = None
 
 
 class IndexingService:

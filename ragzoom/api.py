@@ -2,13 +2,15 @@
 
 import logging
 from dataclasses import asdict
-from typing import Any
+from typing import cast
 
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
+from pydantic.config import ConfigDict
+from typing_extensions import TypedDict
 
-from ragzoom.api_middleware import ErrorHandlingMiddleware
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.api_middleware import create_error_handling_middleware
+from ragzoom.config import IndexConfig, IndexConfigDict, OperationalConfig, QueryConfig
 from ragzoom.services.document_service import DocumentInfo, DocumentService
 from ragzoom.services.indexing_service import IndexingService
 from ragzoom.services.query_service import QueryService
@@ -74,39 +76,47 @@ app = FastAPI(
 )
 
 # Add error handling middleware
-app.add_middleware(ErrorHandlingMiddleware, include_traceback=False)
+app.add_middleware(create_error_handling_middleware(include_traceback=False))
 
 
 # Request/Response models
-class IndexDocumentRequest(BaseModel):
+class IndexDocumentRequest(BaseModel):  # type: ignore[explicit-any]
     """Request to index a new document."""
 
-    text: str = Field(..., description="Document text to index")
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(description="Document text to index")
     document_id: str | None = Field(None, description="Optional document ID")
     file_path: str | None = Field(
         None, description="Optional file path (used for default document ID)"
     )
 
 
-class IndexDocumentResponse(BaseModel):
+class IndexDocumentResponse(BaseModel):  # type: ignore[explicit-any]
     """Response from document indexing."""
+
+    model_config = ConfigDict(extra="forbid")
 
     document_id: str
     chunks_created: int
     tree_depth: int
 
 
-class QueryRequest(BaseModel):
+class QueryRequest(BaseModel):  # type: ignore[explicit-any]
     """Request to query the system."""
 
-    query: str = Field(..., description="Query text")
-    document_id: str = Field(..., description="Document ID to query within")
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(description="Query text")
+    document_id: str = Field(description="Document ID to query within")
     num_seeds: int | None = Field(None, description="Override max nodes to retrieve")
     token_budget: int | None = Field(None, description="Override token budget")
 
 
-class QueryResponse(BaseModel):
+class QueryResponse(BaseModel):  # type: ignore[explicit-any]
     """Response from query."""
+
+    model_config = ConfigDict(extra="forbid")
 
     summary: str
     token_count: int
@@ -114,14 +124,18 @@ class QueryResponse(BaseModel):
     tiling_size: int
 
 
-class PinNodeRequest(BaseModel):
+class PinNodeRequest(BaseModel):  # type: ignore[explicit-any]
     """Request to pin a node."""
 
-    node_id: str = Field(..., description="Node ID to pin")
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(description="Node ID to pin")
 
 
-class UpdateConfigRequest(BaseModel):
+class UpdateConfigRequest(BaseModel):  # type: ignore[explicit-any]
     """Request to update configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     budget_tokens: int | None = None
     leaf_tokens: int | None = None
@@ -129,18 +143,52 @@ class UpdateConfigRequest(BaseModel):
     # Deprecated fields removed - ttl_turns and freshness_decay no longer exist
 
 
-class SystemStatusResponse(BaseModel):
+# IndexConfigDict imported from config.py to avoid duplication
+
+
+class QueryConfigDict(TypedDict):
+    """Type definition for query configuration dictionary."""
+
+    budget_tokens: int
+    mmr_lambda: float
+    mmr_k_multiplier: float
+    embedding_model: str
+
+
+class OperationalConfigDict(TypedDict):
+    """Type definition for operational configuration dictionary (filtered)."""
+
+    database_url: str
+    cache_size: int
+    log_level: str
+    validate_pipeline: bool
+    # Note: openai_api_key is deliberately excluded from API responses
+
+
+class SystemConfigDict(TypedDict):
+    """Type definition for complete system configuration dictionary."""
+
+    index: IndexConfigDict
+    query: QueryConfigDict
+    operational: OperationalConfigDict
+
+
+class SystemStatusResponse(BaseModel):  # type: ignore[explicit-any]
     """System status information."""
+
+    model_config = ConfigDict(extra="forbid")
 
     total_nodes: int
     leaf_nodes: int
     tree_depth: int
     pinned_nodes: int
-    config: dict[str, Any]
+    config: SystemConfigDict
 
 
-class DocumentInfoResponse(BaseModel):
+class DocumentInfoResponse(BaseModel):  # type: ignore[explicit-any]
     """Information about an indexed document for API response."""
+
+    model_config = ConfigDict(extra="forbid")
 
     document_id: str
     file_path: str | None
@@ -160,8 +208,10 @@ class DocumentInfoResponse(BaseModel):
         )
 
 
-class DocumentsResponse(BaseModel):
+class DocumentsResponse(BaseModel):  # type: ignore[explicit-any]
     """Response listing all indexed documents."""
+
+    model_config = ConfigDict(extra="forbid")
 
     documents: list[DocumentInfoResponse]
 
@@ -277,13 +327,16 @@ async def get_status(
         tree_depth=status.tree_depth,
         pinned_nodes=status.pinned_nodes,
         config={
-            "index": asdict(services.index_config),
-            "query": asdict(services.query_config),
-            "operational": {
-                k: v
-                for k, v in asdict(services.operational_config).items()
-                if k != "openai_api_key"  # Don't expose API key
-            },
+            "index": cast(IndexConfigDict, asdict(services.index_config)),
+            "query": cast(QueryConfigDict, asdict(services.query_config)),
+            "operational": cast(
+                OperationalConfigDict,
+                {
+                    k: v
+                    for k, v in asdict(services.operational_config).items()
+                    if k != "openai_api_key"  # Don't expose API key
+                },
+            ),
         },
     )
     # Error handling is now done by middleware

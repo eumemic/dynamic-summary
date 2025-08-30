@@ -2,7 +2,10 @@
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
 
 from ragzoom.document_store import DocumentStore
 from ragzoom.models import TreeNode
@@ -487,7 +490,7 @@ async def validate_summary_faithfulness(
     summary: str,
     left_text: str,
     right_text: str,
-    openai_client: Any,
+    openai_client: "AsyncOpenAI",
     model: str = "gpt-4o",
 ) -> str | None:
     """Validate that a summary faithfully represents its children's content.
@@ -557,7 +560,10 @@ Be strict about factual additions, but allow normal paraphrasing and summarizati
             max_tokens=200,
         )
 
-        result = response.choices[0].message.content.strip()
+        result = response.choices[0].message.content
+        if result is None:
+            return "LLM response content was None - cannot validate"
+        result = result.strip()
 
         # Parse LLM response with proper validation
         result_upper = result.upper().strip()

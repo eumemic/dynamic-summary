@@ -2,7 +2,10 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ragzoom.dynamic_tiling import NodeInfo
 
 from ragzoom.document_store import DocumentStore
 from ragzoom.models import TreeNode
@@ -74,10 +77,10 @@ class TokenPositionResolver(PositionResolver):
 
     def __init__(
         self,
-        node_infos: list[Any],  # List of NodeInfo from dynamic_tiling
+        node_infos: list["NodeInfo"],  # List of NodeInfo from dynamic_tiling
         coverage_map: dict[str, bool],
         doc_store: DocumentStore,
-        tokenizer: Any = None,
+        tokenizer: object | None = None,
         preloaded_nodes: dict[str, "TreeNode"] | None = None,
     ):
         # Validate inputs
@@ -241,7 +244,7 @@ def build_ascii_tree(
     coverage_map: dict[str, bool] | None = None,
     seed_node_ids: set[str] | None = None,
     position_resolver: PositionResolver | None = None,
-    node_infos: list[Any] | None = None,  # List of NodeInfo objects
+    node_infos: list["NodeInfo"] | None = None,  # List of NodeInfo objects
     use_token_coords: bool = False,
     preloaded_nodes: dict[str, "TreeNode"] | None = None,
 ) -> str:
@@ -301,14 +304,7 @@ def build_ascii_tree(
 
         # Build node_infos from tiling if not provided
         if not node_infos:
-            from dataclasses import dataclass
-
-            @dataclass
-            class SimpleNodeInfo:
-                node_id: str
-                token_cost: int
-                span_start: int
-                span_end: int
+            from ragzoom.dynamic_tiling import NodeInfo
 
             node_infos = []
             for node_id in tiling:
@@ -320,7 +316,7 @@ def build_ascii_tree(
 
                 token_cost = node.token_count
                 node_infos.append(
-                    SimpleNodeInfo(
+                    NodeInfo(
                         node_id=node_id,
                         token_cost=token_cost,
                         span_start=node.span_start,

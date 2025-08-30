@@ -2,10 +2,37 @@
 
 import logging
 import re
-from typing import Any
 from uuid import uuid4
 
+from typing_extensions import TypedDict
+
 logger = logging.getLogger(__name__)
+
+# Type definitions for sanitizable values
+SanitizableValue = (
+    str
+    | dict[str, "SanitizableValue"]
+    | list["SanitizableValue"]
+    | int
+    | float
+    | bool
+    | None
+)
+
+
+class ErrorContextData(TypedDict, total=False):
+    """Type definition for error context data."""
+
+    operation: str
+    request_id: str
+    node_id: str
+    document_id: str
+    field: str
+    value: str
+    reason: str
+    # Allow additional context fields
+    # Note: TypedDict with total=False allows extra fields in practice
+
 
 # Pattern for OpenAI API keys (sk-...)
 # More flexible pattern to catch all OpenAI key formats
@@ -36,11 +63,11 @@ def sanitize_message(message: str) -> str:
     return API_KEY_PATTERN.sub("***REDACTED***", message)
 
 
-def sanitize_dict(data: dict[str, Any]) -> dict[str, Any]:
+def sanitize_dict(data: dict[str, SanitizableValue]) -> dict[str, SanitizableValue]:
     """Recursively sanitize dictionary values to redact sensitive information."""
     # Type annotation ensures data is a dict, no need for runtime check
 
-    result: dict[str, Any] = {}
+    result: dict[str, SanitizableValue] = {}
     for key, value in data.items():
         if isinstance(value, str):
             result[key] = sanitize_message(value)
@@ -54,11 +81,11 @@ def sanitize_dict(data: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def sanitize_list(data: list[Any]) -> list[Any]:
+def sanitize_list(data: list[SanitizableValue]) -> list[SanitizableValue]:
     """Recursively sanitize list values to redact sensitive information."""
     # Type annotation ensures data is a list, no need for runtime check
 
-    result: list[Any] = []
+    result: list[SanitizableValue] = []
     for item in data:
         if isinstance(item, str):
             result.append(sanitize_message(item))
@@ -77,16 +104,16 @@ class ErrorContext:
 
     def __init__(self, operation: str):
         self.operation = operation
-        self.context: dict[str, Any] = {}
+        self.context: dict[str, SanitizableValue] = {}
         self.request_id = str(uuid4())[:8]
 
-    def add(self, key: str, value: Any) -> "ErrorContext":
+    def add(self, key: str, value: SanitizableValue) -> "ErrorContext":
         """Add contextual information."""
         self.context[key] = value
         return self
 
     def build_exception(
-        self, exc_class: type[Exception], message: str, **kwargs: Any
+        self, exc_class: type[Exception], message: str, **kwargs: object
     ) -> Exception:
         """Build exception with full context."""
         # Create exception with its specific constructor parameters
@@ -135,9 +162,9 @@ def categorize_exception(exc: Exception) -> str:
 
 def format_structured_error(
     exc: Exception, include_traceback: bool = False
-) -> dict[str, Any]:
+) -> dict[str, SanitizableValue]:
     """Format exception as structured error response."""
-    error_data: dict[str, Any] = {
+    error_data: dict[str, SanitizableValue] = {
         "type": type(exc).__name__,
         "category": categorize_exception(exc),
         "message": sanitize_message(str(exc)),
@@ -182,7 +209,7 @@ def preserve_exception_chain(new_exc: Exception, original_exc: Exception) -> Exc
 
 
 def log_error_with_context(
-    logger: logging.Logger, exc: Exception, operation: str, **context: Any
+    logger: logging.Logger, exc: Exception, operation: str, **context: SanitizableValue
 ) -> None:
     """Log error with full context for debugging."""
     error_info = format_structured_error(exc)

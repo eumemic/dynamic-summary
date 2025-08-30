@@ -17,9 +17,9 @@ import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 from statistics import median
-from typing import Any, TypedDict
 
 import numpy as np
+from typing_extensions import TypedDict
 
 from ragzoom.config import get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_query import QueryPhaseMetrics
@@ -246,7 +246,7 @@ class SimplifiedMetrics:
     metrics_by_chunk_size: dict[int, ChunkMetrics]
 
 
-def compute_simplified_metrics(telemetry_data: dict[str, Any]) -> SimplifiedMetrics:
+def compute_simplified_metrics(telemetry_data: TelemetryDataDict) -> SimplifiedMetrics:
     """Compute simplified metrics from telemetry data.
 
     Args:
@@ -780,7 +780,7 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> DispersionMetr
     )
 
 
-def calculate_pipeline_efficiency(telemetry_data: dict[str, Any]) -> float:
+def calculate_pipeline_efficiency(telemetry_data: TelemetryDataDict) -> float:
     """Calculate pipeline efficiency as a percentage of parallelism utilization.
 
     Pipeline Efficiency = (sequential_duration - actual_duration) /
@@ -982,7 +982,7 @@ class TelemetryAnalysisError(Exception):
     pass
 
 
-def parse_telemetry_format(telemetry_data: dict[str, Any]) -> TelemetryDataDict:
+def parse_telemetry_format(telemetry_data: TelemetryDataDict) -> TelemetryDataDict:
     """Parse telemetry data.
 
     Args:
@@ -1009,11 +1009,11 @@ def parse_telemetry_format(telemetry_data: dict[str, Any]) -> TelemetryDataDict:
         )
 
     # Return format 4.2 data as-is
-    result: TelemetryDataDict = telemetry_data  # type: ignore
+    result: TelemetryDataDict = telemetry_data
     return result
 
 
-def compute_batch_efficiency(telemetry_data: dict[str, Any]) -> BatchEfficiencyDict:
+def compute_batch_efficiency(telemetry_data: TelemetryDataDict) -> BatchEfficiencyDict:
     """Analyze embedding batch utilization from telemetry data.
 
     Args:
@@ -1039,7 +1039,7 @@ def compute_batch_efficiency(telemetry_data: dict[str, Any]) -> BatchEfficiencyD
             continue
 
         batch_size = embedding.get("batch_size", 1)
-        start_time = embedding.get("start_time", embedding.get("timestamp", 0))
+        start_time = embedding.get("start_time", 0.0)
         batch_key = (batch_size, start_time)
 
         # Only count each batch once
@@ -1110,7 +1110,7 @@ def get_accepted_attempt(
     return summary_attempts[-1], len(summary_attempts) - 1
 
 
-def analyze_retry_patterns(telemetry_data: dict[str, Any]) -> RetryAnalysisDict:
+def analyze_retry_patterns(telemetry_data: TelemetryDataDict) -> RetryAnalysisDict:
     """Analyze summary retry patterns from telemetry data.
 
     Args:
@@ -1287,7 +1287,9 @@ class ComputedMetrics:
     nodes_per_height: list[int]
 
 
-def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMetrics:
+def compute_metrics_from_telemetry(
+    telemetry_data: TelemetryDataDict,
+) -> ComputedMetrics:
     """Compute metrics from raw telemetry data.
 
     This function computes all metrics from raw telemetry data that were
@@ -1302,33 +1304,24 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
     parsed_data = parse_telemetry_format(telemetry_data)
 
     # Get models from telemetry for cost calculations
-    models = telemetry_data.get("models", {})
-    embedding_model = models.get("embedding", "text-embedding-3-small")
-    summary_model = models.get("summary", "gpt-5-nano")
+    models = telemetry_data.get("model_metadata", {})
+    embedding_model = str(models.get("embedding_model", "text-embedding-3-small"))
+    summary_model = str(models.get("summary_model", "gpt-5-nano"))
 
     # Get costs using helper functions
     embedding_cost_per_1k = get_embedding_cost(embedding_model)
     summary_input_cost_per_1k, summary_output_cost_per_1k = get_llm_costs(summary_model)
 
-    # Initialize metrics data with proper types
-    metrics_data: dict[str, Any] = {
-        # Timing
-        "start_time": 0.0,
-        "end_time": 0.0,
-        # Document info
-        "source_document_tokens": parsed_data.get("source_document_tokens", 0),
-        # Cost config
-        "embedding_cost_per_1k": embedding_cost_per_1k,
-        "summary_input_cost_per_1k": summary_input_cost_per_1k,
-        "summary_output_cost_per_1k": summary_output_cost_per_1k,
-        "total_embedding_tokens": 0,
-        "embedding_api_calls": 0,
-        "embedding_batch_sizes": [],
-        "total_summary_prompt_tokens": 0,
-        "total_summary_completion_tokens": 0,
-        "summary_api_calls": 0,
-        "summary_stats": {},
-    }
+    # Initialize metrics data with specific types
+    start_time = 0.0
+    end_time = 0.0
+    source_document_tokens = parsed_data.get("source_document_tokens", 0)
+    total_embedding_tokens = 0
+    embedding_api_calls = 0
+    embedding_batch_sizes: list[int] = []
+    total_summary_prompt_tokens = 0
+    total_summary_completion_tokens = 0
+    summary_api_calls = 0
 
     # Track various metrics as we process telemetry
     min_timestamp = float("inf")
@@ -1355,17 +1348,17 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
         embedding = node.get("embedding")
         if embedding:
             text_tokens = embedding.get("text_tokens", 0)
-            metrics_data["total_embedding_tokens"] += text_tokens
+            total_embedding_tokens += text_tokens
 
             # Track unique batches
             batch_size = embedding.get("batch_size", 1)
-            start_time = embedding.get("start_time", embedding.get("timestamp", 0))
+            start_time = embedding.get("start_time", 0.0)
             batch_key = (batch_size, start_time)
 
             if batch_key not in embedding_batches:
                 embedding_batches.add(batch_key)
-                metrics_data["embedding_api_calls"] += 1
-                metrics_data["embedding_batch_sizes"].append(batch_size)
+                embedding_api_calls += 1
+                embedding_batch_sizes.append(batch_size)
 
         # Process summary attempts
         summary_attempts = node.get("summary_attempts", [])
@@ -1375,12 +1368,12 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
         node_total_completion_tokens = 0
 
         for attempt in summary_attempts:
-            metrics_data["summary_api_calls"] += 1
+            summary_api_calls += 1
             prompt_tokens = attempt.get("prompt_tokens", 0)
             completion_tokens = attempt.get("completion_tokens", 0)
 
-            metrics_data["total_summary_prompt_tokens"] += prompt_tokens
-            metrics_data["total_summary_completion_tokens"] += completion_tokens
+            total_summary_prompt_tokens += prompt_tokens
+            total_summary_completion_tokens += completion_tokens
 
             # Accumulate tokens for cost calculation
             node_total_prompt_tokens += prompt_tokens
@@ -1394,27 +1387,23 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
 
     # Set timing
     if min_timestamp != float("inf"):
-        metrics_data["start_time"] = min_timestamp
-        metrics_data["end_time"] = max_timestamp
+        start_time = min_timestamp
+        end_time = max_timestamp
 
     # Calculate total duration
-    total_duration = metrics_data["end_time"] - metrics_data["start_time"]
+    total_duration = end_time - start_time
 
     # Calculate total tokens
     total_tokens = (
-        metrics_data["total_embedding_tokens"]
-        + metrics_data["total_summary_prompt_tokens"]
-        + metrics_data["total_summary_completion_tokens"]
+        total_embedding_tokens
+        + total_summary_prompt_tokens
+        + total_summary_completion_tokens
     )
 
     # Calculate costs
-    embedding_cost = (
-        metrics_data["total_embedding_tokens"] / 1000
-    ) * embedding_cost_per_1k
-    summary_cost = (
-        metrics_data["total_summary_prompt_tokens"] / 1000
-    ) * summary_input_cost_per_1k + (
-        metrics_data["total_summary_completion_tokens"] / 1000
+    embedding_cost = (total_embedding_tokens / 1000) * embedding_cost_per_1k
+    summary_cost = (total_summary_prompt_tokens / 1000) * summary_input_cost_per_1k + (
+        total_summary_completion_tokens / 1000
     ) * summary_output_cost_per_1k
     total_cost = embedding_cost + summary_cost
 
@@ -1435,19 +1424,19 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
 
     return ComputedMetrics(
         # Timing
-        start_time=metrics_data["start_time"],
-        end_time=metrics_data["end_time"],
+        start_time=start_time,
+        end_time=end_time,
         total_duration_seconds=total_duration,
         # Document info
-        source_document_tokens=metrics_data["source_document_tokens"],
+        source_document_tokens=source_document_tokens,
         # Token metrics
         total_tokens=total_tokens,
-        total_embedding_tokens=metrics_data["total_embedding_tokens"],
-        total_summary_prompt_tokens=metrics_data["total_summary_prompt_tokens"],
-        total_summary_completion_tokens=metrics_data["total_summary_completion_tokens"],
+        total_embedding_tokens=total_embedding_tokens,
+        total_summary_prompt_tokens=total_summary_prompt_tokens,
+        total_summary_completion_tokens=total_summary_completion_tokens,
         # API calls
-        embedding_api_calls=metrics_data["embedding_api_calls"],
-        summary_api_calls=metrics_data["summary_api_calls"],
+        embedding_api_calls=embedding_api_calls,
+        summary_api_calls=summary_api_calls,
         chunks_created=chunks_created,
         # Cost metrics
         embedding_cost_per_1k=embedding_cost_per_1k,
@@ -1459,7 +1448,7 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
         # Memory metrics
         **memory_metrics,
         # Collections
-        embedding_batch_sizes=metrics_data["embedding_batch_sizes"],
+        embedding_batch_sizes=embedding_batch_sizes,
         tree_height=tree_height,
         nodes_per_height=nodes_per_height,
     )
@@ -1470,7 +1459,7 @@ def compute_metrics_from_telemetry(telemetry_data: dict[str, Any]) -> ComputedMe
 # ============================================================================
 
 
-def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics:
+def analyze_query_telemetry(telemetry_data: dict[str, object]) -> QueryPhaseMetrics:
     """Analyze query performance telemetry.
 
     Args:
@@ -1481,13 +1470,21 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
     """
     # Handle different telemetry formats
     format_version = telemetry_data.get("format_version")
+    telemetries: list[dict[str, object]]
+    statistics_data: dict[str, object]
+
     if format_version in ("1.1", "1.2") and "telemetries" in telemetry_data:
         # v1.1/v1.2 format with multiple runs and optional pre-calculated statistics
-        telemetries = telemetry_data["telemetries"]
-        statistics_data = telemetry_data.get("statistics", {})
+        telemetries_raw = telemetry_data["telemetries"]
+        telemetries = telemetries_raw if isinstance(telemetries_raw, list) else []
+        statistics_data_raw = telemetry_data.get("statistics", {})
+        statistics_data = (
+            statistics_data_raw if isinstance(statistics_data_raw, dict) else {}
+        )
     elif "telemetry" in telemetry_data:
         # v1.0 format - single telemetry file
-        telemetries = [telemetry_data["telemetry"]]
+        telemetry_item = telemetry_data["telemetry"]
+        telemetries = [telemetry_item] if isinstance(telemetry_item, dict) else []
         statistics_data = {}
     else:
         # Assume it's already the telemetry dict
@@ -1509,34 +1506,42 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
         "total_time": [],
     }
 
-    seeds_utilizations = []
-    budget_utilizations = []
-    coverage_efficiencies = []
+    seeds_utilizations: list[float] = []
+    budget_utilizations: list[float] = []
+    coverage_efficiencies: list[float] = []
 
     for telemetry in telemetries:
-        timings = telemetry.get("timings", {})
-        metrics = telemetry.get("metrics", {})
+        timings_raw = telemetry.get("timings", {})
+        metrics_raw = telemetry.get("metrics", {})
+
+        timings = timings_raw if isinstance(timings_raw, dict) else {}
+        metrics = metrics_raw if isinstance(metrics_raw, dict) else {}
 
         # Collect phase timings
         for phase in all_timings:
             if phase in timings:
-                all_timings[phase].append(timings[phase])
+                timing_value = timings[phase]
+                if isinstance(timing_value, int | float):
+                    all_timings[phase].append(float(timing_value))
 
         # Calculate efficiency metrics
-        if metrics.get("seeds_requested", 0) > 0:
-            seeds_utilizations.append(
-                metrics.get("seeds_found", 0) / metrics["seeds_requested"]
-            )
+        seeds_requested = metrics.get("seeds_requested", 0)
+        if isinstance(seeds_requested, int | float) and seeds_requested > 0:
+            seeds_found = metrics.get("seeds_found", 0)
+            if isinstance(seeds_found, int | float):
+                seeds_utilizations.append(seeds_found / seeds_requested)
 
-        if telemetry.get("budget_tokens", 0) > 0:
-            budget_utilizations.append(
-                metrics.get("output_tokens", 0) / telemetry["budget_tokens"]
-            )
+        budget_tokens = telemetry.get("budget_tokens", 0)
+        if isinstance(budget_tokens, int | float) and budget_tokens > 0:
+            output_tokens = metrics.get("output_tokens", 0)
+            if isinstance(output_tokens, int | float):
+                budget_utilizations.append(output_tokens / budget_tokens)
 
-        if metrics.get("coverage_size", 0) > 0:
-            coverage_efficiencies.append(
-                metrics.get("tiling_size", 0) / metrics["coverage_size"]
-            )
+        coverage_size = metrics.get("coverage_size", 0)
+        if isinstance(coverage_size, int | float) and coverage_size > 0:
+            tiling_size = metrics.get("tiling_size", 0)
+            if isinstance(tiling_size, int | float):
+                coverage_efficiencies.append(tiling_size / coverage_size)
 
     # Calculate phase breakdown (median values) and variance (MAD)
     phase_breakdown = {}
@@ -1546,9 +1551,21 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
     if statistics_data:
         for phase in all_timings.keys():
             if phase in statistics_data:
-                phase_stats = statistics_data[phase]
-                phase_breakdown[phase] = phase_stats.get("median", 0.0)
-                phase_variance[phase] = phase_stats.get("mad", 0.0)
+                phase_stats_raw = statistics_data[phase]
+                if isinstance(phase_stats_raw, dict):
+                    median_val = phase_stats_raw.get("median", 0.0)
+                    mad_val = phase_stats_raw.get("mad", 0.0)
+                    phase_breakdown[phase] = (
+                        float(median_val)
+                        if isinstance(median_val, int | float)
+                        else 0.0
+                    )
+                    phase_variance[phase] = (
+                        float(mad_val) if isinstance(mad_val, int | float) else 0.0
+                    )
+                else:
+                    phase_breakdown[phase] = 0.0
+                    phase_variance[phase] = 0.0
             else:
                 phase_breakdown[phase] = 0.0
                 phase_variance[phase] = 0.0
@@ -1610,10 +1627,10 @@ def analyze_query_telemetry(telemetry_data: dict[str, Any]) -> QueryPhaseMetrics
 
 
 def compare_query_performance(
-    baseline_telemetry: dict[str, Any],
-    current_telemetry: dict[str, Any],
+    baseline_telemetry: dict[str, object],
+    current_telemetry: dict[str, object],
     regression_threshold: float = 0.5,  # Increased from 20% to 50% for query variance
-) -> tuple[bool, dict[str, Any]]:
+) -> tuple[bool, dict[str, object]]:
     """Compare query performance and detect regressions.
 
     Args:
