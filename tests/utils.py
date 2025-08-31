@@ -567,11 +567,11 @@ def ensure_document_store(
 
     # If it's a StoreManager with for_document method, create document store
     if hasattr(store, "for_document") and callable(getattr(store, "for_document")):
-        return store.for_document(None)  # type: ignore[return-value,no-any-return]  # StoreManager.for_document returns DocumentStore
+        return store.for_document(None)  # type: ignore[no-any-return]  # StoreManager.for_document returns DocumentStore
 
     # If it's a SimpleMockStore, use for_document method
     if isinstance(store, SimpleMockStore):
-        return store.for_document(None)  # type: ignore[return-value]  # Mock returns compatible interface
+        return store.for_document(None)  # Mock returns compatible interface
 
     # Otherwise, assume it implements DocumentStore interface
     return cast(DocumentStore, store)

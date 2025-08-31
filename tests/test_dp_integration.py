@@ -107,7 +107,7 @@ class TestDPIntegration:
             doc_store,  # type: ignore[arg-type]
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
-            client=mock_client,  # type: ignore[arg-type]
+            client=mock_client,
         )
         query = "First chunk Second chunk"  # Query that should match the first half
         result = await retriever.retrieve_async(query, document_id="doc1")
@@ -174,7 +174,7 @@ class TestDPIntegration:
             doc_store,  # type: ignore[arg-type]
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
-            client=mock_client,  # type: ignore[arg-type]
+            client=mock_client,
         )
         result = await retriever.retrieve_async("test document", document_id="doc1")
 
@@ -241,7 +241,7 @@ class TestDPIntegration:
             doc_store,  # type: ignore[arg-type]
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
-            client=mock_client,  # type: ignore[arg-type]
+            client=mock_client,
         )
 
         # Patch retriever client for sync
@@ -305,7 +305,7 @@ class TestDPIntegration:
             doc_store,  # type: ignore[arg-type]
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
-            client=mock_client,  # type: ignore[arg-type]
+            client=mock_client,
         )
         result = await retriever.retrieve_async(
             "Sentence", document_id="doc1", budget_tokens=100
