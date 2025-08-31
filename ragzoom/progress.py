@@ -10,6 +10,7 @@ try:
     HAS_TQDM = True
 except ImportError:
     HAS_TQDM = False
+    # Assign None when tqdm is unavailable for graceful degradation
     tqdm = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class GlobalProgressTracker:
                 bar_format="{percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
             )
         else:
+            # Set to None when progress bar is disabled
             self.pbar = None  # type: ignore[assignment]
 
         self.current = 0

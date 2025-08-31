@@ -212,6 +212,7 @@ class TestDocumentAPI:
                 "/query", json={"query": "summarize", "document_id": doc_id}
             )
             assert response.status_code == 200
+            # TestClient.json() returns Any, which we pass through for test assertions
             return response.json()  # type: ignore[no-any-return]
 
         # Run operations on 3 documents concurrently

@@ -39,6 +39,7 @@ class TestDPIntegration:
             preceding_context_tokens=0,
             budget_tokens=500,
         )
+        # OperationalConfig contains Any in its type hierarchy through dataclass internals
         return config  # type: ignore[no-any-return]
 
     @pytest.fixture

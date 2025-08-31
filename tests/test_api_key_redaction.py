@@ -261,7 +261,8 @@ class TestErrorHandlingRedaction:
         """format_structured_error should redact API keys in exception context."""
         api_key = "sk-1234567890123456789012345678901234567890123456789"
         exc = ConfigurationError("config", "valid configuration")
-        exc.context = {"api_key": api_key, "model": "gpt-4"}  # type: ignore
+        # ConfigurationError.context is dynamically added, not in type definition
+        exc.context = {"api_key": api_key, "model": "gpt-4"}  # type: ignore[attr-defined]
 
         result = format_structured_error(exc)
 
@@ -293,7 +294,9 @@ class TestEndToEndScenarios:
         """Ensure API keys aren't exposed when services fail."""
         from ragzoom.config import QueryConfig
         from ragzoom.services.query_service import QueryService
-        from tests.conftest import SimpleMockStore  # type: ignore
+
+        # SimpleMockStore is defined in conftest.py but not exported in __all__
+        from tests.conftest import SimpleMockStore  # type: ignore[attr-defined]
 
         # Create config with API key
         api_key = "sk-1234567890123456789012345678901234567890123456789"
@@ -346,7 +349,9 @@ class TestEndToEndScenarios:
         # Patch where OpenAI is imported in utils, not the original module
         with patch("tests.utils.OpenAI") as mock_openai:
             from ragzoom.config import QueryConfig
-            from tests.conftest import SimpleMockStore  # type: ignore
+
+            # SimpleMockStore is defined in conftest.py but not exported in __all__
+            from tests.conftest import SimpleMockStore  # type: ignore[attr-defined]
             from tests.utils import create_retriever
 
             query_config = QueryConfig()

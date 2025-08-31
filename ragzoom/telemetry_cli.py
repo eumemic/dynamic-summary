@@ -401,6 +401,7 @@ def _compare_query_files_silent(
     )
 
     # Cast the dict[str, object] to the expected QueryComparisonReport TypedDict
+    # TypedDict doesn't support runtime construction from dict, but this is safe
     return QueryComparisonReport(report)  # type: ignore[misc,no-any-return]
 
 
