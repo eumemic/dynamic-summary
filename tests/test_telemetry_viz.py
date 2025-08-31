@@ -603,14 +603,14 @@ class TestVisualizationPerformance:
             ) -> tuple[float, float]:
                 nonlocal get_lim_count
                 get_lim_count += 1
-                return original_get_xlim(self, *args, **kwargs)  # type: ignore[arg-type]
+                return original_get_xlim(self, *args, **kwargs)
 
             def counting_get_ylim(
                 self: "Axes", *args: object, **kwargs: object
             ) -> tuple[float, float]:
                 nonlocal get_lim_count
                 get_lim_count += 1
-                return original_get_ylim(self, *args, **kwargs)  # type: ignore[arg-type]
+                return original_get_ylim(self, *args, **kwargs)
 
             with (
                 patch.object(Axes, "set_xlim", counting_set_xlim),
