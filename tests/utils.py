@@ -488,7 +488,7 @@ def create_retriever(
     api_key: str = "test-key",
     embedding_model: str | None = None,
     target_chunk_tokens: int | None = None,
-    client: OpenAI | None = None,
+    client: object | None = None,  # Accept any client type for testing
 ) -> Retriever:
     """Create a Retriever instance with proper service dependencies.
 
@@ -509,16 +509,20 @@ def create_retriever(
         client = OpenAI(api_key=api_key)
 
     # Get document store - handle both StoreManager and DocumentStore
-    if hasattr(store, "for_document"):
+    # Check if it's actually a StoreManager (not just something with for_document)
+    from ragzoom.store import StoreManager
+
+    if isinstance(store, StoreManager):
         # This is a StoreManager, create DocumentStore
         doc_store = store.for_document(document_id)
     else:
-        # This is already a DocumentStore
+        # This is already a DocumentStore or mock
         doc_store = store
 
     # Create services with DocumentStore
+    # Cast client to OpenAI for type checker - in tests this may be a Mock
     embedding_service = EmbeddingService(
-        client, doc_store, embedding_model or query_config.embedding_model
+        cast(OpenAI, client), doc_store, embedding_model or query_config.embedding_model
     )
 
     # Get chunk tokens from IndexConfig if not provided
