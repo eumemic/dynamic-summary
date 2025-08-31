@@ -2,8 +2,6 @@
 
 import os
 from collections.abc import Callable, Generator
-
-# from typing import Any  # Removed - using object instead
 from unittest.mock import MagicMock
 
 import pytest

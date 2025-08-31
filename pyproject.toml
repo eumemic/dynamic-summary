@@ -78,7 +78,7 @@ disallow_any_explicit = true
 disallow_any_unimported = true
 # disallow_any_expr = true
 
-# External library type issues - to be addressed later
+# External library type issues
 [[tool.mypy.overrides]]
 module = "pgvector.*"
 ignore_missing_imports = true
@@ -91,14 +91,6 @@ ignore_missing_imports = true
 module = "tomllib"
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = "tqdm"
-ignore_errors = true
-
-[[tool.mypy.overrides]]
-module = "ragzoom.progress"
-# Ignore tqdm-related type errors in this module
-ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

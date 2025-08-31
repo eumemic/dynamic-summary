@@ -80,7 +80,6 @@ app.add_middleware(create_error_handling_middleware(include_traceback=False))
 
 
 # Request/Response models
-# Pydantic BaseModel inherits from type containing Any, required for serialization framework
 class IndexDocumentRequest(BaseModel):  # type: ignore[explicit-any]
     """Request to index a new document."""
 
@@ -93,7 +92,6 @@ class IndexDocumentRequest(BaseModel):  # type: ignore[explicit-any]
     )
 
 
-# Pydantic BaseModel inherits from type containing Any, required for serialization framework
 class IndexDocumentResponse(BaseModel):  # type: ignore[explicit-any]
     """Response from document indexing."""
 
@@ -104,7 +102,6 @@ class IndexDocumentResponse(BaseModel):  # type: ignore[explicit-any]
     tree_depth: int
 
 
-# Pydantic BaseModel inherits from type containing Any, required for serialization framework
 class QueryRequest(BaseModel):  # type: ignore[explicit-any]
     """Request to query the system."""
 
@@ -116,7 +113,6 @@ class QueryRequest(BaseModel):  # type: ignore[explicit-any]
     token_budget: int | None = Field(None, description="Override token budget")
 
 
-# Pydantic BaseModel inherits from type containing Any, required for serialization framework
 class QueryResponse(BaseModel):  # type: ignore[explicit-any]
     """Response from query."""
 
@@ -128,7 +124,6 @@ class QueryResponse(BaseModel):  # type: ignore[explicit-any]
     tiling_size: int
 
 
-# Pydantic BaseModel inherits from type containing Any, required for serialization framework
 class PinNodeRequest(BaseModel):  # type: ignore[explicit-any]
     """Request to pin a node."""
 
@@ -137,7 +132,6 @@ class PinNodeRequest(BaseModel):  # type: ignore[explicit-any]
     node_id: str = Field(description="Node ID to pin")
 
 
-# Pydantic BaseModel inherits from type containing Any, required for serialization framework
 class UpdateConfigRequest(BaseModel):  # type: ignore[explicit-any]
     """Request to update configuration."""
 
@@ -179,7 +173,6 @@ class SystemConfigDict(TypedDict):
     operational: OperationalConfigDict
 
 
-# Pydantic BaseModel inherits from type containing Any, required for serialization framework
 class SystemStatusResponse(BaseModel):  # type: ignore[explicit-any]
     """System status information."""
 
@@ -192,7 +185,6 @@ class SystemStatusResponse(BaseModel):  # type: ignore[explicit-any]
     config: SystemConfigDict
 
 
-# Pydantic BaseModel inherits from type containing Any, required for serialization framework
 class DocumentInfoResponse(BaseModel):  # type: ignore[explicit-any]
     """Information about an indexed document for API response."""
 
@@ -216,7 +208,6 @@ class DocumentInfoResponse(BaseModel):  # type: ignore[explicit-any]
         )
 
 
-# Pydantic BaseModel inherits from type containing Any, required for serialization framework
 class DocumentsResponse(BaseModel):  # type: ignore[explicit-any]
     """Response listing all indexed documents."""
 
