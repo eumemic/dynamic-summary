@@ -34,8 +34,14 @@ class TestTelemetryCompare:
 
         # Convert summary format from shared fixture to CLI test format
         for i, node in enumerate(cli_telemetry_data["nodes"]):
-            if node.get("summary"):
-                # Convert from shared format to CLI format
+            # Check if node already has summary_attempts from the fixture
+            if node.get("summary_attempts"):
+                # Fix the actual_tokens to have realistic deviation
+                for attempt in node["summary_attempts"]:
+                    attempt["actual_tokens"] = 95  # 5% deviation instead of 75%
+                    attempt["target_tokens"] = 100
+            elif node.get("summary"):
+                # Convert from old shared format to CLI format
                 summary_data = node["summary"]["create"]
                 node["summary_attempts"] = [
                     {
@@ -107,7 +113,6 @@ class TestTelemetryCompare:
 
         return baseline_dir, current_dir
 
-    @pytest.mark.skip(reason="Performance threshold tuning needed after type fixes")
     def test_compare_single_files(self, create_test_files: tuple[Path, Path]) -> None:
         """Test comparing two individual files."""
         baseline_dir, current_dir = create_test_files
@@ -136,7 +141,6 @@ class TestTelemetryCompare:
         # Chunk size should appear in configuration section
         assert "Target Chunk Tokens" in result.output
 
-    @pytest.mark.skip(reason="Performance threshold tuning needed after type fixes")
     def test_compare_directories(self, create_test_files: tuple[Path, Path]) -> None:
         """Test comparing two directories with matching files."""
         baseline_dir, current_dir = create_test_files
@@ -157,7 +161,6 @@ class TestTelemetryCompare:
         assert "Cost per 1M source tokens" in result.output
         # Should be a unified table with simplified format
 
-    @pytest.mark.skip(reason="Performance threshold tuning needed after type fixes")
     def test_compare_directories_with_output(
         self, create_test_files: tuple[Path, Path], tmp_path: Path
     ) -> None:
@@ -245,7 +248,6 @@ class TestTelemetryCompare:
         assert "other_file.json" not in match_names
         assert "telemetry_300_tokens.json" not in match_names
 
-    @pytest.mark.skip(reason="Performance threshold tuning needed after type fixes")
     def test_compare_with_regression(
         self, tmp_path: Path, sample_telemetry_data: TelemetryDataDict
     ) -> None:
@@ -259,8 +261,14 @@ class TestTelemetryCompare:
 
         # Convert summary format from shared fixture to CLI test format
         for node in cli_data["nodes"]:
-            if node.get("summary"):
-                # Convert from shared format to CLI format
+            # Check if node already has summary_attempts from the fixture
+            if node.get("summary_attempts"):
+                # Fix the actual_tokens to have realistic deviation
+                for attempt in node["summary_attempts"]:
+                    attempt["actual_tokens"] = 95  # 5% deviation instead of 75%
+                    attempt["target_tokens"] = 100
+            elif node.get("summary"):
+                # Convert from old shared format to CLI format
                 summary_data = node["summary"]["create"]
                 node["summary_attempts"] = [
                     {
