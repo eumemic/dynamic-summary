@@ -137,13 +137,13 @@ class ModelInfo:
         return float(llm_info["input"]), float(llm_info["output"])
 
     def get_cache_discount(self, model: str) -> float:
-        """Get the cache discount multiplier for an LLM.
+        """Get the cache discount percentage for an LLM.
 
         Args:
             model: The LLM model name
 
         Returns:
-            Cache discount multiplier (e.g., 0.5 = 50% discount)
+            Cache discount percentage (e.g., 0.5 = 50% discount, 0.9 = 90% discount)
 
         Raises:
             ValueError: If the model is not found
@@ -154,7 +154,7 @@ class ModelInfo:
                 f"LLM model '{model}' not found. Available models: {available}"
             )
 
-        return float(self._data["llms"][model].get("cache_discount", 1.0))
+        return float(self._data["llms"][model].get("cache_discount", 0.0))
 
     def supports_temperature(self, model: str) -> bool:
         """Check if an LLM supports temperature parameter.
