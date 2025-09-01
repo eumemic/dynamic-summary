@@ -116,6 +116,147 @@ class TestTreeVisualization:
         assert "1" in viz  # Second node (leaf3)
         assert "2" in viz  # Third node (leaf4)
 
+    def test_node_with_only_left_child(self) -> None:
+        """Test visualization of nodes with only a left child (document boundary case)."""
+        store = SimpleMockStore()
+
+        # Root node
+        store.add_node(
+            node_id="root",
+            text="Root summary",
+            span_start=0,
+            span_end=150,
+            parent_id=None,
+            document_id="doc1",
+            embedding=[0.5] * 1536,
+            left_child_id="left",
+            right_child_id="right",
+            height=2,
+        )
+
+        # Left subtree (complete)
+        store.add_node(
+            node_id="left",
+            text="Left content",
+            span_start=0,
+            span_end=100,
+            parent_id="root",
+            document_id="doc1",
+            embedding=[0.5] * 1536,
+            left_child_id="leaf1",
+            right_child_id="leaf2",
+            height=1,
+        )
+
+        # Right subtree (only left child - document boundary)
+        store.add_node(
+            node_id="right",
+            text="Right content",
+            span_start=100,
+            span_end=150,
+            parent_id="root",
+            document_id="doc1",
+            embedding=[0.5] * 1536,
+            left_child_id="leaf3",
+            right_child_id=None,  # No right child - document boundary
+            height=1,
+        )
+
+        # Leaf nodes
+        store.add_node(
+            node_id="leaf1",
+            text="Leaf 1",
+            span_start=0,
+            span_end=50,
+            parent_id="left",
+            document_id="doc1",
+            embedding=[0.5] * 1536,
+            height=0,
+        )
+
+        store.add_node(
+            node_id="leaf2",
+            text="Leaf 2",
+            span_start=50,
+            span_end=100,
+            parent_id="left",
+            document_id="doc1",
+            embedding=[0.5] * 1536,
+            height=0,
+        )
+
+        store.add_node(
+            node_id="leaf3",
+            text="Leaf 3",
+            span_start=100,
+            span_end=150,
+            parent_id="right",
+            document_id="doc1",
+            embedding=[0.5] * 1536,
+            height=0,
+        )
+
+        # Tiling includes the node with only left child
+        tiling = ["left", "right"]  # "right" has only left child
+
+        # Coverage map
+        coverage_map = {
+            "root": True,
+            "left": True,
+            "right": True,
+            "leaf1": True,
+            "leaf2": True,
+            "leaf3": True,
+        }
+
+        # Preload nodes
+        preloaded_nodes = {}
+        for node_id in coverage_map:
+            node = store.nodes.get_node(node_id)
+            if node:
+                preloaded_nodes[node_id] = node
+
+        doc_store = store.for_document("doc1")
+        viz = build_ascii_tree(
+            tiling,
+            doc_store,
+            width=40,
+            coverage_map=coverage_map,
+            preloaded_nodes=preloaded_nodes,
+        )
+
+        # Both selected nodes should appear
+        lines = viz.split("\n")
+        h1_line = None
+        for line in lines:
+            if line.startswith("H1 "):
+                h1_line = line[3:]  # Remove "H1 " prefix
+                break
+
+        assert h1_line is not None, "H1 line not found"
+
+        # Check H1 line to see if both nodes are visualized
+        # "left" spans 0-100, "right" spans 100-150
+        # With width 40, we expect:
+        # - "left" should occupy roughly 0-27 (100/150 * 40)
+        # - "right" should occupy roughly 27-40 (50/150 * 40)
+
+        # Since the two nodes are adjacent (left: 0-100, right: 100-150),
+        # they will appear as one continuous filled region
+        filled_blocks = h1_line.count("█")
+
+        # The filled region should cover most of the width
+        # (both nodes together span the entire document)
+        assert (
+            filled_blocks > 20
+        ), f"Expected significant filled region for both nodes, got {filled_blocks} blocks. H1 line: {h1_line}"
+
+        # Check that both nodes are labeled
+        assert "0" in viz, "First selected node (left) not labeled"
+        assert (
+            "1" in viz
+        ), "Second selected node (right with only left child) not labeled"
+
     def test_empty_tiling(self) -> None:
         """Test visualization with no selected nodes."""
         store = SimpleMockStore()
