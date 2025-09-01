@@ -73,10 +73,9 @@ ignore = ["E501"]  # Line too long (handled by black)
 [tool.mypy]
 python_version = "3.10"
 strict = true
-# TODO: Enable these to eliminate Any types completely (Phase 6)
 disallow_any_explicit = true
 disallow_any_unimported = true
-# disallow_any_expr = true
+# disallow_any_expr = true  # Not enabled - would require extensive workarounds for Pydantic/external libraries
 
 # External library type issues
 [[tool.mypy.overrides]]
