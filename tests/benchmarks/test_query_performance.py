@@ -10,7 +10,6 @@ import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, QueryConfig
-from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import StoreManager
@@ -77,7 +76,20 @@ def setup_test_document(store: StoreManager, api_key: str) -> str:
     print(f"  Document {doc_id} not found, indexing...")
     index_config = IndexConfig.load(target_chunk_tokens=200)
     test_doc, doc_name = get_test_document("narrative")
-    builder = TreeBuilder(index_config, cast(DocumentStore, store), api_key)
+
+    # Create DocumentStore with the specific document_id
+    doc_store = store.add_document(
+        document_id=doc_id,
+        file_path=None,
+        content_hash=store.compute_content_hash(test_doc),
+        chunk_count=0,
+        embedding_model=index_config.embedding_model,
+        summary_model=index_config.summary_model,
+    )
+
+    # Create TreeBuilder with the DocumentStore
+    builder = TreeBuilder(index_config, doc_store, api_key)
+    # add_document returns the document_id from the DocumentStore
     return builder.add_document(test_doc)
 
 
@@ -113,26 +125,32 @@ def test_query_performance(num_seeds: int, budget_tokens: int, query_type: str) 
         # Index document first (or reuse if exists)
         doc_id = setup_test_document(store, api_key)
 
-        # Create retriever and assembler using the proper pattern
+        # Create services for Retriever
         from openai import OpenAI
 
         from ragzoom.retrieval.budget_planner import BudgetPlanner
         from ragzoom.retrieval.embedding_service import EmbeddingService
 
         client = OpenAI(api_key=api_key)
-        document_store = store.for_document(doc_id)
+
+        # Get DocumentStore for the test document
+        doc_store = store.for_document(doc_id)
+
         embedding_service = EmbeddingService(
-            client, document_store, "text-embedding-3-small"
+            client, doc_store, query_config.embedding_model
         )
-        index_cfg = IndexConfig.load()
-        budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
+        budget_planner = BudgetPlanner(
+            doc_store, IndexConfig.load(target_chunk_tokens=200).target_chunk_tokens
+        )
+
+        # Create retriever and assembler
         retriever = Retriever(
             query_config,
-            document_store,
+            doc_store,
             embedding_service,
             budget_planner,
         )
-        assembler = Assembler(document_store)
+        assembler = Assembler(doc_store)
 
         # Collect telemetry from multiple runs
         all_telemetries = []
