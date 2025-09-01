@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any
+from types import TracebackType
 
 try:
     from tqdm import tqdm
@@ -10,7 +10,8 @@ try:
     HAS_TQDM = True
 except ImportError:
     HAS_TQDM = False
-    tqdm = None
+    # Assign None when tqdm is unavailable for graceful degradation
+    tqdm = None  # type: ignore[assignment, misc]  # tqdm is None when not installed
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,8 @@ class GlobalProgressTracker:
                 bar_format="{percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
             )
         else:
-            self.pbar = None
+            # Set to None when progress bar is disabled
+            self.pbar = None  # type: ignore[assignment]  # pbar is None when progress bar is disabled
 
         self.current = 0
         self.stage = "leaves"
@@ -103,7 +105,12 @@ class GlobalProgressTracker:
         """Context manager support."""
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Close on exit."""
         self.close()
 

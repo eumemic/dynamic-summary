@@ -1,15 +1,17 @@
 """Test that verifies the num_seeds constraint fix works correctly."""
 
+from typing import cast
 from unittest.mock import Mock, patch
 
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
+from ragzoom.document_store import DocumentStore
 from tests.mock_store import SimpleMockStore
 
 
 class TestNumSeedsFix:
     """Test that the fix for num_seeds constraint works correctly."""
 
-    def test_retrieve_respects_coverage_tree(self):
+    def test_retrieve_respects_coverage_tree(self) -> None:
         """Test that retrieve() only passes coverage tree nodes to DP."""
         # Create a mock store
         store = SimpleMockStore()
@@ -72,7 +74,7 @@ class TestNumSeedsFix:
 
         # Mock the search_similar method on the store itself (not store.search)
         # because for_document() creates a new search object that calls store.search_similar
-        store.search_similar = Mock(
+        store.search_similar = Mock(  # type: ignore[method-assign]
             return_value=[
                 ("leaf1", 0.9, {}),  # High similarity, empty metadata
                 ("leaf2", 0.9, {}),
@@ -82,7 +84,7 @@ class TestNumSeedsFix:
         )
 
         # Mock compute_mmr_diverse_results on the store itself
-        store.compute_mmr_diverse_results = Mock(return_value=["leaf1"])
+        store.compute_mmr_diverse_results = Mock(return_value=["leaf1"])  # type: ignore[method-assign]
 
         # Let the mock store handle get_ancestors naturally - it has proper implementation
 
@@ -104,7 +106,7 @@ class TestNumSeedsFix:
 
             retriever = create_retriever(
                 query_config=query_config,
-                store=store,
+                store=cast(DocumentStore, store),
                 document_id="doc1",  # Specify the document we're retrieving from
                 api_key=operational_config.openai_api_key.get_secret_value(),
                 client=mock_instance,  # Pass the mocked client

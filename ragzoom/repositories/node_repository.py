@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional, TypedDict
 
 import numpy as np
 from numpy.typing import NDArray
@@ -17,6 +17,29 @@ from ragzoom.services.cache_manager import CacheManager
 from ragzoom.storage.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
+
+
+class NodeDataDict(TypedDict, total=False):
+    """Type definition for node data used in batch operations."""
+
+    # Required fields
+    node_id: str
+    document_id: str
+    # Optional fields
+    parent_id: str | None
+    left_child_id: str | None
+    right_child_id: str | None
+    span_start: int
+    span_end: int
+    text: str
+    embedding: list[float] | None
+    node_type: str
+    height: int
+    token_count: int
+    created_at: datetime
+    updated_at: datetime
+    preceding_neighbor_id: str | None
+    path: str
 
 
 class NodeRepository(BaseRepository):
@@ -35,7 +58,7 @@ class NodeRepository(BaseRepository):
         self.cache_manager = cache_manager
         self.SessionLocal = database_manager.SessionLocal
 
-    def _force_load_and_detach(self, session: Any, node: TreeNode) -> None:
+    def _force_load_and_detach(self, session: "Session", node: TreeNode) -> None:
         """Force load all attributes and detach node from session."""
         # Force load all attributes before detaching
         _ = (
@@ -145,7 +168,7 @@ class NodeRepository(BaseRepository):
         return node
 
     def add_nodes_batch(
-        self, nodes_data: list[dict[str, Any]], *, session: Optional["Session"] = None
+        self, nodes_data: list["NodeDataDict"], *, session: Optional["Session"] = None
     ) -> list[TreeNode]:
         """Add multiple nodes to the database in batch.
 
@@ -161,7 +184,8 @@ class NodeRepository(BaseRepository):
 
         # Validate all embeddings first
         for data in nodes_data:
-            self.db_manager.validate_embedding_dimension(data["embedding"])
+            if data["embedding"] is not None:
+                self.db_manager.validate_embedding_dimension(data["embedding"])
 
         db_session, should_commit = self._get_session(session)
         try:
@@ -176,8 +200,10 @@ class NodeRepository(BaseRepository):
                     span_start=data["span_start"],
                     span_end=data["span_end"],
                     text=data["text"],
-                    embedding=list(
-                        map(float, data["embedding"])
+                    embedding=(
+                        list(map(float, data["embedding"]))
+                        if data["embedding"] is not None
+                        else []
                     ),  # Store embedding in DB
                     document_id=data.get("document_id"),
                     token_count=data.get("token_count", 0),
@@ -202,6 +228,7 @@ class NodeRepository(BaseRepository):
                 self.cache_manager.put(node.id, node)
 
             return nodes
+
         except Exception:
             if should_commit:
                 db_session.rollback()

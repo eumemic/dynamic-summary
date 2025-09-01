@@ -235,7 +235,7 @@ fi
 # dmypy
 if ! should_skip "dmypy"; then
     if command -v dmypy &> /dev/null; then
-        run_check_background "Mypy" "dmypy run -- ragzoom --ignore-missing-imports --no-error-summary --check-untyped-defs"
+        run_check_background "Mypy" "dmypy run -- ragzoom tests --no-error-summary --check-untyped-defs"
     else
         echo "[Mypy] ❌ dmypy not installed - cannot run type checks" >&2
         exit 2

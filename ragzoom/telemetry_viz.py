@@ -9,7 +9,7 @@ import json
 import logging
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Literal
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -19,6 +19,7 @@ from matplotlib.axes import Axes
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from typing_extensions import TypedDict
 
 from ragzoom.config import get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_analysis import (
@@ -32,7 +33,7 @@ from ragzoom.telemetry_config import (
     FIGURE_WIDTH,
     SAVE_DPI,
 )
-from ragzoom.telemetry_types import NodeTelemetryDict
+from ragzoom.telemetry_types import NodeTelemetryDict, TelemetryDataDict
 
 # Set style for professional-looking plots
 try:
@@ -60,6 +61,13 @@ LEGEND_COLUMN_SPACING = 0.5  # Horizontal spacing between legend columns
 LEGEND_HANDLE_TEXT_PAD = 0.3  # Spacing between legend marker and text
 
 
+class PlotBoundsDict(TypedDict, total=False):
+    """Type definition for plot bounds with optional x and y limits."""
+
+    x: tuple[float, float]
+    y: tuple[float, float]
+
+
 class TelemetryVisualizer:
     """Generate visualizations from telemetry data."""
 
@@ -75,21 +83,21 @@ class TelemetryVisualizer:
         self.output_path = output_path
 
     def _extract_nodes_from_telemetry(
-        self, telemetry: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+        self, telemetry: TelemetryDataDict
+    ) -> list[NodeTelemetryDict]:
         """Extract nodes from telemetry data.
 
         Args:
             telemetry: Telemetry data dictionary
 
         Returns:
-            List of node dictionaries
+            List of node telemetry dictionaries
         """
         # Format 4.2: nodes are at the top level
         nodes_data = telemetry.get("nodes", [])
         return nodes_data if isinstance(nodes_data, list) else []
 
-    def _extract_chunk_size_from_telemetry(self, telemetry: dict[str, Any]) -> int:
+    def _extract_chunk_size_from_telemetry(self, telemetry: TelemetryDataDict) -> int:
         """Extract chunk size from telemetry data.
 
         Args:
@@ -103,7 +111,7 @@ class TelemetryVisualizer:
         chunk_size = config.get("target_chunk_tokens", 0)
         return int(chunk_size) if chunk_size else 0
 
-    def _calculate_max_time_from_telemetry(self, telemetry: dict[str, Any]) -> float:
+    def _calculate_max_time_from_telemetry(self, telemetry: TelemetryDataDict) -> float:
         """Calculate the maximum end time from telemetry data.
 
         Args:
@@ -115,19 +123,19 @@ class TelemetryVisualizer:
         nodes = self._extract_nodes_from_telemetry(telemetry)
         indexing_start_time = telemetry.get("indexed_at", None)
 
-        max_time = 0
-        min_time = None
+        max_time = 0.0
+        min_time: float | None = None
 
         # Process each node to find the maximum end time
         for node in nodes:
             # Always check node creation time for all nodes (including leaf nodes)
             created_at = node.get("created_at", 0)
             if created_at > 0:
-                max_time = max(max_time, created_at)
+                max_time = max(max_time, float(created_at))
                 if min_time is None:
-                    min_time = created_at
+                    min_time = float(created_at)
                 else:
-                    min_time = min(min_time, created_at)
+                    min_time = min(min_time, float(created_at))
 
             # Check embedding times for all nodes that have embeddings
             embedding = node.get("embedding")
@@ -137,12 +145,12 @@ class TelemetryVisualizer:
 
                 if embed_start_time is not None:
                     if min_time is None:
-                        min_time = embed_start_time
+                        min_time = float(embed_start_time)
                     else:
-                        min_time = min(min_time, embed_start_time)
+                        min_time = min(min_time, float(embed_start_time))
 
                 if embed_end_time is not None:
-                    max_time = max(max_time, embed_end_time)
+                    max_time = max(max_time, float(embed_end_time))
 
             # For non-leaf nodes, also check summary attempts
             height = node["height"]
@@ -154,12 +162,12 @@ class TelemetryVisualizer:
 
                     if start_time is not None:
                         if min_time is None:
-                            min_time = start_time
+                            min_time = float(start_time)
                         else:
-                            min_time = min(min_time, start_time)
+                            min_time = min(min_time, float(start_time))
 
                     if end_time is not None:
-                        max_time = max(max_time, end_time)
+                        max_time = max(max_time, float(end_time))
 
         # Calculate baseline and return relative max time
         baseline = indexing_start_time if indexing_start_time is not None else min_time
@@ -169,8 +177,8 @@ class TelemetryVisualizer:
             return 1.0  # Fallback: minimum 1 second for empty datasets
 
     def _extract_plot_bounds(
-        self, telemetry: dict[str, Any], plot_type: str
-    ) -> dict[str, tuple[float, float]]:
+        self, telemetry: TelemetryDataDict, plot_type: str
+    ) -> PlotBoundsDict:
         """Extract axis bounds for a specific plot type from telemetry data.
 
         Args:
@@ -207,9 +215,7 @@ class TelemetryVisualizer:
         else:
             raise ValueError(f"Unknown plot type: {plot_type}")
 
-    def _combine_bounds(
-        self, bounds_list: list[dict]
-    ) -> dict[str, tuple[float, float]]:
+    def _combine_bounds(self, bounds_list: list[PlotBoundsDict]) -> PlotBoundsDict:
         """Combine multiple bounds dicts into unified bounds using min/max.
 
         Args:
@@ -218,18 +224,26 @@ class TelemetryVisualizer:
         Returns:
             Combined bounds dict with (min, max) tuples
         """
-        combined = {}
-        for axis in ["x", "y"]:
-            values = [b[axis] for b in bounds_list if axis in b]
-            if values:
-                mins = [v[0] for v in values]
-                maxs = [v[1] for v in values]
-                combined[axis] = (min(mins), max(maxs))
+        combined: PlotBoundsDict = {}
+
+        # Handle x-axis bounds
+        x_values = [b["x"] for b in bounds_list if "x" in b]
+        if x_values:
+            x_mins = [v[0] for v in x_values]
+            x_maxs = [v[1] for v in x_values]
+            combined["x"] = (min(x_mins), max(x_maxs))
+
+        # Handle y-axis bounds
+        y_values = [b["y"] for b in bounds_list if "y" in b]
+        if y_values:
+            y_mins = [v[0] for v in y_values]
+            y_maxs = [v[1] for v in y_values]
+            combined["y"] = (min(y_mins), max(y_maxs))
         return combined
 
     def _get_plot_bounds(
-        self, telemetries: dict | list[dict], plot_type: str
-    ) -> dict[str, tuple[float, float]]:
+        self, telemetries: TelemetryDataDict | list[TelemetryDataDict], plot_type: str
+    ) -> PlotBoundsDict:
         """Get combined bounds for a plot type from one or more telemetries.
 
         Args:
@@ -245,7 +259,7 @@ class TelemetryVisualizer:
         all_bounds = [self._extract_plot_bounds(t, plot_type) for t in telemetries]
         return self._combine_bounds(all_bounds)
 
-    def _calculate_total_cost(self, telemetry: dict[str, Any]) -> float:
+    def _calculate_total_cost(self, telemetry: TelemetryDataDict) -> float:
         """Calculate total cost for cost breakdown chart.
 
         Returns:
@@ -287,7 +301,7 @@ class TelemetryVisualizer:
         return embedding_cost + summary_cost
 
     def _extract_summary_tokens(
-        self, telemetry: dict[str, Any]
+        self, telemetry: TelemetryDataDict
     ) -> tuple[list[float], list[float]]:
         """Extract input and output tokens from summary attempts.
 
@@ -314,7 +328,7 @@ class TelemetryVisualizer:
 
         return input_tokens, output_tokens
 
-    def _extract_span_range(self, telemetry: dict[str, Any]) -> tuple[float, float]:
+    def _extract_span_range(self, telemetry: TelemetryDataDict) -> tuple[float, float]:
         """Extract document span range from telemetry.
 
         Returns:
@@ -360,10 +374,10 @@ class TelemetryVisualizer:
 
         return suppress()
 
-    def load_benchmark_data(self, file_path: Path) -> dict[str, Any]:
+    def load_benchmark_data(self, file_path: Path) -> TelemetryDataDict:
         """Load benchmark data from JSON file."""
         with open(file_path) as f:
-            data: dict[str, Any] = json.load(f)
+            data: TelemetryDataDict = json.load(f)
             return data
 
     def visualize_single_benchmark(
@@ -442,7 +456,7 @@ class TelemetryVisualizer:
         print(f"Saved visualization to {self.output_path}")
 
     def _get_cost_functions(
-        self, telemetry: dict[str, Any]
+        self, telemetry: TelemetryDataDict
     ) -> tuple[float, float, float]:
         """Get cost calculation functions for models in telemetry."""
         # Get models from config
@@ -635,7 +649,7 @@ class TelemetryVisualizer:
         print(f"Saved side-by-side comparison to {self.output_path}")
 
     def _plot_token_usage_by_tree_level(
-        self, telemetry: dict[str, Any], ax: Axes
+        self, telemetry: TelemetryDataDict, ax: Axes
     ) -> None:
         """Plot token usage by tree level with stacked bars."""
         # Group tokens by height
@@ -651,9 +665,8 @@ class TelemetryVisualizer:
                 continue  # Skip leaf nodes
 
             # Get token counts for this node
-            # Cast to NodeTelemetryDict for type safety
-            node_typed = cast(NodeTelemetryDict, node)
-            accepted_attempt, _ = get_accepted_attempt(node_typed)
+            # Node is already typed as NodeTelemetryDict
+            accepted_attempt, _ = get_accepted_attempt(node)
             if accepted_attempt:
                 prompt_tokens = accepted_attempt.get("prompt_tokens", 0)
                 completion_tokens = accepted_attempt.get("completion_tokens", 0)
@@ -719,7 +732,10 @@ class TelemetryVisualizer:
         ax.grid(True, alpha=0.3, axis="y")
 
     def _plot_cost_breakdown(
-        self, telemetry: dict[str, Any], ax: Axes, bounds: dict | None = None
+        self,
+        telemetry: TelemetryDataDict,
+        ax: Axes,
+        bounds: PlotBoundsDict | None = None,
     ) -> None:
         """Plot cost breakdown by attempt number as vertical stacked bar."""
         # Get cost functions for models in telemetry
@@ -728,7 +744,7 @@ class TelemetryVisualizer:
         )
 
         # Calculate costs by attempt number
-        costs_by_attempt = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}  # 5 = 5+
+        costs_by_attempt = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}  # 5 = 5+
 
         # Extract nodes from telemetry data
         nodes = self._extract_nodes_from_telemetry(telemetry)
@@ -833,7 +849,7 @@ class TelemetryVisualizer:
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3, axis="y")
 
-    def _plot_batch_efficiency(self, telemetry: dict[str, Any], ax: Axes) -> None:
+    def _plot_batch_efficiency(self, telemetry: TelemetryDataDict, ax: Axes) -> None:
         """Plot embedding batch efficiency with clear explanations."""
         batch_eff = compute_batch_efficiency(telemetry)
 
@@ -914,7 +930,7 @@ class TelemetryVisualizer:
             fontsize=8,
         )
 
-    def _plot_retry_patterns(self, telemetry: dict[str, Any], ax: Axes) -> None:
+    def _plot_retry_patterns(self, telemetry: TelemetryDataDict, ax: Axes) -> None:
         """Plot retry attempt distribution as stacked bar chart (cumulative)."""
         # Count nodes by number of attempts
         attempt_counts: dict[int, int] = {}
@@ -1001,7 +1017,7 @@ class TelemetryVisualizer:
         ax.grid(True, alpha=0.3, axis="y")
 
     def _extract_summary_deviations_from_telemetry(
-        self, telemetry: dict[str, Any]
+        self, telemetry: TelemetryDataDict
     ) -> list[float]:
         """Extract summary accuracy deviations from telemetry data.
 
@@ -1024,9 +1040,8 @@ class TelemetryVisualizer:
             height = node["height"]
             if height > 0:
                 # Look for accepted summary attempts
-                # Cast to NodeTelemetryDict for type safety
-                node_typed = cast(NodeTelemetryDict, node)
-                accepted_attempt, _ = get_accepted_attempt(node_typed)
+                # Node is already typed as NodeTelemetryDict
+                accepted_attempt, _ = get_accepted_attempt(node)
                 if accepted_attempt:
                     actual_tokens = accepted_attempt.get("actual_tokens", 0)
                     if actual_tokens > 0:
@@ -1037,7 +1052,10 @@ class TelemetryVisualizer:
         return deviations
 
     def _plot_summary_scatter(
-        self, telemetry: dict[str, Any], ax: Axes, bounds: dict | None = None
+        self,
+        telemetry: TelemetryDataDict,
+        ax: Axes,
+        bounds: PlotBoundsDict | None = None,
     ) -> None:
         """Plot input vs output token scatter plot, color-coded by attempt number."""
         # Extract chunk size (target) and nodes from telemetry data
@@ -1133,9 +1151,12 @@ class TelemetryVisualizer:
         y_min, y_max = min(output_tokens) - y_margin, max(output_tokens) + y_margin
 
         # Extract retry threshold from telemetry for dynamic acceptable range
-        retry_threshold = None
-        if "config" in telemetry:
-            retry_threshold = telemetry["config"].get("retry_threshold")
+        retry_threshold: float | None = None
+        config = telemetry.get("config", {})
+        if config:
+            raw_threshold = config.get("retry_threshold")
+            if raw_threshold is not None and isinstance(raw_threshold, int | float):
+                retry_threshold = float(raw_threshold)
 
         # Add target line (horizontal at chunk_size)
         if chunk_size > 0:
@@ -1352,7 +1373,7 @@ class TelemetryVisualizer:
             fontsize=8,
         )
 
-    def _plot_node_timeline(self, telemetry: dict[str, Any], ax: Axes) -> None:
+    def _plot_node_timeline(self, telemetry: TelemetryDataDict, ax: Axes) -> None:
         """Plot summary node creation timeline."""
         # Extract summary completion times (when summaries actually finished)
         creation_times = []
@@ -1446,10 +1467,10 @@ class TelemetryVisualizer:
 
     def _plot_tree_construction_timeline(
         self,
-        telemetry: dict[str, Any],
+        telemetry: TelemetryDataDict,
         ax: Axes,
         max_y_limit: float | None = None,
-        bounds: dict | None = None,
+        bounds: PlotBoundsDict | None = None,
     ) -> None:
         """Plot tree construction as rectangles showing span coverage over time.
 
@@ -1503,10 +1524,12 @@ class TelemetryVisualizer:
         indexing_start_time = telemetry.get("indexed_at", None)
 
         # Track min/max for axis limits
-        min_time = None  # Will be set to indexed_at or first node time as baseline
-        max_time = 0
+        min_time: float | None = (
+            None  # Will be set to indexed_at or first node time as baseline
+        )
+        max_time = 0.0
         min_span = float("inf")
-        max_span = 0
+        max_span = 0.0
 
         # First pass: calculate span range for gap sizing
         for node in nodes:
@@ -1540,9 +1563,9 @@ class TelemetryVisualizer:
                 if embed_start_time is not None and embed_end_time is not None:
                     # Update min_time tracking for fallback
                     if indexing_start_time is None and min_time is None:
-                        min_time = embed_start_time
+                        min_time = float(embed_start_time)
 
-                    max_time = max(max_time, embed_end_time)
+                    max_time = max(max_time, float(embed_end_time))
 
                     # Calculate baseline for relative time
                     baseline, min_time = self._calculate_timeline_baseline(
@@ -1574,7 +1597,7 @@ class TelemetryVisualizer:
                 created_at = node.get("created_at", 0)
 
                 # Update max_time
-                max_time = max(max_time, created_at)
+                max_time = max(max_time, float(created_at))
 
                 # Calculate relative time from indexing start
                 # Three-level fallback: indexed_at -> min_time -> current node time
@@ -1752,7 +1775,7 @@ class TelemetryVisualizer:
             )
             ax.set_title("Tree Construction Timeline")
 
-    def _plot_token_distributions(self, telemetry: dict[str, Any], ax: Axes) -> None:
+    def _plot_token_distributions(self, telemetry: TelemetryDataDict, ax: Axes) -> None:
         """Plot token count distributions by attempt number using violin plots."""
         import pandas as pd
 

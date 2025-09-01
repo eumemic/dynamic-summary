@@ -8,7 +8,7 @@ from ragzoom.tiling import Tiling
 from ragzoom.utils.tokenization import tokenizer
 
 if TYPE_CHECKING:
-    from ragzoom.store import TreeNode
+    from ragzoom.models import TreeNode
 
 logger = logging.getLogger(__name__)
 

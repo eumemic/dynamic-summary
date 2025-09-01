@@ -2,16 +2,22 @@
 
 import json
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
 
 # Skip all tests in this module if matplotlib is not available
 pytest.importorskip("matplotlib")
 pytest.importorskip("seaborn")
 pytest.importorskip("pandas")
 
+from ragzoom.telemetry_types import NodeTelemetryDict, TelemetryDataDict
 from ragzoom.telemetry_viz import TelemetryVisualizer
 
 
@@ -19,7 +25,7 @@ class TestTelemetryVisualizer:
     """Test TelemetryVisualizer class."""
 
     @pytest.fixture
-    def temp_output_dir(self) -> Path:
+    def temp_output_dir(self) -> Generator[Path, None, None]:
         """Create a temporary output directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             yield Path(tmpdir)
@@ -31,7 +37,9 @@ class TestTelemetryVisualizer:
         return TelemetryVisualizer(output_path)
 
     @pytest.fixture
-    def sample_benchmark_data(self, sample_telemetry_data: dict) -> dict:
+    def sample_benchmark_data(
+        self, sample_telemetry_data: TelemetryDataDict
+    ) -> dict[str, object]:
         """Create sample benchmark data including telemetry."""
         return {
             "config": {"leaf_tokens": 200},
@@ -57,7 +65,7 @@ class TestTelemetryVisualizer:
         self, visualizer: TelemetryVisualizer, temp_output_dir: Path
     ) -> None:
         """Test loading benchmark data from JSON."""
-        test_data = {"test": "data"}
+        test_data: dict[str, object] = {"test": "data"}
         test_file = temp_output_dir / "test.json"
 
         with open(test_file, "w") as f:
@@ -70,7 +78,7 @@ class TestTelemetryVisualizer:
         self, visualizer: TelemetryVisualizer
     ) -> None:
         """Test histogram bin calculation for small discrete values."""
-        batch_sizes = [1, 1, 1, 2, 2, 3]
+        batch_sizes: list[float] = [1.0, 1.0, 1.0, 2.0, 2.0, 3.0]
         bins, align = visualizer._calculate_histogram_bins(batch_sizes)
 
         assert align == "left"
@@ -81,7 +89,18 @@ class TestTelemetryVisualizer:
         self, visualizer: TelemetryVisualizer
     ) -> None:
         """Test histogram bin calculation for medium range values."""
-        batch_sizes = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45]
+        batch_sizes: list[float] = [
+            1.0,
+            5.0,
+            10.0,
+            15.0,
+            20.0,
+            25.0,
+            30.0,
+            35.0,
+            40.0,
+            45.0,
+        ]
         bins, align = visualizer._calculate_histogram_bins(batch_sizes)
 
         assert align == "left"
@@ -93,7 +112,9 @@ class TestTelemetryVisualizer:
         self, visualizer: TelemetryVisualizer
     ) -> None:
         """Test histogram bin calculation for large range values."""
-        batch_sizes = list(range(1, 150, 10))  # 1, 11, 21, ..., 141
+        batch_sizes: list[float] = [
+            float(x) for x in range(1, 150, 10)
+        ]  # 1, 11, 21, ..., 141
         bins, align = visualizer._calculate_histogram_bins(batch_sizes)
 
         assert align == "mid"
@@ -105,7 +126,7 @@ class TestTelemetryVisualizer:
     ) -> None:
         """Test that visualize_single_benchmark creates expected outputs."""
         # Create minimal telemetry data that won't trigger complex plotting
-        minimal_data = {
+        minimal_data: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 0,
@@ -117,7 +138,11 @@ class TestTelemetryVisualizer:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [],
         }
 
@@ -139,7 +164,10 @@ class TestTelemetryVisualizer:
         # PNG creation is mocked, so we just verify the method was called
 
     def test_visualize_benchmark_without_telemetry(
-        self, visualizer: TelemetryVisualizer, temp_output_dir: Path, capsys
+        self,
+        visualizer: TelemetryVisualizer,
+        temp_output_dir: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Test handling of benchmark file without telemetry data."""
         test_data = {"config": {"leaf_tokens": 200}, "metrics": {}}
@@ -163,7 +191,7 @@ class TestTelemetryVisualizer:
 
         # Test empty batch efficiency
         fig, ax = plt.subplots()
-        empty_telemetry = {
+        empty_telemetry: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "empty",
             "source_document_tokens": 0,
@@ -175,7 +203,11 @@ class TestTelemetryVisualizer:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [],
         }
         visualizer._plot_batch_efficiency(empty_telemetry, ax)
@@ -191,7 +223,7 @@ class TestTelemetryVisualizer:
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots()
-        telemetry = {
+        telemetry: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 100,
@@ -203,7 +235,11 @@ class TestTelemetryVisualizer:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
                     "node_id": "node-1",
@@ -235,7 +271,7 @@ class TestTelemetryVisualizer:
         plt.close(fig)
 
     def test_token_distributions_with_data(
-        self, visualizer: TelemetryVisualizer, sample_telemetry_data: dict
+        self, visualizer: TelemetryVisualizer, sample_telemetry_data: TelemetryDataDict
     ) -> None:
         """Test token distribution plot with actual data."""
         import matplotlib.pyplot as plt
@@ -298,7 +334,7 @@ class TestTelemetryVisualizer:
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots()
-        telemetry = {
+        telemetry: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 300,
@@ -310,28 +346,50 @@ class TestTelemetryVisualizer:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
+                    "node_id": "node-1",
+                    "height": 0,
+                    "created_at": 1.0,
                     "embedding": {
                         "text_tokens": 100,
                         "batch_size": 1,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
                         "start_time": 1.0,
-                    }
+                        "end_time": 1.1,
+                    },
                 },
                 {
+                    "node_id": "node-2",
+                    "height": 0,
+                    "created_at": 2.0,
                     "embedding": {
                         "text_tokens": 100,
                         "batch_size": 5,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
                         "start_time": 2.0,
-                    }
+                        "end_time": 2.1,
+                    },
                 },
                 {
+                    "node_id": "node-3",
+                    "height": 0,
+                    "created_at": 3.0,
                     "embedding": {
                         "text_tokens": 100,
                         "batch_size": 1,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
                         "start_time": 3.0,
-                    }
+                        "end_time": 3.1,
+                    },
                 },
             ],
         }
@@ -354,9 +412,9 @@ class TestTelemetryVisualizer:
         assert visualizer.LARGE_BIN_COUNT == 20
 
 
-def generate_test_telemetry(num_nodes: int) -> dict:
+def generate_test_telemetry(num_nodes: int) -> TelemetryDataDict:
     """Generate test telemetry data with specified number of nodes."""
-    nodes = []
+    nodes: list[NodeTelemetryDict] = []
     for i in range(num_nodes):
         if i % 2 == 0:
             # Leaf node with embedding
@@ -368,6 +426,7 @@ def generate_test_telemetry(num_nodes: int) -> dict:
                     "embedding": {
                         "text_tokens": 195,
                         "batch_size": (i % 10) + 1,
+                        "batch_position": 0,
                         "model": "text-embedding-3-small",
                         "start_time": 1234567890.0 + i,
                         "end_time": 1234567891.0 + i,
@@ -383,15 +442,16 @@ def generate_test_telemetry(num_nodes: int) -> dict:
                     "created_at": 1234567892.0 + i,
                     "summary_attempts": [
                         {
-                            "status": "accepted",
-                            "is_retry": False,
+                            "target_tokens": 100,
                             "prompt_tokens": 400 + i,
                             "completion_tokens": 100 + i % 50,
-                            "input_text_tokens": 195,
                             "actual_tokens": 98 + i % 10,
-                            "target_tokens": 100,
+                            "model": "gpt-4o-mini",
+                            "start_time": 1234567892.0 + i,
+                            "end_time": 1234567893.0 + i,
                         }
                     ],
+                    "accepted_attempt": 0,
                 }
             )
 
@@ -407,7 +467,11 @@ def generate_test_telemetry(num_nodes: int) -> dict:
         },
         "model_metadata": {},
         "system_prompts": {},
-        "runtime_info": {},
+        "runtime_info": {
+            "python_version": "3.11.0",
+            "platform": "test",
+            "ragzoom_version": "1.0.0",
+        },
         "nodes": nodes,
     }
 
@@ -416,7 +480,7 @@ class TestVisualizationPerformance:
     """Test performance improvements in axis synchronization."""
 
     @pytest.fixture
-    def temp_files(self):
+    def temp_files(self) -> Generator[dict[int, tuple[Path, Path]], None, None]:
         """Create temporary telemetry files for testing."""
         import json
         import tempfile
@@ -443,7 +507,9 @@ class TestVisualizationPerformance:
             yield files
 
     @pytest.mark.slow
-    def test_axis_synchronization_performance(self, temp_files):
+    def test_axis_synchronization_performance(
+        self, temp_files: dict[int, tuple[Path, Path]]
+    ) -> None:
         """Benchmark the performance of axis synchronization with the new implementation."""
         import time
         from unittest.mock import patch
@@ -485,7 +551,7 @@ class TestVisualizationPerformance:
             ), f"Time scaling ({time_ratio:.2f}x) should be better than linear size scaling ({size_ratio}x)"
 
     @pytest.mark.slow
-    def test_axis_operation_count(self):
+    def test_axis_operation_count(self) -> None:
         """Verify that the optimized implementation reduces axis operations."""
         import json
         import tempfile
@@ -518,22 +584,30 @@ class TestVisualizationPerformance:
             original_get_xlim = Axes.get_xlim
             original_get_ylim = Axes.get_ylim
 
-            def counting_set_xlim(self, *args, **kwargs):
+            def counting_set_xlim(
+                self: "Axes", *args: object, **kwargs: object
+            ) -> object:
                 nonlocal set_lim_count
                 set_lim_count += 1
-                return original_set_xlim(self, *args, **kwargs)
+                return original_set_xlim(self, *args, **kwargs)  # type: ignore[arg-type]
 
-            def counting_set_ylim(self, *args, **kwargs):
+            def counting_set_ylim(
+                self: "Axes", *args: object, **kwargs: object
+            ) -> object:
                 nonlocal set_lim_count
                 set_lim_count += 1
-                return original_set_ylim(self, *args, **kwargs)
+                return original_set_ylim(self, *args, **kwargs)  # type: ignore[arg-type]
 
-            def counting_get_xlim(self, *args, **kwargs):
+            def counting_get_xlim(
+                self: "Axes", *args: object, **kwargs: object
+            ) -> tuple[float, float]:
                 nonlocal get_lim_count
                 get_lim_count += 1
                 return original_get_xlim(self, *args, **kwargs)
 
-            def counting_get_ylim(self, *args, **kwargs):
+            def counting_get_ylim(
+                self: "Axes", *args: object, **kwargs: object
+            ) -> tuple[float, float]:
                 nonlocal get_lim_count
                 get_lim_count += 1
                 return original_get_ylim(self, *args, **kwargs)

@@ -2,13 +2,13 @@
 
 from ragzoom.config import QueryConfig
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
-from ragzoom.store import TreeNode
+from ragzoom.models import TreeNode
 
 
 class TestBudgetSplitting:
     """Test the proportional budget splitting logic."""
 
-    def test_proportional_split_maintains_ratios(self):
+    def test_proportional_split_maintains_ratios(self) -> None:
         """Test that budget splitting maintains intended proportions."""
         query_config = QueryConfig()
         generator = DynamicTilingGenerator(query_config)
@@ -76,7 +76,7 @@ class TestBudgetSplitting:
             abs(ratio - expected_ratio) < 0.01
         ), f"Ratio {ratio:.2f} != expected {expected_ratio}"
 
-    def test_minimum_constraints_respected(self):
+    def test_minimum_constraints_respected(self) -> None:
         """Test that minimum token requirements are always met."""
         query_config = QueryConfig()
         generator = DynamicTilingGenerator(query_config)
@@ -132,7 +132,7 @@ class TestBudgetSplitting:
         assert budget_r >= 50, f"Right minimum not met: {budget_r} < 50"
         assert budget_l + budget_r == budget
 
-    def test_tight_budget_handling(self):
+    def test_tight_budget_handling(self) -> None:
         """Test behavior when budget barely covers minimums."""
         query_config = QueryConfig()
         generator = DynamicTilingGenerator(query_config)

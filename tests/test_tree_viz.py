@@ -10,7 +10,7 @@ from tests.mock_store import SimpleMockStore
 class TestTreeVisualization:
     """Test tree visualization functionality."""
 
-    def test_basic_tree_visualization(self):
+    def test_basic_tree_visualization(self) -> None:
         """Test basic tree visualization with selected nodes."""
         # Create a mock store with a simple tree
         store = SimpleMockStore()
@@ -116,7 +116,7 @@ class TestTreeVisualization:
         assert "1" in viz  # Second node (leaf3)
         assert "2" in viz  # Third node (leaf4)
 
-    def test_empty_tiling(self):
+    def test_empty_tiling(self) -> None:
         """Test visualization with no selected nodes."""
         store = SimpleMockStore()
 
@@ -132,7 +132,7 @@ class TestTreeVisualization:
         )
 
         # Empty tiling list
-        tiling = []
+        tiling: list[str] = []
 
         doc_store = store.for_document("doc1")
         viz = build_ascii_tree(tiling, doc_store, width=40)
@@ -140,17 +140,17 @@ class TestTreeVisualization:
         # Should still show document structure
         assert "H0 " in viz
 
-    def test_no_nodes_for_document(self):
+    def test_no_nodes_for_document(self) -> None:
         """Test visualization when document has no nodes."""
         store = SimpleMockStore()
-        tiling = []
+        tiling: list[str] = []
 
         doc_store = store.for_document("nonexistent")
         viz = build_ascii_tree(tiling, doc_store, width=40)
 
         assert viz == "No nodes found for document"
 
-    def test_coverage_visualization(self):
+    def test_coverage_visualization(self) -> None:
         """Test visualization with coverage map showing covered but not selected nodes."""
         # Create a mock store with a simple tree
         store = SimpleMockStore()
@@ -215,7 +215,7 @@ class TestTreeVisualization:
         assert "0" in viz  # First node (leaf2)
         # The covered but not selected nodes should be shown with ░ characters
 
-    def test_mixed_height_tiling(self):
+    def test_mixed_height_tiling(self) -> None:
         """Test visualization with nodes at different heights."""
         store = SimpleMockStore()
 

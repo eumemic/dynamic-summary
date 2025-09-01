@@ -102,7 +102,17 @@ Every agent must approach code as a master craftsperson. Each line you write is 
 - The system is designed to give you immediate feedback without manual intervention
 - **VERY IMPORTANT**: When you have completed a task, run `./scripts/run-checks.sh` to ensure your code is correct (NOT `pytest`)
 
-### 8. Algorithm Deep Dive
+### 8. Type Safety Requirements
+
+- **Strict Type Checking**: The codebase enforces `strict = true` in mypy configuration
+- **No Explicit Any Types**: The codebase has eliminated all explicit `Any` types with `disallow_any_explicit = true`
+- **Complete Annotations**: All functions, methods, and class attributes must have type hints
+- **NEVER Add Type Ignores Without Permission**: NEVER add `# type: ignore` comments without explicit approval from the user. If you encounter a type error that seems to require suppression, stop and discuss the issue with the user first. There's usually a better solution.
+- **Type Ignore Documentation**: Every existing `# type: ignore` must have an explanatory comment
+- **Test Type Coverage**: Tests are type-checked as strictly as production code
+- **Note on disallow_any_expr**: This flag is not enabled as it would require extensive workarounds for Pydantic and external libraries (~2000+ errors). The current configuration provides excellent type safety while remaining pragmatic.
+
+### 9. Algorithm Deep Dive
 
 For detailed understanding of the core tiling algorithm:
 
@@ -142,7 +152,7 @@ cd worktrees/worktree-N && claude
 - Use `/merge` to merge PR and sync with master
 - The same branch is reused for multiple sequential PRs
 
-### 12. Agent-Specific Troubleshooting
+### 13. Agent-Specific Troubleshooting
 
 - **Pre-commit Hook Issues:** If pre-commit hooks fail, they'll automatically fix most issues. Just re-commit after they run.
 - **Testing Issues:** Always use `./scripts/run-checks.sh` instead of `pytest` directly - it handles environment setup correctly.

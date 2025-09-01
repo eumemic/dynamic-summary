@@ -9,7 +9,7 @@ from tests.mock_store import SimpleMockStore
 class TestDPScoresBug:
     """Test that DP algorithm incorrectly uses nodes outside coverage tree."""
 
-    def test_dp_uses_scores_outside_coverage_tree(self):
+    def test_dp_uses_scores_outside_coverage_tree(self) -> None:
         """Demonstrate that DP uses any node with a score, ignoring coverage tree."""
         # Set up a mock store with a simple tree
         store = SimpleMockStore()
@@ -120,7 +120,7 @@ class TestDPScoresBug:
             len(leaf_violations) == 0
         ), f"Found leaf nodes outside coverage tree: {leaf_violations}"
 
-    def test_retrieval_result_demonstrates_bug(self):
+    def test_retrieval_result_demonstrates_bug(self) -> None:
         """Test using actual RetrievalResult to show the bug."""
         store = SimpleMockStore()
 

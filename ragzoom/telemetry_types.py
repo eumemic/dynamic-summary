@@ -7,9 +7,7 @@ non-existent fields.
 Supports only v4.2 telemetry format. All legacy formats have been removed.
 """
 
-from typing import Any, TypedDict
-
-from typing_extensions import NotRequired
+from typing_extensions import NotRequired, TypedDict
 
 
 # Embedding telemetry types
@@ -42,7 +40,7 @@ class SummaryAttemptDict(TypedDict):
         int
     ]  # Number of cached prompt tokens (for prompt caching)
     prompt_tokens_details: NotRequired[
-        dict[str, Any]
+        "PromptTokensDetailsDict"
     ]  # Full OpenAI prompt token details
 
 
@@ -85,6 +83,67 @@ class DocumentDict(TypedDict):
     nodes: list[NodeTelemetryDict]
 
 
+# OpenAI API prompt token details structure
+class PromptTokensDetailsDict(TypedDict):
+    """Type definition for OpenAI API prompt token details.
+
+    This represents the detailed token breakdown provided by OpenAI's API,
+    typically including cached and audio tokens.
+    """
+
+    cached_tokens: NotRequired[int]
+    audio_tokens: NotRequired[int]
+
+
+# Model metadata structures
+class EmbeddingModelMetadataDict(TypedDict):
+    """Type definition for embedding model metadata."""
+
+    model: str
+    dimensions: NotRequired[int]
+    cost_per_1k: NotRequired[float]
+    error: NotRequired[str]  # Error message if metadata collection failed
+
+
+class SummaryModelMetadataDict(TypedDict):
+    """Type definition for summary model metadata."""
+
+    model: str
+    input_cost_per_1k: NotRequired[float]
+    output_cost_per_1k: NotRequired[float]
+    supports_temperature: NotRequired[bool]
+    is_gpt5: NotRequired[bool]
+    cache_discount: NotRequired[float]
+    error: NotRequired[str]  # Error message if metadata collection failed
+
+
+class ModelMetadataDict(TypedDict):
+    """Type definition for complete model metadata in telemetry data.
+
+    This structure captures model capabilities, costs, and configuration
+    for reproducibility of indexing operations.
+    """
+
+    embedding: NotRequired[EmbeddingModelMetadataDict]
+    summary: NotRequired[SummaryModelMetadataDict]
+    models_last_updated: NotRequired[str]  # Last update timestamp from models.json
+    error: NotRequired[str]  # Error message if metadata collection failed
+
+
+class RuntimeInfoDict(TypedDict):
+    """Type definition for runtime environment information in telemetry data.
+
+    This structure captures environment details for reproducibility
+    of indexing operations.
+    """
+
+    python_version: str
+    platform: str
+    ragzoom_version: str
+    tiktoken_version: NotRequired[str]
+    openai_version: NotRequired[str]
+
+
 # Configuration dictionary for v3.1+
 class ConfigDict(TypedDict):
     """Type definition for configuration object in v3.1+ formats."""
@@ -109,9 +168,9 @@ class TelemetryDataDict(TypedDict):
     source_document_tokens: int
     indexed_at: float
     config: ConfigDict
-    model_metadata: dict[str, Any]
+    model_metadata: ModelMetadataDict
     system_prompts: dict[str, str]
-    runtime_info: dict[str, Any]
+    runtime_info: RuntimeInfoDict
     nodes: list[NodeTelemetryDict]
     # Optional document path
     document_path: NotRequired[str]

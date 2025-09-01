@@ -3,9 +3,9 @@
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 import click
+from typing_extensions import NotRequired, TypedDict
 
 from ragzoom.telemetry_analysis import (
     ChunkMetrics,
@@ -13,6 +13,7 @@ from ragzoom.telemetry_analysis import (
     compute_simplified_metrics,
 )
 from ragzoom.telemetry_query import QueryPhaseMetrics
+from ragzoom.telemetry_types import TelemetryDataDict
 
 # Fixed thresholds for each metric
 FIXED_THRESHOLDS = {
@@ -27,6 +28,47 @@ FIXED_THRESHOLDS = {
 HIGHER_IS_BETTER_METRICS = {
     "Pipeline efficiency",
 }
+
+
+# Type definitions for CLI-specific data structures
+class PhaseConfigDict(TypedDict):
+    """Configuration for query phase variance analysis."""
+
+    phases: list[str]
+    k1: float
+    k2: float
+
+
+class ConfigDict(TypedDict):
+    """Configuration dictionary with common telemetry config fields."""
+
+    # Common telemetry config fields
+    target_chunk_tokens: NotRequired[int]
+    summary_model: NotRequired[str]
+    embedding_model: NotRequired[str]
+    budget_tokens: NotRequired[int]
+
+
+class QueryComparisonReport(TypedDict):
+    """Report data structure for query performance comparison."""
+
+    summary: dict[str, float | int]
+    regressions: list[dict[str, str | float]]
+    improvements: list[dict[str, str | float]]
+    current_metrics: dict[str, object]
+
+
+class FullTelemetryData(TypedDict):
+    """Full telemetry data that may contain wrapped or direct format."""
+
+    # Can contain either direct telemetry data or wrapped format
+    config: NotRequired[ConfigDict]
+    telemetry: NotRequired[TelemetryDataDict]
+    environment: NotRequired[dict[str, object]]
+    # Plus all fields from TelemetryDataDict for direct format
+    format_version: NotRequired[str]
+    nodes: NotRequired[list[object]]
+    document_id: NotRequired[str]
 
 
 # Metric name constants for consistency
@@ -219,7 +261,9 @@ def analyze(telemetry_file: Path) -> None:
 # check_regression_with_dynamic_threshold removed - using fixed thresholds only
 
 
-def _load_and_compute_metrics(file_path: Path) -> tuple[dict[str, Any], Any]:
+def _load_and_compute_metrics(
+    file_path: Path,
+) -> tuple[FullTelemetryData, SimplifiedMetrics]:
     """Load telemetry file and compute simplified metrics.
 
     Returns:
@@ -278,7 +322,12 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     current_config = current_data.get("config")
 
     # Detect if running in CI
-    is_ci = current_data.get("environment", {}).get("ci", False)
+    environment_data = current_data.get("environment", {})
+    is_ci = (
+        bool(environment_data.get("ci", False))
+        if isinstance(environment_data, dict)
+        else False
+    )
 
     # Extract single chunk size from each file
     baseline_sizes = list(baseline_metrics.metrics_by_chunk_size.keys())
@@ -328,7 +377,9 @@ def _compare_files(baseline_file: Path, current_file: Path) -> bool:
     return has_regression
 
 
-def _compare_query_files_silent(baseline_file: Path, current_file: Path) -> dict:
+def _compare_query_files_silent(
+    baseline_file: Path, current_file: Path
+) -> QueryComparisonReport:
     """Compare two query telemetry files silently and return results.
 
     Returns:
@@ -349,7 +400,9 @@ def _compare_query_files_silent(baseline_file: Path, current_file: Path) -> dict
         baseline_data, current_data, regression_threshold=0.5
     )
 
-    return report
+    # Cast the dict[str, object] to the expected QueryComparisonReport TypedDict
+    # TypedDict doesn't support runtime construction from dict, but this is safe
+    return QueryComparisonReport(report)  # type: ignore[misc,no-any-return]
 
 
 def _compare_query_telemetry_files(baseline_file: Path, current_file: Path) -> bool:
@@ -411,7 +464,12 @@ def _compare_query_telemetry_files(baseline_file: Path, current_file: Path) -> b
 
     # Show phase breakdown
     current_metrics = report["current_metrics"]
-    phase_breakdown = current_metrics["phase_breakdown"]
+    phase_breakdown_obj = current_metrics["phase_breakdown"]
+
+    # Cast phase_breakdown from object to dict for proper access
+    phase_breakdown = (
+        dict(phase_breakdown_obj) if isinstance(phase_breakdown_obj, dict) else {}
+    )
 
     click.echo("#### Phase Breakdown\n")
     click.echo("| Phase | Time (s) | % of Total |")
@@ -430,10 +488,20 @@ def _compare_query_telemetry_files(baseline_file: Path, current_file: Path) -> b
 
     # Show efficiency metrics
     click.echo("#### Efficiency Metrics\n")
-    efficiency = current_metrics["efficiency"]
-    click.echo(f"- **Seeds Utilization:** {efficiency['seeds_utilization']:.1%}")
-    click.echo(f"- **Budget Utilization:** {efficiency['budget_utilization']:.1%}")
-    click.echo(f"- **Coverage Efficiency:** {efficiency['coverage_efficiency']:.1%}")
+    efficiency_obj = current_metrics["efficiency"]
+
+    # Cast efficiency from object to dict for proper access
+    efficiency = dict(efficiency_obj) if isinstance(efficiency_obj, dict) else {}
+
+    click.echo(
+        f"- **Seeds Utilization:** {efficiency.get('seeds_utilization', 0.0):.1%}"
+    )
+    click.echo(
+        f"- **Budget Utilization:** {efficiency.get('budget_utilization', 0.0):.1%}"
+    )
+    click.echo(
+        f"- **Coverage Efficiency:** {efficiency.get('coverage_efficiency', 0.0):.1%}"
+    )
 
     return has_regression
 
@@ -544,13 +612,15 @@ def _compare_directories(baseline_dir: Path, current_dir: Path) -> tuple[bool, b
             from ragzoom.telemetry_analysis import SimplifiedMetrics
 
             # Create pseudo SimplifiedMetrics objects with all chunk sizes
-            baseline_combined_dict = {}
-            current_combined_dict = {}
+            baseline_combined_dict: dict[int, ChunkMetrics] = {}
+            current_combined_dict: dict[int, ChunkMetrics] = {}
 
             for chunk_size in sorted(all_chunk_metrics.keys()):
-                baseline_metrics, current_metrics = all_chunk_metrics[chunk_size]
-                baseline_combined_dict[chunk_size] = baseline_metrics
-                current_combined_dict[chunk_size] = current_metrics
+                baseline_chunk_metrics, current_chunk_metrics = all_chunk_metrics[
+                    chunk_size
+                ]
+                baseline_combined_dict[chunk_size] = baseline_chunk_metrics
+                current_combined_dict[chunk_size] = current_chunk_metrics
 
             baseline_combined = SimplifiedMetrics(
                 metrics_by_chunk_size=baseline_combined_dict
@@ -663,7 +733,7 @@ def _calculate_query_phase_thresholds(
         Dict mapping phase names to absolute threshold values
     """
     # Phase categorization with different k-factors
-    phase_categories: dict[str, dict[str, Any]] = {
+    phase_categories: dict[str, PhaseConfigDict] = {
         # API phases: moderate variance due to API non-determinism (5-sigma)
         "api": {
             "phases": ["embedding_time"],
@@ -1146,7 +1216,7 @@ def visualize(input_paths: tuple[str, ...], output: str | None, format: str) -> 
 def _format_metrics_for_chunk_with_thresholds(
     base_metrics: ChunkMetrics,
     curr_metrics: ChunkMetrics,
-    thresholds: Any,  # Kept for compatibility but unused
+    thresholds: None,  # Kept for compatibility but unused
 ) -> None:
     """Format all metrics for a chunk size with fixed thresholds."""
     # Percentage-based metrics (chunk-size invariant)
@@ -1508,9 +1578,9 @@ def _format_single_chunk_comparison_with_thresholds(
     current_metrics: ChunkMetrics,
     baseline_chunk_size: int,
     current_chunk_size: int,
-    thresholds: Any,  # Kept for compatibility
-    baseline_config: dict[str, Any] | None = None,
-    current_config: dict[str, Any] | None = None,
+    thresholds: None,  # Kept for compatibility
+    baseline_config: ConfigDict | None = None,
+    current_config: ConfigDict | None = None,
 ) -> None:
     """Format single chunk comparison as markdown table with fixed thresholds."""
 
@@ -1558,9 +1628,9 @@ def _format_markdown_comparison_with_thresholds(
     baseline: SimplifiedMetrics,
     current: SimplifiedMetrics,
     chunk_sizes: set[int],
-    thresholds_by_chunk: Any,  # Kept for compatibility
-    baseline_config: dict[str, Any] | None = None,
-    current_config: dict[str, Any] | None = None,
+    thresholds_by_chunk: None,  # Kept for compatibility
+    baseline_config: ConfigDict | None = None,
+    current_config: ConfigDict | None = None,
 ) -> None:
     """Format comparison as markdown table with fixed thresholds."""
 
