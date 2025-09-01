@@ -6,7 +6,8 @@ It tracks detailed timing information for each phase of the retrieval pipeline.
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
+
+from typing_extensions import TypedDict
 
 
 @dataclass
@@ -75,7 +76,7 @@ class QueryTelemetry:
         """Time spent in processing phases (scoring + DP + assembly)."""
         return self.scoring_time + self.dp_time + self.assembly_time
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> "QueryTelemetryDict":
         """Convert telemetry to dictionary for JSON serialization."""
         return {
             "query_text": self.query_text,
@@ -131,7 +132,7 @@ class QueryPhaseMetrics:
     # Query count
     query_count: int
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> "QueryPhaseMetricsDict":
         """Convert to dictionary for reporting."""
         return {
             "phase_breakdown": self.phase_breakdown,
@@ -148,3 +149,70 @@ class QueryPhaseMetrics:
             },
             "query_count": self.query_count,
         }
+
+
+# TypedDict definitions for return values
+class QueryTimingsDict(TypedDict):
+    """Type definition for query timing data."""
+
+    embedding_time: float
+    search_time: float
+    mmr_time: float
+    coverage_map_time: float
+    scoring_time: float
+    dp_time: float
+    assembly_time: float
+    total_time: float
+    retrieval_time: float
+    processing_time: float
+
+
+class QueryMetricsDict(TypedDict):
+    """Type definition for query metrics data."""
+
+    seeds_requested: int
+    seeds_found: int
+    candidates_retrieved: int
+    coverage_size: int
+    tiling_size: int
+    output_tokens: int
+
+
+class QueryTelemetryDict(TypedDict):
+    """Type definition for QueryTelemetry.to_dict() return value."""
+
+    query_text: str
+    num_seeds: int | None
+    budget_tokens: int | None
+    document_id: str | None
+    embedding_model: str
+    timings: QueryTimingsDict
+    metrics: QueryMetricsDict
+    start_time: float
+    end_time: float
+
+
+class QueryEfficiencyDict(TypedDict):
+    """Type definition for query efficiency metrics."""
+
+    seeds_utilization: float
+    budget_utilization: float
+    coverage_efficiency: float
+
+
+class QueryLatencyPercentilesDict(TypedDict):
+    """Type definition for query latency percentiles."""
+
+    p50: float
+    p95: float
+    p99: float
+
+
+class QueryPhaseMetricsDict(TypedDict):
+    """Type definition for QueryPhaseMetrics.to_dict() return value."""
+
+    phase_breakdown: dict[str, float]
+    phase_variance: dict[str, float]
+    efficiency: QueryEfficiencyDict
+    latency_percentiles: QueryLatencyPercentilesDict
+    query_count: int

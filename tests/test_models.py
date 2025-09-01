@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 
 from ragzoom.models import Base, Document, TreeNode
 
@@ -11,11 +12,11 @@ from ragzoom.models import Base, Document, TreeNode
 class TestTreeNodeModel:
     """Test TreeNode SQLAlchemy model definition."""
 
-    def test_table_name(self):
+    def test_table_name(self) -> None:
         """Test that TreeNode uses correct table name."""
         assert TreeNode.__tablename__ == "tree_nodes"
 
-    def test_get_depth_method(self):
+    def test_get_depth_method(self) -> None:
         """Test that TreeNode.get_depth() returns correct depth based on path."""
         # Root node (empty path)
         root = TreeNode(
@@ -71,7 +72,7 @@ class TestTreeNodeModel:
         )
         assert very_deep.get_depth() == 8
 
-    def test_required_fields(self):
+    def test_required_fields(self) -> None:
         """Test that TreeNode has all required fields."""
         # Test field existence and types
         assert hasattr(TreeNode, "id")
@@ -81,7 +82,7 @@ class TestTreeNodeModel:
         assert hasattr(TreeNode, "embedding")
         assert hasattr(TreeNode, "token_count")
 
-    def test_optional_fields(self):
+    def test_optional_fields(self) -> None:
         """Test that TreeNode has correct optional fields."""
         assert hasattr(TreeNode, "parent_id")
         assert hasattr(TreeNode, "left_child_id")
@@ -89,7 +90,7 @@ class TestTreeNodeModel:
         assert hasattr(TreeNode, "document_id")
         assert hasattr(TreeNode, "preceding_neighbor_id")
 
-    def test_default_values(self):
+    def test_default_values(self) -> None:
         """Test that TreeNode has correct default values."""
         # These are mapped column defaults, we can check the column info
         token_count_col = TreeNode.__table__.columns["token_count"]
@@ -100,7 +101,7 @@ class TestTreeNodeModel:
         assert is_pinned_col.default.arg == 0
         assert height_col.default.arg == 0
 
-    def test_foreign_key_relationships(self):
+    def test_foreign_key_relationships(self) -> None:
         """Test that TreeNode has correct foreign key relationships."""
         # Check parent_id foreign key
         parent_id_col = TreeNode.__table__.columns["parent_id"]
@@ -114,45 +115,45 @@ class TestTreeNodeModel:
         fk = list(doc_id_col.foreign_keys)[0]
         assert str(fk.column) == "documents.id"
 
-    def test_primary_key(self):
+    def test_primary_key(self) -> None:
         """Test that TreeNode has correct primary key."""
-        pk_columns = [col.name for col in TreeNode.__table__.primary_key.columns]
+        pk_columns = [col.name for col in TreeNode.__table__.primary_key.columns]  # type: ignore[attr-defined]
         assert pk_columns == ["id"]
 
 
 class TestDocumentModel:
     """Test Document SQLAlchemy model definition."""
 
-    def test_table_name(self):
+    def test_table_name(self) -> None:
         """Test that Document uses correct table name."""
         assert Document.__tablename__ == "documents"
 
-    def test_required_fields(self):
+    def test_required_fields(self) -> None:
         """Test that Document has all required fields."""
         assert hasattr(Document, "id")
         assert hasattr(Document, "content_hash")
         assert hasattr(Document, "embedding_model")
         assert hasattr(Document, "summary_model")
 
-    def test_optional_fields(self):
+    def test_optional_fields(self) -> None:
         """Test that Document has correct optional fields."""
         assert hasattr(Document, "file_path")
         assert hasattr(Document, "indexed_at")
         assert hasattr(Document, "chunk_count")
 
-    def test_unique_constraints(self):
+    def test_unique_constraints(self) -> None:
         """Test that Document has correct unique constraints."""
         file_path_col = Document.__table__.columns["file_path"]
         assert file_path_col.unique is True
 
-    def test_default_values(self):
+    def test_default_values(self) -> None:
         """Test that Document has correct default values."""
         chunk_count_col = Document.__table__.columns["chunk_count"]
         assert chunk_count_col.default.arg == 0
 
-    def test_primary_key(self):
+    def test_primary_key(self) -> None:
         """Test that Document has correct primary key."""
-        pk_columns = [col.name for col in Document.__table__.primary_key.columns]
+        pk_columns = [col.name for col in Document.__table__.primary_key.columns]  # type: ignore[attr-defined]
         assert pk_columns == ["id"]
 
 
@@ -160,14 +161,14 @@ class TestModelIntegration:
     """Test model integration and schema creation."""
 
     @pytest.fixture
-    def memory_engine(self):
+    def memory_engine(self) -> Engine:
         """Create in-memory SQLite engine for testing."""
         # Note: We use SQLite for testing since pgvector may not be available
         # This tests schema structure but not pgvector-specific functionality
         engine = create_engine("sqlite:///:memory:")
         return engine
 
-    def test_schema_creation(self, memory_engine):
+    def test_schema_creation(self, memory_engine: Engine) -> None:
         """Test that models can create schema without errors."""
         # This will test that the model definitions are valid
         # Note: pgvector Vector type may cause issues in SQLite, but we test what we can
@@ -178,7 +179,7 @@ class TestModelIntegration:
             if "Vector" not in str(e):
                 raise
 
-    def test_model_instantiation(self):
+    def test_model_instantiation(self) -> None:
         """Test that model instances can be created."""
         # Test TreeNode instantiation with required fields
         node = TreeNode(
@@ -203,7 +204,7 @@ class TestModelIntegration:
         assert doc.id == "test_doc"
         assert doc.content_hash == "abc123"
 
-    def test_datetime_fields(self):
+    def test_datetime_fields(self) -> None:
         """Test that datetime fields work correctly."""
         # Test that datetime fields accept datetime objects
         now = datetime.utcnow()
@@ -221,7 +222,7 @@ class TestModelIntegration:
         assert node.created_at == now
         assert node.last_accessed == now
 
-    def test_nullable_fields(self):
+    def test_nullable_fields(self) -> None:
         """Test that nullable fields can be None."""
         node = TreeNode(
             id="test_node",
@@ -256,7 +257,7 @@ class TestModelIntegration:
 class TestModelValidation:
     """Test model field validation and constraints."""
 
-    def test_embedding_dimension_flexibility(self):
+    def test_embedding_dimension_flexibility(self) -> None:
         """Test that embedding field accepts different dimensions."""
         # Test different embedding dimensions
         for dim in [512, 1024, 1536, 3072]:
@@ -269,7 +270,7 @@ class TestModelValidation:
             )
             assert len(node.embedding) == dim
 
-    def test_text_field_flexibility(self):
+    def test_text_field_flexibility(self) -> None:
         """Test that text field accepts various content types."""
         test_texts = [
             "Simple text",

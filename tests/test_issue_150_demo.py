@@ -1,10 +1,13 @@
 """Demonstration test for issue #150 atomic multi-operation functionality."""
 
+from ragzoom.repositories.node_repository import NodeDataDict
+from ragzoom.store import StoreManager
+
 
 class TestIssue150Demonstration:
     """Demonstrate the exact usage pattern requested in issue #150."""
 
-    def test_usage_pattern_from_issue(self, store):
+    def test_usage_pattern_from_issue(self, store: StoreManager) -> None:
         """Test the exact usage pattern described in issue #150."""
         # This demonstrates the usage pattern from the issue description:
         #
@@ -26,7 +29,7 @@ class TestIssue150Demonstration:
             summary_model="gpt-4o-mini",
         )
 
-        old_nodes_data = [
+        old_nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "old-node",
                 "text": "Old content",
@@ -44,7 +47,7 @@ class TestIssue150Demonstration:
         assert store.nodes.get_node("old-node") is not None
 
         # Demonstrate atomic multi-operation sequence from issue #150
-        new_doc_data = {
+        new_doc_data: dict[str, str | int] = {
             "document_id": doc_id,
             "file_path": "demo.txt",
             "content_hash": "new-hash",
@@ -53,7 +56,7 @@ class TestIssue150Demonstration:
             "summary_model": "gpt-4o-mini",
         }
 
-        new_nodes_data = [
+        new_nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "new-node",
                 "text": "New content",
@@ -68,12 +71,20 @@ class TestIssue150Demonstration:
         # ATOMIC OPERATION: All operations commit together or all rollback
         with store.transaction() as session:
             # Delete old nodes
-            deleted_count = store.delete_document_nodes(doc_id, session=session)
+            deleted_count = store.clear_document(doc_id, session=session)
             assert deleted_count == 1
 
             # Update document metadata (using add since update isn't implemented yet)
             # In a real scenario, this would be update_document()
-            store.add_document(**new_doc_data, session=session)
+            store.add_document(
+                document_id=str(new_doc_data["document_id"]),
+                file_path=str(new_doc_data["file_path"]),
+                content_hash=str(new_doc_data["content_hash"]),
+                chunk_count=int(new_doc_data["chunk_count"]),
+                embedding_model=str(new_doc_data["embedding_model"]),
+                summary_model=str(new_doc_data["summary_model"]),
+                session=session,
+            )
 
             # Add new nodes
             new_nodes = store.nodes.add_nodes_batch(new_nodes_data, session=session)
@@ -91,7 +102,7 @@ class TestIssue150Demonstration:
         assert store.nodes.get_node("old-node") is None  # Old node deleted
         assert store.nodes.get_node("new-node") is not None  # New node added
 
-    def test_backward_compatibility_demonstration(self, store):
+    def test_backward_compatibility_demonstration(self, store: StoreManager) -> None:
         """Demonstrate that existing code works unchanged (backward compatibility)."""
         # Existing code that doesn't use transactions continues to work
 
@@ -108,7 +119,7 @@ class TestIssue150Demonstration:
         assert doc_store.document_id == "backward-compat-doc"
 
         # Add nodes without session (existing API)
-        nodes_data = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "compat-node",
                 "text": "Test content",
@@ -123,7 +134,7 @@ class TestIssue150Demonstration:
         assert len(nodes) == 1
 
         # Delete nodes without session (existing API)
-        deleted_count = store.delete_document_nodes("backward-compat-doc")  # No session
+        deleted_count = store.clear_document("backward-compat-doc")  # No session
         assert deleted_count == 1
 
         # All existing APIs work exactly as before

@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Any, cast
+from typing import TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
@@ -13,34 +13,53 @@ from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
 
+
+class UsageInfo(TypedDict, total=False):
+    """Type definition for OpenAI API usage information."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    model: str
+    cached_tokens: int  # Optional field for prompt caching
+
+
+class MockUsage:
+    """Mock usage object for telemetry recording."""
+
+    def __init__(self, usage_info: UsageInfo) -> None:
+        # Set basic attributes explicitly
+        self.prompt_tokens = usage_info["prompt_tokens"]
+        self.completion_tokens = usage_info["completion_tokens"]
+        self.total_tokens = usage_info["total_tokens"]
+        self.model = usage_info.get("model", "")
+
+        # Handle prompt_tokens_details specially
+        cached_tokens = usage_info.get("cached_tokens", 0)
+        has_cached_tokens = cached_tokens and cached_tokens > 0
+        self.prompt_tokens_details: dict[str, int] | None = (
+            {"cached_tokens": cached_tokens} if has_cached_tokens else None
+        )
+
+
+class MockResponse:
+    """Mock OpenAI response object for telemetry recording."""
+
+    def __init__(self, usage_info: UsageInfo) -> None:
+        self.usage = MockUsage(usage_info)
+
+
+# Note: Removed APIParam type alias as it was too broad for OpenAI API calls
+# Direct parameter passing ensures type safety with OpenAI's specific requirements
+
+
 # Constants for word-based prompting bias compensation
 # The 0.94 factor compensates for a systematic overshoot bias in GPT models
 WORDS_PER_TOKEN = 0.75 * 0.94  # 0.705 - Bias-compensated word/token ratio
 
 
-def _create_mock_response(usage_info: dict[str, Any]) -> Any:
+def _create_mock_response(usage_info: UsageInfo) -> MockResponse:
     """Create a mock OpenAI response object for telemetry recording."""
-
-    class MockResponse:
-        def __init__(self, usage_info: dict[str, Any]) -> None:
-            self.usage = type("Usage", (), {})()
-            for key, value in usage_info.items():
-                setattr(self.usage, key, value)
-            # Handle prompt_tokens_details specially
-            # Check if cached_tokens exists and is a real number (not a mock)
-            try:
-                cached_tokens = usage_info.get("cached_tokens", 0)
-                has_cached_tokens = cached_tokens and cached_tokens > 0
-            except (TypeError, AttributeError):
-                # cached_tokens might be a mock object, treat as no caching
-                has_cached_tokens = False
-                cached_tokens = 0
-
-            if has_cached_tokens:
-                self.usage.prompt_tokens_details = {"cached_tokens": cached_tokens}
-            else:
-                self.usage.prompt_tokens_details = None
-
     return MockResponse(usage_info)
 
 
@@ -167,25 +186,25 @@ class LLMService:
         target_tokens: int,
         node_id: str,
         reporter: TelemetryCollector | None = None,
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[str, UsageInfo]:
         """Make OpenAI API call for summarization with telemetry tracking."""  # jscpd:ignore-end
         try:
-            # Build kwargs for the API call
-            api_kwargs: dict[str, Any] = {
-                "model": self.config.summary_model,
-                "messages": messages,
-            }
-
             # GPT-5 models have different parameter requirements
             if is_gpt5_model(self.config.summary_model):
-                # GPT-5 models need reasoning_effort="minimal" to output text instead of just reasoning
-                api_kwargs["reasoning_effort"] = "minimal"
+                # GPT-5 models need reasoning_effort="low" to output text instead of just reasoning
+                response = await self.client.chat.completions.create(
+                    model=self.config.summary_model,
+                    messages=messages,
+                    reasoning_effort="low",
+                )
             else:
                 # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
                 # Use a hardcoded reasonable temperature for summaries
-                api_kwargs["temperature"] = 0.3
-
-            response = await self.client.chat.completions.create(**api_kwargs)
+                response = await self.client.chat.completions.create(
+                    model=self.config.summary_model,
+                    messages=messages,
+                    temperature=0.3,
+                )
 
             content = response.choices[0].message.content
             if not content:
@@ -223,7 +242,7 @@ class LLMService:
                     # cached_tokens might be a mock object, skip it
                     pass
 
-            return content, usage_info
+            return content, cast(UsageInfo, usage_info)
 
         except Exception as e:
             from ragzoom.error_utils import preserve_exception_chain
@@ -241,7 +260,7 @@ class LLMService:
         self,
         reporter: TelemetryCollector | None,
         parent_id: str,
-        response: Any,
+        response: MockResponse,
         target_tokens: int,
         input_text_tokens: int,
         actual_tokens: int,
@@ -351,7 +370,7 @@ class LLMService:
         node_id: str,
         attempt_number: int,
         reporter: TelemetryCollector | None = None,  # jscpd:ignore-start
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[str, UsageInfo]:
         """Execute a single retry attempt for summary correction."""  # jscpd:ignore-end
         # Calculate deviation details for retry prompt
         deviation_pct = (
@@ -570,7 +589,7 @@ Here's the content to summarize:"""
                 input_text_tokens += tokenizer.count_tokens(right_text)
 
         # Build messages in conversational format to match test expectations
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {
                 "role": "system",
                 "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
@@ -593,7 +612,7 @@ Here's the content to summarize:"""
         try:
             start_time = time.time()
             summary, usage_info = await self._make_summary_call(
-                cast(list[ChatCompletionMessageParam], messages),
+                messages,
                 target_tokens,
                 parent_id or "",
                 reporter,
@@ -626,7 +645,7 @@ Here's the content to summarize:"""
             if self.config.max_retries > 0:
                 final_summary, retry_count, best_attempt_index = (
                     await self._retry_summary_correction(
-                        cast(list[ChatCompletionMessageParam], messages),
+                        messages,
                         summary,
                         summary_tokens,
                         target_tokens,

@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from ragzoom.config import OperationalConfig, SecretStr
 from ragzoom.error_utils import (
     RedactionFilter,
+    SanitizableValue,
     format_structured_error,
     sanitize_dict,
     sanitize_list,
@@ -18,29 +19,29 @@ from ragzoom.exceptions import ConfigurationError
 class TestSecretStr:
     """Test SecretStr class behavior."""
 
-    def test_secret_str_redacts_repr(self):
+    def test_secret_str_redacts_repr(self) -> None:
         """SecretStr should redact value in repr()."""
         secret = SecretStr("sk-1234567890123456789012345678901234567890123456789")
         assert repr(secret) == "***REDACTED***"
 
-    def test_secret_str_redacts_str(self):
+    def test_secret_str_redacts_str(self) -> None:
         """SecretStr should redact value in str()."""
         secret = SecretStr("sk-1234567890123456789012345678901234567890123456789")
         assert str(secret) == "***REDACTED***"
 
-    def test_secret_str_get_secret_value(self):
+    def test_secret_str_get_secret_value(self) -> None:
         """SecretStr should return actual value via get_secret_value()."""
         api_key = "sk-1234567890123456789012345678901234567890123456789"
         secret = SecretStr(api_key)
         assert secret.get_secret_value() == api_key
 
-    def test_secret_str_in_f_strings(self):
+    def test_secret_str_in_f_strings(self) -> None:
         """SecretStr should be redacted when used in f-strings."""
         secret = SecretStr("sk-1234567890123456789012345678901234567890123456789")
         message = f"Using API key: {secret}"
         assert message == "Using API key: ***REDACTED***"
 
-    def test_secret_str_in_error_messages(self):
+    def test_secret_str_in_error_messages(self) -> None:
         """SecretStr should be redacted when used in exception messages."""
         secret = SecretStr("sk-1234567890123456789012345678901234567890123456789")
 
@@ -54,7 +55,7 @@ class TestSecretStr:
 class TestOperationalConfigSecretStr:
     """Test OperationalConfig usage of SecretStr."""
 
-    def test_operational_config_uses_secret_str(self):
+    def test_operational_config_uses_secret_str(self) -> None:
         """OperationalConfig should use SecretStr for API key."""
         api_key = "sk-1234567890123456789012345678901234567890123456789"
         config = OperationalConfig(openai_api_key=SecretStr(api_key))
@@ -63,7 +64,7 @@ class TestOperationalConfigSecretStr:
         assert str(config.openai_api_key) == "***REDACTED***"
         assert config.openai_api_key.get_secret_value() == api_key
 
-    def test_operational_config_loads_from_env(self):
+    def test_operational_config_loads_from_env(self) -> None:
         """OperationalConfig should wrap environment API key in SecretStr."""
         api_key = "sk-1234567890123456789012345678901234567890123456789"
 
@@ -73,7 +74,7 @@ class TestOperationalConfigSecretStr:
             assert isinstance(config.openai_api_key, SecretStr)
             assert config.openai_api_key.get_secret_value() == api_key
 
-    def test_operational_config_in_repr(self):
+    def test_operational_config_in_repr(self) -> None:
         """OperationalConfig should not expose API key in repr."""
         api_key = "sk-1234567890123456789012345678901234567890123456789"
         config = OperationalConfig(openai_api_key=SecretStr(api_key))
@@ -86,7 +87,7 @@ class TestOperationalConfigSecretStr:
 class TestSanitizationFunctions:
     """Test message and data sanitization functions."""
 
-    def test_sanitize_message_basic(self):
+    def test_sanitize_message_basic(self) -> None:
         """sanitize_message should redact OpenAI API keys."""
         message = "Using API key sk-1234567890123456789012345678901234567890123456789 for request"
         result = sanitize_message(message)
@@ -95,7 +96,7 @@ class TestSanitizationFunctions:
         assert "sk-1234567890123456789012345678901234567890123456789" not in result
         assert "Using API key ***REDACTED*** for request" == result
 
-    def test_sanitize_message_multiple_keys(self):
+    def test_sanitize_message_multiple_keys(self) -> None:
         """sanitize_message should redact multiple API keys."""
         message = "Key1: sk-1111111111111111111111111111111111111111111111111, Key2: sk-2222222222222222222222222222222222222222222222222"
         result = sanitize_message(message)
@@ -103,16 +104,16 @@ class TestSanitizationFunctions:
         assert result.count("***REDACTED***") == 2
         assert "sk-" not in result
 
-    def test_sanitize_message_no_keys(self):
+    def test_sanitize_message_no_keys(self) -> None:
         """sanitize_message should leave message unchanged if no keys."""
         message = "This is a normal log message without keys"
         result = sanitize_message(message)
 
         assert result == message
 
-    def test_sanitize_dict_nested(self):
+    def test_sanitize_dict_nested(self) -> None:
         """sanitize_dict should recursively sanitize nested structures."""
-        data = {
+        data: dict[str, SanitizableValue] = {
             "config": {
                 "api_key": "sk-1234567890123456789012345678901234567890123456789",
                 "model": "gpt-4",
@@ -125,14 +126,21 @@ class TestSanitizationFunctions:
 
         result = sanitize_dict(data)
 
-        assert result["config"]["api_key"] == "***REDACTED***"
-        assert result["config"]["model"] == "gpt-4"
-        assert result["config"]["nested"]["auth"] == "Bearer ***REDACTED***"
+        # Type narrow the nested structures before indexing
+        config_value = result["config"]
+        assert isinstance(config_value, dict)
+        assert config_value["api_key"] == "***REDACTED***"
+        assert config_value["model"] == "gpt-4"
+
+        nested_value = config_value["nested"]
+        assert isinstance(nested_value, dict)
+        assert nested_value["auth"] == "Bearer ***REDACTED***"
+
         assert result["safe_field"] == "normal value"
 
-    def test_sanitize_list_mixed_types(self):
+    def test_sanitize_list_mixed_types(self) -> None:
         """sanitize_list should handle mixed types in lists."""
-        data = [
+        data: list[SanitizableValue] = [
             "sk-1234567890123456789012345678901234567890123456789",
             {"key": "sk-2222222222222222222222222222222222222222222222222"},
             ["nested", "sk-3333333333333333333333333333333333333333333333333"],
@@ -143,9 +151,18 @@ class TestSanitizationFunctions:
         result = sanitize_list(data)
 
         assert result[0] == "***REDACTED***"
-        assert result[1]["key"] == "***REDACTED***"
-        assert result[2][0] == "nested"
-        assert result[2][1] == "***REDACTED***"
+
+        # Type narrow before indexing into dict
+        item1 = result[1]
+        assert isinstance(item1, dict)
+        assert item1["key"] == "***REDACTED***"
+
+        # Type narrow before indexing into nested list
+        item2 = result[2]
+        assert isinstance(item2, list)
+        assert item2[0] == "nested"
+        assert item2[1] == "***REDACTED***"
+
         assert result[3] == 42
         assert result[4] is None
 
@@ -153,7 +170,7 @@ class TestSanitizationFunctions:
 class TestLoggingRedaction:
     """Test logging redaction filter."""
 
-    def test_redaction_filter_message(self):
+    def test_redaction_filter_message(self) -> None:
         """RedactionFilter should redact API keys in log messages."""
         filter_obj = RedactionFilter()
 
@@ -171,7 +188,7 @@ class TestLoggingRedaction:
 
         assert record.msg == "API key: ***REDACTED***"
 
-    def test_redaction_filter_args(self):
+    def test_redaction_filter_args(self) -> None:
         """RedactionFilter should redact API keys in log record args."""
         filter_obj = RedactionFilter()
 
@@ -187,10 +204,14 @@ class TestLoggingRedaction:
 
         filter_obj.filter(record)
 
-        assert record.args[0] == "***REDACTED***"
-        assert record.args[1] == "testing"
+        args_tuple = record.args
+        assert args_tuple is not None
+        # Cast to list then to tuple to handle type checker
+        args_list = list(args_tuple)
+        assert args_list[0] == "***REDACTED***"
+        assert args_list[1] == "testing"
 
-    def test_logging_integration(self):
+    def test_logging_integration(self) -> None:
         """Test full logging integration with redaction filter."""
         # Create a logger with the redaction filter
         logger = logging.getLogger("test_redaction")
@@ -222,7 +243,7 @@ class TestLoggingRedaction:
 class TestErrorHandlingRedaction:
     """Test error handling and formatting redaction."""
 
-    def test_format_structured_error_redacts_message(self):
+    def test_format_structured_error_redacts_message(self) -> None:
         """format_structured_error should redact API keys in exception messages."""
         api_key = "sk-1234567890123456789012345678901234567890123456789"
         exc = ConfigurationError(
@@ -231,21 +252,27 @@ class TestErrorHandlingRedaction:
 
         result = format_structured_error(exc)
 
-        assert "***REDACTED***" in result["message"]
-        assert api_key not in result["message"]
+        message = result["message"]
+        assert isinstance(message, str)
+        assert "***REDACTED***" in message
+        assert api_key not in message
 
-    def test_format_structured_error_redacts_context(self):
+    def test_format_structured_error_redacts_context(self) -> None:
         """format_structured_error should redact API keys in exception context."""
         api_key = "sk-1234567890123456789012345678901234567890123456789"
         exc = ConfigurationError("config", "valid configuration")
-        exc.context = {"api_key": api_key, "model": "gpt-4"}
+        # ConfigurationError.context is dynamically added, not in type definition
+        exc.context = {"api_key": api_key, "model": "gpt-4"}  # type: ignore[attr-defined]
 
         result = format_structured_error(exc)
 
-        assert result["context"]["api_key"] == "***REDACTED***"
-        assert result["context"]["model"] == "gpt-4"
+        # Type narrow the context before indexing
+        context_value = result["context"]
+        assert isinstance(context_value, dict)
+        assert context_value["api_key"] == "***REDACTED***"
+        assert context_value["model"] == "gpt-4"
 
-    def test_format_structured_error_redacts_traceback(self):
+    def test_format_structured_error_redacts_traceback(self) -> None:
         """format_structured_error should redact API keys in tracebacks."""
         api_key = "sk-1234567890123456789012345678901234567890123456789"
 
@@ -254,18 +281,22 @@ class TestErrorHandlingRedaction:
         except ValueError as exc:
             result = format_structured_error(exc, include_traceback=True)
 
-            assert "***REDACTED***" in result["traceback"]
-            assert api_key not in result["traceback"]
+            traceback = result["traceback"]
+            assert isinstance(traceback, str)
+            assert "***REDACTED***" in traceback
+            assert api_key not in traceback
 
 
 class TestEndToEndScenarios:
     """Test end-to-end scenarios for API key protection."""
 
-    def test_api_key_not_exposed_in_service_errors(self):
+    def test_api_key_not_exposed_in_service_errors(self) -> None:
         """Ensure API keys aren't exposed when services fail."""
         from ragzoom.config import QueryConfig
         from ragzoom.services.query_service import QueryService
-        from tests.conftest import SimpleMockStore
+
+        # SimpleMockStore is defined in conftest.py but not exported in __all__
+        from tests.conftest import SimpleMockStore  # type: ignore[attr-defined]
 
         # Create config with API key
         api_key = "sk-1234567890123456789012345678901234567890123456789"
@@ -285,7 +316,7 @@ class TestEndToEndScenarios:
             if "sk-" in error_str:
                 assert "***REDACTED***" in error_str
 
-    def test_json_serialization_safety(self):
+    def test_json_serialization_safety(self) -> None:
         """Test that SecretStr can be safely serialized for logging/debugging."""
         # This test shows that when we want to safely serialize config containing
         # SecretStr objects, we need to be explicit about the serialization
@@ -306,7 +337,7 @@ class TestEndToEndScenarios:
         assert "***REDACTED***" in json_str
         assert "sk-" not in json_str
 
-    def test_actual_api_functionality_preserved(self):
+    def test_actual_api_functionality_preserved(self) -> None:
         """Test that actual API functionality still works with SecretStr."""
         api_key = "test-key-for-functionality"
         secret = SecretStr(api_key)
@@ -318,7 +349,9 @@ class TestEndToEndScenarios:
         # Patch where OpenAI is imported in utils, not the original module
         with patch("tests.utils.OpenAI") as mock_openai:
             from ragzoom.config import QueryConfig
-            from tests.conftest import SimpleMockStore
+
+            # SimpleMockStore is defined in conftest.py but not exported in __all__
+            from tests.conftest import SimpleMockStore  # type: ignore[attr-defined]
             from tests.utils import create_retriever
 
             query_config = QueryConfig()
@@ -335,7 +368,7 @@ class TestEndToEndScenarios:
             # Verify the OpenAI client was initialized with the actual key
             mock_openai.assert_called_once_with(api_key=api_key)
 
-    def test_environment_variable_protection(self):
+    def test_environment_variable_protection(self) -> None:
         """Test that environment variables are properly protected."""
         api_key = "sk-1234567890123456789012345678901234567890123456789"
 

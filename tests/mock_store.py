@@ -2,15 +2,17 @@
 
 import hashlib
 from collections import OrderedDict, defaultdict, deque
+from collections.abc import Iterator
 from contextlib import contextmanager
 from types import SimpleNamespace
-from typing import Any
+from typing import cast
 from unittest.mock import MagicMock
 
 import numpy as np
 from numpy.typing import NDArray
 
-from ragzoom.interfaces import StoreInterface
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.interfaces import NodeData, SearchMetadata, StoreInterface
 from ragzoom.models import Document, TreeNode
 
 
@@ -19,7 +21,7 @@ class MockTreeNode(SimpleNamespace):
 
     def is_leaf(self) -> bool:
         """Check if this node is a leaf node."""
-        return self.height == 0
+        return bool(self.height == 0)
 
     def is_root(self) -> bool:
         """Check if this node is the root node."""
@@ -34,6 +36,234 @@ class MockTreeNode(SimpleNamespace):
         return self.path.endswith("1") if self.path else False
 
 
+class MockDocumentSearch:
+    """Mock search service for a specific document."""
+
+    def __init__(self, store: "SimpleMockStore", document_id: str | None):
+        self.store = store
+        self.document_id = document_id
+
+    def similar(
+        self,
+        embedding: list[float] | NDArray[np.float64],
+        n: int,
+    ) -> list[tuple[str, float, SearchMetadata]]:
+        """Search for similar nodes."""
+        where: dict[str, str | int | float | bool | None] | None = (
+            {"document_id": self.document_id} if self.document_id else None
+        )
+        return self.store.search_similar(embedding, n, where=where)
+
+    def mmr_diverse(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        candidates: list[tuple[str, float, SearchMetadata]],
+        lambda_param: float,
+        k: int,
+    ) -> list[str]:
+        """Apply MMR to get diverse results."""
+        return self.store.compute_mmr_diverse_results(
+            query_embedding, candidates, lambda_param, k
+        )
+
+    # Add compatibility methods for tests that expect these directly on search
+    def search_similar(
+        self,
+        embedding: list[float] | NDArray[np.float64],
+        n_results: int,
+        where: dict[str, str | int | float | bool | None] | None = None,
+    ) -> list[tuple[str, float, SearchMetadata]]:
+        """Compatibility method for tests expecting search_similar."""
+        return self.store.search_similar(embedding, n_results, where=where)
+
+    def compute_mmr_diverse_results(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        candidates: list[tuple[str, float, SearchMetadata]],
+        lambda_param: float,
+        k: int,
+    ) -> list[str]:
+        """Compatibility method for tests expecting compute_mmr_diverse_results."""
+        return self.store.compute_mmr_diverse_results(
+            query_embedding, candidates, lambda_param, k
+        )
+
+
+class MockDocumentTree:
+    """Mock tree navigator for a specific document."""
+
+    def __init__(self, store: "SimpleMockStore", document_id: str | None):
+        self.store = store
+        self.document_id = document_id
+
+    def get_children(self, node_id: str) -> list[TreeNode]:
+        """Get children of a node."""
+        left, right = self.store.get_children(node_id)
+        children = []
+        if left:
+            children.append(left)
+        if right:
+            children.append(right)
+        return children
+
+    def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
+        """Get ancestors of nodes, filtered by document."""
+        ancestors = self.store.get_ancestors(node_ids)
+        return [
+            ancestor
+            for ancestor in ancestors
+            if getattr(ancestor, "document_id", None) == self.document_id
+        ]
+
+    def get_root(self) -> TreeNode | None:
+        """Get root node for this document."""
+        return self.store.get_root_node_for_document(self.document_id)
+
+    def get_depth(self, node_id: str) -> int:
+        """Get depth of a node."""
+        return self.store.get_node_depth(node_id)
+
+    def is_leaf(self, node_id: str) -> bool:
+        """Check if node is a leaf."""
+        return self.store.is_leaf_node(node_id)
+
+    def is_root(self, node_id: str) -> bool:
+        """Check if node is root."""
+        return self.store.is_root_node(node_id)
+
+
+class MockDocumentNodes:
+    """Mock nodes object that behaves like a dict for a specific document."""
+
+    def __init__(self, store: "SimpleMockStore", document_id: str | None):
+        self.store = store
+        self.document_id = document_id
+
+    def __len__(self) -> int:
+        """Return number of nodes for this document."""
+        return sum(
+            1
+            for n in self.store._nodes.values()
+            if getattr(n, "document_id", None) == self.document_id
+        )
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over node IDs for this document."""
+        return (
+            node_id
+            for node_id, node in self.store._nodes.items()
+            if getattr(node, "document_id", None) == self.document_id
+        )
+
+    def items(self) -> Iterator[tuple[str, SimpleNamespace]]:
+        """Return items iterator for nodes in this document."""
+        return (
+            (node_id, node)
+            for node_id, node in self.store._nodes.items()
+            if getattr(node, "document_id", None) == self.document_id
+        )
+
+    def get(self, node_id: str) -> TreeNode | SimpleNamespace | None:
+        """Get a node by ID, filtered by document."""
+        if self.document_id is None:
+            return self.store.get_node(node_id)
+        node = self.store.get_node(node_id)
+        if node and node.document_id == self.document_id:
+            return node
+        return None
+
+    # Alias for compatibility
+    get_node = get
+
+    def get_many(self, node_ids: list[str]) -> list[TreeNode]:
+        """Get multiple nodes."""
+        return self.store.get_nodes(node_ids)
+
+    # Alias for compatibility
+    get_nodes = get_many
+
+    def get_nodes_by_paths(self, paths: list[str]) -> list[SimpleNamespace]:
+        """Get nodes by their paths."""
+        return [
+            n
+            for n in self.store._nodes.values()
+            if hasattr(n, "path")
+            and n.path in paths
+            and n.document_id == self.document_id
+        ]
+
+    def update_access(self, node_id: str) -> None:
+        """Update node access time."""
+        self.store.update_node_access(node_id)
+
+    def get_all(self) -> list[SimpleNamespace]:
+        """Get all nodes for this document."""
+        return [
+            n
+            for n in self.store._nodes.values()
+            if getattr(n, "document_id", None) == self.document_id
+        ]
+
+    def get_all_paginated(self, *, page_size: int = 1000) -> list[list[TreeNode]]:
+        """Get all nodes paginated."""
+        return self.store.get_all_nodes_for_document_paginated(
+            self.document_id, page_size=page_size
+        )
+
+    def get_leaves(self) -> list[TreeNode]:
+        """Get leaf nodes for this document."""
+        return [
+            n
+            for n in self.store.get_leaf_nodes()
+            if getattr(n, "document_id", None) == self.document_id
+        ]
+
+    def add(
+        self,
+        node_id: str,
+        text: str,
+        embedding: list[float] | NDArray[np.float64],
+        span_start: int,
+        span_end: int,
+        parent_id: str | None = None,
+        left_child_id: str | None = None,
+        right_child_id: str | None = None,
+        preceding_neighbor_id: str | None = None,
+        following_neighbor_id: str | None = None,
+        token_count: int = 0,
+        height: int = 0,
+        is_left_child: bool | None = None,
+        path: str = "",
+    ) -> TreeNode:
+        """Add a single node."""
+        return self.store.add_node(
+            node_id=node_id,
+            text=text,
+            embedding=embedding,
+            span_start=span_start,
+            span_end=span_end,
+            parent_id=parent_id,
+            left_child_id=left_child_id,
+            right_child_id=right_child_id,
+            preceding_neighbor_id=preceding_neighbor_id,
+            following_neighbor_id=following_neighbor_id,
+            token_count=token_count,
+            height=height,
+            is_left_child=is_left_child,
+            path=path,
+        )
+
+    def add_batch(self, nodes_data: list[NodeData]) -> list[TreeNode]:
+        """Add multiple nodes in batch."""
+        return self.store.add_nodes_batch(nodes_data)
+
+    def update_parent_references_batch(
+        self, parent_updates: list[tuple[str, str]]
+    ) -> None:
+        """Update parent references in batch."""
+        self.store.update_parent_references_batch(parent_updates)
+
+
 class SimpleMockStore(StoreInterface):
     """Lightweight mock of Store for unit testing.
 
@@ -46,7 +276,9 @@ class SimpleMockStore(StoreInterface):
 
     PIN_DEPTH_MAX = 2  # Match Store class constant
 
-    def __init__(self, config=None):
+    def __init__(
+        self, config: IndexConfig | QueryConfig | OperationalConfig | None = None
+    ) -> None:
         self.config = config
         self._nodes: dict[str, SimpleNamespace] = {}
         self.embeddings: dict[str, list[float]] = {}
@@ -56,7 +288,7 @@ class SimpleMockStore(StoreInterface):
         # Transaction state tracking
         self._active_transaction = False
         # Transaction snapshot for rollback simulation
-        self._transaction_snapshot: dict[str, any] | None = None
+        self._transaction_snapshot: dict[str, object] | None = None
 
         # State tracking
         self.pinned_nodes: set[str] = set()
@@ -66,11 +298,11 @@ class SimpleMockStore(StoreInterface):
         self.document_id: str | None = None
 
         # Cache simulation
-        self._node_cache = OrderedDict()
-        self._cache_order = deque(maxlen=1000)
+        self._node_cache: OrderedDict[str, SimpleNamespace] = OrderedDict()
+        self._cache_order: deque[str] = deque(maxlen=1000)
 
         # Track expected embedding dimension
-        self._expected_embedding_dim = None
+        self._expected_embedding_dim: int | None = None
 
         # Add node_repo attribute for CLI pin command compatibility
         self.node_repo = self  # SimpleMockStore acts as its own node repository
@@ -80,7 +312,7 @@ class SimpleMockStore(StoreInterface):
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=None)
 
-        def mock_query(model_class):
+        def mock_query(model_class: type[TreeNode] | type[Document]) -> MagicMock:
             query_mock = MagicMock()
 
             # Determine model type
@@ -100,7 +332,7 @@ class SimpleMockStore(StoreInterface):
                 query_mock.count.return_value = 0
 
             # Add filter_by support
-            def mock_filter_by(**kwargs):
+            def mock_filter_by(**kwargs: str | int | float | bool | None) -> MagicMock:
                 filtered_query = MagicMock()
 
                 if is_treenode:
@@ -124,7 +356,7 @@ class SimpleMockStore(StoreInterface):
                     filtered_query.delete.return_value = len(filtered_nodes)
 
                     # Add support for chained .filter() calls
-                    def mock_filter(*args):
+                    def mock_filter(*args: object) -> MagicMock:
                         # Filter for leaf nodes (left_child_id.is_(None), right_child_id.is_(None))
                         further_filtered = []
                         for node in filtered_nodes:
@@ -176,11 +408,10 @@ class SimpleMockStore(StoreInterface):
                 return filtered_query
 
             query_mock.filter_by = mock_filter_by
-            query_mock.all.return_value = (
-                list(self._nodes.values())
-                if is_treenode
-                else list(self.documents.values())
-            )
+            if is_treenode:
+                query_mock.all.return_value = list(self._nodes.values())
+            else:
+                query_mock.all.return_value = list(self._documents.values())
 
             return query_mock
 
@@ -188,10 +419,8 @@ class SimpleMockStore(StoreInterface):
         self.SessionLocal = MagicMock(return_value=mock_session)
 
         # Add StoreManager-compatible properties
-        mock_search = MagicMock()
-        mock_search.search_similar = self.search_similar
-        mock_search.compute_mmr_diverse_results = self.compute_mmr_diverse_results
-        self.search = mock_search
+        # Use MockDocumentSearch for proper behavior
+        self.search = MockDocumentSearch(self, self.document_id)
 
         mock_tree = MagicMock()
         mock_tree.get_ancestors = self.get_ancestors
@@ -210,120 +439,63 @@ class SimpleMockStore(StoreInterface):
         mock_nodes.update_parent_references_batch = self.update_parent_references_batch
         # Add get method that delegates to get_node for compatibility with Assembler
         mock_nodes.get = self.get_node
+        # Add missing methods for StoreManager compatibility
+        mock_nodes.add_node = self.add_node
+        mock_nodes.get_leaf_nodes = self.get_leaf_nodes
         self.nodes = mock_nodes
 
         # Create a documents property that acts like both dict and repository
         class DocumentsProperty:
-            def __init__(self, mock_store):
+            def __init__(self, mock_store: "SimpleMockStore") -> None:
                 self._store = mock_store
                 self.get_document_embedding_model = (
                     mock_store.get_document_embedding_model
                 )
 
-            def __getitem__(self, key):
+            def __getitem__(self, key: str) -> SimpleNamespace:
                 return self._store._documents[key]
 
-            def __setitem__(self, key, value):
+            def __setitem__(self, key: str, value: SimpleNamespace) -> None:
                 self._store._documents[key] = value
 
-            def __delitem__(self, key):
+            def __delitem__(self, key: str) -> None:
                 del self._store._documents[key]
 
-            def __contains__(self, key):
+            def __contains__(self, key: str) -> bool:
                 return key in self._store._documents
 
-            def __iter__(self):
+            def __iter__(self) -> Iterator[str]:
                 return iter(self._store._documents)
 
-            def __len__(self):
+            def __len__(self) -> int:
                 return len(self._store._documents)
 
-            def values(self):
-                return self._store._documents.values()
+            def values(self) -> Iterator[SimpleNamespace]:
+                return iter(self._store._documents.values())
 
-            def keys(self):
-                return self._store._documents.keys()
+            def keys(self) -> Iterator[str]:
+                return iter(self._store._documents.keys())
 
-            def items(self):
-                return self._store._documents.items()
+            def items(self) -> Iterator[tuple[str, SimpleNamespace]]:
+                return iter(self._store._documents.items())
 
-            def get(self, key, default=None):
+            def get(
+                self, key: str, default: SimpleNamespace | None = None
+            ) -> SimpleNamespace | None:
                 return self._store._documents.get(key, default)
 
-        self.documents = DocumentsProperty(self)
+        self.documents: DocumentsProperty = DocumentsProperty(self)
 
-    def for_document(self, document_id: str | None):
+    def for_document(self, document_id: str | None) -> MagicMock:
         """Create a mock document store for testing."""
         # Return a mock DocumentStore-like object that delegates to this mock store
         mock_doc_store = MagicMock()
         mock_doc_store.document_id = document_id
 
-        # Create mock nodes, search, tree that filter by document_id
-        mock_nodes = MagicMock()
-
-        def get_node_fn(node_id):
-            if document_id is None:
-                return self.get_node(node_id)
-            node = self.get_node(node_id)
-            if node and node.document_id == document_id:
-                return node
-            return None
-
-        mock_nodes.get = get_node_fn
-        mock_nodes.get_node = get_node_fn  # Both get and get_node should work
-        mock_nodes.get_many = lambda node_ids: self.get_nodes(node_ids)
-        # Add get_nodes alias for get_many (used by Retriever and CoverageBuilder)
-        mock_nodes.get_nodes = lambda node_ids: self.get_nodes(node_ids)
-        # Add get_nodes_by_paths (used by CoverageBuilder for siblings)
-        mock_nodes.get_nodes_by_paths = lambda paths: [
-            n
-            for n in self._nodes.values()
-            if hasattr(n, "path") and n.path in paths and n.document_id == document_id
-        ]
-        # Add update_access method (used by CoverageBuilder)
-        mock_nodes.update_access = lambda node_id: self.update_node_access(node_id)
-        mock_nodes.get_all = lambda: [
-            n
-            for n in self._nodes.values()
-            if getattr(n, "document_id", None) == document_id
-        ]
-        mock_nodes.get_all_paginated = (
-            lambda *, page_size=1000: self.get_all_nodes_for_document_paginated(
-                document_id, page_size=page_size
-            )
-        )
-        mock_nodes.get_leaves = lambda: [
-            n
-            for n in self.get_leaf_nodes()
-            if getattr(n, "document_id", None) == document_id
-        ]
-        mock_nodes.add = self.add_node
-        mock_nodes.add_batch = self.add_nodes_batch
-        mock_nodes.update_access = self.update_node_access
-        mock_nodes.update_parent_references_batch = self.update_parent_references_batch
-
-        mock_search = MagicMock()
-        mock_search.similar = lambda embedding, n: self.search_similar(
-            embedding, n, where={"document_id": document_id} if document_id else None
-        )
-        mock_search.mmr_diverse = self.compute_mmr_diverse_results
-
-        mock_tree = MagicMock()
-        mock_tree.get_children = self.get_children
-        # Filter ancestors by document_id for proper isolation
-        mock_tree.get_ancestors = lambda node_ids: [
-            ancestor
-            for ancestor in self.get_ancestors(node_ids)
-            if getattr(ancestor, "document_id", None) == document_id
-        ]
-        mock_tree.get_root = lambda: self.get_root_node_for_document(document_id)
-        mock_tree.get_depth = self.get_node_depth
-        mock_tree.is_leaf = self.is_leaf_node
-        mock_tree.is_root = self.is_root_node
-
-        mock_doc_store.nodes = mock_nodes
-        mock_doc_store.search = mock_search
-        mock_doc_store.tree = mock_tree
+        # Use the new mock classes for proper behavior
+        mock_doc_store.nodes = MockDocumentNodes(self, document_id)
+        mock_doc_store.search = MockDocumentSearch(self, document_id)
+        mock_doc_store.tree = MockDocumentTree(self, document_id)
 
         # Add DocumentStore methods needed by CoverageBuilder
         mock_doc_store.PIN_DEPTH_MAX = self.PIN_DEPTH_MAX
@@ -334,11 +506,23 @@ class SimpleMockStore(StoreInterface):
         ]
 
         # Add set_metadata method needed by IndexingService
-        def _set_metadata(**kwargs):
+        def _set_metadata(
+            file_path: str | None = None,
+            content_hash: str | None = None,
+            chunk_count: int = 0,
+            embedding_model: str | None = None,
+            summary_model: str | None = None,
+        ) -> None:
             # Save the current document_id, set it temporarily for the method call
             old_doc_id = self.document_id
             self.document_id = document_id
-            self.set_metadata(**kwargs)
+            self.set_metadata(
+                file_path=file_path,
+                content_hash=content_hash,
+                chunk_count=chunk_count,
+                embedding_model=embedding_model,
+                summary_model=summary_model,
+            )
             self.document_id = old_doc_id
 
         mock_doc_store.set_metadata = _set_metadata
@@ -367,10 +551,11 @@ class SimpleMockStore(StoreInterface):
         document_id: str | None = None,
         token_count: int = 0,
         height: int = 0,
+        is_left_child: bool | None = None,
+        # Additional parameters for test flexibility (not in interface)
         preceding_neighbor_id: str | None = None,
         following_neighbor_id: str | None = None,
         path: str = "",
-        is_left_child: bool | None = None,
     ) -> TreeNode:
         """Add a node to the mock store."""
         # Convert embedding to list if needed
@@ -442,35 +627,42 @@ class SimpleMockStore(StoreInterface):
         # Add to cache
         self._add_to_cache(node)
 
-        return node
+        return node  # type: ignore[return-value]  # Mock returns SimpleNamespace for test flexibility
 
     def add_nodes_batch(
-        self, nodes_data: list[dict[str, Any]], *, session=None
+        self, nodes_data: list[NodeData], *, session: object = None
     ) -> list[TreeNode]:
         """Add multiple nodes in batch - mock implementation."""
         nodes = []
         for data in nodes_data:
+            # Handle both dict[str, Any] and NodeData formats for backward compatibility
+            node_data = data if isinstance(data, dict) else data.__dict__
             node = self.add_node(
-                node_id=data["node_id"],
-                text=data["text"],
-                embedding=data["embedding"],
-                span_start=data["span_start"],
-                span_end=data["span_end"],
-                parent_id=data.get("parent_id"),
-                left_child_id=data.get("left_child_id"),
-                right_child_id=data.get("right_child_id"),
-                document_id=data.get("document_id"),
-                token_count=data.get("token_count", 0),
-                height=data.get("height", 0),
-                preceding_neighbor_id=data.get("preceding_neighbor_id"),
-                following_neighbor_id=data.get("following_neighbor_id"),
-                path=data.get("path", ""),
+                node_id=node_data["node_id"],
+                text=node_data["text"],
+                embedding=node_data["embedding"],
+                span_start=node_data["span_start"],
+                span_end=node_data["span_end"],
+                parent_id=node_data.get("parent_id"),
+                left_child_id=node_data.get("left_child_id"),
+                right_child_id=node_data.get("right_child_id"),
+                document_id=node_data.get("document_id"),
+                token_count=node_data.get("token_count", 0),
+                height=node_data.get("height", 0),
+                is_left_child=node_data.get("is_left_child"),
+                # Preserve test-specific neighbor IDs if provided
+                preceding_neighbor_id=cast(
+                    str | None, node_data.get("preceding_neighbor_id")
+                ),
+                following_neighbor_id=cast(
+                    str | None, node_data.get("following_neighbor_id")
+                ),
             )
             nodes.append(node)
         return nodes
 
     def update_parent_references_batch(
-        self, updates: list[tuple[str, str]], *, session=None
+        self, updates: list[tuple[str, str]], *, session: object = None
     ) -> None:
         """Update parent references in batch - mock implementation."""
         for node_id, parent_id in updates:
@@ -491,7 +683,7 @@ class SimpleMockStore(StoreInterface):
             # Move to end of cache order (most recently used)
             if node_id in self._node_cache:
                 self._move_to_cache_end(node_id)
-            return node
+            return node  # type: ignore[return-value]  # Mock returns SimpleNamespace for test flexibility
         return None
 
     def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
@@ -519,7 +711,7 @@ class SimpleMockStore(StoreInterface):
     def get_leaf_nodes(self) -> list[TreeNode]:
         """Get all leaf nodes (nodes with no children)."""
         return [
-            node
+            node  # type: ignore[misc]  # Mock returns SimpleNamespace for test flexibility
             for node in self._nodes.values()
             if not node.left_child_id and not node.right_child_id
         ]
@@ -528,14 +720,14 @@ class SimpleMockStore(StoreInterface):
         """Get the root node (node with no parent)."""
         for node in self._nodes.values():
             if not node.parent_id:
-                return node
+                return node  # type: ignore[return-value]  # Mock returns SimpleNamespace for test flexibility
         return None
 
     def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
         """Get the root node for a specific document."""
         for node in self._nodes.values():
             if node.document_id == document_id and not node.parent_id:
-                return node
+                return node  # type: ignore[return-value]  # Mock returns SimpleNamespace for test flexibility
         return None
 
     def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
@@ -554,7 +746,7 @@ class SimpleMockStore(StoreInterface):
             current_level = next_level
 
         return [
-            self._nodes[ancestor_id]
+            self._nodes[ancestor_id]  # type: ignore[misc]  # Mock returns SimpleNamespace for test flexibility
             for ancestor_id in all_ancestors
             if ancestor_id in self._nodes
         ]
@@ -562,7 +754,7 @@ class SimpleMockStore(StoreInterface):
     def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
         """Get nodes by their path values."""
         return [
-            node
+            node  # type: ignore[misc]  # Mock returns SimpleNamespace for test flexibility
             for node in self._nodes.values()
             if hasattr(node, "path") and node.path in paths
         ]
@@ -602,7 +794,9 @@ class SimpleMockStore(StoreInterface):
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
         """Get all nodes for a specific document."""
         return [
-            node for node in self._nodes.values() if node.document_id == document_id
+            node  # type: ignore[misc]  # Mock returns SimpleNamespace for test flexibility
+            for node in self._nodes.values()
+            if node.document_id == document_id
         ]
 
     def get_all_nodes_for_document_paginated(
@@ -631,8 +825,8 @@ class SimpleMockStore(StoreInterface):
         self,
         query_embedding: list[float] | NDArray[np.float64],
         n_results: int,
-        where: dict[str, Any] | None = None,
-    ) -> list[tuple[str, float, dict[str, Any]]]:
+        where: dict[str, str | int | float | bool | None] | None = None,
+    ) -> list[tuple[str, float, SearchMetadata]]:
         """Search for similar nodes using cosine similarity."""
         if isinstance(query_embedding, np.ndarray):
             query_embedding = query_embedding.tolist()
@@ -654,7 +848,7 @@ class SimpleMockStore(StoreInterface):
                 similarity = self.mock_scores[node_id]
 
             node = self._nodes[node_id]
-            metadata = {
+            metadata: SearchMetadata = {
                 "span_start": node.span_start,
                 "span_end": node.span_end,
                 "parent_id": node.parent_id or "",
@@ -676,7 +870,7 @@ class SimpleMockStore(StoreInterface):
     def compute_mmr_diverse_results(
         self,
         query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, Any]]],
+        candidates: list[tuple[str, float, SearchMetadata]],
         lambda_param: float,
         k: int,
     ) -> list[str]:
@@ -687,7 +881,7 @@ class SimpleMockStore(StoreInterface):
         if isinstance(query_embedding, np.ndarray):
             query_embedding = query_embedding.tolist()
 
-        selected = []
+        selected: list[str] = []
         remaining = candidates.copy()
 
         for _ in range(min(k, len(candidates))):
@@ -736,12 +930,12 @@ class SimpleMockStore(StoreInterface):
         """Get a document by file path."""
         for doc in self.documents.values():
             if doc.file_path == file_path:
-                return doc
+                return doc  # type: ignore[return-value]  # Mock document store compatibility
         return None
 
     def get_document_by_id(self, document_id: str) -> Document | None:
         """Get a document by ID."""
-        return self.documents.get(document_id)
+        return self.documents.get(document_id)  # type: ignore[return-value]  # Mock document store compatibility
 
     def add_document(
         self,
@@ -752,8 +946,8 @@ class SimpleMockStore(StoreInterface):
         embedding_model: str,
         summary_model: str,
         *,
-        session=None,
-    ):
+        session: object = None,
+    ) -> MagicMock:
         """Mock add document and return a DocumentStore for it."""
         from datetime import datetime
 
@@ -837,7 +1031,7 @@ class SimpleMockStore(StoreInterface):
             self.pinned_nodes.add(node_id)
             self._nodes[node_id].is_pinned = 1
 
-    def set_mock_scores(self, scores: dict[str, float]):
+    def set_mock_scores(self, scores: dict[str, float]) -> None:
         """Set mock similarity scores for testing."""
         self.mock_scores = scores
 
@@ -848,19 +1042,19 @@ class SimpleMockStore(StoreInterface):
             if node_id in self._nodes:
                 if depth_max is None or self.get_node_depth(node_id) <= depth_max:
                     pinned.append(self._nodes[node_id])
-        return pinned
+        return pinned  # type: ignore[return-value]  # Mock returns SimpleNamespace for test flexibility
 
     def get_document_embedding_model(self, document_id: str) -> str | None:
         """Get the embedding model used for a specific document."""
         doc = self.get_document_by_id(document_id)
         if isinstance(doc, dict):
             return doc.get("embedding_model")
-        return doc.embedding_model if doc else None
+        return getattr(doc, "embedding_model", None) if doc else None
 
     def _get_avg_leaf_tokens_for_document(self, document_id: str) -> int | None:
         """Get average token count for leaf nodes in this document."""
         leaf_nodes = [
-            node
+            node  # Mock returns SimpleNamespace for test flexibility
             for node in self._nodes.values()
             if node.document_id == document_id and self.is_leaf_node(node.id)
         ]
@@ -870,7 +1064,7 @@ class SimpleMockStore(StoreInterface):
         total_tokens = sum(node.token_count for node in leaf_nodes)
         return total_tokens // len(leaf_nodes) if leaf_nodes else None
 
-    def delete_document_nodes(self, document_id: str, *, session=None) -> int:
+    def delete_document_nodes(self, document_id: str, *, session: object = None) -> int:
         """Delete all nodes for a document."""
         if document_id not in self.document_nodes:
             return 0
@@ -903,7 +1097,7 @@ class SimpleMockStore(StoreInterface):
             "avg_tokens": avg_tokens,
         }
 
-    def clear_document(self, document_id: str, *, session=None) -> int:
+    def clear_document(self, document_id: str, *, session: object = None) -> int:
         """Clear all data for a document, including orphaned nodes and document record."""
         deleted_count = self.delete_document_nodes(document_id, session=session)
         if document_id in self.documents:
@@ -911,7 +1105,7 @@ class SimpleMockStore(StoreInterface):
         return deleted_count
 
     @contextmanager
-    def transaction(self):
+    def transaction(self) -> Iterator[MagicMock]:
         """Mock transaction context manager with rollback simulation.
 
         Simulates transaction behavior by:
@@ -944,10 +1138,18 @@ class SimpleMockStore(StoreInterface):
         except Exception:
             # Rollback - restore from snapshot
             if self._transaction_snapshot:
-                self._documents = self._transaction_snapshot["documents"]
-                self._nodes = self._transaction_snapshot["nodes"]
-                self.embeddings = self._transaction_snapshot["embeddings"]
-                self.document_nodes = self._transaction_snapshot["document_nodes"]
+                self._documents = cast(
+                    dict[str, SimpleNamespace], self._transaction_snapshot["documents"]
+                )
+                self._nodes = cast(
+                    dict[str, SimpleNamespace], self._transaction_snapshot["nodes"]
+                )
+                self.embeddings = cast(
+                    dict[str, list[float]], self._transaction_snapshot["embeddings"]
+                )
+                self.document_nodes = cast(
+                    dict[str, set[str]], self._transaction_snapshot["document_nodes"]
+                )
                 self._transaction_snapshot = None
             raise
         finally:
@@ -958,12 +1160,12 @@ class SimpleMockStore(StoreInterface):
         pass  # No-op for mock
 
     @property
-    def node_cache(self):
+    def node_cache(self) -> OrderedDict[str, SimpleNamespace]:
         """Access to node cache for backward compatibility."""
         return self._node_cache
 
     @property
-    def cache_order(self):
+    def cache_order(self) -> deque[str]:
         """Access to cache order for backward compatibility."""
         return self._cache_order
 
@@ -977,11 +1179,13 @@ class SimpleMockStore(StoreInterface):
         root_nodes = [node for node in self._nodes.values() if node.is_root()]
 
         # Update paths starting from root nodes
-        visited = set()
+        visited: set[str] = set()
         for root in root_nodes:
             self._update_node_path_recursive(root, "", visited)
 
-    def _update_node_path_recursive(self, node, path: str, visited: set[str]) -> None:
+    def _update_node_path_recursive(
+        self, node: SimpleNamespace, path: str, visited: set[str]
+    ) -> None:
         """Recursively update node paths in the tree.
 
         Args:
@@ -1005,7 +1209,7 @@ class SimpleMockStore(StoreInterface):
             right_child = self._nodes[node.right_child_id]
             self._update_node_path_recursive(right_child, path + "1", visited)
 
-    def _add_to_cache(self, node) -> None:
+    def _add_to_cache(self, node: SimpleNamespace) -> None:
         """Add a node to the cache."""
         if len(self._node_cache) >= 1000:
             # Remove oldest item

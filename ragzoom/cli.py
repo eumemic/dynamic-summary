@@ -23,10 +23,11 @@ from ragzoom.exceptions import (
     ResourceError,
     ValidationError,
 )
+from ragzoom.models import TreeNode
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingService
 from ragzoom.services.query_service import QueryService
-from ragzoom.store import TreeNode, create_store_with_docker
+from ragzoom.store import create_store_with_docker
 from ragzoom.tree_viz import build_ascii_tree
 
 # Load environment variables
@@ -745,7 +746,7 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
         # Get all nodes
         nodes_data = []
         with store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
+            from ragzoom.models import TreeNode
 
             nodes = session.query(TreeNode).all()
             for node in nodes:

@@ -3,10 +3,12 @@
 import hashlib
 import logging
 import os
-from contextlib import contextmanager
+from collections.abc import Generator
+from contextlib import AbstractContextManager, contextmanager
 
 import numpy as np
 from numpy.typing import NDArray
+from sqlalchemy.orm import Session
 
 from ragzoom.config import OperationalConfig, SecretStr
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
@@ -129,7 +131,9 @@ class StoreManager:
     DEFAULT_MAX_OVERFLOW = 20  # Default max overflow connections
 
     @classmethod
-    def temporary(cls, embedding_model: str = "text-embedding-3-small"):
+    def temporary(
+        cls, embedding_model: str = "text-embedding-3-small"
+    ) -> AbstractContextManager["StoreManager"]:
         """Create a temporary store for testing/benchmarking.
 
         Returns a context manager that yields a Store instance with a temporary
@@ -137,7 +141,7 @@ class StoreManager:
         """
 
         @contextmanager
-        def _temporary_store():
+        def _temporary_store() -> Generator["StoreManager", None, None]:
             # Generate unique database name
             temp_db_name = get_temp_db_name()
 
@@ -249,7 +253,7 @@ class StoreManager:
         embedding_model: str,
         summary_model: str,
         *,
-        session=None,
+        session: Session | None = None,
     ) -> DocumentStore:
         """Add a document record and return a DocumentStore for it."""
         self.doc_repo.add_document(
@@ -263,7 +267,9 @@ class StoreManager:
         )
         return self.for_document(document_id)
 
-    def clear_document(self, document_id: str, *, session=None) -> int:
+    def clear_document(
+        self, document_id: str, *, session: Session | None = None
+    ) -> int:
         """Clear all data for a document, including orphaned nodes and document record."""
         return self.doc_repo.clear_document(document_id, session=session)
 
@@ -328,7 +334,7 @@ class StoreManager:
 
     # Lifecycle methods
     @contextmanager
-    def transaction(self):
+    def transaction(self) -> Generator[Session, None, None]:
         """Context manager for transactional operations.
 
         Usage:

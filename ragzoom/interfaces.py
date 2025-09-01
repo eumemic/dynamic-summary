@@ -1,12 +1,44 @@
 """Store interface protocol for type safety and testing."""
 
 # jscpd:ignore-start - Protocol interfaces legitimately duplicate method signatures from implementations
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
+from typing_extensions import TypedDict
 
 from ragzoom.models import Document, TreeNode
+
+
+class NodeData(TypedDict, total=False):
+    """Data structure for batch node creation."""
+
+    # Required fields
+    node_id: str
+    text: str
+    embedding: list[float] | NDArray[np.float64]
+    span_start: int
+    span_end: int
+
+    # Optional fields
+    parent_id: str | None
+    left_child_id: str | None
+    right_child_id: str | None
+    document_id: str | None
+    token_count: int
+    height: int
+    is_left_child: bool | None
+
+
+class SearchMetadata(TypedDict):
+    """Metadata returned by search operations."""
+
+    # Fields actually returned by search_similar
+    span_start: int
+    span_end: int
+    parent_id: str  # Never None in actual return
+    document_id: str  # Never None in actual return
+    is_leaf: int
 
 
 @runtime_checkable
@@ -36,7 +68,7 @@ class StoreInterface(Protocol):
         """Add a node to the store."""
         ...
 
-    def add_nodes_batch(self, nodes_data: list[dict[str, Any]]) -> list[TreeNode]:
+    def add_nodes_batch(self, nodes_data: list[NodeData]) -> list[TreeNode]:
         """Add multiple nodes in batch."""
         ...
 
@@ -120,15 +152,15 @@ class StoreInterface(Protocol):
         self,
         query_embedding: list[float] | NDArray[np.float64],
         n_results: int,
-        where: dict[str, Any] | None = None,
-    ) -> list[tuple[str, float, dict[str, Any]]]:
+        where: dict[str, str | int | float | bool | None] | None = None,
+    ) -> list[tuple[str, float, SearchMetadata]]:
         """Search for similar nodes."""
         ...
 
     def compute_mmr_diverse_results(
         self,
         query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, Any]]],
+        candidates: list[tuple[str, float, SearchMetadata]],
         lambda_param: float,
         k: int,
     ) -> list[str]:

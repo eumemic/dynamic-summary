@@ -1,7 +1,8 @@
 """Tests for the service layer implementation."""
 
 from datetime import datetime
-from unittest.mock import Mock, patch
+from typing import cast
+from unittest.mock import MagicMock, Mock, patch
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.services.document_service import (
@@ -16,7 +17,7 @@ from ragzoom.services.query_service import QueryResult, QueryService
 class TestDocumentService:
     """Test the DocumentService."""
 
-    def test_list_documents(self):
+    def test_list_documents(self) -> None:
         """Test listing documents returns formatted results."""
         # Create mock store with documents
         mock_store = Mock()
@@ -47,7 +48,7 @@ class TestDocumentService:
         assert documents[0].chunk_count == 5
         assert documents[0].node_count == 10
 
-    def test_get_system_status(self):
+    def test_get_system_status(self) -> None:
         """Test getting system status."""
         mock_store = Mock()
         mock_session = Mock()
@@ -88,7 +89,7 @@ class TestDocumentService:
         assert status.tree_depth == 5
         assert status.pinned_nodes == 2
 
-    def test_clear_document(self):
+    def test_clear_document(self) -> None:
         """Test clearing a document."""
         mock_store = Mock()
         mock_store.clear_document.return_value = 15
@@ -104,7 +105,7 @@ class TestIndexingService:
     """Test the IndexingService."""
 
     @patch("ragzoom.services.indexing_service.TreeBuilder")
-    def test_index_document(self, mock_tree_builder_class):
+    def test_index_document(self, mock_tree_builder_class: object) -> None:
         """Test indexing a document."""
         # Mock dependencies
         mock_store = Mock()
@@ -122,7 +123,7 @@ class TestIndexingService:
         from unittest.mock import AsyncMock
 
         mock_tree_builder.add_document_async = AsyncMock(return_value="doc-123")
-        mock_tree_builder_class.return_value = mock_tree_builder
+        cast(MagicMock, mock_tree_builder_class).return_value = mock_tree_builder
 
         # Mock database session for stats
         mock_session = Mock()
@@ -162,7 +163,9 @@ class TestQueryService:
 
     @patch("ragzoom.services.query_service.Retriever")
     @patch("ragzoom.services.query_service.Assembler")
-    def test_execute_query(self, mock_assembler_class, mock_retriever_class):
+    def test_execute_query(
+        self, mock_assembler_class: object, mock_retriever_class: object
+    ) -> None:
         """Test executing a query."""
         # Mock dependencies
         mock_store = Mock()
@@ -173,13 +176,13 @@ class TestQueryService:
         mock_retrieval_result.node_ids = ["node1", "node2"]
         mock_retrieval_result.tiling = ["node1", "node3", "node2"]
         mock_retriever.retrieve.return_value = mock_retrieval_result
-        mock_retriever_class.return_value = mock_retriever
+        cast(MagicMock, mock_retriever_class).return_value = mock_retriever
 
         # Mock Assembler
         mock_assembler = Mock()
         mock_assembler.assemble.return_value = "This is the summary"
         mock_assembler.get_token_count.return_value = 50
-        mock_assembler_class.return_value = mock_assembler
+        cast(MagicMock, mock_assembler_class).return_value = mock_assembler
 
         # Create configs
         query_config = QueryConfig(budget_tokens=1000)
@@ -201,13 +204,13 @@ class TestQueryService:
         mock_assembler.assemble.assert_called_once_with(mock_retrieval_result)
 
     @patch("ragzoom.services.query_service.Retriever")
-    def test_update_config(self, mock_retriever_class):
+    def test_update_config(self, mock_retriever_class: object) -> None:
         """Test updating query configuration."""
         mock_store = Mock()
 
         # Mock original retriever
         mock_original_retriever = Mock()
-        mock_retriever_class.return_value = mock_original_retriever
+        cast(MagicMock, mock_retriever_class).return_value = mock_original_retriever
 
         # Create configs
         query_config = QueryConfig(budget_tokens=1000, mmr_lambda=0.7)
@@ -218,7 +221,7 @@ class TestQueryService:
 
         # Mock new retriever for updated config
         mock_new_retriever = Mock()
-        mock_retriever_class.return_value = mock_new_retriever
+        cast(MagicMock, mock_retriever_class).return_value = mock_new_retriever
 
         # Update config
         service.update_config(budget_tokens=2000, mmr_lambda=0.8)

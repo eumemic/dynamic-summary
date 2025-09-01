@@ -1,10 +1,18 @@
 """Test document isolation - queries should only return results from specified document."""
 
+from collections.abc import Generator
+from unittest.mock import Mock
+
 import pytest
 
 from ragzoom.assemble import Assembler
 from ragzoom.index import TreeBuilder
+from ragzoom.retrieval.budget_planner import BudgetPlanner
+from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
+from ragzoom.store import StoreManager
+from tests.conftest import BackwardCompatibilityConfig
+from tests.mock_store import SimpleMockStore
 from tests.utils import mock_openai_context
 
 
@@ -12,7 +20,7 @@ class TestDocumentIsolation:
     """Test that queries are properly isolated to specific documents."""
 
     @pytest.fixture
-    def mock_openai(self):
+    def mock_openai(self) -> Generator[tuple[Mock, Mock, Mock], None, None]:
         """Mock OpenAI API calls with specialized embedding rules."""
         embedding_rules = {
             "dragon": [0.9] * 1536,
@@ -22,7 +30,21 @@ class TestDocumentIsolation:
             yield mocks
 
     @pytest.fixture
-    def setup(self, mock_openai, store, base_config):
+    def setup(
+        self,
+        mock_openai: tuple[Mock, Mock, Mock],
+        store: SimpleMockStore | StoreManager,
+        base_config: BackwardCompatibilityConfig,
+    ) -> Generator[
+        tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            EmbeddingService,
+            BudgetPlanner,
+        ],
+        None,
+        None,
+    ]:
         """Create test environment."""
         from openai import OpenAI
 
@@ -30,17 +52,27 @@ class TestDocumentIsolation:
         from ragzoom.retrieval.embedding_service import EmbeddingService
 
         # Create services for Retriever
-        client = OpenAI(api_key=base_config.openai_api_key.get_secret_value())
+        client = OpenAI(api_key=base_config.openai_api_key)
+        # Create a document store for services (None means all documents)
+        doc_store = store.for_document(None)
         embedding_service = EmbeddingService(
-            client, store, base_config.query_config.embedding_model
+            client, doc_store, base_config.query_config.embedding_model
         )
         budget_planner = BudgetPlanner(
-            store, base_config.index_config.target_chunk_tokens
+            doc_store, base_config.index_config.target_chunk_tokens
         )
 
         yield base_config, store, embedding_service, budget_planner
 
-    def test_document_isolation(self, setup):
+    def test_document_isolation(
+        self,
+        setup: tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            EmbeddingService,
+            BudgetPlanner,
+        ],
+    ) -> None:
         """Test that queries only return results from the specified document."""
         config, store, embedding_service, budget_planner = setup
 
@@ -97,6 +129,7 @@ class TestDocumentIsolation:
         # Check that all returned nodes are from dragons.txt
         for node_id in result1.node_ids:
             node = store.nodes.get_node(node_id)
+            assert node is not None, f"Node {node_id} not found"
             assert (
                 node.document_id == "dragons.txt"
             ), f"Node {node_id} is from wrong document: {node.document_id}"
@@ -118,6 +151,7 @@ class TestDocumentIsolation:
         # Check that all returned nodes are from wizards.txt
         for node_id in result2.node_ids:
             node = store.nodes.get_node(node_id)
+            assert node is not None, f"Node {node_id} not found"
             assert (
                 node.document_id == "wizards.txt"
             ), f"Node {node_id} is from wrong document: {node.document_id}"
@@ -130,6 +164,7 @@ class TestDocumentIsolation:
 
         for node_id in result3.node_ids:
             node = store.nodes.get_node(node_id)
+            assert node is not None, f"Node {node_id} not found"
             assert (
                 node.document_id == "wizards.txt"
             ), f"Cross-query failed: got node from {node.document_id}"
@@ -144,7 +179,15 @@ class TestDocumentIsolation:
             "dragon" not in summary.lower()
         ), "Should not return dragon content when querying wizards doc"
 
-    def test_filename_as_default_document_id(self, setup):
+    def test_filename_as_default_document_id(
+        self,
+        setup: tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            EmbeddingService,
+            BudgetPlanner,
+        ],
+    ) -> None:
         """Test that filename is used as document_id when not specified."""
         config, store, embedding_service, budget_planner = setup
 
@@ -183,9 +226,18 @@ class TestDocumentIsolation:
         # Check all nodes have correct document_id
         for node_id in result.node_ids:
             node = store.nodes.get_node(node_id)
+            assert node is not None, f"Node {node_id} not found"
             assert node.document_id == "test_file.txt"
 
-    def test_query_without_document_filter(self, setup):
+    def test_query_without_document_filter(
+        self,
+        setup: tuple[
+            BackwardCompatibilityConfig,
+            SimpleMockStore | StoreManager,
+            EmbeddingService,
+            BudgetPlanner,
+        ],
+    ) -> None:
         """Test that querying without document_id returns results from all documents."""
         config, store, embedding_service, budget_planner = setup
 
@@ -232,6 +284,7 @@ class TestDocumentIsolation:
         doc_ids = set()
         for node_id in result.node_ids:
             node = store.nodes.get_node(node_id)
+            assert node is not None, f"Node {node_id} not found"
             doc_ids.add(node.document_id)
 
         # Could have nodes from either or both documents
