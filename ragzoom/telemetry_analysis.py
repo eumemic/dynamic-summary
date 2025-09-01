@@ -608,6 +608,26 @@ def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> LatencyMetrics:
     )
 
 
+def _calculate_prompt_cost_with_cache(
+    prompt_tokens: int, cached_tokens: int, price_per_1k: float, cache_discount: float
+) -> float:
+    """Calculate prompt cost applying cache discount.
+
+    Args:
+        prompt_tokens: Total prompt tokens
+        cached_tokens: Number of cached prompt tokens
+        price_per_1k: Price per 1000 tokens
+        cache_discount: Discount percentage (0.9 = 90% discount)
+
+    Returns:
+        Total cost in USD
+    """
+    uncached_tokens = prompt_tokens - cached_tokens
+    return (uncached_tokens / 1000) * price_per_1k + (
+        cached_tokens / 1000
+    ) * price_per_1k * (1 - cache_discount)
+
+
 def compute_cost_metrics(
     nodes: list[NodeTelemetryDict], models: dict[str, str], source_document_tokens: int
 ) -> CostMetrics:
@@ -679,12 +699,11 @@ def compute_cost_metrics(
         ]
 
         # Apply cache discount: cached tokens cost less
-        # cache_discount is the discount percentage (0.9 = 90% discount, pay 10% of original)
-        uncached_prompt_tokens = node_prompt_tokens - node_cached_tokens
-        prompt_cost = (uncached_prompt_tokens / 1000) * pricing[
-            "summary_input_cost_per_1k"
-        ] + (node_cached_tokens / 1000) * pricing["summary_input_cost_per_1k"] * (
-            1 - cache_discount
+        prompt_cost = _calculate_prompt_cost_with_cache(
+            node_prompt_tokens,
+            node_cached_tokens,
+            pricing["summary_input_cost_per_1k"],
+            cache_discount,
         )
 
         completion_cost = (node_completion_tokens / 1000) * pricing[
@@ -701,11 +720,11 @@ def compute_cost_metrics(
     embedding_cost = (total_embedding_tokens / 1000) * pricing["embedding_cost_per_1k"]
 
     # Apply cache discount to total prompt costs
-    total_uncached_prompt_tokens = total_prompt_tokens - total_cached_tokens
-    prompt_cost = (total_uncached_prompt_tokens / 1000) * pricing[
-        "summary_input_cost_per_1k"
-    ] + (total_cached_tokens / 1000) * pricing["summary_input_cost_per_1k"] * (
-        1 - cache_discount
+    prompt_cost = _calculate_prompt_cost_with_cache(
+        total_prompt_tokens,
+        total_cached_tokens,
+        pricing["summary_input_cost_per_1k"],
+        cache_discount,
     )
 
     completion_cost = (total_completion_tokens / 1000) * pricing[
