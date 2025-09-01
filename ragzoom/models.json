@@ -17,19 +17,19 @@
     "gpt-5-nano": {
       "input": 0.00005,
       "output": 0.0004,
-      "cache_discount": 0.1,
+      "cache_discount": 0.9,
       "supports_temperature": false
     },
     "gpt-5-mini": {
       "input": 0.00025,
       "output": 0.002,
-      "cache_discount": 0.1,
+      "cache_discount": 0.9,
       "supports_temperature": false
     },
     "gpt-5": {
       "input": 0.00125,
       "output": 0.01,
-      "cache_discount": 0.1,
+      "cache_discount": 0.9,
       "supports_temperature": false
     },
     "gpt-4o-mini": {
@@ -58,5 +58,5 @@
     }
   },
   "last_updated": "2025-08-11",
-  "note": "Prices are per 1K tokens in USD. cache_discount is the multiplier for cached prompt tokens (0.5 = 50% discount)."
+  "note": "Prices are per 1K tokens in USD. cache_discount is the discount percentage for cached prompt tokens (0.9 = 90% discount, 0.5 = 50% discount)."
 }

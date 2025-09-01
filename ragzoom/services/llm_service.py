@@ -191,11 +191,11 @@ class LLMService:
         try:
             # GPT-5 models have different parameter requirements
             if is_gpt5_model(self.config.summary_model):
-                # GPT-5 models need reasoning_effort="low" to output text instead of just reasoning
+                # Use reasoning_effort="minimal" (valid despite SDK type hints saying otherwise)
                 response = await self.client.chat.completions.create(
                     model=self.config.summary_model,
                     messages=messages,
-                    reasoning_effort="low",
+                    reasoning_effort="minimal",
                 )
             else:
                 # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
