@@ -90,34 +90,10 @@ ignore_missing_imports = true
 module = "tomllib"
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = "tqdm"
-ignore_missing_imports = true
-
+# matplotlib doesn't have complete type stubs
 [[tool.mypy.overrides]]
 module = "matplotlib.*"
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "seaborn"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "pandas"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "psutil"
-ignore_missing_imports = true
-
-# Modules that use matplotlib/visualization libraries need special handling
-[[tool.mypy.overrides]]
-module = [
-    "ragzoom.telemetry_viz",
-    "ragzoom.telemetry_cli"
-]
-ignore_missing_imports = true
-disallow_any_unimported = false
 
 
 [tool.pytest.ini_options]

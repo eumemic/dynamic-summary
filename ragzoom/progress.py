@@ -11,7 +11,7 @@ try:
 except ImportError:
     HAS_TQDM = False
     # Assign None when tqdm is unavailable for graceful degradation
-    tqdm = None  # type: ignore[assignment, misc]
+    tqdm = None  # type: ignore[assignment, misc]  # tqdm is None when not installed
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class GlobalProgressTracker:
             )
         else:
             # Set to None when progress bar is disabled
-            self.pbar = None  # type: ignore[assignment]  # pbar can be None when disabled
+            self.pbar = None  # type: ignore[assignment]  # pbar is None when progress bar is disabled
 
         self.current = 0
         self.stage = "leaves"
