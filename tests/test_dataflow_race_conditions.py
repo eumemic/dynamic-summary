@@ -12,7 +12,7 @@ class TestDataflowRaceConditions:
     """Test race conditions that can occur in concurrent dataflow processing."""
 
     @pytest.mark.asyncio
-    async def test_embedding_workers_wait_for_all_summaries(self):
+    async def test_embedding_workers_wait_for_all_summaries(self) -> None:
         """Test that embedding workers don't exit before processing summaries.
 
         This test simulates the race condition where:
@@ -25,12 +25,12 @@ class TestDataflowRaceConditions:
         # Track what gets embedded
         embedded_nodes = []
 
-        async def slow_summary(*args, **kwargs):
+        async def slow_summary(*args: object, **kwargs: object) -> tuple[str, int, int]:
             """Simulate slow summary generation."""
             await asyncio.sleep(0.05)  # Slow enough to expose race condition
             return ("Summary text", 1, 10)
 
-        async def fast_embeddings(texts):
+        async def fast_embeddings(texts: list[str]) -> list[list[float]]:
             """Track what gets embedded."""
             embedded_nodes.extend(texts)
             await asyncio.sleep(0.001)  # Fast embedding
@@ -65,7 +65,7 @@ class TestDataflowRaceConditions:
         ), f"Expected {len(result)} embeddings, got {len(embedded_nodes)}"
 
     @pytest.mark.asyncio
-    async def test_summary_queuing_before_embedding_exit(self):
+    async def test_summary_queuing_before_embedding_exit(self) -> None:
         """Test that summaries get queued for embedding before workers exit.
 
         This tests the specific race where:
@@ -79,13 +79,15 @@ class TestDataflowRaceConditions:
         summary_generated = asyncio.Event()
         embedding_calls = []
 
-        async def delayed_summary(*args, **kwargs):
+        async def delayed_summary(
+            *args: object, **kwargs: object
+        ) -> tuple[str, int, int]:
             """Summary that signals when complete."""
             await asyncio.sleep(0.1)  # Significant delay
             summary_generated.set()
             return ("Delayed summary", 1, 10)
 
-        async def track_embeddings(texts):
+        async def track_embeddings(texts: list[str]) -> list[list[float]]:
             """Track when embeddings are called."""
             embedding_calls.append(len(texts))
             # If this is called with summary text, the race was avoided

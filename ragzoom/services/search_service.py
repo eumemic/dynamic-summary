@@ -1,16 +1,26 @@
 """Search service for vector similarity search and MMR using pgvector."""
 
 import logging
-from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import select
+from typing_extensions import TypedDict
 
 from ragzoom.models import TreeNode
 from ragzoom.storage.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
+
+
+class NodeMetadataDict(TypedDict):
+    """Type definition for node metadata returned by search."""
+
+    span_start: int
+    span_end: int
+    parent_id: str
+    document_id: str
+    is_leaf: int
 
 
 class SearchService:
@@ -29,8 +39,8 @@ class SearchService:
         self,
         query_embedding: list[float] | NDArray[np.float64],
         n_results: int,
-        where: dict[str, Any] | None = None,
-    ) -> list[tuple[str, float, dict[str, Any]]]:
+        where: dict[str, str | int | float] | None = None,
+    ) -> list[tuple[str, float, NodeMetadataDict]]:
         """Search for similar nodes using pgvector cosine distance.
 
         Args:
@@ -74,7 +84,7 @@ class SearchService:
             similarity = 1.0 - (distance / 2.0)
             similarity = max(0.0, min(1.0, similarity))
 
-            metadata = {
+            metadata: NodeMetadataDict = {
                 "span_start": row.span_start,
                 "span_end": row.span_end,
                 "parent_id": row.parent_id or "",
@@ -92,7 +102,7 @@ class SearchService:
     def compute_mmr_diverse_results(
         self,
         query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, Any]]],
+        candidates: list[tuple[str, float, NodeMetadataDict]],
         lambda_param: float,
         k: int,
     ) -> list[str]:

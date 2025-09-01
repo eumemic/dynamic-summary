@@ -1,7 +1,6 @@
 """Telemetry collector for retrieval operations."""
 
 import time
-from typing import Any
 
 from ragzoom.telemetry_query import QueryTelemetry
 
@@ -54,7 +53,7 @@ class TelemetryCollector:
             elapsed = time.perf_counter() - self.phase_start
             setattr(self.telemetry, f"{phase_name}_time", elapsed)
 
-    def record_metric(self, metric_name: str, value: Any) -> None:
+    def record_metric(self, metric_name: str, value: int | float | str) -> None:
         """Record a metric value.
 
         Args:

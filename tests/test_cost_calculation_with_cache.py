@@ -1,8 +1,17 @@
 """Test cost calculations with cached token discounts."""
 
-from typing import Any
+from collections.abc import Mapping
+from typing import cast
 
 import pytest
+
+# Type definitions for telemetry structures
+AttemptDict = dict[str, int | str | float]
+NodeDict = dict[str, str | list[AttemptDict]]
+DocumentDict = list[NodeDict]
+TelemetryDict = dict[str, dict[str, DocumentDict]]
+NodeCostDict = dict[str, float | int]
+CostAnalysisDict = dict[str, dict[str, NodeCostDict] | dict[str, float | int]]
 
 # Test-specific pricing data for backwards compatibility
 MODEL_PRICING = {
@@ -12,7 +21,9 @@ MODEL_PRICING = {
 }
 
 
-def calculate_summary_attempt_cost(attempt: dict[str, Any], pricing: dict) -> float:
+def calculate_summary_attempt_cost(
+    attempt: Mapping[str, object], pricing: dict[str, dict[str, float]]
+) -> float:
     """Calculate the cost of a single summary attempt with cache discount support."""
     model = attempt.get("model", "")
 
@@ -21,14 +32,14 @@ def calculate_summary_attempt_cost(attempt: dict[str, Any], pricing: dict) -> fl
         return 0.0
 
     # Get pricing for the model
-    if model not in pricing:
+    if not isinstance(model, str) or model not in pricing:
         return 0.0
     model_pricing = pricing[model]
 
     # Get token counts
-    prompt_tokens = attempt.get("prompt_tokens", 0)
-    cached_tokens = attempt.get("cached_tokens", 0)
-    completion_tokens = attempt.get("completion_tokens", 0)
+    prompt_tokens = cast(int, attempt.get("prompt_tokens", 0))
+    cached_tokens = cast(int, attempt.get("cached_tokens", 0))
+    completion_tokens = cast(int, attempt.get("completion_tokens", 0))
 
     # Calculate non-cached prompt tokens
     non_cached_tokens = prompt_tokens - cached_tokens
@@ -43,30 +54,31 @@ def calculate_summary_attempt_cost(attempt: dict[str, Any], pricing: dict) -> fl
         + (completion_tokens * model_pricing["output"])
     ) / 1000
 
-    return cost
+    return float(cost)
 
 
-def analyze_summary_costs(telemetry_data: dict) -> dict:
+def analyze_summary_costs(telemetry_data: TelemetryDict) -> CostAnalysisDict:
     """Analyze summary costs from telemetry data."""
     pricing = MODEL_PRICING
 
-    costs = {
-        "by_node": {},
-        "total": {"total_cost": 0, "total_attempts": 0},
-        "cache_efficiency": {
-            "total_cached_tokens": 0,
-            "total_prompt_tokens": 0,
-            "cache_rate": 0,
-        },
+    by_node: dict[str, NodeCostDict] = {}
+    total_dict: dict[str, float | int] = {"total_cost": 0.0, "total_attempts": 0}
+    cache_dict: dict[str, float | int] = {
+        "total_cached_tokens": 0,
+        "total_prompt_tokens": 0,
+        "cache_rate": 0.0,
     }
 
     for doc_id, doc_data in telemetry_data.get("documents", {}).items():
-        for node in doc_data.get("nodes", []):
-            node_id = node["node_id"]
-            attempts = node.get("summary_attempts", [])
+        nodes = doc_data
+        if not isinstance(nodes, list):
+            continue
+        for node in nodes:
+            node_id = cast(str, node["node_id"])
+            attempts = cast(list[AttemptDict], node.get("summary_attempts", []))
 
-            node_cost = 0
-            node_cost_without_cache = 0
+            node_cost = 0.0
+            node_cost_without_cache = 0.0
 
             for attempt in attempts:
                 # Calculate actual cost
@@ -82,43 +94,46 @@ def analyze_summary_costs(telemetry_data: dict) -> dict:
                 node_cost_without_cache += cost_without_cache
 
                 # Track cache efficiency
-                costs["cache_efficiency"]["total_cached_tokens"] += attempt.get(
-                    "cached_tokens", 0
-                )
-                costs["cache_efficiency"]["total_prompt_tokens"] += attempt.get(
-                    "prompt_tokens", 0
-                )
+                cache_dict["total_cached_tokens"] = cast(
+                    int, cache_dict["total_cached_tokens"]
+                ) + cast(int, attempt.get("cached_tokens", 0))
+                cache_dict["total_prompt_tokens"] = cast(
+                    int, cache_dict["total_prompt_tokens"]
+                ) + cast(int, attempt.get("prompt_tokens", 0))
 
-            costs["by_node"][node_id] = {
+            savings_pct = (
+                ((node_cost_without_cache - node_cost) / node_cost_without_cache * 100)
+                if node_cost_without_cache > 0
+                else 0.0
+            )
+            by_node[node_id] = {
                 "total_cost": node_cost,
                 "cost_without_cache": node_cost_without_cache,
                 "cache_savings": node_cost_without_cache - node_cost,
-                "cache_savings_pct": (
-                    (
-                        (node_cost_without_cache - node_cost)
-                        / node_cost_without_cache
-                        * 100
-                    )
-                    if node_cost_without_cache > 0
-                    else 0
-                ),
+                "cache_savings_pct": savings_pct,
                 "attempts": len(attempts),
             }
 
-            costs["total"]["total_cost"] += node_cost
-            costs["total"]["total_attempts"] += len(attempts)
+            total_dict["total_cost"] = cast(float, total_dict["total_cost"]) + node_cost
+            total_dict["total_attempts"] = cast(
+                int, total_dict["total_attempts"]
+            ) + len(attempts)
 
     # Calculate overall cache rate
-    if costs["cache_efficiency"]["total_prompt_tokens"] > 0:
-        costs["cache_efficiency"]["cache_rate"] = (
-            costs["cache_efficiency"]["total_cached_tokens"]
-            / costs["cache_efficiency"]["total_prompt_tokens"]
+    if cast(int, cache_dict["total_prompt_tokens"]) > 0:
+        cache_dict["cache_rate"] = cast(int, cache_dict["total_cached_tokens"]) / cast(
+            int, cache_dict["total_prompt_tokens"]
         )
 
+    costs: CostAnalysisDict = {
+        "by_node": by_node,
+        "total": total_dict,
+        "cache_efficiency": cache_dict,
+    }
     return costs
 
 
-def test_calculate_cost_with_cached_tokens():
+def test_calculate_cost_with_cached_tokens() -> None:
     """Test that cached tokens receive appropriate discount."""
     # Use pricing constants
     pricing = MODEL_PRICING
@@ -149,7 +164,7 @@ def test_calculate_cost_with_cached_tokens():
     assert cost == pytest.approx(expected_cost, rel=1e-6)
 
 
-def test_calculate_cost_without_cached_tokens():
+def test_calculate_cost_without_cached_tokens() -> None:
     """Test backward compatibility when cached_tokens is not present."""
     pricing = MODEL_PRICING
 
@@ -171,7 +186,7 @@ def test_calculate_cost_without_cached_tokens():
     assert cost == pytest.approx(expected_cost, rel=1e-6)
 
 
-def test_calculate_cost_with_zero_cached_tokens():
+def test_calculate_cost_with_zero_cached_tokens() -> None:
     """Test that zero cached tokens works correctly."""
     pricing = MODEL_PRICING
 
@@ -193,7 +208,7 @@ def test_calculate_cost_with_zero_cached_tokens():
     assert cost == pytest.approx(expected_cost, rel=1e-6)
 
 
-def test_calculate_cost_with_high_cache_rate():
+def test_calculate_cost_with_high_cache_rate() -> None:
     """Test cost savings with very high cache hit rate."""
     pricing = MODEL_PRICING
 
@@ -225,70 +240,70 @@ def test_calculate_cost_with_high_cache_rate():
     assert savings_ratio > 0.3, f"Expected >30% savings, got {savings_ratio:.1%}"
 
 
-def test_analyze_summary_costs_with_cached_tokens():
+def test_analyze_summary_costs_with_cached_tokens() -> None:
     """Test that analyze_summary_costs correctly aggregates cached token costs."""
-    telemetry_data = {
+    telemetry_data: TelemetryDict = {
         "documents": {
-            "doc1": {
-                "nodes": [
-                    {
-                        "node_id": "node1",
-                        "summary_attempts": [
-                            {
-                                "model": "gpt-4o-mini",
-                                "prompt_tokens": 1000,
-                                "cached_tokens": 0,
-                                "completion_tokens": 100,
-                                "status": "rejected_over",
-                            },
-                            {
-                                "model": "gpt-4o-mini",
-                                "prompt_tokens": 1200,
-                                "cached_tokens": 900,  # 75% cached on retry
-                                "completion_tokens": 95,
-                                "status": "accepted",
-                            },
-                        ],
-                    },
-                    {
-                        "node_id": "node2",
-                        "summary_attempts": [
-                            {
-                                "model": "gpt-4o-mini",
-                                "prompt_tokens": 1000,
-                                "cached_tokens": 0,
-                                "completion_tokens": 100,
-                                "status": "accepted",
-                            }
-                        ],
-                    },
-                ],
-            }
+            "doc1": [
+                {
+                    "node_id": "node1",
+                    "summary_attempts": [
+                        {
+                            "model": "gpt-4o-mini",
+                            "prompt_tokens": 1000,
+                            "cached_tokens": 0,
+                            "completion_tokens": 100,
+                            "status": "rejected_over",
+                        },
+                        {
+                            "model": "gpt-4o-mini",
+                            "prompt_tokens": 1200,
+                            "cached_tokens": 900,  # 75% cached on retry
+                            "completion_tokens": 95,
+                            "status": "accepted",
+                        },
+                    ],
+                },
+                {
+                    "node_id": "node2",
+                    "summary_attempts": [
+                        {
+                            "model": "gpt-4o-mini",
+                            "prompt_tokens": 1000,
+                            "cached_tokens": 0,
+                            "completion_tokens": 100,
+                            "status": "accepted",
+                        }
+                    ],
+                },
+            ]
         }
     }
 
     costs = analyze_summary_costs(telemetry_data)
 
     # Should have cost data for both nodes
-    assert "node1" in costs["by_node"]
-    assert "node2" in costs["by_node"]
+    by_node = cast(dict[str, NodeCostDict], costs["by_node"])
+    assert "node1" in by_node
+    assert "node2" in by_node
 
     # Node1 should show savings from caching
-    node1_cost = costs["by_node"]["node1"]
-    assert node1_cost["attempts"] == 2
-    assert node1_cost["total_cost"] > 0
+    node1_cost = by_node["node1"]
+    assert cast(int, node1_cost["attempts"]) == 2
+    assert cast(float, node1_cost["total_cost"]) > 0
 
     # Verify cache efficiency metrics
     assert "cache_efficiency" in costs
-    assert costs["cache_efficiency"]["total_cached_tokens"] == 900
-    assert costs["cache_efficiency"]["total_prompt_tokens"] >= 3200
+    cache_efficiency = cast(dict[str, float | int], costs["cache_efficiency"])
+    assert cast(int, cache_efficiency["total_cached_tokens"]) == 900
+    assert cast(int, cache_efficiency["total_prompt_tokens"]) >= 3200
 
     # Cache rate should be meaningful
-    cache_rate = costs["cache_efficiency"]["cache_rate"]
+    cache_rate = cast(float, cache_efficiency["cache_rate"])
     assert 0.2 < cache_rate < 0.3  # ~900/3200 ≈ 28%
 
 
-def test_cost_calculation_with_missing_model():
+def test_cost_calculation_with_missing_model() -> None:
     """Test graceful handling when model pricing is not available."""
     pricing = {
         "gpt-4o-mini": {
@@ -312,7 +327,7 @@ def test_cost_calculation_with_missing_model():
     assert cost == 0
 
 
-def test_cost_calculation_with_passthrough_model():
+def test_cost_calculation_with_passthrough_model() -> None:
     """Test that passthrough summaries have zero cost."""
     pricing = MODEL_PRICING
 
@@ -327,26 +342,24 @@ def test_cost_calculation_with_passthrough_model():
     assert cost == 0
 
 
-def test_cost_savings_calculation():
+def test_cost_savings_calculation() -> None:
     """Test calculation of cost savings from caching."""
-    telemetry_data = {
+    telemetry_data: TelemetryDict = {
         "documents": {
-            "doc1": {
-                "nodes": [
-                    {
-                        "node_id": "node1",
-                        "summary_attempts": [
-                            {
-                                "model": "gpt-4o",
-                                "prompt_tokens": 2000,
-                                "cached_tokens": 1800,  # 90% cached
-                                "completion_tokens": 200,
-                                "status": "accepted",
-                            }
-                        ],
-                    }
-                ],
-            }
+            "doc1": [
+                {
+                    "node_id": "node1",
+                    "summary_attempts": [
+                        {
+                            "model": "gpt-4o",
+                            "prompt_tokens": 2000,
+                            "cached_tokens": 1800,  # 90% cached
+                            "completion_tokens": 200,
+                            "status": "accepted",
+                        }
+                    ],
+                }
+            ],
         }
     }
 
@@ -354,59 +367,58 @@ def test_cost_savings_calculation():
 
     # Calculate expected savings
     # With 90% cache rate at 50% discount, save 45% on prompt tokens
-    node_cost = costs["by_node"]["node1"]
+    by_node = cast(dict[str, NodeCostDict], costs["by_node"])
+    node_cost = by_node["node1"]
     assert "cost_without_cache" in node_cost
     assert "cache_savings" in node_cost
 
-    savings_pct = node_cost["cache_savings_pct"]
+    savings_pct = cast(float, node_cost["cache_savings_pct"])
     assert savings_pct > 30  # Should save at least 30%
 
 
-def test_aggregate_costs_across_documents():
+def test_aggregate_costs_across_documents() -> None:
     """Test that costs are correctly aggregated across multiple documents."""
-    telemetry_data = {
+    telemetry_data: TelemetryDict = {
         "documents": {
-            "doc1": {
-                "nodes": [
-                    {
-                        "node_id": "d1_n1",
-                        "summary_attempts": [
-                            {
-                                "model": "gpt-4o-mini",
-                                "prompt_tokens": 1000,
-                                "cached_tokens": 500,
-                                "completion_tokens": 100,
-                                "status": "accepted",
-                            }
-                        ],
-                    }
-                ],
-            },
-            "doc2": {
-                "nodes": [
-                    {
-                        "node_id": "d2_n1",
-                        "summary_attempts": [
-                            {
-                                "model": "gpt-4o-mini",
-                                "prompt_tokens": 1200,
-                                "cached_tokens": 1000,
-                                "completion_tokens": 120,
-                                "status": "accepted",
-                            }
-                        ],
-                    }
-                ],
-            },
+            "doc1": [
+                {
+                    "node_id": "d1_n1",
+                    "summary_attempts": [
+                        {
+                            "model": "gpt-4o-mini",
+                            "prompt_tokens": 1000,
+                            "cached_tokens": 500,
+                            "completion_tokens": 100,
+                            "status": "accepted",
+                        }
+                    ],
+                }
+            ],
+            "doc2": [
+                {
+                    "node_id": "d2_n1",
+                    "summary_attempts": [
+                        {
+                            "model": "gpt-4o-mini",
+                            "prompt_tokens": 1200,
+                            "cached_tokens": 1000,
+                            "completion_tokens": 120,
+                            "status": "accepted",
+                        }
+                    ],
+                }
+            ],
         }
     }
 
     costs = analyze_summary_costs(telemetry_data)
 
     # Check total costs
-    assert costs["total"]["total_cost"] > 0
-    assert costs["total"]["total_attempts"] == 2
+    total_dict = cast(dict[str, float | int], costs["total"])
+    assert cast(float, total_dict["total_cost"]) > 0
+    assert cast(int, total_dict["total_attempts"]) == 2
 
     # Check cache efficiency across all documents
-    assert costs["cache_efficiency"]["total_cached_tokens"] == 1500
-    assert costs["cache_efficiency"]["total_prompt_tokens"] == 2200
+    cache_efficiency = cast(dict[str, float | int], costs["cache_efficiency"])
+    assert cast(int, cache_efficiency["total_cached_tokens"]) == 1500
+    assert cast(int, cache_efficiency["total_prompt_tokens"]) == 2200

@@ -6,7 +6,34 @@ This module provides a singleton class for accessing model information
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional, TypedDict, cast
+
+from typing_extensions import NotRequired
+
+
+class EmbeddingModelConfigDict(TypedDict):
+    """Type definition for embedding model configuration in models.json."""
+
+    cost_per_1k: float
+    dimensions: int
+
+
+class LLMModelConfigDict(TypedDict):
+    """Type definition for LLM model configuration in models.json."""
+
+    input: float
+    output: float
+    cache_discount: NotRequired[float]
+    supports_temperature: NotRequired[bool]
+
+
+class ModelsConfigDict(TypedDict, total=False):
+    """Type definition for the complete models.json configuration file."""
+
+    embeddings: dict[str, EmbeddingModelConfigDict]
+    llms: dict[str, LLMModelConfigDict]
+    last_updated: str
+    note: str
 
 
 class ModelInfo:
@@ -18,7 +45,7 @@ class ModelInfo:
     """
 
     _instance: Optional["ModelInfo"] = None
-    _data: dict[str, Any] = {}
+    _data: ModelsConfigDict = {}
 
     def __new__(cls) -> "ModelInfo":
         """Create or return the singleton instance."""
@@ -38,7 +65,7 @@ class ModelInfo:
 
         try:
             with open(models_path) as f:
-                self._data = json.load(f)
+                self._data = cast(ModelsConfigDict, json.load(f))
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in models file {models_path}: {e}")
         except OSError as e:

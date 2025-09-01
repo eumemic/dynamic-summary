@@ -4,7 +4,28 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+from typing_extensions import TypedDict
+
+
+class IndexConfigDict(TypedDict):
+    """Type definition for IndexConfig dictionary representation."""
+
+    target_chunk_tokens: int
+    preceding_context_tokens: int
+    summary_model: str
+    embedding_model: str
+    retry_threshold: float
+    max_retries: int
+    embedding_batch_size: int
+    use_anti_verbatim_vaccine: bool
+    processing_strategy: str
+
+
+# Type for configuration values that can be primitives
+ConfigValue = str | int | float | bool
+# Type that includes None for CLI parameters
+ConfigValueOrNone = str | int | float | bool | None
 
 
 class SecretStr(str):
@@ -154,7 +175,7 @@ class IndexConfig:
             )
 
     @classmethod
-    def from_dict(cls, config_dict: dict[str, Any]) -> "IndexConfig":
+    def from_dict(cls, config_dict: dict[str, ConfigValue]) -> "IndexConfig":
         """Create IndexConfig from a dictionary (e.g., from telemetry JSON).
 
         Args:
@@ -180,10 +201,27 @@ class IndexConfig:
             ),
         }
 
-        return cls(**index_config_fields)
+        # Type-safe construction with proper field types
+        return cls(
+            target_chunk_tokens=int(index_config_fields["target_chunk_tokens"]),
+            preceding_context_tokens=int(
+                index_config_fields["preceding_context_tokens"]
+            ),
+            summary_model=str(index_config_fields["summary_model"]),
+            embedding_model=str(index_config_fields["embedding_model"]),
+            retry_threshold=float(index_config_fields["retry_threshold"]),
+            max_retries=int(index_config_fields["max_retries"]),
+            embedding_batch_size=int(index_config_fields["embedding_batch_size"]),
+            use_anti_verbatim_vaccine=bool(
+                index_config_fields["use_anti_verbatim_vaccine"]
+            ),
+            processing_strategy=str(index_config_fields["processing_strategy"]),
+        )
 
     @classmethod
-    def load(cls, config_path: Path | None = None, **cli_options: Any) -> "IndexConfig":
+    def load(
+        cls, config_path: Path | None = None, **cli_options: ConfigValueOrNone
+    ) -> "IndexConfig":
         """Load IndexConfig from file with CLI overrides.
 
         This is the primary way to create IndexConfig instances.
@@ -202,11 +240,59 @@ class IndexConfig:
         # Use from_dict to create the instance
         return cls.from_dict(config_dict)
 
-    def replace(self, **changes: Any) -> "IndexConfig":
+    def replace(
+        self,
+        target_chunk_tokens: int | None = None,
+        preceding_context_tokens: int | None = None,
+        summary_model: str | None = None,
+        embedding_model: str | None = None,
+        retry_threshold: float | None = None,
+        max_retries: int | None = None,
+        embedding_batch_size: int | None = None,
+        use_anti_verbatim_vaccine: bool | None = None,
+        processing_strategy: str | None = None,
+    ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
 
-        return replace(self, **changes)
+        return replace(
+            self,
+            target_chunk_tokens=(
+                target_chunk_tokens
+                if target_chunk_tokens is not None
+                else self.target_chunk_tokens
+            ),
+            preceding_context_tokens=(
+                preceding_context_tokens
+                if preceding_context_tokens is not None
+                else self.preceding_context_tokens
+            ),
+            summary_model=(
+                summary_model if summary_model is not None else self.summary_model
+            ),
+            embedding_model=(
+                embedding_model if embedding_model is not None else self.embedding_model
+            ),
+            retry_threshold=(
+                retry_threshold if retry_threshold is not None else self.retry_threshold
+            ),
+            max_retries=max_retries if max_retries is not None else self.max_retries,
+            embedding_batch_size=(
+                embedding_batch_size
+                if embedding_batch_size is not None
+                else self.embedding_batch_size
+            ),
+            use_anti_verbatim_vaccine=(
+                use_anti_verbatim_vaccine
+                if use_anti_verbatim_vaccine is not None
+                else self.use_anti_verbatim_vaccine
+            ),
+            processing_strategy=(
+                processing_strategy
+                if processing_strategy is not None
+                else self.processing_strategy
+            ),
+        )
 
 
 @dataclass
@@ -236,11 +322,31 @@ class QueryConfig:
                 f"mmr_k_multiplier must be positive, got {self.mmr_k_multiplier}"
             )
 
-    def replace(self, **changes: Any) -> "QueryConfig":
+    def replace(
+        self,
+        budget_tokens: int | None = None,
+        mmr_lambda: float | None = None,
+        mmr_k_multiplier: float | None = None,
+        embedding_model: str | None = None,
+    ) -> "QueryConfig":
         """Create a new QueryConfig with some fields changed."""
         from dataclasses import replace
 
-        return replace(self, **changes)
+        return replace(
+            self,
+            budget_tokens=(
+                budget_tokens if budget_tokens is not None else self.budget_tokens
+            ),
+            mmr_lambda=mmr_lambda if mmr_lambda is not None else self.mmr_lambda,
+            mmr_k_multiplier=(
+                mmr_k_multiplier
+                if mmr_k_multiplier is not None
+                else self.mmr_k_multiplier
+            ),
+            embedding_model=(
+                embedding_model if embedding_model is not None else self.embedding_model
+            ),
+        )
 
 
 @dataclass
@@ -271,16 +377,38 @@ class OperationalConfig:
 
             self.database_url = get_worktree_database_url(self.database_url)
 
-    def replace(self, **changes: Any) -> "OperationalConfig":
+    def replace(
+        self,
+        openai_api_key: SecretStr | None = None,
+        database_url: str | None = None,
+        cache_size: int | None = None,
+        log_level: str | None = None,
+        validate_pipeline: bool | None = None,
+    ) -> "OperationalConfig":
         """Create a new OperationalConfig with some fields changed."""
         from dataclasses import replace
 
-        return replace(self, **changes)
+        return replace(
+            self,
+            openai_api_key=(
+                openai_api_key if openai_api_key is not None else self.openai_api_key
+            ),
+            database_url=(
+                database_url if database_url is not None else self.database_url
+            ),
+            cache_size=cache_size if cache_size is not None else self.cache_size,
+            log_level=log_level if log_level is not None else self.log_level,
+            validate_pipeline=(
+                validate_pipeline
+                if validate_pipeline is not None
+                else self.validate_pipeline
+            ),
+        )
 
 
 def _load_index_config(
-    config_path: Path | None = None, **cli_options: Any
-) -> dict[str, Any]:
+    config_path: Path | None = None, **cli_options: ConfigValueOrNone
+) -> dict[str, ConfigValue]:
     """Load indexing configuration with proper precedence.
 
     Private function - use IndexConfig.load() instead.

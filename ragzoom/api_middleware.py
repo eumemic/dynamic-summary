@@ -1,11 +1,13 @@
 """FastAPI middleware for centralized error handling."""
 
 import logging
-from typing import Any
+from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+from starlette.types import ASGIApp
 
 from ragzoom.error_utils import categorize_exception, format_structured_error
 
@@ -15,11 +17,13 @@ logger = logging.getLogger(__name__)
 class ErrorHandlingMiddleware(BaseHTTPMiddleware):
     """Middleware for centralized error handling with structured responses."""
 
-    def __init__(self, app: Any, include_traceback: bool = False) -> None:
+    def __init__(self, app: ASGIApp, include_traceback: bool = False) -> None:
         super().__init__(app)
         self.include_traceback = include_traceback
 
-    async def dispatch(self, request: Request, call_next: Any) -> Any:
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         request_id = str(uuid4())[:8]
 
         try:
@@ -95,8 +99,11 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
 
 
 def create_error_response(
-    status_code: int, message: str, error_type: str = "APIError", **context: Any
-) -> dict[str, Any]:
+    status_code: int,
+    message: str,
+    error_type: str = "APIError",
+    **context: object,
+) -> dict[str, object]:
     """Create standardized error response structure."""
     return {
         "error": {
@@ -106,3 +113,20 @@ def create_error_response(
             **context,
         }
     }
+
+
+# Removed complex TypedDict definitions to avoid mypy internal errors
+
+
+def create_error_handling_middleware(
+    include_traceback: bool = False,
+) -> type[ErrorHandlingMiddleware]:
+    """Factory function to create ErrorHandlingMiddleware with custom parameters."""
+
+    class ConfiguredErrorHandlingMiddleware(ErrorHandlingMiddleware):
+        """Pre-configured ErrorHandlingMiddleware."""
+
+        def __init__(self, app: ASGIApp) -> None:
+            super().__init__(app, include_traceback=include_traceback)
+
+    return ConfiguredErrorHandlingMiddleware
