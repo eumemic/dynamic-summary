@@ -53,7 +53,7 @@ class GlobalProgressTracker:
             )
         else:
             # Set to None when progress bar is disabled
-            self.pbar = None  # type: ignore[assignment]
+            self.pbar = None  # type: ignore[assignment]  # pbar can be None when disabled
 
         self.current = 0
         self.stage = "leaves"
