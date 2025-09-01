@@ -212,5 +212,5 @@ class SkipTestQueryVisualizationIsolation:
                 )
 
                 # If it's a DocumentStore, it should have document_id == "doc1"
-                if hasattr(tree_store, "document_id"):
+                if tree_store and hasattr(tree_store, "document_id"):
                     assert tree_store.document_id == "doc1"

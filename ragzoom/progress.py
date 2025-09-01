@@ -11,7 +11,7 @@ try:
 except ImportError:
     HAS_TQDM = False
     # Assign None when tqdm is unavailable for graceful degradation
-    tqdm = None  # type: ignore[assignment,misc]
+    tqdm = None  # type: ignore[assignment, misc]
 
 logger = logging.getLogger(__name__)
 

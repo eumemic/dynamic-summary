@@ -110,6 +110,16 @@ ignore_missing_imports = true
 module = "psutil"
 ignore_missing_imports = true
 
+# Modules that use matplotlib/visualization libraries need to ignore unimported Any
+[[tool.mypy.overrides]]
+module = [
+    "ragzoom.telemetry_viz",
+    "ragzoom.telemetry_cli",
+    "tests.test_telemetry_viz"
+]
+ignore_missing_imports = true
+disallow_any_unimported = false
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
