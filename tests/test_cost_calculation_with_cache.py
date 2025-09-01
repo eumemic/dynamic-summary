@@ -1,424 +1,398 @@
-"""Test cost calculations with cached token discounts."""
+"""Test cost calculations with cached token discounts using production code."""
 
-from collections.abc import Mapping
-from typing import cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Type definitions for telemetry structures
-AttemptDict = dict[str, int | str | float]
-NodeDict = dict[str, str | list[AttemptDict]]
-DocumentDict = list[NodeDict]
-TelemetryDict = dict[str, dict[str, DocumentDict]]
-NodeCostDict = dict[str, float | int]
-CostAnalysisDict = dict[str, dict[str, NodeCostDict] | dict[str, float | int]]
-
-# Test-specific pricing data for backwards compatibility
-MODEL_PRICING = {
-    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006, "cache_discount": 0.5},
-    "gpt-4o": {"input": 0.0025, "output": 0.01, "cache_discount": 0.5},
-    "gpt-4": {"input": 0.03, "output": 0.06, "cache_discount": 0.5},
-}
+from ragzoom.telemetry_analysis import compute_cost_metrics
+from ragzoom.telemetry_types import NodeTelemetryDict
 
 
-def calculate_summary_attempt_cost(
-    attempt: Mapping[str, object], pricing: dict[str, dict[str, float]]
-) -> float:
-    """Calculate the cost of a single summary attempt with cache discount support."""
-    model = attempt.get("model", "")
+def test_compute_cost_metrics_with_cached_tokens() -> None:
+    """Test that cached tokens receive appropriate discount in production code."""
 
-    # Handle passthrough model (no cost)
-    if model == "passthrough":
-        return 0.0
+    # Create test nodes with cached tokens
+    nodes: list[NodeTelemetryDict] = [
+        {
+            "node_id": "node1",
+            "height": 1,
+            "created_at": 0.0,
+            "summary_attempts": [
+                {
+                    "target_tokens": 100,
+                    "prompt_tokens": 1500,
+                    "cached_tokens": 1200,  # 80% cached
+                    "completion_tokens": 100,
+                    "actual_tokens": 100,
+                    "model": "gpt-4o-mini",
+                    "start_time": 0.0,
+                    "end_time": 1.0,
+                }
+            ],
+            "embedding": {
+                "text_tokens": 500,
+                "batch_size": 1,
+                "batch_position": 0,
+                "model": "text-embedding-3-small",
+                "start_time": 0.0,
+                "end_time": 0.1,
+            },
+        },
+        {
+            "node_id": "node2",
+            "height": 1,
+            "created_at": 1.0,
+            "summary_attempts": [
+                {
+                    "target_tokens": 100,
+                    "prompt_tokens": 2000,
+                    "cached_tokens": 1800,  # 90% cached
+                    "completion_tokens": 150,
+                    "actual_tokens": 150,
+                    "model": "gpt-4o-mini",
+                    "start_time": 1.0,
+                    "end_time": 2.0,
+                }
+            ],
+            "embedding": {
+                "text_tokens": 600,
+                "batch_size": 1,
+                "batch_position": 0,
+                "model": "text-embedding-3-small",
+                "start_time": 1.0,
+                "end_time": 1.1,
+            },
+        },
+    ]
 
-    # Get pricing for the model
-    if not isinstance(model, str) or model not in pricing:
-        return 0.0
-    model_pricing = pricing[model]
+    models = {"summary": "gpt-4o-mini", "embedding": "text-embedding-3-small"}
+    source_tokens = 10000
 
-    # Get token counts
-    prompt_tokens = cast(int, attempt.get("prompt_tokens", 0))
-    cached_tokens = cast(int, attempt.get("cached_tokens", 0))
-    completion_tokens = cast(int, attempt.get("completion_tokens", 0))
+    # Mock the model info to return a known cache discount
+    with patch("ragzoom.model_info.ModelInfo") as mock_model_info_class:
+        mock_model_info = MagicMock()
+        mock_model_info.get_cache_discount.return_value = (
+            0.5  # 50% discount (pay 50% of original)
+        )
+        mock_model_info_class.return_value = mock_model_info
 
-    # Calculate non-cached prompt tokens
-    non_cached_tokens = prompt_tokens - cached_tokens
-
-    # Get cache discount (default to 1.0 = no discount)
-    cache_discount = model_pricing.get("cache_discount", 1.0)
-
-    # Calculate cost
-    cost = (
-        (cached_tokens * model_pricing["input"] * cache_discount)
-        + (non_cached_tokens * model_pricing["input"])
-        + (completion_tokens * model_pricing["output"])
-    ) / 1000
-
-    return float(cost)
-
-
-def analyze_summary_costs(telemetry_data: TelemetryDict) -> CostAnalysisDict:
-    """Analyze summary costs from telemetry data."""
-    pricing = MODEL_PRICING
-
-    by_node: dict[str, NodeCostDict] = {}
-    total_dict: dict[str, float | int] = {"total_cost": 0.0, "total_attempts": 0}
-    cache_dict: dict[str, float | int] = {
-        "total_cached_tokens": 0,
-        "total_prompt_tokens": 0,
-        "cache_rate": 0.0,
-    }
-
-    for doc_id, doc_data in telemetry_data.get("documents", {}).items():
-        nodes = doc_data
-        if not isinstance(nodes, list):
-            continue
-        for node in nodes:
-            node_id = cast(str, node["node_id"])
-            attempts = cast(list[AttemptDict], node.get("summary_attempts", []))
-
-            node_cost = 0.0
-            node_cost_without_cache = 0.0
-
-            for attempt in attempts:
-                # Calculate actual cost
-                cost = calculate_summary_attempt_cost(attempt, pricing)
-                node_cost += cost
-
-                # Calculate cost without cache for comparison
-                attempt_no_cache = attempt.copy()
-                attempt_no_cache["cached_tokens"] = 0
-                cost_without_cache = calculate_summary_attempt_cost(
-                    attempt_no_cache, pricing
-                )
-                node_cost_without_cache += cost_without_cache
-
-                # Track cache efficiency
-                cache_dict["total_cached_tokens"] = cast(
-                    int, cache_dict["total_cached_tokens"]
-                ) + cast(int, attempt.get("cached_tokens", 0))
-                cache_dict["total_prompt_tokens"] = cast(
-                    int, cache_dict["total_prompt_tokens"]
-                ) + cast(int, attempt.get("prompt_tokens", 0))
-
-            savings_pct = (
-                ((node_cost_without_cache - node_cost) / node_cost_without_cache * 100)
-                if node_cost_without_cache > 0
-                else 0.0
-            )
-            by_node[node_id] = {
-                "total_cost": node_cost,
-                "cost_without_cache": node_cost_without_cache,
-                "cache_savings": node_cost_without_cache - node_cost,
-                "cache_savings_pct": savings_pct,
-                "attempts": len(attempts),
+        # Mock pricing info
+        with patch("ragzoom.telemetry_analysis.get_model_pricing") as mock_pricing:
+            mock_pricing.return_value = {
+                "summary_input_cost_per_1k": 0.00015,  # gpt-4o-mini input
+                "summary_output_cost_per_1k": 0.0006,  # gpt-4o-mini output
+                "embedding_cost_per_1k": 0.00002,  # text-embedding-3-small
             }
 
-            total_dict["total_cost"] = cast(float, total_dict["total_cost"]) + node_cost
-            total_dict["total_attempts"] = cast(
-                int, total_dict["total_attempts"]
-            ) + len(attempts)
+            result = compute_cost_metrics(nodes, models, source_tokens)
 
-    # Calculate overall cache rate
-    if cast(int, cache_dict["total_prompt_tokens"]) > 0:
-        cache_dict["cache_rate"] = cast(int, cache_dict["total_cached_tokens"]) / cast(
-            int, cache_dict["total_prompt_tokens"]
-        )
+    # Verify token counts
+    assert result.total_prompt_tokens == 3500  # 1500 + 2000
+    assert result.total_completion_tokens == 250  # 100 + 150
 
-    costs: CostAnalysisDict = {
-        "by_node": by_node,
-        "total": total_dict,
-        "cache_efficiency": cache_dict,
-    }
-    return costs
+    # Calculate expected costs with cache discount
+    # Node 1:
+    #   - Embedding: 500 * 0.00002 / 1000 = 0.00001
+    #   - Prompt: (300 * 0.00015 + 1200 * 0.00015 * 0.5) / 1000 = 0.000135
+    #   - Completion: 100 * 0.0006 / 1000 = 0.00006
+    #   - Total: 0.000205
+    # Node 2:
+    #   - Embedding: 600 * 0.00002 / 1000 = 0.000012
+    #   - Prompt: (200 * 0.00015 + 1800 * 0.00015 * 0.5) / 1000 = 0.000165
+    #   - Completion: 150 * 0.0006 / 1000 = 0.00009
+    #   - Total: 0.000267
+    # Total cost: 0.000472
+    expected_total_cost = 0.000472
+    expected_per_node = expected_total_cost / 2
+    expected_per_million = (expected_total_cost / source_tokens) * 1_000_000
 
-
-def test_calculate_cost_with_cached_tokens() -> None:
-    """Test that cached tokens receive appropriate discount."""
-    # Use pricing constants
-    pricing = MODEL_PRICING
-
-    # Test attempt with cached tokens
-    attempt = {
-        "model": "gpt-4o-mini",
-        "prompt_tokens": 1500,
-        "cached_tokens": 1200,  # 80% cached
-        "completion_tokens": 100,
-    }
-
-    cost = calculate_summary_attempt_cost(attempt, pricing)
-
-    # Expected calculation:
-    # - 1200 cached tokens at 50% discount
-    # - 300 non-cached tokens at full price
-    # - 100 completion tokens at full price
-    model_pricing = pricing["gpt-4o-mini"]
-    cache_discount = model_pricing.get("cache_discount", 1.0)
-
-    expected_cost = (
-        (1200 * model_pricing["input"] * cache_discount)  # Cached input
-        + (300 * model_pricing["input"])  # Non-cached input
-        + (100 * model_pricing["output"])  # Completion
-    ) / 1000
-
-    assert cost == pytest.approx(expected_cost, rel=1e-6)
+    assert result.usd_per_node == pytest.approx(expected_per_node, rel=1e-4)
+    assert result.usd_per_million_source_tokens == pytest.approx(
+        expected_per_million, rel=1e-4
+    )
 
 
-def test_calculate_cost_without_cached_tokens() -> None:
+def test_compute_cost_metrics_without_cached_tokens() -> None:
     """Test backward compatibility when cached_tokens is not present."""
-    pricing = MODEL_PRICING
 
-    # Old-style attempt without cached_tokens field
-    attempt = {
-        "model": "gpt-4o-mini",
-        "prompt_tokens": 1500,
-        "completion_tokens": 100,
-    }
+    nodes: list[NodeTelemetryDict] = [
+        {
+            "node_id": "node1",
+            "height": 1,
+            "created_at": 0.0,
+            "summary_attempts": [
+                {
+                    "target_tokens": 100,
+                    "prompt_tokens": 1500,
+                    # No cached_tokens field
+                    "completion_tokens": 100,
+                    "actual_tokens": 100,
+                    "model": "gpt-4o-mini",
+                    "start_time": 0.0,
+                    "end_time": 1.0,
+                }
+            ],
+            "embedding": {
+                "text_tokens": 500,
+                "batch_size": 1,
+                "batch_position": 0,
+                "model": "text-embedding-3-small",
+                "start_time": 0.0,
+                "end_time": 0.1,
+            },
+        }
+    ]
 
-    cost = calculate_summary_attempt_cost(attempt, pricing)
+    models = {"summary": "gpt-4o-mini", "embedding": "text-embedding-3-small"}
+    source_tokens = 10000
 
-    # Should treat all tokens as non-cached
-    model_pricing = pricing["gpt-4o-mini"]
-    expected_cost = (
-        (1500 * model_pricing["input"]) + (100 * model_pricing["output"])
-    ) / 1000
+    with patch("ragzoom.telemetry_analysis.get_model_pricing") as mock_pricing:
+        mock_pricing.return_value = {
+            "summary_input_cost_per_1k": 0.00015,
+            "summary_output_cost_per_1k": 0.0006,
+            "embedding_cost_per_1k": 0.00002,
+        }
 
-    assert cost == pytest.approx(expected_cost, rel=1e-6)
+        result = compute_cost_metrics(nodes, models, source_tokens)
+
+    # Should calculate as if no tokens were cached
+    # Embedding: 500 * 0.00002 / 1000 = 0.00001
+    # Prompt: 1500 * 0.00015 / 1000 = 0.000225
+    # Completion: 100 * 0.0006 / 1000 = 0.00006
+    # Total: 0.000295
+    expected_cost = 0.000295
+
+    assert result.usd_per_node == pytest.approx(expected_cost, rel=1e-4)
 
 
-def test_calculate_cost_with_zero_cached_tokens() -> None:
+def test_compute_cost_metrics_with_zero_cached_tokens() -> None:
     """Test that zero cached tokens works correctly."""
-    pricing = MODEL_PRICING
 
-    attempt = {
-        "model": "gpt-4o-mini",
-        "prompt_tokens": 1500,
-        "cached_tokens": 0,  # Explicitly zero
-        "completion_tokens": 100,
-    }
+    nodes: list[NodeTelemetryDict] = [
+        {
+            "node_id": "node1",
+            "height": 1,
+            "created_at": 0.0,
+            "summary_attempts": [
+                {
+                    "target_tokens": 100,
+                    "prompt_tokens": 1500,
+                    "cached_tokens": 0,  # Explicitly zero
+                    "completion_tokens": 100,
+                    "actual_tokens": 100,
+                    "model": "gpt-4o-mini",
+                    "start_time": 0.0,
+                    "end_time": 1.0,
+                }
+            ],
+            "embedding": {
+                "text_tokens": 500,
+                "batch_size": 1,
+                "batch_position": 0,
+                "model": "text-embedding-3-small",
+                "start_time": 0.0,
+                "end_time": 0.1,
+            },
+        }
+    ]
 
-    cost = calculate_summary_attempt_cost(attempt, pricing)
+    models = {"summary": "gpt-4o-mini", "embedding": "text-embedding-3-small"}
+    source_tokens = 10000
 
-    # All tokens at full price
-    model_pricing = pricing["gpt-4o-mini"]
-    expected_cost = (
-        (1500 * model_pricing["input"]) + (100 * model_pricing["output"])
-    ) / 1000
+    with patch("ragzoom.telemetry_analysis.get_model_pricing") as mock_pricing:
+        mock_pricing.return_value = {
+            "summary_input_cost_per_1k": 0.00015,
+            "summary_output_cost_per_1k": 0.0006,
+            "embedding_cost_per_1k": 0.00002,
+        }
 
-    assert cost == pytest.approx(expected_cost, rel=1e-6)
+        result = compute_cost_metrics(nodes, models, source_tokens)
+
+    # Same as without cached tokens
+    expected_cost = 0.000295
+    assert result.usd_per_node == pytest.approx(expected_cost, rel=1e-4)
 
 
-def test_calculate_cost_with_high_cache_rate() -> None:
+def test_compute_cost_metrics_with_high_cache_rate() -> None:
     """Test cost savings with very high cache hit rate."""
-    pricing = MODEL_PRICING
 
-    # 95% cache hit rate
-    attempt = {
-        "model": "gpt-4o",  # More expensive model
-        "prompt_tokens": 2000,
-        "cached_tokens": 1900,
-        "completion_tokens": 150,
-    }
-
-    cost_with_cache = calculate_summary_attempt_cost(attempt, pricing)
-
-    # Compare to cost without caching
-    attempt_no_cache = {
-        "model": "gpt-4o",
-        "prompt_tokens": 2000,
-        "cached_tokens": 0,
-        "completion_tokens": 150,
-    }
-
-    cost_without_cache = calculate_summary_attempt_cost(attempt_no_cache, pricing)
-
-    # Should see significant savings
-    savings_ratio = 1 - (cost_with_cache / cost_without_cache)
-
-    # With 95% cache rate and 50% discount, expect ~47.5% savings on input tokens
-    # (0.95 * 0.5 = 0.475 discount on input portion)
-    assert savings_ratio > 0.3, f"Expected >30% savings, got {savings_ratio:.1%}"
-
-
-def test_analyze_summary_costs_with_cached_tokens() -> None:
-    """Test that analyze_summary_costs correctly aggregates cached token costs."""
-    telemetry_data: TelemetryDict = {
-        "documents": {
-            "doc1": [
+    nodes: list[NodeTelemetryDict] = [
+        {
+            "node_id": "node1",
+            "height": 1,
+            "created_at": 0.0,
+            "summary_attempts": [
                 {
-                    "node_id": "node1",
-                    "summary_attempts": [
-                        {
-                            "model": "gpt-4o-mini",
-                            "prompt_tokens": 1000,
-                            "cached_tokens": 0,
-                            "completion_tokens": 100,
-                            "status": "rejected_over",
-                        },
-                        {
-                            "model": "gpt-4o-mini",
-                            "prompt_tokens": 1200,
-                            "cached_tokens": 900,  # 75% cached on retry
-                            "completion_tokens": 95,
-                            "status": "accepted",
-                        },
-                    ],
+                    "target_tokens": 100,
+                    "prompt_tokens": 2000,
+                    "cached_tokens": 1900,  # 95% cache hit rate
+                    "completion_tokens": 200,
+                    "actual_tokens": 200,
+                    "model": "gpt-4o",
+                    "start_time": 0.0,
+                    "end_time": 1.0,
+                }
+            ],
+            "embedding": {
+                "text_tokens": 1000,
+                "batch_size": 1,
+                "batch_position": 0,
+                "model": "text-embedding-3-large",
+                "start_time": 0.0,
+                "end_time": 0.1,
+            },
+        }
+    ]
+
+    models = {"summary": "gpt-4o", "embedding": "text-embedding-3-large"}
+    source_tokens = 10000
+
+    with patch("ragzoom.model_info.ModelInfo") as mock_model_info_class:
+        mock_model_info = MagicMock()
+        mock_model_info.get_cache_discount.return_value = 0.5  # 50% discount
+        mock_model_info_class.return_value = mock_model_info
+
+        with patch("ragzoom.telemetry_analysis.get_model_pricing") as mock_pricing:
+            mock_pricing.return_value = {
+                "summary_input_cost_per_1k": 0.0025,  # gpt-4o input
+                "summary_output_cost_per_1k": 0.01,  # gpt-4o output
+                "embedding_cost_per_1k": 0.00013,  # text-embedding-3-large
+            }
+
+            result = compute_cost_metrics(nodes, models, source_tokens)
+
+    # Calculate with 95% cache hit
+    # Embedding: 1000 * 0.00013 / 1000 = 0.00013
+    # Prompt: (100 * 0.0025 + 1900 * 0.0025 * 0.5) / 1000 = 0.002625
+    # Completion: 200 * 0.01 / 1000 = 0.002
+    # Total: 0.004755
+    expected_cost = 0.004755
+
+    # Now calculate without cache for comparison
+    cost_without_cache = (1000 * 0.00013 + 2000 * 0.0025 + 200 * 0.01) / 1000
+    assert cost_without_cache == 0.00713
+
+    # Verify we got significant savings
+    savings_percentage = (cost_without_cache - expected_cost) / cost_without_cache * 100
+    assert savings_percentage > 30  # Should save > 30% with 95% cache rate
+
+    assert result.usd_per_node == pytest.approx(expected_cost, rel=1e-4)
+
+
+def test_compute_cost_metrics_with_multiple_attempts() -> None:
+    """Test cost calculation when nodes have multiple summary attempts."""
+
+    nodes: list[NodeTelemetryDict] = [
+        {
+            "node_id": "node1",
+            "height": 1,
+            "created_at": 0.0,
+            "summary_attempts": [
+                {
+                    "target_tokens": 100,
+                    "prompt_tokens": 1000,
+                    "cached_tokens": 0,  # First attempt, no cache
+                    "completion_tokens": 150,
+                    "actual_tokens": 150,
+                    "model": "gpt-4o-mini",
+                    "start_time": 0.0,
+                    "end_time": 1.0,
                 },
                 {
-                    "node_id": "node2",
-                    "summary_attempts": [
-                        {
-                            "model": "gpt-4o-mini",
-                            "prompt_tokens": 1000,
-                            "cached_tokens": 0,
-                            "completion_tokens": 100,
-                            "status": "accepted",
-                        }
-                    ],
+                    "target_tokens": 100,
+                    "prompt_tokens": 1200,
+                    "cached_tokens": 1000,  # Retry with cache
+                    "completion_tokens": 100,
+                    "actual_tokens": 100,
+                    "model": "gpt-4o-mini",
+                    "start_time": 1.0,
+                    "end_time": 2.0,
                 },
-            ]
+            ],
+            "embedding": {
+                "text_tokens": 500,
+                "batch_size": 1,
+                "batch_position": 0,
+                "model": "text-embedding-3-small",
+                "start_time": 0.0,
+                "end_time": 0.1,
+            },
         }
-    }
+    ]
 
-    costs = analyze_summary_costs(telemetry_data)
+    models = {"summary": "gpt-4o-mini", "embedding": "text-embedding-3-small"}
+    source_tokens = 10000
 
-    # Should have cost data for both nodes
-    by_node = cast(dict[str, NodeCostDict], costs["by_node"])
-    assert "node1" in by_node
-    assert "node2" in by_node
+    with patch("ragzoom.model_info.ModelInfo") as mock_model_info_class:
+        mock_model_info = MagicMock()
+        mock_model_info.get_cache_discount.return_value = 0.5
+        mock_model_info_class.return_value = mock_model_info
 
-    # Node1 should show savings from caching
-    node1_cost = by_node["node1"]
-    assert cast(int, node1_cost["attempts"]) == 2
-    assert cast(float, node1_cost["total_cost"]) > 0
+        with patch("ragzoom.telemetry_analysis.get_model_pricing") as mock_pricing:
+            mock_pricing.return_value = {
+                "summary_input_cost_per_1k": 0.00015,
+                "summary_output_cost_per_1k": 0.0006,
+                "embedding_cost_per_1k": 0.00002,
+            }
 
-    # Verify cache efficiency metrics
-    assert "cache_efficiency" in costs
-    cache_efficiency = cast(dict[str, float | int], costs["cache_efficiency"])
-    assert cast(int, cache_efficiency["total_cached_tokens"]) == 900
-    assert cast(int, cache_efficiency["total_prompt_tokens"]) >= 3200
+            result = compute_cost_metrics(nodes, models, source_tokens)
 
-    # Cache rate should be meaningful
-    cache_rate = cast(float, cache_efficiency["cache_rate"])
-    assert 0.2 < cache_rate < 0.3  # ~900/3200 ≈ 28%
+    # Both attempts should be counted
+    assert result.total_prompt_tokens == 2200  # 1000 + 1200
+    assert result.total_completion_tokens == 250  # 150 + 100
 
+    # Cost calculation:
+    # Embedding: 500 * 0.00002 / 1000 = 0.00001
+    # Attempt 1: 1000 * 0.00015 / 1000 + 150 * 0.0006 / 1000 = 0.00024
+    # Attempt 2: (200 * 0.00015 + 1000 * 0.00015 * 0.5) / 1000 + 100 * 0.0006 / 1000 = 0.000165
+    # Total: 0.000415
+    expected_cost = 0.000415
 
-def test_cost_calculation_with_missing_model() -> None:
-    """Test graceful handling when model pricing is not available."""
-    pricing = {
-        "gpt-4o-mini": {
-            "input": 0.00015,
-            "output": 0.0006,
-            "cache_discount": 0.5,
-        }
-    }
-
-    # Attempt with unknown model
-    attempt = {
-        "model": "claude-3-opus",  # Not in pricing
-        "prompt_tokens": 1000,
-        "cached_tokens": 500,
-        "completion_tokens": 100,
-    }
-
-    cost = calculate_summary_attempt_cost(attempt, pricing)
-
-    # Should return 0 or handle gracefully
-    assert cost == 0
+    assert result.usd_per_node == pytest.approx(expected_cost, rel=1e-4)
 
 
-def test_cost_calculation_with_passthrough_model() -> None:
-    """Test that passthrough summaries have zero cost."""
-    pricing = MODEL_PRICING
+def test_compute_cost_metrics_model_not_found() -> None:
+    """Test graceful handling when model info is not available."""
 
-    attempt = {
-        "model": "passthrough",
-        "prompt_tokens": 0,
-        "cached_tokens": 0,
-        "completion_tokens": 0,
-    }
-
-    cost = calculate_summary_attempt_cost(attempt, pricing)
-    assert cost == 0
-
-
-def test_cost_savings_calculation() -> None:
-    """Test calculation of cost savings from caching."""
-    telemetry_data: TelemetryDict = {
-        "documents": {
-            "doc1": [
+    nodes: list[NodeTelemetryDict] = [
+        {
+            "node_id": "node1",
+            "height": 1,
+            "created_at": 0.0,
+            "summary_attempts": [
                 {
-                    "node_id": "node1",
-                    "summary_attempts": [
-                        {
-                            "model": "gpt-4o",
-                            "prompt_tokens": 2000,
-                            "cached_tokens": 1800,  # 90% cached
-                            "completion_tokens": 200,
-                            "status": "accepted",
-                        }
-                    ],
+                    "target_tokens": 100,
+                    "prompt_tokens": 1500,
+                    "cached_tokens": 1200,
+                    "completion_tokens": 100,
+                    "actual_tokens": 100,
+                    "model": "unknown-model",
+                    "start_time": 0.0,
+                    "end_time": 1.0,
                 }
             ],
         }
-    }
+    ]
 
-    costs = analyze_summary_costs(telemetry_data)
+    models = {"summary": "unknown-model", "embedding": "text-embedding-3-small"}
+    source_tokens = 10000
 
-    # Calculate expected savings
-    # With 90% cache rate at 50% discount, save 45% on prompt tokens
-    by_node = cast(dict[str, NodeCostDict], costs["by_node"])
-    node_cost = by_node["node1"]
-    assert "cost_without_cache" in node_cost
-    assert "cache_savings" in node_cost
+    # Mock ModelInfo to raise ValueError
+    with patch("ragzoom.model_info.ModelInfo") as mock_model_info_class:
+        mock_model_info = MagicMock()
+        mock_model_info.get_cache_discount.side_effect = ValueError("Model not found")
+        mock_model_info_class.return_value = mock_model_info
 
-    savings_pct = cast(float, node_cost["cache_savings_pct"])
-    assert savings_pct > 30  # Should save at least 30%
+        with patch("ragzoom.telemetry_analysis.get_model_pricing") as mock_pricing:
+            mock_pricing.return_value = {
+                "summary_input_cost_per_1k": 0.001,
+                "summary_output_cost_per_1k": 0.002,
+                "embedding_cost_per_1k": 0.00002,
+            }
 
+            result = compute_cost_metrics(nodes, models, source_tokens)
 
-def test_aggregate_costs_across_documents() -> None:
-    """Test that costs are correctly aggregated across multiple documents."""
-    telemetry_data: TelemetryDict = {
-        "documents": {
-            "doc1": [
-                {
-                    "node_id": "d1_n1",
-                    "summary_attempts": [
-                        {
-                            "model": "gpt-4o-mini",
-                            "prompt_tokens": 1000,
-                            "cached_tokens": 500,
-                            "completion_tokens": 100,
-                            "status": "accepted",
-                        }
-                    ],
-                }
-            ],
-            "doc2": [
-                {
-                    "node_id": "d2_n1",
-                    "summary_attempts": [
-                        {
-                            "model": "gpt-4o-mini",
-                            "prompt_tokens": 1200,
-                            "cached_tokens": 1000,
-                            "completion_tokens": 120,
-                            "status": "accepted",
-                        }
-                    ],
-                }
-            ],
-        }
-    }
-
-    costs = analyze_summary_costs(telemetry_data)
-
-    # Check total costs
-    total_dict = cast(dict[str, float | int], costs["total"])
-    assert cast(float, total_dict["total_cost"]) > 0
-    assert cast(int, total_dict["total_attempts"]) == 2
-
-    # Check cache efficiency across all documents
-    cache_efficiency = cast(dict[str, float | int], costs["cache_efficiency"])
-    assert cast(int, cache_efficiency["total_cached_tokens"]) == 1500
-    assert cast(int, cache_efficiency["total_prompt_tokens"]) == 2200
+    # Should fall back to no discount (cache_discount = 1.0)
+    # All prompt tokens charged at full price
+    expected_cost = (1500 * 0.001 + 100 * 0.002) / 1000
+    assert result.usd_per_node == pytest.approx(expected_cost, rel=1e-4)
