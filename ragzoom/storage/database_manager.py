@@ -2,7 +2,6 @@
 
 import logging
 import os
-from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -68,7 +67,7 @@ class DatabaseManager:
 
             @event.listens_for(self.engine, "connect")
             def register_vector_extension(
-                dbapi_conn: Any, connection_record: Any
+                dbapi_conn: object, connection_record: object
             ) -> None:
                 try:
                     # Get the underlying psycopg connection for pgvector registration

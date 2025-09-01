@@ -8,6 +8,7 @@ which provides comprehensive integration testing.
 import pytest
 
 from tests.mock_store import SimpleMockStore
+from tests.test_builders import TreeNodeBuilder
 
 
 class TestStoreMock:
@@ -18,7 +19,7 @@ class TestStoreMock:
     """
 
     @pytest.fixture
-    def mock_store(self):
+    def mock_store(self) -> SimpleMockStore:
         """Create a mock store for testing."""
         return SimpleMockStore()
 
@@ -26,7 +27,7 @@ class TestStoreMock:
     # test_search_similar) have been removed to eliminate duplication with test_store.py.
     # See test_store.py for comprehensive integration testing of these operations.
 
-    def test_session_local_count(self, mock_store):
+    def test_session_local_count(self, mock_store: SimpleMockStore) -> None:
         """Test that SessionLocal mock properly returns count."""
         # Add some nodes
         for i in range(3):
@@ -40,12 +41,12 @@ class TestStoreMock:
 
         # Test SessionLocal count query (used by api.py and cli.py)
         with mock_store.SessionLocal() as session:
-            from ragzoom.store import TreeNode
+            from ragzoom.models import TreeNode
 
             count = session.query(TreeNode).count()
             assert count == 3
 
-    def test_add_node_returns_node(self, mock_store):
+    def test_add_node_returns_node(self, mock_store: SimpleMockStore) -> None:
         """Test that add_node returns the created node."""
         node = mock_store.add_node(
             node_id="return-test",
@@ -60,7 +61,7 @@ class TestStoreMock:
         assert node.id == "return-test"
         assert node.text == "Return test text"
 
-    def test_document_operations(self, mock_store):
+    def test_document_operations(self, mock_store: SimpleMockStore) -> None:
         """Test document operations."""
         # Create document directly
         doc_store = mock_store.add_document(
@@ -76,11 +77,12 @@ class TestStoreMock:
 
         # Verify the document was created with correct properties
         retrieved = mock_store.get_document_by_id("test-doc")
+        assert retrieved is not None, "Document should be retrieved"
         assert retrieved.id == "test-doc"
         assert retrieved.file_path == "/test/file.txt"
         assert retrieved.chunk_count == 3
 
-    def test_interface_compliance(self, mock_store):
+    def test_interface_compliance(self, mock_store: SimpleMockStore) -> None:
         """Test that mock store implements the core interface."""
         # Test that core methods exist (only those actually implemented)
         core_methods = [
@@ -97,7 +99,7 @@ class TestStoreMock:
                 getattr(mock_store, method_name)
             ), f"Not callable: {method_name}"
 
-    def test_real_store_interface_compliance(self):
+    def test_real_store_interface_compliance(self) -> None:
         """Test that real Store class has the same interface as mock."""
         from ragzoom.store import StoreManager
 
@@ -121,19 +123,21 @@ class TestStoreMock:
         # Mock should provide compatibility with new patterns
         assert "for_document" in mock_methods, "Mock missing for_document factory"
 
-    def test_builder_advanced_features(self, mock_store, tree_node_builder):
+    def test_builder_advanced_features(
+        self, mock_store: SimpleMockStore, tree_node_builder: TreeNodeBuilder
+    ) -> None:
         """Test advanced builder features with mock store."""
         # Test complex node creation with builder
-        node_data = (
-            tree_node_builder.with_id("advanced-test")
-            .with_text("Advanced test text")
-            .with_span(100, 200)
-            .with_height(2)
-            .with_document("advanced-doc")
-            .build("dict")
+        # Extract node parameters manually to ensure type compatibility
+        node = mock_store.add_node(
+            node_id="advanced-test",
+            text="Advanced test text",
+            embedding=[0.1] * 1536,  # Default embedding
+            span_start=100,
+            span_end=200,
+            document_id="advanced-doc",
+            height=2,
         )
-
-        node = mock_store.add_node(**node_data)
 
         assert node.id == "advanced-test"
         assert node.span_start == 100

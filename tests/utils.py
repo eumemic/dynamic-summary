@@ -1,17 +1,25 @@
 """Shared test utilities and mock setups."""
 
+from collections.abc import Generator
+from types import SimpleNamespace
+from typing import TypeGuard, cast
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from openai import OpenAI
 
-from ragzoom.config import IndexConfig
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.document_store import DocumentStore
+from ragzoom.interfaces import StoreInterface
+from ragzoom.models import TreeNode
 from ragzoom.retrieval.budget_planner import BudgetPlanner
 from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
+from ragzoom.store import StoreManager
+from tests.mock_store import SimpleMockStore
 
 
-def create_mock_openai_clients():
+def create_mock_openai_clients() -> tuple[Mock, Mock, Mock]:
     """Create standard mock OpenAI clients for testing.
 
     Returns a tuple of (mock_index_client, mock_retrieve_client, mock_assemble_client)
@@ -19,14 +27,14 @@ def create_mock_openai_clients():
     """
 
     # Standard embedding response
-    async def mock_embeddings_create_async(*args, **kwargs):
+    async def mock_embeddings_create_async(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
             return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
         else:
             return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
-    def mock_embeddings_create_sync(*args, **kwargs):
+    def mock_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
             return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
@@ -34,12 +42,12 @@ def create_mock_openai_clients():
             return Mock(data=[Mock(embedding=[0.1] * 1536)])
 
     # Standard chat completion response
-    async def mock_chat_create_async(*args, **kwargs):
+    async def mock_chat_create_async(*args: object, **kwargs: object) -> Mock:
         return Mock(
             choices=[Mock(message=Mock(content="Summary of left and right content"))]
         )
 
-    def mock_chat_create_sync(*args, **kwargs):
+    def mock_chat_create_sync(*args: object, **kwargs: object) -> Mock:
         return Mock(
             choices=[Mock(message=Mock(content="Summary of left and right content"))]
         )
@@ -72,7 +80,7 @@ def create_mock_openai_clients():
     return mock_index_client, mock_retrieve_client, mock_assemble_client
 
 
-def create_test_documents():
+def create_test_documents() -> dict[str, str]:
     """Create standard test documents for testing.
 
     Returns a dict with different document types and sizes.
@@ -95,11 +103,11 @@ Third paragraph with yet more content.""",
 class MockOpenAIContext:
     """Context manager that provides OpenAI mocking for tests."""
 
-    def __init__(self, embedding_rules=None):
+    def __init__(self, embedding_rules: dict[str, list[float]] | None = None) -> None:
         """Initialize with optional specialized embedding rules."""
         self.embedding_rules = embedding_rules
 
-    def __enter__(self):
+    def __enter__(self) -> tuple[Mock, Mock, Mock]:
         """Enter context and set up mocks."""
         self.index_patcher = patch("ragzoom.services.llm_service.AsyncOpenAI")
         self.retrieve_patcher = patch("openai.OpenAI")
@@ -121,13 +129,15 @@ class MockOpenAIContext:
 
         return mock_index_client, mock_retrieve_client, mock_assemble_client
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         """Exit context and clean up mocks."""
         self.index_patcher.stop()
         self.retrieve_patcher.stop()
 
 
-def mock_openai_context(embedding_rules=None):
+def mock_openai_context(
+    embedding_rules: dict[str, list[float]] | None = None,
+) -> MockOpenAIContext:
     """Context manager that mocks all OpenAI clients.
 
     Args:
@@ -149,7 +159,9 @@ def mock_openai_context(embedding_rules=None):
     return MockOpenAIContext(embedding_rules)
 
 
-def mock_openai_fixture(embedding_rules=None):
+def mock_openai_fixture(
+    embedding_rules: dict[str, list[float]] | None = None,
+) -> Generator[tuple[Mock, Mock, Mock], None, None]:
     """Pytest fixture that mocks all OpenAI clients.
 
     Args:
@@ -181,7 +193,7 @@ def mock_openai_fixture(embedding_rules=None):
 
 
 @pytest.fixture
-def openai_mocks():
+def openai_mocks() -> Generator[tuple[Mock, Mock, Mock], None, None]:
     """Centralized pytest fixture for OpenAI mocking.
 
     This fixture provides consistent OpenAI mocking across all tests.
@@ -190,11 +202,12 @@ def openai_mocks():
     Returns:
         tuple: (mock_index_client, mock_retrieve_client, mock_assemble_client)
     """
-    with mock_openai_fixture() as mocks:
-        yield mocks
+    yield from mock_openai_fixture()
 
 
-def create_mock_embedding_response(texts, embedding_dim=1536):
+def create_mock_embedding_response(
+    texts: str | list[str], embedding_dim: int = 1536
+) -> Mock:
     """Create a mock embedding response for given texts.
 
     Args:
@@ -210,7 +223,7 @@ def create_mock_embedding_response(texts, embedding_dim=1536):
     return Mock(data=[Mock(embedding=[0.1] * embedding_dim) for _ in texts])
 
 
-def create_mock_chat_response(content):
+def create_mock_chat_response(content: str) -> Mock:
     """Create a mock chat completion response.
 
     Args:
@@ -222,16 +235,21 @@ def create_mock_chat_response(content):
     return Mock(choices=[Mock(message=Mock(content=content))])
 
 
-def create_predictable_summary_mock():
+def create_predictable_summary_mock() -> tuple[object, object]:
     """Create a mock that returns predictable summaries based on content.
 
     This is useful for tests that need consistent, deterministic summaries
     based on the input content patterns.
     """
 
-    def mock_chat_create(*args, **kwargs):
+    def mock_chat_create(*args: object, **kwargs: object) -> Mock:
         messages = kwargs.get("messages", [])
-        content = messages[-1]["content"] if messages else ""
+        from typing import cast
+
+        messages_list = (
+            cast(list[dict[str, str]], messages) if isinstance(messages, list) else []
+        )
+        content = messages_list[-1]["content"] if messages_list else ""
 
         # Return shorter summary if prompt asks for specific token count
         if "approximately 50 tokens" in content:
@@ -279,24 +297,24 @@ def create_predictable_summary_mock():
                 ]
             )
 
-    async def mock_chat_create_async(*args, **kwargs):
+    async def mock_chat_create_async(*args: object, **kwargs: object) -> Mock:
         return mock_chat_create(*args, **kwargs)
 
     return mock_chat_create, mock_chat_create_async
 
 
-def create_hash_based_embedding_mock():
+def create_hash_based_embedding_mock() -> tuple[object, object]:
     """Create an embedding mock that returns deterministic hash-based embeddings.
 
     This is useful for tests that need consistent, deterministic embeddings
     based on text content.
     """
 
-    def calculate_hash_embedding(text):
+    def calculate_hash_embedding(text: str) -> list[float]:
         hash_val = sum(ord(c) for c in text) % 100
         return [hash_val / 100.0] * 1536
 
-    async def hash_embeddings_create_async(*args, **kwargs):
+    async def hash_embeddings_create_async(*args: object, **kwargs: object) -> Mock:
         texts = kwargs.get("input")
         if texts is None and len(args) > 0:
             texts = args[0]
@@ -304,11 +322,12 @@ def create_hash_based_embedding_mock():
             texts = [texts]
         embeddings = []
         for text in texts:
-            embedding = calculate_hash_embedding(text)
+            text_str = str(text) if not isinstance(text, str) else text
+            embedding = calculate_hash_embedding(text_str)
             embeddings.append(Mock(embedding=embedding))
         return Mock(data=embeddings)
 
-    def hash_embeddings_create_sync(*args, **kwargs):
+    def hash_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
         texts = kwargs.get("input")
         if texts is None and len(args) > 0:
             texts = args[0]
@@ -316,20 +335,23 @@ def create_hash_based_embedding_mock():
             texts = [texts]
         embeddings = []
         for text in texts:
-            embedding = calculate_hash_embedding(text)
+            text_str = str(text) if not isinstance(text, str) else text
+            embedding = calculate_hash_embedding(text_str)
             embeddings.append(Mock(embedding=embedding))
         return Mock(data=embeddings)
 
     return hash_embeddings_create_sync, hash_embeddings_create_async
 
 
-def create_telemetry_summary_mock():
+def create_telemetry_summary_mock() -> tuple[object, object]:
     """Create a mock for telemetry tests that includes usage data.
 
     This mock returns summaries with token usage information needed for telemetry collection.
     """
 
-    async def mock_chat_completion_with_usage(*args, **kwargs):
+    async def mock_chat_completion_with_usage(
+        *args: object, **kwargs: object
+    ) -> MagicMock:
         response = MagicMock()
         response.choices = [MagicMock()]
         response.choices[0].message = MagicMock()
@@ -343,7 +365,9 @@ def create_telemetry_summary_mock():
         response.usage.completion_tokens = 50
         return response
 
-    def mock_chat_completion_with_usage_sync(*args, **kwargs):
+    def mock_chat_completion_with_usage_sync(
+        *args: object, **kwargs: object
+    ) -> MagicMock:
         response = MagicMock()
         response.choices = [MagicMock()]
         response.choices[0].message = MagicMock()
@@ -358,7 +382,9 @@ def create_telemetry_summary_mock():
     return mock_chat_completion_with_usage_sync, mock_chat_completion_with_usage
 
 
-def _calculate_embedding_from_rules(text, embedding_rules):
+def _calculate_embedding_from_rules(
+    text: str, embedding_rules: dict[str, list[float]]
+) -> list[float]:
     """Calculate embedding vector based on text patterns and rules.
 
     Args:
@@ -376,7 +402,9 @@ def _calculate_embedding_from_rules(text, embedding_rules):
     return embedding
 
 
-def create_specialized_openai_mocks(embedding_rules=None):
+def create_specialized_openai_mocks(
+    embedding_rules: dict[str, list[float]] | None = None,
+) -> tuple[Mock, Mock, Mock]:
     """Create OpenAI mocks with specialized embedding behavior.
 
     Args:
@@ -390,30 +418,37 @@ def create_specialized_openai_mocks(embedding_rules=None):
         return create_mock_openai_clients()
 
     # Create specialized embedding functions
-    async def specialized_embeddings_create_async(*args, **kwargs):
+    async def specialized_embeddings_create_async(
+        *args: object, **kwargs: object
+    ) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
             embeddings = []
             for text in input_data:
-                embedding = _calculate_embedding_from_rules(text, embedding_rules)
+                text_str = str(text) if not isinstance(text, str) else text
+                embedding = _calculate_embedding_from_rules(text_str, embedding_rules)
                 embeddings.append(Mock(embedding=embedding))
             return Mock(data=embeddings)
         else:
-            embedding = _calculate_embedding_from_rules(input_data, embedding_rules)
+            text_str = (
+                str(input_data) if not isinstance(input_data, str) else input_data
+            )
+            embedding = _calculate_embedding_from_rules(text_str, embedding_rules)
             return Mock(data=[Mock(embedding=embedding)])
 
-    def specialized_embeddings_create_sync(*args, **kwargs):
+    def specialized_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
-        embedding = _calculate_embedding_from_rules(input_data, embedding_rules)
+        text_str = str(input_data) if not isinstance(input_data, str) else input_data
+        embedding = _calculate_embedding_from_rules(text_str, embedding_rules)
         return Mock(data=[Mock(embedding=embedding)])
 
     # Standard chat completion
-    async def mock_chat_create_async(*args, **kwargs):
+    async def mock_chat_create_async(*args: object, **kwargs: object) -> Mock:
         return Mock(
             choices=[Mock(message=Mock(content="Summary of left and right content"))]
         )
 
-    def mock_chat_create_sync(*args, **kwargs):
+    def mock_chat_create_sync(*args: object, **kwargs: object) -> Mock:
         return Mock(
             choices=[Mock(message=Mock(content="Summary of left and right content"))]
         )
@@ -447,14 +482,14 @@ def create_specialized_openai_mocks(embedding_rules=None):
 
 
 def create_retriever(
-    query_config,
-    store,
-    document_id=None,
-    api_key="test-key",
-    embedding_model=None,
-    target_chunk_tokens=None,
-    client=None,
-):
+    query_config: QueryConfig,
+    store: StoreManager | DocumentStore,
+    document_id: str | None = None,
+    api_key: str = "test-key",
+    embedding_model: str | None = None,
+    target_chunk_tokens: int | None = None,
+    client: object | None = None,  # Accept any client type for testing
+) -> Retriever:
     """Create a Retriever instance with proper service dependencies.
 
     Args:
@@ -474,16 +509,20 @@ def create_retriever(
         client = OpenAI(api_key=api_key)
 
     # Get document store - handle both StoreManager and DocumentStore
-    if hasattr(store, "for_document"):
+    # Check if it's actually a StoreManager (not just something with for_document)
+    from ragzoom.store import StoreManager
+
+    if isinstance(store, StoreManager):
         # This is a StoreManager, create DocumentStore
         doc_store = store.for_document(document_id)
     else:
-        # This is already a DocumentStore
+        # This is already a DocumentStore or mock
         doc_store = store
 
     # Create services with DocumentStore
+    # Cast client to OpenAI for type checker - in tests this may be a Mock
     embedding_service = EmbeddingService(
-        client, doc_store, embedding_model or query_config.embedding_model
+        cast(OpenAI, client), doc_store, embedding_model or query_config.embedding_model
     )
 
     # Get chunk tokens from IndexConfig if not provided
@@ -500,3 +539,234 @@ def create_retriever(
         embedding_service,
         budget_planner,
     )
+
+
+# Type conversion utilities for common test patterns
+
+
+def ensure_document_store(
+    store: StoreInterface | DocumentStore | None,
+) -> DocumentStore:
+    """Safely convert StoreInterface to DocumentStore for tests.
+
+    Args:
+        store: Store instance that might be StoreInterface, DocumentStore, or None
+
+    Returns:
+        DocumentStore instance
+
+    Raises:
+        TypeError: If store cannot be converted to DocumentStore
+    """
+    if store is None:
+        raise TypeError("Store cannot be None")
+
+    # If it's already a DocumentStore, return it
+    if isinstance(store, DocumentStore):
+        return store
+
+    # If it's a StoreManager with for_document method, create document store
+    if hasattr(store, "for_document") and callable(getattr(store, "for_document")):
+        return store.for_document(None)  # type: ignore[no-any-return]  # StoreManager.for_document returns DocumentStore
+
+    # If it's a SimpleMockStore, use for_document method
+    if isinstance(store, SimpleMockStore):
+        return store.for_document(None)  # Mock returns compatible interface
+
+    # Otherwise, assume it implements DocumentStore interface
+    return cast(DocumentStore, store)
+
+
+def ensure_store_interface(
+    store: DocumentStore | StoreInterface | None,
+) -> StoreInterface:
+    """Safely convert DocumentStore to StoreInterface for tests.
+
+    Args:
+        store: Store instance that might be DocumentStore, StoreInterface, or None
+
+    Returns:
+        StoreInterface instance
+
+    Raises:
+        TypeError: If store cannot be converted to StoreInterface
+    """
+    if store is None:
+        raise TypeError("Store cannot be None")
+
+    # DocumentStore implements StoreInterface, so we can safely cast
+    return cast(StoreInterface, store)
+
+
+def extract_single_config(
+    config: (
+        tuple[IndexConfig, QueryConfig, OperationalConfig]
+        | IndexConfig
+        | QueryConfig
+        | OperationalConfig
+        | None
+    ),
+    config_type: (
+        type[IndexConfig] | type[QueryConfig] | type[OperationalConfig] | None
+    ) = None,
+) -> IndexConfig | QueryConfig | OperationalConfig | None:
+    """Extract single config from tuple or pass through single config.
+
+    Args:
+        config: Either a tuple of configs or a single config
+        config_type: Preferred config type to extract from tuple (optional)
+
+    Returns:
+        Single config instance or None
+    """
+    if config is None:
+        return None
+
+    if isinstance(config, tuple):
+        # If specific type requested, find it in the tuple
+        if config_type is not None:
+            for cfg in config:
+                if isinstance(cfg, config_type):
+                    return cfg
+        # Otherwise return first config
+        return config[0] if config else None
+
+    # Already a single config
+    return config
+
+
+def ensure_secret_str_value(
+    value: str | SecretStr | None, default: str = "test-key"
+) -> str:
+    """Safely extract value from SecretStr or regular string.
+
+    Args:
+        value: String or SecretStr value
+        default: Default value if input is None or empty
+
+    Returns:
+        Actual string value
+    """
+    if value is None:
+        return default
+
+    if hasattr(value, "get_secret_value"):
+        return value.get_secret_value() or default
+
+    return str(value) or default
+
+
+def is_tree_node(value: object) -> TypeGuard[TreeNode]:
+    """Type guard to check if value is a TreeNode.
+
+    Args:
+        value: Value to check
+
+    Returns:
+        True if value is a TreeNode
+    """
+    # Check for TreeNode attributes
+    return (
+        hasattr(value, "id")
+        and hasattr(value, "text")
+        and hasattr(value, "span_start")
+        and hasattr(value, "span_end")
+    )
+
+
+def ensure_tree_node(value: object, node_id: str = "unknown") -> TreeNode:
+    """Safely convert object to TreeNode or raise informative error.
+
+    Args:
+        value: Object that should be a TreeNode
+        node_id: ID for error messages
+
+    Returns:
+        TreeNode instance
+
+    Raises:
+        TypeError: If value is not a TreeNode
+    """
+    if value is None:
+        raise TypeError(f"Expected TreeNode for {node_id}, got None")
+
+    if not is_tree_node(value):
+        raise TypeError(f"Expected TreeNode for {node_id}, got {type(value)}")
+
+    return value  # Type guard ensures this is TreeNode
+
+
+def safe_tree_node_access(value: object) -> TreeNode | None:
+    """Safely access TreeNode attributes, returning None if not a TreeNode.
+
+    Args:
+        value: Object that might be a TreeNode
+
+    Returns:
+        TreeNode if valid, None otherwise
+    """
+    if is_tree_node(value):
+        return value  # Type guard ensures this is TreeNode
+    return None
+
+
+def create_mock_config_tuple() -> tuple[IndexConfig, QueryConfig, OperationalConfig]:
+    """Create a standard tuple of mock configs for testing.
+
+    Returns:
+        Tuple of (IndexConfig, QueryConfig, OperationalConfig)
+    """
+    index_config = IndexConfig.load()
+    query_config = QueryConfig()
+    operational_config = OperationalConfig()
+
+    return (index_config, query_config, operational_config)
+
+
+def cast_simple_namespace_to_dict(ns: SimpleNamespace) -> dict[str, object]:
+    """Convert SimpleNamespace to dict for type compatibility.
+
+    Args:
+        ns: SimpleNamespace object
+
+    Returns:
+        Dictionary representation
+    """
+    return ns.__dict__
+
+
+def create_test_store_with_config(
+    config: IndexConfig | QueryConfig | OperationalConfig | None = None,
+) -> SimpleMockStore:
+    """Create a SimpleMockStore with proper config handling.
+
+    Args:
+        config: Single config to use, or None for default
+
+    Returns:
+        SimpleMockStore instance
+    """
+    # If no config provided, use IndexConfig as default
+    if config is None:
+        config = IndexConfig.load()
+
+    return SimpleMockStore(config=config)
+
+
+def assert_compatible_store_types(
+    store1: StoreInterface | DocumentStore, store2: StoreInterface | DocumentStore
+) -> None:
+    """Assert that two stores are type-compatible for testing.
+
+    Args:
+        store1: First store
+        store2: Second store
+
+    Raises:
+        AssertionError: If stores are not compatible
+    """
+    # Both should be either StoreInterface or DocumentStore compatible
+    assert hasattr(store1, "get_node"), f"Store1 missing get_node: {type(store1)}"
+    assert hasattr(store2, "get_node"), f"Store2 missing get_node: {type(store2)}"
+    assert hasattr(store1, "add_node"), f"Store1 missing add_node: {type(store1)}"
+    assert hasattr(store2, "add_node"), f"Store2 missing add_node: {type(store2)}"

@@ -44,6 +44,13 @@ telemetry = [
     "pandas>=1.4.0",
     "numpy>=1.24.0",
 ]
+dev = [
+    "types-tqdm",
+    "pandas-stubs",
+    "types-psutil",
+    "types-seaborn",
+    "tomli>=1.0.0; python_version < '3.11'",
+]
 
 [project.scripts]
 ragzoom = "ragzoom.cli:cli"
@@ -65,27 +72,29 @@ ignore = ["E501"]  # Line too long (handled by black)
 
 [tool.mypy]
 python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
+strict = true
+disallow_any_explicit = true
+disallow_any_unimported = true
+# disallow_any_expr = true  # Not enabled - would require extensive workarounds for Pydantic/external libraries
+
+# External library type issues
+[[tool.mypy.overrides]]
+module = "pgvector.*"
 ignore_missing_imports = true
-# SQLAlchemy 2.0 has native type support, no plugin needed
-
-# Per-module options for SQLAlchemy ORM files
-[[tool.mypy.overrides]]
-module = "ragzoom.store"
-disallow_untyped_defs = false
-warn_return_any = false
 
 [[tool.mypy.overrides]]
-module = "ragzoom.retrieve"
-disallow_untyped_defs = false
-warn_return_any = false
+module = "tomli"
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "ragzoom.assemble"
-disallow_untyped_defs = false
-warn_return_any = false
+module = "tomllib"
+ignore_missing_imports = true
+
+# matplotlib doesn't have complete type stubs
+[[tool.mypy.overrides]]
+module = "matplotlib.*"
+ignore_missing_imports = true
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

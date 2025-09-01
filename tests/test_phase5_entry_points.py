@@ -1,6 +1,7 @@
 """Test Phase 5 entry point isolation (CLI commands with DocumentStore)."""
 
-from unittest.mock import Mock, patch
+from typing import cast
+from unittest.mock import MagicMock, Mock, patch
 
 from click.testing import CliRunner
 
@@ -11,14 +12,14 @@ from tests.mock_store import SimpleMockStore
 class TestCLIPinCommandIsolation:
     """Test that CLI pin command properly uses DocumentStore for isolation."""
 
-    def test_pin_command_with_document_id(self):
+    def test_pin_command_with_document_id(self) -> None:
         """Test pin command with explicit document ID."""
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
             # Create mock store
             store = SimpleMockStore()
-            mock_create_store.return_value = store
+            cast(MagicMock, mock_create_store).return_value = store
 
             # Add nodes to different documents
             store.add_node(
@@ -45,14 +46,14 @@ class TestCLIPinCommandIsolation:
             assert result.exit_code == 0
             assert "doc1_node" in store.pinned_nodes
 
-    def test_pin_command_auto_detects_document(self):
+    def test_pin_command_auto_detects_document(self) -> None:
         """Test pin command auto-detects document from node ID."""
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
             # Create mock store
             store = SimpleMockStore()
-            mock_create_store.return_value = store
+            cast(MagicMock, mock_create_store).return_value = store
 
             # Add node
             store.add_node(
@@ -74,14 +75,14 @@ class TestCLIPinCommandIsolation:
             assert result.exit_code == 0
             assert "doc1_node" in store.pinned_nodes
 
-    def test_pin_command_validates_document_ownership(self):
+    def test_pin_command_validates_document_ownership(self) -> None:
         """Test pin command validates node belongs to specified document."""
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
             # Create mock store
             store = SimpleMockStore()
-            mock_create_store.return_value = store
+            cast(MagicMock, mock_create_store).return_value = store
 
             # Add node to doc1
             store.add_node(
@@ -103,14 +104,14 @@ class TestCLIPinCommandIsolation:
                 or "node not found" in result.output.lower()
             )
 
-    def test_pin_command_error_on_nonexistent_node(self):
+    def test_pin_command_error_on_nonexistent_node(self) -> None:
         """Test pin command handles non-existent nodes gracefully."""
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
             # Create mock store
             store = SimpleMockStore()
-            mock_create_store.return_value = store
+            cast(MagicMock, mock_create_store).return_value = store
 
             # Try to pin non-existent node
             result = runner.invoke(cli, ["pin", "nonexistent_node"])
@@ -129,14 +130,14 @@ class SkipTestQueryVisualizationIsolation:
     @patch("ragzoom.cli.click.echo")
     @patch("ragzoom.cli.create_store_with_docker")
     def test_query_tree_visualization_scoped_to_document(
-        self, mock_create_store, mock_echo
-    ):
+        self, mock_create_store: object, mock_echo: object
+    ) -> None:
         """Test that tree visualization only shows specified document."""
         runner = CliRunner()
 
         # Create mock store
         store = SimpleMockStore()
-        mock_create_store.return_value = store
+        cast(MagicMock, mock_create_store).return_value = store
 
         # Add nodes for doc1
         store.add_node(
@@ -211,5 +212,5 @@ class SkipTestQueryVisualizationIsolation:
                 )
 
                 # If it's a DocumentStore, it should have document_id == "doc1"
-                if hasattr(tree_store, "document_id"):
+                if tree_store and hasattr(tree_store, "document_id"):
                     assert tree_store.document_id == "doc1"

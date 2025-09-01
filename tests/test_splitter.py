@@ -14,7 +14,7 @@ os.environ["OPENAI_API_KEY"] = "test-key"
 class TestTextSplitter:
     """Test the TextSplitter class."""
 
-    def test_split_basic_text(self):
+    def test_split_basic_text(self) -> None:
         """Test basic text splitting."""
         index_config = IndexConfig.load(
             target_chunk_tokens=50, preceding_context_tokens=25
@@ -28,7 +28,7 @@ class TestTextSplitter:
         assert all(isinstance(chunk, str) for chunk in chunks)
         assert all(len(chunk) > 0 for chunk in chunks)
 
-    def test_split_respects_boundaries(self):
+    def test_split_respects_boundaries(self) -> None:
         """Test that splitter respects sentence boundaries."""
         index_config = IndexConfig.load(
             target_chunk_tokens=50, preceding_context_tokens=25
@@ -43,7 +43,7 @@ class TestTextSplitter:
             # Each chunk should end with punctuation or be the last chunk
             assert chunk.strip().endswith(".") or chunk == chunks[-1]
 
-    def test_adjacent_context(self):
+    def test_adjacent_context(self) -> None:
         """Test getting adjacent context for chunks."""
         index_config = IndexConfig.load(
             target_chunk_tokens=50, preceding_context_tokens=10
@@ -69,7 +69,7 @@ class TestTextSplitter:
         assert prev_ctx is not None
         assert next_ctx is None
 
-    def test_token_counting(self):
+    def test_token_counting(self) -> None:
         """Test token counting accuracy."""
         index_config = IndexConfig.load(
             target_chunk_tokens=200, preceding_context_tokens=75
@@ -81,7 +81,7 @@ class TestTextSplitter:
         assert isinstance(token_count, int)
         assert token_count > 0
 
-    def test_empty_text(self):
+    def test_empty_text(self) -> None:
         """Test handling of empty text."""
         index_config = IndexConfig.load(
             target_chunk_tokens=200, preceding_context_tokens=75
@@ -92,7 +92,7 @@ class TestTextSplitter:
         with pytest.raises(ValueError, match="produced no valid chunks"):
             splitter.split_text("")
 
-    def test_sequential_chunks(self):
+    def test_sequential_chunks(self) -> None:
         """Test that chunks are sequential without overlap."""
         index_config = IndexConfig.load(
             target_chunk_tokens=50, preceding_context_tokens=25

@@ -1,9 +1,10 @@
 """Service for computing node relevance scores."""
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
+from numpy.typing import NDArray
 
 if TYPE_CHECKING:
     from ragzoom.document_store import DocumentStore
@@ -21,12 +22,13 @@ class ScoringService:
             store: DocumentStore instance for node retrieval
         """
         self.store = store
+        self.logger = logger
 
     def compute_scores(
         self,
         query_embedding: list[float],
         coverage_map: dict[str, bool],
-        candidates: list[tuple[str, float, dict[str, Any]]],
+        candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
     ) -> dict[str, float]:
         """Compute similarity scores for all nodes in coverage map.
 
@@ -78,7 +80,9 @@ class ScoringService:
 
         # Collect valid embeddings
         for node in nodes:
-            if node.embedding is not None:
+            if (
+                node.embedding is not None
+            ):  # Check if embedding exists (works with arrays)
                 valid_embeddings.append(node.embedding)
                 valid_node_ids.append(node.id)
             else:
@@ -103,15 +107,15 @@ class ScoringService:
                     scores[node_id] = similarity
 
             except Exception as e:
-                logger.warning(f"Failed to compute batch similarities: {e}")
+                self.logger.warning(f"Failed to compute batch similarities: {e}")
                 # Fallback to individual computation
                 for node_id in valid_node_ids:
                     scores[node_id] = 0.0
 
     @staticmethod
     def _compute_cosine_similarities_batch(
-        query_vec: np.ndarray, embeddings_matrix: np.ndarray
-    ) -> np.ndarray:
+        query_vec: NDArray[np.float64], embeddings_matrix: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
         """Compute cosine similarities between query and multiple embeddings.
 
         Args:

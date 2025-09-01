@@ -7,7 +7,7 @@ from tests.mock_store import SimpleMockStore
 class TestPathOptimizations:
     """Test path-based optimizations in tree navigation."""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         """Set up test environment with nodes that have proper paths."""
         self.store = SimpleMockStore()
 
@@ -76,7 +76,7 @@ class TestPathOptimizations:
             path="01",  # Left-right grandchild path
         )
 
-    def test_get_node_depth_with_paths(self):
+    def test_get_node_depth_with_paths(self) -> None:
         """Test that get_node_depth uses path field for instant calculation."""
         navigator = TreeNavigator(self.store.nodes)
 
@@ -87,7 +87,7 @@ class TestPathOptimizations:
         assert navigator.get_node_depth("left_left") == 2  # Second level
         assert navigator.get_node_depth("left_right") == 2  # Second level
 
-    def test_get_parent_node_with_paths(self):
+    def test_get_parent_node_with_paths(self) -> None:
         """Test that get_parent_node uses path field for instant lookup."""
         navigator = TreeNavigator(self.store.nodes)
 
@@ -103,7 +103,7 @@ class TestPathOptimizations:
         assert left_left_parent is not None
         assert left_left_parent.id == "left"
 
-    def test_get_sibling_node_with_paths(self):
+    def test_get_sibling_node_with_paths(self) -> None:
         """Test that get_sibling_node uses path field for instant lookup."""
         navigator = TreeNavigator(self.store.nodes)
 
@@ -123,7 +123,7 @@ class TestPathOptimizations:
         assert left_left_sibling is not None
         assert left_left_sibling.id == "left_right"
 
-    def test_is_left_child_with_paths(self):
+    def test_is_left_child_with_paths(self) -> None:
         """Test that is_left_child uses path field for instant determination."""
         navigator = TreeNavigator(self.store.nodes)
 
@@ -134,7 +134,7 @@ class TestPathOptimizations:
         assert navigator.is_left_child("left_left")  # Left-left is left child
         assert not navigator.is_left_child("left_right")  # Left-right is right child
 
-    def test_is_right_child_with_paths(self):
+    def test_is_right_child_with_paths(self) -> None:
         """Test that is_right_child uses path field for instant determination."""
         navigator = TreeNavigator(self.store.nodes)
 
@@ -145,7 +145,7 @@ class TestPathOptimizations:
         assert not navigator.is_right_child("left_left")  # Left-left is left child
         assert navigator.is_right_child("left_right")  # Left-right is right child
 
-    def test_pinned_nodes_path_filtering(self):
+    def test_pinned_nodes_path_filtering(self) -> None:
         """Test that get_pinned_nodes uses path-based database filtering."""
         # Pin some nodes at different depths
         self.store.pin_node("root")  # Depth 0
@@ -171,7 +171,7 @@ class TestPathOptimizations:
         pinned_all = self.store.get_pinned_nodes()
         assert len(pinned_all) == 3
 
-    def test_path_optimization_performance(self):
+    def test_path_optimization_performance(self) -> None:
         """Test that path-based methods avoid database queries where possible."""
         navigator = TreeNavigator(self.store.nodes)
 

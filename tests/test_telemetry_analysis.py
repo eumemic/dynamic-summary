@@ -11,6 +11,7 @@ from ragzoom.telemetry_analysis import (
     detect_verbatim_concatenations,
     parse_telemetry_format,
 )
+from ragzoom.telemetry_types import TelemetryDataDict
 
 
 class TestTelemetryFormatParsing:
@@ -22,7 +23,7 @@ class TestTelemetryFormatParsing:
         Consolidated test that replaces the three separate format tests which
         were all testing the same thing (v4.2 format only).
         """
-        telemetry_data = {
+        telemetry_data: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 5000,
@@ -34,7 +35,11 @@ class TestTelemetryFormatParsing:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
                     "node_id": "node-1",
@@ -58,24 +63,24 @@ class TestTelemetryFormatParsing:
 
     def test_parse_missing_format_version(self) -> None:
         """Test parsing telemetry without format version."""
-        telemetry_data = {"documents": {}}
+        telemetry_data: dict[str, object] = {"documents": {}}
 
         with pytest.raises(TelemetryAnalysisError, match="Missing format_version"):
-            parse_telemetry_format(telemetry_data)
+            parse_telemetry_format(telemetry_data)  # type: ignore[arg-type]
 
     def test_parse_unsupported_format_version(self) -> None:
         """Test parsing telemetry with unsupported format version."""
-        telemetry_data = {"format_version": "4.1", "nodes": []}
+        telemetry_data: dict[str, object] = {"format_version": "4.1", "nodes": []}
 
         with pytest.raises(
             TelemetryAnalysisError, match="Unsupported telemetry format version"
         ):
-            parse_telemetry_format(telemetry_data)
+            parse_telemetry_format(telemetry_data)  # type: ignore[arg-type]
 
     def test_parse_invalid_data_type(self) -> None:
         """Test parsing non-dictionary data."""
         with pytest.raises(TelemetryAnalysisError, match="must be a dictionary"):
-            parse_telemetry_format("invalid")
+            parse_telemetry_format("invalid")  # type: ignore[arg-type]
 
 
 class TestTargetFitMetrics:
@@ -148,7 +153,7 @@ class TestTargetFitMetrics:
 
         from ragzoom.telemetry_analysis import compute_target_fit_metrics
 
-        result = compute_target_fit_metrics(nodes, target_size=100)
+        result = compute_target_fit_metrics(nodes, target_size=100)  # type: ignore[arg-type]
 
         # Errors should be: -5 (95-100), +5 (105-100), -2 (98-100)
         # Median of [-5, -2, 5] = -2
@@ -187,7 +192,7 @@ class TestTargetFitMetrics:
 
         from ragzoom.telemetry_analysis import compute_target_fit_metrics
 
-        result = compute_target_fit_metrics(nodes, target_size=100)
+        result = compute_target_fit_metrics(nodes, target_size=100)  # type: ignore[arg-type]
 
         # Should use the last attempt (90 tokens)
         # Error should be: -10 (90-100)
@@ -201,7 +206,7 @@ class TestSimplifiedMetrics:
     # Config fixture removed - telemetry functions no longer need config
 
     @pytest.fixture
-    def sample_telemetry(self) -> dict:
+    def sample_telemetry(self) -> TelemetryDataDict:
         """Create sample telemetry data with summary attempts."""
         return {
             "format_version": "4.2",
@@ -215,7 +220,11 @@ class TestSimplifiedMetrics:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
                     "node_id": "summary-1",
@@ -254,7 +263,9 @@ class TestSimplifiedMetrics:
             ],
         }
 
-    def test_compute_simplified_metrics(self, sample_telemetry: dict) -> None:
+    def test_compute_simplified_metrics(
+        self, sample_telemetry: TelemetryDataDict
+    ) -> None:
         """Test computing simplified metrics from telemetry."""
         result = compute_simplified_metrics(sample_telemetry)
 
@@ -280,7 +291,9 @@ class TestSimplifiedMetrics:
             assert hasattr(metrics.retries, "retry_rate")
             assert hasattr(metrics.retries, "max_retries")
 
-    def test_simplified_metrics_empty_data(self, empty_telemetry_data) -> None:
+    def test_simplified_metrics_empty_data(
+        self, empty_telemetry_data: TelemetryDataDict
+    ) -> None:
         """Test simplified metrics with empty telemetry."""
         result = compute_simplified_metrics(empty_telemetry_data)
 
@@ -289,7 +302,7 @@ class TestSimplifiedMetrics:
 
     def test_simplified_metrics_only_leaf_nodes(self) -> None:
         """Test simplified metrics with only leaf nodes (no summaries)."""
-        leaf_only_telemetry = {
+        leaf_only_telemetry: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
@@ -301,7 +314,11 @@ class TestSimplifiedMetrics:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
                     "node_id": "leaf-1",
@@ -316,7 +333,9 @@ class TestSimplifiedMetrics:
         # Should return empty metrics (no summary attempts)
         assert result.metrics_by_chunk_size == {}
 
-    def test_simplified_metrics_cost_calculations(self, sample_telemetry: dict) -> None:
+    def test_simplified_metrics_cost_calculations(
+        self, sample_telemetry: TelemetryDataDict
+    ) -> None:
         """Test that cost calculations in simplified metrics are correct."""
         result = compute_simplified_metrics(sample_telemetry)
 
@@ -352,7 +371,7 @@ class TestBatchEfficiency:
 
     def test_compute_batch_efficiency(self) -> None:
         """Test computing batch efficiency from telemetry."""
-        telemetry_data = {
+        telemetry_data: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
@@ -364,7 +383,11 @@ class TestBatchEfficiency:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
                     "node_id": "node-1",
@@ -420,7 +443,9 @@ class TestBatchEfficiency:
         # Total batched: 3, Total embeddings: 3 → 100% efficiency
         assert result["batch_utilization"] == pytest.approx(100.0, rel=0.01)
 
-    def test_batch_efficiency_empty_data(self, empty_telemetry_data) -> None:
+    def test_batch_efficiency_empty_data(
+        self, empty_telemetry_data: TelemetryDataDict
+    ) -> None:
         """Test batch efficiency with empty telemetry."""
         result = compute_batch_efficiency(empty_telemetry_data)
 
@@ -437,7 +462,7 @@ class TestRetryAnalysis:
     def test_successful_attempts_equals_node_count_new_format(self) -> None:
         """Test that successful attempts equals number of summary nodes (new format)."""
         # Create telemetry with 3 summary nodes, some with multiple attempts
-        telemetry_data = {
+        telemetry_data: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 1000,
@@ -449,7 +474,11 @@ class TestRetryAnalysis:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 # Leaf node - should be skipped
                 {
@@ -552,7 +581,7 @@ class TestRetryAnalysis:
     def test_successful_attempts_backward_compat_no_accepted_field(self) -> None:
         """Test backward compatibility without accepted_attempt field."""
         # Format without accepted_attempt field (should use last attempt)
-        telemetry_data = {
+        telemetry_data: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test",
             "source_document_tokens": 1000,
@@ -564,7 +593,11 @@ class TestRetryAnalysis:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 # Summary node with multiple attempts, no accepted_attempt field
                 {
@@ -604,7 +637,7 @@ class TestRetryAnalysis:
 
     def test_analyze_retry_patterns(self) -> None:
         """Test analyzing retry patterns from telemetry."""
-        telemetry_data = {
+        telemetry_data: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
@@ -616,7 +649,11 @@ class TestRetryAnalysis:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
                     "node_id": "summary-1",
@@ -719,7 +756,7 @@ class TestRetryAnalysis:
 
     def test_retry_analysis_no_retries(self) -> None:
         """Test retry analysis with no retries."""
-        telemetry_data = {
+        telemetry_data: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
@@ -731,7 +768,11 @@ class TestRetryAnalysis:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
                     "node_id": "summary-1",
@@ -766,7 +807,7 @@ class TestFullMetricsComputation:
     # Config fixture removed - telemetry functions no longer need config
 
     @pytest.fixture
-    def full_telemetry(self) -> dict:
+    def full_telemetry(self) -> TelemetryDataDict:
         """Create comprehensive telemetry data."""
         return {
             "format_version": "4.2",
@@ -780,7 +821,11 @@ class TestFullMetricsComputation:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
                     "node_id": "leaf-1",
@@ -836,7 +881,9 @@ class TestFullMetricsComputation:
             ],
         }
 
-    def test_compute_full_metrics_from_telemetry(self, full_telemetry: dict) -> None:
+    def test_compute_full_metrics_from_telemetry(
+        self, full_telemetry: TelemetryDataDict
+    ) -> None:
         """Test computing full metrics from telemetry."""
         metrics = compute_metrics_from_telemetry(full_telemetry)
 
@@ -867,7 +914,7 @@ class TestFullMetricsComputation:
 
     def test_metrics_include_retry_attempts(self) -> None:
         """Test that metrics include ALL attempts, not just accepted ones."""
-        telemetry = {
+        telemetry: TelemetryDataDict = {
             "format_version": "4.2",
             "document_id": "test_doc",
             "source_document_tokens": 100,
@@ -879,7 +926,11 @@ class TestFullMetricsComputation:
             },
             "model_metadata": {},
             "system_prompts": {},
-            "runtime_info": {},
+            "runtime_info": {
+                "python_version": "3.11.0",
+                "platform": "test",
+                "ragzoom_version": "1.0.0",
+            },
             "nodes": [
                 {
                     "node_id": "summary-1",
@@ -960,7 +1011,7 @@ class TestVerbatimDetection:
             },
         ]
 
-        result = detect_verbatim_concatenations(nodes)
+        result = detect_verbatim_concatenations(nodes)  # type: ignore[arg-type]
         assert result["total_summaries"] == 2
         assert result["verbatim_count"] == 0
         assert result["verbatim_percentage"] == 0.0
@@ -1004,7 +1055,7 @@ class TestVerbatimDetection:
             },
         ]
 
-        result = detect_verbatim_concatenations(nodes)
+        result = detect_verbatim_concatenations(nodes)  # type: ignore[arg-type]
         assert result["total_summaries"] == 3
         assert result["verbatim_count"] == 2
         assert result["verbatim_percentage"] == pytest.approx(66.67, 0.1)
@@ -1044,11 +1095,11 @@ class TestVerbatimDetection:
         ]
 
         # With default 2% tolerance
-        result = detect_verbatim_concatenations(nodes, tolerance=0.02)
+        result = detect_verbatim_concatenations(nodes, tolerance=0.02)  # type: ignore[arg-type]
         assert result["verbatim_count"] == 1  # Only the 0.98 ratio
 
         # With 5% tolerance
-        result = detect_verbatim_concatenations(nodes, tolerance=0.05)
+        result = detect_verbatim_concatenations(nodes, tolerance=0.05)  # type: ignore[arg-type]
         assert result["verbatim_count"] == 2  # Both are caught
 
     def test_height_distribution(self) -> None:
@@ -1070,7 +1121,7 @@ class TestVerbatimDetection:
             for i in range(6)
         ]
 
-        result = detect_verbatim_concatenations(nodes)
+        result = detect_verbatim_concatenations(nodes)  # type: ignore[arg-type]
         assert result["verbatim_count"] == 4
         assert result["height_distribution"] == {1: 2, 2: 1, 3: 1}
 
@@ -1094,5 +1145,5 @@ class TestVerbatimDetection:
             },
         ]
 
-        result = detect_verbatim_concatenations(nodes)
+        result = detect_verbatim_concatenations(nodes)  # type: ignore[arg-type]
         assert result["verbatim_count"] == 0  # Accepted attempt is not verbatim

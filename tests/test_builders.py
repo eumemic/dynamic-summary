@@ -1,7 +1,6 @@
 """Test data builders for creating test fixtures easily."""
 
 from types import SimpleNamespace
-from typing import Any
 
 from ragzoom.models import Document, TreeNode
 
@@ -9,7 +8,7 @@ from ragzoom.models import Document, TreeNode
 class TreeNodeBuilder:
     """Builder for creating TreeNode test data with sensible defaults."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._data = {
             "id": "test-node-1",
             "text": "Test node text",
@@ -75,7 +74,7 @@ class TreeNodeBuilder:
 
     def build(
         self, target: str = "model"
-    ) -> TreeNode | SimpleNamespace | dict[str, Any]:
+    ) -> TreeNode | SimpleNamespace | dict[str, object]:
         """Build the node in the specified format.
 
         Args:
@@ -117,17 +116,21 @@ class TreeNodeBuilder:
     # Legacy methods for backward compatibility
     def build_simple_namespace(self) -> SimpleNamespace:
         """Build a SimpleNamespace for mock store compatibility. [DEPRECATED: Use build('namespace')]"""
-        return self.build("namespace")
+        result = self.build("namespace")
+        assert isinstance(result, SimpleNamespace)
+        return result
 
-    def build_dict(self) -> dict[str, Any]:
+    def build_dict(self) -> dict[str, object]:
         """Build a dictionary for batch operations. [DEPRECATED: Use build('dict')]"""
-        return self.build("dict")
+        result = self.build("dict")
+        assert isinstance(result, dict)
+        return result
 
 
 class DocumentBuilder:
     """Builder for creating Document test data with sensible defaults."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._data = {
             "id": "test-doc-1",
             "file_path": "/test/document.txt",
@@ -189,7 +192,9 @@ class DocumentBuilder:
     # Legacy method for backward compatibility
     def build_simple_namespace(self) -> SimpleNamespace:
         """Build a SimpleNamespace for mock store compatibility. [DEPRECATED: Use build('namespace')]"""
-        return self.build("namespace")
+        result = self.build("namespace")
+        assert isinstance(result, SimpleNamespace)
+        return result
 
 
 def create_test_tree_nodes(
@@ -231,7 +236,9 @@ def create_test_tree_nodes(
             i * 10, (i + 1) * 10
         )
 
-        nodes.append(builder.build())
+        result = builder.build("model")
+        assert isinstance(result, TreeNode)
+        nodes.append(result)
 
     return nodes
 
@@ -268,6 +275,8 @@ def create_simple_namespace_tree(
             i * 10, (i + 1) * 10
         )
 
-        nodes.append(builder.build("namespace"))
+        result = builder.build("namespace")
+        assert isinstance(result, SimpleNamespace)
+        nodes.append(result)
 
     return nodes

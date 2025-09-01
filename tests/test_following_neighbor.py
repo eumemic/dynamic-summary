@@ -1,12 +1,20 @@
 """Tests for following_neighbor_id column and bidirectional neighbor relationships."""
 
+# Type imports for test configuration
+
+import numpy as np
+from numpy.typing import NDArray
+from openai import AsyncOpenAI
+
 from ragzoom.models import TreeNode
+from ragzoom.store import StoreManager
+from tests.conftest import BackwardCompatibilityConfig
 
 
 class TestFollowingNeighbor:
     """Test following_neighbor_id column and relationships."""
 
-    def test_tree_node_has_following_neighbor_id_column(self):
+    def test_tree_node_has_following_neighbor_id_column(self) -> None:
         """TreeNode model should have following_neighbor_id column."""
         # Verify the column exists on the model
         assert hasattr(TreeNode, "following_neighbor_id")
@@ -18,14 +26,22 @@ class TestFollowingNeighbor:
             column.nullable is True
         )  # Should be nullable (last node has no following)
 
-    def test_bidirectional_neighbor_consistency(self, base_config, store):
+    def test_bidirectional_neighbor_consistency(
+        self, base_config: BackwardCompatibilityConfig, store: StoreManager
+    ) -> None:
         """Verify bidirectional consistency: if A.following = B, then B.preceding = A."""
         # Create some test nodes with neighbor relationships
-        nodes_data = []
+        nodes_data: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = []
         node_ids = ["node1", "node2", "node3", "node4"]
 
         for i, node_id in enumerate(node_ids):
-            node_data = {
+            node_data: dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ] = {
                 "node_id": node_id,
                 "text": f"Node {i} text",
                 "embedding": [0.1] * 10,  # Simple embedding
@@ -81,8 +97,11 @@ class TestFollowingNeighbor:
                 )
 
     def test_leaf_nodes_have_correct_neighbor_relationships(
-        self, base_config, store, mock_openai_async_client
-    ):
+        self,
+        base_config: BackwardCompatibilityConfig,
+        store: StoreManager,
+        mock_openai_async_client: AsyncOpenAI,
+    ) -> None:
         """Test that leaf nodes created during indexing have correct neighbor relationships."""
         import asyncio
 
@@ -146,8 +165,11 @@ class TestFollowingNeighbor:
                 ), f"Leaf {i} following should be leaf {i+1}"
 
     def test_parent_nodes_have_correct_neighbor_relationships(
-        self, base_config, store, mock_openai_async_client
-    ):
+        self,
+        base_config: BackwardCompatibilityConfig,
+        store: StoreManager,
+        mock_openai_async_client: AsyncOpenAI,
+    ) -> None:
         """Test that parent nodes at each level have correct neighbor relationships."""
         import asyncio
 
@@ -157,8 +179,9 @@ class TestFollowingNeighbor:
         test_doc = " ".join([f"Chunk {i}." for i in range(8)])  # 8 chunks -> 3 levels
 
         # Create tree builder with small chunk size
-        config = base_config.index_config.replace(target_chunk_tokens=3)
-        # Create document with proper metadata
+        config = base_config.index_config.replace(
+            target_chunk_tokens=3
+        )  # Create document with proper metadata
         doc_store = store.add_document(
             document_id="parent-neighbor-test",
             file_path=None,
@@ -176,7 +199,7 @@ class TestFollowingNeighbor:
         # Get all nodes and group by height
         all_nodes = doc_store.nodes.get_all()
 
-        nodes_by_height = {}
+        nodes_by_height: dict[int, list[TreeNode]] = {}
         for node in all_nodes:
             if node.height not in nodes_by_height:
                 nodes_by_height[node.height] = []
@@ -186,7 +209,6 @@ class TestFollowingNeighbor:
         for height, level_nodes in nodes_by_height.items():
             # Sort by span_start to get logical order
             level_nodes.sort(key=lambda n: n.span_start)
-
             for i, node in enumerate(level_nodes):
                 if i == 0:
                     assert (

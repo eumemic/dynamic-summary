@@ -2,18 +2,22 @@
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from ragzoom.telemetry_cli import cli
+from ragzoom.telemetry_types import TelemetryDataDict
 
 
 class TestTelemetryCompare:
     """Test the compare command with directory support."""
 
     @pytest.fixture
-    def create_test_files(self, tmp_path, sample_telemetry_data):
+    def create_test_files(
+        self, tmp_path: Path, sample_telemetry_data: TelemetryDataDict
+    ) -> tuple[Path, Path]:
         """Create test telemetry files in temporary directories."""
         baseline_dir = tmp_path / "baseline"
         current_dir = tmp_path / "current"
@@ -21,14 +25,23 @@ class TestTelemetryCompare:
         current_dir.mkdir()
 
         # Adapt shared telemetry data for CLI testing format
-        cli_telemetry_data = copy.deepcopy(sample_telemetry_data)
+        # Create a completely mutable copy using JSON serialization roundtrip
+        import json
+
+        cli_telemetry_data = json.loads(json.dumps(sample_telemetry_data))
         cli_telemetry_data["document_id"] = "test.txt"
         cli_telemetry_data["config"]["target_chunk_tokens"] = 100
 
         # Convert summary format from shared fixture to CLI test format
         for i, node in enumerate(cli_telemetry_data["nodes"]):
-            if node.get("summary"):
-                # Convert from shared format to CLI format
+            # Check if node already has summary_attempts from the fixture
+            if node.get("summary_attempts"):
+                # Fix the actual_tokens to have realistic deviation
+                for attempt in node["summary_attempts"]:
+                    attempt["actual_tokens"] = 95  # 5% deviation instead of 75%
+                    attempt["target_tokens"] = 100
+            elif node.get("summary"):
+                # Convert from old shared format to CLI format
                 summary_data = node["summary"]["create"]
                 node["summary_attempts"] = [
                     {
@@ -44,16 +57,20 @@ class TestTelemetryCompare:
                 node["accepted_attempt"] = 0
                 del node["summary"]
             elif node.get("embedding"):
-                # Convert embedding format
-                embed_data = node["embedding"]["create"]
-                node["embedding"] = {
-                    "text_tokens": embed_data["input_tokens"],
-                    "batch_size": 1,
-                    "batch_position": 0,
-                    "model": "text-embedding-3-small",
-                    "start_time": node["created_at"],
-                    "end_time": node["created_at"] + 0.5,
-                }
+                # Convert embedding format - handle both old and new formats
+                embed_data = node["embedding"]
+                if "create" in embed_data:
+                    # Old format
+                    create_data = embed_data["create"]
+                    node["embedding"] = {
+                        "text_tokens": create_data["input_tokens"],
+                        "batch_size": 1,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
+                        "start_time": node["created_at"],
+                        "end_time": node["created_at"] + 0.5,
+                    }
+                # else: New format - already in correct structure, no conversion needed
 
         # Create baseline files
         baseline_100 = baseline_dir / "telemetry_100_tokens.json"
@@ -96,7 +113,7 @@ class TestTelemetryCompare:
 
         return baseline_dir, current_dir
 
-    def test_compare_single_files(self, create_test_files):
+    def test_compare_single_files(self, create_test_files: tuple[Path, Path]) -> None:
         """Test comparing two individual files."""
         baseline_dir, current_dir = create_test_files
         baseline_file = baseline_dir / "telemetry_100_tokens.json"
@@ -124,7 +141,7 @@ class TestTelemetryCompare:
         # Chunk size should appear in configuration section
         assert "Target Chunk Tokens" in result.output
 
-    def test_compare_directories(self, create_test_files):
+    def test_compare_directories(self, create_test_files: tuple[Path, Path]) -> None:
         """Test comparing two directories with matching files."""
         baseline_dir, current_dir = create_test_files
 
@@ -144,7 +161,9 @@ class TestTelemetryCompare:
         assert "Cost per 1M source tokens" in result.output
         # Should be a unified table with simplified format
 
-    def test_compare_directories_with_output(self, create_test_files, tmp_path):
+    def test_compare_directories_with_output(
+        self, create_test_files: tuple[Path, Path], tmp_path: Path
+    ) -> None:
         """Test comparing directories with markdown output."""
         baseline_dir, current_dir = create_test_files
 
@@ -162,7 +181,7 @@ class TestTelemetryCompare:
         # Check for markdown format
         assert "| Chunk Size |" in result.output or "| Metric |" in result.output
 
-    def test_compare_directories_no_matches(self, tmp_path):
+    def test_compare_directories_no_matches(self, tmp_path: Path) -> None:
         """Test comparing directories with no matching files."""
         baseline_dir = tmp_path / "baseline"
         current_dir = tmp_path / "current"
@@ -179,7 +198,9 @@ class TestTelemetryCompare:
         assert result.exit_code == 1
         assert "No matching telemetry files found" in result.output
 
-    def test_compare_mixed_types_error(self, tmp_path, sample_telemetry_data):
+    def test_compare_mixed_types_error(
+        self, tmp_path: Path, sample_telemetry_data: TelemetryDataDict
+    ) -> None:
         """Test error when comparing a file with a directory."""
         test_dir = tmp_path / "test_dir"
         test_dir.mkdir()
@@ -194,7 +215,7 @@ class TestTelemetryCompare:
             "Error: Both arguments must be either files or directories" in result.output
         )
 
-    def test_file_matching_logic(self, tmp_path):
+    def test_file_matching_logic(self, tmp_path: Path) -> None:
         """Test the file matching logic handles various naming patterns."""
         from ragzoom.telemetry_cli import _match_telemetry_files
 
@@ -227,17 +248,27 @@ class TestTelemetryCompare:
         assert "other_file.json" not in match_names
         assert "telemetry_300_tokens.json" not in match_names
 
-    def test_compare_with_regression(self, tmp_path, sample_telemetry_data):
+    def test_compare_with_regression(
+        self, tmp_path: Path, sample_telemetry_data: TelemetryDataDict
+    ) -> None:
         """Test that regressions are detected and exit code is 1."""
         # Use the same approach as create_test_files fixture - adapt shared telemetry data
-        cli_data = copy.deepcopy(sample_telemetry_data)
+        import json
+
+        cli_data = json.loads(json.dumps(sample_telemetry_data))
         cli_data["document_id"] = "test.txt"
         cli_data["config"]["target_chunk_tokens"] = 100
 
         # Convert summary format from shared fixture to CLI test format
         for node in cli_data["nodes"]:
-            if node.get("summary"):
-                # Convert from shared format to CLI format
+            # Check if node already has summary_attempts from the fixture
+            if node.get("summary_attempts"):
+                # Fix the actual_tokens to have realistic deviation
+                for attempt in node["summary_attempts"]:
+                    attempt["actual_tokens"] = 95  # 5% deviation instead of 75%
+                    attempt["target_tokens"] = 100
+            elif node.get("summary"):
+                # Convert from old shared format to CLI format
                 summary_data = node["summary"]["create"]
                 node["summary_attempts"] = [
                     {
@@ -253,16 +284,20 @@ class TestTelemetryCompare:
                 node["accepted_attempt"] = 0
                 del node["summary"]
             elif node.get("embedding"):
-                # Convert embedding format
-                embed_data = node["embedding"]["create"]
-                node["embedding"] = {
-                    "text_tokens": embed_data["input_tokens"],
-                    "batch_size": 1,
-                    "batch_position": 0,
-                    "model": "text-embedding-3-small",
-                    "start_time": node["created_at"],
-                    "end_time": node["created_at"] + 0.5,
-                }
+                # Convert embedding format - handle both old and new formats
+                embed_data = node["embedding"]
+                if "create" in embed_data:
+                    # Old format
+                    create_data = embed_data["create"]
+                    node["embedding"] = {
+                        "text_tokens": create_data["input_tokens"],
+                        "batch_size": 1,
+                        "batch_position": 0,
+                        "model": "text-embedding-3-small",
+                        "start_time": node["created_at"],
+                        "end_time": node["created_at"] + 0.5,
+                    }
+                # else: New format - already in correct structure, no conversion needed
 
         baseline_file = tmp_path / "baseline.json"
         baseline_file.write_text(json.dumps(cli_data))
@@ -297,25 +332,31 @@ class TestTelemetryCompare:
         # Chunk size should appear in configuration section
         assert "Target Chunk Tokens" in result.output
 
-    def test_dynamic_thresholds_computation(self, tmp_path, sample_telemetry_data):
+    def test_dynamic_thresholds_computation(
+        self, tmp_path: Path, sample_telemetry_data: TelemetryDataDict
+    ) -> None:
         """Test that dynamic thresholds are computed from baseline variance."""
         import pytest
 
         pytest.skip("Dynamic thresholds removed - using fixed thresholds")
 
-    def test_dynamic_thresholds_emoji_logic(self, tmp_path, sample_telemetry_data):
+    def test_dynamic_thresholds_emoji_logic(
+        self, tmp_path: Path, sample_telemetry_data: TelemetryDataDict
+    ) -> None:
         """Test emoji assignment based on variance thresholds."""
         import pytest
 
         pytest.skip("Dynamic thresholds removed - using fixed thresholds")
 
-    def test_variance_metrics_in_output(self, tmp_path, sample_telemetry_data):
+    def test_variance_metrics_in_output(
+        self, tmp_path: Path, sample_telemetry_data: TelemetryDataDict
+    ) -> None:
         """Test that variance metrics are displayed in output."""
         import pytest
 
         pytest.skip("Dynamic thresholds removed - variance no longer displayed")
 
-    def test_emotional_feedback_functions(self):
+    def test_emotional_feedback_functions(self) -> None:
         """Test the emotional feedback emoji functions."""
         import pytest
 

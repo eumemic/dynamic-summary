@@ -3,6 +3,8 @@
 import pytest
 
 from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
+from ragzoom.store import StoreManager
+from tests.mock_store import SimpleMockStore
 
 
 @pytest.mark.integration
@@ -10,13 +12,15 @@ class TestStore:
     """Test the Store class."""
 
     @pytest.fixture
-    def temp_store(self, store):
+    def temp_store(
+        self, store: SimpleMockStore | StoreManager
+    ) -> SimpleMockStore | StoreManager:
         """Create a temporary store for testing using conftest store fixture."""
         # For integration tests, use the store fixture from conftest.py
         # which handles PostgreSQL with proper isolation or SQLite fallback
         return store
 
-    def test_add_node(self, temp_store):
+    def test_add_node(self, temp_store: SimpleMockStore | StoreManager) -> None:
         """Test adding a node to the store."""
         # Create document first to satisfy foreign key constraint
         temp_store.add_document(
@@ -43,7 +47,7 @@ class TestStore:
         assert node.span_start == 0
         assert node.span_end == 10
 
-    def test_get_node(self, temp_store):
+    def test_get_node(self, temp_store: SimpleMockStore | StoreManager) -> None:
         """Test retrieving a node."""
         # Add a node
         temp_store.nodes.add_node(
@@ -64,7 +68,9 @@ class TestStore:
         node = temp_store.nodes.get_node("non-existent")
         assert node is None
 
-    def test_node_relationships(self, temp_store):
+    def test_node_relationships(
+        self, temp_store: SimpleMockStore | StoreManager
+    ) -> None:
         """Test parent-child relationships."""
         # Create parent and children
         temp_store.nodes.add_node(
@@ -96,7 +102,10 @@ class TestStore:
         )
 
         # Test relationships
-        left, right = temp_store.tree.get_children("parent")
+        children = temp_store.tree.get_children("parent")
+        left, right = children
+        assert left is not None
+        assert right is not None
         assert left.id == "child1"
         assert right.id == "child2"
 
@@ -104,7 +113,7 @@ class TestStore:
         assert len(ancestors) == 1
         assert ancestors[0].id == "parent"
 
-    def test_search_similar(self, temp_store):
+    def test_search_similar(self, temp_store: SimpleMockStore | StoreManager) -> None:
         """Test vector similarity search."""
         # Add some nodes
         for i in range(5):
@@ -125,15 +134,69 @@ class TestStore:
         assert all(isinstance(r, tuple) for r in results)
         assert all(len(r) == 3 for r in results)  # (id, distance, metadata)
 
-    def test_mmr_diverse_results(self, temp_store):
+    def test_mmr_diverse_results(
+        self, temp_store: SimpleMockStore | StoreManager
+    ) -> None:
         """Test MMR diversity computation."""
+        from ragzoom.services.search_service import NodeMetadataDict
+
         # Create candidates with different similarities
-        candidates = [
-            ("node-1", 0.1, {}),  # Very similar
-            ("node-2", 0.15, {}),  # Similar
-            ("node-3", 0.5, {}),  # Less similar
-            ("node-4", 0.12, {}),  # Similar to node-1
-            ("node-5", 0.8, {}),  # Different
+        candidates: list[tuple[str, float, NodeMetadataDict]] = [
+            (
+                "node-1",
+                0.1,
+                {
+                    "span_start": 0,
+                    "span_end": 10,
+                    "parent_id": "root",
+                    "document_id": "test-doc",
+                    "is_leaf": 1,
+                },
+            ),  # Very similar
+            (
+                "node-2",
+                0.15,
+                {
+                    "span_start": 10,
+                    "span_end": 20,
+                    "parent_id": "root",
+                    "document_id": "test-doc",
+                    "is_leaf": 1,
+                },
+            ),  # Similar
+            (
+                "node-3",
+                0.5,
+                {
+                    "span_start": 20,
+                    "span_end": 30,
+                    "parent_id": "root",
+                    "document_id": "test-doc",
+                    "is_leaf": 1,
+                },
+            ),  # Less similar
+            (
+                "node-4",
+                0.12,
+                {
+                    "span_start": 30,
+                    "span_end": 40,
+                    "parent_id": "root",
+                    "document_id": "test-doc",
+                    "is_leaf": 1,
+                },
+            ),  # Similar to node-1
+            (
+                "node-5",
+                0.8,
+                {
+                    "span_start": 40,
+                    "span_end": 50,
+                    "parent_id": "root",
+                    "document_id": "test-doc",
+                    "is_leaf": 1,
+                },
+            ),  # Different
         ]
 
         # Add nodes with embeddings
@@ -168,7 +231,7 @@ class TestStore:
         # Should include some diversity
         assert len(set(selected)) == 3
 
-    def test_pinned_nodes(self, temp_store):
+    def test_pinned_nodes(self, temp_store: SimpleMockStore | StoreManager) -> None:
         """Test node pinning functionality."""
         # Create a tree structure with proper depths
         # Root node (depth 0)
@@ -238,7 +301,9 @@ class TestStore:
         pinned = temp_store.get_pinned_nodes(depth_max=1)
         assert len(pinned) == 1  # Still only root (level2 has depth 2)
 
-    def test_cache_functionality(self, temp_store):
+    def test_cache_functionality(
+        self, temp_store: SimpleMockStore | StoreManager
+    ) -> None:
         """Test LRU cache behavior."""
         # Add a node
         temp_store.nodes.add_node(
@@ -261,7 +326,9 @@ class TestStore:
         # Check cache contains the node
         assert "cached" in temp_store.node_cache
 
-    def test_node_depth_calculation(self, temp_store):
+    def test_node_depth_calculation(
+        self, temp_store: SimpleMockStore | StoreManager
+    ) -> None:
         """Test dynamic depth calculation."""
         # Create a tree structure:
         #     root
@@ -351,7 +418,9 @@ class TestStore:
         with pytest.raises(NodeNotFoundError):
             temp_store.tree.get_node_depth("non-existent")
 
-    def test_node_height_calculation(self, temp_store):
+    def test_node_height_calculation(
+        self, temp_store: SimpleMockStore | StoreManager
+    ) -> None:
         """Test dynamic height calculation."""
         # Create the same tree structure
         temp_store.nodes.add_node(
@@ -420,14 +489,20 @@ class TestStore:
 
         # Test height calculations using stored values
         # Leaf nodes have height 0
-        assert temp_store.nodes.get_node("ll").height == 0
-        assert temp_store.nodes.get_node("lr").height == 0
-        assert temp_store.nodes.get_node("rc").height == 0
+        ll_node = temp_store.nodes.get_node("ll")
+        lr_node = temp_store.nodes.get_node("lr")
+        rc_node = temp_store.nodes.get_node("rc")
+        assert ll_node is not None and ll_node.height == 0
+        assert lr_node is not None and lr_node.height == 0
+        assert rc_node is not None and rc_node.height == 0
 
         # Internal nodes have height = 1 + max(child heights)
-        assert temp_store.nodes.get_node("left").height == 1  # max(0, 0) + 1
-        assert temp_store.nodes.get_node("right").height == 1  # has only left child
-        assert temp_store.nodes.get_node("root").height == 2  # max(1, 1) + 1
+        left_node = temp_store.nodes.get_node("left")
+        right_node = temp_store.nodes.get_node("right")
+        root_node = temp_store.nodes.get_node("root")
+        assert left_node is not None and left_node.height == 1  # max(0, 0) + 1
+        assert right_node is not None and right_node.height == 1  # has only left child
+        assert root_node is not None and root_node.height == 2  # max(1, 1) + 1
 
         # Test is_leaf_node
         assert temp_store.tree.is_leaf_node("ll") is True
@@ -442,7 +517,9 @@ class TestStore:
         # Test non-existent node
         assert temp_store.nodes.get_node("non-existent") is None
 
-    def test_depth_height_edge_cases(self, temp_store):
+    def test_depth_height_edge_cases(
+        self, temp_store: SimpleMockStore | StoreManager
+    ) -> None:
         """Test edge cases for depth/height calculation."""
         # Test single node (both root and leaf)
         temp_store.nodes.add_node(
@@ -455,7 +532,8 @@ class TestStore:
         )
 
         assert temp_store.tree.get_node_depth("single") == 0  # Root has depth 0
-        assert temp_store.nodes.get_node("single").height == 0  # Leaf has height 0
+        single_node = temp_store.nodes.get_node("single")
+        assert single_node is not None and single_node.height == 0  # Leaf has height 0
         assert temp_store.tree.is_root_node("single") is True
         assert temp_store.tree.is_leaf_node("single") is True
 
@@ -480,7 +558,8 @@ class TestStore:
             height=0,
         )
 
-        assert temp_store.nodes.get_node("parent_left_only").height == 1
+        parent_left_only_node = temp_store.nodes.get_node("parent_left_only")
+        assert parent_left_only_node is not None and parent_left_only_node.height == 1
         assert temp_store.tree.is_leaf_node("parent_left_only") is False
 
         # Test node with only right child
@@ -504,10 +583,13 @@ class TestStore:
             height=0,
         )
 
-        assert temp_store.nodes.get_node("parent_right_only").height == 1
+        parent_right_only_node = temp_store.nodes.get_node("parent_right_only")
+        assert parent_right_only_node is not None and parent_right_only_node.height == 1
         assert temp_store.tree.is_leaf_node("parent_right_only") is False
 
-    def test_depth_calculation_performance(self, temp_store):
+    def test_depth_calculation_performance(
+        self, temp_store: SimpleMockStore | StoreManager
+    ) -> None:
         """Test that depth calculation is O(log n) by creating a deep tree."""
         # Create a linear chain of nodes to test worst case
         nodes = []
@@ -536,7 +618,9 @@ class TestStore:
         # This is O(depth) = O(log n) for balanced trees
         assert temp_store.tree.get_node_depth("chain_9") == 9
 
-    def test_error_handling_patterns(self, temp_store):
+    def test_error_handling_patterns(
+        self, temp_store: SimpleMockStore | StoreManager
+    ) -> None:
         """Test consistent error handling patterns."""
         # Create a simple tree for testing
         temp_store.nodes.add_node(

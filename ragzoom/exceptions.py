@@ -1,7 +1,5 @@
 """Domain-specific exceptions for RagZoom."""
 
-from typing import Any
-
 
 class NodeNotFoundError(Exception):
     """Raised when a requested node cannot be found in the store."""
@@ -22,7 +20,7 @@ class DocumentNotFoundError(Exception):
 class InvalidOperationError(Exception):
     """Raised when an operation cannot be performed due to invalid state or parameters."""
 
-    def __init__(self, operation: str, reason: str, **context: Any) -> None:
+    def __init__(self, operation: str, reason: str, **context: object) -> None:
         super().__init__(f"Invalid operation '{operation}': {reason}")
         self.operation = operation
         self.reason = reason
@@ -32,7 +30,7 @@ class InvalidOperationError(Exception):
 class StorageError(Exception):
     """Raised when storage operations encounter internal errors."""
 
-    def __init__(self, operation: str, message: str, **context: Any) -> None:
+    def __init__(self, operation: str, message: str, **context: object) -> None:
         super().__init__(f"Storage error during {operation}: {message}")
         self.operation = operation
         self.context = context
@@ -51,7 +49,7 @@ class ValidationError(Exception):
 class DatabaseError(Exception):
     """Raised when database operations fail."""
 
-    def __init__(self, operation: str, message: str, **context: Any) -> None:
+    def __init__(self, operation: str, message: str, **context: object) -> None:
         super().__init__(f"Database error during {operation}: {message}")
         self.operation = operation
         self.context = context
@@ -61,7 +59,7 @@ class LLMError(Exception):
     """Raised when LLM service operations fail."""
 
     def __init__(
-        self, operation: str, model: str, message: str, **context: Any
+        self, operation: str, model: str, message: str, **context: object
     ) -> None:
         super().__init__(f"LLM error during {operation} with {model}: {message}")
         self.operation = operation
@@ -86,7 +84,7 @@ class ResourceError(Exception):
     """Raised when resource allocation or management fails."""
 
     def __init__(
-        self, resource: str, operation: str, reason: str, **context: Any
+        self, resource: str, operation: str, reason: str, **context: object
     ) -> None:
         super().__init__(f"Resource error for {resource} during {operation}: {reason}")
         self.resource = resource

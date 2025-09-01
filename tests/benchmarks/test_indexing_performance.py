@@ -3,10 +3,12 @@
 import json
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from ragzoom.config import IndexConfig
+from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.store import StoreManager
 
@@ -42,8 +44,8 @@ def get_test_document(document_path: str) -> tuple[str, str]:
 @pytest.mark.slow
 @pytest.mark.parametrize("leaf_tokens", [100, 200, 400])
 def test_indexing_performance(
-    leaf_tokens, document_path="test_data/the_hobbit_chapter_1.txt"
-):
+    leaf_tokens: int, document_path: str = "test_data/the_hobbit_chapter_1.txt"
+) -> None:
     """Benchmark indexing performance with configurable document and chunk size.
 
     Args:
@@ -66,16 +68,15 @@ def test_indexing_performance(
 
     # Run indexing with metrics
     with StoreManager.temporary() as store:
-        builder = TreeBuilder(index_config, store, api_key)
+        builder = TreeBuilder(index_config, cast(DocumentStore, store), api_key)
 
         # Warm up tokenizer
         _ = builder.splitter.tokenizer.encode("warmup")
 
         # Run indexing
-        # Create document ID from path and tokens
-        doc_stem = Path(document_path).stem
+        # Run indexing without document_id parameter (it's generated internally)
         doc_id, telemetry = builder.add_document_with_telemetry(
-            test_doc, document_id=f"{doc_stem}_{leaf_tokens}", show_progress=False
+            test_doc, show_progress=False
         )
 
         # Save telemetry data for comparison
@@ -163,7 +164,7 @@ def test_indexing_performance(
 
 
 @pytest.mark.slow
-def test_performance_comparison():
+def test_performance_comparison() -> None:
     """Compare benchmark results if available."""
     output_dir = Path("benchmark_results")
     if not output_dir.exists():
@@ -192,7 +193,7 @@ def test_performance_comparison():
             simplified = compute_simplified_metrics(telemetry)
 
             # Get chunk-specific metrics
-            chunk_metrics = simplified.metrics_by_chunk_size.get(chunk_size, {})
+            chunk_metrics = simplified.metrics_by_chunk_size.get(chunk_size)
 
             # Store metrics for comparison
             results[chunk_size] = {
@@ -216,9 +217,21 @@ def test_performance_comparison():
         m = results[chunk_size]
         chunk_m = m["chunk_metrics"]
 
-        # Extract key metrics
-        target_fit = chunk_m.get("target_fit", {}).get("percent_within_10", 0)
-        retry_rate = chunk_m.get("retry_efficiency", {}).get("retry_rate", 0)
+        # Extract key metrics with proper typing
+        target_fit = 0.0
+        retry_rate = 0.0
+        if (
+            chunk_m is not None
+            and hasattr(chunk_m, "target_fit")
+            and hasattr(chunk_m.target_fit, "percent_within_10")
+        ):
+            target_fit = chunk_m.target_fit.percent_within_10
+        if (
+            chunk_m is not None
+            and hasattr(chunk_m, "retries")
+            and hasattr(chunk_m.retries, "retry_rate")
+        ):
+            retry_rate = chunk_m.retries.retry_rate
 
         print(
             f"{chunk_size:<12} "

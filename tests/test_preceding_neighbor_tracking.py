@@ -3,8 +3,11 @@
 import asyncio
 
 import pytest
+from openai import AsyncOpenAI
 
 from ragzoom.index import TreeBuilder
+from ragzoom.models import TreeNode
+from tests.conftest import BackwardCompatibilityConfig
 
 
 class TestPrecedingNeighborTracking:
@@ -12,8 +15,12 @@ class TestPrecedingNeighborTracking:
 
     @pytest.mark.parametrize("store_type", ["mock", "real"])
     def test_leaf_nodes_track_preceding_neighbor(
-        self, request, base_config, mock_openai_async_client, store_type
-    ):
+        self,
+        request: pytest.FixtureRequest,
+        base_config: BackwardCompatibilityConfig,
+        mock_openai_async_client: AsyncOpenAI,
+        store_type: str,
+    ) -> None:
         """Test that leaf nodes correctly track their preceding neighbor."""
         # Get the appropriate store based on parameter
         store = request.getfixturevalue(f"{store_type}_store")
@@ -69,8 +76,12 @@ class TestPrecedingNeighborTracking:
 
     @pytest.mark.parametrize("store_type", ["mock", "real"])
     def test_internal_nodes_track_preceding_neighbor(
-        self, request, base_config, mock_openai_async_client, store_type
-    ):
+        self,
+        request: pytest.FixtureRequest,
+        base_config: BackwardCompatibilityConfig,
+        mock_openai_async_client: AsyncOpenAI,
+        store_type: str,
+    ) -> None:
         """Test that internal nodes at each tree level track their preceding neighbor."""
         # Get the appropriate store based on parameter
         store = request.getfixturevalue(f"{store_type}_store")
@@ -125,7 +136,7 @@ class TestPrecedingNeighborTracking:
                 all_nodes.extend(ancestors)
 
         # Group nodes by height (leaf nodes have no children)
-        nodes_by_height = {}
+        nodes_by_height: dict[int, list[TreeNode]] = {}
         for node in all_nodes:
             height = _calculate_node_height(node, all_nodes)
             if height not in nodes_by_height:
@@ -153,8 +164,12 @@ class TestPrecedingNeighborTracking:
 
     @pytest.mark.parametrize("store_type", ["mock", "real"])
     def test_preceding_context_reconstruction(
-        self, request, base_config, mock_openai_async_client, store_type
-    ):
+        self,
+        request: pytest.FixtureRequest,
+        base_config: BackwardCompatibilityConfig,
+        mock_openai_async_client: AsyncOpenAI,
+        store_type: str,
+    ) -> None:
         """Test that we can reconstruct preceding context using preceding_neighbor_id."""
         # Get the appropriate store based on parameter
         store = request.getfixturevalue(f"{store_type}_store")
@@ -216,7 +231,7 @@ class TestPrecedingNeighborTracking:
                 ), "Preceding node should end before current node starts"
 
 
-def _calculate_node_height(node, all_nodes):
+def _calculate_node_height(node: TreeNode, all_nodes: list[TreeNode]) -> int:
     """Calculate the height of a node in the tree."""
     # Create a mapping of node IDs to nodes
     node_map = {n.id: n for n in all_nodes}

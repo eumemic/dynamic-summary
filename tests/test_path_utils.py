@@ -15,7 +15,7 @@ from ragzoom.utils.path_utils import (
 class TestPathUtilities:
     """Test binary tree path utility functions."""
 
-    def test_get_parent_path(self):
+    def test_get_parent_path(self) -> None:
         """Test parent path generation."""
         assert get_parent_path("") == ""  # Root has no parent
         assert get_parent_path("0") == ""  # First level -> root
@@ -26,7 +26,7 @@ class TestPathUtilities:
         assert get_parent_path("11") == "1"
         assert get_parent_path("001") == "00"  # Third level -> second level
 
-    def test_get_sibling_path(self):
+    def test_get_sibling_path(self) -> None:
         """Test sibling path generation."""
         assert get_sibling_path("") is None  # Root has no sibling
         assert get_sibling_path("0") == "1"  # Left child -> right child
@@ -37,7 +37,7 @@ class TestPathUtilities:
         assert get_sibling_path("11") == "10"
         assert get_sibling_path("001") == "000"
 
-    def test_get_depth(self):
+    def test_get_depth(self) -> None:
         """Test depth calculation."""
         assert get_depth("") == 0  # Root at depth 0
         assert get_depth("0") == 1  # First level
@@ -46,7 +46,7 @@ class TestPathUtilities:
         assert get_depth("11") == 2
         assert get_depth("001") == 3  # Third level
 
-    def test_get_position_at_level(self):
+    def test_get_position_at_level(self) -> None:
         """Test position calculation at each level."""
         assert get_position_at_level("") == 0  # Root at position 0
         assert get_position_at_level("0") == 0  # First position at level 1
@@ -56,7 +56,7 @@ class TestPathUtilities:
         assert get_position_at_level("10") == 2  # Third position at level 2
         assert get_position_at_level("11") == 3  # Fourth position at level 2
 
-    def test_get_all_ancestor_paths(self):
+    def test_get_all_ancestor_paths(self) -> None:
         """Test ancestor path generation."""
         assert get_all_ancestor_paths("") == []  # Root has no ancestors
         assert get_all_ancestor_paths("0") == [""]  # First level -> root
@@ -68,7 +68,7 @@ class TestPathUtilities:
         assert get_all_ancestor_paths("11") == ["1", ""]
         assert get_all_ancestor_paths("001") == ["00", "0", ""]  # Third level paths
 
-    def test_calculate_tree_depth(self):
+    def test_calculate_tree_depth(self) -> None:
         """Test tree depth calculation."""
         assert calculate_tree_depth(0) == 0  # No leaves
         assert calculate_tree_depth(1) == 0  # Single leaf (root)
@@ -79,7 +79,7 @@ class TestPathUtilities:
         assert calculate_tree_depth(8) == 3  # Eight leaves need depth 3
         assert calculate_tree_depth(9) == 4  # Nine leaves need depth 4
 
-    def test_generate_leaf_path(self):
+    def test_generate_leaf_path(self) -> None:
         """Test leaf path generation."""
         # Single leaf (root)
         assert generate_leaf_path(0, 0) == ""
@@ -98,7 +98,7 @@ class TestPathUtilities:
         assert generate_leaf_path(0, 3) == "000"
         assert generate_leaf_path(7, 3) == "111"
 
-    def test_path_exists_in_left_balanced_tree(self):
+    def test_path_exists_in_left_balanced_tree(self) -> None:
         """Test path existence validation for left-balanced trees."""
         # Empty tree
         assert not path_exists_in_left_balanced_tree("", 0)
@@ -135,7 +135,7 @@ class TestPathUtilities:
         assert path_exists_in_left_balanced_tree("10", 4)  # Third leaf exists
         assert path_exists_in_left_balanced_tree("11", 4)  # Fourth leaf exists
 
-    def test_integration_leaf_to_root_traversal(self):
+    def test_integration_leaf_to_root_traversal(self) -> None:
         """Test complete traversal from leaf to root."""
         # Test with a leaf at path "001" in an 8-leaf tree
         leaf_path = "001"
@@ -154,7 +154,7 @@ class TestPathUtilities:
         assert sibling == "000"
         assert path_exists_in_left_balanced_tree(sibling, 8)
 
-    def test_tree_structure_consistency(self):
+    def test_tree_structure_consistency(self) -> None:
         """Test that generated paths form a consistent tree structure."""
         # Generate paths for a 5-leaf tree
         num_leaves = 5

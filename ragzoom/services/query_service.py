@@ -187,14 +187,10 @@ class QueryService:
             budget_tokens: New token budget
             mmr_lambda: New MMR lambda parameter
         """
-        # Build update dictionary
-        updates: dict[str, int | float] = {}
-        if budget_tokens is not None:
-            updates["budget_tokens"] = budget_tokens
-        if mmr_lambda is not None:
-            updates["mmr_lambda"] = mmr_lambda
-
-        if updates:
-            # Update config
-            self.query_config = self.query_config.replace(**updates)
+        # Update config if any parameters changed
+        if budget_tokens is not None or mmr_lambda is not None:
+            self.query_config = self.query_config.replace(
+                budget_tokens=budget_tokens,
+                mmr_lambda=mmr_lambda,
+            )
             # Note: Retriever is now created per-request with latest config
