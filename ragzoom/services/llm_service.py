@@ -192,7 +192,7 @@ class LLMService:
             # GPT-5 models have different parameter requirements
             if is_gpt5_model(self.config.summary_model):
                 # Use reasoning_effort="minimal" (valid despite SDK type hints saying otherwise)
-                response = await self.client.chat.completions.create(  # type: ignore[call-overload]
+                response = await self.client.chat.completions.create(
                     model=self.config.summary_model,
                     messages=messages,
                     reasoning_effort="minimal",
