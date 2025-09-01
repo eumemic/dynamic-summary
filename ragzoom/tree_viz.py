@@ -393,7 +393,8 @@ def build_ascii_tree(
             if end_pos <= start_pos:
                 end_pos = start_pos + 1
             is_covered = coverage_map and node.id in coverage_map
-            # Leaf node
+
+            # Leaf node (no children at all)
             if not node.left_child_id and not node.right_child_id:
                 char_priority = (
                     1 if node.id in selected_nodes else 0 if is_covered else -1
@@ -406,8 +407,8 @@ def build_ascii_tree(
                     if label:
                         mid_pos = (start_pos + end_pos) // 2
                         label_spans.append((mid_pos, label, True))
-            # Internal node
-            elif node.left_child_id and node.right_child_id:
+            # Internal node (has at least a left child - tree is left-balanced)
+            elif node.left_child_id:
                 # For atomic nodes, internal nodes are either fully selected or not
                 char_priority = (
                     1 if node.id in selected_nodes else 0 if is_covered else -1
