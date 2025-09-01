@@ -639,7 +639,7 @@ def compute_cost_metrics(
         cache_discount = model_info.get_cache_discount(summary_model)
     except (ImportError, ValueError):
         # Default to no discount if model info not available
-        cache_discount = 1.0
+        cache_discount = 0.0
 
     total_prompt_tokens = 0
     total_completion_tokens = 0
@@ -679,13 +679,13 @@ def compute_cost_metrics(
         ]
 
         # Apply cache discount: cached tokens cost less
-        # cache_discount is the multiplier (0.1 = 10% of original price = 90% discount)
+        # cache_discount is the discount percentage (0.9 = 90% discount, pay 10% of original)
         uncached_prompt_tokens = node_prompt_tokens - node_cached_tokens
         prompt_cost = (uncached_prompt_tokens / 1000) * pricing[
             "summary_input_cost_per_1k"
-        ] + (node_cached_tokens / 1000) * pricing[
-            "summary_input_cost_per_1k"
-        ] * cache_discount
+        ] + (node_cached_tokens / 1000) * pricing["summary_input_cost_per_1k"] * (
+            1 - cache_discount
+        )
 
         completion_cost = (node_completion_tokens / 1000) * pricing[
             "summary_output_cost_per_1k"
@@ -704,9 +704,9 @@ def compute_cost_metrics(
     total_uncached_prompt_tokens = total_prompt_tokens - total_cached_tokens
     prompt_cost = (total_uncached_prompt_tokens / 1000) * pricing[
         "summary_input_cost_per_1k"
-    ] + (total_cached_tokens / 1000) * pricing[
-        "summary_input_cost_per_1k"
-    ] * cache_discount
+    ] + (total_cached_tokens / 1000) * pricing["summary_input_cost_per_1k"] * (
+        1 - cache_discount
+    )
 
     completion_cost = (total_completion_tokens / 1000) * pricing[
         "summary_output_cost_per_1k"

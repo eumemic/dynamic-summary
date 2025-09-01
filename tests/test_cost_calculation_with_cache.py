@@ -392,7 +392,7 @@ def test_compute_cost_metrics_model_not_found() -> None:
 
             result = compute_cost_metrics(nodes, models, source_tokens)
 
-    # Should fall back to no discount (cache_discount = 1.0)
+    # Should fall back to no discount (cache_discount = 0.0)
     # All prompt tokens charged at full price
     expected_cost = (1500 * 0.001 + 100 * 0.002) / 1000
     assert result.usd_per_node == pytest.approx(expected_cost, rel=1e-4)
