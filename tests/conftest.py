@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ragzoom.backends.local_store_adapter import LocalStoreAdapter
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendProtocol
@@ -190,12 +191,11 @@ def config_factory() -> (
 @pytest.fixture
 def mock_store(
     base_config: BackwardCompatibilityConfig,
-    sqlite_store_factory: Callable[[str | None], DocumentStore],
-) -> Generator[DocumentStore, None, None]:
-    """Create a mock store for fast testing using SQLite."""
-    store = sqlite_store_factory("test_doc")
-    yield store
-    # No explicit close needed for SQLite backend
+    sqlite_backend: SQLiteStorageBackend,
+) -> Generator[LocalStoreAdapter, None, None]:
+    """Create a local Store-like adapter for fast testing using SQLite."""
+    adapter = LocalStoreAdapter(sqlite_backend)
+    yield adapter
 
 
 @pytest.fixture
@@ -220,9 +220,9 @@ def real_store(
 def store(
     request: pytest.FixtureRequest,
     base_config: BackwardCompatibilityConfig,
-    mock_store: DocumentStore,
+    mock_store: LocalStoreAdapter,
     sqlite_backend: SQLiteStorageBackend,
-) -> Generator[DocumentStore | StoreManager | SQLiteStorageBackend, None, None]:
+) -> Generator[LocalStoreAdapter | StoreManager, None, None]:
     """Provide either mock or real store based on test requirements.
 
     This fixture automatically selects the appropriate store:
@@ -275,8 +275,8 @@ def store(
             real_store.close()
         return
 
-    # Default to SQLite backend for store-like API (for_document, add_document)
-    yield sqlite_backend
+    # Default to SQLite-backed local adapter for Store-like API
+    yield LocalStoreAdapter(sqlite_backend)
 
 
 # --- SQLite in-memory backend fixtures (for migrating off mocks) ---

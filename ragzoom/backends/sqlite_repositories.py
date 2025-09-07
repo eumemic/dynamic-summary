@@ -63,6 +63,16 @@ class SqliteNodeRepository:
                 created.append(node)
             if own_session:
                 session.commit()
+
+            # Ensure attributes are loaded and detach before returning
+            for n in created:
+                try:
+                    session.refresh(n)
+                    session.expunge(n)
+                except Exception:
+                    # Best effort; tests mainly need scalar attributes
+                    pass
+
             # Cache invalidation is minimal here; callers rarely read immediately
             return created  # type: ignore[return-value]
         finally:
@@ -95,6 +105,11 @@ class SqliteNodeRepository:
     def get_node(self, node_id: str) -> TreeNode | None:
         with self.SessionLocal() as session:
             row = session.get(SqliteTreeNode, node_id)
+            if row:
+                try:
+                    session.expunge(row)
+                except Exception:
+                    pass
             return row  # type: ignore[return-value]
 
     def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
@@ -108,6 +123,11 @@ class SqliteNodeRepository:
                 .scalars()
                 .all()
             )
+            for r in rows:
+                try:
+                    session.expunge(r)
+                except Exception:
+                    pass
             return rows  # type: ignore[return-value]
 
     def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
@@ -121,6 +141,13 @@ class SqliteNodeRepository:
                 .scalars()
                 .all()
             )
+            # jscpd:ignore-start - Detach loop repeats across helpers by design
+            for r in rows:
+                try:
+                    session.expunge(r)
+                except Exception:
+                    pass
+            # jscpd:ignore-end
             return rows  # type: ignore[return-value]
 
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
@@ -142,6 +169,8 @@ class SqliteNodeRepository:
     def get_all_nodes_for_document_paginated(
         self, document_id: str | None, *, page_size: int = 1000
     ) -> list[list[TreeNode]]:
+        if page_size <= 0:
+            raise ValueError("page_size must be positive")
         with self.SessionLocal() as session:
             if document_id:
                 total_rows = (
@@ -253,6 +282,26 @@ class SqliteDocumentRepository:
             )
             session.execute(
                 delete(SqliteDocument).where(SqliteDocument.id == document_id)
+            )
+            if own_session:
+                session.commit()
+            return int(del_nodes.rowcount or 0)
+        finally:
+            if own_session:
+                session.close()
+
+    # Provide nodes-only deletion for compatibility with tests expecting
+    # StoreInterface.delete_document_nodes semantics
+    def delete_document_nodes(
+        self, document_id: str, *, session: Session | None = None
+    ) -> int:  # noqa: D401
+        own_session = False
+        if session is None:
+            session = self.SessionLocal()
+            own_session = True
+        try:
+            del_nodes = session.execute(
+                delete(SqliteTreeNode).where(SqliteTreeNode.document_id == document_id)
             )
             if own_session:
                 session.commit()
