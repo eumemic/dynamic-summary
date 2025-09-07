@@ -11,8 +11,8 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from types import TracebackType
 
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
-from ragzoom.interfaces.storage_backend import StorageBackend
 from ragzoom.models import Document
 from ragzoom.store import StoreManager
 
