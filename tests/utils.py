@@ -514,6 +514,9 @@ def create_retriever(
     if isinstance(store, StoreManager):
         # This is a StoreManager, create DocumentStore
         doc_store = store.for_document(document_id)
+    elif hasattr(store, "for_document") and callable(getattr(store, "for_document")):
+        # Support pluggable backends that expose for_document (e.g., SQLiteStorageBackend)
+        doc_store = store.for_document(document_id)  # type: ignore[assignment]
     else:
         # This is already a DocumentStore or mock
         doc_store = store
