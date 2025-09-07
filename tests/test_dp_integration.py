@@ -14,8 +14,8 @@ import pytest
 from pytest import MonkeyPatch
 
 from ragzoom.assemble import Assembler
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
-from ragzoom.interfaces import StoreInterface
 from tests.conftest import BackwardCompatibilityConfig
 from tests.utils import (
     create_hash_based_embedding_mock,
@@ -66,7 +66,7 @@ class TestDPIntegration:
     async def test_no_duplicate_content(
         self,
         config: BackwardCompatibilityConfig,
-        store: StoreInterface,
+        storage_backend: StorageBackend,
         mock_openai: tuple[object, object],
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -85,9 +85,9 @@ class TestDPIntegration:
 
         # Index the document
         # Create document with proper metadata
-        doc_store = store.add_document(
-            document_id="doc1",
-            file_path=None,
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="dp_integration_test.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -136,7 +136,7 @@ class TestDPIntegration:
     async def test_parent_child_deduplication(
         self,
         config: BackwardCompatibilityConfig,
-        store: StoreInterface,
+        storage_backend: StorageBackend,
         mock_openai: tuple[object, object],
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -154,9 +154,9 @@ class TestDPIntegration:
         )  # Very small chunks
         # Create document-scoped store
         # Create document with proper metadata
-        doc_store = store.add_document(
-            document_id="doc1",
-            file_path=None,
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="dp_integration_test.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -203,7 +203,7 @@ class TestDPIntegration:
     async def test_span_coverage(
         self,
         config: BackwardCompatibilityConfig,
-        store: StoreInterface,
+        storage_backend: StorageBackend,
         mock_openai: tuple[object, object],
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -221,9 +221,9 @@ class TestDPIntegration:
         )  # One word per chunk approximately
         # Create document-scoped store
         # Create document with proper metadata
-        doc_store = store.add_document(
-            document_id="doc1",
-            file_path=None,
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="dp_integration_test.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -267,7 +267,7 @@ class TestDPIntegration:
     async def test_budget_respected(
         self,
         config: BackwardCompatibilityConfig,
-        store: StoreInterface,
+        storage_backend: StorageBackend,
         mock_openai: tuple[object, object],
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -285,9 +285,9 @@ class TestDPIntegration:
         # Index
         # Create document-scoped store
         # Create document with proper metadata
-        doc_store = store.add_document(
-            document_id="doc1",
-            file_path=None,
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="dp_integration_test.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",

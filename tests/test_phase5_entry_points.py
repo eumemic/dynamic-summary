@@ -1,32 +1,43 @@
 """Test Phase 5 entry point isolation (CLI commands with DocumentStore)."""
 
-from collections.abc import Callable
 from typing import cast
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
-import pytest
 from click.testing import CliRunner
 from numpy.typing import NDArray
 
-from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.cli import cli
-from ragzoom.document_store import DocumentStore
+from ragzoom.contracts.storage_backend import StorageBackend
 
 
-@pytest.mark.usefixtures("sqlite_backend")
 class TestCLIPinCommandIsolation:
     """Test that CLI pin command properly uses DocumentStore for isolation."""
 
     def test_pin_command_with_document_id(
         self,
-        sqlite_store_factory: Callable[[str | None], DocumentStore],
-        sqlite_backend: SQLiteStorageBackend,
+        storage_backend: StorageBackend,
     ) -> None:
         """Test pin command with explicit document ID."""
         # Create document-scoped stores
-        doc1_store = sqlite_store_factory("doc1")
-        doc2_store = sqlite_store_factory("doc2")
+        doc1_store = storage_backend.for_document("doc1")
+        doc2_store = storage_backend.for_document("doc2")
+
+        # Set metadata for both documents
+        doc1_store.set_metadata(
+            file_path="doc1.txt",
+            content_hash="doc1-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc2_store.set_metadata(
+            file_path="doc2.txt",
+            content_hash="doc2-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         # Add nodes to different documents using proper add_batch format
         nodes: list[
@@ -71,8 +82,9 @@ class TestCLIPinCommandIsolation:
         ]
         doc2_store.nodes.add_batch(nodes_doc2)
 
-        # Upsert embeddings for both nodes
-        sqlite_backend.vector_index.upsert(
+        # Upsert embeddings for both nodes via storage backend
+        # Type ignore for vector_index access (backend-agnostic tests assume SQLite)
+        storage_backend.vector_index.upsert(  # type: ignore[attr-defined]  # type: ignore[attr-defined]
             [
                 (
                     "doc1_node",
@@ -116,11 +128,17 @@ class TestCLIPinCommandIsolation:
 
     def test_pin_command_auto_detects_document(
         self,
-        sqlite_store_factory: Callable[[str | None], DocumentStore],
-        sqlite_backend: SQLiteStorageBackend,
+        storage_backend: StorageBackend,
     ) -> None:
         """Test pin command auto-detects document from node ID."""
-        doc_store = sqlite_store_factory("doc1")
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="doc1.txt",
+            content_hash="doc1-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         # Add node using proper add_batch format
         nodes: list[
@@ -145,7 +163,7 @@ class TestCLIPinCommandIsolation:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embedding
-        sqlite_backend.vector_index.upsert(
+        storage_backend.vector_index.upsert(  # type: ignore[attr-defined]
             [
                 (
                     "doc1_node",
@@ -180,11 +198,17 @@ class TestCLIPinCommandIsolation:
 
     def test_pin_command_validates_document_ownership(
         self,
-        sqlite_store_factory: Callable[[str | None], DocumentStore],
-        sqlite_backend: SQLiteStorageBackend,
+        storage_backend: StorageBackend,
     ) -> None:
         """Test pin command validates node belongs to specified document."""
-        doc_store = sqlite_store_factory("doc1")
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="doc1.txt",
+            content_hash="doc1-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         # Add node to doc1 using proper add_batch format
         nodes: list[
@@ -209,7 +233,7 @@ class TestCLIPinCommandIsolation:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embedding
-        sqlite_backend.vector_index.upsert(
+        storage_backend.vector_index.upsert(  # type: ignore[attr-defined]
             [
                 (
                     "doc1_node",
@@ -229,7 +253,14 @@ class TestCLIPinCommandIsolation:
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
             # Create a doc2 store when wrong document ID is specified
-            doc2_store = sqlite_store_factory("doc2")
+            doc2_store = storage_backend.for_document("doc2")
+            doc2_store.set_metadata(
+                file_path="doc2.txt",
+                content_hash="doc2-hash",
+                chunk_count=0,
+                embedding_model="text-embedding-3-small",
+                summary_model="gpt-4o-mini",
+            )
             mock_create_store.return_value = doc2_store
 
             # Try to pin with wrong document ID
@@ -243,10 +274,17 @@ class TestCLIPinCommandIsolation:
             )
 
     def test_pin_command_error_on_nonexistent_node(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
+        self, storage_backend: StorageBackend
     ) -> None:
         """Test pin command handles non-existent nodes gracefully."""
-        doc_store = sqlite_store_factory("doc1")
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="doc1.txt",
+            content_hash="doc1-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         runner = CliRunner()
 
@@ -264,7 +302,6 @@ class TestCLIPinCommandIsolation:
             )
 
 
-@pytest.mark.usefixtures("sqlite_backend")
 class SkipTestQueryVisualizationIsolation:
     """Test that query visualization uses document-scoped store."""
 
@@ -274,13 +311,28 @@ class SkipTestQueryVisualizationIsolation:
         self,
         mock_create_store: object,
         mock_echo: object,
-        sqlite_store_factory: Callable[[str | None], DocumentStore],
-        sqlite_backend: SQLiteStorageBackend,
+        storage_backend: StorageBackend,
     ) -> None:
         """Test that tree visualization only shows specified document."""
         # Create document-scoped stores
-        doc1_store = sqlite_store_factory("doc1")
-        doc2_store = sqlite_store_factory("doc2")
+        doc1_store = storage_backend.for_document("doc1")
+        doc2_store = storage_backend.for_document("doc2")
+
+        # Set metadata for both documents
+        doc1_store.set_metadata(
+            file_path="doc1.txt",
+            content_hash="doc1-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc2_store.set_metadata(
+            file_path="doc2.txt",
+            content_hash="doc2-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         # Add nodes for doc1 using proper add_batch format
         doc1_nodes: list[
@@ -360,7 +412,7 @@ class SkipTestQueryVisualizationIsolation:
         doc2_store.nodes.add_batch(doc2_nodes)
 
         # Upsert embeddings for all nodes
-        sqlite_backend.vector_index.upsert(
+        storage_backend.vector_index.upsert(  # type: ignore[attr-defined]
             [
                 (
                     "doc1_root",

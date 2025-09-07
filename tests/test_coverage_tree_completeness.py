@@ -8,7 +8,6 @@ coverage tree validation functionality.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -16,6 +15,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 
 if TYPE_CHECKING:
@@ -23,16 +23,21 @@ if TYPE_CHECKING:
     from ragzoom.retrieve import Retriever
 
 
-@pytest.mark.usefixtures("sqlite_backend")
 class TestCoverageTreeCompletenessSQLite:
     """Tests that ensure coverage trees maintain left-balanced properties with SQLite."""
 
     @pytest.fixture
-    def doc_store(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> DocumentStore:
+    def doc_store(self, storage_backend: StorageBackend) -> DocumentStore:
         """Create a document-scoped store for test-doc."""
-        return sqlite_store_factory("test-doc")
+        doc_store = storage_backend.for_document("test-doc")
+        doc_store.set_metadata(
+            file_path="test.txt",
+            content_hash="test-hash",
+            chunk_count=7,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        return doc_store
 
     @pytest.fixture
     def setup_incomplete_tree(
@@ -44,6 +49,9 @@ class TestCoverageTreeCompletenessSQLite:
         )
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
+
+        # Use the doc_store fixture (already scoped to test-doc)
+        document_store = doc_store
 
         # Create a simple tree structure directly in SQLite:
         #         root
@@ -142,10 +150,10 @@ class TestCoverageTreeCompletenessSQLite:
             },
         ]
 
-        doc_store.nodes.add_batch(nodes)
+        document_store.nodes.add_batch(nodes)
 
         # Update parent references
-        doc_store.nodes.update_parent_references_batch(
+        document_store.nodes.update_parent_references_batch(
             [
                 ("L1", "P1"),
                 ("L2", "P1"),
@@ -166,7 +174,7 @@ class TestCoverageTreeCompletenessSQLite:
         )
         dp_generator = retriever.dp_generator
 
-        return index_config, doc_store, retriever, dp_generator
+        return index_config, document_store, retriever, dp_generator
 
     def test_left_balanced_tree_single_child_handling(
         self,
@@ -175,7 +183,7 @@ class TestCoverageTreeCompletenessSQLite:
         ],
     ) -> None:
         """Test that left-balanced trees with single children are handled correctly."""
-        index_config, doc_store, retriever, dp_generator = setup_incomplete_tree
+        index_config, document_store, retriever, dp_generator = setup_incomplete_tree
 
         # Simulate what happens with --num-seeds 1: only L3 is selected
         # This creates a left-balanced coverage tree where P2 has only its left child
@@ -183,9 +191,9 @@ class TestCoverageTreeCompletenessSQLite:
 
         # Add ancestors (this is what current retriever does)
         current_id = "L3"
-        node = doc_store.nodes.get_node(current_id)
+        node = document_store.nodes.get_node(current_id)
         while node and node.parent_id:
-            parent = doc_store.nodes.get_node(node.parent_id)
+            parent = document_store.nodes.get_node(node.parent_id)
             if parent:
                 coverage_map[parent.id] = True
                 current_id = parent.id
@@ -196,7 +204,7 @@ class TestCoverageTreeCompletenessSQLite:
         # Load nodes from coverage map
         nodes = {}
         for node_id in coverage_map:
-            node = doc_store.nodes.get_node(node_id)
+            node = document_store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 
@@ -236,12 +244,12 @@ class TestCoverageTreeCompletenessSQLite:
         ],
     ) -> None:
         """Test that complete coverage trees work correctly."""
-        index_config, doc_store, retriever, dp_generator = setup_incomplete_tree
+        index_config, document_store, retriever, dp_generator = setup_incomplete_tree
 
         # Create a complete coverage tree by including all nodes
         nodes = {}
         for node_id in ["root", "P1", "P2", "L1", "L2", "L3", "L4"]:
-            node = doc_store.nodes.get_node(node_id)
+            node = document_store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 
@@ -264,7 +272,7 @@ class TestCoverageTreeCompletenessSQLite:
         ],
     ) -> None:
         """Test the correct way to build coverage tree with siblings."""
-        index_config, doc_store, retriever, dp_generator = setup_incomplete_tree
+        index_config, document_store, retriever, dp_generator = setup_incomplete_tree
 
         # Start with selected node
         selected_nodes = ["L3"]
@@ -276,7 +284,7 @@ class TestCoverageTreeCompletenessSQLite:
             current_id = node_id
             while current_id:
                 coverage_nodes.add(current_id)
-                node = doc_store.nodes.get_node(current_id)
+                node = document_store.nodes.get_node(current_id)
                 if node and node.parent_id:
                     current_id = node.parent_id
                 else:
@@ -287,7 +295,7 @@ class TestCoverageTreeCompletenessSQLite:
         nodes_to_check = list(coverage_nodes)
         while nodes_to_check:
             node_id = nodes_to_check.pop(0)
-            node = doc_store.nodes.get_node(node_id)
+            node = document_store.nodes.get_node(node_id)
             if node:
                 # If this node has children, both must be in coverage
                 if node.left_child_id:
@@ -302,7 +310,7 @@ class TestCoverageTreeCompletenessSQLite:
         # Load all nodes
         nodes = {}
         for node_id in coverage_nodes:
-            node = doc_store.nodes.get_node(node_id)
+            node = document_store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 
@@ -332,12 +340,12 @@ class TestCoverageTreeCompletenessSQLite:
         ],
     ) -> None:
         """Test validation logic for coverage tree completeness."""
-        index_config, doc_store, retriever, dp_generator = setup_incomplete_tree
+        index_config, document_store, retriever, dp_generator = setup_incomplete_tree
 
         # Test incomplete coverage tree (missing sibling)
         incomplete_nodes = {}
         for node_id in ["root", "P2", "L3"]:  # Missing L4, P1, L1, L2
-            node = doc_store.nodes.get_node(node_id)
+            node = document_store.nodes.get_node(node_id)
             if node:
                 incomplete_nodes[node_id] = node
 
@@ -363,7 +371,7 @@ class TestCoverageTreeCompletenessSQLite:
         ],
     ) -> None:
         """Test coverage tree with single leaf node and its ancestors."""
-        index_config, doc_store, retriever, dp_generator = setup_incomplete_tree
+        index_config, document_store, retriever, dp_generator = setup_incomplete_tree
 
         # Build minimal coverage tree with just one leaf and ancestors
         coverage_nodes = set()
@@ -372,7 +380,7 @@ class TestCoverageTreeCompletenessSQLite:
         current_id = "L1"
         while current_id:
             coverage_nodes.add(current_id)
-            node = doc_store.nodes.get_node(current_id)
+            node = document_store.nodes.get_node(current_id)
             if node and node.parent_id:
                 current_id = node.parent_id
             else:
@@ -381,7 +389,7 @@ class TestCoverageTreeCompletenessSQLite:
         # Load nodes
         nodes = {}
         for node_id in coverage_nodes:
-            node = doc_store.nodes.get_node(node_id)
+            node = document_store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 

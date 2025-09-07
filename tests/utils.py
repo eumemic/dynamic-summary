@@ -9,13 +9,12 @@ import pytest
 from openai import OpenAI
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
-from ragzoom.interfaces import StoreInterface
 from ragzoom.models import TreeNode
 from ragzoom.retrieval.budget_planner import BudgetPlanner
 from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
-from ragzoom.store import StoreManager
 
 
 def create_mock_openai_clients() -> tuple[Mock, Mock, Mock]:
@@ -482,7 +481,7 @@ def create_specialized_openai_mocks(
 
 def create_retriever(
     query_config: QueryConfig,
-    store: StoreManager | DocumentStore,
+    store: StorageBackend | DocumentStore,
     document_id: str | None = None,
     api_key: str = "test-key",
     embedding_model: str | None = None,
@@ -493,7 +492,7 @@ def create_retriever(
 
     Args:
         query_config: QueryConfig instance
-        store: StoreManager or DocumentStore instance
+        store: StorageBackend or DocumentStore instance
         document_id: Optional document ID to scope retriever to
         api_key: OpenAI API key (defaults to test key)
         embedding_model: Optional embedding model override
@@ -507,19 +506,16 @@ def create_retriever(
     if client is None:
         client = OpenAI(api_key=api_key)
 
-    # Get document store - handle both StoreManager and DocumentStore
-    # Check if it's actually a StoreManager (not just something with for_document)
-    from ragzoom.store import StoreManager
-
-    if isinstance(store, StoreManager):
-        # This is a StoreManager, create DocumentStore
-        doc_store = store.for_document(document_id)
-    elif hasattr(store, "for_document") and callable(getattr(store, "for_document")):
-        # Support pluggable backends that expose for_document (e.g., SQLiteStorageBackend)
-        doc_store = store.for_document(document_id)  # type: ignore[assignment]
-    else:
-        # This is already a DocumentStore or mock
+    # Get document store - handle both StorageBackend and DocumentStore
+    if isinstance(store, DocumentStore):
+        # This is already a DocumentStore
         doc_store = store
+    elif hasattr(store, "for_document") and callable(getattr(store, "for_document")):
+        # Support pluggable backends that expose for_document method
+        doc_store = store.for_document(document_id)
+    else:
+        # Fallback for test mocks
+        doc_store = cast(DocumentStore, store)
 
     # Create services with DocumentStore
     # Cast client to OpenAI for type checker - in tests this may be a Mock
@@ -547,12 +543,12 @@ def create_retriever(
 
 
 def ensure_document_store(
-    store: StoreInterface | DocumentStore | None,
+    store: StorageBackend | DocumentStore | None,
 ) -> DocumentStore:
-    """Safely convert StoreInterface to DocumentStore for tests.
+    """Safely convert StorageBackend to DocumentStore for tests.
 
     Args:
-        store: Store instance that might be StoreInterface, DocumentStore, or None
+        store: Store instance that might be StorageBackend, DocumentStore, or None
 
     Returns:
         DocumentStore instance
@@ -567,33 +563,43 @@ def ensure_document_store(
     if isinstance(store, DocumentStore):
         return store
 
-    # If it's a StoreManager with for_document method, create document store
+    # If it's a StorageBackend with for_document method, create document store
     if hasattr(store, "for_document") and callable(getattr(store, "for_document")):
-        return store.for_document(None)  # type: ignore[no-any-return]  # StoreManager.for_document returns DocumentStore
+        return store.for_document(None)
 
     # Otherwise, assume it implements DocumentStore interface
     return cast(DocumentStore, store)
 
 
-def ensure_store_interface(
-    store: DocumentStore | StoreInterface | None,
-) -> StoreInterface:
-    """Safely convert DocumentStore to StoreInterface for tests.
+def ensure_storage_backend(
+    store: DocumentStore | StorageBackend | None,
+) -> StorageBackend:
+    """Safely convert DocumentStore to StorageBackend for tests.
 
     Args:
-        store: Store instance that might be DocumentStore, StoreInterface, or None
+        store: Store instance that might be DocumentStore, StorageBackend, or None
 
     Returns:
-        StoreInterface instance
+        StorageBackend instance
 
     Raises:
-        TypeError: If store cannot be converted to StoreInterface
+        TypeError: If store cannot be converted to StorageBackend
     """
     if store is None:
         raise TypeError("Store cannot be None")
 
-    # DocumentStore implements StoreInterface, so we can safely cast
-    return cast(StoreInterface, store)
+    # If it's already a StorageBackend, return it
+    if hasattr(store, "for_document") and not isinstance(store, DocumentStore):
+        # Type checker knows this is StorageBackend due to the hasattr check
+        return store
+
+    # Otherwise, this is likely a test mock or similar
+    # Cast without redundancy warning by being more specific
+    if hasattr(store, "clear_document"):
+        return cast(StorageBackend, store)
+
+    # Fallback for test scenarios
+    raise TypeError(f"Cannot convert {type(store)} to StorageBackend")
 
 
 def extract_single_config(
@@ -734,7 +740,7 @@ def cast_simple_namespace_to_dict(ns: SimpleNamespace) -> dict[str, object]:
 
 
 def assert_compatible_store_types(
-    store1: StoreInterface | DocumentStore, store2: StoreInterface | DocumentStore
+    store1: StorageBackend | DocumentStore, store2: StorageBackend | DocumentStore
 ) -> None:
     """Assert that two stores are type-compatible for testing.
 
@@ -745,8 +751,22 @@ def assert_compatible_store_types(
     Raises:
         AssertionError: If stores are not compatible
     """
-    # Both should be either StoreInterface or DocumentStore compatible
-    assert hasattr(store1, "get_node"), f"Store1 missing get_node: {type(store1)}"
-    assert hasattr(store2, "get_node"), f"Store2 missing get_node: {type(store2)}"
-    assert hasattr(store1, "add_node"), f"Store1 missing add_node: {type(store1)}"
-    assert hasattr(store2, "add_node"), f"Store2 missing add_node: {type(store2)}"
+    # Both should be either StorageBackend or DocumentStore compatible
+    # Check for core storage operations
+    if hasattr(store1, "for_document"):
+        # StorageBackend - check for backend methods
+        assert hasattr(
+            store1, "clear_document"
+        ), f"Store1 missing clear_document: {type(store1)}"
+    else:
+        # DocumentStore - check for document store methods
+        assert hasattr(store1, "nodes"), f"Store1 missing nodes: {type(store1)}"
+
+    if hasattr(store2, "for_document"):
+        # StorageBackend - check for backend methods
+        assert hasattr(
+            store2, "clear_document"
+        ), f"Store2 missing clear_document: {type(store2)}"
+    else:
+        # DocumentStore - check for document store methods
+        assert hasattr(store2, "nodes"), f"Store2 missing nodes: {type(store2)}"

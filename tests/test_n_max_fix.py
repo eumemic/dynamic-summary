@@ -7,7 +7,6 @@ Using the real in-memory SQLite backend.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -15,21 +14,28 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
-from ragzoom.document_store import DocumentStore
+from ragzoom.contracts.storage_backend import StorageBackend
 
 
-@pytest.mark.usefixtures("sqlite_backend")
 class TestNumSeedsFixSQLite:
     """Test that the fix for num_seeds constraint works correctly."""
 
     @pytest.fixture
-    def doc_store(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> DocumentStore:
-        return sqlite_store_factory("doc1")
+    def doc_store(self, storage_backend: StorageBackend) -> StorageBackend:
+        return storage_backend
 
-    def test_retrieve_respects_coverage_tree(self, doc_store: DocumentStore) -> None:
+    def test_retrieve_respects_coverage_tree(self, doc_store: StorageBackend) -> None:
         """Test that retrieve() only passes coverage tree nodes to DP."""
+        # Get document store for the specific document
+        document_store = doc_store.for_document("doc1")
+        document_store.set_metadata(
+            file_path="test.txt",
+            content_hash="test-hash",
+            chunk_count=7,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
         # Build a simple tree with explicit token counts for DP cost control
         nodes: list[
             dict[
@@ -131,8 +137,8 @@ class TestNumSeedsFixSQLite:
                 "path": "",
             },
         ]
-        doc_store.nodes.add_batch(nodes)
-        doc_store.nodes.update_parent_references_batch(
+        document_store.nodes.add_batch(nodes)
+        document_store.nodes.update_parent_references_batch(
             [
                 ("leaf1", "nodeA"),
                 ("leaf2", "nodeA"),
@@ -146,7 +152,7 @@ class TestNumSeedsFixSQLite:
         # Mock the search methods using patch (use correct method names)
         with (
             patch.object(
-                doc_store.search,
+                document_store.search,
                 "similar",  # Correct method name used by retriever
                 return_value=[
                     ("leaf1", 0.9, {}),  # High similarity, empty metadata
@@ -156,7 +162,7 @@ class TestNumSeedsFixSQLite:
                 ],
             ),
             patch.object(
-                doc_store.search,
+                document_store.search,
                 "mmr_diverse",
                 return_value=["leaf1"],  # Correct method name
             ),
@@ -179,7 +185,7 @@ class TestNumSeedsFixSQLite:
 
                 retriever = create_retriever(
                     query_config=query_config,
-                    store=doc_store,
+                    store=document_store,
                     document_id="doc1",
                     api_key=operational_config.openai_api_key.get_secret_value(),
                     client=mock_instance,
@@ -215,7 +221,7 @@ class TestNumSeedsFixSQLite:
                 # Count leaf nodes in tiling (using height == 0)
                 leaf_count = 0
                 for node_id in result.tiling:
-                    node = doc_store.nodes.get_node(node_id)
+                    node = document_store.nodes.get_node(node_id)
                     if node and node.height == 0:
                         leaf_count += 1
                 # Since we have to include leaf2 to maintain coverage property, the DP algorithm

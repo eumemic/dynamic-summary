@@ -100,6 +100,53 @@ if [[ "${RZ_GUARD_NO_MOCKS:-}" = "1" ]]; then
     fi
 fi
 
+# Backend-agnostic migration guards - prevent regressions
+if command -v rg &> /dev/null; then
+    # Guard against SQLiteStorageBackend imports in non-sqlite files (except conftest.py)
+    if rg -l "SQLiteStorageBackend" tests --type py | grep -v sqlite | grep -v conftest.py >/tmp/sqlite_guard_hits 2>/dev/null; then
+        echo "❌ Found SQLiteStorageBackend imports in non-*_sqlite*.py files:" >&2
+        cat /tmp/sqlite_guard_hits >&2 || true
+        exit 2
+    fi
+    
+    # Guard against SessionLocal usage in tests
+    if rg -l "SessionLocal\(" tests --type py >/tmp/session_guard_hits 2>/dev/null; then
+        echo "❌ Found SessionLocal() usage in test files:" >&2
+        cat /tmp/session_guard_hits >&2 || true
+        exit 2
+    fi
+    
+    # Guard against LocalStoreAdapter references
+    if rg -l "LocalStoreAdapter" . --type py >/tmp/local_store_guard_hits 2>/dev/null; then
+        echo "❌ Found LocalStoreAdapter references (should be fully migrated):" >&2
+        cat /tmp/local_store_guard_hits >&2 || true
+        exit 2
+    fi
+    
+    echo "✅ Backend-agnostic migration guards passed"
+else
+    # Fallback to find/grep if rg not available
+    if find tests -name "*.py" -not -name "*sqlite*" -not -name "conftest.py" -exec grep -l "SQLiteStorageBackend" {} \; 2>/dev/null | head -1 | grep -q .; then
+        echo "❌ Found SQLiteStorageBackend imports in non-*_sqlite*.py files:" >&2
+        find tests -name "*.py" -not -name "*sqlite*" -not -name "conftest.py" -exec grep -l "SQLiteStorageBackend" {} \; 2>/dev/null >&2
+        exit 2
+    fi
+    
+    if find tests -name "*.py" -exec grep -l "SessionLocal(" {} \; 2>/dev/null | head -1 | grep -q .; then
+        echo "❌ Found SessionLocal() usage in test files:" >&2
+        find tests -name "*.py" -exec grep -l "SessionLocal(" {} \; 2>/dev/null >&2
+        exit 2
+    fi
+    
+    if find . -name "*.py" -exec grep -l "LocalStoreAdapter" {} \; 2>/dev/null | head -1 | grep -q .; then
+        echo "❌ Found LocalStoreAdapter references (should be fully migrated):" >&2
+        find . -name "*.py" -exec grep -l "LocalStoreAdapter" {} \; 2>/dev/null >&2
+        exit 2
+    fi
+    
+    echo "✅ Backend-agnostic migration guards passed"
+fi
+
 # Convert comma-separated skip list to array
 if [[ -n "$SKIP_CHECKS" ]]; then
     IFS=',' read -ra SKIP_ARRAY <<< "$SKIP_CHECKS"

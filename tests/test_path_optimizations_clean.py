@@ -1,32 +1,38 @@
-"""SQLite-based tests for path-based tree navigation optimizations.
+"""Backend-agnostic tests for path-based tree navigation optimizations.
 
-SQLite-based tests for path-based tree navigation optimizations, providing
-higher fidelity testing of the path-based navigation functionality with
-the real SQLite backend.
+Tests for path-based tree navigation optimizations, providing
+higher fidelity testing of the path-based navigation functionality.
 """
 
 from __future__ import annotations
-
-from collections.abc import Callable
 
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 from ragzoom.services.tree_navigator import TreeNavigator
 
 
-@pytest.mark.usefixtures("sqlite_backend")
-class TestPathOptimizationsSQLite:
-    """Test path-based optimizations in tree navigation with SQLite backend."""
+class TestPathOptimizations:
+    """Test path-based optimizations in tree navigation."""
 
     @pytest.fixture
-    def doc_store(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> DocumentStore:
+    def doc_store(self, storage_backend: StorageBackend) -> object:
         """Create a document-scoped store for doc1."""
-        return sqlite_store_factory("doc1")
+        doc_store = storage_backend.for_document("doc1")
+
+        # Set up document metadata
+        doc_store.set_metadata(
+            file_path="path_test.txt",
+            content_hash="path-test-hash",
+            chunk_count=5,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        return doc_store
 
     @pytest.fixture
     def seed_nodes(self, doc_store: DocumentStore) -> None:
@@ -104,9 +110,9 @@ class TestPathOptimizationsSQLite:
                 "path": "",
             },
         ]
-        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
         # Update parent references
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [
                 ("left_left", "left"),
                 ("left_right", "left"),
@@ -119,7 +125,7 @@ class TestPathOptimizationsSQLite:
         self, doc_store: DocumentStore, seed_nodes: None
     ) -> None:
         """Test that get_node_depth uses path field for instant calculation."""
-        navigator = TreeNavigator(doc_store._node_repo)
+        navigator = TreeNavigator(doc_store._node_repo)  # type: ignore[attr-defined]
 
         # Test depth calculation using paths
         assert navigator.get_node_depth("root") == 0  # Root depth
@@ -132,7 +138,7 @@ class TestPathOptimizationsSQLite:
         self, doc_store: DocumentStore, seed_nodes: None
     ) -> None:
         """Test that get_parent_node uses path field for instant lookup."""
-        navigator = TreeNavigator(doc_store._node_repo)
+        navigator = TreeNavigator(doc_store._node_repo)  # type: ignore[attr-defined]
 
         # Test parent lookup using paths
         root_parent = navigator.get_parent_node("root")
@@ -150,7 +156,7 @@ class TestPathOptimizationsSQLite:
         self, doc_store: DocumentStore, seed_nodes: None
     ) -> None:
         """Test that get_sibling_node uses path field for instant lookup."""
-        navigator = TreeNavigator(doc_store._node_repo)
+        navigator = TreeNavigator(doc_store._node_repo)  # type: ignore[attr-defined]
 
         # Test sibling lookup using paths
         root_sibling = navigator.get_sibling_node("root")
@@ -172,7 +178,7 @@ class TestPathOptimizationsSQLite:
         self, doc_store: DocumentStore, seed_nodes: None
     ) -> None:
         """Test that is_left_child uses path field for instant determination."""
-        navigator = TreeNavigator(doc_store._node_repo)
+        navigator = TreeNavigator(doc_store._node_repo)  # type: ignore[attr-defined]
 
         # Test left child detection using paths
         assert not navigator.is_left_child("root")  # Root is neither left nor right
@@ -185,7 +191,7 @@ class TestPathOptimizationsSQLite:
         self, doc_store: DocumentStore, seed_nodes: None
     ) -> None:
         """Test that is_right_child uses path field for instant determination."""
-        navigator = TreeNavigator(doc_store._node_repo)
+        navigator = TreeNavigator(doc_store._node_repo)  # type: ignore[attr-defined]
 
         # Test right child detection using paths
         assert not navigator.is_right_child("root")  # Root is neither left nor right
@@ -199,34 +205,36 @@ class TestPathOptimizationsSQLite:
     ) -> None:
         """Test that get_pinned_nodes uses path-based database filtering."""
         # Pin some nodes at different depths
-        doc_store._node_repo.pin_node("root")  # Depth 0
-        doc_store._node_repo.pin_node("left")  # Depth 1
-        doc_store._node_repo.pin_node("left_left")  # Depth 2
+        doc_store._node_repo.pin_node("root")  # Depth 0  # type: ignore[attr-defined]
+        doc_store._node_repo.pin_node("left")  # Depth 1  # type: ignore[attr-defined]
+        doc_store._node_repo.pin_node(
+            "left_left"
+        )  # Depth 2  # type: ignore[attr-defined]
 
         # Test filtering by depth
-        pinned_depth_0 = doc_store.get_pinned_nodes(depth_max=0)
+        pinned_depth_0 = doc_store.get_pinned_nodes(depth_max=0)  # type: ignore[attr-defined]
         assert len(pinned_depth_0) == 1
         assert pinned_depth_0[0].id == "root"
 
-        pinned_depth_1 = doc_store.get_pinned_nodes(depth_max=1)
+        pinned_depth_1 = doc_store.get_pinned_nodes(depth_max=1)  # type: ignore[attr-defined]
         assert len(pinned_depth_1) == 2
         node_ids = {node.id for node in pinned_depth_1}
         assert node_ids == {"root", "left"}
 
-        pinned_depth_2 = doc_store.get_pinned_nodes(depth_max=2)
+        pinned_depth_2 = doc_store.get_pinned_nodes(depth_max=2)  # type: ignore[attr-defined]
         assert len(pinned_depth_2) == 3
         node_ids = {node.id for node in pinned_depth_2}
         assert node_ids == {"root", "left", "left_left"}
 
         # Test no depth limit
-        pinned_all = doc_store.get_pinned_nodes()
+        pinned_all = doc_store.get_pinned_nodes()  # type: ignore[attr-defined]
         assert len(pinned_all) == 3
 
     def test_path_optimization_performance(
         self, doc_store: DocumentStore, seed_nodes: None
     ) -> None:
         """Test that path-based methods avoid database queries where possible."""
-        navigator = TreeNavigator(doc_store._node_repo)
+        navigator = TreeNavigator(doc_store._node_repo)  # type: ignore[attr-defined]
 
         # With proper paths, these operations should be very fast
         # and not require traversing up the tree

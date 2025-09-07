@@ -6,8 +6,8 @@ import numpy as np
 from numpy.typing import NDArray
 from openai import AsyncOpenAI
 
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.models import TreeNode
-from ragzoom.store import StoreManager
 from tests.conftest import BackwardCompatibilityConfig
 
 
@@ -27,7 +27,7 @@ class TestFollowingNeighbor:
         )  # Should be nullable (last node has no following)
 
     def test_bidirectional_neighbor_consistency(
-        self, base_config: BackwardCompatibilityConfig, store: StoreManager
+        self, base_config: BackwardCompatibilityConfig, storage_backend: StorageBackend
     ) -> None:
         """Verify bidirectional consistency: if A.following = B, then B.preceding = A."""
         # Create some test nodes with neighbor relationships
@@ -58,11 +58,11 @@ class TestFollowingNeighbor:
             nodes_data.append(node_data)
 
         # Create document with proper metadata and get document store
-        doc_store = store.add_document(
-            document_id="test-doc",
-            file_path=None,
+        doc_store = storage_backend.for_document("test-doc")
+        doc_store.set_metadata(
+            file_path="test.txt",
             content_hash="test-hash",
-            chunk_count=0,
+            chunk_count=4,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -99,7 +99,7 @@ class TestFollowingNeighbor:
     def test_leaf_nodes_have_correct_neighbor_relationships(
         self,
         base_config: BackwardCompatibilityConfig,
-        store: StoreManager,
+        storage_backend: StorageBackend,
         mock_openai_async_client: AsyncOpenAI,
     ) -> None:
         """Test that leaf nodes created during indexing have correct neighbor relationships."""
@@ -113,9 +113,9 @@ class TestFollowingNeighbor:
         # Create tree builder with small chunk size to ensure multiple chunks
         config = base_config.index_config.replace(target_chunk_tokens=5)
         # Create document with proper metadata
-        doc_store = store.add_document(
-            document_id="neighbor-test",
-            file_path=None,
+        doc_store = storage_backend.for_document("neighbor-test")
+        doc_store.set_metadata(
+            file_path="test.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -167,7 +167,7 @@ class TestFollowingNeighbor:
     def test_parent_nodes_have_correct_neighbor_relationships(
         self,
         base_config: BackwardCompatibilityConfig,
-        store: StoreManager,
+        storage_backend: StorageBackend,
         mock_openai_async_client: AsyncOpenAI,
     ) -> None:
         """Test that parent nodes at each level have correct neighbor relationships."""
@@ -179,12 +179,11 @@ class TestFollowingNeighbor:
         test_doc = " ".join([f"Chunk {i}." for i in range(8)])  # 8 chunks -> 3 levels
 
         # Create tree builder with small chunk size
-        config = base_config.index_config.replace(
-            target_chunk_tokens=3
-        )  # Create document with proper metadata
-        doc_store = store.add_document(
-            document_id="parent-neighbor-test",
-            file_path=None,
+        config = base_config.index_config.replace(target_chunk_tokens=3)
+        # Create document with proper metadata
+        doc_store = storage_backend.for_document("parent-neighbor-test")
+        doc_store.set_metadata(
+            file_path="test.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",

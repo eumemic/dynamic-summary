@@ -3,14 +3,12 @@
 import json
 import os
 from pathlib import Path
-from typing import cast
 
 import pytest
 
 from ragzoom.config import IndexConfig
-from ragzoom.document_store import DocumentStore
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
-from ragzoom.store import StoreManager
 
 # Skip benchmarks by default unless explicitly requested
 pytestmark = pytest.mark.benchmark
@@ -44,7 +42,9 @@ def get_test_document(document_path: str) -> tuple[str, str]:
 @pytest.mark.slow
 @pytest.mark.parametrize("leaf_tokens", [100, 200, 400])
 def test_indexing_performance(
-    leaf_tokens: int, document_path: str = "test_data/the_hobbit_chapter_1.txt"
+    storage_backend: StorageBackend,
+    leaf_tokens: int,
+    document_path: str = "test_data/the_hobbit_chapter_1.txt",
 ) -> None:
     """Benchmark indexing performance with configurable document and chunk size.
 
@@ -67,100 +67,108 @@ def test_indexing_performance(
     test_doc, doc_name = get_test_document(document_path)
 
     # Run indexing with metrics
-    with StoreManager.temporary() as store:
-        builder = TreeBuilder(index_config, cast(DocumentStore, store), api_key)
+    # Create a temporary document store for indexing
+    doc_store = storage_backend.add_document(
+        document_id="indexing_perf_test",
+        file_path="indexing_perf_test.txt",
+        content_hash="indexing-perf-hash",
+        chunk_count=0,
+        embedding_model=index_config.embedding_model,
+        summary_model=index_config.summary_model,
+    )
+    builder = TreeBuilder(index_config, doc_store, api_key)
 
-        # Warm up tokenizer
-        _ = builder.splitter.tokenizer.encode("warmup")
+    # Warm up tokenizer
+    _ = builder.splitter.tokenizer.encode("warmup")
 
-        # Run indexing
-        # Run indexing without document_id parameter (it's generated internally)
-        doc_id, telemetry = builder.add_document_with_telemetry(
-            test_doc, show_progress=False
-        )
+    # Run indexing
+    # Run indexing without document_id parameter (it's generated internally)
+    doc_id, telemetry = builder.add_document_with_telemetry(
+        test_doc, show_progress=False
+    )
 
-        # Save telemetry data for comparison
-        # Note: telemetry is already in v3.0 format from add_document_with_telemetry()
-        output_dir = Path("benchmark_results")
-        output_dir.mkdir(exist_ok=True)
+    # Save telemetry data for comparison
+    # Note: telemetry is already in v3.0 format from add_document_with_telemetry()
+    output_dir = Path("benchmark_results")
+    output_dir.mkdir(exist_ok=True)
 
-        output_file = output_dir / f"telemetry_{leaf_tokens}_tokens.json"
-        with open(output_file, "w") as f:
-            json.dump(telemetry, f, indent=2)
+    output_file = output_dir / f"telemetry_{leaf_tokens}_tokens.json"
+    with open(output_file, "w") as f:
+        json.dump(telemetry, f, indent=2)
 
-        # Compute metrics from telemetry for display
-        from ragzoom.telemetry_analysis import (
-            compute_metrics_from_telemetry,
-            compute_simplified_metrics,
-        )
+    # Compute metrics from telemetry for display
+    from ragzoom.telemetry_analysis import (
+        compute_metrics_from_telemetry,
+        compute_simplified_metrics,
+    )
 
-        # Get basic metrics for memory and timing info
-        basic_metrics = compute_metrics_from_telemetry(telemetry)
+    # Get basic metrics for memory and timing info
+    basic_metrics = compute_metrics_from_telemetry(telemetry)
 
-        # Get simplified metrics for the new metrics system
-        simplified = compute_simplified_metrics(telemetry)
+    # Get simplified metrics for the new metrics system
+    simplified = compute_simplified_metrics(telemetry)
 
-        # Get metrics for this chunk size
-        chunk_metrics = simplified.metrics_by_chunk_size.get(leaf_tokens)
+    # Get metrics for this chunk size
+    chunk_metrics = simplified.metrics_by_chunk_size.get(leaf_tokens)
 
-        # Print summary
-        print(f"\n=== Performance Summary ({doc_name}, leaf_tokens={leaf_tokens}) ===")
-        print(f"Document: {basic_metrics.source_document_tokens:,} tokens")
-        print(f"Total duration: {basic_metrics.total_duration_seconds:.2f}s")
-        print(f"Total cost: ${basic_metrics.total_cost:.4f}")
-        print(f"Peak memory: {basic_metrics.peak_memory_mb:.1f} MB")
-        print(f"Memory growth: {basic_metrics.memory_usage_mb:.1f} MB")
+    # Print summary
+    print(f"\n=== Performance Summary ({doc_name}, leaf_tokens={leaf_tokens}) ===")
+    print(f"Document: {basic_metrics.source_document_tokens:,} tokens")
+    print(f"Total duration: {basic_metrics.total_duration_seconds:.2f}s")
+    print(f"Total cost: ${basic_metrics.total_cost:.4f}")
+    print(f"Peak memory: {basic_metrics.peak_memory_mb:.1f} MB")
+    print(f"Memory growth: {basic_metrics.memory_usage_mb:.1f} MB")
 
-        # Print new simplified metrics if available
-        if chunk_metrics:
-            print("\n--- Simplified Metrics ---")
-            # ChunkMetrics is now a dataclass with typed attributes
-            if hasattr(chunk_metrics, "target_fit"):
-                print("\nTarget Fit:")
-                tf = chunk_metrics.target_fit
-                print(f"  median_error: {tf.median_error:.2f}")
-                print(f"  p95_error: {tf.p95_error:.2f}")
-                print(f"  percent_within_10: {tf.percent_within_10:.2f}")
+    # Print new simplified metrics if available
+    if chunk_metrics:
+        print("\n--- Simplified Metrics ---")
+        # ChunkMetrics is now a dataclass with typed attributes
+        if hasattr(chunk_metrics, "target_fit"):
+            print("\nTarget Fit:")
+            tf = chunk_metrics.target_fit
+            print(f"  median_error: {tf.median_error:.2f}")
+            print(f"  p95_error: {tf.p95_error:.2f}")
+            print(f"  percent_within_10: {tf.percent_within_10:.2f}")
 
-            if hasattr(chunk_metrics, "retries"):
-                print("\nRetries:")
-                r = chunk_metrics.retries
-                print(f"  retry_rate: {r.retry_rate:.2f}")
-                print(f"  max_retries: {r.max_retries:.0f}")
+        if hasattr(chunk_metrics, "retries"):
+            print("\nRetries:")
+            r = chunk_metrics.retries
+            print(f"  retry_rate: {r.retry_rate:.2f}")
+            print(f"  max_retries: {r.max_retries:.0f}")
 
-            if hasattr(chunk_metrics, "latency"):
-                print("\nLatency:")
-                latency = chunk_metrics.latency
-                print(f"  median_seconds: {latency.median_seconds:.2f}")
-                print(f"  total_indexing_seconds: {latency.total_indexing_seconds:.2f}")
+        if hasattr(chunk_metrics, "latency"):
+            print("\nLatency:")
+            latency = chunk_metrics.latency
+            print(f"  median_seconds: {latency.median_seconds:.2f}")
+            print(f"  total_indexing_seconds: {latency.total_indexing_seconds:.2f}")
 
-            if hasattr(chunk_metrics, "cost"):
-                print("\nCost:")
-                c = chunk_metrics.cost
-                print(f"  usd_per_node: ${c.usd_per_node:.4f}")
-                print(f"  total_tokens: {c.total_tokens:,}")
+        if hasattr(chunk_metrics, "cost"):
+            print("\nCost:")
+            c = chunk_metrics.cost
+            print(f"  usd_per_node: ${c.usd_per_node:.4f}")
+            print(f"  total_tokens: {c.total_tokens:,}")
 
-            if hasattr(chunk_metrics, "pipeline_efficiency"):
-                print("\nPipeline Efficiency:")
-                eff = chunk_metrics.pipeline_efficiency
-                print(f"  pipeline_efficiency: {eff:.1f}%")
-                if eff >= 60:
-                    print("  🚀 High parallelism utilization")
-                elif eff >= 20:
-                    print("  ✅ Moderate parallelism utilization")
-                else:
-                    print("  ⚠️  Low parallelism utilization")
+        if hasattr(chunk_metrics, "pipeline_efficiency"):
+            print("\nPipeline Efficiency:")
+            eff = chunk_metrics.pipeline_efficiency
+            print(f"  pipeline_efficiency: {eff:.1f}%")
+            if eff >= 60:
+                print("  🚀 High parallelism utilization")
+            elif eff >= 20:
+                print("  ✅ Moderate parallelism utilization")
+            else:
+                print("  ⚠️  Low parallelism utilization")
 
-        # Summary accuracy (simplified - using only available properties)
-        if hasattr(basic_metrics, "summary_stats") and basic_metrics.summary_stats:
-            for target, stats in basic_metrics.summary_stats.items():
-                print(f"\nSummary accuracy (target={target}):")
-                print(f"  Count: {stats.count}")
-                print(f"  Average size: {stats.avg_tokens:.1f} tokens")
-                print(f"  Average deviation: {stats.avg_deviation:.1f} tokens")
-                print(f"  Std deviation: {stats.std_deviation:.1f} tokens")
-                print(f"  Over target: {stats.over_target_count}")
-                print(f"  Under target: {stats.under_target_count}")
+    # Summary accuracy (simplified - using only available properties)
+    if hasattr(basic_metrics, "summary_stats") and basic_metrics.summary_stats:
+        for target, stats in basic_metrics.summary_stats.items():
+            print(f"\nSummary accuracy (target={target}):")
+            print(f"  Count: {stats.count}")
+            print(f"  Average size: {stats.avg_tokens:.1f} tokens")
+            print(f"  Average deviation: {stats.avg_deviation:.1f} tokens")
+            print(f"  Std deviation: {stats.std_deviation:.1f} tokens")
+            print(f"  Over target: {stats.over_target_count}")
+            print(f"  Under target: {stats.under_target_count}")
 
 
 @pytest.mark.slow
@@ -249,7 +257,18 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         leaf_tokens = int(sys.argv[1])
         # Config is created inside test_indexing_performance function
-        test_indexing_performance(leaf_tokens, "narrative")
+
+        # Note: For standalone execution, this would require a storage backend.
+        # Use pytest fixtures in practice: `pytest tests/benchmarks/test_indexing_performance.py`
+        print(
+            "Error: Standalone execution requires refactoring to use pytest fixtures."
+        )
+        print(
+            "Run: pytest tests/benchmarks/test_indexing_performance.py::test_indexing_performance"
+        )
+        import sys
+
+        sys.exit(1)
     else:
         print("Usage: python test_indexing_performance.py <leaf_tokens>")
         print("Example: python test_indexing_performance.py 200")

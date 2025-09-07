@@ -1,37 +1,41 @@
-"""SQLite-based tests for span corruption bug in tree building.
+"""Tests for span corruption bug in tree building.
 
 These tests ensure that tree building handles odd numbers of nodes correctly
-and prevents span corruption issues using the real in-memory SQLite backend.
+and prevents span corruption issues.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
-from ragzoom.document_store import DocumentStore
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
 from ragzoom.models import TreeNode
 from tests.conftest import BackwardCompatibilityConfig
 
 
-@pytest.mark.usefixtures("sqlite_backend")
-class TestSpanCorruptionSQLite:
+class TestSpanCorruption:
     """Test span corruption issues in tree building."""
 
-    @pytest.fixture
-    def doc_store(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> DocumentStore:
-        return sqlite_store_factory("test-doc")
-
     def setup_system(
-        self, doc_store: DocumentStore
-    ) -> tuple[BackwardCompatibilityConfig, DocumentStore, TreeBuilder, AsyncMock]:
+        self, storage_backend: StorageBackend
+    ) -> tuple[BackwardCompatibilityConfig, TreeBuilder, AsyncMock]:
         """Set up test system."""
+        # Get document store first
+        doc_store = storage_backend.for_document("test-doc")
+
+        # Set up document metadata
+        doc_store.set_metadata(
+            file_path="test_span_corruption.txt",
+            content_hash="span-corruption-test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
         # Create separate configs
         index_config = IndexConfig.load(
             target_chunk_tokens=100,  # Small chunks to create many nodes
@@ -58,14 +62,15 @@ class TestSpanCorruptionSQLite:
             index_config, query_config, operational_config
         )
 
-        return config, doc_store, tree_builder, mock_client
+        return config, tree_builder, mock_client
 
     @pytest.mark.asyncio
     async def test_odd_nodes_create_invalid_spans(
-        self, doc_store: DocumentStore
+        self, storage_backend: StorageBackend
     ) -> None:
         """Test that odd number of nodes creates span corruption."""
-        config, doc_store, tree_builder, mock_client = self.setup_system(doc_store)
+        config, tree_builder, mock_client = self.setup_system(storage_backend)
+        doc_store = storage_backend.for_document("test-doc")
 
         # Create text that will split into an odd number of chunks
         # Each chunk is ~100 tokens, so we need longer content
@@ -137,9 +142,10 @@ class TestSpanCorruptionSQLite:
         ), f"Found {len(corrupt_nodes)} nodes with invalid spans"
 
     @pytest.mark.asyncio
-    async def test_wraparound_pairing(self, doc_store: DocumentStore) -> None:
+    async def test_wraparound_pairing(self, storage_backend: StorageBackend) -> None:
         """Test that demonstrates wraparound pairing issue."""
-        config, doc_store, tree_builder, mock_client = self.setup_system(doc_store)
+        config, tree_builder, mock_client = self.setup_system(storage_backend)
+        doc_store = storage_backend.for_document("test-doc")
 
         # Create 5 chunks that will split properly at 100 tokens each
         # Each chunk needs to be long enough to hit the token limit

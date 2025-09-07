@@ -1,13 +1,10 @@
-"""SQLite-based tests for storage functionality.
+"""Backend-agnostic tests for storage functionality.
 
-Using the real in-memory SQLite backend
-for testing core store functionality, CRUD operations, document isolation,
-and store interface compliance.
+Testing core store functionality, CRUD operations, document isolation,
+and store interface compliance using the configured backend.
 """
 
 from __future__ import annotations
-
-from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -17,19 +14,22 @@ from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 
 
-@pytest.mark.usefixtures("sqlite_backend")
-class TestStoreSQLite:
-    """Test the Store class with real SQLite backend."""
+class TestStore:
+    """Test core store functionality with configured backend."""
 
     @pytest.fixture
-    def doc_store(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> DocumentStore:
-        return sqlite_store_factory("doc-id")
+    def doc_store(self, storage_backend: StorageBackend) -> DocumentStore:
+        doc_store = storage_backend.for_document("doc-id")
+        doc_store.set_metadata(
+            file_path="test_file.txt",
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        return doc_store
 
-    def test_add_node(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_add_node(self, doc_store: DocumentStore) -> None:
         """Test adding a node to the store."""
         nodes: list[
             dict[
@@ -48,10 +48,10 @@ class TestStoreSQLite:
                 "path": "",
             }
         ]
-        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        doc_store.search.upsert_vectors(  # type: ignore[attr-defined]
             [
                 (
                     "test-1",
@@ -67,16 +67,14 @@ class TestStoreSQLite:
             ]
         )
 
-        node = doc_store.nodes.get_node("test-1")
+        node = doc_store.nodes.get_node("test-1")  # type: ignore[attr-defined]
         assert node is not None
         assert node.id == "test-1"
         assert node.text == "Test text"
         assert node.span_start == 0
         assert node.span_end == 10
 
-    def test_get_node(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_get_node(self, doc_store: DocumentStore) -> None:
         """Test retrieving a node."""
         nodes: list[
             dict[
@@ -95,10 +93,10 @@ class TestStoreSQLite:
                 "path": "",
             }
         ]
-        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        doc_store.search.upsert_vectors(  # type: ignore[attr-defined]
             [
                 (
                     "test-2",
@@ -115,18 +113,16 @@ class TestStoreSQLite:
         )
 
         # Retrieve it
-        node = doc_store.nodes.get_node("test-2")
+        node = doc_store.nodes.get_node("test-2")  # type: ignore[attr-defined]
         assert node is not None
         assert node.id == "test-2"
         assert node.text == "Test text 2"
 
         # Test non-existent node
-        node = doc_store.nodes.get_node("non-existent")
+        node = doc_store.nodes.get_node("non-existent")  # type: ignore[attr-defined]
         assert node is None
 
-    def test_node_relationships(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_node_relationships(self, doc_store: DocumentStore) -> None:
         """Test parent-child relationships."""
         nodes: list[
             dict[
@@ -174,13 +170,13 @@ class TestStoreSQLite:
                 "right_child_id": "child2",
             },
         ]
-        doc_store.nodes.add_batch(nodes)
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [("child1", "parent"), ("child2", "parent")]
         )
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        doc_store.search.upsert_vectors(  # type: ignore[attr-defined]
             [
                 (
                     "child1",
@@ -219,20 +215,18 @@ class TestStoreSQLite:
         )
 
         # Test relationships
-        children = doc_store.tree.get_children("parent")
+        children = doc_store.tree.get_children("parent")  # type: ignore[attr-defined]
         left, right = children
         assert left is not None
         assert right is not None
         assert left.id == "child1"
         assert right.id == "child2"
 
-        ancestors = doc_store.tree.get_ancestors(["child1", "child2"])
+        ancestors = doc_store.tree.get_ancestors(["child1", "child2"])  # type: ignore[attr-defined]
         assert len(ancestors) == 1
         assert ancestors[0].id == "parent"
 
-    def test_search_similar(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_search_similar(self, doc_store: DocumentStore) -> None:
         """Test vector similarity search."""
         nodes: list[
             dict[
@@ -272,7 +266,7 @@ class TestStoreSQLite:
                 )
             )
 
-        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
         # Cast to exact expected type for upsert
         typed_entries: list[tuple[str, list[float], dict[str, object]]] = [
             (entry[0], list(entry[1]), entry[2]) for entry in vector_entries
@@ -281,15 +275,13 @@ class TestStoreSQLite:
 
         # Search with a query embedding
         query_embedding = [0.25] * 1536
-        results = doc_store.search.search_similar(query_embedding, n_results=3)
+        results = doc_store.search.search_similar(query_embedding, n_results=3)  # type: ignore[attr-defined]
 
         assert len(results) == 3
         assert all(isinstance(r, tuple) for r in results)
         assert all(len(r) == 3 for r in results)  # (id, distance, metadata)
 
-    def test_mmr_diverse_results(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_mmr_diverse_results(self, doc_store: DocumentStore) -> None:
         """Test MMR diversity computation."""
         from ragzoom.services.search_service import NodeMetadataDict
 
@@ -388,7 +380,7 @@ class TestStoreSQLite:
             )
             vector_entries.append((node_id, full_embedding, dict(metadata)))
 
-        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
         # Cast to exact expected type for upsert
         typed_entries: list[tuple[str, list[float], dict[str, object]]] = [
             (entry[0], list(entry[1]), entry[2]) for entry in vector_entries
@@ -414,7 +406,7 @@ class TestStoreSQLite:
             )
             for cand in candidates
         ]
-        selected = doc_store.search.compute_mmr_diverse_results(
+        selected = doc_store.search.compute_mmr_diverse_results(  # type: ignore[attr-defined]
             query_embedding, formatted_candidates, lambda_param=0.7, k=3
         )
 
@@ -424,9 +416,7 @@ class TestStoreSQLite:
         # Should include some diversity
         assert len(set(selected)) == 3
 
-    def test_pinned_nodes(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_pinned_nodes(self, doc_store: DocumentStore) -> None:
         """Test node pinning functionality."""
         # Create a tree structure with proper depths
         nodes: list[
@@ -492,13 +482,13 @@ class TestStoreSQLite:
                 "right_child_id": None,
             },
         ]
-        doc_store.nodes.add_batch(nodes)
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [("level1", "root"), ("level2", "level1"), ("level3", "level2")]
         )
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        doc_store.search.upsert_vectors(  # type: ignore[attr-defined]
             [
                 (
                     "root",
@@ -553,22 +543,20 @@ class TestStoreSQLite:
         # This test validates the document-scoped tree structure instead
 
         # Test tree depths
-        assert doc_store.tree.get_depth("root") == 0
-        assert doc_store.tree.get_depth("level1") == 1
-        assert doc_store.tree.get_depth("level2") == 2
-        assert doc_store.tree.get_depth("level3") == 3
+        assert doc_store.tree.get_depth("root") == 0  # type: ignore[attr-defined]
+        assert doc_store.tree.get_depth("level1") == 1  # type: ignore[attr-defined]
+        assert doc_store.tree.get_depth("level2") == 2  # type: ignore[attr-defined]
+        assert doc_store.tree.get_depth("level3") == 3  # type: ignore[attr-defined]
 
         # Test pinned nodes retrieval (filtering to this document)
-        pinned = doc_store.get_pinned_nodes()
+        pinned = doc_store.get_pinned_nodes()  # type: ignore[attr-defined]
         assert isinstance(pinned, list)  # Should return empty list for document store
 
         # Test pinned nodes with depth filter
         pinned = doc_store.get_pinned_nodes(depth_max=0)
         assert isinstance(pinned, list)
 
-    def test_cache_functionality(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_cache_functionality(self, doc_store: DocumentStore) -> None:
         """Test LRU cache behavior."""
         nodes: list[
             dict[
@@ -587,10 +575,10 @@ class TestStoreSQLite:
                 "path": "",
             }
         ]
-        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        doc_store.search.upsert_vectors(  # type: ignore[attr-defined]
             [
                 (
                     "cached",
@@ -607,23 +595,21 @@ class TestStoreSQLite:
         )
 
         # First retrieval (from DB)
-        node1 = doc_store.nodes.get_node("cached")
+        node1 = doc_store.nodes.get_node("cached")  # type: ignore[attr-defined]
         assert node1 is not None
 
         # Second retrieval (from cache)
-        node2 = doc_store.nodes.get_node("cached")
+        node2 = doc_store.nodes.get_node("cached")  # type: ignore[attr-defined]
         assert node2 is not None
         assert node2.id == node1.id
 
         # Note: DocumentStore doesn't expose node_cache - cache is managed internally
         # Test that repeated access works consistently
-        node3 = doc_store.nodes.get_node("cached")
+        node3 = doc_store.nodes.get_node("cached")  # type: ignore[attr-defined]
         assert node3 is not None
         assert node3.id == node1.id
 
-    def test_node_depth_calculation(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_node_depth_calculation(self, doc_store: DocumentStore) -> None:
         """Test dynamic depth calculation."""
         # Create a tree structure:
         #     root
@@ -720,8 +706,8 @@ class TestStoreSQLite:
                 "right_child_id": None,
             },
         ]
-        doc_store.nodes.add_batch(nodes)
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [
                 ("left", "root"),
                 ("right", "root"),
@@ -732,7 +718,7 @@ class TestStoreSQLite:
         )
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        doc_store.search.upsert_vectors(  # type: ignore[attr-defined]
             [
                 (
                     "root",
@@ -804,28 +790,26 @@ class TestStoreSQLite:
         )
 
         # Test depth calculations
-        assert doc_store.tree.get_depth("root") == 0
-        assert doc_store.tree.get_depth("left") == 1
-        assert doc_store.tree.get_depth("right") == 1
-        assert doc_store.tree.get_depth("ll") == 2
-        assert doc_store.tree.get_depth("lr") == 2
-        assert doc_store.tree.get_depth("rc") == 2
+        assert doc_store.tree.get_depth("root") == 0  # type: ignore[attr-defined]
+        assert doc_store.tree.get_depth("left") == 1  # type: ignore[attr-defined]
+        assert doc_store.tree.get_depth("right") == 1  # type: ignore[attr-defined]
+        assert doc_store.tree.get_depth("ll") == 2  # type: ignore[attr-defined]
+        assert doc_store.tree.get_depth("lr") == 2  # type: ignore[attr-defined]
+        assert doc_store.tree.get_depth("rc") == 2  # type: ignore[attr-defined]
 
         # Test is_root method
-        assert doc_store.tree.is_root("root") is True
-        assert doc_store.tree.is_root("left") is False
-        assert doc_store.tree.is_root("ll") is False
+        assert doc_store.tree.is_root("root") is True  # type: ignore[attr-defined]
+        assert doc_store.tree.is_root("left") is False  # type: ignore[attr-defined]
+        assert doc_store.tree.is_root("ll") is False  # type: ignore[attr-defined]
 
         # Test with non-existent node
-        assert doc_store.tree.is_root("non-existent") is False
+        assert doc_store.tree.is_root("non-existent") is False  # type: ignore[attr-defined]
 
         # Test non-existent node raises ValueError (not NodeNotFoundError)
         with pytest.raises(ValueError):
-            doc_store.tree.get_depth("non-existent")
+            doc_store.tree.get_depth("non-existent")  # type: ignore[attr-defined]
 
-    def test_node_height_calculation(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_node_height_calculation(self, doc_store: DocumentStore) -> None:
         """Test dynamic height calculation."""
         # Create the same tree structure
         nodes: list[
@@ -913,8 +897,8 @@ class TestStoreSQLite:
                 "right_child_id": None,
             },
         ]
-        doc_store.nodes.add_batch(nodes)
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [
                 ("left", "root"),
                 ("right", "root"),
@@ -925,7 +909,7 @@ class TestStoreSQLite:
         )
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        doc_store.search.upsert_vectors(  # type: ignore[attr-defined]
             [
                 (
                     "root",
@@ -998,37 +982,35 @@ class TestStoreSQLite:
 
         # Test height calculations using stored values
         # Leaf nodes have height 0
-        ll_node = doc_store.nodes.get_node("ll")
-        lr_node = doc_store.nodes.get_node("lr")
-        rc_node = doc_store.nodes.get_node("rc")
+        ll_node = doc_store.nodes.get_node("ll")  # type: ignore[attr-defined]
+        lr_node = doc_store.nodes.get_node("lr")  # type: ignore[attr-defined]
+        rc_node = doc_store.nodes.get_node("rc")  # type: ignore[attr-defined]
         assert ll_node is not None and ll_node.height == 0
         assert lr_node is not None and lr_node.height == 0
         assert rc_node is not None and rc_node.height == 0
 
         # Internal nodes have height = 1 + max(child heights)
-        left_node = doc_store.nodes.get_node("left")
-        right_node = doc_store.nodes.get_node("right")
-        root_node = doc_store.nodes.get_node("root")
+        left_node = doc_store.nodes.get_node("left")  # type: ignore[attr-defined]
+        right_node = doc_store.nodes.get_node("right")  # type: ignore[attr-defined]
+        root_node = doc_store.nodes.get_node("root")  # type: ignore[attr-defined]
         assert left_node is not None and left_node.height == 1  # max(0, 0) + 1
         assert right_node is not None and right_node.height == 1  # has only left child
         assert root_node is not None and root_node.height == 2  # max(1, 1) + 1
 
         # Test is_leaf method
-        assert doc_store.tree.is_leaf("ll") is True
-        assert doc_store.tree.is_leaf("lr") is True
-        assert doc_store.tree.is_leaf("rc") is True
-        assert doc_store.tree.is_leaf("left") is False
-        assert doc_store.tree.is_leaf("root") is False
+        assert doc_store.tree.is_leaf("ll") is True  # type: ignore[attr-defined]
+        assert doc_store.tree.is_leaf("lr") is True  # type: ignore[attr-defined]
+        assert doc_store.tree.is_leaf("rc") is True  # type: ignore[attr-defined]
+        assert doc_store.tree.is_leaf("left") is False  # type: ignore[attr-defined]
+        assert doc_store.tree.is_leaf("root") is False  # type: ignore[attr-defined]
 
         # Test with non-existent node
-        assert doc_store.tree.is_leaf("non-existent") is False
+        assert doc_store.tree.is_leaf("non-existent") is False  # type: ignore[attr-defined]
 
         # Test non-existent node
-        assert doc_store.nodes.get_node("non-existent") is None
+        assert doc_store.nodes.get_node("non-existent") is None  # type: ignore[attr-defined]
 
-    def test_depth_height_edge_cases(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_depth_height_edge_cases(self, doc_store: DocumentStore) -> None:
         """Test edge cases for depth/height calculation."""
         # Test single node (both root and leaf)
         nodes: list[
@@ -1105,8 +1087,8 @@ class TestStoreSQLite:
                 "right_child_id": None,
             },
         ]
-        doc_store.nodes.add_batch(nodes)
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [
                 ("left_only_child", "parent_left_only"),
                 ("right_only_child", "parent_right_only"),
@@ -1114,7 +1096,7 @@ class TestStoreSQLite:
         )
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        doc_store.search.upsert_vectors(  # type: ignore[attr-defined]
             [
                 (
                     "single",
@@ -1175,22 +1157,20 @@ class TestStoreSQLite:
         )
 
         assert doc_store.tree.get_depth("single") == 0  # Root has depth 0
-        single_node = doc_store.nodes.get_node("single")
+        single_node = doc_store.nodes.get_node("single")  # type: ignore[attr-defined]
         assert single_node is not None and single_node.height == 0  # Leaf has height 0
-        assert doc_store.tree.is_root("single") is True
-        assert doc_store.tree.is_leaf("single") is True
+        assert doc_store.tree.is_root("single") is True  # type: ignore[attr-defined]
+        assert doc_store.tree.is_leaf("single") is True  # type: ignore[attr-defined]
 
-        parent_left_only_node = doc_store.nodes.get_node("parent_left_only")
+        parent_left_only_node = doc_store.nodes.get_node("parent_left_only")  # type: ignore[attr-defined]
         assert parent_left_only_node is not None and parent_left_only_node.height == 1
-        assert doc_store.tree.is_leaf("parent_left_only") is False
+        assert doc_store.tree.is_leaf("parent_left_only") is False  # type: ignore[attr-defined]
 
-        parent_right_only_node = doc_store.nodes.get_node("parent_right_only")
+        parent_right_only_node = doc_store.nodes.get_node("parent_right_only")  # type: ignore[attr-defined]
         assert parent_right_only_node is not None and parent_right_only_node.height == 1
-        assert doc_store.tree.is_leaf("parent_right_only") is False
+        assert doc_store.tree.is_leaf("parent_right_only") is False  # type: ignore[attr-defined]
 
-    def test_depth_calculation_performance(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_depth_calculation_performance(self, doc_store: DocumentStore) -> None:
         """Test that depth calculation is O(log n) by creating a deep tree."""
         # Create a linear chain of nodes to test worst case
         nodes: list[
@@ -1242,8 +1222,8 @@ class TestStoreSQLite:
             if parent_id:
                 parent_refs.append((node_id, parent_id))
 
-        doc_store.nodes.add_batch(nodes)
-        doc_store.nodes.update_parent_references_batch(parent_refs)
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
+        doc_store.nodes.update_parent_references_batch(parent_refs)  # type: ignore[attr-defined]
         # Cast to exact expected type for upsert
         typed_entries: list[tuple[str, list[float], dict[str, object]]] = [
             (entry[0], list(entry[1]), entry[2]) for entry in vector_entries
@@ -1253,15 +1233,13 @@ class TestStoreSQLite:
         # Test depths
         for i in range(10):
             node_id = f"chain_{i}"
-            assert doc_store.tree.get_depth(node_id) == i
+            assert doc_store.tree.get_depth(node_id) == i  # type: ignore[attr-defined]
 
         # Even for the deepest node, we only traverse up to root
         # This is O(depth) = O(log n) for balanced trees
-        assert doc_store.tree.get_depth("chain_9") == 9
+        assert doc_store.tree.get_depth("chain_9") == 9  # type: ignore[attr-defined]
 
-    def test_error_handling_patterns(
-        self, storage_backend: StorageBackend, doc_store: DocumentStore
-    ) -> None:
+    def test_error_handling_patterns(self, doc_store: DocumentStore) -> None:
         """Test consistent error handling patterns."""
         # Create a simple tree for testing
         nodes: list[
@@ -1284,10 +1262,10 @@ class TestStoreSQLite:
                 "right_child_id": None,
             }
         ]
-        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        doc_store.search.upsert_vectors(  # type: ignore[attr-defined]
             [
                 (
                     "root",
@@ -1305,14 +1283,14 @@ class TestStoreSQLite:
 
         # Test ValueError for calculation methods with missing nodes
         with pytest.raises(ValueError):
-            doc_store.tree.get_depth("missing")
+            doc_store.tree.get_depth("missing")  # type: ignore[attr-defined]
 
         # Note: DocumentStore doesn't have pin_node method - test other error patterns
         # Test that empty embedding is handled (this would be caught at add_batch level)
 
         # Test predicate methods return False for missing nodes (don't raise)
-        assert doc_store.tree.is_leaf("missing") is False
-        assert doc_store.tree.is_root("missing") is False
+        assert doc_store.tree.is_leaf("missing") is False  # type: ignore[attr-defined]
+        assert doc_store.tree.is_root("missing") is False  # type: ignore[attr-defined]
 
         # Test query methods return None for missing items (don't raise)
-        assert doc_store.nodes.get_node("missing") is None
+        assert doc_store.nodes.get_node("missing") is None  # type: ignore[attr-defined]

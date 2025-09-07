@@ -1,13 +1,19 @@
-"""Demonstration test for issue #150 atomic multi-operation functionality."""
+"""Demonstration test for issue #150 using backend + DocumentStore.
 
-from ragzoom.repositories.node_repository import NodeDataDict
-from ragzoom.store import StoreManager
+This version avoids leaking DB sessions and uses the StorageBackend
+and per-document DocumentStore APIs exclusively.
+"""
+
+import numpy as np
+from numpy.typing import NDArray
+
+from ragzoom.contracts.storage_backend import StorageBackend
 
 
 class TestIssue150Demonstration:
     """Demonstrate the exact usage pattern requested in issue #150."""
 
-    def test_usage_pattern_from_issue(self, store: StoreManager) -> None:
+    def test_usage_pattern_from_issue(self, storage_backend: StorageBackend) -> None:
         """Test the exact usage pattern described in issue #150."""
         # This demonstrates the usage pattern from the issue description:
         #
@@ -20,8 +26,9 @@ class TestIssue150Demonstration:
 
         # Setup: Create initial document with nodes
         doc_id = "demo-doc"
-        store.add_document(
-            document_id=doc_id,
+        doc_store = storage_backend.for_document(doc_id)
+        # Create initial document record
+        doc_store.set_metadata(
             file_path="demo.txt",
             content_hash="old-hash",
             chunk_count=1,
@@ -29,7 +36,11 @@ class TestIssue150Demonstration:
             summary_model="gpt-4o-mini",
         )
 
-        old_nodes_data: list[NodeDataDict] = [
+        old_nodes_data: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
             {
                 "node_id": "old-node",
                 "text": "Old content",
@@ -40,11 +51,11 @@ class TestIssue150Demonstration:
                 "token_count": 2,
             }
         ]
-        store.nodes.add_nodes_batch(old_nodes_data)
+        doc_store.nodes.add_batch(old_nodes_data)
 
         # Verify initial state
-        assert store.get_document_by_id(doc_id) is not None
-        assert store.nodes.get_node("old-node") is not None
+        assert doc_store.get_metadata() is not None
+        assert doc_store.nodes.get_node("old-node") is not None
 
         # Demonstrate atomic multi-operation sequence from issue #150
         new_doc_data: dict[str, str | int] = {
@@ -56,7 +67,11 @@ class TestIssue150Demonstration:
             "summary_model": "gpt-4o-mini",
         }
 
-        new_nodes_data: list[NodeDataDict] = [
+        new_nodes_data: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
             {
                 "node_id": "new-node",
                 "text": "New content",
@@ -69,25 +84,23 @@ class TestIssue150Demonstration:
         ]
 
         # ATOMIC OPERATION: All operations commit together or all rollback
-        with store.transaction() as session:
+        with doc_store.transaction() as session:
             # Delete old nodes
-            deleted_count = store.clear_document(doc_id, session=session)
+            deleted_count = doc_store.clear_document(doc_id, session=session)
             assert deleted_count == 1
 
             # Update document metadata (using add since update isn't implemented yet)
             # In a real scenario, this would be update_document()
-            store.add_document(
-                document_id=str(new_doc_data["document_id"]),
+            doc_store.set_metadata(
                 file_path=str(new_doc_data["file_path"]),
                 content_hash=str(new_doc_data["content_hash"]),
                 chunk_count=int(new_doc_data["chunk_count"]),
                 embedding_model=str(new_doc_data["embedding_model"]),
                 summary_model=str(new_doc_data["summary_model"]),
-                session=session,
             )
 
             # Add new nodes
-            new_nodes = store.nodes.add_nodes_batch(new_nodes_data, session=session)
+            new_nodes = doc_store.nodes.add_batch(new_nodes_data, session=session)
             assert len(new_nodes) == 1
 
             # All operations are part of the same transaction
@@ -95,31 +108,36 @@ class TestIssue150Demonstration:
             # If we reach here, everything commits atomically
 
         # Verify final state: atomic replacement succeeded
-        final_doc = store.get_document_by_id(doc_id)
+        final_doc = doc_store.get_metadata()
         assert final_doc is not None
         assert final_doc.content_hash == "new-hash"  # Document updated
 
-        assert store.nodes.get_node("old-node") is None  # Old node deleted
-        assert store.nodes.get_node("new-node") is not None  # New node added
+        assert doc_store.nodes.get_node("old-node") is None  # Old node deleted
+        assert doc_store.nodes.get_node("new-node") is not None  # New node added
 
-    def test_backward_compatibility_demonstration(self, store: StoreManager) -> None:
+    def test_backward_compatibility_demonstration(
+        self, storage_backend: StorageBackend
+    ) -> None:
         """Demonstrate that existing code works unchanged (backward compatibility)."""
         # Existing code that doesn't use transactions continues to work
 
         # Add document without session (existing API)
-        doc_store = store.add_document(
-            document_id="backward-compat-doc",
+        doc_store = storage_backend.for_document("backward-compat-doc")
+        doc_store.set_metadata(
             file_path="test.txt",
             content_hash="test-hash",
             chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
-            # No session parameter - uses existing behavior
         )
         assert doc_store.document_id == "backward-compat-doc"
 
         # Add nodes without session (existing API)
-        nodes_data: list[NodeDataDict] = [
+        nodes_data: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
             {
                 "node_id": "compat-node",
                 "text": "Test content",
@@ -130,12 +148,14 @@ class TestIssue150Demonstration:
                 "token_count": 3,
             }
         ]
-        nodes = store.nodes.add_nodes_batch(nodes_data)  # No session parameter
+        nodes = doc_store.nodes.add_batch(nodes_data)  # No session parameter
         assert len(nodes) == 1
 
         # Delete nodes without session (existing API)
-        deleted_count = store.clear_document("backward-compat-doc")  # No session
+        deleted_count = storage_backend.clear_document(
+            "backward-compat-doc"
+        )  # No session
         assert deleted_count == 1
 
         # All existing APIs work exactly as before
-        assert store.nodes.get_node("compat-node") is None
+        assert doc_store.nodes.get_node("compat-node") is None
