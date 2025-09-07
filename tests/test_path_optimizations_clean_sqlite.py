@@ -1,8 +1,8 @@
 """SQLite-based tests for path-based tree navigation optimizations.
 
-This file converts the path optimization tests from test_path_optimizations_clean.py
-to use the real in-memory SQLite backend instead of SimpleMockStore, providing
-higher fidelity testing of the path-based navigation functionality.
+SQLite-based tests for path-based tree navigation optimizations, providing
+higher fidelity testing of the path-based navigation functionality with
+the real SQLite backend.
 """
 
 from __future__ import annotations

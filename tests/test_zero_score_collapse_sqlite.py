@@ -1,8 +1,8 @@
 """SQLite-based tests for zero score collapse scenarios.
 
-These tests ensure the DP tiling algorithm returns a valid tiling when
-ancestors have lower scores and budget cannot fit deeper nodes. Converted
-from SimpleMockStore to use the real in-memory SQLite backend.
+SQLite-based tests ensuring the DP tiling algorithm returns a valid tiling
+when ancestors have lower scores and budget cannot fit deeper nodes,
+with the real in-memory SQLite backend.
 """
 
 from __future__ import annotations

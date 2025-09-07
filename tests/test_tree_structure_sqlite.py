@@ -1,7 +1,7 @@
 """SQLite-based tests for tree structure validation and indexing tree creation.
 
 This module converts the core tree structure validation tests from test_tree_structure.py
-to use the real in-memory SQLite backend instead of SimpleMockStore, providing
+using the real in-memory SQLite backend, providing
 higher fidelity testing of the tree validation functionality.
 """
 

@@ -2,7 +2,7 @@
 
 This mirrors a subset of tests from test_dp_assembly.py to demonstrate how to
 use the new sqlite fixtures. Use this as a template for migrating additional
-tests off SimpleMockStore.
+tests using SQLite backend.
 """
 
 from __future__ import annotations

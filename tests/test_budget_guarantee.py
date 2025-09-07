@@ -1,431 +1,766 @@
-"""Test budget guarantees in retrieval and assembly."""
+"""SQLite-based budget guarantee tests.
 
-from collections.abc import Callable, Generator
-from typing import TYPE_CHECKING, cast
+SQLite-based tests for budget guarantees in retrieval and assembly
+with the real in-memory SQLite backend.
+"""
 
-if TYPE_CHECKING:
-    from ragzoom.document_store import DocumentStore
-    from ragzoom.interfaces import StoreInterface
-    from tests.conftest import BackwardCompatibilityConfig
-from unittest.mock import Mock
+from __future__ import annotations
 
+from collections.abc import Callable
+
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
-from ragzoom.index import TreeBuilder
-from ragzoom.retrieve import Retriever
-from tests.utils import create_predictable_summary_mock, mock_openai_context
+from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
+from ragzoom.config import QueryConfig
+from ragzoom.document_store import DocumentStore
+from ragzoom.validate import validate_tiling
+from tests.utils import create_retriever, mock_openai_context
 
 
+@pytest.mark.usefixtures("sqlite_backend")
 class TestBudgetGuarantee:
     """Test that budget guarantees are enforced by construction."""
 
     @pytest.fixture
-    def setup_system(
-        self,
-        store: "StoreInterface",
-        config_factory: Callable[
-            [int, int, int, str, str | None], "BackwardCompatibilityConfig"
-        ],
-    ) -> Generator[
-        tuple[
-            tuple[IndexConfig, QueryConfig, OperationalConfig],
-            "StoreInterface",
-            TreeBuilder,
-            Retriever,
-            Assembler,
-        ],
-        None,
-        None,
-    ]:
-        """Set up a test system with mocked API."""
-        # Create custom config for budget testing
-        config = config_factory(
-            200,  # target_chunk_tokens - Standard leaf size
-            50,  # preceding_context_tokens
-            1000,  # budget_tokens - Strict budget for testing
-            "test-key",
-            None,  # database_url
-        )
+    def doc_store(
+        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
+    ) -> DocumentStore:
+        return sqlite_store_factory("test-doc")
 
-        # Use centralized mocking with predictable summaries
-        with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
-            # Override with predictable summary behavior
-            mock_chat_sync, mock_chat_async = create_predictable_summary_mock()
-            mock_index.chat.completions.create = mock_chat_async
-
-            from openai import OpenAI
-
-            from ragzoom.retrieval.budget_planner import BudgetPlanner
-            from ragzoom.retrieval.embedding_service import EmbeddingService
-
-            # Create a document and get its DocumentStore
-            doc_store = store.add_document(
-                document_id="test-doc",
-                file_path=None,
-                content_hash=store.compute_content_hash(""),
-                chunk_count=0,
-                embedding_model=config.index_config.embedding_model,
-                summary_model=config.index_config.summary_model,
-            )
-
-            tree_builder = TreeBuilder(
-                config.index_config,
-                cast("DocumentStore", doc_store),
-                api_key=config.operational_config.openai_api_key.get_secret_value(),
-            )
-
-            # Create services for Retriever
-            client = OpenAI(
-                api_key=config.operational_config.openai_api_key.get_secret_value()
-            )
-            embedding_service = EmbeddingService(
-                client,
-                cast("DocumentStore | None", doc_store),
-                config.query_config.embedding_model,
-            )
-            budget_planner = BudgetPlanner(
-                cast("DocumentStore | None", doc_store),
-                config.index_config.target_chunk_tokens,
-            )
-            retriever = Retriever(
-                config.query_config,
-                cast("DocumentStore", doc_store),
-                embedding_service,
-                budget_planner,
-            )
-            assembler = Assembler(cast("DocumentStore", doc_store))
-
-            yield (
-                config.index_config,
-                config.query_config,
-                config.operational_config,
-            ), store, tree_builder, retriever, assembler
+    @pytest.fixture
+    def assembler(self, doc_store: DocumentStore) -> Assembler:
+        return Assembler(doc_store)
 
     def test_budget_never_exceeded_worst_case(
         self,
-        setup_system: tuple[
-            tuple[IndexConfig, QueryConfig, OperationalConfig],
-            "StoreInterface",
-            TreeBuilder,
-            Retriever,
-            Assembler,
-        ],
+        doc_store: DocumentStore,
+        assembler: Assembler,
+        sqlite_backend: SQLiteStorageBackend,
     ) -> None:
         """Test that assembly never exceeds budget even in worst case."""
-        (
-            (index_config, query_config, operational_config),
-            store,
-            tree_builder,
-            retriever,
-            assembler,
-        ) = setup_system
-
-        # Create a document that will build a multi-level tree
-        # Each chunk is ~200 tokens, create enough for a 3-level tree
-        chunk_text = "This is test content. " * 40  # ~200 tokens
-        document = " ".join([chunk_text for _ in range(8)])  # 8 chunks = 3 levels
-
-        tree_builder.add_document(document)
-
-        # Test multiple queries with budget-only mode
-        test_queries = [
-            "test content",
-            "this is",
-            "random query that might not match well",
-            "test",
+        # Create a multi-level tree with known token costs
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            # Leaf nodes (level 0)
+            {
+                "node_id": "leaf1",
+                "text": "This is test content. " * 40,  # ~200 tokens
+                "span_start": 0,
+                "span_end": 200,
+                "document_id": "test-doc",
+                "token_count": 200,
+                "height": 0,
+                "path": "000",
+                "parent_id": "mid1",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "leaf2",
+                "text": "This is test content. " * 40,  # ~200 tokens
+                "span_start": 200,
+                "span_end": 400,
+                "document_id": "test-doc",
+                "token_count": 200,
+                "height": 0,
+                "path": "001",
+                "parent_id": "mid1",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "leaf3",
+                "text": "This is test content. " * 40,  # ~200 tokens
+                "span_start": 400,
+                "span_end": 600,
+                "document_id": "test-doc",
+                "token_count": 200,
+                "height": 0,
+                "path": "010",
+                "parent_id": "mid2",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "leaf4",
+                "text": "This is test content. " * 40,  # ~200 tokens
+                "span_start": 600,
+                "span_end": 800,
+                "document_id": "test-doc",
+                "token_count": 200,
+                "height": 0,
+                "path": "011",
+                "parent_id": "mid2",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            # Middle level nodes (level 1)
+            {
+                "node_id": "mid1",
+                "text": "Summary of leaves 1-2",
+                "span_start": 0,
+                "span_end": 400,
+                "document_id": "test-doc",
+                "token_count": 100,
+                "height": 1,
+                "path": "00",
+                "parent_id": "root",
+                "left_child_id": "leaf1",
+                "right_child_id": "leaf2",
+            },
+            {
+                "node_id": "mid2",
+                "text": "Summary of leaves 3-4",
+                "span_start": 400,
+                "span_end": 800,
+                "document_id": "test-doc",
+                "token_count": 100,
+                "height": 1,
+                "path": "01",
+                "parent_id": "root",
+                "left_child_id": "leaf3",
+                "right_child_id": "leaf4",
+            },
+            # Root node (level 2)
+            {
+                "node_id": "root",
+                "text": "Root summary of all content",
+                "span_start": 0,
+                "span_end": 800,
+                "document_id": "test-doc",
+                "token_count": 50,
+                "height": 2,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": "mid1",
+                "right_child_id": "mid2",
+            },
         ]
 
-        for query in test_queries:
-            # Retrieve with budget constraint
-            result = retriever.retrieve(query, budget_tokens=query_config.budget_tokens)
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [
+                ("leaf1", "mid1"),
+                ("leaf2", "mid1"),
+                ("leaf3", "mid2"),
+                ("leaf4", "mid2"),
+                ("mid1", "root"),
+                ("mid2", "root"),
+            ]
+        )
 
-            # Assemble the result
-            assembled_text = assembler.assemble(result)
-            token_count = assembler.get_token_count(assembled_text)
+        # Add embeddings for vector search
+        sqlite_backend.vector_index.upsert(
+            [
+                (
+                    "leaf1",
+                    [0.9] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 200,
+                        "parent_id": "mid1",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "leaf2",
+                    [0.8] * 1536,
+                    {
+                        "span_start": 200,
+                        "span_end": 400,
+                        "parent_id": "mid1",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "leaf3",
+                    [0.7] * 1536,
+                    {
+                        "span_start": 400,
+                        "span_end": 600,
+                        "parent_id": "mid2",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "leaf4",
+                    [0.6] * 1536,
+                    {
+                        "span_start": 600,
+                        "span_end": 800,
+                        "parent_id": "mid2",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "mid1",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 400,
+                        "parent_id": "root",
+                        "document_id": "test-doc",
+                        "is_leaf": 0,
+                    },
+                ),
+                (
+                    "mid2",
+                    [0.4] * 1536,
+                    {
+                        "span_start": 400,
+                        "span_end": 800,
+                        "parent_id": "root",
+                        "document_id": "test-doc",
+                        "is_leaf": 0,
+                    },
+                ),
+                (
+                    "root",
+                    [0.3] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 800,
+                        "parent_id": "",
+                        "document_id": "test-doc",
+                        "is_leaf": 0,
+                    },
+                ),
+            ]
+        )
 
-            # CRITICAL: Token count must NEVER exceed budget
-            assert (
-                token_count <= query_config.budget_tokens
-            ), f"Budget exceeded for query '{query}': {token_count} > {query_config.budget_tokens}"
+        # Test with various budgets using real retriever
+        query_config = QueryConfig(budget_tokens=1000)
 
-            # Also verify by encoding directly
-            actual_tokens = assembler.tokenizer.encode(assembled_text)
-            assert (
-                len(actual_tokens) <= query_config.budget_tokens
-            ), f"Actual token count exceeds budget: {len(actual_tokens)} > {query_config.budget_tokens}"
+        with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
+            retriever = create_retriever(
+                query_config,
+                doc_store,
+                document_id="test-doc",
+                client=mock_retrieve,
+            )
+
+            test_queries = [
+                "test content",
+                "this is",
+                "random query that might not match well",
+                "test",
+            ]
+
+            for query in test_queries:
+                # Test multiple strict budgets
+                for budget in [250, 500, 750]:
+                    result = retriever.retrieve(query, budget_tokens=budget)
+                    assembled_text = assembler.assemble(result)
+                    token_count = assembler.get_token_count(assembled_text)
+
+                    # CRITICAL: Token count must NEVER exceed budget
+                    assert (
+                        token_count <= budget
+                    ), f"Budget exceeded for query '{query}' with budget {budget}: {token_count} > {budget}"
+
+                    # Also verify by encoding directly
+                    actual_tokens = assembler.tokenizer.encode(assembled_text)
+                    assert (
+                        len(actual_tokens) <= budget
+                    ), f"Actual token count exceeds budget: {len(actual_tokens)} > {budget}"
 
     def test_worst_case_parent_child_extraction(
         self,
-        setup_system: tuple[
-            tuple[IndexConfig, QueryConfig, OperationalConfig],
-            "StoreInterface",
-            TreeBuilder,
-            Retriever,
-            Assembler,
-        ],
+        doc_store: DocumentStore,
+        assembler: Assembler,
+        sqlite_backend: SQLiteStorageBackend,
     ) -> None:
         """Test worst case where parent-child extraction could double content."""
-        (
-            (index_config, query_config, operational_config),
-            store,
-            tree_builder,
-            retriever,
-            assembler,
-        ) = setup_system
+        # Create a simple parent-child structure with precise token costs
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "expensive_leaf",
+                "text": "Very long content. " * 60,  # ~300 tokens
+                "span_start": 0,
+                "span_end": 300,
+                "document_id": "test-doc",
+                "token_count": 300,
+                "height": 0,
+                "path": "0",
+                "parent_id": "parent",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "parent",
+                "text": "Summary of expensive leaf",
+                "span_start": 0,
+                "span_end": 300,
+                "document_id": "test-doc",
+                "token_count": 100,
+                "height": 1,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": "expensive_leaf",
+                "right_child_id": None,
+            },
+        ]
 
-        # Create a simple tree with known structure
-        leaf1_text = "First leaf content. " * 40  # ~200 tokens
-        leaf2_text = "Second leaf content. " * 40  # ~200 tokens
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch([("expensive_leaf", "parent")])
 
-        # Create parent node
-        parent_text = "Summary of first and second leaves."
-        store.add_node(
-            node_id="1_0_400_parent",
-            text=parent_text,
-            span_start=0,
-            span_end=400,
-            parent_id=None,
-            document_id="test-doc",
-            embedding=[0.15] * 1536,
+        # Add embeddings with high score for leaf
+        sqlite_backend.vector_index.upsert(
+            [
+                (
+                    "expensive_leaf",
+                    [1.0] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 300,
+                        "parent_id": "parent",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "parent",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 300,
+                        "parent_id": "",
+                        "document_id": "test-doc",
+                        "is_leaf": 0,
+                    },
+                ),
+            ]
         )
 
-        # Then create children pointing to parent
-        store.add_node(
-            node_id="0_0_200_leaf1",
-            text=leaf1_text,
-            span_start=0,
-            span_end=200,
-            parent_id="1_0_400_parent",
-            document_id="test-doc",
-            embedding=[0.1] * 1536,
-        )
+        query_config = QueryConfig(budget_tokens=500)
 
-        store.add_node(
-            node_id="0_200_400_leaf2",
-            text=leaf2_text,
-            span_start=200,
-            span_end=400,
-            parent_id="1_0_400_parent",
-            document_id="test-doc",
-            embedding=[0.2] * 1536,
-        )
+        with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
+            retriever = create_retriever(
+                query_config,
+                doc_store,
+                document_id="test-doc",
+                client=mock_retrieve,
+            )
 
-        # Update parent to reference children
-        # Note: Direct database access not available in StoreInterface
-        # This test relies on the tree structure being properly set up
+            # Test that retriever respects budget even with parent + child preference
+            result = retriever.retrieve(
+                "expensive leaf", num_seeds=2, budget_tokens=250
+            )
+            assembled_text = assembler.assemble(result)
+            token_count = assembler.get_token_count(assembled_text)
 
-        # Update children to point to parent
-        # Note: Store doesn't have update_node_parent, nodes already have parent_id set
+            assert (
+                token_count <= 250
+            ), f"Budget exceeded in worst case: {token_count} > 250"
 
-        # Test that retriever respects budget even with parent + child nodes
-        result = retriever.retrieve("first leaf", num_seeds=2, budget_tokens=500)
-
-        # Note: Cannot force a specific tiling anymore since tiling field is computed by DP
-        # This test may need to be redesigned to work with the new tiling-based approach
-
-        # Assemble and check budget
-        assembled_text = assembler.assemble(result)
-        token_count = assembler.get_token_count(assembled_text)
-
-        assert token_count <= 500, f"Budget exceeded in worst case: {token_count} > 500"
-
-        # Verify no content duplication
-        assert (
-            assembled_text.count("First leaf content.") <= 40
-        ), "Content was duplicated"
+            # Verify no content duplication - should pick parent over expensive child
+            assert result.tiling is not None
+            assert len(result.tiling) == 1
+            assert "parent" in result.tiling
 
     def test_conservative_num_seeds_calculation(
         self,
-        setup_system: tuple[
-            tuple[IndexConfig, QueryConfig, OperationalConfig],
-            "StoreInterface",
-            TreeBuilder,
-            Retriever,
-            Assembler,
-        ],
+        doc_store: DocumentStore,
+        assembler: Assembler,
+        sqlite_backend: SQLiteStorageBackend,
     ) -> None:
-        """Test that the conservative num_seeds calculation is reasonable and respects budget."""
-        (
-            (index_config, query_config, operational_config),
-            store,
-            tree_builder,
-            retriever,
-            assembler,
-        ) = setup_system
+        """Test that the conservative num_seeds calculation respects budget."""
+        # Create multiple nodes with varying token costs
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = []
 
-        document = "This is test content for budget calculation. " * 500
-        tree_builder.add_document(document)
+        # Create 10 leaf nodes with 100 tokens each
+        for i in range(10):
+            nodes.append(
+                {
+                    "node_id": f"leaf_{i}",
+                    "text": f"Content {i}. " * 25,  # ~100 tokens each
+                    "span_start": i * 100,
+                    "span_end": (i + 1) * 100,
+                    "document_id": "test-doc",
+                    "token_count": 100,
+                    "height": 0,
+                    "path": f"0{i:03b}",  # Binary representation for tree paths
+                    "parent_id": "root",
+                    "left_child_id": None,
+                    "right_child_id": None,
+                }
+            )
 
-        # Test various budget sizes
-        test_budgets = [500, 1000, 2000, 5000]
+        # Add root node
+        nodes.append(
+            {
+                "node_id": "root",
+                "text": "Root summary of all content",
+                "span_start": 0,
+                "span_end": 1000,
+                "document_id": "test-doc",
+                "token_count": 50,
+                "height": 1,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": "leaf_0",
+                "right_child_id": "leaf_1",
+            }
+        )
 
-        for budget in test_budgets:
-            # Calculate conservative num_seeds using the retriever's method
-            conservative_num_seeds = (
-                retriever.budget_planner.calculate_conservative_num_seeds(
-                    budget, "doc-budget-test"
+        doc_store.nodes.add_batch(nodes)
+
+        # Update parent references for all leaves
+        parent_refs = [(f"leaf_{i}", "root") for i in range(10)]
+        doc_store.nodes.update_parent_references_batch(parent_refs)
+
+        # Add embeddings for all nodes
+        embeddings_data = []
+        for i in range(10):
+            embeddings_data.append(
+                (
+                    f"leaf_{i}",
+                    [0.9 - i * 0.05] * 1536,  # Decreasing similarity scores
+                    {
+                        "span_start": i * 100,
+                        "span_end": (i + 1) * 100,
+                        "parent_id": "root",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
                 )
             )
 
-            # Verify the calculation is at least 1
-            assert (
-                conservative_num_seeds >= 1
-            ), f"num_seeds calculation should be at least 1 for budget {budget}"
+        embeddings_data.append(
+            (
+                "root",
+                [0.3] * 1536,
+                {
+                    "span_start": 0,
+                    "span_end": 1000,
+                    "parent_id": "",
+                    "document_id": "test-doc",
+                    "is_leaf": 0,
+                },
+            )
+        )
 
-            # Now, verify the outcome: does using this num_seeds actually respect the budget?
-            result = retriever.retrieve(
-                "test",
-                num_seeds=conservative_num_seeds,
-                budget_tokens=budget,
-                document_id="doc-budget-test",
+        sqlite_backend.vector_index.upsert(embeddings_data)  # type: ignore[arg-type]  # List variance issue with Union types
+
+        query_config = QueryConfig(budget_tokens=1000)
+
+        with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
+            retriever = create_retriever(
+                query_config,
+                doc_store,
+                document_id="test-doc",
+                client=mock_retrieve,
             )
 
-            # The retriever's own internal enforcement should already have trimmed the tiling
-            # Let's assemble and get the final count
-            assembled_text = assembler.assemble(result)
-            final_token_count = assembler.get_token_count(assembled_text)
+            # Test various budget sizes
+            test_budgets = [250, 500, 750, 1200]
 
-            assert (
-                final_token_count <= budget
-            ), f"Budget {budget} exceeded with conservative_num_seeds={conservative_num_seeds}, final tokens={final_token_count}"
+            for budget in test_budgets:
+                # Calculate conservative num_seeds using the retriever's method
+                conservative_num_seeds = (
+                    retriever.budget_planner.calculate_conservative_num_seeds(
+                        budget, "test-doc"
+                    )
+                )
+
+                # Verify the calculation is at least 1
+                assert (
+                    conservative_num_seeds >= 1
+                ), f"num_seeds calculation should be at least 1 for budget {budget}"
+
+                # Test that using this num_seeds respects the budget
+                result = retriever.retrieve(
+                    "content",
+                    num_seeds=conservative_num_seeds,
+                    budget_tokens=budget,
+                    document_id="test-doc",
+                )
+
+                assembled_text = assembler.assemble(result)
+                final_token_count = assembler.get_token_count(assembled_text)
+
+                assert (
+                    final_token_count <= budget
+                ), f"Budget {budget} exceeded with conservative_num_seeds={conservative_num_seeds}, final tokens={final_token_count}"
 
     def test_mixed_mode_budget_plus_num_seeds(
         self,
-        setup_system: tuple[
-            tuple[IndexConfig, QueryConfig, OperationalConfig],
-            "StoreInterface",
-            TreeBuilder,
-            Retriever,
-            Assembler,
-        ],
+        doc_store: DocumentStore,
+        assembler: Assembler,
+        sqlite_backend: SQLiteStorageBackend,
     ) -> None:
         """Test mixed mode where both budget and num_seeds are specified."""
-        (
-            (index_config, query_config, operational_config),
-            store,
-            tree_builder,
-            retriever,
-            assembler,
-        ) = setup_system
+        # Create several nodes that could exceed budget if all selected
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "node1",
+                "text": "Node 1 content. " * 30,  # ~120 tokens
+                "span_start": 0,
+                "span_end": 120,
+                "document_id": "test-doc",
+                "token_count": 120,
+                "height": 0,
+                "path": "00",
+                "parent_id": "root",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "node2",
+                "text": "Node 2 content. " * 30,  # ~120 tokens
+                "span_start": 120,
+                "span_end": 240,
+                "document_id": "test-doc",
+                "token_count": 120,
+                "height": 0,
+                "path": "01",
+                "parent_id": "root",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "node3",
+                "text": "Node 3 content. " * 30,  # ~120 tokens
+                "span_start": 240,
+                "span_end": 360,
+                "document_id": "test-doc",
+                "token_count": 120,
+                "height": 0,
+                "path": "10",
+                "parent_id": "root",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "root",
+                "text": "Root summary",
+                "span_start": 0,
+                "span_end": 360,
+                "document_id": "test-doc",
+                "token_count": 60,
+                "height": 1,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": "node1",
+                "right_child_id": "node2",
+            },
+        ]
 
-        # Create a document
-        document = "Test content. " * 200
-        tree_builder.add_document(document)
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [("node1", "root"), ("node2", "root"), ("node3", "root")]
+        )
 
-        # Specify both budget and num_seeds
-        budget = 800
-        num_seeds = 10  # Potentially too many nodes for budget
+        # Add embeddings
+        sqlite_backend.vector_index.upsert(
+            [
+                (
+                    "node1",
+                    [0.9] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 120,
+                        "parent_id": "root",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "node2",
+                    [0.8] * 1536,
+                    {
+                        "span_start": 120,
+                        "span_end": 240,
+                        "parent_id": "root",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "node3",
+                    [0.7] * 1536,
+                    {
+                        "span_start": 240,
+                        "span_end": 360,
+                        "parent_id": "root",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "root",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 360,
+                        "parent_id": "",
+                        "document_id": "test-doc",
+                        "is_leaf": 0,
+                    },
+                ),
+            ]
+        )
 
-        # Retrieve with both constraints
-        result = retriever.retrieve("test", num_seeds=num_seeds, budget_tokens=budget)
+        query_config = QueryConfig(budget_tokens=800)
 
-        # Should respect budget with DP algorithm
-        assert result.tiling is not None
-
-        # Assemble and verify budget
-        assembled_text = assembler.assemble(result)
-        token_count = assembler.get_token_count(assembled_text)
-        assert (
-            token_count <= budget
-        ), f"Budget exceeded with mixed mode: {token_count} > {budget}"
-
-    def test_num_seeds_only_mode(self) -> None:
-        """Test num_seeds only mode (no budget enforcement)."""
-
-        from unittest.mock import patch
-
-        from tests.mock_store import SimpleMockStore
-
-        # Mock OpenAI clients
-        with (patch("openai.OpenAI") as mock_openai_class,):
-
-            # Setup sync mock for retrieval
-            mock_embeddings = Mock()
-            mock_embeddings.create = Mock(
-                return_value=Mock(data=[Mock(embedding=[0.5] * 1536)])
-            )
-
-            instance_openai = Mock()
-            instance_openai.embeddings = mock_embeddings
-            mock_openai_class.return_value = instance_openai
-
-            # No OpenAI setup needed for assembler
-            from openai import OpenAI
-
-            from ragzoom.retrieval.budget_planner import BudgetPlanner
-            from ragzoom.retrieval.embedding_service import EmbeddingService
-
-            index_config = IndexConfig.load(target_chunk_tokens=200)
-            query_config = QueryConfig(budget_tokens=1000)
-            operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
-            store = SimpleMockStore(config=index_config)
-
-            # Create services for Retriever
-            client = OpenAI(
-                api_key=operational_config.openai_api_key.get_secret_value()
-            )
-            embedding_service = EmbeddingService(
-                client,
-                cast("DocumentStore | None", store),
-                query_config.embedding_model,
-            )
-            budget_planner = BudgetPlanner(
-                cast("DocumentStore | None", store), index_config.target_chunk_tokens
-            )
-
-            doc_store = store.for_document(None)
-            retriever = Retriever(
+        with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
+            retriever = create_retriever(
                 query_config,
                 doc_store,
-                embedding_service,
-                budget_planner,
-            )
-            assembler = Assembler(doc_store)
-
-            # Create a simple tree structure
-            # Root
-            store.add_node(
-                node_id="root",
-                text="Root summary of the document",
-                span_start=0,
-                span_end=2800,
-                parent_id=None,
                 document_id="test-doc",
-                embedding=[0.1] * 1536,
-                left_child_id="leaf1",
-                right_child_id="leaf2",
+                client=mock_retrieve,
             )
 
-            # Leaf nodes
-            store.add_node(
-                node_id="leaf1",
-                text="Test content. " * 100,  # ~200 tokens
-                span_start=0,
-                span_end=1400,
-                parent_id="root",
+            # Specify both budget and num_seeds
+            budget = 200  # Should only allow 1-2 nodes
+            num_seeds = 10  # Way more than budget allows
+
+            result = retriever.retrieve(
+                "test", num_seeds=num_seeds, budget_tokens=budget
+            )
+
+            # Should respect budget constraint via DP algorithm
+            assert result.tiling is not None
+
+            assembled_text = assembler.assemble(result)
+            token_count = assembler.get_token_count(assembled_text)
+            assert (
+                token_count <= budget
+            ), f"Budget exceeded with mixed mode: {token_count} > {budget}"
+
+    def test_num_seeds_only_mode(
+        self,
+        doc_store: DocumentStore,
+        assembler: Assembler,
+        sqlite_backend: SQLiteStorageBackend,
+    ) -> None:
+        """Test num_seeds only mode (no budget enforcement)."""
+        # Create a simple tree structure
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "leaf1",
+                "text": "Test content. " * 50,  # ~200 tokens
+                "span_start": 0,
+                "span_end": 200,
+                "document_id": "test-doc",
+                "token_count": 200,
+                "height": 0,
+                "path": "0",
+                "parent_id": "root",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "leaf2",
+                "text": "Other content. " * 50,  # ~200 tokens
+                "span_start": 200,
+                "span_end": 400,
+                "document_id": "test-doc",
+                "token_count": 200,
+                "height": 0,
+                "path": "1",
+                "parent_id": "root",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "root",
+                "text": "Root summary of the document",
+                "span_start": 0,
+                "span_end": 400,
+                "document_id": "test-doc",
+                "token_count": 50,
+                "height": 1,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": "leaf1",
+                "right_child_id": "leaf2",
+            },
+        ]
+
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [("leaf1", "root"), ("leaf2", "root")]
+        )
+
+        # Add embeddings with high score for leaf1
+        sqlite_backend.vector_index.upsert(
+            [
+                (
+                    "leaf1",
+                    [0.9] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 200,
+                        "parent_id": "root",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "leaf2",
+                    [0.2] * 1536,
+                    {
+                        "span_start": 200,
+                        "span_end": 400,
+                        "parent_id": "root",
+                        "document_id": "test-doc",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "root",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 400,
+                        "parent_id": "",
+                        "document_id": "test-doc",
+                        "is_leaf": 0,
+                    },
+                ),
+            ]
+        )
+
+        query_config = QueryConfig(budget_tokens=1000)
+
+        with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
+            retriever = create_retriever(
+                query_config,
+                doc_store,
                 document_id="test-doc",
-                embedding=[0.9] * 1536,  # High similarity to query
-            )
-
-            store.add_node(
-                node_id="leaf2",
-                text="Other content. " * 100,  # ~200 tokens
-                span_start=1400,
-                span_end=2800,
-                parent_id="root",
-                document_id="test-doc",
-                embedding=[0.2] * 1536,  # Low similarity
-            )
-
-            # Set up mock scores to simulate search results
-            store.set_mock_scores(
-                {
-                    "leaf1": 0.9,  # High score for "test" query
-                    "leaf2": 0.2,
-                    "root": 0.5,
-                }
+                client=mock_retrieve,
             )
 
             # Retrieve with only num_seeds (no budget)
@@ -443,124 +778,166 @@ class TestBudgetGuarantee:
             assert len(assembled_text) > 0
 
 
+@pytest.mark.usefixtures("sqlite_backend")
 class TestBudgetValidation:
     """Test that budget validation catches overflows."""
 
-    def test_budget_validation_catches_overflow(self) -> None:
+    @pytest.fixture
+    def doc_store(
+        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
+    ) -> DocumentStore:
+        return sqlite_store_factory("test-doc")
+
+    def test_budget_validation_catches_overflow(self, doc_store: DocumentStore) -> None:
         """Test that validation fails when tiling exceeds budget."""
-        from ragzoom.validate import validate_tiling
-        from tests.mock_store import SimpleMockStore
-
-        index_config = IndexConfig.load(target_chunk_tokens=100)
-        store = SimpleMockStore(config=index_config)
-
         # Create some nodes with known token costs
-        # "test " * 20 = ~20 tokens
-        store.add_node(
-            node_id="node1",
-            text="test " * 20,
-            embedding=[0.1] * 1536,
-            span_start=0,
-            span_end=100,
-            document_id="test-doc",
-        )
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "node1",
+                "text": "test " * 20,  # ~20 tokens
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "test-doc",
+                "token_count": 20,
+                "height": 0,
+                "path": "0",
+                "parent_id": None,
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "node2",
+                "text": "test " * 30,  # ~30 tokens
+                "span_start": 100,
+                "span_end": 200,
+                "document_id": "test-doc",
+                "token_count": 30,
+                "height": 0,
+                "path": "1",
+                "parent_id": None,
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+        ]
 
-        store.add_node(
-            node_id="node2",
-            text="test " * 30,
-            embedding=[0.2] * 1536,
-            span_start=100,
-            span_end=200,
-            document_id="test-doc",
-        )
+        doc_store.nodes.add_batch(nodes)
 
         # Create tiling that would exceed a small budget
         tiling = ["node1", "node2"]  # ~20 + ~30 = ~50 tokens
 
         # Validate with budget that's too small
-        doc_store = store.for_document("test-doc")
         error = validate_tiling(tiling, doc_store, budget_tokens=40)
 
         assert error is not None
         assert "exceeds budget" in error
         assert "> 40 budget" in error
 
-    def test_budget_validation_passes_within_budget(self) -> None:
+    def test_budget_validation_passes_within_budget(
+        self, doc_store: DocumentStore
+    ) -> None:
         """Test that validation passes when tiling is within budget."""
-        from ragzoom.validate import validate_tiling
-        from tests.mock_store import SimpleMockStore
-
-        index_config = IndexConfig.load(target_chunk_tokens=100)
-        store = SimpleMockStore(config=index_config)
-
         # Create a node
-        store.add_node(
-            node_id="node1",
-            text="test " * 10,
-            embedding=[0.1] * 1536,
-            span_start=0,
-            span_end=50,
-            document_id="test-doc",
-        )
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "node1",
+                "text": "test " * 10,  # ~10 tokens
+                "span_start": 0,
+                "span_end": 50,
+                "document_id": "test-doc",
+                "token_count": 10,
+                "height": 0,
+                "path": "0",
+                "parent_id": None,
+                "left_child_id": None,
+                "right_child_id": None,
+            }
+        ]
+
+        doc_store.nodes.add_batch(nodes)
 
         # Create tiling within budget
         tiling = ["node1"]  # ~10 tokens
 
         # Validate with sufficient budget
-        doc_store = store.for_document("test-doc")
         error = validate_tiling(tiling, doc_store, budget_tokens=100)
 
         assert error is None
 
-    def test_budget_validation_with_parent_child(self) -> None:
+    def test_budget_validation_with_parent_child(
+        self, doc_store: DocumentStore
+    ) -> None:
         """Test budget validation with parent and child nodes."""
-        from ragzoom.validate import validate_tiling
-        from tests.mock_store import SimpleMockStore
+        # Create parent-child structure
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "left_child",
+                "text": "left part " * 10,  # ~10 tokens
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "test-doc",
+                "token_count": 10,
+                "height": 0,
+                "path": "00",
+                "parent_id": "parent",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "right_child",
+                "text": "right part " * 10,  # ~10 tokens
+                "span_start": 100,
+                "span_end": 200,
+                "document_id": "test-doc",
+                "token_count": 10,
+                "height": 0,
+                "path": "01",
+                "parent_id": "parent",
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "parent",
+                "text": "Summary of left and right parts",
+                "span_start": 0,
+                "span_end": 200,
+                "document_id": "test-doc",
+                "token_count": 15,
+                "height": 1,
+                "path": "0",
+                "parent_id": None,
+                "left_child_id": "left_child",
+                "right_child_id": "right_child",
+            },
+        ]
 
-        index_config = IndexConfig.load(target_chunk_tokens=100)
-        store = SimpleMockStore(config=index_config)
-
-        # Create child nodes
-        store.add_node(
-            node_id="left_child",
-            text="left part " * 10,
-            embedding=[0.1] * 1536,
-            span_start=0,
-            span_end=100,
-            document_id="test-doc",
-        )
-
-        store.add_node(
-            node_id="right_child",
-            text="right part " * 10,
-            embedding=[0.1] * 1536,
-            span_start=100,
-            span_end=200,
-            document_id="test-doc",
-        )
-
-        # Create parent node
-        store.add_node(
-            node_id="parent",
-            text="Summary of left and right parts",
-            embedding=[0.1] * 1536,
-            span_start=0,
-            span_end=200,
-            document_id="test-doc",
-            left_child_id="left_child",
-            right_child_id="right_child",
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [("left_child", "parent"), ("right_child", "parent")]
         )
 
         # Create tiling with child nodes
         tiling = ["left_child", "right_child"]  # ~20 tokens total
 
         # Should pass with budget of 50
-        doc_store = store.for_document("test-doc")
         error = validate_tiling(tiling, doc_store, budget_tokens=50)
         assert error is None
 
         # Should fail with budget of 15
-        doc_store = store.for_document("test-doc")
         error = validate_tiling(tiling, doc_store, budget_tokens=15)
         assert error is not None
         assert "exceeds budget" in error

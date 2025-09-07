@@ -16,7 +16,6 @@ from ragzoom.retrieval.budget_planner import BudgetPlanner
 from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
 from ragzoom.store import StoreManager
-from tests.mock_store import SimpleMockStore
 
 
 def create_mock_openai_clients() -> tuple[Mock, Mock, Mock]:
@@ -569,10 +568,6 @@ def ensure_document_store(
     if hasattr(store, "for_document") and callable(getattr(store, "for_document")):
         return store.for_document(None)  # type: ignore[no-any-return]  # StoreManager.for_document returns DocumentStore
 
-    # If it's a SimpleMockStore, use for_document method
-    if isinstance(store, SimpleMockStore):
-        return store.for_document(None)  # Mock returns compatible interface
-
     # Otherwise, assume it implements DocumentStore interface
     return cast(DocumentStore, store)
 
@@ -733,24 +728,6 @@ def cast_simple_namespace_to_dict(ns: SimpleNamespace) -> dict[str, object]:
         Dictionary representation
     """
     return ns.__dict__
-
-
-def create_test_store_with_config(
-    config: IndexConfig | QueryConfig | OperationalConfig | None = None,
-) -> SimpleMockStore:
-    """Create a SimpleMockStore with proper config handling.
-
-    Args:
-        config: Single config to use, or None for default
-
-    Returns:
-        SimpleMockStore instance
-    """
-    # If no config provided, use IndexConfig as default
-    if config is None:
-        config = IndexConfig.load()
-
-    return SimpleMockStore(config=config)
 
 
 def assert_compatible_store_types(
