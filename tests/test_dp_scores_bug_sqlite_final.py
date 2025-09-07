@@ -1,7 +1,8 @@
-"""SQLite-based tests for DP algorithm score handling.
+"""SQLite-based tests for DP algorithm score handling bugs.
 
-Tests demonstrating how the DP algorithm uses scores outside
-the coverage tree with the real in-memory SQLite backend.
+These tests ensure the DP tiling algorithm only uses scores from nodes within
+the coverage tree using the real in-memory
+SQLite backend.
 """
 
 from __future__ import annotations
@@ -15,125 +16,140 @@ from numpy.typing import NDArray
 from ragzoom.config import QueryConfig
 from ragzoom.document_store import DocumentStore
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
+from ragzoom.models import TreeNode
 from ragzoom.retrieve import RetrievalResult
 
 
 @pytest.mark.usefixtures("sqlite_backend")
 class TestDPScoresBugSQLite:
-    """Test that DP algorithm incorrectly uses nodes outside coverage tree."""
+    """Test that DP algorithm correctly respects coverage tree boundaries."""
 
     @pytest.fixture
     def doc_store(
         self, sqlite_store_factory: Callable[[str | None], DocumentStore]
     ) -> DocumentStore:
-        return sqlite_store_factory("doc-id")
+        return sqlite_store_factory("doc1")
 
     def test_dp_uses_scores_outside_coverage_tree(
         self, doc_store: DocumentStore
     ) -> None:
         """Demonstrate that DP uses any node with a score, ignoring coverage tree."""
-        # Set up a tree structure:
+        # Create a tree structure:
         #          root
         #         /    \
         #     node_a   node_b
         #      / \      / \
         #    a1  a2   b1  b2
 
+        # Seed nodes with explicit token counts for DP cost control
         nodes: list[
             dict[
                 str,
                 str | int | float | bool | list[float] | NDArray[np.float64] | None,
             ]
         ] = [
+            # Leaf nodes
+            {
+                "node_id": "a1",
+                "text": "Leaf a1 content",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
+                "span_start": 0,
+                "span_end": 250,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 0,
+                "parent_id": "node_a",
+                "path": "00",
+            },
+            {
+                "node_id": "a2",
+                "text": "Leaf a2 content",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
+                "span_start": 250,
+                "span_end": 500,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 0,
+                "parent_id": "node_a",
+                "path": "01",
+            },
+            {
+                "node_id": "b1",
+                "text": "Leaf b1 content",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
+                "span_start": 500,
+                "span_end": 750,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 0,
+                "parent_id": "node_b",
+                "path": "10",
+            },
+            {
+                "node_id": "b2",
+                "text": "Leaf b2 content",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
+                "span_start": 750,
+                "span_end": 1000,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 0,
+                "parent_id": "node_b",
+                "path": "11",
+            },
+            # Internal nodes
+            {
+                "node_id": "node_a",
+                "text": "Node A summary",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
+                "span_start": 0,
+                "span_end": 500,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 1,
+                "left_child_id": "a1",
+                "right_child_id": "a2",
+                "parent_id": "root",
+                "path": "0",
+            },
+            {
+                "node_id": "node_b",
+                "text": "Node B summary",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
+                "span_start": 500,
+                "span_end": 1000,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 1,
+                "left_child_id": "b1",
+                "right_child_id": "b2",
+                "parent_id": "root",
+                "path": "1",
+            },
             # Root
             {
                 "node_id": "root",
                 "text": "Root summary of document",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 1000,
-                "document_id": "doc-id",
+                "document_id": "doc1",
                 "token_count": 100,
                 "height": 2,
                 "left_child_id": "node_a",
                 "right_child_id": "node_b",
                 "path": "",
             },
-            # Internal nodes
-            {
-                "node_id": "node_a",
-                "text": "Node A summary",
-                "span_start": 0,
-                "span_end": 500,
-                "document_id": "doc-id",
-                "token_count": 50,
-                "height": 1,
-                "left_child_id": "a1",
-                "right_child_id": "a2",
-                "path": "0",
-            },
-            {
-                "node_id": "node_b",
-                "text": "Node B summary",
-                "span_start": 500,
-                "span_end": 1000,
-                "document_id": "doc-id",
-                "token_count": 50,
-                "height": 1,
-                "left_child_id": "b1",
-                "right_child_id": "b2",
-                "path": "1",
-            },
-            # Leaf nodes
-            {
-                "node_id": "a1",
-                "text": "Leaf a1 content",
-                "span_start": 0,
-                "span_end": 250,
-                "document_id": "doc-id",
-                "token_count": 25,
-                "height": 0,
-                "path": "00",
-            },
-            {
-                "node_id": "a2",
-                "text": "Leaf a2 content",
-                "span_start": 250,
-                "span_end": 500,
-                "document_id": "doc-id",
-                "token_count": 25,
-                "height": 0,
-                "path": "01",
-            },
-            {
-                "node_id": "b1",
-                "text": "Leaf b1 content",
-                "span_start": 500,
-                "span_end": 750,
-                "document_id": "doc-id",
-                "token_count": 25,
-                "height": 0,
-                "path": "10",
-            },
-            {
-                "node_id": "b2",
-                "text": "Leaf b2 content",
-                "span_start": 750,
-                "span_end": 1000,
-                "document_id": "doc-id",
-                "token_count": 25,
-                "height": 0,
-                "path": "11",
-            },
         ]
         doc_store.nodes.add_batch(nodes)
         doc_store.nodes.update_parent_references_batch(
             [
-                ("node_a", "root"),
-                ("node_b", "root"),
                 ("a1", "node_a"),
                 ("a2", "node_a"),
                 ("b1", "node_b"),
                 ("b2", "node_b"),
+                ("node_a", "root"),
+                ("node_b", "root"),
             ]
         )
 
@@ -155,7 +171,7 @@ class TestDPScoresBugSQLite:
         }
 
         # Load nodes from coverage map
-        nodes_map: dict[str, object] = {}
+        nodes_map: dict[str, TreeNode] = {}
         for nid in coverage_tree:
             node = doc_store.nodes.get_node(nid)
             if node:
@@ -167,14 +183,18 @@ class TestDPScoresBugSQLite:
         dp_result = dp_generator.find_optimal_tiling(
             budget_tokens=10000,
             scores=scores,
-            nodes=nodes_map,  # type: ignore[arg-type]
+            nodes=nodes_map,
             root_id=root_id,
         )
         tiling = dp_result.tiling
 
-        # Check results - need to check if nodes are leaves using document store
+        # Check results
         leaf_node_ids = {
-            node_id for node_id in tiling.node_ids if doc_store.tree.is_leaf(node_id)
+            node_id
+            for node_id in tiling.node_ids
+            if (node := doc_store.nodes.get_node(node_id))
+            and node.left_child_id is None
+            and node.right_child_id is None
         }
 
         # With our fix, all leaf nodes in tiling must be in the coverage tree
@@ -187,7 +207,7 @@ class TestDPScoresBugSQLite:
 
     def test_retrieval_result_demonstrates_bug(self, doc_store: DocumentStore) -> None:
         """Test using actual RetrievalResult to show the bug."""
-        # Simplified tree setup
+        # Seed nodes with simple tree structure
         nodes: list[
             dict[
                 str,
@@ -195,36 +215,41 @@ class TestDPScoresBugSQLite:
             ]
         ] = [
             {
-                "node_id": "root",
-                "text": "Root",
-                "span_start": 0,
-                "span_end": 1000,
-                "document_id": "doc-id",
-                "token_count": 100,
-                "height": 1,
-                "left_child_id": "leaf1",
-                "right_child_id": "leaf2",
-                "path": "",
-            },
-            {
                 "node_id": "leaf1",
                 "text": "Leaf 1",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 500,
-                "document_id": "doc-id",
+                "document_id": "doc1",
                 "token_count": 50,
                 "height": 0,
+                "parent_id": "root",
                 "path": "0",
             },
             {
                 "node_id": "leaf2",
                 "text": "Leaf 2",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
                 "span_start": 500,
                 "span_end": 1000,
-                "document_id": "doc-id",
+                "document_id": "doc1",
                 "token_count": 50,
                 "height": 0,
+                "parent_id": "root",
                 "path": "1",
+            },
+            {
+                "node_id": "root",
+                "text": "Root",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
+                "span_start": 0,
+                "span_end": 1000,
+                "document_id": "doc1",
+                "token_count": 100,
+                "height": 1,
+                "left_child_id": "leaf1",
+                "right_child_id": "leaf2",
+                "path": "",
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -248,7 +273,7 @@ class TestDPScoresBugSQLite:
         )
 
         # Load nodes from coverage map
-        nodes_map: dict[str, object] = {}
+        nodes_map: dict[str, TreeNode] = {}
         for node_id in result.coverage_map:
             node = doc_store.nodes.get_node(node_id)
             if node:
@@ -260,14 +285,18 @@ class TestDPScoresBugSQLite:
         dp_result = dp_generator.find_optimal_tiling(
             budget_tokens=10000,
             scores=result.scores,
-            nodes=nodes_map,  # type: ignore[arg-type]
+            nodes=nodes_map,
             root_id=root_id,
         )
         tiling = dp_result.tiling
 
-        # Check results - need to check if nodes are leaves using document store
+        # Check results
         leaf_node_ids = {
-            node_id for node_id in tiling.node_ids if doc_store.tree.is_leaf(node_id)
+            node_id
+            for node_id in tiling.node_ids
+            if (node := doc_store.nodes.get_node(node_id))
+            and node.left_child_id is None
+            and node.right_child_id is None
         }
 
         # With our fix: leaf2 should NOT appear in tiling unless it is in the coverage map

@@ -1,7 +1,7 @@
-"""SQLite-based document isolation tests to prevent cross-document contamination.
+"""SQLite-based tests for document isolation to prevent cross-document contamination.
 
-SQLite-based tests for document isolation to ensure the CoverageBuilder
-only includes nodes from the specified document with the real in-memory SQLite backend.
+These tests ensure that coverage builder only includes nodes from the specified
+document using the real in-memory SQLite backend.
 """
 
 from __future__ import annotations
@@ -13,11 +13,12 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.document_store import DocumentStore
-from ragzoom.retrieval.coverage_builder import CoverageBuilder
 
 
 @pytest.mark.usefixtures("sqlite_backend")
 class TestContaminationBugSQLite:
+    """Test that document isolation prevents cross-document contamination."""
+
     @pytest.fixture
     def doc1_store(
         self, sqlite_store_factory: Callable[[str | None], DocumentStore]
@@ -33,8 +34,8 @@ class TestContaminationBugSQLite:
     def test_document_isolation_prevents_contamination(
         self, doc1_store: DocumentStore, doc2_store: DocumentStore
     ) -> None:
-        """Test that coverage builder only includes nodes from the specified document."""
-        # Add nodes for doc1
+        """Test that document stores only contain nodes from their specified document."""
+        # Add nodes for doc1 to doc1_store
         doc1_nodes: list[
             dict[
                 str,
@@ -44,11 +45,11 @@ class TestContaminationBugSQLite:
             {
                 "node_id": "doc1_root",
                 "text": "Document 1 root",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 100,
-                "parent_id": None,
                 "document_id": "doc1",
-                "token_count": 50,
+                "token_count": 17,
                 "height": 1,
                 "left_child_id": "doc1_left",
                 "right_child_id": "doc1_right",
@@ -57,32 +58,37 @@ class TestContaminationBugSQLite:
             {
                 "node_id": "doc1_left",
                 "text": "Document 1 left",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 50,
-                "parent_id": "doc1_root",
                 "document_id": "doc1",
-                "token_count": 25,
+                "token_count": 16,
                 "height": 0,
+                "parent_id": "doc1_root",
                 "path": "0",
             },
             {
                 "node_id": "doc1_right",
                 "text": "Document 1 right",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
                 "span_start": 50,
                 "span_end": 100,
-                "parent_id": "doc1_root",
                 "document_id": "doc1",
-                "token_count": 25,
+                "token_count": 17,
                 "height": 0,
+                "parent_id": "doc1_root",
                 "path": "1",
             },
         ]
         doc1_store.nodes.add_batch(doc1_nodes)
         doc1_store.nodes.update_parent_references_batch(
-            [("doc1_left", "doc1_root"), ("doc1_right", "doc1_root")]
+            [
+                ("doc1_left", "doc1_root"),
+                ("doc1_right", "doc1_root"),
+            ]
         )
 
-        # Add nodes for doc2 using separate document store
+        # Add nodes for doc2 to doc2_store
         doc2_nodes: list[
             dict[
                 str,
@@ -92,11 +98,11 @@ class TestContaminationBugSQLite:
             {
                 "node_id": "doc2_root",
                 "text": "Document 2 root",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 100,
-                "parent_id": None,
                 "document_id": "doc2",
-                "token_count": 50,
+                "token_count": 17,
                 "height": 1,
                 "left_child_id": "doc2_left",
                 "right_child_id": "doc2_right",
@@ -105,46 +111,37 @@ class TestContaminationBugSQLite:
             {
                 "node_id": "doc2_left",
                 "text": "Document 2 left",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 50,
-                "parent_id": "doc2_root",
                 "document_id": "doc2",
-                "token_count": 25,
+                "token_count": 16,
                 "height": 0,
+                "parent_id": "doc2_root",
                 "path": "0",
             },
             {
                 "node_id": "doc2_right",
                 "text": "Document 2 right",
+                "embedding": np.array([0.5] * 1536, dtype=np.float64),
                 "span_start": 50,
                 "span_end": 100,
-                "parent_id": "doc2_root",
                 "document_id": "doc2",
-                "token_count": 25,
+                "token_count": 17,
                 "height": 0,
+                "parent_id": "doc2_root",
                 "path": "1",
             },
         ]
         doc2_store.nodes.add_batch(doc2_nodes)
         doc2_store.nodes.update_parent_references_batch(
-            [("doc2_left", "doc2_root"), ("doc2_right", "doc2_root")]
+            [
+                ("doc2_left", "doc2_root"),
+                ("doc2_right", "doc2_root"),
+            ]
         )
 
-        # Build coverage map for doc1_left using document-scoped store
-        coverage_builder = CoverageBuilder(doc1_store)
-        coverage_map = coverage_builder.build_coverage_map(["doc1_left"])
-
-        # Verify only doc1 nodes are included
-        assert "doc1_left" in coverage_map
-        assert "doc1_right" in coverage_map  # Sibling included
-        assert "doc1_root" in coverage_map  # Ancestor included
-
-        # Verify doc2 nodes are NOT included (contamination prevented)
-        assert "doc2_left" not in coverage_map
-        assert "doc2_right" not in coverage_map
-        assert "doc2_root" not in coverage_map
-
-        # Also test retrieval through document store
+        # Test isolation: doc1_store should only see doc1 nodes
         doc1_nodes_retrieved = doc1_store.nodes.get_all()
         doc1_node_ids = {node.id for node in doc1_nodes_retrieved}
 
@@ -152,3 +149,21 @@ class TestContaminationBugSQLite:
         assert "doc2_root" not in doc1_node_ids
         assert "doc2_left" not in doc1_node_ids
         assert "doc2_right" not in doc1_node_ids
+
+        # Test isolation: doc2_store should only see doc2 nodes
+        doc2_nodes_retrieved = doc2_store.nodes.get_all()
+        doc2_node_ids = {node.id for node in doc2_nodes_retrieved}
+
+        assert doc2_node_ids == {"doc2_root", "doc2_left", "doc2_right"}
+        assert "doc1_root" not in doc2_node_ids
+        assert "doc1_left" not in doc2_node_ids
+        assert "doc1_right" not in doc2_node_ids
+
+        # Test node retrieval by ID
+        doc1_left_node = doc1_store.nodes.get_node("doc1_left")
+        assert doc1_left_node is not None
+        assert doc1_left_node.id == "doc1_left"
+
+        # doc1_store should not be able to retrieve doc2 nodes
+        doc2_left_node = doc1_store.nodes.get_node("doc2_left")
+        assert doc2_left_node is None

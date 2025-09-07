@@ -1,84 +1,125 @@
-"""Tests for path-based tree navigation optimizations."""
+"""SQLite-based tests for path-based tree navigation optimizations.
 
+SQLite-based tests for path-based tree navigation optimizations, providing
+higher fidelity testing of the path-based navigation functionality with
+the real SQLite backend.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+import numpy as np
+import pytest
+from numpy.typing import NDArray
+
+from ragzoom.document_store import DocumentStore
 from ragzoom.services.tree_navigator import TreeNavigator
-from tests.mock_store import SimpleMockStore
 
 
-class TestPathOptimizations:
-    """Test path-based optimizations in tree navigation."""
+@pytest.mark.usefixtures("sqlite_backend")
+class TestPathOptimizationsSQLite:
+    """Test path-based optimizations in tree navigation with SQLite backend."""
 
-    def setup_method(self) -> None:
-        """Set up test environment with nodes that have proper paths."""
-        self.store = SimpleMockStore()
+    @pytest.fixture
+    def doc_store(
+        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
+    ) -> DocumentStore:
+        """Create a document-scoped store for doc1."""
+        return sqlite_store_factory("doc1")
 
-        # Create a proper tree with paths
-        # Root: path=""
-        self.store.add_node(
-            node_id="root",
-            text="Root node",
-            span_start=0,
-            span_end=100,
-            parent_id=None,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="left",
-            right_child_id="right",
-            path="",  # Root path
+    @pytest.fixture
+    def seed_nodes(self, doc_store: DocumentStore) -> None:
+        """Create a tree with proper paths directly in the SQLite backend.
+
+        Structure:
+            root ("")
+            /        \
+        left ("0")  right ("1")
+        /     \
+   left_left  left_right
+    ("00")     ("01")
+        """
+        nodes: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
+            # Leaf nodes
+            {
+                "node_id": "left_left",
+                "text": "Left-left grandchild",
+                "embedding": [0.5] * 1536,
+                "span_start": 0,
+                "span_end": 25,
+                "document_id": "doc1",
+                "token_count": 3,
+                "height": 0,
+                "path": "00",
+            },
+            {
+                "node_id": "left_right",
+                "text": "Left-right grandchild",
+                "embedding": [0.5] * 1536,
+                "span_start": 25,
+                "span_end": 50,
+                "document_id": "doc1",
+                "token_count": 3,
+                "height": 0,
+                "path": "01",
+            },
+            # Internal nodes
+            {
+                "node_id": "left",
+                "text": "Left child",
+                "embedding": [0.5] * 1536,
+                "span_start": 0,
+                "span_end": 50,
+                "document_id": "doc1",
+                "height": 1,
+                "left_child_id": "left_left",
+                "right_child_id": "left_right",
+                "path": "0",
+            },
+            {
+                "node_id": "right",
+                "text": "Right child",
+                "embedding": [0.5] * 1536,
+                "span_start": 50,
+                "span_end": 100,
+                "document_id": "doc1",
+                "height": 1,
+                "path": "1",
+            },
+            {
+                "node_id": "root",
+                "text": "Root node",
+                "embedding": [0.5] * 1536,
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "height": 2,
+                "left_child_id": "left",
+                "right_child_id": "right",
+                "path": "",
+            },
+        ]
+        doc_store.nodes.add_batch(nodes)
+        # Update parent references
+        doc_store.nodes.update_parent_references_batch(
+            [
+                ("left_left", "left"),
+                ("left_right", "left"),
+                ("left", "root"),
+                ("right", "root"),
+            ]
         )
 
-        # Left child: path="0"
-        self.store.add_node(
-            node_id="left",
-            text="Left child",
-            span_start=0,
-            span_end=50,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="left_left",
-            right_child_id="left_right",
-            path="0",  # Left child path
-        )
-
-        # Right child: path="1"
-        self.store.add_node(
-            node_id="right",
-            text="Right child",
-            span_start=50,
-            span_end=100,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            path="1",  # Right child path
-        )
-
-        # Left-left grandchild: path="00"
-        self.store.add_node(
-            node_id="left_left",
-            text="Left-left grandchild",
-            span_start=0,
-            span_end=25,
-            parent_id="left",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            path="00",  # Left-left grandchild path
-        )
-
-        # Left-right grandchild: path="01"
-        self.store.add_node(
-            node_id="left_right",
-            text="Left-right grandchild",
-            span_start=25,
-            span_end=50,
-            parent_id="left",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            path="01",  # Left-right grandchild path
-        )
-
-    def test_get_node_depth_with_paths(self) -> None:
+    def test_get_node_depth_with_paths(
+        self, doc_store: DocumentStore, seed_nodes: None
+    ) -> None:
         """Test that get_node_depth uses path field for instant calculation."""
-        navigator = TreeNavigator(self.store.nodes)
+        navigator = TreeNavigator(doc_store._node_repo)
 
         # Test depth calculation using paths
         assert navigator.get_node_depth("root") == 0  # Root depth
@@ -87,9 +128,11 @@ class TestPathOptimizations:
         assert navigator.get_node_depth("left_left") == 2  # Second level
         assert navigator.get_node_depth("left_right") == 2  # Second level
 
-    def test_get_parent_node_with_paths(self) -> None:
+    def test_get_parent_node_with_paths(
+        self, doc_store: DocumentStore, seed_nodes: None
+    ) -> None:
         """Test that get_parent_node uses path field for instant lookup."""
-        navigator = TreeNavigator(self.store.nodes)
+        navigator = TreeNavigator(doc_store._node_repo)
 
         # Test parent lookup using paths
         root_parent = navigator.get_parent_node("root")
@@ -103,9 +146,11 @@ class TestPathOptimizations:
         assert left_left_parent is not None
         assert left_left_parent.id == "left"
 
-    def test_get_sibling_node_with_paths(self) -> None:
+    def test_get_sibling_node_with_paths(
+        self, doc_store: DocumentStore, seed_nodes: None
+    ) -> None:
         """Test that get_sibling_node uses path field for instant lookup."""
-        navigator = TreeNavigator(self.store.nodes)
+        navigator = TreeNavigator(doc_store._node_repo)
 
         # Test sibling lookup using paths
         root_sibling = navigator.get_sibling_node("root")
@@ -123,9 +168,11 @@ class TestPathOptimizations:
         assert left_left_sibling is not None
         assert left_left_sibling.id == "left_right"
 
-    def test_is_left_child_with_paths(self) -> None:
+    def test_is_left_child_with_paths(
+        self, doc_store: DocumentStore, seed_nodes: None
+    ) -> None:
         """Test that is_left_child uses path field for instant determination."""
-        navigator = TreeNavigator(self.store.nodes)
+        navigator = TreeNavigator(doc_store._node_repo)
 
         # Test left child detection using paths
         assert not navigator.is_left_child("root")  # Root is neither left nor right
@@ -134,9 +181,11 @@ class TestPathOptimizations:
         assert navigator.is_left_child("left_left")  # Left-left is left child
         assert not navigator.is_left_child("left_right")  # Left-right is right child
 
-    def test_is_right_child_with_paths(self) -> None:
+    def test_is_right_child_with_paths(
+        self, doc_store: DocumentStore, seed_nodes: None
+    ) -> None:
         """Test that is_right_child uses path field for instant determination."""
-        navigator = TreeNavigator(self.store.nodes)
+        navigator = TreeNavigator(doc_store._node_repo)
 
         # Test right child detection using paths
         assert not navigator.is_right_child("root")  # Root is neither left nor right
@@ -145,35 +194,39 @@ class TestPathOptimizations:
         assert not navigator.is_right_child("left_left")  # Left-left is left child
         assert navigator.is_right_child("left_right")  # Left-right is right child
 
-    def test_pinned_nodes_path_filtering(self) -> None:
+    def test_pinned_nodes_path_filtering(
+        self, doc_store: DocumentStore, seed_nodes: None
+    ) -> None:
         """Test that get_pinned_nodes uses path-based database filtering."""
         # Pin some nodes at different depths
-        self.store.pin_node("root")  # Depth 0
-        self.store.pin_node("left")  # Depth 1
-        self.store.pin_node("left_left")  # Depth 2
+        doc_store._node_repo.pin_node("root")  # Depth 0
+        doc_store._node_repo.pin_node("left")  # Depth 1
+        doc_store._node_repo.pin_node("left_left")  # Depth 2
 
         # Test filtering by depth
-        pinned_depth_0 = self.store.get_pinned_nodes(depth_max=0)
+        pinned_depth_0 = doc_store.get_pinned_nodes(depth_max=0)
         assert len(pinned_depth_0) == 1
         assert pinned_depth_0[0].id == "root"
 
-        pinned_depth_1 = self.store.get_pinned_nodes(depth_max=1)
+        pinned_depth_1 = doc_store.get_pinned_nodes(depth_max=1)
         assert len(pinned_depth_1) == 2
         node_ids = {node.id for node in pinned_depth_1}
         assert node_ids == {"root", "left"}
 
-        pinned_depth_2 = self.store.get_pinned_nodes(depth_max=2)
+        pinned_depth_2 = doc_store.get_pinned_nodes(depth_max=2)
         assert len(pinned_depth_2) == 3
         node_ids = {node.id for node in pinned_depth_2}
         assert node_ids == {"root", "left", "left_left"}
 
         # Test no depth limit
-        pinned_all = self.store.get_pinned_nodes()
+        pinned_all = doc_store.get_pinned_nodes()
         assert len(pinned_all) == 3
 
-    def test_path_optimization_performance(self) -> None:
+    def test_path_optimization_performance(
+        self, doc_store: DocumentStore, seed_nodes: None
+    ) -> None:
         """Test that path-based methods avoid database queries where possible."""
-        navigator = TreeNavigator(self.store.nodes)
+        navigator = TreeNavigator(doc_store._node_repo)
 
         # With proper paths, these operations should be very fast
         # and not require traversing up the tree

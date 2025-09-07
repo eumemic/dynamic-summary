@@ -78,6 +78,28 @@ fi
 # Get repository root (works in main repo and worktrees)
 GIT_ROOT="$(git rev-parse --show-toplevel)"
 
+# Optional guard: fail if legacy mock store is referenced in tests
+# Enable by setting RZ_GUARD_NO_MOCKS=1 in the environment (disabled by default)
+if [[ "${RZ_GUARD_NO_MOCKS:-}" = "1" ]]; then
+    if command -v rg &> /dev/null; then
+        if rg -n "from tests\\.mock_store import|SimpleMockStore\\b" tests >/tmp/mock_guard_hits 2>/dev/null; then
+            echo "[MockGuard] ❌ SimpleMockStore references detected in tests:" >&2
+            cat /tmp/mock_guard_hits >&2 || true
+            exit 2
+        else
+            echo "[MockGuard] ✅ No SimpleMockStore references detected"
+        fi
+    else
+        if grep -REn "from tests\\.mock_store import|SimpleMockStore\\b" tests >/tmp/mock_guard_hits 2>/dev/null; then
+            echo "[MockGuard] ❌ SimpleMockStore references detected in tests:" >&2
+            cat /tmp/mock_guard_hits >&2 || true
+            exit 2
+        else
+            echo "[MockGuard] ✅ No SimpleMockStore references detected"
+        fi
+    fi
+fi
+
 # Convert comma-separated skip list to array
 if [[ -n "$SKIP_CHECKS" ]]; then
     IFS=',' read -ra SKIP_ARRAY <<< "$SKIP_CHECKS"
@@ -229,10 +251,10 @@ if ! should_skip "tests"; then
             # Run all tests including slow and integration
             run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark' -n 8 --no-header"
         elif [ "$TEST_SCOPE" = "smoke" ]; then
-            # Run a minimal, fast smoke subset: SQLite-backed tests only
+            # Run a minimal, fast smoke subset: SQLite-backed test files only
             # These exercise core retrieval, assembly, and tree logic without external services
-            # Note: avoid xdist overhead for small suites
-            run_check_background "Tests" "pytest tests/ -q --tb=short -k 'sqlite' --no-header"
+            # Note: avoid xdist overhead for small suites and match by filename to avoid false positives on class names
+            run_check_background "Tests" "pytest tests/*sqlite*.py -q --tb=short --no-header"
         else
             # Run only fast tests (default)
             run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not slow and not integration and not benchmark' -n 8 --no-header"
@@ -255,25 +277,20 @@ fi
 # ruff
 if ! should_skip "ruff"; then
     if command -v ruff &> /dev/null; then
-        # Prefer running on changed files during git commits for speed
-        if [ -n "$modified_files" ]; then
-            files="$modified_files"
-        else
-            files="$TARGETS"
-        fi
-            # Enhanced ruff command that detects auto-fixes
-            ruff_cmd="(
-                # Capture initial state
-                before_hash=\$(echo $files | xargs -I {} sh -c 'if [ -d {} ]; then find {} -name \"*.py\"; else echo {}; fi' 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
-                
-                # Run ruff with auto-fix
-                if ruff check $files --fix --output-format concise"
+        # Run on full targets for reliability
+        # Enhanced ruff command that detects auto-fixes
+        ruff_cmd="(
+            # Capture initial state
+            before_hash=\$(find $TARGETS -name '*.py' -print0 2>/dev/null | xargs -0 md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+            
+            # Run ruff with auto-fix
+            if ruff check $TARGETS --fix --output-format concise"
             if [ -n "$IGNORE_LINT_RULES" ]; then
                 ruff_cmd="$ruff_cmd --ignore $IGNORE_LINT_RULES"
             fi
             ruff_cmd="$ruff_cmd; then
                     # Check if files were modified
-                    after_hash=\$(echo $files | xargs -I {} sh -c 'if [ -d {} ]; then find {} -name \"*.py\"; else echo {}; fi' 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+                    after_hash=\$(find $TARGETS -name '*.py' -print0 2>/dev/null | xargs -0 md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
                     if [ \"\$before_hash\" != \"\$after_hash\" ]; then
                         echo '[Ruff] ✨ Auto-fixed all issues!'
                         echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
@@ -284,7 +301,7 @@ if ! should_skip "ruff"; then
                 else
                     exit_code=\$?
                     # Check if files were modified (partial fixes)
-                    after_hash=\$(echo $files | xargs -I {} sh -c 'if [ -d {} ]; then find {} -name \"*.py\"; else echo {}; fi' 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+                    after_hash=\$(find $TARGETS -name '*.py' -print0 2>/dev/null | xargs -0 md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
                 if [ \"\$before_hash\" != \"\$after_hash\" ]; then
                     echo '[Ruff] ⚠️ Auto-fixed some issues, but manual fixes needed above'
                     echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
@@ -303,34 +320,29 @@ fi
 # black
 if ! should_skip "black"; then
     if command -v black &> /dev/null; then
-        # Prefer running on changed files during git commits for speed
-        if [ -n "$modified_files" ]; then
-            files="$modified_files"
-        else
-            files="$TARGETS"
-        fi
-            # Enhanced black command that detects formatting changes
-            black_cmd="(
-                # Capture initial state
-                before_hash=\$(echo $files | xargs -I {} sh -c 'if [ -d {} ]; then find {} -name \"*.py\"; else echo {}; fi' 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
-                
-                # Run black (it auto-formats by default)
-                if black $files --quiet; then
-                    # Check if files were modified
-                    after_hash=\$(echo $files | xargs -I {} sh -c 'if [ -d {} ]; then find {} -name \"*.py\"; else echo {}; fi' 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
-                    if [ \"\$before_hash\" != \"\$after_hash\" ]; then
-                        echo '[Black] ✨ Reformatted files!'
-                        echo 'AUTOFIX_OCCURRED' > $tmpdir/black_autofix
-                    else
-                        echo '[Black] ✅ All files already formatted!'
-                    fi
-                    exit 0
+        # Run on full targets for reliability
+        # Enhanced black command that detects formatting changes
+        black_cmd="(
+            # Capture initial state
+            before_hash=\$(find $TARGETS -name '*.py' -print0 2>/dev/null | xargs -0 md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+            
+            # Run black (it auto-formats by default)
+            if black $TARGETS --quiet; then
+                # Check if files were modified
+                after_hash=\$(find $TARGETS -name '*.py' -print0 2>/dev/null | xargs -0 md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+                if [ \"\$before_hash\" != \"\$after_hash\" ]; then
+                    echo '[Black] ✨ Reformatted files!'
+                    echo 'AUTOFIX_OCCURRED' > $tmpdir/black_autofix
                 else
-                    echo '[Black] ❌ Error during formatting'
-                    exit 1
+                    echo '[Black] ✅ All files already formatted!'
                 fi
+                exit 0
+            else
+                echo '[Black] ❌ Error during formatting'
+                exit 1
+            fi
             )"
-            run_check_background "Black" "$black_cmd"
+        run_check_background "Black" "$black_cmd"
     else
         echo "[Black] Skipped (not installed)"
     fi

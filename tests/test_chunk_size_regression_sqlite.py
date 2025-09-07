@@ -1,6 +1,6 @@
 """SQLite-based regression test for chunk size issue where chunks were 4x larger than configured.
 
-Converted from SimpleMockStore to SQLite-based testing with focus on assembly and
+SQLite-based testing with focus on assembly and
 chunk size behavior validation.
 """
 

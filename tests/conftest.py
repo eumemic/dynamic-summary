@@ -12,7 +12,6 @@ from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_
 from ragzoom.document_store import DocumentStore
 from ragzoom.store import StoreManager
 from ragzoom.telemetry_types import TelemetryDataDict
-from tests.mock_store import SimpleMockStore
 from tests.test_builders import DocumentBuilder, TreeNodeBuilder
 
 
@@ -189,11 +188,12 @@ def config_factory() -> (
 @pytest.fixture
 def mock_store(
     base_config: BackwardCompatibilityConfig,
-) -> Generator[SimpleMockStore, None, None]:
-    """Create a mock store for fast testing."""
-    store = SimpleMockStore()
+    sqlite_store_factory: Callable[[str | None], DocumentStore],
+) -> Generator[DocumentStore, None, None]:
+    """Create a mock store for fast testing using SQLite."""
+    store = sqlite_store_factory("test_doc")
     yield store
-    store.close()
+    # No explicit close needed for SQLite backend
 
 
 @pytest.fixture
@@ -218,8 +218,8 @@ def real_store(
 def store(
     request: pytest.FixtureRequest,
     base_config: BackwardCompatibilityConfig,
-    mock_store: SimpleMockStore,
-) -> Generator[SimpleMockStore | StoreManager, None, None]:
+    mock_store: DocumentStore,
+) -> Generator[DocumentStore | StoreManager, None, None]:
     """Provide either mock or real store based on test requirements.
 
     This fixture automatically selects the appropriate store:

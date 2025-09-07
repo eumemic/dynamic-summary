@@ -1,7 +1,8 @@
 """SQLite-based tests for span corruption bug in tree building.
 
 These tests ensure that tree building handles odd numbers of nodes correctly
-and prevents span corruption issues using the real in-memory SQLite backend.
+and prevents span corruption issues using
+the real in-memory SQLite backend.
 """
 
 from __future__ import annotations
@@ -9,7 +10,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from unittest.mock import AsyncMock, Mock
 
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.document_store import DocumentStore
@@ -173,10 +176,10 @@ class TestSpanCorruptionSQLite:
         # Group nodes by height
         nodes_by_height: dict[int, list[TreeNode]] = {}
         for node in nodes:
-            height = node.height
-            if height not in nodes_by_height:
-                nodes_by_height[height] = []
-            nodes_by_height[height].append(node)
+            node_height = node.height
+            if node_height not in nodes_by_height:
+                nodes_by_height[node_height] = []
+            nodes_by_height[node_height].append(node)
 
         # Sort nodes by span_start within each height
         for height in nodes_by_height:
@@ -203,7 +206,195 @@ class TestSpanCorruptionSQLite:
 
         # Check all parent nodes have valid spans
         for node in nodes:
-            if node.height > 0:
+            node_height = node.height
+            if node_height > 0:
                 assert (
                     node.span_end >= node.span_start
-                ), f"Node at height {node.height} has invalid span: ({node.span_start}, {node.span_end})"
+                ), f"Node at height {node_height} has invalid span: ({node.span_start}, {node.span_end})"
+
+    def test_manual_span_corruption_scenario(self, doc_store: DocumentStore) -> None:
+        """Test a manually constructed scenario that should expose span corruption."""
+        # Seed nodes that simulate what happens with odd pairing in tree construction
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            # 5 leaf nodes simulating odd count
+            {
+                "node_id": "leaf0",
+                "text": "First leaf content",
+                "embedding": np.array([0.1] * 1536, dtype=np.float64),
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "test-doc",
+                "token_count": 10,
+                "height": 0,
+                "parent_id": "internal0",
+                "path": "000",
+            },
+            {
+                "node_id": "leaf1",
+                "text": "Second leaf content",
+                "embedding": np.array([0.1] * 1536, dtype=np.float64),
+                "span_start": 100,
+                "span_end": 200,
+                "document_id": "test-doc",
+                "token_count": 10,
+                "height": 0,
+                "parent_id": "internal0",
+                "path": "001",
+            },
+            {
+                "node_id": "leaf2",
+                "text": "Third leaf content",
+                "embedding": np.array([0.1] * 1536, dtype=np.float64),
+                "span_start": 200,
+                "span_end": 300,
+                "document_id": "test-doc",
+                "token_count": 10,
+                "height": 0,
+                "parent_id": "internal1",
+                "path": "010",
+            },
+            {
+                "node_id": "leaf3",
+                "text": "Fourth leaf content",
+                "embedding": np.array([0.1] * 1536, dtype=np.float64),
+                "span_start": 300,
+                "span_end": 400,
+                "document_id": "test-doc",
+                "token_count": 10,
+                "height": 0,
+                "parent_id": "internal1",
+                "path": "011",
+            },
+            {
+                "node_id": "leaf4",
+                "text": "Fifth leaf content (the odd one out)",
+                "embedding": np.array([0.1] * 1536, dtype=np.float64),
+                "span_start": 400,
+                "span_end": 500,
+                "document_id": "test-doc",
+                "token_count": 10,
+                "height": 0,
+                "parent_id": "internal2",
+                "path": "100",
+            },
+            # Internal nodes that pair the leaves
+            {
+                "node_id": "internal0",
+                "text": "Summary of leaves 0-1",
+                "embedding": np.array([0.1] * 1536, dtype=np.float64),
+                "span_start": 0,
+                "span_end": 200,
+                "document_id": "test-doc",
+                "token_count": 20,
+                "height": 1,
+                "left_child_id": "leaf0",
+                "right_child_id": "leaf1",
+                "parent_id": "internal3",
+                "path": "00",
+            },
+            {
+                "node_id": "internal1",
+                "text": "Summary of leaves 2-3",
+                "embedding": np.array([0.1] * 1536, dtype=np.float64),
+                "span_start": 200,
+                "span_end": 400,
+                "document_id": "test-doc",
+                "token_count": 20,
+                "height": 1,
+                "left_child_id": "leaf2",
+                "right_child_id": "leaf3",
+                "parent_id": "internal3",
+                "path": "01",
+            },
+            {
+                "node_id": "internal2",
+                "text": "Summary of leaf 4 (single child)",
+                "embedding": np.array([0.1] * 1536, dtype=np.float64),
+                "span_start": 400,
+                "span_end": 500,
+                "document_id": "test-doc",
+                "token_count": 10,
+                "height": 1,
+                "left_child_id": "leaf4",
+                "right_child_id": None,
+                "parent_id": "root",
+                "path": "1",
+            },
+            # Higher level internal node
+            {
+                "node_id": "internal3",
+                "text": "Summary of leaves 0-3",
+                "embedding": np.array([0.1] * 1536, dtype=np.float64),
+                "span_start": 0,
+                "span_end": 400,
+                "document_id": "test-doc",
+                "token_count": 40,
+                "height": 2,
+                "left_child_id": "internal0",
+                "right_child_id": "internal1",
+                "parent_id": "root",
+                "path": "0",
+            },
+            # Root
+            {
+                "node_id": "root",
+                "text": "Root summary of all content",
+                "embedding": np.array([0.1] * 1536, dtype=np.float64),
+                "span_start": 0,
+                "span_end": 500,
+                "document_id": "test-doc",
+                "token_count": 50,
+                "height": 3,
+                "left_child_id": "internal3",
+                "right_child_id": "internal2",
+                "path": "",
+            },
+        ]
+
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [
+                ("leaf0", "internal0"),
+                ("leaf1", "internal0"),
+                ("leaf2", "internal1"),
+                ("leaf3", "internal1"),
+                ("leaf4", "internal2"),
+                ("internal0", "internal3"),
+                ("internal1", "internal3"),
+                ("internal2", "root"),
+                ("internal3", "root"),
+            ]
+        )
+
+        # Verify no span corruption
+        all_nodes = doc_store.nodes.get_all()
+        corrupt_nodes = []
+
+        for node in all_nodes:
+            # Check basic span validity
+            if node.span_end < node.span_start:
+                corrupt_nodes.append(node)
+            # Check that parent spans encompass child spans
+            if node.left_child_id:
+                left_child = doc_store.nodes.get_node(node.left_child_id)
+                if left_child and not (
+                    node.span_start <= left_child.span_start
+                    and left_child.span_end <= node.span_end
+                ):
+                    corrupt_nodes.append(node)
+            if node.right_child_id:
+                right_child = doc_store.nodes.get_node(node.right_child_id)
+                if right_child and not (
+                    node.span_start <= right_child.span_start
+                    and right_child.span_end <= node.span_end
+                ):
+                    corrupt_nodes.append(node)
+
+        assert (
+            len(corrupt_nodes) == 0
+        ), f"Found {len(corrupt_nodes)} nodes with span corruption"

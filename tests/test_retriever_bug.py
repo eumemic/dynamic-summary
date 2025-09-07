@@ -1,27 +1,30 @@
 """Test that demonstrates the current bug in Retriever - creates incomplete coverage trees."""
 
 import asyncio
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 if TYPE_CHECKING:
     from ragzoom.retrieve import Retriever
-    from tests.mock_store import SimpleMockStore
 
+from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.document_store import DocumentStore
 from ragzoom.models import TreeNode
-from tests.mock_store import SimpleMockStore
 
 
-class TestRetrieverBug:
+@pytest.mark.usefixtures("sqlite_backend")
+class TestRetrieverBugSQLite:
     """Tests that show the current Retriever creates incomplete coverage trees."""
 
     @pytest.fixture
     def setup_tree_for_bug_demo(
-        self,
-    ) -> Generator[tuple[object, SimpleMockStore, "Retriever"], None, None]:
+        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
+    ) -> Generator[tuple[object, DocumentStore, "Retriever"], None, None]:
         """Set up a system with a tree structure to demonstrate the bug."""
         index_config = IndexConfig.load(
             target_chunk_tokens=100, preceding_context_tokens=50
@@ -29,119 +32,160 @@ class TestRetrieverBug:
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
-        # Use index_config directly for SimpleMockStore compatibility
-        store = SimpleMockStore(config=index_config)
+        # Create document store
+        doc_store = sqlite_store_factory("test-doc")
 
-        # Create same tree structure as before
+        # Create tree structure:
         #         root
         #        /    \
         #      P1      P2
         #     /  \    /  \
         #    L1  L2  L3  L4
 
-        # Add all nodes (same as in other test)
-        store.add_node(
-            node_id="L1",
-            text="Chapter 1 content",
-            embedding=[0.1] * 1536,
-            span_start=0,
-            span_end=20,
-            document_id="test-doc",
-            parent_id="P1",
-        )
-        store.add_node(
-            node_id="L2",
-            text="Chapter 2 content",
-            embedding=[0.2] * 1536,
-            span_start=20,
-            span_end=40,
-            document_id="test-doc",
-            parent_id="P1",
-        )
-        store.add_node(
-            node_id="L3",
-            text="Chapter 3 content",
-            embedding=[0.3] * 1536,
-            span_start=40,
-            span_end=60,
-            document_id="test-doc",
-            parent_id="P2",
-        )
-        store.add_node(
-            node_id="L4",
-            text="Chapter 4 content",
-            embedding=[0.4] * 1536,
-            span_start=60,
-            span_end=80,
-            document_id="test-doc",
-            parent_id="P2",
-        )
+        # Add all nodes using add_batch
+        nodes: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
+            {
+                "node_id": "L1",
+                "text": "Chapter 1 content",
+                "span_start": 0,
+                "span_end": 20,
+                "document_id": "test-doc",
+                "token_count": 50,
+                "height": 0,
+                "path": "00",
+                "parent_id": None,  # Will be set in update_parent_references_batch
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "L2",
+                "text": "Chapter 2 content",
+                "span_start": 20,
+                "span_end": 40,
+                "document_id": "test-doc",
+                "token_count": 50,
+                "height": 0,
+                "path": "01",
+                "parent_id": None,  # Will be set in update_parent_references_batch
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "L3",
+                "text": "Chapter 3 content",
+                "span_start": 40,
+                "span_end": 60,
+                "document_id": "test-doc",
+                "token_count": 50,
+                "height": 0,
+                "path": "10",
+                "parent_id": None,  # Will be set in update_parent_references_batch
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "L4",
+                "text": "Chapter 4 content",
+                "span_start": 60,
+                "span_end": 80,
+                "document_id": "test-doc",
+                "token_count": 50,
+                "height": 0,
+                "path": "11",
+                "parent_id": None,  # Will be set in update_parent_references_batch
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "P1",
+                "text": "Summary of chapters 1-2",
+                "span_start": 0,
+                "span_end": 40,
+                "document_id": "test-doc",
+                "token_count": 75,
+                "height": 1,
+                "path": "0",
+                "parent_id": None,  # Will be set in update_parent_references_batch
+                "left_child_id": "L1",
+                "right_child_id": "L2",
+            },
+            {
+                "node_id": "P2",
+                "text": "Summary of chapters 3-4",
+                "span_start": 40,
+                "span_end": 80,
+                "document_id": "test-doc",
+                "token_count": 75,
+                "height": 1,
+                "path": "1",
+                "parent_id": None,  # Will be set in update_parent_references_batch
+                "left_child_id": "L3",
+                "right_child_id": "L4",
+            },
+            {
+                "node_id": "root",
+                "text": "Full document summary",
+                "span_start": 0,
+                "span_end": 80,
+                "document_id": "test-doc",
+                "token_count": 100,
+                "height": 2,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": "P1",
+                "right_child_id": "P2",
+            },
+        ]
 
-        store.add_node(
-            node_id="P1",
-            text="Summary of chapters 1-2",
-            embedding=[0.15] * 1536,
-            span_start=0,
-            span_end=40,
-            document_id="test-doc",
-            parent_id="root",
-            left_child_id="L1",
-            right_child_id="L2",
-        )
-        store.add_node(
-            node_id="P2",
-            text="Summary of chapters 3-4",
-            embedding=[0.35] * 1536,
-            span_start=40,
-            span_end=80,
-            document_id="test-doc",
-            parent_id="root",
-            left_child_id="L3",
-            right_child_id="L4",
-        )
+        doc_store.nodes.add_batch(nodes)
 
-        store.add_node(
-            node_id="root",
-            text="Full document summary",
-            embedding=[0.25] * 1536,
-            span_start=0,
-            span_end=80,
-            document_id="test-doc",
-            left_child_id="P1",
-            right_child_id="P2",
+        # Set parent references
+        doc_store.nodes.update_parent_references_batch(
+            [
+                ("L1", "P1"),
+                ("L2", "P1"),
+                ("L3", "P2"),
+                ("L4", "P2"),
+                ("P1", "root"),
+                ("P2", "root"),
+            ]
         )
-
-        # Update paths after tree construction is complete
-        store.update_node_paths_from_tree_structure()
 
         from tests.utils import create_retriever
 
         retriever = create_retriever(
             query_config=query_config,
-            store=store,  # type: ignore[arg-type]
-            document_id="test-doc",  # Specify the document we're working with
+            store=doc_store,
+            document_id="test-doc",
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
-        yield index_config, store, retriever
+        yield index_config, doc_store, retriever
 
     def test_retriever_bug_with_num_seeds_1(
-        self, setup_tree_for_bug_demo: tuple[object, SimpleMockStore, "Retriever"]
+        self,
+        setup_tree_for_bug_demo: tuple[object, DocumentStore, "Retriever"],
+        sqlite_backend: SQLiteStorageBackend,
     ) -> None:
         """Test that the retriever should build complete coverage trees but currently doesn't."""
-        index_config, store, retriever = setup_tree_for_bug_demo
+        index_config, doc_store, retriever = setup_tree_for_bug_demo
 
-        # Mock the vector search to return only L3
-        # This simulates what happens with --num-seeds 1 when L3 is most relevant
+        # Mock the search similar functionality to return only L3
         def mock_search_similar(
-            embedding: list[float], n_results: int, where: object = None
-        ) -> list[tuple[str, float, dict[str, object]]]:
+            query_embedding: list[float] | NDArray[np.float64],
+            n_results: int,
+            where: dict[str, str | int | float | bool | None] | None = None,
+        ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
             return [("L3", 0.95, {})]
 
-        store.search_similar = mock_search_similar  # type: ignore[method-assign,assignment]
-        # Also mock MMR to return L3 as selected
-        store.compute_mmr_diverse_results = lambda *args: ["L3"]  # type: ignore[method-assign]
+        doc_store.search.similar = mock_search_similar  # type: ignore[method-assign]
 
-        # Mock the query embedding generation
+        # We don't need vector embeddings since we're mocking search
+
+        # Mock the query embedding generation to return something close to L3
         retriever.embedding_service.get_query_embedding = (  # type: ignore[method-assign]
             lambda query, document_id=None: [0.3] * 1536
         )
@@ -150,8 +194,8 @@ class TestRetrieverBug:
         # But it currently raises an error because of the bug
         result = asyncio.run(
             retriever.retrieve_async(
-                query="test query",  # Query text doesn't matter with our mock
-                num_seeds=1,  # Only select 1 node
+                query="test query",
+                num_seeds=1,
                 budget_tokens=1000,
                 document_id="test-doc",
             )
@@ -162,22 +206,26 @@ class TestRetrieverBug:
         assert len(result.tiling) > 0
 
     def test_retriever_builds_complete_coverage_trees(
-        self, setup_tree_for_bug_demo: tuple[object, SimpleMockStore, "Retriever"]
+        self,
+        setup_tree_for_bug_demo: tuple[object, DocumentStore, "Retriever"],
+        sqlite_backend: SQLiteStorageBackend,
     ) -> None:
         """Test that retriever should include siblings to build complete coverage trees."""
-        index_config, store, retriever = setup_tree_for_bug_demo
+        index_config, doc_store, retriever = setup_tree_for_bug_demo
 
-        # Mock vector search to return only L3
+        # Mock the search similar functionality to return only L3
         def mock_search_similar(
-            embedding: list[float], n_results: int, where: object = None
-        ) -> list[tuple[str, float, dict[str, object]]]:
+            query_embedding: list[float] | NDArray[np.float64],
+            n_results: int,
+            where: dict[str, str | int | float | bool | None] | None = None,
+        ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
             return [("L3", 0.95, {})]
 
-        store.search_similar = mock_search_similar  # type: ignore[method-assign,assignment]
-        # Also mock MMR to return L3 as selected
-        store.compute_mmr_diverse_results = lambda *args: ["L3"]  # type: ignore[method-assign]
+        doc_store.search.similar = mock_search_similar  # type: ignore[method-assign]
 
-        # Mock the query embedding generation
+        # We don't need vector embeddings since we're mocking search
+
+        # Mock the query embedding generation to return something close to L3
         retriever.embedding_service.get_query_embedding = (  # type: ignore[method-assign]
             lambda query, document_id=None: [0.3] * 1536
         )

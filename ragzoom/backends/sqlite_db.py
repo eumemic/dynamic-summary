@@ -11,7 +11,7 @@ import datetime as dt
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from sqlalchemy import (  # type: ignore[import-not-found]
+from sqlalchemy import (
     DateTime,
     Integer,
     String,
@@ -50,6 +50,10 @@ class SqliteTreeNode(SqliteBase):
     following_neighbor_id: Mapped[str | None] = mapped_column(String, nullable=True)
     height: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     path: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+    def is_leaf(self) -> bool:
+        """Check if this node is a leaf node (has no children)."""
+        return self.height == 0
 
 
 class SqliteDocument(SqliteBase):

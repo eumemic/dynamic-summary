@@ -2,7 +2,8 @@
 
 import hashlib
 import logging
-from contextlib import AbstractContextManager
+from collections.abc import Generator
+from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -323,6 +324,75 @@ class DocumentStore:
         self.nodes = DocumentNodeRepository(document_id, node_repo)
         self.search = DocumentSearchService(document_id, search_service)
         self.tree = DocumentTreeNavigator(document_id, tree_navigator)
+
+        # Transaction state tracking (similar to StoreManager)
+        self._active_transaction = False
+
+    # jscpd:ignore-start - Transaction interface legitimately duplicates StoreManager method for consistency
+    @contextmanager
+    def transaction(self) -> Generator[Session, None, None]:
+        """Context manager for transactional operations.
+
+        Usage:
+            with doc_store.transaction() as session:
+                doc_store.nodes.add_batch(..., session=session)
+                # All operations commit together or all rollback
+
+        Yields:
+            SQLAlchemy session for the transaction
+
+        Raises:
+            RuntimeError: If nested transaction is attempted
+            Any exception from the transactional operations (after rollback)
+        """
+        if self._active_transaction:
+            raise RuntimeError(
+                "Nested transactions are not supported. "
+                "Please use the same session for all operations within a transaction."
+            )
+
+        self._active_transaction = True
+        session_context = self._open_session()
+        session = session_context.__enter__()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            self._active_transaction = False
+            session_context.__exit__(None, None, None)
+
+    def clear_document(
+        self, document_id: str | None = None, *, session: Session | None = None
+    ) -> int:
+        """Delete all nodes for a document.
+
+        Args:
+            document_id: Document ID to clear (defaults to this store's document_id)
+            session: Optional session for transactional operations
+
+        Returns:
+            Number of nodes deleted
+        """
+        target_doc_id = document_id or self.document_id
+        if not target_doc_id:
+            raise ValueError("Cannot clear document without a document_id")
+
+        # Check if the underlying doc_repo has clear_document method
+        if hasattr(self._doc_repo, "clear_document"):
+            return self._doc_repo.clear_document(target_doc_id, session=session)
+        else:
+            # Fallback: use the clear method from this store
+            if target_doc_id == self.document_id:
+                return self.clear()
+            else:
+                raise ValueError(
+                    "Cannot clear different document without doc_repo.clear_document support"
+                )
+
+    # jscpd:ignore-end
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         """Get all pinned nodes for this document only."""

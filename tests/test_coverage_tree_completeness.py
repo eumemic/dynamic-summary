@@ -1,25 +1,43 @@
-"""Tests for coverage tree completeness requirements."""
+"""SQLite-based tests for coverage tree completeness requirements.
 
+This file converts the core coverage tree completeness tests from
+test_coverage_tree_completeness.py to use the real in-memory SQLite backend
+providing higher fidelity testing of the
+coverage tree validation functionality.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pytest
+from numpy.typing import NDArray
+
+from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.document_store import DocumentStore
 
 if TYPE_CHECKING:
     from ragzoom.dynamic_tiling import DynamicTilingGenerator
     from ragzoom.retrieve import Retriever
-    from tests.mock_store import SimpleMockStore
-
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
-from tests.mock_store import SimpleMockStore
 
 
-class TestCoverageTreeCompleteness:
-    """Tests that ensure coverage trees maintain left-balanced properties."""
+@pytest.mark.usefixtures("sqlite_backend")
+class TestCoverageTreeCompletenessSQLite:
+    """Tests that ensure coverage trees maintain left-balanced properties with SQLite."""
+
+    @pytest.fixture
+    def doc_store(
+        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
+    ) -> DocumentStore:
+        """Create a document-scoped store for test-doc."""
+        return sqlite_store_factory("test-doc")
 
     @pytest.fixture
     def setup_incomplete_tree(
-        self,
-    ) -> tuple[IndexConfig, "SimpleMockStore", "Retriever", "DynamicTilingGenerator"]:
+        self, doc_store: DocumentStore
+    ) -> tuple[IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator]:
         """Set up a system with a tree that will produce incomplete coverage."""
         index_config = IndexConfig.load(
             target_chunk_tokens=100, preceding_context_tokens=50
@@ -27,109 +45,137 @@ class TestCoverageTreeCompleteness:
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
-        # Use index_config directly for SimpleMockStore compatibility
-        store = SimpleMockStore(config=index_config)
-
-        # Create a simple tree structure:
+        # Create a simple tree structure directly in SQLite:
         #         root
         #        /    \
         #      P1      P2
         #     /  \    /  \
         #    L1  L2  L3  L4
 
-        # Add leaf nodes with parent relationships
-        store.add_node(
-            node_id="L1",
-            text="Chapter 1 content",
-            embedding=[0.1] * 1536,
-            span_start=0,
-            span_end=20,
-            document_id="test-doc",
-            parent_id="P1",
-        )
-        store.add_node(
-            node_id="L2",
-            text="Chapter 2 content",
-            embedding=[0.2] * 1536,
-            span_start=20,
-            span_end=40,
-            document_id="test-doc",
-            parent_id="P1",
-        )
-        store.add_node(
-            node_id="L3",
-            text="Chapter 3 content",
-            embedding=[0.3] * 1536,
-            span_start=40,
-            span_end=60,
-            document_id="test-doc",
-            parent_id="P2",
-        )
-        store.add_node(
-            node_id="L4",
-            text="Chapter 4 content",
-            embedding=[0.4] * 1536,
-            span_start=60,
-            span_end=80,
-            document_id="test-doc",
-            parent_id="P2",
-        )
+        nodes: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
+            # Leaf nodes
+            {
+                "node_id": "L1",
+                "text": "Chapter 1 content",
+                "embedding": [0.1] * 1536,
+                "span_start": 0,
+                "span_end": 20,
+                "document_id": "test-doc",
+                "token_count": 5,
+                "height": 0,
+                "path": "000",
+            },
+            {
+                "node_id": "L2",
+                "text": "Chapter 2 content",
+                "embedding": [0.2] * 1536,
+                "span_start": 20,
+                "span_end": 40,
+                "document_id": "test-doc",
+                "token_count": 5,
+                "height": 0,
+                "path": "001",
+            },
+            {
+                "node_id": "L3",
+                "text": "Chapter 3 content",
+                "embedding": [0.3] * 1536,
+                "span_start": 40,
+                "span_end": 60,
+                "document_id": "test-doc",
+                "token_count": 5,
+                "height": 0,
+                "path": "010",
+            },
+            {
+                "node_id": "L4",
+                "text": "Chapter 4 content",
+                "embedding": [0.4] * 1536,
+                "span_start": 60,
+                "span_end": 80,
+                "document_id": "test-doc",
+                "token_count": 5,
+                "height": 0,
+                "path": "011",
+            },
+            # Parent nodes
+            {
+                "node_id": "P1",
+                "text": "Summary of chapters 1-2",
+                "embedding": [0.15] * 1536,
+                "span_start": 0,
+                "span_end": 40,
+                "document_id": "test-doc",
+                "height": 1,
+                "left_child_id": "L1",
+                "right_child_id": "L2",
+                "path": "00",
+            },
+            {
+                "node_id": "P2",
+                "text": "Summary of chapters 3-4",
+                "embedding": [0.35] * 1536,
+                "span_start": 40,
+                "span_end": 80,
+                "document_id": "test-doc",
+                "height": 1,
+                "left_child_id": "L3",
+                "right_child_id": "L4",
+                "path": "01",
+            },
+            # Root node
+            {
+                "node_id": "root",
+                "text": "Full document summary",
+                "embedding": [0.25] * 1536,
+                "span_start": 0,
+                "span_end": 80,
+                "document_id": "test-doc",
+                "height": 2,
+                "left_child_id": "P1",
+                "right_child_id": "P2",
+                "path": "",
+            },
+        ]
 
-        # Add parent nodes
-        store.add_node(
-            node_id="P1",
-            text="Summary of chapters 1-2",
-            embedding=[0.15] * 1536,
-            span_start=0,
-            span_end=40,
-            document_id="test-doc",
-            parent_id="root",
-            left_child_id="L1",
-            right_child_id="L2",
-        )
-        store.add_node(
-            node_id="P2",
-            text="Summary of chapters 3-4",
-            embedding=[0.35] * 1536,
-            span_start=40,
-            span_end=80,
-            document_id="test-doc",
-            parent_id="root",
-            left_child_id="L3",
-            right_child_id="L4",
-        )
+        doc_store.nodes.add_batch(nodes)
 
-        # Add root
-        store.add_node(
-            node_id="root",
-            text="Full document summary",
-            embedding=[0.25] * 1536,
-            span_start=0,
-            span_end=80,
-            document_id="test-doc",
-            left_child_id="P1",
-            right_child_id="P2",
+        # Update parent references
+        doc_store.nodes.update_parent_references_batch(
+            [
+                ("L1", "P1"),
+                ("L2", "P1"),
+                ("L3", "P2"),
+                ("L4", "P2"),
+                ("P1", "root"),
+                ("P2", "root"),
+            ]
         )
 
         from tests.utils import create_retriever
 
         retriever = create_retriever(
             query_config,
-            store,  # type: ignore[arg-type]
+            doc_store,
+            document_id="test-doc",
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
         dp_generator = retriever.dp_generator
 
-        return index_config, store, retriever, dp_generator
+        return index_config, doc_store, retriever, dp_generator
 
     def test_left_balanced_tree_single_child_handling(
         self,
         setup_incomplete_tree: tuple[
-            IndexConfig, "SimpleMockStore", "Retriever", "DynamicTilingGenerator"
+            IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator
         ],
     ) -> None:
         """Test that left-balanced trees with single children are handled correctly."""
-        index_config, store, retriever, dp_generator = setup_incomplete_tree
+        index_config, doc_store, retriever, dp_generator = setup_incomplete_tree
 
         # Simulate what happens with --num-seeds 1: only L3 is selected
         # This creates a left-balanced coverage tree where P2 has only its left child
@@ -137,9 +183,9 @@ class TestCoverageTreeCompleteness:
 
         # Add ancestors (this is what current retriever does)
         current_id = "L3"
-        node = store.nodes.get_node(current_id)
+        node = doc_store.nodes.get_node(current_id)
         while node and node.parent_id:
-            parent = store.nodes.get_node(node.parent_id)
+            parent = doc_store.nodes.get_node(node.parent_id)
             if parent:
                 coverage_map[parent.id] = True
                 current_id = parent.id
@@ -150,7 +196,7 @@ class TestCoverageTreeCompleteness:
         # Load nodes from coverage map
         nodes = {}
         for node_id in coverage_map:
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 
@@ -186,16 +232,16 @@ class TestCoverageTreeCompleteness:
     def test_complete_coverage_tree_works(
         self,
         setup_incomplete_tree: tuple[
-            IndexConfig, "SimpleMockStore", "Retriever", "DynamicTilingGenerator"
+            IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator
         ],
     ) -> None:
         """Test that complete coverage trees work correctly."""
-        index_config, store, retriever, dp_generator = setup_incomplete_tree
+        index_config, doc_store, retriever, dp_generator = setup_incomplete_tree
 
         # Create a complete coverage tree by including all nodes
         nodes = {}
         for node_id in ["root", "P1", "P2", "L1", "L2", "L3", "L4"]:
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 
@@ -214,11 +260,11 @@ class TestCoverageTreeCompleteness:
     def test_coverage_tree_with_siblings_included(
         self,
         setup_incomplete_tree: tuple[
-            IndexConfig, "SimpleMockStore", "Retriever", "DynamicTilingGenerator"
+            IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator
         ],
     ) -> None:
         """Test the correct way to build coverage tree with siblings."""
-        index_config, store, retriever, dp_generator = setup_incomplete_tree
+        index_config, doc_store, retriever, dp_generator = setup_incomplete_tree
 
         # Start with selected node
         selected_nodes = ["L3"]
@@ -230,7 +276,7 @@ class TestCoverageTreeCompleteness:
             current_id = node_id
             while current_id:
                 coverage_nodes.add(current_id)
-                node = store.nodes.get_node(current_id)
+                node = doc_store.nodes.get_node(current_id)
                 if node and node.parent_id:
                     current_id = node.parent_id
                 else:
@@ -241,7 +287,7 @@ class TestCoverageTreeCompleteness:
         nodes_to_check = list(coverage_nodes)
         while nodes_to_check:
             node_id = nodes_to_check.pop(0)
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             if node:
                 # If this node has children, both must be in coverage
                 if node.left_child_id:
@@ -256,7 +302,7 @@ class TestCoverageTreeCompleteness:
         # Load all nodes
         nodes = {}
         for node_id in coverage_nodes:
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             if node:
                 nodes[node_id] = node
 
@@ -278,3 +324,83 @@ class TestCoverageTreeCompleteness:
         )
 
         assert result.tiling is not None
+
+    def test_coverage_tree_completeness_validation(
+        self,
+        setup_incomplete_tree: tuple[
+            IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator
+        ],
+    ) -> None:
+        """Test validation logic for coverage tree completeness."""
+        index_config, doc_store, retriever, dp_generator = setup_incomplete_tree
+
+        # Test incomplete coverage tree (missing sibling)
+        incomplete_nodes = {}
+        for node_id in ["root", "P2", "L3"]:  # Missing L4, P1, L1, L2
+            node = doc_store.nodes.get_node(node_id)
+            if node:
+                incomplete_nodes[node_id] = node
+
+        # This represents a left-balanced tree where P2 only has left child
+        # DP algorithm should handle this gracefully
+        scores = {"L3": 1.0, "P2": 0.5, "root": 0.3}
+
+        result = dp_generator.find_optimal_tiling(
+            budget_tokens=1000,
+            scores=scores,
+            nodes=incomplete_nodes,
+            root_id="root",
+        )
+
+        # Should produce a valid result without errors
+        assert result.tiling is not None
+        assert result.total_quality >= 0
+
+    def test_single_leaf_coverage_tree(
+        self,
+        setup_incomplete_tree: tuple[
+            IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator
+        ],
+    ) -> None:
+        """Test coverage tree with single leaf node and its ancestors."""
+        index_config, doc_store, retriever, dp_generator = setup_incomplete_tree
+
+        # Build minimal coverage tree with just one leaf and ancestors
+        coverage_nodes = set()
+
+        # Start with L1
+        current_id = "L1"
+        while current_id:
+            coverage_nodes.add(current_id)
+            node = doc_store.nodes.get_node(current_id)
+            if node and node.parent_id:
+                current_id = node.parent_id
+            else:
+                break
+
+        # Load nodes
+        nodes = {}
+        for node_id in coverage_nodes:
+            node = doc_store.nodes.get_node(node_id)
+            if node:
+                nodes[node_id] = node
+
+        # Should have L1, P1, and root
+        assert "L1" in nodes
+        assert "P1" in nodes
+        assert "root" in nodes
+        assert "L2" not in nodes  # Sibling not included
+
+        # Test DP algorithm with this minimal coverage
+        scores = {"L1": 1.0, "P1": 0.5, "root": 0.3}
+
+        result = dp_generator.find_optimal_tiling(
+            budget_tokens=1000,
+            scores=scores,
+            nodes=nodes,
+            root_id="root",
+        )
+
+        # Should handle incomplete subtree gracefully
+        assert result.tiling is not None
+        assert result.total_quality >= 0

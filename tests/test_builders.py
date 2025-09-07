@@ -87,7 +87,7 @@ class TreeNodeBuilder:
             return TreeNode(**self._data)
         elif target == "namespace":
             node = SimpleNamespace(**self._data)
-            # Add additional attributes that SimpleMockStore expects
+            # Add additional attributes for compatibility
             node.is_pinned = 0
             node.last_accessed = None
             node.access_count = 0
@@ -183,7 +183,7 @@ class DocumentBuilder:
             return Document(**self._data)
         elif target == "namespace":
             doc = SimpleNamespace(**self._data)
-            # Add additional attributes that SimpleMockStore expects
+            # Add additional attributes for compatibility
             doc.created_at = None
             return doc
         else:

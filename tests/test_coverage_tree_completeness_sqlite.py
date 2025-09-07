@@ -2,7 +2,7 @@
 
 This file converts the core coverage tree completeness tests from
 test_coverage_tree_completeness.py to use the real in-memory SQLite backend
-instead of SimpleMockStore, providing higher fidelity testing of the
+providing higher fidelity testing of the
 coverage tree validation functionality.
 """
 

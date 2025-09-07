@@ -1,22 +1,27 @@
-"""Test document isolation - queries should only return results from specified document."""
+"""SQLite-based document isolation tests.
 
-from collections.abc import Generator
+Tests to ensure queries are properly isolated to specific documents using the real SQLite backend.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Generator
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from ragzoom.assemble import Assembler
+from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
+from ragzoom.config import IndexConfig, QueryConfig
+from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
-from ragzoom.retrieval.budget_planner import BudgetPlanner
-from ragzoom.retrieval.embedding_service import EmbeddingService
-from ragzoom.retrieve import Retriever
-from ragzoom.store import StoreManager
-from tests.conftest import BackwardCompatibilityConfig
-from tests.mock_store import SimpleMockStore
-from tests.utils import mock_openai_context
+from tests.utils import create_retriever, mock_openai_context
 
 
-class TestDocumentIsolation:
+@pytest.mark.usefixtures("sqlite_backend")
+class TestDocumentIsolationSQLite:
     """Test that queries are properly isolated to specific documents."""
 
     @pytest.fixture
@@ -29,96 +34,80 @@ class TestDocumentIsolation:
         with mock_openai_context(embedding_rules) as mocks:
             yield mocks
 
-    @pytest.fixture
-    def setup(
-        self,
-        mock_openai: tuple[Mock, Mock, Mock],
-        store: SimpleMockStore | StoreManager,
-        base_config: BackwardCompatibilityConfig,
-    ) -> Generator[
-        tuple[
-            BackwardCompatibilityConfig,
-            SimpleMockStore | StoreManager,
-            EmbeddingService,
-            BudgetPlanner,
-        ],
-        None,
-        None,
-    ]:
-        """Create test environment."""
-        from openai import OpenAI
-
-        from ragzoom.retrieval.budget_planner import BudgetPlanner
-        from ragzoom.retrieval.embedding_service import EmbeddingService
-
-        # Create services for Retriever
-        client = OpenAI(api_key=base_config.openai_api_key)
-        # Create a document store for services (None means all documents)
-        doc_store = store.for_document(None)
-        embedding_service = EmbeddingService(
-            client, doc_store, base_config.query_config.embedding_model
-        )
-        budget_planner = BudgetPlanner(
-            doc_store, base_config.index_config.target_chunk_tokens
-        )
-
-        yield base_config, store, embedding_service, budget_planner
-
     def test_document_isolation(
         self,
-        setup: tuple[
-            BackwardCompatibilityConfig,
-            SimpleMockStore | StoreManager,
-            EmbeddingService,
-            BudgetPlanner,
-        ],
+        sqlite_store_factory: Callable[[str | None], DocumentStore],
+        sqlite_backend: SQLiteStorageBackend,
+        mock_openai: tuple[Mock, Mock, Mock],
     ) -> None:
         """Test that queries only return results from the specified document."""
-        config, store, embedding_service, budget_planner = setup
+        # Create document stores
+        dragons_store = sqlite_store_factory("dragons.txt")
+        wizards_store = sqlite_store_factory("wizards.txt")
 
-        # Index two different documents
+        # Create configs
+        index_config = IndexConfig.load(target_chunk_tokens=100)
+        query_config = QueryConfig(budget_tokens=1000)
+
+        # Index documents using TreeBuilder
         doc1_text = "The mighty dragon breathed fire upon the castle. Dragons are powerful creatures."
-        doc2_text = "The wise wizard cast a spell. Wizards study magic for many years."
-
-        # Index with explicit document IDs
-        # Create TreeBuilder for first document
-        doc1_store = store.add_document(
-            document_id="dragons.txt",
-            file_path=None,
-            content_hash=store.compute_content_hash(doc1_text),
-            chunk_count=0,
-            embedding_model=config.index_config.embedding_model,
-            summary_model=config.index_config.summary_model,
-        )
-        tree_builder1 = TreeBuilder(
-            config.index_config, doc1_store, api_key=config.openai_api_key
-        )
+        tree_builder1 = TreeBuilder(index_config, dragons_store, api_key="test-key")
         doc1_id = tree_builder1.add_document(doc1_text)
-
-        # Create TreeBuilder for second document
-        doc2_store = store.add_document(
-            document_id="wizards.txt",
-            file_path=None,
-            content_hash=store.compute_content_hash(doc2_text),
-            chunk_count=0,
-            embedding_model=config.index_config.embedding_model,
-            summary_model=config.index_config.summary_model,
-        )
-        tree_builder2 = TreeBuilder(
-            config.index_config, doc2_store, api_key=config.openai_api_key
-        )
-        doc2_id = tree_builder2.add_document(doc2_text)
-
         assert doc1_id == "dragons.txt"
+
+        doc2_text = "The wise wizard cast a spell. Wizards study magic for many years."
+        tree_builder2 = TreeBuilder(index_config, wizards_store, api_key="test-key")
+        doc2_id = tree_builder2.add_document(doc2_text)
         assert doc2_id == "wizards.txt"
 
-        # Create retriever for dragons document
-        doc1_store = store.for_document("dragons.txt")
-        retriever1 = Retriever(
-            config.query_config,
-            doc1_store,
-            embedding_service,
-            budget_planner,
+        # Get all nodes and upsert embeddings for vector behavior
+        all_nodes = []
+        # Collect from both backends through the shared SQLite backend
+        for doc_store in [dragons_store, wizards_store]:
+            nodes = list(doc_store.nodes.get_all())
+            all_nodes.extend(nodes)
+
+        embedding_entries: list[
+            tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+        ] = []
+        for node in all_nodes:
+            # Use different embeddings based on content
+            if "dragon" in node.text.lower():
+                embedding: list[float] | NDArray[np.float64] = [0.9] * 1536
+            else:
+                embedding = [0.8] * 1536
+
+            embedding_entries.append(
+                (
+                    node.id,  # TreeNode uses 'id', not 'node_id'
+                    embedding,
+                    {
+                        "span_start": node.span_start,
+                        "span_end": node.span_end,
+                        "parent_id": node.parent_id,
+                        "document_id": node.document_id,
+                        "is_leaf": 1 if node.height == 0 else 0,
+                    },
+                )
+            )
+
+        sqlite_backend.vector_index.upsert(embedding_entries)
+
+        # Create retrievers using the utility function
+        retriever1 = create_retriever(
+            query_config,
+            dragons_store,
+            document_id="dragons.txt",
+            api_key="test-key",
+            client=mock_openai[1],  # Use mock retrieve client
+        )
+
+        retriever2 = create_retriever(
+            query_config,
+            wizards_store,
+            document_id="wizards.txt",
+            api_key="test-key",
+            client=mock_openai[1],  # Use mock retrieve client
         )
 
         # Query about dragons in the dragons document
@@ -128,20 +117,11 @@ class TestDocumentIsolation:
 
         # Check that all returned nodes are from dragons.txt
         for node_id in result1.node_ids:
-            node = store.nodes.get_node(node_id)
-            assert node is not None, f"Node {node_id} not found"
+            retrieved_node = dragons_store.nodes.get_node(node_id)
+            assert retrieved_node is not None, f"Node {node_id} not found"
             assert (
-                node.document_id == "dragons.txt"
-            ), f"Node {node_id} is from wrong document: {node.document_id}"
-
-        # Create retriever for wizards document
-        doc2_store = store.for_document("wizards.txt")
-        retriever2 = Retriever(
-            config.query_config,
-            doc2_store,
-            embedding_service,
-            budget_planner,
-        )
+                retrieved_node.document_id == "dragons.txt"
+            ), f"Node {node_id} is from wrong document: {retrieved_node.document_id}"
 
         # Query about wizards in the wizards document
         result2 = retriever2.retrieve(
@@ -150,11 +130,11 @@ class TestDocumentIsolation:
 
         # Check that all returned nodes are from wizards.txt
         for node_id in result2.node_ids:
-            node = store.nodes.get_node(node_id)
-            assert node is not None, f"Node {node_id} not found"
+            retrieved_node = wizards_store.nodes.get_node(node_id)
+            assert retrieved_node is not None, f"Node {node_id} not found"
             assert (
-                node.document_id == "wizards.txt"
-            ), f"Node {node_id} is from wrong document: {node.document_id}"
+                retrieved_node.document_id == "wizards.txt"
+            ), f"Node {node_id} is from wrong document: {retrieved_node.document_id}"
 
         # Cross-query test: query about dragons in wizards document
         # Should return nodes from wizards.txt even though query is about dragons
@@ -163,14 +143,14 @@ class TestDocumentIsolation:
         )
 
         for node_id in result3.node_ids:
-            node = store.nodes.get_node(node_id)
-            assert node is not None, f"Node {node_id} not found"
+            retrieved_node = wizards_store.nodes.get_node(node_id)
+            assert retrieved_node is not None, f"Node {node_id} not found"
             assert (
-                node.document_id == "wizards.txt"
-            ), f"Cross-query failed: got node from {node.document_id}"
+                retrieved_node.document_id == "wizards.txt"
+            ), f"Cross-query failed: got node from {retrieved_node.document_id}"
 
         # The content should be about wizards, not dragons
-        assembler = Assembler(doc2_store)
+        assembler = Assembler(wizards_store)
         summary = assembler.assemble(result3)
         assert (
             "wizard" in summary.lower() or "magic" in summary.lower()
@@ -181,42 +161,32 @@ class TestDocumentIsolation:
 
     def test_filename_as_default_document_id(
         self,
-        setup: tuple[
-            BackwardCompatibilityConfig,
-            SimpleMockStore | StoreManager,
-            EmbeddingService,
-            BudgetPlanner,
-        ],
+        sqlite_store_factory: Callable[[str | None], DocumentStore],
+        mock_openai: tuple[Mock, Mock, Mock],
     ) -> None:
         """Test that filename is used as document_id when not specified."""
-        config, store, embedding_service, budget_planner = setup
+        # Create document store
+        doc_store = sqlite_store_factory("test_file.txt")
+
+        # Create config
+        index_config = IndexConfig.load(target_chunk_tokens=100)
+        query_config = QueryConfig(budget_tokens=1000)
 
         # Index with file_path but no explicit document_id
         text = "Test content for filename ID"
-        # Create TreeBuilder with document store for test_file.txt
-        doc_store = store.add_document(
-            document_id="test_file.txt",
-            file_path="test_file.txt",
-            content_hash=store.compute_content_hash(text),
-            chunk_count=0,
-            embedding_model=config.index_config.embedding_model,
-            summary_model=config.index_config.summary_model,
-        )
-        tree_builder = TreeBuilder(
-            config.index_config, doc_store, api_key=config.openai_api_key
-        )
+        tree_builder = TreeBuilder(index_config, doc_store, api_key="test-key")
         doc_id = tree_builder.add_document(text)
 
         # Should use filename as document_id
         assert doc_id == "test_file.txt"
 
         # Create retriever for this document
-        doc_store = store.for_document("test_file.txt")
-        retriever = Retriever(
-            config.query_config,
+        retriever = create_retriever(
+            query_config,
             doc_store,
-            embedding_service,
-            budget_planner,
+            document_id="test_file.txt",
+            api_key="test-key",
+            client=mock_openai[1],  # Use mock retrieve client
         )
 
         # Verify we can query using the filename
@@ -225,56 +195,39 @@ class TestDocumentIsolation:
 
         # Check all nodes have correct document_id
         for node_id in result.node_ids:
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             assert node is not None, f"Node {node_id} not found"
             assert node.document_id == "test_file.txt"
 
     def test_query_without_document_filter(
         self,
-        setup: tuple[
-            BackwardCompatibilityConfig,
-            SimpleMockStore | StoreManager,
-            EmbeddingService,
-            BudgetPlanner,
-        ],
+        sqlite_store_factory: Callable[[str | None], DocumentStore],
+        mock_openai: tuple[Mock, Mock, Mock],
     ) -> None:
         """Test that querying without document_id returns results from all documents."""
-        config, store, embedding_service, budget_planner = setup
+        # Create document stores
+        doc1_store = sqlite_store_factory("doc1")
+        doc2_store = sqlite_store_factory("doc2")
+        global_store = sqlite_store_factory(None)  # No document filter
+
+        # Create config
+        index_config = IndexConfig.load(target_chunk_tokens=100)
+        query_config = QueryConfig(budget_tokens=1000)
 
         # Index multiple documents
-        doc1_store = store.add_document(
-            document_id="doc1",
-            file_path=None,
-            content_hash=store.compute_content_hash("Dragons are fierce"),
-            chunk_count=0,
-            embedding_model=config.index_config.embedding_model,
-            summary_model=config.index_config.summary_model,
-        )
-        tree_builder1 = TreeBuilder(
-            config.index_config, doc1_store, api_key=config.openai_api_key
-        )
+        tree_builder1 = TreeBuilder(index_config, doc1_store, api_key="test-key")
         tree_builder1.add_document("Dragons are fierce")
 
-        doc2_store = store.add_document(
-            document_id="doc2",
-            file_path=None,
-            content_hash=store.compute_content_hash("Wizards are wise"),
-            chunk_count=0,
-            embedding_model=config.index_config.embedding_model,
-            summary_model=config.index_config.summary_model,
-        )
-        tree_builder2 = TreeBuilder(
-            config.index_config, doc2_store, api_key=config.openai_api_key
-        )
+        tree_builder2 = TreeBuilder(index_config, doc2_store, api_key="test-key")
         tree_builder2.add_document("Wizards are wise")
 
         # Create retriever without document filter (None)
-        doc_store = store.for_document(None)
-        retriever = Retriever(
-            config.query_config,
-            doc_store,
-            embedding_service,
-            budget_planner,
+        retriever = create_retriever(
+            query_config,
+            global_store,
+            document_id=None,
+            api_key="test-key",
+            client=mock_openai[1],  # Use mock retrieve client
         )
 
         # Query without document filter
@@ -283,7 +236,7 @@ class TestDocumentIsolation:
         # Should potentially get results from multiple documents
         doc_ids = set()
         for node_id in result.node_ids:
-            node = store.nodes.get_node(node_id)
+            node = global_store.nodes.get_node(node_id)
             assert node is not None, f"Node {node_id} not found"
             doc_ids.add(node.document_id)
 

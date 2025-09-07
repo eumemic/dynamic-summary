@@ -1,8 +1,8 @@
 """SQLite-based unit tests for storage functionality.
 
-This file converts the SimpleMockStore tests from test_store_unit.py to use the
-real SQLite backend, providing higher fidelity testing while maintaining the
-unit test focus on core storage operations and interface compliance.
+SQLite-based unit tests for core storage operations and interface compliance
+with the real SQLite backend, providing higher fidelity testing while
+maintaining the unit test focus.
 """
 
 from collections.abc import Callable
