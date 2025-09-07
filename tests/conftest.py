@@ -327,21 +327,6 @@ def storage_backend() -> Generator[_StorageBackendProtocol, None, None]:
         backend.close()
 
 
-@pytest.fixture
-def doc_store_factory(
-    storage_backend: _StorageBackendProtocol,
-) -> Callable[[str | None], DocumentStore]:
-    """Backend-agnostic DocumentStore factory.
-
-    Usage: doc_store = doc_store_factory("doc-id")
-    """
-
-    def _make(doc_id: str | None = None) -> DocumentStore:
-        return storage_backend.for_document(doc_id)
-
-    return _make
-
-
 def _create_real_store(base_config: BackwardCompatibilityConfig) -> StoreManager | None:
     """Create a real store for integration testing, or return None if unavailable."""
     try:
