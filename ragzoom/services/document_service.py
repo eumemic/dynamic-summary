@@ -4,7 +4,6 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
-from ragzoom.models import Document, TreeNode
 from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
@@ -43,63 +42,43 @@ class DocumentService:
         self.store = store
 
     def list_documents(self) -> list[DocumentInfo]:
-        """List all indexed documents with metadata.
+        """List all indexed documents with metadata (backend-agnostic).
 
-        Returns:
-            List of DocumentInfo objects with document metadata
+        Avoids exposing DB sessions by using Store APIs.
         """
-        documents = []
-
-        with self.store.SessionLocal() as session:
-            docs = session.query(Document).all()
-
-            for doc in docs:
-                # Get node count for this document
-                node_count = (
-                    session.query(TreeNode).filter_by(document_id=doc.id).count()
+        out: list[DocumentInfo] = []
+        for doc in self.store.list_documents():
+            # Compute node count via repository
+            node_count = len(self.store.node_repo.get_all_nodes_for_document(doc.id))
+            out.append(
+                DocumentInfo(
+                    document_id=doc.id,
+                    file_path=doc.file_path,
+                    indexed_at=doc.indexed_at,
+                    chunk_count=doc.chunk_count,
+                    node_count=node_count,
                 )
-
-                documents.append(
-                    DocumentInfo(
-                        document_id=doc.id,
-                        file_path=doc.file_path,
-                        indexed_at=doc.indexed_at,
-                        chunk_count=doc.chunk_count,
-                        node_count=node_count,
-                    )
-                )
-
-        return documents
+            )
+        return out
 
     def get_system_status(self) -> SystemStatus:
-        """Get system status information.
+        """Get system status information without exposing sessions."""
+        # Total nodes across all documents
+        all_nodes = len(self.store.node_repo.get_all_nodes_for_document(None))
+        # Leaf nodes across all documents
+        leaf_nodes = len(self.store.node_repo.get_leaf_nodes())
+        # Tree depth: derive from max height among all nodes
+        nodes_all = self.store.node_repo.get_all_nodes_for_document(None)
+        tree_depth = max((n.height for n in nodes_all), default=0)
 
-        Returns:
-            SystemStatus with node counts and tree information
-        """
-        with self.store.SessionLocal() as session:
-            all_nodes = session.query(TreeNode).count()
-
-            # Count leaf nodes (nodes without children)
-            leaf_count = (
-                session.query(TreeNode)
-                .filter(
-                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
-                )
-                .count()
-            )
-
-            # Get max tree height across all documents
-            max_height = (
-                session.query(TreeNode.height).order_by(TreeNode.height.desc()).first()
-            )
-            tree_depth = max_height[0] if max_height else 0
-
-        pinned = self.store.get_pinned_nodes()
+        try:
+            pinned = self.store.get_pinned_nodes()  # type: ignore[attr-defined]
+        except Exception:
+            pinned = self.store.node_repo.get_pinned_nodes(None)
 
         return SystemStatus(
             total_nodes=all_nodes,
-            leaf_nodes=leaf_count,
+            leaf_nodes=leaf_nodes,
             tree_depth=tree_depth,
             pinned_nodes=len(pinned),
         )
@@ -116,25 +95,8 @@ class DocumentService:
         return self.store.clear_document(document_id)
 
     def clear_all_documents(self) -> int:
-        """Clear all documents and nodes from the database.
-
-        Returns:
-            Number of nodes deleted
-        """
-        with self.store.SessionLocal() as session:
-            # Count nodes before deletion
-            deleted_count = session.query(TreeNode).count()
-
-            # Delete all nodes and documents
-            session.query(TreeNode).delete()
-            session.query(Document).delete()
-            session.commit()
-
-        # Clear the cache
-        self.store.node_cache.clear()
-        self.store.cache_order.clear()
-
-        return deleted_count
+        """Clear all documents and nodes via store API (no direct sessions)."""
+        return self.store.clear_all_documents()
 
     def pin_node(self, node_id: str) -> None:
         """Pin a node to always include it.

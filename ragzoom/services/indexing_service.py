@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.index import TreeBuilder
-from ragzoom.models import TreeNode
 from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
@@ -161,8 +160,10 @@ class IndexingService:
             lock_cm = cast(AbstractContextManager[object], cm_any)
 
         with lock_cm:
-            # Compute content hash for metadata
-            content_hash = self.store.compute_content_hash(text)
+            # Compute content hash for metadata (backend-agnostic)
+            from ragzoom.document_store import DocumentStore
+
+            content_hash = DocumentStore.compute_content_hash(text)
 
             # Clear existing data for the document
             deleted_count = self.store.clear_document(document_id)
@@ -212,47 +213,20 @@ class IndexingService:
             )
             telemetry = None
 
-        # Get document statistics and update metadata (Postgres path). If backend
-        # doesn't expose a session, gracefully skip this block.
-        tree_height = 0
+        # Get document statistics and update metadata without exposing sessions
+        doc_store_final = self.store.for_document(doc_id)
+        leaves = doc_store_final.nodes.get_leaves()
+        # Update chunk_count metadata for the document
         try:
-            session_local = getattr(self.store, "SessionLocal", None)
-            if session_local is not None:
-                with session_local() as session:  # type: ignore[call-arg]
-                    # Get leaf nodes for this specific document
-                    doc_leaves = (
-                        session.query(TreeNode)
-                        .filter_by(document_id=doc_id)
-                        .filter(
-                            TreeNode.left_child_id.is_(None),
-                            TreeNode.right_child_id.is_(None),
-                        )
-                        .all()
-                    )
-
-                    # Get root node for this document
-                    root = (
-                        session.query(TreeNode)
-                        .filter_by(document_id=doc_id, parent_id=None)
-                        .first()
-                    )
-
-                    # Update the document's chunk count now that indexing is complete
-                    from ragzoom.models import Document
-
-                    doc = session.query(Document).filter_by(id=document_id).first()
-                    if doc:
-                        doc.chunk_count = len(doc_leaves)
-                        session.commit()
-
-                    tree_height = root.height if root else 0
+            doc_store_final.set_metadata(chunk_count=len(leaves))
         except Exception:
-            # Non-Postgres backends may not provide this path; rely on dev/test utilities
             pass
+        root = doc_store_final.tree.get_root()
+        tree_height = root.height if root else 0
 
         return IndexingResult(
             document_id=doc_id,
-            chunks_created=len(doc_leaves),
+            chunks_created=len(leaves),
             tree_depth=tree_height,
             telemetry=telemetry,
         )

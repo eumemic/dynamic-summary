@@ -23,7 +23,6 @@ from ragzoom.exceptions import (
     ResourceError,
     ValidationError,
 )
-from ragzoom.models import TreeNode
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingService
 from ragzoom.services.query_service import QueryService
@@ -273,16 +272,8 @@ def index(
             text = Path(file_path).read_text(encoding="utf-8")
 
             # Get leaf nodes for validation
-            with store.SessionLocal() as session:
-                doc_leaves = (
-                    session.query(TreeNode)
-                    .filter_by(document_id=result.document_id)
-                    .filter(
-                        TreeNode.left_child_id.is_(None),
-                        TreeNode.right_child_id.is_(None),
-                    )
-                    .all()
-                )
+            doc_store_for_validate = store.for_document(result.document_id)
+            doc_leaves = doc_store_for_validate.nodes.get_leaves()
 
             run_validate(
                 lambda: validate_document_coverage(text, doc_leaves),
@@ -356,17 +347,9 @@ def documents(ctx: click.Context) -> None:
             click.echo(f"Chunks: {doc.chunk_count}")
             click.echo(f"Total nodes: {doc.node_count}")
 
-            # Calculate leaf count separately if needed
-            with store.SessionLocal() as session:
-                leaf_count = (
-                    session.query(TreeNode)
-                    .filter_by(document_id=doc.document_id)
-                    .filter(
-                        TreeNode.left_child_id.is_(None),
-                        TreeNode.right_child_id.is_(None),
-                    )
-                    .count()
-                )
+            # Calculate leaf count via DocumentStore
+            doc_store = store.for_document(doc.document_id)
+            leaf_count = len(doc_store.nodes.get_leaves())
             click.echo(f"Leaf nodes: {leaf_count}")
 
     except Exception as e:
@@ -763,26 +746,22 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
             operational_config, embedding_model=index_config.embedding_model
         )
 
-        # Get all nodes
+        # Get all nodes via repository (backend-agnostic)
         nodes_data = []
-        with store.SessionLocal() as session:
-            from ragzoom.models import TreeNode
-
-            nodes = session.query(TreeNode).all()
-            for node in nodes:
-                node_dict = {
-                    "id": node.id,
-                    "parent_id": node.parent_id,
-                    "height": node.height,
-                    "span_start": node.span_start,
-                    "span_end": node.span_end,
-                    "is_leaf": node.left_child_id is None
-                    and node.right_child_id is None,
-                    "text_preview": (
-                        node.text[:100] + "..." if len(node.text) > 100 else node.text
-                    ),
-                }
-                nodes_data.append(node_dict)
+        all_nodes = store.node_repo.get_all_nodes_for_document(None)
+        for node in all_nodes:
+            node_dict = {
+                "id": node.id,
+                "parent_id": node.parent_id,
+                "height": node.height,
+                "span_start": node.span_start,
+                "span_end": node.span_end,
+                "is_leaf": (node.left_child_id is None and node.right_child_id is None),
+                "text_preview": (
+                    node.text[:100] + "..." if len(node.text) > 100 else node.text
+                ),
+            }
+            nodes_data.append(node_dict)
 
         # Write output
         output_path = Path(output_file)
@@ -1033,12 +1012,9 @@ def doctor() -> None:
             # Try to create a store (this will auto-start PostgreSQL if needed)
             store = create_store_with_docker(operational_config)
 
-            # Test basic operation
-            with store.SessionLocal() as session:
-                # Simple query to test connection
-                from sqlalchemy import text
-
-                session.execute(text("SELECT 1"))
+            # Test basic operation without exposing sessions
+            # Attempt a lightweight repository call
+            _ = store.list_documents()
 
             click.echo("✅ Database connection: Working")
             store.close()
