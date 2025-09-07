@@ -591,21 +591,35 @@ def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
             operational_config, embedding_model=index_config.embedding_model
         )
 
-        # If document_id not provided, detect it from the node
-        if not document_id:
-            node = store.node_repo.get_node(node_id)
-            if not node:
-                click.echo(f"❌ Node {node_id} not found")
-                sys.exit(1)
-            document_id = node.document_id
-            if document_id:
-                click.echo(f"Auto-detected document: {document_id}")
+        # Detect whether we have a system-wide Store or a DocumentStore
+        is_document_store = (
+            hasattr(store, "document_id")
+            and hasattr(store, "nodes")
+            and not hasattr(store, "node_repo")
+        )
 
-        # Use document-scoped store for consistency (though pinning affects the node globally)
-        document_store = store.for_document(document_id)
+        # If document_id not provided, detect it
+        if not document_id:
+            if is_document_store:
+                # DocumentStore: use its scoped document
+                document_id = getattr(store, "document_id", None)
+                if document_id:
+                    click.echo(f"Auto-detected document: {document_id}")
+            else:
+                # Store-like object: look up node globally
+                node = store.node_repo.get_node(node_id)  # type: ignore[attr-defined]
+                if not node:
+                    click.echo(f"❌ Node {node_id} not found")
+                    sys.exit(1)
+                document_id = node.document_id
+                if document_id:
+                    click.echo(f"Auto-detected document: {document_id}")
+
+        # Use document-scoped store for verification
+        document_store = store if is_document_store else store.for_document(document_id)
 
         # Verify the node belongs to this document
-        node = document_store.nodes.get(node_id)
+        node = document_store.nodes.get_node(node_id)  # type: ignore[attr-defined]
         if not node:
             click.echo(
                 f"❌ Node {node_id} not found"
@@ -613,9 +627,14 @@ def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
             )
             sys.exit(1)
 
-        # Pin the node using DocumentService (this affects the node globally)
-        document_service = DocumentService(store)
-        document_service.pin_node(node_id)
+        # Pin the node (works for both Store and DocumentStore cases)
+        if hasattr(store, "pin_node"):
+            # Store-like object
+            store.pin_node(node_id)  # type: ignore[attr-defined]
+        else:
+            # DocumentStore: use underlying repository
+            document_store._node_repo.pin_node(node_id)  # type: ignore[union-attr]
+
         click.echo(f"✅ Node {node_id} pinned successfully!")
 
     except NodeNotFoundError:
