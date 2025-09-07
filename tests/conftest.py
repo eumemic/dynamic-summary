@@ -6,8 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
+from ragzoom.document_store import DocumentStore
 from ragzoom.store import StoreManager
 from ragzoom.telemetry_types import TelemetryDataDict
 from tests.mock_store import SimpleMockStore
@@ -272,6 +274,41 @@ def store(
 
     # Default to mock for speed
     yield mock_store
+
+
+# --- SQLite in-memory backend fixtures (for migrating off mocks) ---
+
+
+@pytest.fixture
+def sqlite_backend() -> Generator[SQLiteStorageBackend, None, None]:
+    """Real in-memory SQLite backend for high-fidelity testing.
+
+    Provides a true database (no Docker) and pairs with the pure-Python vector
+    index. Use together with `sqlite_store_factory` to obtain document-scoped
+    stores for tests.
+    """
+    backend = SQLiteStorageBackend("sqlite:///:memory:")
+    try:
+        yield backend
+    finally:
+        backend.close()
+
+
+@pytest.fixture
+def sqlite_store_factory(
+    sqlite_backend: SQLiteStorageBackend,
+) -> Callable[[str | None], DocumentStore]:
+    """Factory to create a document-scoped store from the SQLite backend.
+
+    Example usage in a test:
+        doc_store = sqlite_store_factory("doc1")
+        # use doc_store.nodes.add_batch(...), etc.
+    """
+
+    def _make(doc_id: str | None = None) -> DocumentStore:
+        return sqlite_backend.for_document(doc_id)
+
+    return _make
 
 
 def _create_real_store(base_config: BackwardCompatibilityConfig) -> StoreManager | None:

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from ragzoom.interfaces.vector_index import VectorIndex, VectorSearchMetadata
+from ragzoom.contracts.vector_index import VectorIndex, VectorSearchMetadata
 
 
 @dataclass

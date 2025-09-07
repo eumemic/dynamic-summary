@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from ragzoom.interfaces.vector_index import VectorIndex, VectorSearchMetadata
+from ragzoom.contracts.vector_index import VectorIndex, VectorSearchMetadata
 from ragzoom.services.search_service import NodeMetadataDict, SearchService
 from ragzoom.storage.database_manager import DatabaseManager
 

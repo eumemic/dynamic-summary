@@ -20,9 +20,9 @@ from ragzoom.backends.sqlite_repositories import (
     SqliteDocumentRepository,
     SqliteNodeRepository,
 )
+from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorSearchMetadata
 from ragzoom.document_store import DocumentStore
-from ragzoom.interfaces.storage_backend import StorageBackend
-from ragzoom.interfaces.vector_index import VectorSearchMetadata
 from ragzoom.models import Document, TreeNode
 from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.cache_manager import CacheManager
