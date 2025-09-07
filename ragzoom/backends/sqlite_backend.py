@@ -186,3 +186,10 @@ class _VectorIndexSearchAdapter:
         return self._index.compute_mmr_diverse_results(
             query_embedding, conv, lambda_param, k
         )
+
+    # Optional upsert API used during indexing when embeddings are not stored in SQL
+    def upsert(
+        self,
+        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
+    ) -> None:
+        self._index.upsert(items)

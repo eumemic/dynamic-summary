@@ -99,7 +99,6 @@ class TestChunkSizeRegressionSQLite:
             50 <= avg_tokens <= config.target_chunk_tokens * 1.2
         ), f"Average chunk size {avg_tokens} tokens is outside reasonable range (expected 50-{int(config.target_chunk_tokens * 1.2)})"
 
-    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_indexed_chunks_have_correct_size(
         self,
