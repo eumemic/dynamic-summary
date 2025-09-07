@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -220,6 +221,15 @@ class DocumentSearchService:
         sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
         return [c[0] for c in sorted_candidates[:k]]
 
+    # Optional: vector upsert used by backends where embeddings are external to SQL
+    def upsert_vectors(
+        self,
+        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
+    ) -> None:
+        upsert = getattr(self._service, "upsert", None)
+        if callable(upsert):
+            upsert(items)
+
 
 class DocumentTreeNavigator:
     """Tree navigation automatically scoped to a specific document."""
@@ -333,7 +343,7 @@ class DocumentStore:
             node_id: ID of the node to update
             parent_id: New parent ID
         """
-        with self._node_repo.db_manager.SessionLocal() as session:
+        with self._open_session() as session:
             from ragzoom.models import TreeNode as TreeNodeModel
 
             session.query(TreeNodeModel).filter_by(id=node_id).update(
@@ -393,7 +403,7 @@ class DocumentStore:
 
         from ragzoom.models import Document
 
-        with self._node_repo.db_manager.SessionLocal() as session:
+        with self._open_session() as session:
             return session.query(Document).filter_by(id=self.document_id).first()
 
     def set_metadata(
@@ -418,7 +428,7 @@ class DocumentStore:
 
         from ragzoom.models import Document
 
-        with self._node_repo.db_manager.SessionLocal() as session:
+        with self._open_session() as session:
             # Try to get existing document
             doc = session.query(Document).filter_by(id=self.document_id).first()
 
@@ -472,7 +482,7 @@ class DocumentStore:
         # Use SQL aggregation for efficiency on large documents
         from ragzoom.models import TreeNode as TreeNodeModel
 
-        with self._node_repo.db_manager.SessionLocal() as session:
+        with self._open_session() as session:
             # Query for average token count of leaf nodes (nodes with no children)
             result = (
                 session.query(TreeNodeModel.token_count)
@@ -505,3 +515,13 @@ class DocumentStore:
                 f"Calculated average leaf tokens: {avg_tokens} from {count} leaves for document {self.document_id}"
             )
             return avg_tokens
+
+    # Internal helper to obtain a SQLAlchemy session from either backend type
+    def _open_session(self) -> AbstractContextManager[Session]:
+        session_local = getattr(self._node_repo, "SessionLocal", None)
+        if callable(session_local):
+            return session_local()  # type: ignore[no-any-return]
+        db_manager = getattr(self._node_repo, "db_manager", None)
+        if db_manager is not None and hasattr(db_manager, "SessionLocal"):
+            return db_manager.SessionLocal()  # type: ignore[no-any-return]
+        raise RuntimeError("No session factory available on node repository")

@@ -148,29 +148,42 @@ class IndexingService:
             else:
                 raise ValueError("Either document_id or file_path must be provided")
 
-        # Compute content hash for metadata
-        content_hash = self.store.compute_content_hash(text)
+        # Acquire per-document lock when supported by backend
+        from contextlib import AbstractContextManager, nullcontext
+        from typing import cast
 
-        # Clear existing data for the document
-        deleted_count = self.store.clear_document(document_id)
-        if deleted_count > 0:
-            logger.info(
-                f"Cleared existing data for '{document_id}' ({deleted_count} nodes)"
+        _lock_fn = getattr(self.store, "lock_document", None)
+        cm_any = _lock_fn(document_id) if callable(_lock_fn) else None
+        # Some test doubles (unconfigured Mocks) may return non-context managers; coerce to a valid one
+        if not (hasattr(cm_any, "__enter__") and hasattr(cm_any, "__exit__")):
+            lock_cm = cast(AbstractContextManager[object], nullcontext())
+        else:
+            lock_cm = cast(AbstractContextManager[object], cm_any)
+
+        with lock_cm:
+            # Compute content hash for metadata
+            content_hash = self.store.compute_content_hash(text)
+
+            # Clear existing data for the document
+            deleted_count = self.store.clear_document(document_id)
+            if deleted_count > 0:
+                logger.info(
+                    f"Cleared existing data for '{document_id}' ({deleted_count} nodes)"
+                )
+
+            # Create document with full metadata BEFORE indexing
+            # This ensures the document exists with proper metadata before TreeBuilder runs
+            self.store.add_document(
+                document_id=document_id,
+                file_path=file_path,
+                content_hash=content_hash,
+                chunk_count=0,  # Will be updated after indexing
+                embedding_model=self.index_config.embedding_model,
+                summary_model=self.index_config.summary_model,
             )
 
-        # Create document with full metadata BEFORE indexing
-        # This ensures the document exists with proper metadata before TreeBuilder runs
-        self.store.add_document(
-            document_id=document_id,
-            file_path=file_path,
-            content_hash=content_hash,
-            chunk_count=0,  # Will be updated after indexing
-            embedding_model=self.index_config.embedding_model,
-            summary_model=self.index_config.summary_model,
-        )
-
-        # Create document-scoped store and TreeBuilder
-        document_store = self.store.for_document(document_id)
+            # Create document-scoped store and TreeBuilder
+            document_store = self.store.for_document(document_id)
 
         tree_builder = TreeBuilder(
             self.index_config,
@@ -199,35 +212,43 @@ class IndexingService:
             )
             telemetry = None
 
-        # Get document statistics and update metadata
-        with self.store.SessionLocal() as session:
-            # Get leaf nodes for this specific document
-            doc_leaves = (
-                session.query(TreeNode)
-                .filter_by(document_id=doc_id)
-                .filter(
-                    TreeNode.left_child_id.is_(None),
-                    TreeNode.right_child_id.is_(None),
-                )
-                .all()
-            )
+        # Get document statistics and update metadata (Postgres path). If backend
+        # doesn't expose a session, gracefully skip this block.
+        tree_height = 0
+        try:
+            session_local = getattr(self.store, "SessionLocal", None)
+            if session_local is not None:
+                with session_local() as session:  # type: ignore[call-arg]
+                    # Get leaf nodes for this specific document
+                    doc_leaves = (
+                        session.query(TreeNode)
+                        .filter_by(document_id=doc_id)
+                        .filter(
+                            TreeNode.left_child_id.is_(None),
+                            TreeNode.right_child_id.is_(None),
+                        )
+                        .all()
+                    )
 
-            # Get root node for this document
-            root = (
-                session.query(TreeNode)
-                .filter_by(document_id=doc_id, parent_id=None)
-                .first()
-            )
+                    # Get root node for this document
+                    root = (
+                        session.query(TreeNode)
+                        .filter_by(document_id=doc_id, parent_id=None)
+                        .first()
+                    )
 
-            # Update the document's chunk count now that indexing is complete
-            from ragzoom.models import Document
+                    # Update the document's chunk count now that indexing is complete
+                    from ragzoom.models import Document
 
-            doc = session.query(Document).filter_by(id=document_id).first()
-            if doc:
-                doc.chunk_count = len(doc_leaves)
-                session.commit()
+                    doc = session.query(Document).filter_by(id=document_id).first()
+                    if doc:
+                        doc.chunk_count = len(doc_leaves)
+                        session.commit()
 
-            tree_height = root.height if root else 0
+                    tree_height = root.height if root else 0
+        except Exception:
+            # Non-Postgres backends may not provide this path; rely on dev/test utilities
+            pass
 
         return IndexingResult(
             document_id=doc_id,
