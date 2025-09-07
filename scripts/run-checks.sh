@@ -251,10 +251,23 @@ if ! should_skip "tests"; then
             # Run all tests including slow and integration
             run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark' -n 8 --no-header"
         elif [ "$TEST_SCOPE" = "smoke" ]; then
-            # Run a minimal, fast smoke subset: SQLite-backed test files only
-            # These exercise core retrieval, assembly, and tree logic without external services
+            # Run a minimal, fast smoke subset: SQLite-backed test files, plus any changed tests in the commit
+            # Detect changed test files (staged) and include them alongside the smoke suite
+            changed_tests=""
+            if [ -n "$modified_files" ]; then
+                for f in $modified_files; do
+                    case "$f" in
+                        tests/*.py)
+                            case "$f" in
+                                *sqlite*.py) ;;  # already covered by smoke suite
+                                *) changed_tests="$changed_tests $f" ;;
+                            esac
+                            ;;
+                    esac
+                done
+            fi
             # Note: avoid xdist overhead for small suites and match by filename to avoid false positives on class names
-            run_check_background "Tests" "pytest tests/*sqlite*.py -q --tb=short --no-header"
+            run_check_background "Tests" "pytest tests/*sqlite*.py $changed_tests -q --tb=short --no-header"
         else
             # Run only fast tests (default)
             run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not slow and not integration and not benchmark' -n 8 --no-header"
