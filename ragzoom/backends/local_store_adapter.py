@@ -83,8 +83,13 @@ class LocalStoreAdapter:
         )
         return self.for_document(document_id)
 
-    def clear_document(self, document_id: str) -> int:
-        return self.doc_repo.clear_document(document_id)
+    def clear_document(self, document_id: str, *, session: object | None = None) -> int:
+        # session is accepted for compatibility but ignored by SQLite adapter unless it is a SQLAlchemy session
+        try:
+            # Best-effort: pass through if this looks like a session
+            return self.doc_repo.clear_document(document_id, session=session)  # type: ignore[arg-type]
+        except TypeError:
+            return self.doc_repo.clear_document(document_id)
 
     def delete_document_nodes(
         self, document_id: str, *, session: None = None

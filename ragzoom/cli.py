@@ -628,12 +628,13 @@ def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
             sys.exit(1)
 
         # Pin the node (works for both Store and DocumentStore cases)
-        if hasattr(store, "pin_node"):
-            # Store-like object
-            store.pin_node(node_id)  # type: ignore[attr-defined]
-        else:
+        if is_document_store:
             # DocumentStore: use underlying repository
             document_store._node_repo.pin_node(node_id)  # type: ignore[union-attr]
+        else:
+            # Use DocumentService path (keeps CLI test mocks intact)
+            document_service = DocumentService(store)
+            document_service.pin_node(node_id)
 
         click.echo(f"✅ Node {node_id} pinned successfully!")
 
