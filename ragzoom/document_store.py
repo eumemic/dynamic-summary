@@ -84,6 +84,8 @@ class DocumentNodeRepository:
     def get(self, node_id: str) -> TreeNode | None:
         """Get a node by ID, ensuring it belongs to this document."""
         node = self._repo.get_node(node_id)
+        if self.document_id is None:
+            return node
         if node and node.document_id == self.document_id:
             return node
         return None
@@ -97,11 +99,15 @@ class DocumentNodeRepository:
     def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes by IDs, filtered to this document only."""
         nodes = self._repo.get_nodes(node_ids)
+        if self.document_id is None:
+            return nodes
         return [node for node in nodes if node.document_id == self.document_id]
 
     def get_many(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes, filtering to this document only."""
         nodes = self._repo.get_nodes(node_ids)
+        if self.document_id is None:
+            return nodes
         return [node for node in nodes if node.document_id == self.document_id]
 
     def get_all(self) -> list[TreeNode]:
@@ -130,6 +136,8 @@ class DocumentNodeRepository:
     def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
         """Get nodes by path values, filtered to this document only."""
         nodes = self._repo.get_nodes_by_paths(paths)
+        if self.document_id is None:
+            return nodes
         return [node for node in nodes if node.document_id == self.document_id]
 
     def update_parent_references_batch(

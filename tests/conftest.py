@@ -219,7 +219,8 @@ def store(
     request: pytest.FixtureRequest,
     base_config: BackwardCompatibilityConfig,
     mock_store: DocumentStore,
-) -> Generator[DocumentStore | StoreManager, None, None]:
+    sqlite_backend: SQLiteStorageBackend,
+) -> Generator[DocumentStore | StoreManager | SQLiteStorageBackend, None, None]:
     """Provide either mock or real store based on test requirements.
 
     This fixture automatically selects the appropriate store:
@@ -272,8 +273,8 @@ def store(
             real_store.close()
         return
 
-    # Default to mock for speed
-    yield mock_store
+    # Default to SQLite backend for store-like API (for_document, add_document)
+    yield sqlite_backend
 
 
 # --- SQLite in-memory backend fixtures (for migrating off mocks) ---

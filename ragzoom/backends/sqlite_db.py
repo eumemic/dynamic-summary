@@ -19,7 +19,14 @@ from sqlalchemy import (
     create_engine,
     select,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    sessionmaker,
+)
+from sqlalchemy.pool import StaticPool
 
 
 class SqliteBase(DeclarativeBase):
@@ -77,7 +84,14 @@ class SqliteDatabaseManager:
     url: str
 
     def __post_init__(self) -> None:
-        self.engine = create_engine(self.url)
+        # Use thread-safe settings for in-memory and test usage
+        engine_kwargs: dict[str, object] = {
+            "connect_args": {"check_same_thread": False}
+        }
+        # Share the same in-memory database across threads and sessions
+        if self.url.strip().lower() in {"sqlite:///:memory:", "sqlite://"}:
+            engine_kwargs["poolclass"] = StaticPool
+        self.engine = create_engine(self.url, **engine_kwargs)
         SqliteBase.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(bind=self.engine)
 
