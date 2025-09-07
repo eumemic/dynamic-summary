@@ -19,11 +19,11 @@ class _MetadataProxy:
     """Proxy that adapts NodeMetadataDict to the VectorSearchMetadata Protocol."""
 
     def __init__(self, meta: NodeMetadataDict) -> None:
-        self.span_start = int(meta["span_start"])  # type: ignore[assignment]
-        self.span_end = int(meta["span_end"])  # type: ignore[assignment]
-        self.parent_id = str(meta["parent_id"])  # type: ignore[assignment]
-        self.document_id = str(meta["document_id"])  # type: ignore[assignment]
-        self.is_leaf = int(meta["is_leaf"])  # type: ignore[assignment]
+        self.span_start = int(meta["span_start"])
+        self.span_end = int(meta["span_end"])
+        self.parent_id = str(meta["parent_id"])
+        self.document_id = str(meta["document_id"])
+        self.is_leaf = int(meta["is_leaf"])
 
 
 class PgVectorIndex(VectorIndex):

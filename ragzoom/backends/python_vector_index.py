@@ -216,8 +216,12 @@ class PythonVectorIndex(VectorIndex):
 
         # Optional filter by document_id
         mask: NDArray[np.bool_] | None = None
-        if where and "document_id" in where and where["document_id"]:
-            doc = str(where["document_id"])  # type: ignore[assignment]
+        if where and "document_id" in where and where["document_id"] is not None:
+            val = where["document_id"]
+            if isinstance(val, (str | int | float | bool)):
+                doc = str(val)
+            else:
+                doc = ""
             mask = np.array([self._meta[i].document_id == doc for i in self._ids])
         if mask is not None:
             idxs = np.where(mask)[0]
