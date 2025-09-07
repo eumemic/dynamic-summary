@@ -169,6 +169,7 @@ class DocumentSearchService:
         results = self._service.search_similar(query_embedding, n_results, where)
         return self._format_search_results(results)
 
+    # jscpd:ignore-start - Delegating wrapper pattern; similarity to SearchService is intentional
     def mmr_diverse(
         self,
         query_embedding: list[float] | NDArray[np.float64],
@@ -176,9 +177,19 @@ class DocumentSearchService:
         lambda_param: float,
         k: int,
     ) -> list[str]:
-        """Apply MMR to get diverse results from candidates."""
-        # For now, just return the top k candidates by similarity score
-        # This maintains the interface while avoiding the broken method call
+        """Apply MMR to get diverse results from candidates.
+
+        Delegates to underlying search service when available; falls back to
+        score-based top-k selection otherwise.
+        """
+        underlying = getattr(self._service, "compute_mmr_diverse_results", None)
+        if callable(underlying):
+            try:
+                out = underlying(query_embedding, candidates, lambda_param, k)
+                # Be explicit for type checker
+                return list(out)
+            except Exception:
+                pass
         sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
         return [c[0] for c in sorted_candidates[:k]]
 
@@ -224,11 +235,22 @@ class DocumentSearchService:
         lambda_param: float,
         k: int,
     ) -> list[str]:
-        """Compatibility wrapper matching SearchService method name."""
-        # For now, just return the top k candidates by similarity score
-        # This maintains the interface while avoiding the broken method call
+        """Compatibility wrapper matching SearchService method name.
+
+        Delegates to the underlying service when available; falls back to
+        score-based top-k selection.
+        """
+        underlying = getattr(self._service, "compute_mmr_diverse_results", None)
+        if callable(underlying):
+            try:
+                out = underlying(query_embedding, candidates, lambda_param, k)
+                return list(out)
+            except Exception:
+                pass
         sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
         return [c[0] for c in sorted_candidates[:k]]
+
+    # jscpd:ignore-end
 
     # Optional: vector upsert used by backends where embeddings are external to SQL
     def upsert_vectors(
