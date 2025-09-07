@@ -6,8 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ragzoom.backends.postgres_backend import PostgresStorageBackend
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendProtocol
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
 from ragzoom.document_store import DocumentStore
 from ragzoom.store import StoreManager
@@ -68,6 +70,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         default=False,
         help="Run only integration tests with real Store",
+    )
+    parser.addoption(
+        "--backend",
+        choices=["sqlite", "postgres"],
+        default="sqlite",
+        help="Select storage backend implementation for tests",
     )
 
 
@@ -308,6 +316,56 @@ def sqlite_store_factory(
 
     def _make(doc_id: str | None = None) -> DocumentStore:
         return sqlite_backend.for_document(doc_id)
+
+    return _make
+
+
+# Generic, backend-agnostic fixtures
+
+
+@pytest.fixture
+def storage_backend(
+    request: pytest.FixtureRequest,
+    base_config: BackwardCompatibilityConfig,
+) -> Generator[_StorageBackendProtocol, None, None]:
+    """Return a StorageBackend implementation based on CLI options/markers.
+
+    Default: SQLite in-memory. If --backend=postgres or test is marked
+    integration, attempt to create a Postgres-backed backend.
+    """
+    backend_opt = request.config.getoption("--backend")
+    is_integration = bool(request.node.get_closest_marker("integration"))
+
+    if backend_opt == "postgres" or is_integration:
+        real = _create_real_store(base_config)
+        if real is None:
+            pytest.skip("PostgreSQL not available for requested backend")
+        pg_backend = PostgresStorageBackend(real)
+        try:
+            yield pg_backend
+        finally:
+            pg_backend.close()
+        return
+
+    # Default to SQLite in-memory
+    backend = SQLiteStorageBackend("sqlite:///:memory:")
+    try:
+        yield backend
+    finally:
+        backend.close()
+
+
+@pytest.fixture
+def doc_store_factory(
+    storage_backend: _StorageBackendProtocol,
+) -> Callable[[str | None], DocumentStore]:
+    """Backend-agnostic DocumentStore factory.
+
+    Usage: doc_store = doc_store_factory("doc-id")
+    """
+
+    def _make(doc_id: str | None = None) -> DocumentStore:
+        return storage_backend.for_document(doc_id)
 
     return _make
 

@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 
 
@@ -28,7 +28,7 @@ class TestStoreSQLite:
         return sqlite_store_factory("doc-id")
 
     def test_add_node(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test adding a node to the store."""
         nodes: list[
@@ -51,7 +51,7 @@ class TestStoreSQLite:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embeddings
-        sqlite_backend.vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "test-1",
@@ -75,7 +75,7 @@ class TestStoreSQLite:
         assert node.span_end == 10
 
     def test_get_node(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test retrieving a node."""
         nodes: list[
@@ -98,7 +98,7 @@ class TestStoreSQLite:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embeddings
-        sqlite_backend.vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "test-2",
@@ -125,7 +125,7 @@ class TestStoreSQLite:
         assert node is None
 
     def test_node_relationships(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test parent-child relationships."""
         nodes: list[
@@ -180,7 +180,7 @@ class TestStoreSQLite:
         )
 
         # Upsert embeddings
-        sqlite_backend.vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "child1",
@@ -231,7 +231,7 @@ class TestStoreSQLite:
         assert ancestors[0].id == "parent"
 
     def test_search_similar(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test vector similarity search."""
         nodes: list[
@@ -277,7 +277,7 @@ class TestStoreSQLite:
         typed_entries: list[tuple[str, list[float], dict[str, object]]] = [
             (entry[0], list(entry[1]), entry[2]) for entry in vector_entries
         ]
-        sqlite_backend.vector_index.upsert(typed_entries)  # type: ignore[arg-type]
+        doc_store.search.upsert_vectors(typed_entries)  # type: ignore[arg-type]
 
         # Search with a query embedding
         query_embedding = [0.25] * 1536
@@ -288,7 +288,7 @@ class TestStoreSQLite:
         assert all(len(r) == 3 for r in results)  # (id, distance, metadata)
 
     def test_mmr_diverse_results(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test MMR diversity computation."""
         from ragzoom.services.search_service import NodeMetadataDict
@@ -393,7 +393,7 @@ class TestStoreSQLite:
         typed_entries: list[tuple[str, list[float], dict[str, object]]] = [
             (entry[0], list(entry[1]), entry[2]) for entry in vector_entries
         ]
-        sqlite_backend.vector_index.upsert(typed_entries)  # type: ignore[arg-type]
+        doc_store.search.upsert_vectors(typed_entries)  # type: ignore[arg-type]
 
         # Test MMR selection
         query_embedding = [1.0, 0.0, 0.0] + [0.0] * 1533  # Similar to node-1
@@ -425,7 +425,7 @@ class TestStoreSQLite:
         assert len(set(selected)) == 3
 
     def test_pinned_nodes(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test node pinning functionality."""
         # Create a tree structure with proper depths
@@ -498,7 +498,7 @@ class TestStoreSQLite:
         )
 
         # Upsert embeddings
-        sqlite_backend.vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "root",
@@ -567,7 +567,7 @@ class TestStoreSQLite:
         assert isinstance(pinned, list)
 
     def test_cache_functionality(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test LRU cache behavior."""
         nodes: list[
@@ -590,7 +590,7 @@ class TestStoreSQLite:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embeddings
-        sqlite_backend.vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "cached",
@@ -622,7 +622,7 @@ class TestStoreSQLite:
         assert node3.id == node1.id
 
     def test_node_depth_calculation(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test dynamic depth calculation."""
         # Create a tree structure:
@@ -732,7 +732,7 @@ class TestStoreSQLite:
         )
 
         # Upsert embeddings
-        sqlite_backend.vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "root",
@@ -824,7 +824,7 @@ class TestStoreSQLite:
             doc_store.tree.get_depth("non-existent")
 
     def test_node_height_calculation(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test dynamic height calculation."""
         # Create the same tree structure
@@ -925,7 +925,7 @@ class TestStoreSQLite:
         )
 
         # Upsert embeddings
-        sqlite_backend.vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "root",
@@ -1027,7 +1027,7 @@ class TestStoreSQLite:
         assert doc_store.nodes.get_node("non-existent") is None
 
     def test_depth_height_edge_cases(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test edge cases for depth/height calculation."""
         # Test single node (both root and leaf)
@@ -1114,7 +1114,7 @@ class TestStoreSQLite:
         )
 
         # Upsert embeddings
-        sqlite_backend.vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "single",
@@ -1189,7 +1189,7 @@ class TestStoreSQLite:
         assert doc_store.tree.is_leaf("parent_right_only") is False
 
     def test_depth_calculation_performance(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test that depth calculation is O(log n) by creating a deep tree."""
         # Create a linear chain of nodes to test worst case
@@ -1248,7 +1248,7 @@ class TestStoreSQLite:
         typed_entries: list[tuple[str, list[float], dict[str, object]]] = [
             (entry[0], list(entry[1]), entry[2]) for entry in vector_entries
         ]
-        sqlite_backend.vector_index.upsert(typed_entries)  # type: ignore[arg-type]
+        doc_store.search.upsert_vectors(typed_entries)  # type: ignore[arg-type]
 
         # Test depths
         for i in range(10):
@@ -1260,7 +1260,7 @@ class TestStoreSQLite:
         assert doc_store.tree.get_depth("chain_9") == 9
 
     def test_error_handling_patterns(
-        self, sqlite_backend: SQLiteStorageBackend, doc_store: DocumentStore
+        self, storage_backend: StorageBackend, doc_store: DocumentStore
     ) -> None:
         """Test consistent error handling patterns."""
         # Create a simple tree for testing
@@ -1287,7 +1287,7 @@ class TestStoreSQLite:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embeddings
-        sqlite_backend.vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "root",
