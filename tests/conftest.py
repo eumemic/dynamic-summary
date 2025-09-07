@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ragzoom.backends.postgres_backend import PostgresStorageBackend
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendProtocol
@@ -71,12 +70,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run only integration tests with real Store",
     )
-    parser.addoption(
-        "--backend",
-        choices=["sqlite", "postgres"],
-        default="sqlite",
-        help="Select storage backend implementation for tests",
-    )
+    # Backend selection is not exposed; tests default to SQLite backend for speed
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -324,30 +318,8 @@ def sqlite_store_factory(
 
 
 @pytest.fixture
-def storage_backend(
-    request: pytest.FixtureRequest,
-    base_config: BackwardCompatibilityConfig,
-) -> Generator[_StorageBackendProtocol, None, None]:
-    """Return a StorageBackend implementation based on CLI options/markers.
-
-    Default: SQLite in-memory. If --backend=postgres or test is marked
-    integration, attempt to create a Postgres-backed backend.
-    """
-    backend_opt = request.config.getoption("--backend")
-    is_integration = bool(request.node.get_closest_marker("integration"))
-
-    if backend_opt == "postgres" or is_integration:
-        real = _create_real_store(base_config)
-        if real is None:
-            pytest.skip("PostgreSQL not available for requested backend")
-        pg_backend = PostgresStorageBackend(real)
-        try:
-            yield pg_backend
-        finally:
-            pg_backend.close()
-        return
-
-    # Default to SQLite in-memory
+def storage_backend() -> Generator[_StorageBackendProtocol, None, None]:
+    """Default StorageBackend for tests: SQLite in-memory."""
     backend = SQLiteStorageBackend("sqlite:///:memory:")
     try:
         yield backend
