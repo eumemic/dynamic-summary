@@ -70,31 +70,58 @@ class ScoringService:
         if not node_ids:
             return
 
-        # Batch fetch all nodes in a single operation
+        # Try to use node embeddings first (for backward compatibility with existing stores)
         nodes = self.store.nodes.get_nodes(list(node_ids))
 
         # Prepare for vectorized computation
         query_vec = np.array(query_embedding)
         valid_embeddings = []
         valid_node_ids = []
+        nodes_without_embeddings = set()
 
-        # Collect valid embeddings
+        # Collect valid embeddings from nodes that have them
         for node in nodes:
-            if (
-                node.embedding is not None
-            ):  # Check if embedding exists (works with arrays)
-                valid_embeddings.append(node.embedding)
+            embedding = getattr(node, "embedding", None)
+            if embedding is not None:
+                valid_embeddings.append(embedding)
                 valid_node_ids.append(node.id)
             else:
-                scores[node.id] = 0.0
+                nodes_without_embeddings.add(node.id)
 
         # Handle missing nodes
         loaded_node_ids = {node.id for node in nodes}
         for node_id in node_ids:
             if node_id not in loaded_node_ids:
-                scores[node_id] = 0.0
+                nodes_without_embeddings.add(node_id)
 
-        # Vectorized similarity computation for all valid embeddings
+        # For nodes without embeddings, use search service fallback
+        if nodes_without_embeddings:
+            try:
+                # Get total node count for this document to ensure we get all similarities
+                doc_nodes = self.store.nodes.get_all()
+                total_nodes = len(doc_nodes)
+
+                # Search all vectors in this document via the vector index
+                search_results = self.store.search.similar(
+                    query_embedding, n_results=total_nodes
+                )
+
+                # Build score map from search results
+                score_map = {
+                    node_id: score for (node_id, score, _meta) in search_results
+                }
+
+                # Assign scores for nodes without embeddings
+                for node_id in nodes_without_embeddings:
+                    scores[node_id] = float(score_map.get(node_id, 0.0))
+
+            except Exception as e:
+                self.logger.warning(f"Failed to get scores from search service: {e}")
+                # Fallback: assign zero scores
+                for node_id in nodes_without_embeddings:
+                    scores[node_id] = 0.0
+
+        # Vectorized similarity computation for nodes with valid embeddings
         if valid_embeddings:
             try:
                 embeddings_matrix = np.array(valid_embeddings)
