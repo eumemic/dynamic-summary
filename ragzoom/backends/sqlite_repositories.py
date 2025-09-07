@@ -365,3 +365,8 @@ class SqliteDocumentRepository:
 
     def get_document_embedding_model(self, document_id: str) -> str | None:
         return self.db.get_document_embedding_model(document_id)
+
+    def list_documents(self) -> list[SqliteDocument]:
+        with self.SessionLocal() as session:
+            rows = session.query(SqliteDocument).all()
+            return rows

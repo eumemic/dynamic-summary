@@ -96,8 +96,12 @@ class SQLiteStorageBackend(StorageBackend):
         return _InProcessDocLock(self._get_lock(document_id))
 
     def list_documents(self) -> list[Document]:
-        # Minimal implementation for test usage; not relied on by current tests
-        return []
+        # Delegate to repository
+        try:
+            docs = self.doc_repo.list_documents()  # type: ignore[attr-defined]
+            return docs  # type: ignore[return-value]
+        except Exception:
+            return []
 
     def add_document(
         self,

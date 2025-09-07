@@ -66,6 +66,11 @@ class DocumentRepository(BaseRepository):
         doc = self.get_document_by_id(document_id)
         return doc.embedding_model if doc else None
 
+    def list_documents(self) -> list[Document]:
+        """Return all Document rows."""
+        with self.SessionLocal() as session:
+            return session.query(Document).all()
+
     def add_document(
         self,
         document_id: str,

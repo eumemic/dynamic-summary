@@ -1,67 +1,77 @@
 """Simple test to demonstrate the document clearing regression."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from typing import cast
+from unittest.mock import MagicMock, patch
 
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.services.indexing_service import IndexingService
 
 
-def test_index_document_always_clears() -> None:
+def test_index_document_always_clears(storage_backend: StorageBackend) -> None:
     """Test that index_document ALWAYS clears, even when content hash matches."""
 
     config = OperationalConfig(openai_api_key=SecretStr("test-key"))
     index_config = IndexConfig.load()
 
-    # Create a mock store
-    mock_store = Mock()
-
-    # Set up minimal mocks needed
-    mock_store.compute_content_hash.return_value = "abc123"
-    mock_store.clear_document.return_value = 5  # Cleared 5 nodes
-    mock_store.add_document.return_value = None
-    mock_store.for_document.return_value = Mock()
+    # Prepare a real document with pre-existing nodes
+    doc_id = "test.txt"
+    doc_store = storage_backend.for_document(doc_id)
+    doc_store.set_metadata(
+        file_path=None,
+        content_hash="pre-hash",
+        chunk_count=0,
+        embedding_model="text-embedding-3-small",
+        summary_model="gpt-4o-mini",
+    )
+    pre_nodes = [  # type: ignore[var-annotated]
+        {
+            "node_id": f"pre-{i}",
+            "text": f"Pre node {i}",
+            "span_start": i * 10,
+            "span_end": i * 10 + 5,
+            "document_id": doc_id,
+            "token_count": 1,
+            "height": 0,
+            "path": "",
+        }
+        for i in range(2)
+    ]
+    doc_store.nodes.add_batch(pre_nodes)  # type: ignore[arg-type]
 
     # Mock the tree builder to avoid actual indexing
+    # Mock OpenAI client to avoid network
+    mock_async_client = MagicMock()
+
+    async def mock_embeddings(*args: object, **kwargs: object) -> object:
+
+        input_texts = cast(list[str] | str, kwargs.get("input", []))
+        if isinstance(input_texts, str):
+            input_texts = [input_texts]
+        return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts])
+
+    mock_async_client.embeddings.create = mock_embeddings
+    mock_async_client.chat.completions.create = MagicMock(
+        return_value=MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(content="Summary of left and right content")
+                )
+            ]
+        )
+    )
+
     with patch(
-        "ragzoom.services.indexing_service.TreeBuilder"
-    ) as mock_tree_builder_class:
-        mock_tree_builder = Mock()
-        # Now we need to mock the async method since sync delegates to async
-        mock_tree_builder.add_document_async = AsyncMock(return_value="test.txt")
-        mock_tree_builder_class.return_value = mock_tree_builder
-
-        # Mock the session for document stats
-        mock_session = Mock()
-        mock_leaves = [Mock() for _ in range(3)]
-        mock_root = Mock(height=2)
-        mock_doc = Mock(id="test.txt", chunk_count=3)
-
-        # Set up query chain
-        mock_query = Mock()
-        mock_query.filter_by.return_value.filter.return_value.all.return_value = (
-            mock_leaves
-        )
-        mock_query.filter_by.return_value.first.side_effect = [mock_root, mock_doc]
-        mock_session.query.return_value = mock_query
-
-        # Set up context manager
-        mock_context = Mock()
-        mock_context.__enter__ = Mock(return_value=mock_session)
-        mock_context.__exit__ = Mock(return_value=None)
-        mock_store.SessionLocal.return_value = mock_context
-
-        # Create the service
-        service = IndexingService(mock_store, index_config, config)
-
+        "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
+    ):
+        # Create the service using backend directly
+        service = IndexingService(storage_backend, index_config, config)  # type: ignore[arg-type]
         # Index a document
-        service.index_document(
-            "Test content", document_id="test.txt", show_progress=False
-        )
+        service.index_document("Test content", document_id=doc_id, show_progress=False)
 
         # WITH FIX: clear_document should be called
         # WITHOUT FIX: clear_document would NOT be called if we had content hash check
-        assert mock_store.clear_document.called, "Document should always be cleared!"
-        assert mock_store.clear_document.call_args[0][0] == "test.txt"
-        print(
-            f"✅ Fix verified: clear_document was called for {mock_store.clear_document.call_args[0][0]}"
-        )
+    # Verify pre-existing nodes were cleared (no 'pre-' nodes remain)
+    remaining_ids = [n.id for n in doc_store.nodes.get_all()]
+    assert all(not nid.startswith("pre-") for nid in remaining_ids)
+    print("✅ Fix verified: pre-existing nodes cleared before indexing")
