@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import cast
 
+import numpy as np
+from numpy.typing import NDArray
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
@@ -78,6 +80,42 @@ class SqliteNodeRepository:
         finally:
             if own_session:
                 session.close()
+
+    # jscpd:ignore-start - Small wrapper mirrors NodeRepository signature for tests
+    def add_node(
+        self,
+        node_id: str,
+        text: str,
+        embedding: list[float] | NDArray[np.float64],
+        span_start: int,
+        span_end: int,
+        parent_id: str | None = None,
+        left_child_id: str | None = None,
+        right_child_id: str | None = None,
+        document_id: str | None = None,
+        token_count: int = 0,
+        height: int = 0,
+        is_left_child: bool | None = None,
+    ) -> TreeNode:
+        created = self.add_nodes_batch(
+            [
+                {
+                    "node_id": node_id,
+                    "text": text,
+                    "span_start": span_start,
+                    "span_end": span_end,
+                    "parent_id": parent_id,
+                    "left_child_id": left_child_id,
+                    "right_child_id": right_child_id,
+                    "document_id": document_id,
+                    "token_count": token_count,
+                    "height": height,
+                }
+            ]
+        )
+        return created[0]
+
+    # jscpd:ignore-end
 
     def update_parent_references_batch(
         self, updates: list[tuple[str, str]], *, session: Session | None = None
