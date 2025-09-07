@@ -10,7 +10,7 @@ GIT_ROOT="$(git rev-parse --show-toplevel)"
 # Run all checks using the common script
 # Don't skip any checks for git commits
 # Fail if auto-fixes are applied (user needs to re-commit)
-"$GIT_ROOT/scripts/run-checks.sh" --fail-on-autofix
+"$GIT_ROOT/scripts/run-checks.sh" --fail-on-autofix --test-scope smoke
 RESULT=$?
 
 # Get list of modified Python files to re-add after formatting

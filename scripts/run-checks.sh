@@ -26,6 +26,7 @@ FAIL_FAST=false
 INCLUDE_SLOW_TESTS=false
 IGNORE_LINT_RULES=""
 FAIL_ON_AUTOFIX=false
+TEST_SCOPE="fast"  # fast (default), smoke, or all
 
 show_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# *//'
@@ -52,6 +53,10 @@ while [[ $# -gt 0 ]]; do
         --fail-on-autofix)
             FAIL_ON_AUTOFIX=true
             shift
+            ;;
+        --test-scope)
+            TEST_SCOPE="$2"
+            shift 2
             ;;
         --help|-h)
             show_help
@@ -211,7 +216,7 @@ run_check_background() {
 # Tests
 if ! should_skip "tests"; then
     if command -v pytest &> /dev/null; then
-        if [ "$INCLUDE_SLOW_TESTS" = true ]; then
+        if [ "$INCLUDE_SLOW_TESTS" = true ] || [ "$TEST_SCOPE" = "all" ]; then
             # Ensure PostgreSQL is available for integration tests
             if [ -z "$RAGZOOM_DATABASE_URL" ]; then
                 echo "[PostgreSQL] Ensuring PostgreSQL is running for integration tests..."
@@ -223,6 +228,11 @@ if ! should_skip "tests"; then
             fi
             # Run all tests including slow and integration
             run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark' -n 8 --no-header"
+        elif [ "$TEST_SCOPE" = "smoke" ]; then
+            # Run a minimal, fast smoke subset: SQLite-backed tests only
+            # These exercise core retrieval, assembly, and tree logic without external services
+            # Note: avoid xdist overhead for small suites
+            run_check_background "Tests" "pytest tests/ -q --tb=short -k 'sqlite' --no-header"
         else
             # Run only fast tests (default)
             run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not slow and not integration and not benchmark' -n 8 --no-header"
@@ -245,21 +255,25 @@ fi
 # ruff
 if ! should_skip "ruff"; then
     if command -v ruff &> /dev/null; then
-        # Run on all Python files in targets (modified_files is only for git context)
-        if true; then
+        # Prefer running on changed files during git commits for speed
+        if [ -n "$modified_files" ]; then
+            files="$modified_files"
+        else
+            files="$TARGETS"
+        fi
             # Enhanced ruff command that detects auto-fixes
             ruff_cmd="(
                 # Capture initial state
-                before_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+                before_hash=\$(echo $files | xargs -I {} sh -c 'if [ -d {} ]; then find {} -name \"*.py\"; else echo {}; fi' 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
                 
                 # Run ruff with auto-fix
-                if ruff check $TARGETS --fix --output-format concise"
+                if ruff check $files --fix --output-format concise"
             if [ -n "$IGNORE_LINT_RULES" ]; then
                 ruff_cmd="$ruff_cmd --ignore $IGNORE_LINT_RULES"
             fi
             ruff_cmd="$ruff_cmd; then
                     # Check if files were modified
-                    after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+                    after_hash=\$(echo $files | xargs -I {} sh -c 'if [ -d {} ]; then find {} -name \"*.py\"; else echo {}; fi' 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
                     if [ \"\$before_hash\" != \"\$after_hash\" ]; then
                         echo '[Ruff] ✨ Auto-fixed all issues!'
                         echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
@@ -270,20 +284,17 @@ if ! should_skip "ruff"; then
                 else
                     exit_code=\$?
                     # Check if files were modified (partial fixes)
-                    after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
-                    if [ \"\$before_hash\" != \"\$after_hash\" ]; then
-                        echo '[Ruff] ⚠️ Auto-fixed some issues, but manual fixes needed above'
-                        echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
-                    else
-                        echo '[Ruff] ❌ Issues found that need manual fixes (see above)'
-                    fi
-                    exit \$exit_code
+                    after_hash=\$(echo $files | xargs -I {} sh -c 'if [ -d {} ]; then find {} -name \"*.py\"; else echo {}; fi' 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+                if [ \"\$before_hash\" != \"\$after_hash\" ]; then
+                    echo '[Ruff] ⚠️ Auto-fixed some issues, but manual fixes needed above'
+                    echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
+                else
+                    echo '[Ruff] ❌ Issues found that need manual fixes (see above)'
+                fi
+                exit \$exit_code
                 fi
             )"
             run_check_background "Ruff" "$ruff_cmd"
-        else
-            echo "[Ruff] Skipped (no Python files)"
-        fi
     else
         echo "[Ruff] Skipped (not installed)"
     fi
@@ -292,17 +303,21 @@ fi
 # black
 if ! should_skip "black"; then
     if command -v black &> /dev/null; then
-        # Run on all Python files in targets (modified_files is only for git context)
-        if true; then
+        # Prefer running on changed files during git commits for speed
+        if [ -n "$modified_files" ]; then
+            files="$modified_files"
+        else
+            files="$TARGETS"
+        fi
             # Enhanced black command that detects formatting changes
             black_cmd="(
                 # Capture initial state
-                before_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+                before_hash=\$(echo $files | xargs -I {} sh -c 'if [ -d {} ]; then find {} -name \"*.py\"; else echo {}; fi' 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
                 
                 # Run black (it auto-formats by default)
-                if black $TARGETS --quiet; then
+                if black $files --quiet; then
                     # Check if files were modified
-                    after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+                    after_hash=\$(echo $files | xargs -I {} sh -c 'if [ -d {} ]; then find {} -name \"*.py\"; else echo {}; fi' 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
                     if [ \"\$before_hash\" != \"\$after_hash\" ]; then
                         echo '[Black] ✨ Reformatted files!'
                         echo 'AUTOFIX_OCCURRED' > $tmpdir/black_autofix
@@ -316,9 +331,6 @@ if ! should_skip "black"; then
                 fi
             )"
             run_check_background "Black" "$black_cmd"
-        else
-            echo "[Black] Skipped (no Python files)"
-        fi
     else
         echo "[Black] Skipped (not installed)"
     fi
