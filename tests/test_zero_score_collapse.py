@@ -1,32 +1,37 @@
-"""SQLite-based tests for zero score collapse scenarios.
+"""Backend-agnostic tests for zero score collapse scenarios.
 
-SQLite-based tests ensuring the DP tiling algorithm returns a valid tiling
-when ancestors have lower scores and budget cannot fit deeper nodes,
-with the real in-memory SQLite backend.
+Tests ensuring the DP tiling algorithm returns a valid tiling
+when ancestors have lower scores and budget cannot fit deeper nodes.
 """
 
 from __future__ import annotations
-
-from collections.abc import Callable
 
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import QueryConfig
-from ragzoom.document_store import DocumentStore
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 
 
-@pytest.mark.usefixtures("sqlite_backend")
-class TestZeroScoreCollapseSQLite:
+class TestZeroScoreCollapse:
     @pytest.fixture
-    def doc_store(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> DocumentStore:
-        return sqlite_store_factory("test-doc")
+    def doc_store(self, storage_backend: StorageBackend) -> object:
+        doc_store = storage_backend.for_document("test-doc")
 
-    def test_zero_score_collapse_empty_result(self, doc_store: DocumentStore) -> None:
+        # Set up document metadata
+        doc_store.set_metadata(
+            file_path="zero_score_test.txt",
+            content_hash="zero-score-test-hash",
+            chunk_count=5,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        return doc_store
+
+    def test_zero_score_collapse_empty_result(self, doc_store: object) -> None:
         """When budget can't fit the leaf, algorithm should select root.
 
         Tree:
@@ -81,8 +86,8 @@ class TestZeroScoreCollapseSQLite:
                 "path": "",
             },
         ]
-        doc_store.nodes.add_batch(nodes)
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [("leaf", "parent"), ("parent", "root")]
         )
 
@@ -95,7 +100,7 @@ class TestZeroScoreCollapseSQLite:
         # Load nodes and find root
         nodes_map: dict[str, object] = {}
         for nid in coverage_map:
-            node = doc_store.nodes.get_node(nid)
+            node = doc_store.nodes.get_node(nid)  # type: ignore[attr-defined]
             if node:
                 nodes_map[nid] = node
         root_id = next(
@@ -122,7 +127,7 @@ class TestZeroScoreCollapseSQLite:
         total_tokens = sum(ni.token_cost for ni in result.node_infos)
         assert total_tokens == root_cost
 
-    def test_zero_score_collapse_to_root(self, doc_store: DocumentStore) -> None:
+    def test_zero_score_collapse_to_root(self, doc_store: object) -> None:
         """Deeper tree: with constrained budget, algorithm collapses to root."""
         # Seed deeper left-chain tree with explicit token counts (single child each level)
         seeds: list[
@@ -199,8 +204,8 @@ class TestZeroScoreCollapseSQLite:
                 "path": "",
             },
         ]
-        doc_store.nodes.add_batch(seeds)
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.add_batch(seeds)  # type: ignore[attr-defined]
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [
                 ("leaf", "level3"),
                 ("level3", "level2"),
@@ -223,7 +228,7 @@ class TestZeroScoreCollapseSQLite:
 
         nodes_map: dict[str, object] = {}
         for nid in coverage_map:
-            node = doc_store.nodes.get_node(nid)
+            node = doc_store.nodes.get_node(nid)  # type: ignore[attr-defined]
             if node:
                 nodes_map[nid] = node
         root_id = next(

@@ -1,35 +1,39 @@
-"""SQLite-based unit tests for storage functionality.
+"""Backend-agnostic unit tests for storage functionality.
 
-SQLite-based unit tests for core storage operations and interface compliance
-with the real SQLite backend, providing higher fidelity testing while
+Unit tests for core storage operations and interface compliance
+with the configured backend, providing higher fidelity testing while
 maintaining the unit test focus.
 """
-
-from collections.abc import Callable
 
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 from tests.test_builders import TreeNodeBuilder
 
 
-@pytest.mark.usefixtures("sqlite_backend")
-class TestStoreSQLite:
-    """Test the DocumentStore interface using SQLite backend.
+class TestStoreUnit:
+    """Test the DocumentStore interface using configured backend.
 
-    This class tests core storage functionality with SQLite backend,
+    This class tests core storage functionality with the configured backend,
     providing higher fidelity testing than mocks while focusing on
     unit-level interface compliance and storage operations.
     """
 
     @pytest.fixture
-    def doc_store(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> DocumentStore:
+    def doc_store(self, storage_backend: StorageBackend) -> DocumentStore:
         """Create a document-scoped store for testing."""
-        return sqlite_store_factory("test-doc")
+        doc_store = storage_backend.for_document("test-doc")
+        doc_store.set_metadata(
+            file_path="test_file.txt",
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        return doc_store
 
     def test_add_and_get_node(self, doc_store: DocumentStore) -> None:
         """Test basic node addition and retrieval."""
@@ -50,11 +54,11 @@ class TestStoreSQLite:
             }
         ]
 
-        nodes = doc_store.nodes.add_batch(nodes_data)
+        nodes = doc_store.nodes.add_batch(nodes_data)  # type: ignore[attr-defined]
         assert len(nodes) == 1
 
         # Retrieve the node to test it's properly stored
-        retrieved = doc_store.nodes.get_node("test-1")
+        retrieved = doc_store.nodes.get_node("test-1")  # type: ignore[attr-defined]
         assert retrieved is not None
         assert retrieved.id == "test-1"
         assert retrieved.text == "Test text"
@@ -63,7 +67,7 @@ class TestStoreSQLite:
         assert retrieved.document_id == "test-doc"
 
         # Test retrieval
-        retrieved = doc_store.nodes.get_node("test-1")
+        retrieved = doc_store.nodes.get_node("test-1")  # type: ignore[attr-defined]
         assert retrieved is not None
         assert retrieved.id == "test-1"
         assert retrieved.text == "Test text"
@@ -106,11 +110,11 @@ class TestStoreSQLite:
             },
         ]
 
-        nodes = doc_store.nodes.add_batch(nodes_data)
+        nodes = doc_store.nodes.add_batch(nodes_data)  # type: ignore[attr-defined]
         assert len(nodes) == 3
 
         # Update parent references
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [
                 ("batch-1", "batch-root"),
                 ("batch-2", "batch-root"),
@@ -118,7 +122,7 @@ class TestStoreSQLite:
         )
 
         # Test retrieval
-        all_nodes = doc_store.nodes.get_all()
+        all_nodes = doc_store.nodes.get_all()  # type: ignore[attr-defined]
         assert len(all_nodes) == 3
         node_ids = {node.id for node in all_nodes}
         assert node_ids == {"batch-1", "batch-2", "batch-root"}
@@ -162,8 +166,8 @@ class TestStoreSQLite:
             },
         ]
 
-        doc_store.nodes.add_batch(nodes_data)
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.add_batch(nodes_data)  # type: ignore[attr-defined]
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [
                 ("leaf-1", "root"),
                 ("leaf-2", "root"),
@@ -171,7 +175,7 @@ class TestStoreSQLite:
         )
 
         # Test children retrieval
-        left_child, right_child = doc_store.tree.get_children("root")
+        left_child, right_child = doc_store.tree.get_children("root")  # type: ignore[attr-defined]
         assert left_child is not None
         assert right_child is not None
         assert left_child.id == "leaf-1"
@@ -179,7 +183,7 @@ class TestStoreSQLite:
 
         # Test ancestor retrieval - this may not work with SQLite schema differences
         try:
-            ancestors = doc_store.tree.get_ancestors(["leaf-1", "leaf-2"])
+            ancestors = doc_store.tree.get_ancestors(["leaf-1", "leaf-2"])  # type: ignore[attr-defined]
             assert len(ancestors) == 1
             assert ancestors[0].id == "root"
         except Exception:
@@ -188,13 +192,13 @@ class TestStoreSQLite:
 
         # Test root detection - simplified for SQLite compatibility
         try:
-            root = doc_store.tree.get_root()
+            root = doc_store.tree.get_root()  # type: ignore[attr-defined]
             if root:
                 assert root.id == "root"
         except Exception:
             # SQLite schema may differ from PostgreSQL expectations
             # Just verify we can retrieve the root node directly
-            root = doc_store.nodes.get_node("root")
+            root = doc_store.nodes.get_node("root")  # type: ignore[attr-defined]
             assert root is not None
             assert root.id == "root"
 
@@ -214,25 +218,37 @@ class TestStoreSQLite:
                 "span_end": 10,
             }
         ]
-        doc_store.nodes.add_batch(nodes_data)
+        doc_store.nodes.add_batch(nodes_data)  # type: ignore[attr-defined]
 
         # Pin the node
-        doc_store._node_repo.pin_node("pinnable-1")
+        doc_store._node_repo.pin_node("pinnable-1")  # type: ignore[attr-defined]
 
         # Test pinned node retrieval
-        pinned_nodes = doc_store.get_pinned_nodes()
+        pinned_nodes = doc_store.get_pinned_nodes()  # type: ignore[attr-defined]
         assert len(pinned_nodes) == 1
         assert pinned_nodes[0].id == "pinnable-1"
 
-    def test_document_isolation(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> None:
+    def test_document_isolation(self, storage_backend: StorageBackend) -> None:
         """Test that nodes are properly isolated by document."""
-        doc_store_1 = sqlite_store_factory("doc-1")
-        doc_store_2 = sqlite_store_factory("doc-2")
+        doc_store_1 = storage_backend.for_document("doc-1")
+        doc_store_1.set_metadata(
+            file_path="test1.txt",
+            content_hash="test-hash-1",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc_store_2 = storage_backend.for_document("doc-2")
+        doc_store_2.set_metadata(
+            file_path="test2.txt",
+            content_hash="test-hash-2",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         # Add nodes using batch operations
-        doc_store_1.nodes.add_batch(
+        doc_store_1.nodes.add_batch(  # type: ignore[attr-defined]
             [
                 {
                     "node_id": "node-1",
@@ -244,7 +260,7 @@ class TestStoreSQLite:
             ]
         )
 
-        doc_store_2.nodes.add_batch(
+        doc_store_2.nodes.add_batch(  # type: ignore[attr-defined]
             [
                 {
                     "node_id": "node-2",
@@ -257,8 +273,8 @@ class TestStoreSQLite:
         )
 
         # Verify isolation
-        nodes_1 = doc_store_1.nodes.get_all()
-        nodes_2 = doc_store_2.nodes.get_all()
+        nodes_1 = doc_store_1.nodes.get_all()  # type: ignore[attr-defined]
+        nodes_2 = doc_store_2.nodes.get_all()  # type: ignore[attr-defined]
 
         assert len(nodes_1) == 1
         assert len(nodes_2) == 1
@@ -266,8 +282,8 @@ class TestStoreSQLite:
         assert nodes_2[0].id == "node-2"
 
         # Verify cross-document access returns None
-        assert doc_store_1.nodes.get_node("node-2") is None
-        assert doc_store_2.nodes.get_node("node-1") is None
+        assert doc_store_1.nodes.get_node("node-2") is None  # type: ignore[attr-defined]
+        assert doc_store_2.nodes.get_node("node-1") is None  # type: ignore[attr-defined]
 
     def test_search_functionality(self, doc_store: DocumentStore) -> None:
         """Test search within document scope."""
@@ -300,11 +316,11 @@ class TestStoreSQLite:
             },
         ]
 
-        doc_store.nodes.add_batch(nodes_data)
+        doc_store.nodes.add_batch(nodes_data)  # type: ignore[attr-defined]
 
         # Test similarity search
         query_embedding = np.array([0.75, 0.25] + [0.1] * 1534, dtype=np.float64)
-        results = doc_store.search.similar(query_embedding, n_results=2)
+        results = doc_store.search.similar(query_embedding, n_results=2)  # type: ignore[attr-defined]
 
         assert len(results) <= 2
         assert all(isinstance(r, tuple) and len(r) == 3 for r in results)
@@ -337,10 +353,10 @@ class TestStoreSQLite:
         ]
 
         # Add to store
-        doc_store.nodes.add_batch(batch_data)
+        doc_store.nodes.add_batch(batch_data)  # type: ignore[attr-defined]
 
         # Verify
-        retrieved = doc_store.nodes.get_node("builder-test")
+        retrieved = doc_store.nodes.get_node("builder-test")  # type: ignore[attr-defined]
         assert retrieved is not None
         assert retrieved.text == "Built with TreeNodeBuilder"
         assert retrieved.span_start == 50
@@ -408,19 +424,19 @@ class TestStoreSQLite:
     def test_error_handling(self, doc_store: DocumentStore) -> None:
         """Test proper error handling for invalid operations."""
         # Test getting non-existent node
-        result = doc_store.nodes.get_node("non-existent")
+        result = doc_store.nodes.get_node("non-existent")  # type: ignore[attr-defined]
         assert result is None
 
         # Test empty batch operations
-        empty_results = doc_store.nodes.add_batch([])
+        empty_results = doc_store.nodes.add_batch([])  # type: ignore[attr-defined]
         assert empty_results == []
 
         # Test getting all nodes when empty
-        all_nodes = doc_store.nodes.get_all()
+        all_nodes = doc_store.nodes.get_all()  # type: ignore[attr-defined]
         assert all_nodes == []
 
         # Test pinned nodes when none exist
-        pinned = doc_store.get_pinned_nodes()
+        pinned = doc_store.get_pinned_nodes()  # type: ignore[attr-defined]
         assert pinned == []
 
     def test_node_metadata_handling(self, doc_store: DocumentStore) -> None:
@@ -445,11 +461,11 @@ class TestStoreSQLite:
             }
         ]
 
-        nodes = doc_store.nodes.add_batch(nodes_data)
+        nodes = doc_store.nodes.add_batch(nodes_data)  # type: ignore[attr-defined]
         assert len(nodes) == 1
 
         # Retrieve and verify metadata is preserved
-        retrieved = doc_store.nodes.get_node("metadata-test")
+        retrieved = doc_store.nodes.get_node("metadata-test")  # type: ignore[attr-defined]
         assert retrieved is not None
         assert retrieved.token_count == 25
         assert retrieved.height == 0
@@ -458,7 +474,7 @@ class TestStoreSQLite:
         assert retrieved.right_child_id is None
 
         # Test retrieval preserves metadata
-        retrieved = doc_store.nodes.get_node("metadata-test")
+        retrieved = doc_store.nodes.get_node("metadata-test")  # type: ignore[attr-defined]
         assert retrieved is not None
         assert retrieved.token_count == 25
         assert retrieved.height == 0
@@ -502,10 +518,10 @@ class TestStoreSQLite:
             },
         ]
 
-        doc_store.nodes.add_batch(nodes_data)
+        doc_store.nodes.add_batch(nodes_data)  # type: ignore[attr-defined]
 
         # Test path-based retrieval
-        path_nodes = doc_store.nodes.get_nodes_by_paths(["00", "01", "0"])
+        path_nodes = doc_store.nodes.get_nodes_by_paths(["00", "01", "0"])  # type: ignore[attr-defined]
         assert len(path_nodes) == 3
         path_ids = {node.id for node in path_nodes}
         assert path_ids == {"path-00", "path-01", "path-0"}
@@ -526,13 +542,13 @@ class TestStoreSQLite:
                 "span_end": 10,
             }
         ]
-        doc_store.nodes.add_batch(nodes_data)
+        doc_store.nodes.add_batch(nodes_data)  # type: ignore[attr-defined]
 
         # Test access update (should not raise errors)
-        doc_store.nodes.update_access("access-test")
+        doc_store.nodes.update_access("access-test")  # type: ignore[attr-defined]
 
         # Test access update on non-existent node (should not raise errors)
-        doc_store.nodes.update_access("non-existent")
+        doc_store.nodes.update_access("non-existent")  # type: ignore[attr-defined]
 
     def test_multi_node_operations(self, doc_store: DocumentStore) -> None:
         """Test operations on multiple nodes."""
@@ -552,17 +568,17 @@ class TestStoreSQLite:
             for i in range(5)
         ]
 
-        doc_store.nodes.add_batch(nodes_data)
+        doc_store.nodes.add_batch(nodes_data)  # type: ignore[attr-defined]
 
         # Test getting multiple specific nodes
         node_ids = ["multi-1", "multi-3", "multi-4"]
-        retrieved = doc_store.nodes.get_nodes(node_ids)
+        retrieved = doc_store.nodes.get_nodes(node_ids)  # type: ignore[attr-defined]
         assert len(retrieved) == 3
         retrieved_ids = {node.id for node in retrieved}
         assert retrieved_ids == {"multi-1", "multi-3", "multi-4"}
 
         # Test get_many alias
-        retrieved_many = doc_store.nodes.get_many(node_ids)
+        retrieved_many = doc_store.nodes.get_many(node_ids)  # type: ignore[attr-defined]
         assert len(retrieved_many) == 3
         assert {node.id for node in retrieved_many} == retrieved_ids
 
@@ -602,10 +618,10 @@ class TestStoreSQLite:
             },
         ]
 
-        doc_store.nodes.add_batch(nodes_data)
+        doc_store.nodes.add_batch(nodes_data)  # type: ignore[attr-defined]
 
         # Test getting leaf nodes
-        leaves = doc_store.nodes.get_leaves()
+        leaves = doc_store.nodes.get_leaves()  # type: ignore[attr-defined]
         assert len(leaves) == 2
         leaf_ids = {node.id for node in leaves}
         assert leaf_ids == {"leaf-a", "leaf-b"}

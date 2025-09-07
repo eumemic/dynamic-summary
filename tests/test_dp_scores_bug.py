@@ -1,37 +1,37 @@
-"""SQLite-based tests for DP algorithm score handling.
+"""Tests for DP algorithm score handling.
 
 Tests demonstrating how the DP algorithm uses scores outside
-the coverage tree with the real in-memory SQLite backend.
+the coverage tree.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import numpy as np
-import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import QueryConfig
-from ragzoom.document_store import DocumentStore
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.retrieve import RetrievalResult
 
 
-@pytest.mark.usefixtures("sqlite_backend")
-class TestDPScoresBugSQLite:
+class TestDPScoresBug:
     """Test that DP algorithm incorrectly uses nodes outside coverage tree."""
 
-    @pytest.fixture
-    def doc_store(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> DocumentStore:
-        return sqlite_store_factory("doc-id")
-
     def test_dp_uses_scores_outside_coverage_tree(
-        self, doc_store: DocumentStore
+        self, storage_backend: StorageBackend
     ) -> None:
         """Demonstrate that DP uses any node with a score, ignoring coverage tree."""
+        # Get document store and set metadata
+        doc_store = storage_backend.for_document("doc-id")
+        doc_store.set_metadata(
+            file_path="dp_scores_test.txt",
+            content_hash="dp-scores-test-hash",
+            chunk_count=7,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
         # Set up a tree structure:
         #          root
         #         /    \
@@ -185,8 +185,20 @@ class TestDPScoresBugSQLite:
             len(leaf_violations) == 0
         ), f"Found leaf nodes outside coverage tree: {leaf_violations}"
 
-    def test_retrieval_result_demonstrates_bug(self, doc_store: DocumentStore) -> None:
+    def test_retrieval_result_demonstrates_bug(
+        self, storage_backend: StorageBackend
+    ) -> None:
         """Test using actual RetrievalResult to show the bug."""
+        # Get document store and set metadata
+        doc_store = storage_backend.for_document("doc-id")
+        doc_store.set_metadata(
+            file_path="retrieval_bug_test.txt",
+            content_hash="retrieval-bug-test-hash",
+            chunk_count=3,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
         # Simplified tree setup
         nodes: list[
             dict[

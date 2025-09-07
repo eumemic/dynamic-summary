@@ -1,69 +1,60 @@
-"""SQLite-based tests for DocumentStore methods.
+"""Backend-agnostic tests for DocumentStore methods.
 
-SQLite-based tests for new DocumentStore methods added in Phase 4
-with the real in-memory SQLite backend.
+Tests for new DocumentStore methods added in Phase 4
+with the configured backend.
 """
 
 from __future__ import annotations
-
-from collections.abc import Callable
 
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from ragzoom.document_store import DocumentStore
+from ragzoom.contracts.storage_backend import StorageBackend
 
 
-@pytest.mark.usefixtures("sqlite_backend")
-class TestDocumentStoreMethodsSQLite:
+class TestDocumentStoreMethods:
     """Test the new methods added to DocumentStore for Phase 4."""
 
     @pytest.fixture
-    def doc_store(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> DocumentStore:
-        return sqlite_store_factory("doc1")
-
-    def test_get_embedding_model(
-        self, doc_store: DocumentStore, sqlite_backend: object
-    ) -> None:
-        """Test that DocumentStore correctly retrieves embedding model."""
-        # Insert document with metadata using the document repository
-        doc_repo = sqlite_backend.doc_repo  # type: ignore[attr-defined]
-        doc_repo.add_document(
-            document_id="doc1",
-            file_path=None,
+    def doc_store(self, storage_backend: StorageBackend) -> object:
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="test_file.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
-            summary_model="gpt-4",
+            summary_model="gpt-4o-mini",
         )
+        return doc_store
+
+    def test_get_embedding_model(
+        self, doc_store: object, storage_backend: StorageBackend
+    ) -> None:
+        """Test that DocumentStore correctly retrieves embedding model."""
+        # Document metadata already set in fixture
 
         # Test getting embedding model
-        model = doc_store.get_embedding_model()
+        model = doc_store.get_embedding_model()  # type: ignore[attr-defined]
         assert model == "text-embedding-3-small"
 
-    def test_get_embedding_model_missing(
-        self, doc_store: DocumentStore, sqlite_backend: object
-    ) -> None:
+    def test_get_embedding_model_missing(self, storage_backend: StorageBackend) -> None:
         """Test that DocumentStore returns None when embedding model is missing."""
-        # Insert document without embedding_model
-        doc_repo = sqlite_backend.doc_repo  # type: ignore[attr-defined]
-        doc_repo.add_document(
-            document_id="doc1",
-            file_path=None,
+        # Create doc store with empty embedding model
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="test_file.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="",
-            summary_model="gpt-4",
+            summary_model="gpt-4o-mini",
         )
 
         # Test getting embedding model
-        model = doc_store.get_embedding_model()
-        assert model == "" or model is None  # SQLite uses empty string instead of null
+        model = doc_store.get_embedding_model()  # type: ignore[attr-defined]
+        assert model == "" or model is None
 
-    def test_get_avg_leaf_tokens(self, doc_store: DocumentStore) -> None:
+    def test_get_avg_leaf_tokens(self, doc_store: object) -> None:
         """Test that DocumentStore correctly calculates average leaf tokens."""
         # Seed leaf nodes with different token counts
         nodes: list[
@@ -120,29 +111,41 @@ class TestDocumentStoreMethodsSQLite:
                 "path": "0",
             },
         ]
-        doc_store.nodes.add_batch(nodes)
-        doc_store.nodes.update_parent_references_batch(
+        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
+        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
             [("leaf_0", "parent"), ("leaf_1", "parent")]
         )
 
         # Test getting average leaf tokens
-        avg_tokens = doc_store.get_avg_leaf_tokens()
+        avg_tokens = doc_store.get_avg_leaf_tokens()  # type: ignore[attr-defined]
         # Average of 100, 150, 200 = 150
         assert avg_tokens == 150
 
-    def test_get_avg_leaf_tokens_no_leaves(self, doc_store: DocumentStore) -> None:
+    def test_get_avg_leaf_tokens_no_leaves(self, doc_store: object) -> None:
         """Test that DocumentStore returns None when no leaf nodes exist."""
         # Test getting average leaf tokens from empty document
-        avg_tokens = doc_store.get_avg_leaf_tokens()
+        avg_tokens = doc_store.get_avg_leaf_tokens()  # type: ignore[attr-defined]
         assert avg_tokens is None
 
-    def test_document_id_mismatch_safety(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> None:
+    def test_document_id_mismatch_safety(self, storage_backend: StorageBackend) -> None:
         """Test that DocumentStore validates document ID matches."""
         # Create separate document stores for doc1 and doc2
-        doc1_store = sqlite_store_factory("doc1")
-        doc2_store = sqlite_store_factory("doc2")
+        doc1_store = storage_backend.for_document("doc1")
+        doc1_store.set_metadata(
+            file_path="test1.txt",
+            content_hash="test-hash-1",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc2_store = storage_backend.for_document("doc2")
+        doc2_store.set_metadata(
+            file_path="test2.txt",
+            content_hash="test-hash-2",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         # Add node to doc1
         doc1_nodes: list[
@@ -163,7 +166,7 @@ class TestDocumentStoreMethodsSQLite:
                 "path": "0",
             }
         ]
-        doc1_store.nodes.add_batch(doc1_nodes)
+        doc1_store.nodes.add_batch(doc1_nodes)  # type: ignore[attr-defined]
 
         # Add node to doc2
         doc2_nodes: list[
@@ -184,23 +187,21 @@ class TestDocumentStoreMethodsSQLite:
                 "path": "0",
             }
         ]
-        doc2_store.nodes.add_batch(doc2_nodes)
+        doc2_store.nodes.add_batch(doc2_nodes)  # type: ignore[attr-defined]
 
         # Verify doc1_store can get doc1 node
-        node1 = doc1_store.nodes.get("doc1_node")
+        node1 = doc1_store.nodes.get_node("doc1_node")  # type: ignore[attr-defined]
         assert node1 is not None
         assert node1.id == "doc1_node"
 
         # Verify doc1_store cannot get doc2 node (should be filtered out)
-        node2 = doc1_store.nodes.get("doc2_node")
+        node2 = doc1_store.nodes.get_node("doc2_node")  # type: ignore[attr-defined]
         assert node2 is None  # Should be filtered out
 
-    def test_cross_document_store(
-        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
-    ) -> None:
+    def test_cross_document_store(self, storage_backend: StorageBackend) -> None:
         """Test that DocumentStore with None document_id allows cross-document access."""
         # Create cross-document store
-        cross_store = sqlite_store_factory(None)
+        cross_store = storage_backend.for_document(None)
 
         # Seed nodes to different documents
         nodes: list[
@@ -232,11 +233,11 @@ class TestDocumentStoreMethodsSQLite:
                 "path": "0",
             },
         ]
-        cross_store.nodes.add_batch(nodes)
+        cross_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
 
         # Should be able to access both documents
-        node1 = cross_store.nodes.get("doc1_node")
+        node1 = cross_store.nodes.get_node("doc1_node")  # type: ignore[attr-defined]
         assert node1 is not None
 
-        node2 = cross_store.nodes.get("doc2_node")
+        node2 = cross_store.nodes.get_node("doc2_node")  # type: ignore[attr-defined]
         assert node2 is not None

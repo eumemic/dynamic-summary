@@ -6,11 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ragzoom.backends.local_store_adapter import LocalStoreAdapter
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendProtocol
-from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
+from ragzoom.db_utils import create_temp_database, get_temp_db_name
 from ragzoom.document_store import DocumentStore
 from ragzoom.store import StoreManager
 from ragzoom.telemetry_types import TelemetryDataDict
@@ -189,16 +188,6 @@ def config_factory() -> (
 
 
 @pytest.fixture
-def mock_store(
-    base_config: BackwardCompatibilityConfig,
-    sqlite_backend: SQLiteStorageBackend,
-) -> Generator[LocalStoreAdapter, None, None]:
-    """Create a local Store-like adapter for fast testing using SQLite."""
-    adapter = LocalStoreAdapter(sqlite_backend)
-    yield adapter
-
-
-@pytest.fixture
 def real_store(
     base_config: BackwardCompatibilityConfig,
 ) -> Generator[StoreManager | None, None, None]:
@@ -214,69 +203,6 @@ def real_store(
             yield real_store_instance
         finally:
             real_store_instance.close()
-
-
-@pytest.fixture
-def store(
-    request: pytest.FixtureRequest,
-    base_config: BackwardCompatibilityConfig,
-    mock_store: LocalStoreAdapter,
-    sqlite_backend: SQLiteStorageBackend,
-) -> Generator[LocalStoreAdapter | StoreManager, None, None]:
-    """Provide either mock or real store based on test requirements.
-
-    This fixture automatically selects the appropriate store:
-    - For tests marked with @pytest.mark.integration: uses real_store (if available)
-    - For tests run with --use-real-store flag: uses real_store (if available)
-    - Otherwise: uses mock_store for speed
-    """
-    # Check if test is marked as integration
-    if hasattr(request.node, "get_closest_marker"):
-        if request.node.get_closest_marker("integration"):
-            # Only create real_store when actually needed for integration tests
-            real_store = _create_real_store(base_config)
-            if real_store is None:
-                pytest.skip("PostgreSQL not available for integration test")
-            try:
-                yield real_store
-            finally:
-                # Cleanup test database if needed
-                if hasattr(real_store, "_test_db_cleanup"):
-                    cleanup_info = real_store._test_db_cleanup
-                    try:
-                        drop_temp_database(
-                            cleanup_info["db_name"], cleanup_info["admin_url"]
-                        )
-                    except Exception:
-                        pass  # Ignore cleanup errors
-
-                real_store.close()
-            return
-
-    # Check command-line option
-    if request.config.getoption("--use-real-store"):
-        # Only create real_store when explicitly requested
-        real_store = _create_real_store(base_config)
-        if real_store is None:
-            pytest.skip("PostgreSQL not available for real store test")
-        try:
-            yield real_store
-        finally:
-            # Cleanup test database if needed
-            if hasattr(real_store, "_test_db_cleanup"):
-                cleanup_info = real_store._test_db_cleanup
-                try:
-                    drop_temp_database(
-                        cleanup_info["db_name"], cleanup_info["admin_url"]
-                    )
-                except Exception:
-                    pass  # Ignore cleanup errors
-
-            real_store.close()
-        return
-
-    # Default to SQLite-backed local adapter for Store-like API
-    yield LocalStoreAdapter(sqlite_backend)
 
 
 # --- SQLite in-memory backend fixtures (for migrating off mocks) ---

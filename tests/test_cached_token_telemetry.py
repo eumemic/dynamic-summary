@@ -7,7 +7,7 @@ import pytest
 from typing_extensions import TypedDict
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
-from ragzoom.document_store import DocumentStore
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import TelemetryCollector
 from tests.conftest import BackwardCompatibilityConfig
@@ -74,7 +74,9 @@ class MockOpenAIResponseWithCache:
 
 
 @pytest.mark.asyncio
-async def test_cached_tokens_recorded_in_telemetry(mock_store: DocumentStore) -> None:
+async def test_cached_tokens_recorded_in_telemetry(
+    storage_backend: StorageBackend,
+) -> None:
     """Test that cached tokens from OpenAI response are properly recorded."""
     index_config = IndexConfig.load(
         retry_threshold=0.1,
@@ -92,8 +94,16 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store: DocumentStore) ->
         index_config, cast(QueryConfig, None), operational_config
     )
 
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=index_config.embedding_model,
+        summary_model=index_config.summary_model,
+    )
     indexer = TreeBuilder(
-        index_config, mock_store, api_key=operational_config.openai_api_key
+        index_config, doc_store, api_key=operational_config.openai_api_key
     )
     reporter = create_test_reporter(config)
 
@@ -159,7 +169,7 @@ async def test_cached_tokens_recorded_in_telemetry(mock_store: DocumentStore) ->
 
 @pytest.mark.asyncio
 async def test_backward_compatibility_without_cached_tokens(
-    mock_store: DocumentStore,
+    storage_backend: StorageBackend,
 ) -> None:
     """Test that telemetry works correctly when OpenAI doesn't return cached_tokens."""
     index_config = IndexConfig.load(target_chunk_tokens=100)
@@ -172,8 +182,16 @@ async def test_backward_compatibility_without_cached_tokens(
         index_config, cast(QueryConfig, None), operational_config
     )
 
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=index_config.embedding_model,
+        summary_model=index_config.summary_model,
+    )
     indexer = TreeBuilder(
-        index_config, mock_store, api_key=operational_config.openai_api_key
+        index_config, doc_store, api_key=operational_config.openai_api_key
     )
     reporter = create_test_reporter(config)
 
@@ -232,7 +250,9 @@ async def test_backward_compatibility_without_cached_tokens(
 
 
 @pytest.mark.asyncio
-async def test_cached_tokens_across_multiple_retries(mock_store: DocumentStore) -> None:
+async def test_cached_tokens_across_multiple_retries(
+    storage_backend: StorageBackend,
+) -> None:
     """Test that cached tokens increase with each retry as conversation grows."""
     index_config = IndexConfig.load(
         retry_threshold=0.05,  # Very strict
@@ -248,8 +268,16 @@ async def test_cached_tokens_across_multiple_retries(mock_store: DocumentStore) 
         index_config, cast(QueryConfig, None), operational_config
     )
 
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=index_config.embedding_model,
+        summary_model=index_config.summary_model,
+    )
     indexer = TreeBuilder(
-        index_config, mock_store, api_key=operational_config.openai_api_key
+        index_config, doc_store, api_key=operational_config.openai_api_key
     )
     reporter = create_test_reporter(config)
 
@@ -323,7 +351,7 @@ async def test_cached_tokens_across_multiple_retries(mock_store: DocumentStore) 
 
 @pytest.mark.asyncio
 async def test_passthrough_summary_has_no_cached_tokens(
-    mock_store: DocumentStore,
+    storage_backend: StorageBackend,
 ) -> None:
     """Test that passthrough summaries correctly report 0 cached tokens."""
     index_config = IndexConfig.load(target_chunk_tokens=100)
@@ -336,8 +364,16 @@ async def test_passthrough_summary_has_no_cached_tokens(
         index_config, cast(QueryConfig, None), operational_config
     )
 
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=index_config.embedding_model,
+        summary_model=index_config.summary_model,
+    )
     indexer = TreeBuilder(
-        index_config, mock_store, api_key=operational_config.openai_api_key
+        index_config, doc_store, api_key=operational_config.openai_api_key
     )
     reporter = create_test_reporter(config)
 
@@ -378,7 +414,9 @@ async def test_passthrough_summary_has_no_cached_tokens(
 
 
 @pytest.mark.asyncio
-async def test_cached_tokens_with_high_cache_rate(mock_store: DocumentStore) -> None:
+async def test_cached_tokens_with_high_cache_rate(
+    storage_backend: StorageBackend,
+) -> None:
     """Test scenario with very high cache hit rate (95%+)."""
     index_config = IndexConfig.load(
         retry_threshold=0.1,
@@ -394,8 +432,16 @@ async def test_cached_tokens_with_high_cache_rate(mock_store: DocumentStore) -> 
         index_config, cast(QueryConfig, None), operational_config
     )
 
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=index_config.embedding_model,
+        summary_model=index_config.summary_model,
+    )
     indexer = TreeBuilder(
-        index_config, mock_store, api_key=operational_config.openai_api_key
+        index_config, doc_store, api_key=operational_config.openai_api_key
     )
     reporter = create_test_reporter(config)
 

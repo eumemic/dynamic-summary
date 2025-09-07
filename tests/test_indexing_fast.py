@@ -1,4 +1,4 @@
-"""Fast version of indexing tests using mock store."""
+"""Backend-agnostic fast indexing tests using storage backend."""
 
 import asyncio
 from typing import cast
@@ -6,18 +6,18 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
-from ragzoom.store import StoreManager
 from tests.conftest import BackwardCompatibilityConfig
 
 
 class TestIndexingFast:
-    """Fast indexing tests using mock store instead of real database."""
+    """Fast indexing tests using storage backend instead of real database."""
 
     def test_full_document_gets_indexed(
         self,
         base_config: BackwardCompatibilityConfig,
-        store: StoreManager,
+        storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
     ) -> None:
         """Test that the entire document is indexed, not just first 37%."""
@@ -37,9 +37,9 @@ class TestIndexingFast:
         mock_client = mock_openai_async_client
 
         # Create document-scoped store and tree builder
-        doc_store = store.add_document(
-            document_id="test-doc",
-            file_path=None,
+        doc_store = storage_backend.for_document("test-doc")
+        doc_store.set_metadata(
+            file_path="test-doc.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -53,7 +53,9 @@ class TestIndexingFast:
 
         # Verify: Check that the entire document was indexed
         # Get all leaf nodes and check their spans
-        leaf_nodes = store.nodes.get_leaf_nodes()
+        # Get leaf nodes by filtering all nodes
+        all_nodes = doc_store.nodes.get_all()
+        leaf_nodes = [node for node in all_nodes if node.height == 0]
 
         # Sort by span_start
         leaf_nodes.sort(key=lambda n: n.span_start)
@@ -105,7 +107,7 @@ class TestIndexingFast:
     def test_small_document_indexing(
         self,
         base_config: BackwardCompatibilityConfig,
-        store: StoreManager,
+        storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
     ) -> None:
         """Test indexing a very small document to isolate the issue."""
@@ -120,9 +122,9 @@ class TestIndexingFast:
         mock_client = mock_openai_async_client
 
         # Create document-scoped store and tree builder
-        doc_store = store.add_document(
-            document_id="test-doc",
-            file_path=None,
+        doc_store = storage_backend.for_document("test-doc")
+        doc_store.set_metadata(
+            file_path="test-doc.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -135,7 +137,9 @@ class TestIndexingFast:
         asyncio.run(tree_builder.add_document_async(test_document))
 
         # Check that we indexed the whole thing
-        leaf_nodes = store.nodes.get_leaf_nodes()
+        # Get leaf nodes by filtering all nodes
+        all_nodes = doc_store.nodes.get_all()
+        leaf_nodes = [node for node in all_nodes if node.height == 0]
 
         if leaf_nodes:
             leaf_nodes.sort(key=lambda n: n.span_start)
@@ -154,7 +158,7 @@ class TestIndexingFast:
     def test_check_api_batch_limits(
         self,
         base_config: BackwardCompatibilityConfig,
-        store: StoreManager,
+        storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
     ) -> None:
         """Test if there's a limit on API batching causing truncation."""
@@ -188,9 +192,9 @@ class TestIndexingFast:
         mock_client.embeddings.create = mock_embeddings_create
 
         # Create document-scoped store and tree builder
-        doc_store = store.add_document(
-            document_id="test-doc",
-            file_path=None,
+        doc_store = storage_backend.for_document("test-doc")
+        doc_store.set_metadata(
+            file_path="test-doc.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -203,7 +207,9 @@ class TestIndexingFast:
         asyncio.run(tree_builder.add_document_async(test_document))
 
         # Check results
-        leaf_nodes = store.nodes.get_leaf_nodes()
+        # Get leaf nodes by filtering all nodes
+        all_nodes = doc_store.nodes.get_all()
+        leaf_nodes = [node for node in all_nodes if node.height == 0]
 
         print(f"API calls made: {api_call_count}")
         print(f"Texts per call: {texts_per_call}")

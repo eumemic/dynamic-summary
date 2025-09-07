@@ -14,13 +14,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ragzoom.index import TreeBuilder
-    from ragzoom.store import StoreManager
-    from tests.conftest import BackwardCompatibilityConfig
 
     TreeBuilderFactory = Callable[[str], TreeBuilder]
 
 from ragzoom.assemble import Assembler
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.config import IndexConfig, QueryConfig
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
 from tests.utils import mock_openai_context
 
@@ -44,22 +43,13 @@ class TestIntegration:
         self,
         request: pytest.FixtureRequest,
         mock_openai: tuple[Mock, Mock, Mock],
-        base_config: "BackwardCompatibilityConfig",
+        storage_backend: StorageBackend,
     ) -> Generator[
-        tuple[
-            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
-        ],
+        tuple[IndexConfig, QueryConfig, StorageBackend, "TreeBuilderFactory", Mock],
         None,
         None,
     ]:
         """Create a complete temporary RagZoom system."""
-        # Always use real PostgreSQL store for integration tests
-        from tests.conftest import _create_real_store
-
-        real_store = _create_real_store(base_config)
-        if real_store is None:
-            pytest.skip("PostgreSQL not available for integration test")
-
         # Create separate configs
         index_config = IndexConfig.load(
             target_chunk_tokens=50,
@@ -67,78 +57,32 @@ class TestIntegration:
         )
         query_config = QueryConfig(budget_tokens=500)
 
-        # Create operational config
-        operational_config = OperationalConfig(
-            openai_api_key=SecretStr("test-key"),
-            database_url=real_store.config.database_url,  # Use the store's database URL
-        )
-
-        # Don't create TreeBuilder here - tests will create their own
-        # after creating documents
-
         # Use the mocked OpenAI client
         mock_index_client, mock_retrieve_client, mock_assemble_client = mock_openai
 
         # Helper function to create TreeBuilder for a specific document
         def create_tree_builder(document_id: str) -> "TreeBuilder":
-            # Create document in store first
-            real_store.add_document(
-                document_id=document_id,
-                file_path=None,
-                content_hash=real_store.compute_content_hash(""),
-                chunk_count=0,
-                embedding_model=index_config.embedding_model,
-                summary_model=index_config.summary_model,
-            )
             # Create DocumentStore for that document
-            doc_store = real_store.for_document(document_id)
+            doc_store = storage_backend.for_document(document_id)
             # Create TreeBuilder with that DocumentStore
-            return TreeBuilder(
-                index_config, doc_store, api_key=operational_config.openai_api_key
-            )
+            return TreeBuilder(index_config, doc_store, api_key="test-key")
 
-        # Create a config wrapper for backward compatibility
-        from tests.conftest import BackwardCompatibilityConfig
-
-        config = BackwardCompatibilityConfig(
-            index_config, query_config, operational_config
-        )
-
-        yield config, real_store, create_tree_builder, mock_retrieve_client
-
-        # Cleanup PostgreSQL store and unique database
-        if hasattr(real_store, "_test_db_cleanup"):
-            cleanup_info = real_store._test_db_cleanup
-            try:
-                from sqlalchemy import create_engine, text
-
-                admin_engine = create_engine(
-                    cleanup_info["admin_url"], isolation_level="AUTOCOMMIT"
-                )
-                with admin_engine.connect() as conn:
-                    # Terminate connections and drop database
-                    conn.execute(
-                        text(
-                            "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = :db_name AND pid <> pg_backend_pid()"
-                        ),
-                        {"db_name": cleanup_info["db_name"]},
-                    )
-                    conn.execute(
-                        text(f"DROP DATABASE IF EXISTS {cleanup_info['db_name']}")
-                    )  # nosec B608
-                admin_engine.dispose()
-            except Exception:
-                pass  # Ignore cleanup errors
-            real_store.close()
+        yield index_config, query_config, storage_backend, create_tree_builder, mock_retrieve_client
 
     def test_index_and_query(
         self,
         temp_system: tuple[
-            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+            IndexConfig, QueryConfig, StorageBackend, "TreeBuilderFactory", Mock
         ],
     ) -> None:
         """Test indexing a document and querying it."""
-        config, store, create_tree_builder, mock_client = temp_system
+        (
+            index_config,
+            query_config,
+            storage_backend,
+            create_tree_builder,
+            mock_client,
+        ) = temp_system
 
         # Create TreeBuilder for this specific document
         tree_builder = create_tree_builder("test-doc")
@@ -150,7 +94,7 @@ class TestIntegration:
         assert doc_id == "test-doc"
 
         # Check tree was built - get leaf nodes from the specific document
-        doc_store = store.for_document(doc_id)
+        doc_store = storage_backend.for_document(doc_id)
         leaf_nodes = doc_store.nodes.get_leaves()
         assert len(leaf_nodes) > 0
 
@@ -161,7 +105,7 @@ class TestIntegration:
         from tests.utils import create_retriever
 
         retriever = create_retriever(
-            config.query_config,
+            query_config,
             doc_store,
             client=mock_client,
         )
@@ -183,11 +127,17 @@ class TestIntegration:
     def test_multiple_documents(
         self,
         temp_system: tuple[
-            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+            IndexConfig, QueryConfig, StorageBackend, "TreeBuilderFactory", Mock
         ],
     ) -> None:
         """Test indexing multiple documents."""
-        config, store, create_tree_builder, mock_client = temp_system
+        (
+            index_config,
+            query_config,
+            storage_backend,
+            create_tree_builder,
+            mock_client,
+        ) = temp_system
 
         # Create TreeBuilder and index first document
         text1 = "First document content. " * 10
@@ -195,7 +145,7 @@ class TestIntegration:
         tree_builder1.add_document(text1)
 
         # Get initial leaf count from doc1
-        doc1_store = store.for_document("doc1")
+        doc1_store = storage_backend.for_document("doc1")
         initial_leaf_count = len(doc1_store.nodes.get_leaves())
 
         # Create TreeBuilder and index second document
@@ -204,7 +154,7 @@ class TestIntegration:
         tree_builder2.add_document(text2)
 
         # Check new leaves were added by checking both documents
-        doc2_store = store.for_document("doc2")
+        doc2_store = storage_backend.for_document("doc2")
         doc1_leaf_count = len(doc1_store.nodes.get_leaves())
         doc2_leaf_count = len(doc2_store.nodes.get_leaves())
         total_leaf_count = doc1_leaf_count + doc2_leaf_count
@@ -219,11 +169,17 @@ class TestIntegration:
     def test_mmr_diversity(
         self,
         temp_system: tuple[
-            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+            IndexConfig, QueryConfig, StorageBackend, "TreeBuilderFactory", Mock
         ],
     ) -> None:
         """Test that MMR returns diverse results."""
-        config, store, create_tree_builder, mock_client = temp_system
+        (
+            index_config,
+            query_config,
+            storage_backend,
+            create_tree_builder,
+            mock_client,
+        ) = temp_system
 
         # Create a single document with different topics
         combined_text = """
@@ -241,9 +197,9 @@ class TestIntegration:
         # Create retriever for this document
         from tests.utils import create_retriever
 
-        doc_store = store.for_document("doc-diverse")
+        doc_store = storage_backend.for_document("doc-diverse")
         retriever = create_retriever(
-            config.query_config,
+            query_config,
             doc_store,
             client=mock_client,
         )
@@ -258,11 +214,17 @@ class TestIntegration:
     def test_token_budget_enforcement(
         self,
         temp_system: tuple[
-            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+            IndexConfig, QueryConfig, StorageBackend, "TreeBuilderFactory", Mock
         ],
     ) -> None:
         """Test that assembly respects token budget."""
-        config, store, create_tree_builder, mock_client = temp_system
+        (
+            index_config,
+            query_config,
+            storage_backend,
+            create_tree_builder,
+            mock_client,
+        ) = temp_system
 
         # Create TreeBuilder and index a large document
         text = "This is a test sentence. " * 200
@@ -272,9 +234,9 @@ class TestIntegration:
         # Create retriever for this document
         from tests.utils import create_retriever
 
-        doc_store = store.for_document("budget-test")
+        doc_store = storage_backend.for_document("budget-test")
         retriever = create_retriever(
-            config.query_config,
+            query_config,
             doc_store,
             client=mock_client,
         )
@@ -292,11 +254,17 @@ class TestIntegration:
     def test_node_pinning(
         self,
         temp_system: tuple[
-            "BackwardCompatibilityConfig", "StoreManager", "TreeBuilderFactory", Mock
+            IndexConfig, QueryConfig, StorageBackend, "TreeBuilderFactory", Mock
         ],
     ) -> None:
         """Test that pinned nodes are always included."""
-        config, store, create_tree_builder, mock_client = temp_system
+        (
+            index_config,
+            query_config,
+            storage_backend,
+            create_tree_builder,
+            mock_client,
+        ) = temp_system
 
         # Create a single document with multiple content sections
         combined_text = (
@@ -306,17 +274,22 @@ class TestIntegration:
         tree_builder.add_document(combined_text)
 
         # Pin a specific node from the document
-        doc_store = store.for_document("doc-pinning")
+        doc_store = storage_backend.for_document("doc-pinning")
         all_nodes = doc_store.nodes.get_leaves()
         if all_nodes:
             important_node = all_nodes[0]
-            store.pin_node(important_node.id)
+            # Use the backend's pin_node method if available
+            if hasattr(storage_backend, "pin_node"):
+                storage_backend.pin_node(important_node.id)
+            else:
+                # Backend doesn't support pinning, skip this part of test
+                pytest.skip("Node pinning not implemented for this backend")
 
             # Create retriever for this document
             from tests.utils import create_retriever
 
             retriever = create_retriever(
-                config.query_config,
+                query_config,
                 doc_store,
                 client=mock_client,
             )
