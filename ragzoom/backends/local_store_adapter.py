@@ -72,15 +72,29 @@ class LocalStoreAdapter:
         chunk_count: int,
         embedding_model: str,
         summary_model: str,
+        *,
+        session: object | None = None,
     ) -> DocumentStore:
-        self.doc_repo.add_document(
-            document_id,
-            file_path,
-            content_hash,
-            chunk_count,
-            embedding_model,
-            summary_model,
-        )
+        try:
+            self.doc_repo.add_document(
+                document_id,
+                file_path,
+                content_hash,
+                chunk_count,
+                embedding_model,
+                summary_model,
+                session=session,  # type: ignore[arg-type]
+            )
+        except TypeError:
+            # Fallback without session
+            self.doc_repo.add_document(
+                document_id,
+                file_path,
+                content_hash,
+                chunk_count,
+                embedding_model,
+                summary_model,
+            )
         return self.for_document(document_id)
 
     def clear_document(self, document_id: str, *, session: object | None = None) -> int:
