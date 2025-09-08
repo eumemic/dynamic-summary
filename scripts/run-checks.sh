@@ -8,7 +8,7 @@
 # Options:
 #   --skip CHECKS           Skip specific checks (comma-separated): tests,dmypy,ruff,black,jscpd,bandit
 #   --fail-fast             Stop at first failure (useful for debugging)
-#   --include-slow-tests    Include slow and integration tests (auto-starts PostgreSQL)
+#   --include-slow-tests    Include slow and integration tests (auto-starts PostgreSQL when backend=postgres)
 #   --ignore-lint-rules RULES  Ignore specific lint rules (comma-separated): F401,E402,etc.
 #   --fail-on-autofix       Exit with failure if any auto-fixes were applied
 #   --help                  Show this help message
@@ -286,14 +286,20 @@ run_check_background() {
 if ! should_skip "tests"; then
     if command -v pytest &> /dev/null; then
         if [ "$INCLUDE_SLOW_TESTS" = true ] || [ "$TEST_SCOPE" = "all" ]; then
-            # Ensure PostgreSQL is available for integration tests
-            if [ -z "$RAGZOOM_DATABASE_URL" ]; then
-                echo "[PostgreSQL] Ensuring PostgreSQL is running for integration tests..."
-                python -c "from ragzoom.docker_postgres import DockerPostgres; dp = DockerPostgres(); dp.ensure_running()" 2>/dev/null || {
-                    echo "[PostgreSQL] Warning: Could not start PostgreSQL, integration tests may fail"
-                }
+            # Ensure PostgreSQL is available only when using the postgres backend
+            BACKEND="${RAGZOOM_BACKEND:-sqlite}"
+            DB_URL="${RAGZOOM_DATABASE_URL:-}"
+            if [ "$BACKEND" = "postgres" ] || [[ "$DB_URL" =~ ^postgres ]]; then
+                if [ -z "$DB_URL" ]; then
+                    echo "[PostgreSQL] Ensuring PostgreSQL is running for integration tests..."
+                    python -c "from ragzoom.docker_postgres import DockerPostgres; dp = DockerPostgres(); dp.ensure_running()" 2>/dev/null || {
+                        echo "[PostgreSQL] Warning: Could not start PostgreSQL, integration tests may fail"
+                    }
+                else
+                    echo "[PostgreSQL] Using provided database URL: $DB_URL"
+                fi
             else
-                echo "[PostgreSQL] Using provided database URL: $RAGZOOM_DATABASE_URL"
+                echo "[PostgreSQL] Skipping: backend is '$BACKEND' (using SQLite)"
             fi
             # Run all tests including slow and integration
             run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark' -n 8 --no-header"
