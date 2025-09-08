@@ -28,6 +28,7 @@ from ragzoom.services.indexing_service import IndexingService
 from ragzoom.services.query_service import QueryService
 from ragzoom.store import create_store_with_docker
 from ragzoom.tree_viz import build_ascii_tree
+from ragzoom.worktree_utils import DEFAULT_DATA_DIR_NAME
 
 # Load environment variables
 load_dotenv()
@@ -44,6 +45,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
 # Suppress noisy SQLAlchemy logs even in debug mode
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
+# Suppress Chroma telemetry noise
+logging.getLogger("chromadb").setLevel(logging.WARNING)
+logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
 
 
 def handle_cli_error(e: Exception, operation: str) -> None:
@@ -149,7 +154,7 @@ def cli(ctx: click.Context) -> None:
 @click.option(
     "--database",
     type=str,
-    help="PostgreSQL database URL (default: postgresql://localhost/ragzoom)",
+    help="Database URL (sqlite:///path/to.db or postgresql+psycopg://host/db)",
 )
 @click.option(
     "--debug",
@@ -217,12 +222,22 @@ def index(
         query_config = QueryConfig()  # Use defaults for indexing command
         operational_config = OperationalConfig()
 
-        # Override database URL if provided
+        # Override storage location if provided
         if data_dir:
             data_path = Path(data_dir)
-            operational_config = operational_config.replace(
-                database_url=f"postgresql:///{data_path / 'ragzoom'}",
-            )
+            # Choose URL based on backend
+            if operational_config.backend == "sqlite":
+                from ragzoom.worktree_utils import get_default_sqlite_url
+
+                operational_config = operational_config.replace(
+                    database_url=get_default_sqlite_url(data_path)
+                )
+            else:
+                # For postgres, form a sensible DB name under base_dir
+                dbname = (data_path / DEFAULT_DATA_DIR_NAME / "ragzoom").name
+                operational_config = operational_config.replace(
+                    database_url=f"postgresql+psycopg://localhost/{dbname}"
+                )
 
         if database:
             operational_config = operational_config.replace(database_url=database)
@@ -232,7 +247,7 @@ def index(
         ctx.obj["query_config"] = query_config
         ctx.obj["operational_config"] = operational_config
 
-        # Create services for this command
+        # Create services for this command (respects backend configured)
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
@@ -303,10 +318,9 @@ def index(
 
         # Save telemetry if requested
         if telemetry_file and telemetry_data:
-            click.echo(f"\n📁 Saving telemetry to {telemetry_file}...")
             with open(telemetry_file, "w") as f:
                 json.dump(telemetry_data, f, indent=2)
-            click.echo(f"✅ Telemetry saved to {telemetry_file}")
+            click.echo(f"✅ Saved telemetry: {telemetry_file}")
 
     except OSError as e:
         # Clean user-friendly errors (no "Error indexing document" prefix)
@@ -590,7 +604,7 @@ def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
                     click.echo(f"Auto-detected document: {document_id}")
             else:
                 # Store-like object: look up node globally
-                node = store.node_repo.get_node(node_id)  # type: ignore[attr-defined]
+                node = store.node_repo.get_node(node_id)  # type: ignore[union-attr]
                 if not node:
                     click.echo(f"❌ Node {node_id} not found")
                     sys.exit(1)
@@ -602,7 +616,7 @@ def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
         document_store = store if is_document_store else store.for_document(document_id)
 
         # Verify the node belongs to this document
-        node = document_store.nodes.get_node(node_id)  # type: ignore[attr-defined]
+        node = document_store.nodes.get_node(node_id)  # type: ignore[union-attr]
         if not node:
             click.echo(
                 f"❌ Node {node_id} not found"
@@ -748,7 +762,7 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
 
         # Get all nodes via repository (backend-agnostic)
         nodes_data = []
-        all_nodes = store.node_repo.get_all_nodes_for_document(None)
+        all_nodes = store.node_repo.get_all_nodes_for_document(None)  # type: ignore[union-attr]
         for node in all_nodes:
             node_dict = {
                 "id": node.id,
@@ -938,41 +952,48 @@ def doctor() -> None:
     else:
         click.echo("⚠️  Virtual environment: None (consider using one)")
 
-    # Check Docker availability
-    try:
-        result = subprocess.run(
-            ["docker", "--version"], capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            version = result.stdout.strip()
-            click.echo(f"✅ Docker: {version}")
+    # Check Docker availability (only if using postgres backend)
+    from ragzoom.config import OperationalConfig
 
-            # Check Docker daemon
-            try:
-                subprocess.run(
-                    ["docker", "ps"], capture_output=True, check=True, timeout=5
-                )
-                click.echo("✅ Docker daemon: Running")
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                click.echo("❌ Docker daemon: Not running")
-                click.echo(
-                    "   Start Docker Desktop or run: sudo systemctl start docker"
-                )
-                issues_found = True
-        else:
-            raise subprocess.CalledProcessError(result.returncode, "docker")
+    _cfg = OperationalConfig()
+    if _cfg.backend == "sqlite":
+        click.echo("✅ Backend: SQLite (file-backed)")
+        click.echo("   Skipping Docker checks")
+    else:
+        try:
+            result = subprocess.run(
+                ["docker", "--version"], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                version = result.stdout.strip()
+                click.echo(f"✅ Docker: {version}")
 
-    except (
-        FileNotFoundError,
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-    ):
-        click.echo("❌ Docker: Not found or not working")
-        click.echo("   Install Docker Desktop from https://docker.com")
-        issues_found = True
+                # Check Docker daemon
+                try:
+                    subprocess.run(
+                        ["docker", "ps"], capture_output=True, check=True, timeout=5
+                    )
+                    click.echo("✅ Docker daemon: Running")
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    click.echo("❌ Docker daemon: Not running")
+                    click.echo(
+                        "   Start Docker Desktop or run: sudo systemctl start docker"
+                    )
+                    issues_found = True
+            else:
+                raise subprocess.CalledProcessError(result.returncode, "docker")
+
+        except (
+            FileNotFoundError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+        ):
+            click.echo("❌ Docker: Not found or not working")
+            click.echo("   Install Docker Desktop from https://docker.com")
+            issues_found = True
 
     # Check PostgreSQL container status
-    if not issues_found:  # Only check if Docker is working
+    if not issues_found and _cfg.backend != "sqlite":  # Only if using postgres
         try:
             from ragzoom.docker_postgres import DockerPostgres
 
@@ -1009,7 +1030,7 @@ def doctor() -> None:
             # Create operational config
             operational_config = OperationalConfig()
 
-            # Try to create a store (this will auto-start PostgreSQL if needed)
+            # Try to create a store (auto-start only if postgres)
             store = create_store_with_docker(operational_config)
 
             # Test basic operation without exposing sessions

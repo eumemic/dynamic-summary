@@ -9,8 +9,9 @@ if TYPE_CHECKING:
     from ragzoom.telemetry_types import TelemetryDataDict
 
 from ragzoom.config import IndexConfig, OperationalConfig
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
-from ragzoom.store import Store
+from ragzoom.store import StoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class IndexingService:
 
     def __init__(
         self,
-        store: Store,
+        store: StoreManager | StorageBackend,
         index_config: IndexConfig,
         operational_config: OperationalConfig,
     ):

@@ -64,6 +64,19 @@ class SqliteTreeNode(SqliteBase):
         """Check if this node is a leaf node (has no children)."""
         return self.height == 0
 
+    # Compatibility helpers to mirror PostgreSQL TreeNode API
+    def is_root(self) -> bool:  # noqa: D401 - trivial helper
+        return self.parent_id is None
+
+    def is_left_child(self) -> bool:  # noqa: D401 - trivial helper
+        return isinstance(self.path, str) and self.path.endswith("0")
+
+    def is_right_child(self) -> bool:  # noqa: D401 - trivial helper
+        return isinstance(self.path, str) and self.path.endswith("1")
+
+    def get_depth(self) -> int:  # noqa: D401 - trivial helper
+        return len(self.path or "")
+
 
 class SqliteDocument(SqliteBase):
     __tablename__ = "documents"

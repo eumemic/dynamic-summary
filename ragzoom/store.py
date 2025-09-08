@@ -11,6 +11,7 @@ from numpy.typing import NDArray
 from sqlalchemy.orm import Session
 
 from ragzoom.config import OperationalConfig, SecretStr
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
 from ragzoom.document_store import DocumentStore
 from ragzoom.exceptions import InvalidOperationError, NodeNotFoundError
@@ -21,39 +22,51 @@ from ragzoom.services.cache_manager import CacheManager
 from ragzoom.services.search_service import SearchService
 from ragzoom.services.tree_navigator import TreeNavigator
 from ragzoom.storage.database_manager import DatabaseManager
+from ragzoom.worktree_utils import DEFAULT_VECTOR_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
 
-def create_store_with_docker(
+def create_store(
     config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
-) -> "StoreManager":
-    """Create a Store instance with automatic Docker PostgreSQL if needed.
+) -> "StoreManager | StorageBackend":
+    """Create a store based on OperationalConfig backend.
 
-    This factory function handles Docker container startup when using
-    the default database URL without explicit configuration.
-
-    Args:
-        config: Operational configuration
-        embedding_model: Name of embedding model
-
-    Returns:
-        Configured StoreManager instance
-
-    Raises:
-        OSError: If Docker PostgreSQL startup fails
+    - sqlite: uses SQLiteStorageBackend with a persistent Python/Chroma vector index
+    - postgres: uses StoreManager (pgvector) with optional Docker auto-start
     """
+    if config.backend == "sqlite" or config.database_url.lower().startswith("sqlite"):
+        try:
+            from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
+        except Exception as e:  # pragma: no cover - import failures are surfaced
+            raise OSError(f"SQLite backend unavailable: {e}")
+
+        # Derive a vector persistence directory near the sqlite db file
+        vec_dir: str | None = None
+        url = config.database_url
+        if url.startswith("sqlite:") and ":memory:" not in url:
+            # naive parse: sqlite:////abs or sqlite:///rel
+            path_part = url.split("sqlite:///")[-1]
+            import os
+
+            db_dir = os.path.dirname(path_part)
+            vec_dir = os.path.join(db_dir, DEFAULT_VECTOR_DIR_NAME)
+
+        return SQLiteStorageBackend(
+            url=config.database_url,
+            vector_backend=config.vector_backend,
+            vector_persist_dir=vec_dir,
+        )
+
+    # Postgres path (with optional Docker auto-start)
     database_url = config.database_url
 
-    # Check if we should auto-start Docker PostgreSQL
-    # Note: database_url may already be worktree-specific from OperationalConfig.__post_init__
     from ragzoom.worktree_utils import (
         DEFAULT_DATABASE_NAME,
         DEFAULT_DATABASE_URL_TEMPLATE,
         get_worktree_database_name,
     )
 
-    # Check if URL matches expected patterns (base or worktree-specific)
     expected_base_url = DEFAULT_DATABASE_URL_TEMPLATE.format(
         database_name=DEFAULT_DATABASE_NAME
     )
@@ -64,8 +77,8 @@ def create_store_with_docker(
 
     should_auto_start = (
         (database_url == expected_base_url or database_url == expected_worktree_url)
-        and not os.getenv("RAGZOOM_DATABASE_URL")  # User didn't explicitly set URL
-        and not os.getenv("RAGZOOM_NO_DOCKER")  # User didn't disable Docker
+        and not os.getenv("RAGZOOM_DATABASE_URL")
+        and not os.getenv("RAGZOOM_NO_DOCKER")
     )
 
     if should_auto_start:
@@ -73,10 +86,7 @@ def create_store_with_docker(
             from ragzoom.docker_postgres import DockerPostgres
 
             docker_pg = DockerPostgres()
-
-            # Use the expected database name for consistency
             if database_url == expected_worktree_url:
-                # This is a worktree-specific database
                 database_url = docker_pg.ensure_database_exists(
                     expected_worktree_db_name
                 )
@@ -84,20 +94,19 @@ def create_store_with_docker(
                     f"✅ PostgreSQL ready with worktree database: {expected_worktree_db_name}"
                 )
             else:
-                # This is the base ragzoom database
                 database_url = docker_pg.ensure_running()
                 logger.info("✅ PostgreSQL ready in Docker container")
 
-            # Update config with Docker database URL
             config = OperationalConfig(
                 openai_api_key=config.openai_api_key,
+                backend="postgres",
                 database_url=database_url,
+                vector_backend=config.vector_backend,
                 cache_size=config.cache_size,
             )
         except ImportError:
             logger.debug("Docker PostgreSQL management not available")
         except OSError:
-            # User-friendly errors from DockerPostgres - re-raise as-is
             raise
         except Exception as e:
             logger.debug(f"Auto-start failed: {e}")
@@ -108,6 +117,16 @@ def create_store_with_docker(
             )
 
     return StoreManager(config, embedding_model)
+
+
+def create_store_with_docker(
+    config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
+) -> "StoreManager | StorageBackend":
+    """Legacy factory retained for CLI/test compatibility.
+
+    Delegates to create_store(). Docker will only be used for postgres.
+    """
+    return create_store(config, embedding_model)
 
 
 class StoreManager:

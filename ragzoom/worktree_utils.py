@@ -11,6 +11,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_DATABASE_NAME = "ragzoom"
 DEFAULT_DATABASE_URL_TEMPLATE = "postgresql+psycopg://localhost/{database_name}"
 DEFAULT_CONTAINER_NAME = "ragzoom-postgres"
+DEFAULT_DATA_DIR_NAME = "data"
+DEFAULT_VECTOR_DIR_NAME = "vectors"
+
+
+def _ensure_str_path(p: Path) -> str:
+    """Return POSIX-style absolute path string for URLs."""
+    try:
+        return p.resolve().as_posix()
+    except Exception:
+        return str(p)
 
 
 def get_worktree_id() -> str | None:
@@ -104,3 +114,35 @@ def get_default_database_url() -> str:
     return DEFAULT_DATABASE_URL_TEMPLATE.format(
         database_name=get_worktree_database_name()
     )
+
+
+def get_default_sqlite_path(base_dir: Path | None = None) -> Path:
+    """Get a default file-backed SQLite path.
+
+    Defaults to ./storage/ when base_dir is not provided. If base_dir is
+    provided (e.g., via RAGZOOM_DATA_DIR), use it directly as the storage
+    directory. The filename includes the worktree id when present.
+    """
+    if base_dir is None:
+        data_dir = Path.cwd() / DEFAULT_DATA_DIR_NAME
+    else:
+        data_dir = Path(base_dir) / DEFAULT_DATA_DIR_NAME
+    data_dir.mkdir(parents=True, exist_ok=True)
+    wt = get_worktree_id()
+    suffix = f"_{wt.replace('-', '_')}" if wt else ""
+    return data_dir / f"{DEFAULT_DATABASE_NAME}{suffix}.db"
+
+
+def get_default_sqlite_url(base_dir: Path | None = None) -> str:
+    """Build a sqlite:/// URL for the default SQLite database file."""
+    path = get_default_sqlite_path(base_dir)
+    return f"sqlite:///{_ensure_str_path(path)}"
+
+
+def get_default_vector_dir(base_dir: Path | None = None) -> Path:
+    """Get default vector index directory under the data directory."""
+    if base_dir is None:
+        base = Path.cwd()
+    else:
+        base = Path(base_dir)
+    return base / DEFAULT_DATA_DIR_NAME / DEFAULT_VECTOR_DIR_NAME
