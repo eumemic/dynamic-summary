@@ -17,6 +17,15 @@ Welcome to the RagZoom project! This comprehensive guide covers the technology s
 
 Getting your environment set up correctly is the most important first step.
 
+### 2.1 Backend & Data Layout (Update)
+
+- Default backend: SQLite (no Docker). Files are created under:
+  - Database: `data/sqlite.db`
+  - Vector index (Chroma): `data/chroma/` (requires `chromadb`)
+- The `data/` directory is ignored by Git.
+- Switch to PostgreSQL by setting `RAGZOOM_BACKEND=postgres` and `RAGZOOM_DATABASE_URL`.
+- Document‑level lock prevents concurrent indexing of the same document (lock files under `data/.ragzoom/locks/`).
+
 1.  **Create a Virtual Environment:** It is strongly recommended to use a Python virtual environment to manage dependencies.
     ```bash
     python -m venv venv

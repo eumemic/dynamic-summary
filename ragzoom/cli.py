@@ -73,6 +73,12 @@ def handle_cli_error(e: Exception, operation: str) -> None:
         click.echo(f"❌ Resource error during {operation}: {e}", err=True)
     elif isinstance(e, NodeNotFoundError):
         click.echo(f"❌ Node not found during {operation}: {e}", err=True)
+    elif isinstance(e, RuntimeError) and "currently being modified" in str(e):
+        click.echo(
+            "❌ Another indexing is already in progress for this document.\n"
+            "   Please wait for the current run to finish and try again.",
+            err=True,
+        )
     else:
         click.echo(f"❌ Error during {operation}: {e}", err=True)
     sys.exit(1)

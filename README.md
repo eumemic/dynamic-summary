@@ -23,8 +23,9 @@ Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system tha
 ### Requirements
 
 - **Python 3.10+**
-- **Docker** (for PostgreSQL database)
 - **OpenAI API key**
+
+Docker is optional. By default RagZoom uses a local SQLite database and a file‑backed vector index. You can opt into PostgreSQL later if needed.
 
 ### Quick Setup
 
@@ -37,19 +38,14 @@ cd dynamic-summary
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Run the automated setup script
-./scripts/setup-dev.sh
-
-# Add your OpenAI API key
+pip install -e .
 echo "OPENAI_API_KEY=your-key-here" >> .env
 ```
 
-The setup script automatically:
-- Installs all Python dependencies
-- **Starts PostgreSQL in Docker** (with pgvector extension)
-- Sets up git hooks for automated testing
-- Configures your development environment
-- Verifies everything is working
+Defaults and layout:
+- Uses SQLite at `data/sqlite.db` (created on first use)
+- Uses Chroma vector index at `data/chroma/` (if installed)
+- Ignores `data/` directory in Git (.gitignore)
 
 ### Verify Setup
 
@@ -60,40 +56,26 @@ ragzoom doctor
 # Should show all green checkmarks ✅
 ```
 
-### Alternative: pip install
+### Install from PyPI
 
 ```bash
 pip install ragzoom
-# PostgreSQL will auto-start on first use (requires Docker)
 ```
 
-### Database Configuration
+### Backend Selection
 
-RagZoom automatically manages PostgreSQL for you:
+By default RagZoom uses SQLite (file‑backed) and a local vector index:
 
-- **Automatic**: PostgreSQL starts in Docker on first use
-- **No configuration needed** for development
-- **Persistent data** across restarts
+- DB: `sqlite:///data/sqlite.db`
+- Vector index: Chroma in `data/chroma/` (if `chromadb` is installed). Otherwise set `RAGZOOM_VECTOR_BACKEND=python`.
 
-#### Advanced Database Setup
-
-Using existing PostgreSQL:
+Switch to PostgreSQL:
 ```bash
+export RAGZOOM_BACKEND=postgres
 export RAGZOOM_DATABASE_URL="postgresql+psycopg://user:pass@host/db"
 ragzoom index document.txt
 ```
-
-Using Docker Compose (optional):
-```bash
-docker-compose up -d    # Start PostgreSQL
-ragzoom index document.txt
-```
-
-Disable auto-Docker (use manual setup):
-```bash
-export RAGZOOM_NO_DOCKER=1
-export RAGZOOM_DATABASE_URL="postgresql+psycopg://localhost/ragzoom"
-```
+Docker auto-start is used only for Postgres if you use the default local URL. For SQLite, Docker is not required.
 
 #### Troubleshooting
 
@@ -133,9 +115,8 @@ For comprehensive telemetry documentation, see [docs/telemetry.md](docs/telemetr
 ### First Time Use
 
 ```bash
-# Index your first document (PostgreSQL starts automatically)
+# Index your first document (SQLite + local vector index)
 ragzoom index document.txt
-# ✨ PostgreSQL container created and started automatically
 
 # Query the document
 ragzoom query "What is this document about?" -d document.txt
@@ -183,55 +164,28 @@ ragzoom serve
 ### Python API
 
 ```python
-from ragzoom import IndexConfig, QueryConfig, OperationalConfig, TreeBuilder, Retriever, Assembler, Store
+from ragzoom import IndexConfig, QueryConfig, OperationalConfig, TreeBuilder, Retriever, Assembler, create_store
 
 # Initialize
-index_config = IndexConfig()
+index_config = IndexConfig.load()
 query_config = QueryConfig()
-operational_config = OperationalConfig()
-store = Store(operational_config)
-tree_builder = TreeBuilder(index_config, store, operational_config.openai_api_key)
-retriever = Retriever(query_config, index_config, store, operational_config.openai_api_key)
-assembler = Assembler(store)
+operational_config = OperationalConfig()  # defaults to SQLite
+store = create_store(operational_config)
 
-# Index a document with explicit ID
-doc_id = tree_builder.add_document(
-    "Your document text here...",
-    document_id="my-doc-id"
-)
+# Build helpers per document
+document_id = "my-doc-id"
+document_store = store.for_document(document_id)
+tree_builder = TreeBuilder(index_config, document_store, operational_config.openai_api_key.get_secret_value())
+retriever = Retriever(query_config, document_store, None, None)  # see CLI/services for embedding setup
+assembler = Assembler(document_store)
 
-# Index from file (uses filename as ID)
-doc_id = tree_builder.add_document(
-    text,
-    file_path="/path/to/document.txt"
-)
+# Index from text
+doc_id = tree_builder.add_document("Your document text here...", document_id=document_id)
 
 # Query within a specific document
-result = retriever.retrieve("Your query here", document_id="my-doc-id")
+result = retriever.retrieve("Your query here", document_id=document_id)
 summary = assembler.assemble(result)
 print(summary)
-
-# For performance: Use async retriever with parallel DP algorithm
-retriever_async = Retriever(
-    query_config, 
-    store, 
-    operational_config.openai_api_key,
-    use_async_dp=True,                # Enable parallel processing
-    min_nodes_for_parallel=10         # Threshold for parallelization
-)
-
-# Async retrieval (2-4x faster on large trees)
-import asyncio
-result = await retriever_async.retrieve_async("Your query here", document_id="my-doc-id")
-summary = assembler.assemble(result)
-print(summary)
-
-# List all documents
-with store.SessionLocal() as session:
-    from ragzoom.store import Document
-    docs = session.query(Document).all()
-    for doc in docs:
-        print(f"Document: {doc.id}, indexed at: {doc.indexed_at}")
 ```
 
 ### REST API
