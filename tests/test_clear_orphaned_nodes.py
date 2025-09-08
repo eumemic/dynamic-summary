@@ -191,10 +191,8 @@ class TestAutomaticClearing:
 
                 # Mock create_store_with_docker to return a StoreManager that uses our backend
                 with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
-                    from ragzoom.store import StoreManager
-
-                    # Create a mock StoreManager that delegates to our storage backend
-                    mock_store = MagicMock(spec=StoreManager)
+                    # Create a mock StorageBackend that delegates to our storage backend
+                    mock_store = MagicMock()
                     mock_store.clear_document.side_effect = (
                         storage_backend.clear_document
                     )
@@ -323,10 +321,8 @@ class TestAutomaticClearing:
                 )
 
                 with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
-                    from ragzoom.store import StoreManager
-
-                    # Create a mock StoreManager that delegates to our storage backend
-                    mock_store = MagicMock(spec=StoreManager)
+                    # Create a mock StorageBackend that delegates to our storage backend
+                    mock_store = MagicMock()
                     mock_store.clear_document.side_effect = (
                         storage_backend.clear_document
                     )

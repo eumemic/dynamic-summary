@@ -11,7 +11,7 @@ from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretSt
 from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendProtocol
 from ragzoom.db_utils import create_temp_database, get_temp_db_name
 from ragzoom.document_store import DocumentStore
-from ragzoom.store import StoreManager
+from ragzoom.store import create_store
 from ragzoom.telemetry_types import TelemetryDataDict
 from tests.test_builders import DocumentBuilder, TreeNodeBuilder
 
@@ -190,7 +190,7 @@ def config_factory() -> (
 @pytest.fixture
 def real_store(
     base_config: BackwardCompatibilityConfig,
-) -> Generator[StoreManager | None, None, None]:
+) -> Generator[_StorageBackendProtocol | None, None, None]:
     """Create a real store for integration testing (lazy loading)."""
     # Only attempt to create real store when fixture is actually requested
     real_store_instance = _create_real_store(base_config)
@@ -253,7 +253,9 @@ def storage_backend() -> Generator[_StorageBackendProtocol, None, None]:
         backend.close()
 
 
-def _create_real_store(base_config: BackwardCompatibilityConfig) -> StoreManager | None:
+def _create_real_store(
+    base_config: BackwardCompatibilityConfig,
+) -> _StorageBackendProtocol | None:
     """Create a real store for integration testing, or return None if unavailable."""
     try:
         # Use test-specific database URL or create unique one
@@ -292,18 +294,9 @@ def _create_real_store(base_config: BackwardCompatibilityConfig) -> StoreManager
                 os.environ["RAGZOOM_DATABASE_URL"] = original_env
 
         # If we get here, PostgreSQL is available
-        store = StoreManager(
-            operational_config,
-            embedding_model=base_config.index_config.embedding_model,
+        store = create_store(
+            operational_config, embedding_model=base_config.index_config.embedding_model
         )
-
-        # Store cleanup info for later
-        if test_db_name:
-            store._test_db_cleanup = {  # type: ignore[attr-defined]
-                "db_name": test_db_name,
-                "admin_url": admin_url,
-            }
-
         return store
     except Exception:
         # Return None - let individual tests decide how to handle unavailable PostgreSQL

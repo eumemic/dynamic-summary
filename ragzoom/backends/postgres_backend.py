@@ -1,9 +1,8 @@
-"""Adapter that exposes the existing PostgreSQL StoreManager as a StorageBackend.
+"""PostgreSQL StorageBackend implementation using pgvector.
 
-This is a minimal wrapper to enable progressive adoption of the pluggable
-storage interface without refactoring existing call sites. The write lock is a
-no-op for now; advisory locks can be added in a follow-up without changing the
-engine contract.
+This backend uses DatabaseManager + repositories directly and exposes the
+StorageBackend protocol. It avoids leaking the legacy StoreManager and keeps a
+uniform API across backends.
 """
 
 from __future__ import annotations
@@ -11,10 +10,16 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from types import TracebackType
 
+from ragzoom.config import OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import Document
-from ragzoom.store import StoreManager
+from ragzoom.models import Document, TreeNode
+from ragzoom.repositories.document_repository import DocumentRepository
+from ragzoom.repositories.node_repository import NodeRepository
+from ragzoom.services.cache_manager import CacheManager
+from ragzoom.services.search_service import SearchService
+from ragzoom.services.tree_navigator import TreeNavigator
+from ragzoom.storage.database_manager import DatabaseManager
 
 
 class _NoOpLock(AbstractContextManager[None]):
@@ -33,27 +38,42 @@ class _NoOpLock(AbstractContextManager[None]):
 
 
 class PostgresStorageBackend(StorageBackend):
-    """StorageBackend adapter for the existing StoreManager (PostgreSQL)."""
+    """PostgreSQL-backed StorageBackend using repositories and services."""
 
-    def __init__(self, store_manager: StoreManager) -> None:
-        self._store = store_manager
+    DEFAULT_CACHE_SIZE = 1000
+
+    def __init__(
+        self, config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
+    ) -> None:
+        self.config = config
+        # Initialize core components
+        self.db_manager = DatabaseManager(config, embedding_model)
+        self.cache_manager = CacheManager[TreeNode](
+            config.cache_size or self.DEFAULT_CACHE_SIZE
+        )
+        self.node_repo = NodeRepository(self.db_manager, self.cache_manager)
+        self.doc_repo = DocumentRepository(self.db_manager, self.cache_manager)
+        self.search_service = SearchService(self.db_manager)
+        self.tree_navigator = TreeNavigator(self.node_repo)
 
     # Document-scoped API
     def for_document(self, doc_id: str | None) -> DocumentStore:
-        return self._store.for_document(doc_id)
+        return DocumentStore(
+            document_id=doc_id,
+            node_repo=self.node_repo,
+            search_service=self.search_service,
+            tree_navigator=self.tree_navigator,
+            doc_repo=self.doc_repo,
+        )
 
-    # Locking
+    # Locking (no-op; can be replaced with advisory locks)
     def lock_document(self, document_id: str | None) -> AbstractContextManager[None]:
-        # Placeholder: use advisory locks in a follow-up change
         return _NoOpLock()
 
     # Multi-document API
     def list_documents(self) -> list[Document]:
-        return self._store.list_documents()
+        return self.doc_repo.list_documents()  # type: ignore[return-value]
 
-    # jscpd:ignore-start Adapter method forwards to underlying StoreManager.
-    # The structure mirrors the original API by design and is considered a
-    # legitimate duplication for interface compatibility.
     def add_document(
         self,
         document_id: str,
@@ -63,7 +83,8 @@ class PostgresStorageBackend(StorageBackend):
         embedding_model: str,
         summary_model: str,
     ) -> DocumentStore:
-        return self._store.add_document(
+        # jscpd:ignore-start - delegation mirrors repository API for compatibility
+        self.doc_repo.add_document(
             document_id,
             file_path,
             content_hash,
@@ -71,17 +92,17 @@ class PostgresStorageBackend(StorageBackend):
             embedding_model,
             summary_model,
         )
-
-    # jscpd:ignore-end
+        # jscpd:ignore-end
+        return self.for_document(document_id)
 
     def clear_document(self, document_id: str) -> int:
-        return self._store.clear_document(document_id)
+        return self.doc_repo.clear_document(document_id)
 
     def get_document_by_id(self, document_id: str) -> Document | None:
-        return self._store.get_document_by_id(document_id)
+        return self.doc_repo.get_document_by_id(document_id)
 
     def get_document_by_path(self, file_path: str) -> Document | None:
-        return self._store.get_document_by_path(file_path)
+        return self.doc_repo.get_document_by_path(file_path)
 
     def close(self) -> None:
-        self._store.close()
+        self.db_manager.close()
