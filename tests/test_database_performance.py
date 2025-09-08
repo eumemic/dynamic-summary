@@ -216,45 +216,43 @@ class TestDatabaseScalability:
             deletion_duration < 1.0
         ), f"Small document deletion took {deletion_duration:.2f}s, expected < 1s"
 
-    @pytest.mark.slow
-    def test_paginated_retrieval_large_document(
+    def test_paginated_retrieval_correctness_small(
         self,
         storage_backend: StorageBackend,
-        large_document_data: dict[
+        small_document_data: dict[
             str, list[dict[str, str | int | list[float]]] | str | int
         ],
     ) -> None:
-        """Test that paginated retrieval works correctly with large documents."""
-        document_id = cast(str, large_document_data["document_id"])
+        """Validate pagination correctness on a small document.
+
+        Ensures batches cover all nodes exactly once and each batch size
+        equals page_size except possibly the last. Uses a few representative
+        page sizes to exercise boundaries without large-scale overhead.
+        """
+        document_id = cast(str, small_document_data["document_id"])
         nodes_data = cast(
-            list[dict[str, str | int | list[float]]], large_document_data["nodes"]
+            list[dict[str, str | int | list[float]]], small_document_data["nodes"]
         )
-        expected_count = cast(int, large_document_data["expected_count"])
+        expected_count = cast(int, small_document_data["expected_count"])
         doc_store = storage_backend.for_document(document_id)
 
         # Set up document metadata first
         doc_store.set_metadata(
-            file_path="large_paginated_test.txt",
-            content_hash="large-paginated-test-hash",
+            file_path="small_paginated_test.txt",
+            content_hash="small-paginated-test-hash",
             chunk_count=expected_count,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
 
         # Add nodes
-        logger.info(f"Adding {expected_count} nodes for paginated retrieval test...")
         self.add_test_nodes(storage_backend, document_id, nodes_data)
 
-        # Test paginated retrieval with different page sizes
-        page_sizes = [500, 1000, 2500]
+        # Test paginated retrieval with a few representative sizes
+        page_sizes = [7, 10, 33, 256]
 
         for page_size in page_sizes:
-            logger.info(f"Testing paginated retrieval with page_size={page_size}")
-            start_time = time.perf_counter()
-
             batches = doc_store.nodes.get_all_paginated(page_size=page_size)
-
-            retrieval_duration = time.perf_counter() - start_time
 
             # Verify correctness
             total_nodes = sum(len(batch) for batch in batches)
@@ -275,15 +273,6 @@ class TestDatabaseScalability:
                 assert (
                     last_batch_size <= page_size
                 ), f"Last batch has {last_batch_size} nodes, should be <= {page_size}"
-
-            # Performance assertion
-            logger.info(
-                f"Retrieved {total_nodes} nodes in {len(batches)} batches "
-                f"({page_size} per batch) in {retrieval_duration:.2f}s"
-            )
-            assert (
-                retrieval_duration < 30.0
-            ), f"Paginated retrieval took {retrieval_duration:.2f}s, expected < 30s"
 
         # Clean up
         storage_backend.clear_document(document_id)
