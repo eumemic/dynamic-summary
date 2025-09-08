@@ -3,8 +3,11 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol, cast
 
-from ragzoom.store import Store
+from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.repositories.node_repository import NodeRepository
+from ragzoom.store import StoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +36,7 @@ class SystemStatus:
 class DocumentService:
     """Service for document management operations."""
 
-    def __init__(self, store: Store):
+    def __init__(self, store: StoreManager | StorageBackend):
         """Initialize document service.
 
         Args:
@@ -47,9 +50,10 @@ class DocumentService:
         Avoids exposing DB sessions by using Store APIs.
         """
         out: list[DocumentInfo] = []
+        repo = cast("HasNodeRepo", self.store).node_repo
         for doc in self.store.list_documents():
             # Compute node count via repository
-            node_count = len(self.store.node_repo.get_all_nodes_for_document(doc.id))
+            node_count = len(repo.get_all_nodes_for_document(doc.id))
             out.append(
                 DocumentInfo(
                     document_id=doc.id,
@@ -63,18 +67,16 @@ class DocumentService:
 
     def get_system_status(self) -> SystemStatus:
         """Get system status information without exposing sessions."""
+        repo = cast("HasNodeRepo", self.store).node_repo
         # Total nodes across all documents
-        all_nodes = len(self.store.node_repo.get_all_nodes_for_document(None))
+        all_nodes = len(repo.get_all_nodes_for_document(None))
         # Leaf nodes across all documents
-        leaf_nodes = len(self.store.node_repo.get_leaf_nodes())
+        leaf_nodes = len(repo.get_leaf_nodes())
         # Tree depth: derive from max height among all nodes
-        nodes_all = self.store.node_repo.get_all_nodes_for_document(None)
+        nodes_all = repo.get_all_nodes_for_document(None)
         tree_depth = max((n.height for n in nodes_all), default=0)
 
-        try:
-            pinned = self.store.get_pinned_nodes()  # type: ignore[attr-defined]
-        except Exception:
-            pinned = self.store.node_repo.get_pinned_nodes(None)
+        pinned = repo.get_pinned_nodes(None)
 
         return SystemStatus(
             total_nodes=all_nodes,
@@ -95,8 +97,11 @@ class DocumentService:
         return self.store.clear_document(document_id)
 
     def clear_all_documents(self) -> int:
-        """Clear all documents and nodes via store API (no direct sessions)."""
-        return self.store.clear_all_documents()
+        """Clear all documents and nodes in a backend-agnostic way."""
+        total = 0
+        for doc in self.store.list_documents():
+            total += self.store.clear_document(doc.id)
+        return total
 
     def pin_node(self, node_id: str) -> None:
         """Pin a node to always include it.
@@ -108,4 +113,9 @@ class DocumentService:
             NodeNotFoundError: If node doesn't exist
             InvalidOperationError: If node cannot be pinned
         """
-        self.store.pin_node(node_id)
+        repo = cast("HasNodeRepo", self.store).node_repo
+        repo.pin_node(node_id)
+
+
+class HasNodeRepo(Protocol):
+    node_repo: NodeRepository

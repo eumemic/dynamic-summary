@@ -27,6 +27,10 @@ from ragzoom.models import Document, TreeNode
 from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.services.tree_navigator import TreeNavigator
+from ragzoom.worktree_utils import (
+    DEFAULT_VECTOR_DIR_NAME,
+    get_default_vector_dir,
+)
 
 
 class _InProcessDocLock(AbstractContextManager[None]):
@@ -52,25 +56,71 @@ class _InProcessDocLock(AbstractContextManager[None]):
 
 
 class SQLiteStorageBackend(StorageBackend):
-    def __init__(self, url: str = "sqlite:///:memory:") -> None:
+    def __init__(
+        self,
+        url: str = "sqlite:///:memory:",
+        *,
+        vector_backend: str = "python",
+        vector_persist_dir: str | None = None,
+    ) -> None:
         self.db = SqliteDatabaseManager(url)
         # Cache for nodes (align with existing StoreManager default)
         self.cache: CacheManager[TreeNode] = CacheManager(1000)
         # Per-document in-process locks
         self._locks: dict[str | None, threading.Lock] = {}
 
-        # Vector index for this backend (in-memory for tests; file-backed via path)
-        # For file-backed deployments, pass a directory to persist
-        self.vector_index = PythonVectorIndex()
+        # Vector index for this backend
+        self.vector_index = self._make_vector_index(vector_backend, vector_persist_dir)
 
         # Repositories
         self.node_repo = SqliteNodeRepository(self.db, self.cache)
         self.doc_repo = SqliteDocumentRepository(self.db)
         # Tree navigation uses repository path operations
         self.tree_nav = TreeNavigator(cast(NodeRepository, self.node_repo))
-        # SearchService-compatible shim over PythonVectorIndex will be provided later
+        # SearchService-compatible shim over configured VectorIndex is provided here
         # For now, keep the interface by composing a thin adapter
         self.search_service = _VectorIndexSearchAdapter(self.vector_index)
+
+    def _make_vector_index(
+        self, backend: str, persist_dir: str | None
+    ) -> PythonVectorIndex:
+        # Resolve persistence dir default based on sqlite database path
+        if persist_dir is None:
+            try:
+                url = str(self.db.url)
+            except Exception:
+                url = ""
+            # Extract file path from sqlite:/// URL
+            if url.startswith("sqlite:") and ":memory:" not in url:
+                # naive parse: sqlite:////abs or sqlite:///rel
+                path_part = url.split("sqlite:///")[-1]
+                import os
+
+                db_dir = os.path.dirname(path_part)
+                persist_dir = os.path.join(db_dir, DEFAULT_VECTOR_DIR_NAME)
+
+        if backend == "chroma":
+            try:
+                from ragzoom.backends.chroma_vector_index import ChromaVectorIndex
+
+                # Chroma requires a directory path
+                if persist_dir is None:
+                    base = str(get_default_vector_dir(None))
+                else:
+                    base = persist_dir
+                try:
+                    import os
+
+                    os.makedirs(base, exist_ok=True)
+                except Exception:
+                    pass
+                return ChromaVectorIndex(base)  # type: ignore[return-value]
+            except Exception:
+                # Fallback to python backend
+                pass
+
+        # Default to PythonVectorIndex (optionally persistent)
+        return PythonVectorIndex(persist_dir)
 
     def _get_lock(self, doc_id: str | None) -> threading.Lock:
         lock = self._locks.get(doc_id)
@@ -161,19 +211,24 @@ class _VectorIndexSearchAdapter:
         )
         out: list[tuple[str, float, dict[str, str | int | float | bool | None]]] = []
         for node_id, score, meta in results:
-            out.append(
-                (
-                    node_id,
-                    score,
-                    {
-                        "span_start": meta.span_start,
-                        "span_end": meta.span_end,
-                        "parent_id": meta.parent_id,
-                        "document_id": meta.document_id,
-                        "is_leaf": meta.is_leaf,
-                    },
-                )
-            )
+            if isinstance(meta, dict):
+                md: dict[str, str | int | float | bool | None] = {
+                    "span_start": int(meta.get("span_start", 0)),
+                    "span_end": int(meta.get("span_end", 0)),
+                    "parent_id": str(meta.get("parent_id", "")),
+                    "document_id": str(meta.get("document_id", "")),
+                    "is_leaf": int(meta.get("is_leaf", 0)),
+                }
+            else:
+                # Assume VectorSearchMetadata with attributes
+                md = {
+                    "span_start": int(getattr(meta, "span_start", 0)),
+                    "span_end": int(getattr(meta, "span_end", 0)),
+                    "parent_id": str(getattr(meta, "parent_id", "")),
+                    "document_id": str(getattr(meta, "document_id", "")),
+                    "is_leaf": int(getattr(meta, "is_leaf", 0)),
+                }
+            out.append((node_id, score, md))
         return out
 
     def compute_mmr_diverse_results(

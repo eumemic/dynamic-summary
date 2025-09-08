@@ -1,5 +1,6 @@
 """Configuration management for RagZoom."""
 
+import importlib.util
 import json
 import os
 from dataclasses import dataclass
@@ -358,7 +359,11 @@ class OperationalConfig:
     """
 
     openai_api_key: SecretStr = SecretStr("")
-    database_url: str = "postgresql+psycopg://localhost/ragzoom"
+    # Durable backend selection and storage location
+    backend: str = "sqlite"  # "sqlite" | "postgres"
+    database_url: str = ""
+    # Vector index backend for non-PostgreSQL setups
+    vector_backend: str = "chroma"  # "chroma" | "python"
     cache_size: int = 1000
     log_level: str = "INFO"
     validate_pipeline: bool = False
@@ -368,19 +373,60 @@ class OperationalConfig:
         if not self.openai_api_key.get_secret_value():
             self.openai_api_key = SecretStr(os.environ.get("OPENAI_API_KEY", ""))
 
-        # Allow environment overrides for storage path (for testing)
-        if os.environ.get("RAGZOOM_DATABASE_URL"):
-            self.database_url = os.environ["RAGZOOM_DATABASE_URL"]
+        # Backend selection via env (overrides default)
+        if os.environ.get("RAGZOOM_BACKEND"):
+            self.backend = os.environ["RAGZOOM_BACKEND"].strip().lower()
+
+        # Vector backend via env
+        if os.environ.get("RAGZOOM_VECTOR_BACKEND"):
+            self.vector_backend = os.environ["RAGZOOM_VECTOR_BACKEND"].strip().lower()
+
+        # Data dir override for SQLite/vector persistence
+        data_dir = os.environ.get("RAGZOOM_DATA_DIR")
+
+        # Database URL resolution
+        env_db = os.environ.get("RAGZOOM_DATABASE_URL")
+        if env_db:
+            self.database_url = env_db
         else:
-            # Apply worktree-specific database isolation
+            # If user provided an explicit URL at construction, respect it; otherwise infer from backend
+            if not self.database_url:
+                if self.backend == "postgres":
+                    from ragzoom.worktree_utils import get_default_database_url
+
+                    self.database_url = get_default_database_url()
+                else:
+                    from pathlib import Path
+
+                    from ragzoom.worktree_utils import get_default_sqlite_url
+
+                    base = Path(data_dir) if data_dir else None
+                    self.database_url = get_default_sqlite_url(base)
+
+        # If URL implies backend, update backend to stay consistent
+        url = self.database_url.strip().lower()
+        if url.startswith("sqlite"):
+            self.backend = "sqlite"
+        elif url.startswith("postgresql") or url.startswith("postgres"):
+            self.backend = "postgres"
+
+        # Apply worktree isolation when using PostgreSQL default name
+        if self.backend == "postgres":
             from ragzoom.worktree_utils import get_worktree_database_url
 
             self.database_url = get_worktree_database_url(self.database_url)
 
+        # If chroma is not available, fall back to python vector index
+        if self.vector_backend == "chroma":
+            if importlib.util.find_spec("chromadb") is None:
+                self.vector_backend = "python"
+
     def replace(
         self,
         openai_api_key: SecretStr | None = None,
+        backend: str | None = None,
         database_url: str | None = None,
+        vector_backend: str | None = None,
         cache_size: int | None = None,
         log_level: str | None = None,
         validate_pipeline: bool | None = None,
@@ -393,8 +439,12 @@ class OperationalConfig:
             openai_api_key=(
                 openai_api_key if openai_api_key is not None else self.openai_api_key
             ),
+            backend=backend if backend is not None else self.backend,
             database_url=(
                 database_url if database_url is not None else self.database_url
+            ),
+            vector_backend=(
+                vector_backend if vector_backend is not None else self.vector_backend
             ),
             cache_size=cache_size if cache_size is not None else self.cache_size,
             log_level=log_level if log_level is not None else self.log_level,
