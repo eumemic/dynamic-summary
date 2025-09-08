@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 def create_store(
     config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
-) -> "StoreManager | StorageBackend":
+) -> StorageBackend:
     """Create a store based on OperationalConfig backend.
 
     - sqlite: uses SQLiteStorageBackend with a persistent Python/Chroma vector index
@@ -116,12 +116,15 @@ def create_store(
                 f"Error: {str(e)}"
             )
 
-    return StoreManager(config, embedding_model)
+    # Wrap StoreManager in a StorageBackend adapter for a uniform interface
+    from ragzoom.backends.postgres_backend import PostgresStorageBackend
+
+    return PostgresStorageBackend(StoreManager(config, embedding_model))
 
 
 def create_store_with_docker(
     config: OperationalConfig, embedding_model: str = "text-embedding-3-small"
-) -> "StoreManager | StorageBackend":
+) -> StorageBackend:
     """Legacy factory retained for CLI/test compatibility.
 
     Delegates to create_store(). Docker will only be used for postgres.
