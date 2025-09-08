@@ -46,7 +46,7 @@ def test_tree_height_accessed_within_session(storage_backend: StorageBackend) ->
     with patch(
         "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
     ):
-        service = IndexingService(storage_backend, index_config, config)  # type: ignore[arg-type]
+        service = IndexingService(storage_backend, index_config, config)
         result = service.index_document(
             "Test content", document_id="test.txt", show_progress=False
         )

@@ -24,7 +24,7 @@ def test_index_document_always_clears(storage_backend: StorageBackend) -> None:
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
     )
-    pre_nodes = [  # type: ignore[var-annotated]
+    pre_nodes = [
         {
             "node_id": f"pre-{i}",
             "text": f"Pre node {i}",
@@ -65,7 +65,7 @@ def test_index_document_always_clears(storage_backend: StorageBackend) -> None:
         "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
     ):
         # Create the service using backend directly
-        service = IndexingService(storage_backend, index_config, config)  # type: ignore[arg-type]
+        service = IndexingService(storage_backend, index_config, config)
         # Index a document
         service.index_document("Test content", document_id=doc_id, show_progress=False)
 

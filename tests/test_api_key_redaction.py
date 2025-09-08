@@ -269,7 +269,7 @@ class TestErrorHandlingRedaction:
         api_key = "sk-1234567890123456789012345678901234567890123456789"
         exc = ConfigurationError("config", "valid configuration")
         # ConfigurationError.context is dynamically added, not in type definition
-        exc.context = {"api_key": api_key, "model": "gpt-4"}  # type: ignore[attr-defined]
+        setattr(exc, "context", {"api_key": api_key, "model": "gpt-4"})
 
         result = format_structured_error(exc)
 

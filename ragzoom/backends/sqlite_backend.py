@@ -135,7 +135,7 @@ class SQLiteStorageBackend(StorageBackend):
             document_id=document_id,
             node_repo=self.node_repo,  # type: ignore[arg-type]
             search_service=self.search_service,  # type: ignore[arg-type]
-            tree_navigator=self.tree_nav,  # type: ignore[arg-type]
+            tree_navigator=self.tree_nav,
             doc_repo=self.doc_repo,  # type: ignore[arg-type]
         )
 
@@ -177,7 +177,7 @@ class SQLiteStorageBackend(StorageBackend):
     def list_documents(self) -> list[Document]:
         # Delegate to repository
         try:
-            docs = self.doc_repo.list_documents()  # type: ignore[attr-defined]
+            docs = self.doc_repo.list_documents()
             return docs  # type: ignore[return-value]
         except Exception:
             return []

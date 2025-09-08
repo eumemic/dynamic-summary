@@ -48,7 +48,7 @@ async def test_mark_accepted_attempt_is_called(storage_backend: StorageBackend) 
         summary_model="gpt-4o-mini",
     )
 
-    indexer = TreeBuilder(config, doc_store)  # type: ignore[arg-type]
+    indexer = TreeBuilder(config, doc_store)
 
     # Track API calls and telemetry calls
     api_calls = []
@@ -204,7 +204,7 @@ async def test_retry_selection_uses_proper_logic(
         summary_model="gpt-4o-mini",
     )
 
-    indexer = TreeBuilder(config, doc_store)  # type: ignore[arg-type]
+    indexer = TreeBuilder(config, doc_store)
 
     api_calls = []
     summaries_returned = []

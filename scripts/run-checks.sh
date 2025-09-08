@@ -333,6 +333,9 @@ fi
 # dmypy
 if ! should_skip "dmypy"; then
     if command -v dmypy &> /dev/null; then
+        # Ensure a fresh daemon to avoid stale state across runs (especially in CI)
+        dmypy stop >/dev/null 2>&1 || true
+        # Note: keep on-disk .mypy_cache for speed; only restart daemon
         run_check_background "Mypy" "dmypy run -- ragzoom tests --no-error-summary --check-untyped-defs"
     else
         echo "[Mypy] ❌ dmypy not installed - cannot run type checks" >&2

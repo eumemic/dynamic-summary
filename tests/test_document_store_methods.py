@@ -11,13 +11,14 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.document_store import DocumentStore
 
 
 class TestDocumentStoreMethods:
     """Test the new methods added to DocumentStore for Phase 4."""
 
     @pytest.fixture
-    def doc_store(self, storage_backend: StorageBackend) -> object:
+    def doc_store(self, storage_backend: StorageBackend) -> DocumentStore:
         doc_store = storage_backend.for_document("doc1")
         doc_store.set_metadata(
             file_path="test_file.txt",
@@ -29,13 +30,13 @@ class TestDocumentStoreMethods:
         return doc_store
 
     def test_get_embedding_model(
-        self, doc_store: object, storage_backend: StorageBackend
+        self, doc_store: DocumentStore, storage_backend: StorageBackend
     ) -> None:
         """Test that DocumentStore correctly retrieves embedding model."""
         # Document metadata already set in fixture
 
         # Test getting embedding model
-        model = doc_store.get_embedding_model()  # type: ignore[attr-defined]
+        model = doc_store.get_embedding_model()
         assert model == "text-embedding-3-small"
 
     def test_get_embedding_model_missing(self, storage_backend: StorageBackend) -> None:
@@ -51,10 +52,10 @@ class TestDocumentStoreMethods:
         )
 
         # Test getting embedding model
-        model = doc_store.get_embedding_model()  # type: ignore[attr-defined]
+        model = doc_store.get_embedding_model()
         assert model == "" or model is None
 
-    def test_get_avg_leaf_tokens(self, doc_store: object) -> None:
+    def test_get_avg_leaf_tokens(self, doc_store: DocumentStore) -> None:
         """Test that DocumentStore correctly calculates average leaf tokens."""
         # Seed leaf nodes with different token counts
         nodes: list[
@@ -111,20 +112,20 @@ class TestDocumentStoreMethods:
                 "path": "0",
             },
         ]
-        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
-        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
             [("leaf_0", "parent"), ("leaf_1", "parent")]
         )
 
         # Test getting average leaf tokens
-        avg_tokens = doc_store.get_avg_leaf_tokens()  # type: ignore[attr-defined]
+        avg_tokens = doc_store.get_avg_leaf_tokens()
         # Average of 100, 150, 200 = 150
         assert avg_tokens == 150
 
-    def test_get_avg_leaf_tokens_no_leaves(self, doc_store: object) -> None:
+    def test_get_avg_leaf_tokens_no_leaves(self, doc_store: DocumentStore) -> None:
         """Test that DocumentStore returns None when no leaf nodes exist."""
         # Test getting average leaf tokens from empty document
-        avg_tokens = doc_store.get_avg_leaf_tokens()  # type: ignore[attr-defined]
+        avg_tokens = doc_store.get_avg_leaf_tokens()
         assert avg_tokens is None
 
     def test_document_id_mismatch_safety(self, storage_backend: StorageBackend) -> None:
@@ -166,7 +167,7 @@ class TestDocumentStoreMethods:
                 "path": "0",
             }
         ]
-        doc1_store.nodes.add_batch(doc1_nodes)  # type: ignore[attr-defined]
+        doc1_store.nodes.add_batch(doc1_nodes)
 
         # Add node to doc2
         doc2_nodes: list[
@@ -187,15 +188,15 @@ class TestDocumentStoreMethods:
                 "path": "0",
             }
         ]
-        doc2_store.nodes.add_batch(doc2_nodes)  # type: ignore[attr-defined]
+        doc2_store.nodes.add_batch(doc2_nodes)
 
         # Verify doc1_store can get doc1 node
-        node1 = doc1_store.nodes.get_node("doc1_node")  # type: ignore[attr-defined]
+        node1 = doc1_store.nodes.get_node("doc1_node")
         assert node1 is not None
         assert node1.id == "doc1_node"
 
         # Verify doc1_store cannot get doc2 node (should be filtered out)
-        node2 = doc1_store.nodes.get_node("doc2_node")  # type: ignore[attr-defined]
+        node2 = doc1_store.nodes.get_node("doc2_node")
         assert node2 is None  # Should be filtered out
 
     def test_cross_document_store(self, storage_backend: StorageBackend) -> None:
@@ -233,11 +234,11 @@ class TestDocumentStoreMethods:
                 "path": "0",
             },
         ]
-        cross_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
+        cross_store.nodes.add_batch(nodes)
 
         # Should be able to access both documents
-        node1 = cross_store.nodes.get_node("doc1_node")  # type: ignore[attr-defined]
+        node1 = cross_store.nodes.get_node("doc1_node")
         assert node1 is not None
 
-        node2 = cross_store.nodes.get_node("doc2_node")  # type: ignore[attr-defined]
+        node2 = cross_store.nodes.get_node("doc2_node")
         assert node2 is not None

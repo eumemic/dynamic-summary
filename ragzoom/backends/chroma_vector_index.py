@@ -24,7 +24,7 @@ try:
     logging.getLogger("chromadb").setLevel(logging.WARNING)
     logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
     logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
-    import chromadb  # type: ignore
+    import chromadb
 except Exception as e:  # pragma: no cover - optional dependency
     raise ImportError(
         "chromadb is not installed. Install with `pip install chromadb`."
@@ -83,8 +83,8 @@ class ChromaVectorIndex:
             where=where_param,  # type: ignore[arg-type]
         )
         # Mypy types for chroma response are loose; cast progressively
-        ids = (res.get("ids") or [[]])[0] if res else []  # type: ignore[index]
-        dists = (res.get("distances") or [[]])[0] if res else []  # type: ignore[index]
+        ids = (res.get("ids") or [[]])[0] if res else []
+        dists = (res.get("distances") or [[]])[0] if res else []
         metas = cast(
             list[list[dict[str, str | int | float | bool | None]]],
             res.get("metadatas", [[]]) if res else [[]],

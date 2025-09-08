@@ -1,6 +1,7 @@
 """Test Phase 5 entry point isolation (CLI commands with DocumentStore)."""
 
-from typing import cast
+from collections.abc import Sequence
+from typing import Protocol, cast
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
@@ -9,6 +10,16 @@ from numpy.typing import NDArray
 
 from ragzoom.cli import cli
 from ragzoom.contracts.storage_backend import StorageBackend
+
+
+class _VectorIndexLike(Protocol):
+    def upsert(
+        self, items: list[tuple[str, Sequence[float], dict[str, object]]]
+    ) -> None: ...
+
+
+class _HasVectorIndex(Protocol):
+    vector_index: _VectorIndexLike
 
 
 class TestCLIPinCommandIsolation:
@@ -84,7 +95,7 @@ class TestCLIPinCommandIsolation:
 
         # Upsert embeddings for both nodes via storage backend
         # Type ignore for vector_index access (backend-agnostic tests assume SQLite)
-        storage_backend.vector_index.upsert(  # type: ignore[attr-defined]  # type: ignore[attr-defined]
+        cast(_HasVectorIndex, storage_backend).vector_index.upsert(
             [
                 (
                     "doc1_node",
@@ -114,8 +125,8 @@ class TestCLIPinCommandIsolation:
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
-            # Return the doc-scoped store when requested for doc1
-            mock_create_store.return_value = doc1_store
+            # Return the backend; CLI will scope per document internally
+            mock_create_store.return_value = storage_backend
 
             # Pin a node from doc1 with explicit document ID
             result = runner.invoke(cli, ["pin", "doc1_node", "--document-id", "doc1"])
@@ -163,7 +174,7 @@ class TestCLIPinCommandIsolation:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embedding
-        storage_backend.vector_index.upsert(  # type: ignore[attr-defined]
+        cast(_HasVectorIndex, storage_backend).vector_index.upsert(
             [
                 (
                     "doc1_node",
@@ -182,7 +193,7 @@ class TestCLIPinCommandIsolation:
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
-            mock_create_store.return_value = doc_store
+            mock_create_store.return_value = storage_backend
 
             # Pin without document ID - should auto-detect
             result = runner.invoke(cli, ["pin", "doc1_node"])
@@ -233,7 +244,7 @@ class TestCLIPinCommandIsolation:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embedding
-        storage_backend.vector_index.upsert(  # type: ignore[attr-defined]
+        cast(_HasVectorIndex, storage_backend).vector_index.upsert(
             [
                 (
                     "doc1_node",
@@ -261,7 +272,7 @@ class TestCLIPinCommandIsolation:
                 embedding_model="text-embedding-3-small",
                 summary_model="gpt-4o-mini",
             )
-            mock_create_store.return_value = doc2_store
+            mock_create_store.return_value = storage_backend
 
             # Try to pin with wrong document ID
             result = runner.invoke(cli, ["pin", "doc1_node", "--document-id", "doc2"])
@@ -289,7 +300,7 @@ class TestCLIPinCommandIsolation:
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
-            mock_create_store.return_value = doc_store
+            mock_create_store.return_value = storage_backend
 
             # Try to pin non-existent node
             result = runner.invoke(cli, ["pin", "nonexistent_node"])

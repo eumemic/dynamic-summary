@@ -11,12 +11,13 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.document_store import DocumentStore
 from ragzoom.retrieval.coverage_builder import CoverageBuilder
 
 
 class TestContaminationBug:
     @pytest.fixture
-    def doc1_store(self, storage_backend: StorageBackend) -> object:
+    def doc1_store(self, storage_backend: StorageBackend) -> DocumentStore:
         doc_store = storage_backend.for_document("doc1")
 
         # Set up document metadata
@@ -31,7 +32,7 @@ class TestContaminationBug:
         return doc_store
 
     @pytest.fixture
-    def doc2_store(self, storage_backend: StorageBackend) -> object:
+    def doc2_store(self, storage_backend: StorageBackend) -> DocumentStore:
         doc_store = storage_backend.for_document("doc2")
 
         # Set up document metadata
@@ -46,7 +47,7 @@ class TestContaminationBug:
         return doc_store
 
     def test_document_isolation_prevents_contamination(
-        self, doc1_store: object, doc2_store: object
+        self, doc1_store: DocumentStore, doc2_store: DocumentStore
     ) -> None:
         """Test that coverage builder only includes nodes from the specified document."""
         # Add nodes for doc1
@@ -92,8 +93,8 @@ class TestContaminationBug:
                 "path": "1",
             },
         ]
-        doc1_store.nodes.add_batch(doc1_nodes)  # type: ignore[attr-defined]
-        doc1_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
+        doc1_store.nodes.add_batch(doc1_nodes)
+        doc1_store.nodes.update_parent_references_batch(
             [("doc1_left", "doc1_root"), ("doc1_right", "doc1_root")]
         )
 
@@ -140,13 +141,13 @@ class TestContaminationBug:
                 "path": "1",
             },
         ]
-        doc2_store.nodes.add_batch(doc2_nodes)  # type: ignore[attr-defined]
-        doc2_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
+        doc2_store.nodes.add_batch(doc2_nodes)
+        doc2_store.nodes.update_parent_references_batch(
             [("doc2_left", "doc2_root"), ("doc2_right", "doc2_root")]
         )
 
         # Build coverage map for doc1_left using document-scoped store
-        coverage_builder = CoverageBuilder(doc1_store)  # type: ignore[arg-type]
+        coverage_builder = CoverageBuilder(doc1_store)
         coverage_map = coverage_builder.build_coverage_map(["doc1_left"])
 
         # Verify only doc1 nodes are included
@@ -160,7 +161,7 @@ class TestContaminationBug:
         assert "doc2_root" not in coverage_map
 
         # Also test retrieval through document store
-        doc1_nodes_retrieved = doc1_store.nodes.get_all()  # type: ignore[attr-defined]
+        doc1_nodes_retrieved = doc1_store.nodes.get_all()
         doc1_node_ids = {node.id for node in doc1_nodes_retrieved}
 
         assert doc1_node_ids == {"doc1_root", "doc1_left", "doc1_right"}

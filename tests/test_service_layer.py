@@ -29,7 +29,7 @@ class TestDocumentService:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        nodes = [  # type: ignore[var-annotated]
+        nodes = [
             {
                 "node_id": f"n{i}",
                 "text": f"content {i}",
@@ -45,7 +45,7 @@ class TestDocumentService:
         doc_store.nodes.add_batch(nodes)  # type: ignore[arg-type]
 
         # DocumentService expects a Store-like object; using backend directly works here
-        service = DocumentService(storage_backend)  # type: ignore[arg-type]
+        service = DocumentService(storage_backend)
         documents = service.list_documents()
 
         assert len(documents) == 1
@@ -67,7 +67,7 @@ class TestDocumentService:
                 embedding_model="text-embedding-3-small",
                 summary_model="gpt-4o-mini",
             )
-            nodes = [  # type: ignore[assignment]
+            nodes = [
                 {
                     "node_id": f"{d}-leaf-{i}",
                     "text": f"t{i}",
@@ -84,7 +84,7 @@ class TestDocumentService:
         # Pin a node
         storage_backend.node_repo.pin_node("doc-a-leaf-0")  # type: ignore[attr-defined]
 
-        service = DocumentService(storage_backend)  # type: ignore[arg-type]
+        service = DocumentService(storage_backend)
         status = service.get_system_status()
 
         assert isinstance(status, SystemStatus)
@@ -140,7 +140,7 @@ class TestIndexingService:
         with patch(
             "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
         ):
-            service = IndexingService(storage_backend, index_config, operational_config)  # type: ignore[arg-type]
+            service = IndexingService(storage_backend, index_config, operational_config)
             result = service.index_document("test text", document_id="test-doc")
 
             assert isinstance(result, IndexingResult)

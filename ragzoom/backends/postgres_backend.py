@@ -71,8 +71,9 @@ class PostgresStorageBackend(StorageBackend):
         return _NoOpLock()
 
     # Multi-document API
+    # jscpd:ignore-start - delegation mirrors repository API for compatibility
     def list_documents(self) -> list[Document]:
-        return self.doc_repo.list_documents()  # type: ignore[return-value]
+        return self.doc_repo.list_documents()
 
     def add_document(
         self,
@@ -83,7 +84,6 @@ class PostgresStorageBackend(StorageBackend):
         embedding_model: str,
         summary_model: str,
     ) -> DocumentStore:
-        # jscpd:ignore-start - delegation mirrors repository API for compatibility
         self.doc_repo.add_document(
             document_id,
             file_path,

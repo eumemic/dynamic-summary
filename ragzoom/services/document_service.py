@@ -118,7 +118,7 @@ class DocumentService:
         for doc in self.store.list_documents():
             ds = self.store.for_document(doc.id)
             if ds.nodes.get_node(node_id):
-                ds._node_repo.pin_node(node_id)  # type: ignore[attr-defined]
+                ds._node_repo.pin_node(node_id)
                 return
         raise ValueError(f"Node {node_id} not found")
 

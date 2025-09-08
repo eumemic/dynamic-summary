@@ -12,12 +12,13 @@ from numpy.typing import NDArray
 
 from ragzoom.config import QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.document_store import DocumentStore
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 
 
 class TestZeroScoreCollapse:
     @pytest.fixture
-    def doc_store(self, storage_backend: StorageBackend) -> object:
+    def doc_store(self, storage_backend: StorageBackend) -> DocumentStore:
         doc_store = storage_backend.for_document("test-doc")
 
         # Set up document metadata
@@ -31,7 +32,7 @@ class TestZeroScoreCollapse:
 
         return doc_store
 
-    def test_zero_score_collapse_empty_result(self, doc_store: object) -> None:
+    def test_zero_score_collapse_empty_result(self, doc_store: DocumentStore) -> None:
         """When budget can't fit the leaf, algorithm should select root.
 
         Tree:
@@ -86,8 +87,8 @@ class TestZeroScoreCollapse:
                 "path": "",
             },
         ]
-        doc_store.nodes.add_batch(nodes)  # type: ignore[attr-defined]
-        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
             [("leaf", "parent"), ("parent", "root")]
         )
 
@@ -100,7 +101,7 @@ class TestZeroScoreCollapse:
         # Load nodes and find root
         nodes_map: dict[str, object] = {}
         for nid in coverage_map:
-            node = doc_store.nodes.get_node(nid)  # type: ignore[attr-defined]
+            node = doc_store.nodes.get_node(nid)
             if node:
                 nodes_map[nid] = node
         root_id = next(
@@ -127,7 +128,7 @@ class TestZeroScoreCollapse:
         total_tokens = sum(ni.token_cost for ni in result.node_infos)
         assert total_tokens == root_cost
 
-    def test_zero_score_collapse_to_root(self, doc_store: object) -> None:
+    def test_zero_score_collapse_to_root(self, doc_store: DocumentStore) -> None:
         """Deeper tree: with constrained budget, algorithm collapses to root."""
         # Seed deeper left-chain tree with explicit token counts (single child each level)
         seeds: list[
@@ -204,8 +205,8 @@ class TestZeroScoreCollapse:
                 "path": "",
             },
         ]
-        doc_store.nodes.add_batch(seeds)  # type: ignore[attr-defined]
-        doc_store.nodes.update_parent_references_batch(  # type: ignore[attr-defined]
+        doc_store.nodes.add_batch(seeds)
+        doc_store.nodes.update_parent_references_batch(
             [
                 ("leaf", "level3"),
                 ("level3", "level2"),
@@ -228,7 +229,7 @@ class TestZeroScoreCollapse:
 
         nodes_map: dict[str, object] = {}
         for nid in coverage_map:
-            node = doc_store.nodes.get_node(nid)  # type: ignore[attr-defined]
+            node = doc_store.nodes.get_node(nid)
             if node:
                 nodes_map[nid] = node
         root_id = next(
