@@ -75,7 +75,7 @@ class TestChunkSizeRegressionSQLite:
 
         # Check each chunk's token size
         for i, chunk in enumerate(chunks):
-            token_count = len(tokenizer.encode(chunk))
+            token_count = tokenizer.count_tokens(chunk)
 
             # Allow more tolerance due to boundary splitting
             # The splitter respects sentence boundaries, so chunks can be smaller
@@ -94,7 +94,9 @@ class TestChunkSizeRegressionSQLite:
                 ), f"Last chunk {i} has {token_count} tokens, should be > 0 and <= {max_tokens}"
 
         # Check average chunk size - should be reasonable but can be lower due to boundaries
-        avg_tokens = sum(len(tokenizer.encode(chunk)) for chunk in chunks) / len(chunks)
+        avg_tokens = sum(tokenizer.count_tokens(chunk) for chunk in chunks) / len(
+            chunks
+        )
         assert (
             50 <= avg_tokens <= config.target_chunk_tokens * 1.2
         ), f"Average chunk size {avg_tokens} tokens is outside reasonable range (expected 50-{int(config.target_chunk_tokens * 1.2)})"
@@ -179,7 +181,7 @@ class TestChunkSizeRegressionSQLite:
 
         # Check each leaf node's token count
         for i, node in enumerate(leaf_nodes):
-            token_count = len(tokenizer.encode(node.text))
+            token_count = tokenizer.count_tokens(node.text)
 
             # Allow more flexibility for the last chunk which might be smaller
             if i == len(leaf_nodes) - 1:
@@ -210,7 +212,7 @@ class TestChunkSizeRegressionSQLite:
         ]
 
         for node in parent_nodes:
-            token_count = len(tokenizer.encode(node.text))
+            token_count = tokenizer.count_tokens(node.text)
 
             # Parent summaries should also be roughly the same size
             max_summary_tokens = (
