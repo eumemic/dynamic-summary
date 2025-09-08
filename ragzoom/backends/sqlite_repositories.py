@@ -299,6 +299,54 @@ class SqliteNodeRepository:
             )
             return rows  # type: ignore[return-value]
 
+    def count_leaves_for_document(self, document_id: str | None) -> int:
+        """Return count of leaf nodes for a document."""
+        with self.SessionLocal() as session:
+            stmt = (
+                select(func.count())
+                .select_from(SqliteTreeNode)
+                .where(
+                    SqliteTreeNode.left_child_id.is_(None),
+                    SqliteTreeNode.right_child_id.is_(None),
+                )
+            )
+            if document_id:
+                stmt = stmt.where(SqliteTreeNode.document_id == document_id)
+            return int(session.execute(stmt).scalar_one() or 0)
+
+    def max_height_for_document(self, document_id: str | None) -> int:
+        """Return maximum node height for a document."""
+        with self.SessionLocal() as session:
+            stmt = select(func.max(SqliteTreeNode.height))
+            if document_id:
+                stmt = stmt.where(SqliteTreeNode.document_id == document_id)
+            result = session.execute(stmt).scalar_one()
+            return int(result or 0)
+
+    def get_pinned_nodes_for_document(
+        self, document_id: str, depth_max: int | None = None
+    ) -> list[TreeNode]:
+        with self.SessionLocal() as session:
+            stmt = select(SqliteTreeNode).where(
+                SqliteTreeNode.is_pinned == 1,
+                SqliteTreeNode.document_id == document_id,
+            )
+            rows = session.execute(stmt).scalars().all()
+            if depth_max is None:
+                return rows  # type: ignore[return-value]
+            return [r for r in rows if len(r.path) <= depth_max]  # type: ignore[misc]
+
+    def count_pinned_for_document(self, document_id: str | None) -> int:
+        with self.SessionLocal() as session:
+            stmt = (
+                select(func.count())
+                .select_from(SqliteTreeNode)
+                .where(SqliteTreeNode.is_pinned == 1)
+            )
+            if document_id:
+                stmt = stmt.where(SqliteTreeNode.document_id == document_id)
+            return int(session.execute(stmt).scalar_one() or 0)
+
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         with self.SessionLocal() as session:
             stmt = select(SqliteTreeNode).where(SqliteTreeNode.is_pinned == 1)

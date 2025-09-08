@@ -122,6 +122,28 @@ class DocumentNodeRepository:
         # Fallback: materialize and count (less efficient)
         return len(self._repo.get_all_nodes_for_document(self.document_id))
 
+    def leaf_count(self) -> int:
+        """Get count of leaf nodes for this document efficiently."""
+        counter = getattr(self._repo, "count_leaves_for_document", None)
+        if callable(counter):
+            return int(counter(self.document_id))
+        return len(self.get_leaves())
+
+    def max_height(self) -> int:
+        """Get maximum height for nodes in this document efficiently."""
+        getter = getattr(self._repo, "max_height_for_document", None)
+        if callable(getter):
+            return int(getter(self.document_id))
+        nodes = self.get_all()
+        return max((n.height for n in nodes), default=0)
+
+    def pinned_count(self) -> int:
+        """Get count of pinned nodes for this document efficiently."""
+        counter = getattr(self._repo, "count_pinned_for_document", None)
+        if callable(counter):
+            return int(counter(self.document_id))
+        return len(self._repo.get_pinned_nodes(None))
+
     def get_leaves(self) -> list[TreeNode]:
         """Get all leaf nodes for this document."""
         all_leaves = self._repo.get_leaf_nodes()
@@ -426,9 +448,12 @@ class DocumentStore:
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         """Get all pinned nodes for this document only."""
-        # Get all pinned nodes from repository
+        # Prefer backend-optimized query if available
+        getter = getattr(self._node_repo, "get_pinned_nodes_for_document", None)
+        if callable(getter) and self.document_id is not None:
+            return list(getter(self.document_id, depth_max))
+        # Fallback: get all pinned nodes and filter by document
         all_pinned = self._node_repo.get_pinned_nodes(depth_max)
-        # Filter to this document only
         return [node for node in all_pinned if node.document_id == self.document_id]
 
     @staticmethod

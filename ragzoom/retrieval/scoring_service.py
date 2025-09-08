@@ -97,9 +97,10 @@ class ScoringService:
         # For nodes without embeddings, use search service fallback
         if nodes_without_embeddings:
             try:
-                # Get total node count for this document to ensure we get all similarities
-                doc_nodes = self.store.nodes.get_all()
-                total_nodes = len(doc_nodes)
+                # Get total node count efficiently; fallback to materializing if unavailable
+                total_nodes = getattr(
+                    self.store.nodes, "count", lambda: len(self.store.nodes.get_all())
+                )()
 
                 # Search all vectors in this document via the vector index
                 search_results = self.store.search.similar(

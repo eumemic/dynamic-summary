@@ -513,6 +513,47 @@ class NodeRepository(BaseRepository):
 
             return nodes
 
+    def count_leaves_for_document(self, document_id: str | None) -> int:
+        """Return count of leaf nodes for a document (fast COUNT(*))"""
+        with self.SessionLocal() as session:
+            q = session.query(func.count(TreeNode.id)).filter(
+                TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
+            )
+            if document_id:
+                q = q.filter(TreeNode.document_id == document_id)
+            return int(q.scalar() or 0)
+
+    def max_height_for_document(self, document_id: str | None) -> int:
+        """Return maximum node height for a document (fast MAX(height))"""
+        with self.SessionLocal() as session:
+            q = session.query(func.max(TreeNode.height))
+            if document_id:
+                q = q.filter(TreeNode.document_id == document_id)
+            return int(q.scalar() or 0)
+
+    def get_pinned_nodes_for_document(
+        self, document_id: str, depth_max: int | None = None
+    ) -> list[TreeNode]:
+        """Return pinned nodes filtered by a specific document."""
+        with self.SessionLocal() as session:
+            q = session.query(TreeNode).filter(
+                TreeNode.is_pinned == 1, TreeNode.document_id == document_id
+            )
+            if depth_max is not None:
+                q = q.filter(func.length(TreeNode.path) <= depth_max)
+            nodes = q.all()
+            for node in nodes:
+                self._force_load_and_detach(session, node)
+            return nodes
+
+    def count_pinned_for_document(self, document_id: str | None) -> int:
+        """Return count of pinned nodes for a document."""
+        with self.SessionLocal() as session:
+            q = session.query(func.count(TreeNode.id)).filter(TreeNode.is_pinned == 1)
+            if document_id:
+                q = q.filter(TreeNode.document_id == document_id)
+            return int(q.scalar() or 0)
+
     def get_all_nodes_for_document_paginated(
         self, document_id: str | None, *, page_size: int = 1000
     ) -> list[list[TreeNode]]:

@@ -51,7 +51,8 @@ class DocumentService:
         out: list[DocumentInfo] = []
         for doc in self.store.list_documents():
             ds = self.store.for_document(doc.id)
-            node_count = len(ds.nodes.get_all())
+            # Use efficient count to avoid loading all nodes
+            node_count = getattr(ds.nodes, "count", lambda: len(ds.nodes.get_all()))()
             out.append(
                 DocumentInfo(
                     document_id=doc.id,
@@ -71,14 +72,11 @@ class DocumentService:
         pinned_nodes = 0
         for doc in self.store.list_documents():
             ds = self.store.for_document(doc.id)
-            nodes = ds.nodes.get_all()
-            total_nodes += len(nodes)
-            leaf_nodes += sum(
-                1 for n in nodes if n.left_child_id is None and n.right_child_id is None
-            )
-            if nodes:
-                tree_depth = max(tree_depth, max(n.height for n in nodes))
-            pinned_nodes += len(ds.get_pinned_nodes(None))
+            # Use repository-level aggregations when available
+            total_nodes += ds.nodes.count()
+            leaf_nodes += ds.nodes.leaf_count()
+            tree_depth = max(tree_depth, ds.nodes.max_height())
+            pinned_nodes += ds.nodes.pinned_count()
 
         return SystemStatus(
             total_nodes=total_nodes,
