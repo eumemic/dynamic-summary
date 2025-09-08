@@ -12,7 +12,7 @@ DEFAULT_DATABASE_NAME = "ragzoom"
 DEFAULT_DATABASE_URL_TEMPLATE = "postgresql+psycopg://localhost/{database_name}"
 DEFAULT_CONTAINER_NAME = "ragzoom-postgres"
 DEFAULT_DATA_DIR_NAME = "data"
-DEFAULT_VECTOR_DIR_NAME = "vectors"
+DEFAULT_VECTOR_DIR_NAME = "chroma"
 
 
 def _ensure_str_path(p: Path) -> str:
@@ -128,9 +128,8 @@ def get_default_sqlite_path(base_dir: Path | None = None) -> Path:
     else:
         data_dir = Path(base_dir) / DEFAULT_DATA_DIR_NAME
     data_dir.mkdir(parents=True, exist_ok=True)
-    wt = get_worktree_id()
-    suffix = f"_{wt.replace('-', '_')}" if wt else ""
-    return data_dir / f"{DEFAULT_DATABASE_NAME}{suffix}.db"
+    # Use a stable, implementation-named file; avoid redundant worktree suffix
+    return data_dir / "sqlite.db"
 
 
 def get_default_sqlite_url(base_dir: Path | None = None) -> str:
