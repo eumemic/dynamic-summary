@@ -7,7 +7,6 @@ from ragzoom.assemble import Assembler
 from ragzoom.config import OperationalConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.retrieve import Retriever
-from ragzoom.store import StoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ class QueryService:
 
     def __init__(
         self,
-        store: StoreManager | StorageBackend,
+        store: StorageBackend,
         query_config: QueryConfig,
         operational_config: OperationalConfig,
     ):
