@@ -588,50 +588,18 @@ def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
             operational_config, embedding_model=index_config.embedding_model
         )
 
-        # Detect whether we have a system-wide Store or a DocumentStore
-        is_document_store = (
-            hasattr(store, "document_id")
-            and hasattr(store, "nodes")
-            and not hasattr(store, "node_repo")
-        )
-
-        # If document_id not provided, detect it
-        if not document_id:
-            if is_document_store:
-                # DocumentStore: use its scoped document
-                document_id = getattr(store, "document_id", None)
-                if document_id:
-                    click.echo(f"Auto-detected document: {document_id}")
-            else:
-                # Store-like object: look up node globally
-                node = store.node_repo.get_node(node_id)  # type: ignore[union-attr]
-                if not node:
-                    click.echo(f"❌ Node {node_id} not found")
-                    sys.exit(1)
-                document_id = node.document_id
-                if document_id:
-                    click.echo(f"Auto-detected document: {document_id}")
-
-        # Use document-scoped store for verification
-        document_store = store if is_document_store else store.for_document(document_id)
-
-        # Verify the node belongs to this document
-        node = document_store.nodes.get_node(node_id)  # type: ignore[union-attr]
-        if not node:
-            click.echo(
-                f"❌ Node {node_id} not found"
-                + (f" in document {document_id}" if document_id else "")
-            )
-            sys.exit(1)
-
-        # Pin the node (works for both Store and DocumentStore cases)
-        if is_document_store:
-            # DocumentStore: use underlying repository
-            document_store._node_repo.pin_node(node_id)  # type: ignore[union-attr]
-        else:
-            # Use DocumentService path (keeps CLI test mocks intact)
-            document_service = DocumentService(store)
-            document_service.pin_node(node_id)
+        document_service = DocumentService(store)
+        # If a document was provided, verify the node belongs to it
+        if document_id:
+            ds = store.for_document(document_id)
+            if not ds.nodes.get_node(node_id):
+                click.echo(
+                    f"❌ Node {node_id} not found"
+                    + (f" in document {document_id}" if document_id else "")
+                )
+                sys.exit(1)
+        # Delegate to service to find and pin the node
+        document_service.pin_node(node_id)
 
         click.echo(f"✅ Node {node_id} pinned successfully!")
 
@@ -760,22 +728,25 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
             operational_config, embedding_model=index_config.embedding_model
         )
 
-        # Get all nodes via repository (backend-agnostic)
+        # Get all nodes via document-scoped stores (backend-agnostic)
         nodes_data = []
-        all_nodes = store.node_repo.get_all_nodes_for_document(None)  # type: ignore[union-attr]
-        for node in all_nodes:
-            node_dict = {
-                "id": node.id,
-                "parent_id": node.parent_id,
-                "height": node.height,
-                "span_start": node.span_start,
-                "span_end": node.span_end,
-                "is_leaf": (node.left_child_id is None and node.right_child_id is None),
-                "text_preview": (
-                    node.text[:100] + "..." if len(node.text) > 100 else node.text
-                ),
-            }
-            nodes_data.append(node_dict)
+        for doc in store.list_documents():
+            ds = store.for_document(doc.id)
+            for node in ds.nodes.get_all():
+                node_dict = {
+                    "id": node.id,
+                    "parent_id": node.parent_id,
+                    "height": node.height,
+                    "span_start": node.span_start,
+                    "span_end": node.span_end,
+                    "is_leaf": (
+                        node.left_child_id is None and node.right_child_id is None
+                    ),
+                    "text_preview": (
+                        node.text[:100] + "..." if len(node.text) > 100 else node.text
+                    ),
+                }
+                nodes_data.append(node_dict)
 
         # Write output
         output_path = Path(output_file)
