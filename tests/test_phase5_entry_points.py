@@ -1,7 +1,6 @@
 """Test Phase 5 entry point isolation (CLI commands with DocumentStore)."""
 
-from collections.abc import Sequence
-from typing import Protocol, cast
+from typing import cast
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
@@ -10,16 +9,6 @@ from numpy.typing import NDArray
 
 from ragzoom.cli import cli
 from ragzoom.contracts.storage_backend import StorageBackend
-
-
-class _VectorIndexLike(Protocol):
-    def upsert(
-        self, items: list[tuple[str, Sequence[float], dict[str, object]]]
-    ) -> None: ...
-
-
-class _HasVectorIndex(Protocol):
-    vector_index: _VectorIndexLike
 
 
 class TestCLIPinCommandIsolation:
@@ -93,9 +82,8 @@ class TestCLIPinCommandIsolation:
         ]
         doc2_store.nodes.add_batch(nodes_doc2)
 
-        # Upsert embeddings for both nodes via storage backend
-        # Type ignore for vector_index access (backend-agnostic tests assume SQLite)
-        cast(_HasVectorIndex, storage_backend).vector_index.upsert(
+        # Upsert embeddings via the public DocumentStore search API
+        doc1_store.search.upsert_vectors(
             [
                 (
                     "doc1_node",
@@ -108,6 +96,10 @@ class TestCLIPinCommandIsolation:
                         "is_leaf": 1,
                     },
                 ),
+            ]
+        )
+        doc2_store.search.upsert_vectors(
+            [
                 (
                     "doc2_node",
                     [0.5] * 1536,
@@ -118,7 +110,7 @@ class TestCLIPinCommandIsolation:
                         "document_id": "doc2",
                         "is_leaf": 1,
                     },
-                ),
+                )
             ]
         )
 
@@ -174,7 +166,7 @@ class TestCLIPinCommandIsolation:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embedding
-        cast(_HasVectorIndex, storage_backend).vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "doc1_node",
@@ -244,7 +236,7 @@ class TestCLIPinCommandIsolation:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embedding
-        cast(_HasVectorIndex, storage_backend).vector_index.upsert(
+        doc_store.search.upsert_vectors(
             [
                 (
                     "doc1_node",
@@ -423,7 +415,7 @@ class SkipTestQueryVisualizationIsolation:
         doc2_store.nodes.add_batch(doc2_nodes)
 
         # Upsert embeddings for all nodes
-        storage_backend.vector_index.upsert(  # type: ignore[attr-defined]
+        doc1_store.search.upsert_vectors(
             [
                 (
                     "doc1_root",
@@ -458,6 +450,10 @@ class SkipTestQueryVisualizationIsolation:
                         "is_leaf": 1,
                     },
                 ),
+            ]
+        )
+        doc2_store.search.upsert_vectors(
+            [
                 (
                     "doc2_root",
                     [0.5] * 1536,
@@ -468,7 +464,7 @@ class SkipTestQueryVisualizationIsolation:
                         "document_id": "doc2",
                         "is_leaf": 1,
                     },
-                ),
+                )
             ]
         )
 
