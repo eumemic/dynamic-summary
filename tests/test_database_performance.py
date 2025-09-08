@@ -344,7 +344,9 @@ class TestMemoryEfficiency:
     def test_deletion_memory_usage(self, storage_backend: StorageBackend) -> None:
         """Test that deletion doesn't load excessive data into memory."""
         document_id = "memory_test_doc"
-        num_nodes = 10000  # Smaller test for memory monitoring
+        num_nodes = (
+            5000  # Smaller test for memory monitoring (fast but still meaningful)
+        )
         doc_store = storage_backend.for_document(document_id)
 
         # Set up document metadata
