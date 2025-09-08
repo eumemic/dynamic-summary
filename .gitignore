@@ -90,3 +90,6 @@ jscpd-report.json
 .jscpd/
 report/
 /results/
+
+# Local data (DB and vector index)
+data/
