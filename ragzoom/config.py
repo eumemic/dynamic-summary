@@ -416,12 +416,12 @@ class OperationalConfig:
 
             self.database_url = get_worktree_database_url(self.database_url)
 
-        # Require chroma when selected; no automatic fallback
-        if self.vector_backend == "chroma":
+        # Require chroma only when using the SQLite backend with chroma selected
+        if self.backend == "sqlite" and self.vector_backend == "chroma":
             if importlib.util.find_spec("chromadb") is None:
                 raise ImportError(
-                    "chromadb is not installed. Install with `pip install chromadb`, "
-                    "or set RAGZOOM_VECTOR_BACKEND=python to use the pure-Python index."
+                    "chromadb is not installed but RAGZOOM_VECTOR_BACKEND=chroma was selected. "
+                    "Install with `pip install chromadb` or set RAGZOOM_VECTOR_BACKEND=python."
                 )
 
     def replace(
