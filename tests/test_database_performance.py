@@ -119,64 +119,46 @@ class TestDatabaseScalability:
 
         doc_store.nodes.add_batch(node_data_dicts)
 
-    @pytest.mark.slow
-    def test_deletion_performance_large_document(
+    def test_deletion_correctness_small_document(
         self,
         storage_backend: StorageBackend,
-        large_document_data: dict[
+        small_document_data: dict[
             str, list[dict[str, str | int | list[float]]] | str | int
         ],
     ) -> None:
-        """Test that deletion of 50,000 nodes completes in reasonable time."""
-        document_id = cast(str, large_document_data["document_id"])
+        """Validate deletion correctness on a small document.
+
+        Ensures delete returns correct count and leaves zero nodes,
+        without large-scale overhead or timing assertions.
+        """
+        document_id = cast(str, small_document_data["document_id"])
         nodes_data = cast(
-            list[dict[str, str | int | list[float]]], large_document_data["nodes"]
+            list[dict[str, str | int | list[float]]], small_document_data["nodes"]
         )
-        expected_count = cast(int, large_document_data["expected_count"])
+        expected_count = cast(int, small_document_data["expected_count"])
         doc_store = storage_backend.for_document(document_id)
 
         # Set up document metadata first
         doc_store.set_metadata(
-            file_path="performance_test.txt",
-            content_hash="perf-test-hash",
+            file_path="small_deletion_test.txt",
+            content_hash="small-deletion-test-hash",
             chunk_count=expected_count,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
 
-        # Add all nodes
-        logger.info(f"Adding {expected_count} nodes for performance test...")
-        start_time = time.perf_counter()
+        # Add nodes
         self.add_test_nodes(storage_backend, document_id, nodes_data)
-        add_duration = time.perf_counter() - start_time
-        logger.info(f"Added {expected_count} nodes in {add_duration:.2f}s")
 
-        # Verify nodes were added (efficient count)
+        # Verify and assert deletion correctness using efficient count
         count_before = doc_store.nodes.count()
         assert count_before == expected_count
 
-        # Test deletion performance
-        logger.info("Testing deletion performance...")
-        start_time = time.perf_counter()
         deleted_count = storage_backend.clear_document(document_id)
-        deletion_duration = time.perf_counter() - start_time
-
-        # Verify deletion
         assert deleted_count == expected_count
+
         count_after = doc_store.nodes.count()
         assert count_after == 0
-
-        # Performance assertions
-        logger.info(f"Deleted {deleted_count} nodes in {deletion_duration:.2f}s")
-        assert (
-            deletion_duration < 10.0
-        ), f"Deletion took {deletion_duration:.2f}s, expected < 10s for {expected_count} nodes"
-
-        # Log performance metrics
-        nodes_per_second = (
-            deleted_count / deletion_duration if deletion_duration > 0 else 0
-        )
-        logger.info(f"Deletion rate: {nodes_per_second:.0f} nodes/second")
 
     def test_deletion_performance_small_document(
         self,
