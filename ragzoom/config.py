@@ -416,10 +416,13 @@ class OperationalConfig:
 
             self.database_url = get_worktree_database_url(self.database_url)
 
-        # If chroma is not available, fall back to python vector index
+        # Require chroma when selected; no automatic fallback
         if self.vector_backend == "chroma":
             if importlib.util.find_spec("chromadb") is None:
-                self.vector_backend = "python"
+                raise ImportError(
+                    "chromadb is not installed. Install with `pip install chromadb`, "
+                    "or set RAGZOOM_VECTOR_BACKEND=python to use the pure-Python index."
+                )
 
     def replace(
         self,

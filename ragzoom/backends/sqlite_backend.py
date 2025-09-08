@@ -100,24 +100,20 @@ class SQLiteStorageBackend(StorageBackend):
                 persist_dir = os.path.join(db_dir, DEFAULT_VECTOR_DIR_NAME)
 
         if backend == "chroma":
+            from ragzoom.backends.chroma_vector_index import ChromaVectorIndex
+
+            # Chroma requires a directory path
+            if persist_dir is None:
+                base = str(get_default_vector_dir(None))
+            else:
+                base = persist_dir
             try:
-                from ragzoom.backends.chroma_vector_index import ChromaVectorIndex
+                import os
 
-                # Chroma requires a directory path
-                if persist_dir is None:
-                    base = str(get_default_vector_dir(None))
-                else:
-                    base = persist_dir
-                try:
-                    import os
-
-                    os.makedirs(base, exist_ok=True)
-                except Exception:
-                    pass
-                return ChromaVectorIndex(base)  # type: ignore[return-value]
+                os.makedirs(base, exist_ok=True)
             except Exception:
-                # Fallback to python backend
                 pass
+            return ChromaVectorIndex(base)  # type: ignore[return-value]
 
         # Default to PythonVectorIndex (optionally persistent)
         return PythonVectorIndex(persist_dir)
