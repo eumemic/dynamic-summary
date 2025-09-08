@@ -11,7 +11,7 @@ from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.orm import Session
 
 from ragzoom.backends.sqlite_db import (
@@ -40,43 +40,74 @@ class SqliteNodeRepository:
             session = self.SessionLocal()
             own_session = True
         try:
-            created = []
-            for data in nodes_data:
-                node = SqliteTreeNode(
-                    id=str(data["node_id"]),
-                    parent_id=cast(str | None, data.get("parent_id")),
-                    left_child_id=cast(str | None, data.get("left_child_id")),
-                    right_child_id=cast(str | None, data.get("right_child_id")),
-                    span_start=cast(int, data["span_start"]),
-                    span_end=cast(int, data["span_end"]),
-                    text=cast(str, data["text"]),
-                    token_count=cast(int, data.get("token_count", 0)),
-                    document_id=cast(str | None, data.get("document_id")),
-                    preceding_neighbor_id=cast(
-                        str | None, data.get("preceding_neighbor_id")
-                    ),
-                    following_neighbor_id=cast(
-                        str | None, data.get("following_neighbor_id")
-                    ),
-                    height=cast(int, data.get("height", 0)),
-                    path=cast(str, data.get("path", "")),
-                )
-                session.add(node)
-                created.append(node)
-            if own_session:
-                session.commit()
+            # For very large batches, use Core bulk insert for speed and lower overhead
+            if len(nodes_data) >= 1000:
+                payload = [
+                    {
+                        "id": str(data["node_id"]),
+                        "parent_id": cast(str | None, data.get("parent_id")),
+                        "left_child_id": cast(str | None, data.get("left_child_id")),
+                        "right_child_id": cast(str | None, data.get("right_child_id")),
+                        "span_start": cast(int, data["span_start"]),
+                        "span_end": cast(int, data["span_end"]),
+                        "text": cast(str, data["text"]),
+                        "token_count": cast(int, data.get("token_count", 0)),
+                        "document_id": cast(str | None, data.get("document_id")),
+                        "preceding_neighbor_id": cast(
+                            str | None, data.get("preceding_neighbor_id")
+                        ),
+                        "following_neighbor_id": cast(
+                            str | None, data.get("following_neighbor_id")
+                        ),
+                        "height": cast(int, data.get("height", 0)),
+                        "path": cast(str, data.get("path", "")),
+                    }
+                    for data in nodes_data
+                ]
+                session.execute(insert(SqliteTreeNode), payload)
+                if own_session:
+                    session.commit()
+                # For massive inserts, callers typically don't use returned objects; return empty list
+                return []
+            else:
+                # Build ORM objects and add in one call for moderate batches
+                created = [
+                    SqliteTreeNode(
+                        id=str(data["node_id"]),
+                        parent_id=cast(str | None, data.get("parent_id")),
+                        left_child_id=cast(str | None, data.get("left_child_id")),
+                        right_child_id=cast(str | None, data.get("right_child_id")),
+                        span_start=cast(int, data["span_start"]),
+                        span_end=cast(int, data["span_end"]),
+                        text=cast(str, data["text"]),
+                        token_count=cast(int, data.get("token_count", 0)),
+                        document_id=cast(str | None, data.get("document_id")),
+                        preceding_neighbor_id=cast(
+                            str | None, data.get("preceding_neighbor_id")
+                        ),
+                        following_neighbor_id=cast(
+                            str | None, data.get("following_neighbor_id")
+                        ),
+                        height=cast(int, data.get("height", 0)),
+                        path=cast(str, data.get("path", "")),
+                    )
+                    for data in nodes_data
+                ]
+                session.add_all(created)
+                if own_session:
+                    session.commit()
 
-            # Ensure attributes are loaded and detach before returning
-            for n in created:
-                try:
-                    session.refresh(n)
-                    session.expunge(n)
-                except Exception:
-                    # Best effort; tests mainly need scalar attributes
-                    pass
+                # Ensure attributes are loaded and detach before returning
+                for n in created:
+                    try:
+                        session.refresh(n)
+                        session.expunge(n)
+                    except Exception:
+                        # Best effort; tests mainly need scalar attributes
+                        pass
 
-            # Cache invalidation is minimal here; callers rarely read immediately
-            return created  # type: ignore[return-value]
+                # Cache invalidation is minimal here; callers rarely read immediately
+                return created  # type: ignore[return-value]
         finally:
             if own_session:
                 session.close()
@@ -210,23 +241,33 @@ class SqliteNodeRepository:
         if page_size <= 0:
             raise ValueError("page_size must be positive")
         with self.SessionLocal() as session:
+            # Build ORM query scoped by document if provided
+            q = session.query(SqliteTreeNode)
             if document_id:
-                total_rows = (
-                    session.execute(
-                        select(SqliteTreeNode).where(
-                            SqliteTreeNode.document_id == document_id
-                        )
-                    )
-                    .scalars()
-                    .all()
-                )
-            else:
-                total_rows = session.execute(select(SqliteTreeNode)).scalars().all()
+                q = q.filter(SqliteTreeNode.document_id == document_id)
+            # Stable ordering and streaming iteration to avoid large materialization
+            q = q.order_by(SqliteTreeNode.id).yield_per(page_size)
+
             batches: list[list[TreeNode]] = []
-            for i in range(0, len(total_rows), page_size):
-                batches.append(
-                    cast(list[TreeNode], list(total_rows[i : i + page_size]))
-                )
+            current: list[SqliteTreeNode] = []
+            for row in q:
+                current.append(row)
+                if len(current) >= page_size:
+                    # Detach loaded rows and append batch
+                    for r in current:
+                        try:
+                            session.expunge(r)
+                        except Exception:
+                            pass
+                    batches.append(cast(list[TreeNode], list(current)))
+                    current = []
+            if current:
+                for r in current:
+                    try:
+                        session.expunge(r)
+                    except Exception:
+                        pass
+                batches.append(cast(list[TreeNode], list(current)))
             return batches
 
     def get_leaf_nodes(self) -> list[TreeNode]:

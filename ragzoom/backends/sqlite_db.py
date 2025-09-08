@@ -107,6 +107,18 @@ class SqliteDatabaseManager:
         if self.url.strip().lower() in {"sqlite:///:memory:", "sqlite://"}:
             engine_kwargs["poolclass"] = StaticPool
         self.engine = create_engine(self.url, **engine_kwargs)
+        # Apply lightweight performance PRAGMAs suitable for tests/dev
+        try:
+            with self.engine.connect() as conn:
+                # Reduce fsyncs and use in-memory journaling for faster writes
+                conn.exec_driver_sql("PRAGMA synchronous=OFF")
+                conn.exec_driver_sql("PRAGMA journal_mode=MEMORY")
+                # Keep temporary tables in memory and enlarge page cache
+                conn.exec_driver_sql("PRAGMA temp_store=MEMORY")
+                conn.exec_driver_sql("PRAGMA cache_size=-65536")
+        except Exception:
+            # Pragmas are best-effort; ignore on unsupported environments
+            pass
         SqliteBase.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(bind=self.engine)
 
