@@ -186,47 +186,47 @@ class IndexingService:
             # Create document-scoped store and TreeBuilder
             document_store = self.store.for_document(document_id)
 
-        tree_builder = TreeBuilder(
-            self.index_config,
-            document_store,
-            api_key=self.operational_config.openai_api_key.get_secret_value(),
-            max_concurrent=30,
-        )
-
-        # Index with or without telemetry
-        if collect_telemetry:
-            # TreeBuilder's add_document_with_telemetry is sync only, so we need to run it in executor
-            import asyncio
-            from functools import partial
-
-            func = partial(
-                tree_builder.add_document_with_telemetry,
-                text,
-                show_progress=show_progress,
+            tree_builder = TreeBuilder(
+                self.index_config,
+                document_store,
+                api_key=self.operational_config.openai_api_key.get_secret_value(),
+                max_concurrent=30,
             )
-            loop = asyncio.get_event_loop()
-            doc_id, telemetry = await loop.run_in_executor(None, func)
-        else:
-            doc_id = await tree_builder.add_document_async(
-                text,
-                show_progress=show_progress,
+
+            # Index with or without telemetry
+            if collect_telemetry:
+                # TreeBuilder's add_document_with_telemetry is sync only; run in executor
+                import asyncio
+                from functools import partial
+
+                func = partial(
+                    tree_builder.add_document_with_telemetry,
+                    text,
+                    show_progress=show_progress,
+                )
+                loop = asyncio.get_event_loop()
+                doc_id, telemetry = await loop.run_in_executor(None, func)
+            else:
+                doc_id = await tree_builder.add_document_async(
+                    text,
+                    show_progress=show_progress,
+                )
+                telemetry = None
+
+            # Get document statistics and update metadata without exposing sessions
+            doc_store_final = self.store.for_document(doc_id)
+            leaves = doc_store_final.nodes.get_leaves()
+            # Update chunk_count metadata for the document
+            try:
+                doc_store_final.set_metadata(chunk_count=len(leaves))
+            except Exception:
+                pass
+            root = doc_store_final.tree.get_root()
+            tree_height = root.height if root else 0
+
+            return IndexingResult(
+                document_id=doc_id,
+                chunks_created=len(leaves),
+                tree_depth=tree_height,
+                telemetry=telemetry,
             )
-            telemetry = None
-
-        # Get document statistics and update metadata without exposing sessions
-        doc_store_final = self.store.for_document(doc_id)
-        leaves = doc_store_final.nodes.get_leaves()
-        # Update chunk_count metadata for the document
-        try:
-            doc_store_final.set_metadata(chunk_count=len(leaves))
-        except Exception:
-            pass
-        root = doc_store_final.tree.get_root()
-        tree_height = root.height if root else 0
-
-        return IndexingResult(
-            document_id=doc_id,
-            chunks_created=len(leaves),
-            tree_depth=tree_height,
-            telemetry=telemetry,
-        )
