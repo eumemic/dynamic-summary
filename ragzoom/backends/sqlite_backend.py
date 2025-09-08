@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import threading
 from contextlib import AbstractContextManager
+from pathlib import Path
+from types import TracebackType
 from typing import cast
 
 import numpy as np
@@ -27,6 +29,7 @@ from ragzoom.models import Document, TreeNode
 from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.services.tree_navigator import TreeNavigator
+from ragzoom.utils.locks import FileDocumentLock, document_lock_path
 from ragzoom.worktree_utils import (
     DEFAULT_VECTOR_DIR_NAME,
     get_default_vector_dir,
@@ -139,7 +142,37 @@ class SQLiteStorageBackend(StorageBackend):
     # jscpd:ignore-end
 
     def lock_document(self, document_id: str | None) -> AbstractContextManager[None]:
-        return _InProcessDocLock(self._get_lock(document_id))
+        # Combine cross-process file lock with in-process thread lock
+        url = str(self.db.url)
+        if url.startswith("sqlite:") and ":memory:" not in url:
+            path_part = url.split("sqlite:///")[-1]
+            base_dir = Path(path_part).parent
+        else:
+            from ragzoom.worktree_utils import get_default_sqlite_path
+
+            base_dir = get_default_sqlite_path(None).parent
+
+        file_lock = FileDocumentLock(document_lock_path(base_dir, document_id))
+        thread_lock = _InProcessDocLock(self._get_lock(document_id))
+
+        class _CombinedLock(AbstractContextManager[None]):
+            def __enter__(self) -> None:  # noqa: D401 - trivial
+                file_lock.__enter__()
+                thread_lock.__enter__()
+                return None
+
+            def __exit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc: BaseException | None,
+                tb: TracebackType | None,
+            ) -> None:
+                try:
+                    thread_lock.__exit__(exc_type, exc, tb)
+                finally:
+                    file_lock.__exit__(exc_type, exc, tb)
+
+        return _CombinedLock()
 
     def list_documents(self) -> list[Document]:
         # Delegate to repository
