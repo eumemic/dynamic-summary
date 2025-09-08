@@ -114,6 +114,14 @@ class DocumentNodeRepository:
             self.document_id, page_size=page_size
         )
 
+    def count(self) -> int:
+        """Get count of nodes for this document efficiently."""
+        counter = getattr(self._repo, "count_nodes_for_document", None)
+        if callable(counter):
+            return int(counter(self.document_id))
+        # Fallback: materialize and count (less efficient)
+        return len(self._repo.get_all_nodes_for_document(self.document_id))
+
     def get_leaves(self) -> list[TreeNode]:
         """Get all leaf nodes for this document."""
         all_leaves = self._repo.get_leaf_nodes()

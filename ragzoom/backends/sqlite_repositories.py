@@ -11,7 +11,7 @@ from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.orm import Session
 
 from ragzoom.backends.sqlite_db import (
@@ -234,6 +234,21 @@ class SqliteNodeRepository:
             else:
                 rows = session.execute(select(SqliteTreeNode)).scalars().all()
             return rows  # type: ignore[return-value]
+
+    def count_nodes_for_document(self, document_id: str | None) -> int:
+        """Return count of nodes for the given document (fast COUNT(*))"""
+        with self.SessionLocal() as session:
+            if document_id:
+                result = session.execute(
+                    select(func.count())
+                    .select_from(SqliteTreeNode)
+                    .where(SqliteTreeNode.document_id == document_id)
+                ).scalar_one()
+            else:
+                result = session.execute(
+                    select(func.count()).select_from(SqliteTreeNode)
+                ).scalar_one()
+            return int(result or 0)
 
     def get_all_nodes_for_document_paginated(
         self, document_id: str | None, *, page_size: int = 1000

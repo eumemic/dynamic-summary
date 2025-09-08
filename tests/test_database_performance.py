@@ -151,8 +151,8 @@ class TestDatabaseScalability:
         add_duration = time.perf_counter() - start_time
         logger.info(f"Added {expected_count} nodes in {add_duration:.2f}s")
 
-        # Verify nodes were added
-        count_before = len(doc_store.nodes.get_all())
+        # Verify nodes were added (efficient count)
+        count_before = doc_store.nodes.count()
         assert count_before == expected_count
 
         # Test deletion performance
@@ -163,7 +163,7 @@ class TestDatabaseScalability:
 
         # Verify deletion
         assert deleted_count == expected_count
-        count_after = len(doc_store.nodes.get_all())
+        count_after = doc_store.nodes.count()
         assert count_after == 0
 
         # Performance assertions

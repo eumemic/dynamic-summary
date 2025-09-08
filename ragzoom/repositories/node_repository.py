@@ -597,3 +597,16 @@ class NodeRepository(BaseRepository):
                 self._force_load_and_detach(session, node)
 
             return nodes
+
+    def count_nodes_for_document(self, document_id: str | None) -> int:
+        """Return count of nodes for the given document (fast COUNT(*))"""
+        with self.SessionLocal() as session:
+            if document_id:
+                count_val = (
+                    session.query(func.count(TreeNode.id))
+                    .filter_by(document_id=document_id)
+                    .scalar()
+                )
+            else:
+                count_val = session.query(func.count(TreeNode.id)).scalar()
+            return int(count_val or 0)
