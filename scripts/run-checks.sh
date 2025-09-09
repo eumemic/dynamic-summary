@@ -8,7 +8,7 @@
 # Options:
 #   --skip CHECKS           Skip specific checks (comma-separated): tests,dmypy,ruff,black,jscpd,bandit
 #   --fail-fast             Stop at first failure (useful for debugging)
-#   --include-slow-tests    Include slow and integration tests (auto-starts PostgreSQL when backend=postgres)
+#   --include-slow-tests    Include @slow tests (auto-starts PostgreSQL when backend=postgres)
 #   --ignore-lint-rules RULES  Ignore specific lint rules (comma-separated): F401,E402,etc.
 #   --fail-on-autofix       Exit with failure if any auto-fixes were applied
 #   --help                  Show this help message
@@ -26,7 +26,7 @@ FAIL_FAST=false
 INCLUDE_SLOW_TESTS=false
 IGNORE_LINT_RULES=""
 FAIL_ON_AUTOFIX=false
-TEST_SCOPE="fast"  # fast (default), smoke, or all
+TEST_SCOPE="fast"  # deprecated; kept for backward-compatibility
 
 show_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# *//'
@@ -55,6 +55,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --test-scope)
+            # Deprecated: use --include-slow-tests or default fast path
             TEST_SCOPE="$2"
             shift 2
             ;;
@@ -301,29 +302,39 @@ if ! should_skip "tests"; then
             else
                 echo "[PostgreSQL] Skipping: backend is '$BACKEND' (using SQLite)"
             fi
-            # Run all tests including slow and integration
+            # Run tests including @slow (still excludes benchmark)
             run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark' -n 8 --no-header"
-        elif [ "$TEST_SCOPE" = "smoke" ]; then
-            # Run a minimal, fast smoke subset: SQLite-backed test files, plus any changed tests in the commit
-            # Detect changed test files (staged) and include them alongside the smoke suite
+        else
+            # Run only fast tests (default): exclude @slow, @integration, and benchmark
+            run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not slow and not integration and not benchmark' -n 8 --no-header"
+
+            # Additionally, run tests impacted by staged changes (including slow ones)
+            # Collect changed tests and tests referencing changed modules
             changed_tests=""
             if [ -n "$modified_files" ]; then
                 for f in $modified_files; do
                     case "$f" in
                         tests/*.py)
-                            case "$f" in
-                                *sqlite*.py) ;;  # already covered by smoke suite
-                                *) changed_tests="$changed_tests $f" ;;
-                            esac
+                            changed_tests="$changed_tests $f"
+                            ;;
+                        *.py)
+                            base="$(basename "$f" .py)"
+                            if command -v rg &> /dev/null; then
+                                hits="$(rg -l "(^|\W)(from .*${base}\b|import .*${base}\b|${base}\b)" tests --type py || true)"
+                            else
+                                hits="$(grep -REl "${base}" tests || true)"
+                            fi
+                            if [ -n "$hits" ]; then
+                                changed_tests="$changed_tests $hits"
+                            fi
                             ;;
                     esac
                 done
             fi
-            # Note: avoid xdist overhead for small suites and match by filename to avoid false positives on class names
-            run_check_background "Tests" "pytest tests/*sqlite*.py $changed_tests -q --tb=short --no-header"
-        else
-            # Run only fast tests (default)
-            run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not slow and not integration and not benchmark' -n 8 --no-header"
+            if [ -n "$changed_tests" ]; then
+                # Run impacted tests inclusively (ignore slow filter), still exclude benchmarks
+                run_check_background "Changes" "pytest $changed_tests -q --tb=short -m 'not benchmark' -n 8 --no-header"
+            fi
         fi
     else
         echo "[Tests] Skipped (pytest not installed)"
