@@ -768,21 +768,31 @@ class TestEmbeddingBatching:
     @pytest.mark.asyncio
     async def test_batch_aware_queue_waits_for_full_batches(self) -> None:
         """Test that BatchAwareQueue waits for full batches when possible."""
-        batch_calls = []
-        batch_timings = []
+        batch_calls: list[int] = []
+        batch_timings: list[float] = []
 
         async def mock_embeddings(texts: list[str]) -> list[list[float]]:
-            # Record batch size and timing
+            # Record batch size and timing without artificial delay
             batch_calls.append(len(texts))
             batch_timings.append(asyncio.get_event_loop().time())
-            await asyncio.sleep(0.01)
             return [[0.1] * 10 for _ in texts]
 
-        # Use slower summaries to test batching behavior
+        # Gate summaries so multiple are ready together, avoiding fixed sleeps
+        started = 0
+        gate = asyncio.Event()
+        threshold = 3  # ensure at least 3 summaries queued
+
         async def mock_slow_summary(
             *args: object, **kwargs: object
         ) -> tuple[str, int, int]:
-            await asyncio.sleep(0.05)  # Summaries arrive gradually
+            nonlocal started
+            started += 1
+            if started >= threshold:
+                gate.set()
+            try:
+                await asyncio.wait_for(gate.wait(), timeout=0.2)
+            except asyncio.TimeoutError:
+                pass
             return ("Summary", 1, 10)
 
         mock_llm_service = MagicMock()
