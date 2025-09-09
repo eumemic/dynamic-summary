@@ -75,14 +75,7 @@ jobs:
           RAGZOOM_VECTOR_BACKEND: chroma
           RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
-          # For draft PRs, skip slow/integration tests
-          if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
-            echo "Draft PR detected - running fast checks only"
-            ./scripts/run-checks.sh
-          else
-            echo "Running all checks including slow and integration tests"
-            ./scripts/run-checks.sh --include-slow-tests
-          fi
+          ./scripts/run-checks.sh
 
   # Test coverage report (only on push to master)
   coverage:
@@ -171,11 +164,11 @@ jobs:
           pip install -r requirements-dev.txt
           pip install chromadb
           
-      - name: Run fast tests
+      - name: Run tests
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_BACKEND: sqlite
           RAGZOOM_VECTOR_BACKEND: chroma
           RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
-          pytest tests/ -m "not slow and not integration" -n 2 --no-header -q
+          pytest tests/ -m "not integration" -n 2 --no-header -q

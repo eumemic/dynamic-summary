@@ -8,7 +8,7 @@
 # Options:
 #   --skip CHECKS           Skip specific checks (comma-separated): tests,dmypy,ruff,black,jscpd,bandit
 #   --fail-fast             Stop at first failure (useful for debugging)
-#   --include-slow-tests    Include @slow tests (auto-starts PostgreSQL when backend=postgres)
+#   --include-slow-tests    (Deprecated) No-op; full suite already runs by default
 #   --ignore-lint-rules RULES  Ignore specific lint rules (comma-separated): F401,E402,etc.
 #   --fail-on-autofix       Exit with failure if any auto-fixes were applied
 #   --help                  Show this help message
@@ -27,6 +27,7 @@ INCLUDE_SLOW_TESTS=false
 IGNORE_LINT_RULES=""
 FAIL_ON_AUTOFIX=false
 TEST_SCOPE="fast"  # deprecated; kept for backward-compatibility
+IMPACTED_ONLY=false
 
 show_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# *//'
@@ -52,6 +53,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --fail-on-autofix)
             FAIL_ON_AUTOFIX=true
+            shift
+            ;;
+        --impacted-only)
+            IMPACTED_ONLY=true
             shift
             ;;
         --test-scope)
@@ -302,38 +307,35 @@ if ! should_skip "tests"; then
             else
                 echo "[PostgreSQL] Skipping: backend is '$BACKEND' (using SQLite)"
             fi
-            # Run tests including @slow (still excludes benchmark)
-            run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark' -n 8 --no-header"
+            # Run full suite (still excludes benchmarks)
+            run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark and not integration' -n 8 --no-header"
         else
-            # Run only fast tests (default): exclude @slow, @integration, and benchmark
-            run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not slow and not integration and not benchmark' -n 8 --no-header"
+            if [ "$IMPACTED_ONLY" = true ]; then
+                # Impacted-only mode for pre-commit: run only tests downstream of changes
+                if [ -n "$modified_files" ]; then
+                    impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" $modified_files || true)"
+                else
+                    impacted=""
+                fi
+                if [ -n "$impacted" ]; then
+                    run_check_background "Tests" "pytest $impacted -q --tb=short -m 'not benchmark and not integration' -n 8 --no-header"
+                else
+                    # Fallback to full suite
+                    run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark and not integration' -n 8 --no-header"
+                fi
+            else
+                # Run full suite (default): exclude benchmarks and integration
+                run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark and not integration' -n 8 --no-header"
 
-            # Additionally, run tests impacted by staged changes (including slow ones)
-            # Collect changed tests and tests referencing changed modules
-            changed_tests=""
-            if [ -n "$modified_files" ]; then
-                for f in $modified_files; do
-                    case "$f" in
-                        tests/*.py)
-                            changed_tests="$changed_tests $f"
-                            ;;
-                        *.py)
-                            base="$(basename "$f" .py)"
-                            if command -v rg &> /dev/null; then
-                                hits="$(rg -l "(^|\W)(from .*${base}\b|import .*${base}\b|${base}\b)" tests --type py || true)"
-                            else
-                                hits="$(grep -REl "${base}" tests || true)"
-                            fi
-                            if [ -n "$hits" ]; then
-                                changed_tests="$changed_tests $hits"
-                            fi
-                            ;;
-                    esac
-                done
-            fi
-            if [ -n "$changed_tests" ]; then
-                # Run impacted tests inclusively (ignore slow filter), still exclude benchmarks
-                run_check_background "Changes" "pytest $changed_tests -q --tb=short -m 'not benchmark' -n 8 --no-header"
+                # Additionally, run tests impacted by staged changes (to double-check), still no benchmarks
+                if [ -n "$modified_files" ]; then
+                    impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" $modified_files || true)"
+                else
+                    impacted=""
+                fi
+                if [ -n "$impacted" ]; then
+                    run_check_background "Changes" "pytest $impacted -q --tb=short -m 'not benchmark and not integration' -n 8 --no-header"
+                fi
             fi
         fi
     else

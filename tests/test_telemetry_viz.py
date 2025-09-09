@@ -9,8 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytestmark = pytest.mark.slow
-
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 

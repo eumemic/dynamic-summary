@@ -424,7 +424,6 @@ class TestDataflowIntegration:
         assert max_concurrent_embedding["value"] <= 1
 
     @pytest.mark.asyncio
-    @pytest.mark.slow
     async def test_dataflow_error_handling(self) -> None:
         """Test that dataflow handles errors appropriately."""
         mock_llm_service = MagicMock()
