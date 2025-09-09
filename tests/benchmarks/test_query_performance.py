@@ -90,7 +90,6 @@ def setup_test_document(storage_backend: StorageBackend, api_key: str) -> str:
     return builder.add_document(test_doc)
 
 
-@pytest.mark.slow
 @pytest.mark.parametrize("num_seeds", [5, 10, 20])
 @pytest.mark.parametrize("budget_tokens", [1000, 2000, 4000])
 @pytest.mark.parametrize("query_type", ["specific", "broad", "complex"])
@@ -306,7 +305,6 @@ def test_query_performance(
     assert total_stats["median"] > 0, "Invalid timing"
 
 
-@pytest.mark.slow
 def test_query_performance_comparison() -> None:
     """Compare query benchmark results if available."""
     output_dir = Path("benchmark_results")

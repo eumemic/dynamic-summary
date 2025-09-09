@@ -340,7 +340,6 @@ class TestDatabaseScalability:
 class TestMemoryEfficiency:
     """Test memory efficiency of optimized operations."""
 
-    @pytest.mark.slow
     def test_deletion_memory_usage(self, storage_backend: StorageBackend) -> None:
         """Test that deletion doesn't load excessive data into memory."""
         document_id = "memory_test_doc"
@@ -396,7 +395,6 @@ class TestMemoryEfficiency:
         )
 
 
-@pytest.mark.slow
 class TestRegressionPrevention:
     """Test that optimizations don't break existing functionality."""
 

@@ -4,8 +4,6 @@ import asyncio
 from typing import cast
 from unittest.mock import MagicMock, Mock
 
-import pytest
-
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
 from tests.conftest import BackwardCompatibilityConfig
@@ -154,7 +152,6 @@ class TestIndexingFast:
                 last_span_end >= doc_length - 10
             ), f"Document not fully indexed: {last_span_end} < {doc_length}"
 
-    @pytest.mark.slow
     def test_check_api_batch_limits(
         self,
         base_config: BackwardCompatibilityConfig,

@@ -525,7 +525,6 @@ class TestIndexingCreatesValidTreesSQLite:
         # which is not available on SqliteTreeNode objects from the real backend
         # This test focuses on left-balanced validation which works correctly
 
-    @pytest.mark.slow
     def test_large_document_creates_valid_tree(
         self,
         setup_indexing: tuple[

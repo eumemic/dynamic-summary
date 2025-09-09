@@ -39,7 +39,6 @@ def get_test_document(document_path: str) -> tuple[str, str]:
         pytest.skip(f"Could not load test document {document_path}: {e}")
 
 
-@pytest.mark.slow
 @pytest.mark.parametrize("leaf_tokens", [100, 200, 400])
 def test_indexing_performance(
     storage_backend: StorageBackend,
@@ -171,7 +170,6 @@ def test_indexing_performance(
             print(f"  Under target: {stats.under_target_count}")
 
 
-@pytest.mark.slow
 def test_performance_comparison() -> None:
     """Compare benchmark results if available."""
     output_dir = Path("benchmark_results")

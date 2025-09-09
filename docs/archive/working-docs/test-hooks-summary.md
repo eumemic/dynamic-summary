@@ -6,7 +6,7 @@
 
 **Pre-commit Hook** (`.git/hooks/pre-commit`)
 - Runs automatically before each commit
-- Runs fast tests only (excludes @slow and @integration)
+- Runs fast tests only (excludes integration and benchmarks)
 - Also runs linting (ruff + black) and type checking (mypy)
 - Execution time: ~7-8 seconds with 8 parallel workers
 
@@ -106,7 +106,7 @@ pytest tests/ --cov=ragzoom --cov-report=term-missing
 
 3. **Performance monitoring**:
    - Track test execution times
-   - Optimize slow tests if needed
+   - Optimize long-running tests if needed
 
 4. **Enhanced hooks**:
    - Could add performance benchmarks
