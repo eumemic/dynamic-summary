@@ -1,32 +1,41 @@
-"""Test for span corruption bug in tree building."""
+"""Tests for span corruption bug in tree building.
 
-from collections.abc import Generator
+These tests ensure that tree building handles odd numbers of nodes correctly
+and prevents span corruption issues.
+"""
+
+from __future__ import annotations
+
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
-from ragzoom.store import StoreManager
+from ragzoom.models import TreeNode
 from tests.conftest import BackwardCompatibilityConfig
-from tests.mock_store import SimpleMockStore
 
 
 class TestSpanCorruption:
     """Test span corruption issues in tree building."""
 
-    @pytest.fixture
-    def setup_system(self, store: SimpleMockStore | StoreManager) -> Generator[
-        tuple[
-            BackwardCompatibilityConfig,
-            SimpleMockStore | StoreManager,
-            TreeBuilder,
-            AsyncMock,
-        ],
-        None,
-        None,
-    ]:
+    def setup_system(
+        self, storage_backend: StorageBackend
+    ) -> tuple[BackwardCompatibilityConfig, TreeBuilder, AsyncMock]:
         """Set up test system."""
+        # Get document store first
+        doc_store = storage_backend.for_document("test-doc")
+
+        # Set up document metadata
+        doc_store.set_metadata(
+            file_path="test_span_corruption.txt",
+            content_hash="span-corruption-test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
         # Create separate configs
         index_config = IndexConfig.load(
             target_chunk_tokens=100,  # Small chunks to create many nodes
@@ -37,8 +46,7 @@ class TestSpanCorruption:
             openai_api_key=SecretStr("test-key"),
         )
 
-        # Create document-scoped store
-        doc_store = store.for_document("test-doc")
+        # Create tree builder
         tree_builder = TreeBuilder(
             index_config,
             doc_store,
@@ -50,26 +58,19 @@ class TestSpanCorruption:
         tree_builder.llm_service.client = mock_client
 
         # Create a config wrapper for backward compatibility
-        from tests.conftest import BackwardCompatibilityConfig
-
         config = BackwardCompatibilityConfig(
             index_config, query_config, operational_config
         )
 
-        yield config, store, tree_builder, mock_client
+        return config, tree_builder, mock_client
 
     @pytest.mark.asyncio
     async def test_odd_nodes_create_invalid_spans(
-        self,
-        setup_system: tuple[
-            BackwardCompatibilityConfig,
-            SimpleMockStore | StoreManager,
-            TreeBuilder,
-            AsyncMock,
-        ],
+        self, storage_backend: StorageBackend
     ) -> None:
         """Test that odd number of nodes creates span corruption."""
-        config, store, tree_builder, mock_client = setup_system
+        config, tree_builder, mock_client = self.setup_system(storage_backend)
+        doc_store = storage_backend.for_document("test-doc")
 
         # Create text that will split into an odd number of chunks
         # Each chunk is ~100 tokens, so we need longer content
@@ -98,73 +99,53 @@ class TestSpanCorruption:
         )
 
         # Index the document
-        doc_id = await tree_builder.add_document_async(text, show_progress=False)
+        await tree_builder.add_document_async(text, show_progress=False)
 
         # Check for span corruption
-        with store.SessionLocal() as session:
-            from ragzoom.models import TreeNode
+        nodes: list[TreeNode] = doc_store.nodes.get_all()
 
-            # Get all nodes
-            all_nodes = session.query(TreeNode).filter_by(document_id=doc_id).all()
+        # Check for invalid spans
+        corrupt_nodes = []
+        for node in nodes:
+            node_height = node.height
+            if node.span_end < node.span_start:
+                corrupt_nodes.append(
+                    {
+                        "id": node.id,
+                        "height": node_height,
+                        "span_start": node.span_start,
+                        "span_end": node.span_end,
+                    }
+                )
+            elif node.span_start == node.span_end and node_height > 0:
+                # Zero-width spans for non-leaf nodes are also invalid
+                corrupt_nodes.append(
+                    {
+                        "id": node.id,
+                        "height": node_height,
+                        "span_start": node.span_start,
+                        "span_end": node.span_end,
+                    }
+                )
 
-            # Get document-scoped store for node depth queries
-            from ragzoom.store import StoreManager
+        # Report findings
+        if corrupt_nodes:
+            print(f"\nFound {len(corrupt_nodes)} corrupt nodes:")
+            for corrupt_node in corrupt_nodes:
+                print(
+                    f"  Height {corrupt_node['height']}: span ({corrupt_node['span_start']}, {corrupt_node['span_end']})"
+                )
 
-            if isinstance(store, StoreManager):
-                doc_store = store.for_document(doc_id)
-                get_depth = doc_store.tree.get_depth
-            else:
-                get_depth = store.get_node_depth
-
-            # Check for invalid spans
-            corrupt_nodes = []
-            for node in all_nodes:
-                node_depth = get_depth(node.id)
-                if node.span_end < node.span_start:
-                    corrupt_nodes.append(
-                        {
-                            "id": node.id,
-                            "depth": node_depth,
-                            "span_start": node.span_start,
-                            "span_end": node.span_end,
-                        }
-                    )
-                elif node.span_start == node.span_end and node_depth > 0:
-                    # Zero-width spans for non-leaf nodes are also invalid
-                    corrupt_nodes.append(
-                        {
-                            "id": node.id,
-                            "depth": node_depth,
-                            "span_start": node.span_start,
-                            "span_end": node.span_end,
-                        }
-                    )
-
-            # Report findings
-            if corrupt_nodes:
-                print(f"\nFound {len(corrupt_nodes)} corrupt nodes:")
-                for node in corrupt_nodes:
-                    print(
-                        f"  Depth {node['depth']}: span ({node['span_start']}, {node['span_end']})"
-                    )
-
-            # This test SHOULD fail with the current implementation
-            assert (
-                len(corrupt_nodes) == 0
-            ), f"Found {len(corrupt_nodes)} nodes with invalid spans"
+        # This test SHOULD fail with the current implementation
+        assert (
+            len(corrupt_nodes) == 0
+        ), f"Found {len(corrupt_nodes)} nodes with invalid spans"
 
     @pytest.mark.asyncio
-    async def test_wraparound_pairing(
-        self,
-        setup_system: tuple[
-            BackwardCompatibilityConfig,
-            SimpleMockStore | StoreManager,
-            TreeBuilder,
-            AsyncMock,
-        ],
-    ) -> None:
+    async def test_wraparound_pairing(self, storage_backend: StorageBackend) -> None:
         """Test that demonstrates wraparound pairing issue."""
-        config, store, tree_builder, mock_client = setup_system
+        config, tree_builder, mock_client = self.setup_system(storage_backend)
+        doc_store = storage_backend.for_document("test-doc")
 
         # Create 5 chunks that will split properly at 100 tokens each
         # Each chunk needs to be long enough to hit the token limit
@@ -190,67 +171,45 @@ class TestSpanCorruption:
         )
 
         # Index the document
-        doc_id = await tree_builder.add_document_async(text, show_progress=False)
+        await tree_builder.add_document_async(text, show_progress=False)
 
         # Verify tree structure
-        with store.SessionLocal() as session:
-            from ragzoom.models import TreeNode
+        nodes: list[TreeNode] = doc_store.nodes.get_all()
 
-            # Get nodes by depth
-            from ragzoom.models import TreeNode as TreeNodeModel
+        # Group nodes by height
+        nodes_by_height: dict[int, list[TreeNode]] = {}
+        for node in nodes:
+            height = node.height
+            if height not in nodes_by_height:
+                nodes_by_height[height] = []
+            nodes_by_height[height].append(node)
 
-            # Get document-scoped store for node depth queries
-            from ragzoom.store import StoreManager
+        # Sort nodes by span_start within each height
+        for height in nodes_by_height:
+            nodes_by_height[height].sort(key=lambda n: n.span_start)
 
-            if isinstance(store, StoreManager):
-                doc_store = store.for_document(doc_id)
-                get_depth = doc_store.tree.get_depth
-            else:
-                get_depth = store.get_node_depth
+        print("\nTree structure:")
+        for height in sorted(nodes_by_height.keys()):
+            print(f"\nHeight {height}:")
+            for node in nodes_by_height[height]:
+                print(f"  Node: span ({node.span_start}, {node.span_end})")
+                if node.left_child_id and node.right_child_id:
+                    left = next(n for n in nodes if n.id == node.left_child_id)
+                    right = next(n for n in nodes if n.id == node.right_child_id)
+                    print(f"    Left child: span ({left.span_start}, {left.span_end})")
+                    print(
+                        f"    Right child: span ({right.span_start}, {right.span_end})"
+                    )
 
-            nodes_by_depth: dict[int, list[TreeNodeModel]] = {}
-            all_nodes = session.query(TreeNode).filter_by(document_id=doc_id).all()
-
-            for node in all_nodes:
-                node_depth = get_depth(node.id)
-                if node_depth not in nodes_by_depth:
-                    nodes_by_depth[node_depth] = []
-                nodes_by_depth[node_depth].append(node)
-
-            # Sort nodes by span_start within each depth
-            for depth in nodes_by_depth:
-                nodes_by_depth[depth].sort(key=lambda n: n.span_start)
-
-            print("\nTree structure:")
-            for depth in sorted(nodes_by_depth.keys()):
-                print(f"\nDepth {depth}:")
-                for node in nodes_by_depth[depth]:
-                    print(f"  Node: span ({node.span_start}, {node.span_end})")
-                    if node.left_child_id and node.right_child_id:
-                        left = next(n for n in all_nodes if n.id == node.left_child_id)
-                        right = next(
-                            n for n in all_nodes if n.id == node.right_child_id
-                        )
+                    # Check for wraparound
+                    if left.span_end > right.span_start:
                         print(
-                            f"    Left child: span ({left.span_start}, {left.span_end})"
-                        )
-                        print(
-                            f"    Right child: span ({right.span_start}, {right.span_end})"
+                            f"    WARNING: Wraparound detected! Left end {left.span_end} > Right start {right.span_start}"
                         )
 
-                        # Check for wraparound
-                        if left.span_end > right.span_start:
-                            print(
-                                f"    WARNING: Wraparound detected! Left end {left.span_end} > Right start {right.span_start}"
-                            )
-
-            # Check all parent nodes have valid spans
-            for node in all_nodes:
-                if isinstance(store, StoreManager):
-                    node_depth = store.tree_navigator.get_node_depth(node.id)
-                else:
-                    node_depth = store.get_node_depth(node.id)
-                if node_depth > 0:
-                    assert (
-                        node.span_end >= node.span_start
-                    ), f"Node at depth {node_depth} has invalid span: ({node.span_start}, {node.span_end})"
+        # Check all parent nodes have valid spans
+        for node in nodes:
+            if node.height > 0:
+                assert (
+                    node.span_end >= node.span_start
+                ), f"Node at height {node.height} has invalid span: ({node.span_start}, {node.span_end})"

@@ -9,6 +9,7 @@ import pytest
 from ragzoom.config import OperationalConfig
 from ragzoom.docker_postgres import DockerPostgres
 from ragzoom.worktree_utils import (
+    get_default_sqlite_url,
     get_worktree_database_name,
     get_worktree_database_url,
     get_worktree_id,
@@ -182,8 +183,17 @@ class TestOperationalConfigIntegration:
 
             try:
                 config = OperationalConfig()
-                expected = "postgresql+psycopg://localhost/ragzoom_worktree_2"
-                assert config.database_url == expected
+                if config.backend == "postgres":
+                    expected = "postgresql+psycopg://localhost/ragzoom_worktree_2"
+                    assert config.database_url == expected
+                else:
+                    base_dir_env = os.environ.get("RAGZOOM_DATA_DIR")
+                    expected_sqlite = (
+                        get_default_sqlite_url(Path(base_dir_env))
+                        if base_dir_env
+                        else get_default_sqlite_url(None)
+                    )
+                    assert config.database_url == expected_sqlite
             finally:
                 # Restore environment
                 if env_backup:
@@ -211,7 +221,18 @@ class TestOperationalConfigIntegration:
 
             try:
                 config = OperationalConfig()
-                assert config.database_url == "postgresql+psycopg://localhost/ragzoom"
+                if config.backend == "postgres":
+                    assert (
+                        config.database_url == "postgresql+psycopg://localhost/ragzoom"
+                    )
+                else:
+                    base_dir_env = os.environ.get("RAGZOOM_DATA_DIR")
+                    expected_sqlite = (
+                        get_default_sqlite_url(Path(base_dir_env))
+                        if base_dir_env
+                        else get_default_sqlite_url(None)
+                    )
+                    assert config.database_url == expected_sqlite
             finally:
                 # Restore environment
                 if env_backup:
@@ -339,7 +360,17 @@ class TestWorktreeIsolationEndToEnd:
 
             try:
                 config = OperationalConfig()
-                assert config.database_url == worktree_url
+                if config.backend == "postgres":
+                    assert config.database_url == worktree_url
+                else:
+                    # SQLite backend ignores worktree for default URL
+                    base_dir_env = os.environ.get("RAGZOOM_DATA_DIR")
+                    expected_sqlite = (
+                        get_default_sqlite_url(Path(base_dir_env))
+                        if base_dir_env
+                        else get_default_sqlite_url(None)
+                    )
+                    assert config.database_url == expected_sqlite
             finally:
                 if env_backup:
                     os.environ["RAGZOOM_DATABASE_URL"] = env_backup
@@ -368,7 +399,16 @@ class TestWorktreeIsolationEndToEnd:
 
             try:
                 config = OperationalConfig()
-                assert config.database_url == base_url
+                if config.backend == "postgres":
+                    assert config.database_url == base_url
+                else:
+                    base_dir_env = os.environ.get("RAGZOOM_DATA_DIR")
+                    expected_sqlite = (
+                        get_default_sqlite_url(Path(base_dir_env))
+                        if base_dir_env
+                        else get_default_sqlite_url(None)
+                    )
+                    assert config.database_url == expected_sqlite
             finally:
                 if env_backup:
                     os.environ["RAGZOOM_DATABASE_URL"] = env_backup

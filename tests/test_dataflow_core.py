@@ -487,19 +487,34 @@ class TestEmbeddingBatching:
     @pytest.mark.asyncio
     async def test_embedding_workers_process_available_items(self) -> None:
         """Test that embedding workers process available items efficiently."""
-        batch_calls = []
+        batch_calls: list[int] = []
 
         async def mock_embeddings(texts: list[str]) -> list[list[float]]:
             # Record the batch size for analysis
             batch_calls.append(len(texts))
-            await asyncio.sleep(0.01)  # Simulate API call
+            # No artificial delay; focus on batching behavior
             return [[0.1] * 10 for _ in texts]
+
+        # Gate summaries so multiple are released together without fixed sleeps.
+        # Threshold must not exceed summary concurrency to avoid deadlock.
+        summary_started = 0
+        summary_gate = asyncio.Event()
+        max_summary_concurrency = 5
+        embedding_batch_size = 8
+        threshold = min(embedding_batch_size, max_summary_concurrency)  # 5
 
         async def mock_slow_summary(
             *args: object, **kwargs: object
         ) -> tuple[str, int, int]:
-            # Simulate realistic API timing - summaries arrive spaced out
-            await asyncio.sleep(0.1)  # Much slower than embedding batching
+            nonlocal summary_started
+            summary_started += 1
+            if summary_started >= threshold:
+                summary_gate.set()
+            try:
+                await asyncio.wait_for(summary_gate.wait(), timeout=0.2)
+            except asyncio.TimeoutError:
+                # Fall back to immediate completion to avoid flakiness
+                pass
             return ("Summary", 1, 10)
 
         mock_llm_service = MagicMock()
@@ -515,9 +530,9 @@ class TestEmbeddingBatching:
             chunks=chunks,
             document_id="test-doc",
             llm_service=mock_llm_service,
-            max_summary_concurrency=5,
+            max_summary_concurrency=max_summary_concurrency,
             max_embedding_concurrency=2,
-            embedding_batch_size=8,  # Batch size of 8
+            embedding_batch_size=embedding_batch_size,  # Batch size of 8
         )
 
         # Verify all nodes got embeddings
@@ -541,24 +556,38 @@ class TestEmbeddingBatching:
     @pytest.mark.asyncio
     async def test_multiple_workers_coordinate_batching(self) -> None:
         """Test that multiple embedding workers coordinate to take full batches."""
-        batch_calls = []
+        batch_calls: list[int] = []
         worker_calls: dict[object, list[int]] = {}
 
         async def mock_embeddings(texts: list[str]) -> list[list[float]]:
-            # Use asyncio context to identify which worker made the call
+            # Identify worker and record batch sizes
             worker_id = id(asyncio.current_task())
-            if worker_id not in worker_calls:
-                worker_calls[worker_id] = []
-
-            batch_size = len(texts)
-            batch_calls.append(batch_size)
-            worker_calls[worker_id].append(batch_size)
-
-            await asyncio.sleep(0.01)  # Simulate work
+            worker_calls.setdefault(worker_id, []).append(len(texts))
+            batch_calls.append(len(texts))
             return [[0.1] * 10 for _ in texts]
 
+        # Gate summaries to collect a full batch without fixed sleeps
+        started = 0
+        gate = asyncio.Event()
+        max_summary_concurrency = 10
+        embedding_batch_size = 10
+        threshold = min(max_summary_concurrency, embedding_batch_size)  # 10
+
+        async def gated_summary(
+            *args: object, **kwargs: object
+        ) -> tuple[str, int, int]:
+            nonlocal started
+            started += 1
+            if started >= threshold:
+                gate.set()
+            try:
+                await asyncio.wait_for(gate.wait(), timeout=0.3)
+            except asyncio.TimeoutError:
+                pass
+            return ("Summary", 1, 10)
+
         mock_llm_service = MagicMock()
-        mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
+        mock_llm_service._summarize_text = AsyncMock(side_effect=gated_summary)
         mock_llm_service._get_embeddings_batch = mock_embeddings
 
         # Use many chunks to create lots of summaries
@@ -568,9 +597,9 @@ class TestEmbeddingBatching:
             chunks=chunks,
             document_id="test-doc",
             llm_service=mock_llm_service,
-            max_summary_concurrency=10,
+            max_summary_concurrency=max_summary_concurrency,
             max_embedding_concurrency=4,  # Multiple workers
-            embedding_batch_size=10,
+            embedding_batch_size=embedding_batch_size,
         )
 
         # Multiple workers should have participated
@@ -739,21 +768,31 @@ class TestEmbeddingBatching:
     @pytest.mark.asyncio
     async def test_batch_aware_queue_waits_for_full_batches(self) -> None:
         """Test that BatchAwareQueue waits for full batches when possible."""
-        batch_calls = []
-        batch_timings = []
+        batch_calls: list[int] = []
+        batch_timings: list[float] = []
 
         async def mock_embeddings(texts: list[str]) -> list[list[float]]:
-            # Record batch size and timing
+            # Record batch size and timing without artificial delay
             batch_calls.append(len(texts))
             batch_timings.append(asyncio.get_event_loop().time())
-            await asyncio.sleep(0.01)
             return [[0.1] * 10 for _ in texts]
 
-        # Use slower summaries to test batching behavior
+        # Gate summaries so multiple are ready together, avoiding fixed sleeps
+        started = 0
+        gate = asyncio.Event()
+        threshold = 3  # ensure at least 3 summaries queued
+
         async def mock_slow_summary(
             *args: object, **kwargs: object
         ) -> tuple[str, int, int]:
-            await asyncio.sleep(0.05)  # Summaries arrive gradually
+            nonlocal started
+            started += 1
+            if started >= threshold:
+                gate.set()
+            try:
+                await asyncio.wait_for(gate.wait(), timeout=0.2)
+            except asyncio.TimeoutError:
+                pass
             return ("Summary", 1, 10)
 
         mock_llm_service = MagicMock()

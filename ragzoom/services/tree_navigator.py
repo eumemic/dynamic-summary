@@ -137,7 +137,10 @@ class TreeNavigator:
         if not node:
             return False
 
-        return node.is_leaf()
+        # Prefer structural check to support multiple model types
+        left = getattr(node, "left_child_id", None)
+        right = getattr(node, "right_child_id", None)
+        return not left and not right
 
     def is_root_node(self, node_id: str) -> bool:
         """Check if a node is a root (has no parent).
@@ -152,7 +155,8 @@ class TreeNavigator:
         if not node:
             return False
 
-        return node.is_root()
+        # Prefer structural check to support multiple model types
+        return getattr(node, "parent_id", None) is None
 
     def get_parent_node(self, node_id: str) -> TreeNode | None:
         """Get the parent node using path-based lookup.

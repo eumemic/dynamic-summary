@@ -107,9 +107,11 @@ Options:
                           3. <repo_root>/telemetry.json (if in worktree)
     --output-dir <dir>     Directory for output files
                           Default: benchmarks/<timestamp> (e.g., benchmarks/20250815_163448)
-    --database <url>       PostgreSQL database URL to use
-                          If provided, skips Docker PostgreSQL setup
-                          Example: postgresql+psycopg://user:pass@host:5432/db
+    --database <url>       Database URL to use
+                          If provided, skips local SQLite setup
+                          Examples:
+                            - sqlite:///path/to.db (default when not provided)
+                            - postgresql+psycopg://user:pass@host:5432/db
     --help                 Show this help message and exit
     
 Document:
@@ -147,7 +149,7 @@ BASELINE=""
 OUTPUT_DIR=""  # Will be set to benchmarks/<timestamp> by default
 DOCUMENT=""  # Will be auto-detected or provided
 DATABASE_URL=""  # Will be set by --database flag or generated
-SKIP_DB_SETUP=false  # Skip Docker PostgreSQL setup if --database provided
+SKIP_DB_SETUP=false  # Skip local DB setup if --database provided
 EXTRA_ARGS=()
 USE_DEFAULT_OUTPUT=true  # Track if user provided custom output dir
 
@@ -360,7 +362,7 @@ if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
 fi
 echo ""
 
-# Set up database - either use provided URL or create unique benchmark database
+# Set up database - either use provided URL or create local SQLite database by default
 if [ "$SKIP_DB_SETUP" = true ]; then
     echo "🗄️ Using provided database URL..."
     echo "  Database URL: $DATABASE_URL"
@@ -370,46 +372,17 @@ if [ "$SKIP_DB_SETUP" = true ]; then
     echo "external_database" > "$DATABASE_NAME_FILE"
     echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
 else
-    # Create unique benchmark database (PostgreSQL setup handled automatically)
-    echo "🗄️ Setting up benchmark database..."
-    
-    # Create database - Docker PostgreSQL startup is handled automatically
-    # Use environment variable to avoid shell injection  
-    BENCHMARK_DB_ENV_NAME="$BENCHMARK_DB_NAME" python -c "
-from ragzoom.docker_postgres import DockerPostgres
-from ragzoom.db_utils import create_temp_database
-import os, sys
-try:
-    dp = DockerPostgres()
-    dp.ensure_running()
-    db_name = os.environ['BENCHMARK_DB_ENV_NAME']
-    url = create_temp_database(db_name)
-    print(url)
-except Exception as e:
-    print(f'Error: {e}', file=sys.stderr)
-    sys.exit(1)
-" > /tmp/db_setup_$$.out 2> /tmp/db_setup_$$.err
-
-    # Check if database setup succeeded
-    if [ $? -eq 0 ]; then
-        DATABASE_URL=$(cat /tmp/db_setup_$$.out)
-        rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
-        
-        # Track the database for cleanup
-        CREATED_DB_NAME="$BENCHMARK_DB_NAME"
-        
-        # Save database info for reference  
-        echo "$BENCHMARK_DB_NAME" > "$DATABASE_NAME_FILE"
-        echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
-        
-        echo "✅ Created benchmark database: $BENCHMARK_DB_NAME"
-        echo ""
-    else
-        echo "❌ PostgreSQL setup failed:"
-        cat /tmp/db_setup_$$.err >&2
-        rm -f /tmp/db_setup_$$.out /tmp/db_setup_$$.err
-        exit 1
-    fi
+    # Use local SQLite by default (matches dev CLI defaults)
+    echo "🗄️ Setting up local SQLite database..."
+    DB_FILE="$OUTPUT_DIR/benchmark_sqlite.db"
+    # Ensure path exists
+    mkdir -p "$(dirname "$DB_FILE")"
+    DATABASE_URL="sqlite:///$DB_FILE"
+    echo "  Database URL: $DATABASE_URL"
+    echo "sqlite_file" > "$DATABASE_NAME_FILE"
+    echo "$DATABASE_URL" >> "$DATABASE_NAME_FILE"
+    echo "✅ Using SQLite file for benchmark"
+    echo ""
 fi
 
 # Run indexing with telemetry
@@ -434,7 +407,25 @@ if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
     INDEX_ARGS+=("${EXTRA_ARGS[@]}")
 fi
 
-python -m ragzoom.cli index "${INDEX_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+# Configure backend defaults for the run when not explicitly set
+# Prefer chroma vector backend if installed; otherwise fall back to python
+RUN_ENV=()
+
+# If we created a local SQLite DB, set backend accordingly
+if [ "$SKIP_DB_SETUP" != true ]; then
+    RUN_ENV+=(RAGZOOM_BACKEND="sqlite")
+fi
+
+if [ -z "${RAGZOOM_VECTOR_BACKEND:-}" ]; then
+    if python -c "import chromadb" 2>/dev/null; then
+        RUN_ENV+=(RAGZOOM_VECTOR_BACKEND="chroma")
+    else
+        echo "⚠️  chromadb not installed; falling back to RAGZOOM_VECTOR_BACKEND=python" | tee -a "$LOG_FILE"
+        RUN_ENV+=(RAGZOOM_VECTOR_BACKEND="python")
+    fi
+fi
+
+env "${RUN_ENV[@]}" python -m ragzoom.cli index "${INDEX_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
 
 # Check if indexing succeeded
 if [ ${PIPESTATUS[0]} -ne 0 ]; then

@@ -86,11 +86,14 @@ Every agent must approach code as a master craftsperson. Each line you write is 
 
 #### Common Commands for Agents
 ```bash
-# Preferred: Run all fast checks (what pre-commit will run)
+# Preferred: Run quality checks (excludes integration/benchmarks by default)
 ./scripts/run-checks.sh
 
-# If you need to skip tests temporarily (e.g., debugging)
-./scripts/run-checks.sh --skip tests
+# Include integration tests
+./scripts/run-checks.sh --include-integration-tests
+
+# Run only tests impacted by specific files
+./scripts/run-checks.sh --impacted-only path/to/changed1.py path/to/changed2.py
 
 # Stop at first error (useful for debugging)
 ./scripts/run-checks.sh --fail-fast

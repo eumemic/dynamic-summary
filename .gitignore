@@ -27,6 +27,9 @@ ENV/
 env/
 .venv
 
+# Node modules
+node_modules/
+
 # IDE
 .vscode/
 .idea/
@@ -90,3 +93,6 @@ jscpd-report.json
 .jscpd/
 report/
 /results/
+
+# Local data (DB and vector index)
+data/

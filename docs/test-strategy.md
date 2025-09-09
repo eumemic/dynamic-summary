@@ -19,7 +19,7 @@ This document defines the comprehensive testing strategy for RagZoom, establishi
 ### Quality Standards
 - **Minimum Coverage**: 80% for business-critical modules (index, retrieve, store)
 - **Test Performance**: Unit test suite must run in <30 seconds
-- **CI Optimization**: Separate fast/slow/integration test execution
+- **CI Optimization**: Separate fast/integration/benchmark execution
 - **Documentation**: All test patterns documented with examples
 
 ## Test Architecture
@@ -68,13 +68,12 @@ def test_index_and_retrieve_workflow(self, real_store):
 - Complex data flows
 - Environment-dependent (CI provides API keys)
 
-#### 3. Benchmark Tests (Slow - 2-10 minutes)
+#### 3. Benchmark Tests (Long-running - minutes)
 **Purpose**: Performance validation and regression detection  
 **Execution**: Scheduled CI runs, manual performance analysis  
 **Coverage Target**: Key performance paths documented
 
 ```python
-@pytest.mark.slow
 @pytest.mark.benchmark
 def test_indexing_performance(self, leaf_tokens, document_type):
     # Real API calls, timing measurements
@@ -244,15 +243,17 @@ def test_indexing_memory_usage(self):
 
 ### Test Execution Strategy
 
-#### Pre-commit Hook (Fast Tests Only)
+#### Pre-commit Hook (Impacted-only Fast Suite)
 ```bash
-pytest tests/ -m "not slow and not integration" --maxfail=5
+./scripts/run-checks.sh --impacted-only <files...>
+# Equivalent marker selection when invoking pytest directly:
+pytest tests/ -m "not benchmark and not integration" --maxfail=5
 ```
 
 #### Pull Request Validation (Comprehensive)
 ```bash
-# Fast tests
-pytest tests/ -m "not slow and not integration"
+# Fast tests (exclude benchmarks and integration)
+pytest tests/ -m "not benchmark and not integration"
 
 # Integration tests  
 pytest tests/ -m "integration" --use-real-store
@@ -271,7 +272,6 @@ pytest benchmarks/ -m "benchmark" --benchmark-json=results.json
 
 #### Standard Markers
 ```python
-@pytest.mark.slow          # Tests taking >5 seconds
 @pytest.mark.integration   # Tests requiring external dependencies
 @pytest.mark.benchmark     # Performance/timing tests
 @pytest.mark.skip          # Temporarily disabled tests

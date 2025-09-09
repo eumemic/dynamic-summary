@@ -43,11 +43,10 @@ The system is composed of several key modules that work together.
 
 -   **`ragzoom.index.TreeBuilder`**: The component responsible for building the node tree from a source document. It splits the text, creates leaf nodes, and then recursively calls an LLM to generate parent summaries in a bottom-up fashion.
 
--   **`ragzoom.store.Store`**: The persistence layer backed by a single
-    PostgreSQL database with the `pgvector` extension. Both the tree structure
-    and vector embeddings live in one transactional store, ensuring atomic
-    updates. An LRU cache keeps frequently accessed nodes in memory (default:
-    1000 nodes). Node IDs are generated as UUIDs using `uuid.uuid4()`.
+-   **Storage Layer (StorageBackend + DocumentStore)**: The persistence layer is abstracted behind a `StorageBackend` protocol.
+    - SQLiteStorageBackend (default for development) stores nodes in `data/sqlite.db` and vectors in a local index (Chroma in `data/chroma/` or a pure‑Python index).
+    - PostgresStorageBackend (for production/perf) uses PostgreSQL with pgvector for embeddings via repositories and a `DatabaseManager`.
+    - All application code creates a per‑document `DocumentStore` via `store.for_document(doc_id)` to enforce strict document isolation.
 
 -   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent node or recurse into children for higher detail. Budget is split proportionally based on relevance scores. 
 

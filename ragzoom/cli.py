@@ -23,12 +23,12 @@ from ragzoom.exceptions import (
     ResourceError,
     ValidationError,
 )
-from ragzoom.models import TreeNode
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingService
 from ragzoom.services.query_service import QueryService
 from ragzoom.store import create_store_with_docker
 from ragzoom.tree_viz import build_ascii_tree
+from ragzoom.worktree_utils import DEFAULT_DATA_DIR_NAME
 
 # Load environment variables
 load_dotenv()
@@ -45,6 +45,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
 # Suppress noisy SQLAlchemy logs even in debug mode
 logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
+# Suppress Chroma telemetry noise
+logging.getLogger("chromadb").setLevel(logging.WARNING)
+logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
 
 
 def handle_cli_error(e: Exception, operation: str) -> None:
@@ -69,6 +73,12 @@ def handle_cli_error(e: Exception, operation: str) -> None:
         click.echo(f"❌ Resource error during {operation}: {e}", err=True)
     elif isinstance(e, NodeNotFoundError):
         click.echo(f"❌ Node not found during {operation}: {e}", err=True)
+    elif isinstance(e, RuntimeError) and "currently being modified" in str(e):
+        click.echo(
+            "❌ Another indexing is already in progress for this document.\n"
+            "   Please wait for the current run to finish and try again.",
+            err=True,
+        )
     else:
         click.echo(f"❌ Error during {operation}: {e}", err=True)
     sys.exit(1)
@@ -150,7 +160,7 @@ def cli(ctx: click.Context) -> None:
 @click.option(
     "--database",
     type=str,
-    help="PostgreSQL database URL (default: postgresql://localhost/ragzoom)",
+    help="Database URL (sqlite:///path/to.db or postgresql+psycopg://host/db)",
 )
 @click.option(
     "--debug",
@@ -218,12 +228,22 @@ def index(
         query_config = QueryConfig()  # Use defaults for indexing command
         operational_config = OperationalConfig()
 
-        # Override database URL if provided
+        # Override storage location if provided
         if data_dir:
             data_path = Path(data_dir)
-            operational_config = operational_config.replace(
-                database_url=f"postgresql:///{data_path / 'ragzoom'}",
-            )
+            # Choose URL based on backend
+            if operational_config.backend == "sqlite":
+                from ragzoom.worktree_utils import get_default_sqlite_url
+
+                operational_config = operational_config.replace(
+                    database_url=get_default_sqlite_url(data_path)
+                )
+            else:
+                # For postgres, form a sensible DB name under base_dir
+                dbname = (data_path / DEFAULT_DATA_DIR_NAME / "ragzoom").name
+                operational_config = operational_config.replace(
+                    database_url=f"postgresql+psycopg://localhost/{dbname}"
+                )
 
         if database:
             operational_config = operational_config.replace(database_url=database)
@@ -233,7 +253,7 @@ def index(
         ctx.obj["query_config"] = query_config
         ctx.obj["operational_config"] = operational_config
 
-        # Create services for this command
+        # Create services for this command (respects backend configured)
         store = create_store_with_docker(
             operational_config, embedding_model=index_config.embedding_model
         )
@@ -273,16 +293,8 @@ def index(
             text = Path(file_path).read_text(encoding="utf-8")
 
             # Get leaf nodes for validation
-            with store.SessionLocal() as session:
-                doc_leaves = (
-                    session.query(TreeNode)
-                    .filter_by(document_id=result.document_id)
-                    .filter(
-                        TreeNode.left_child_id.is_(None),
-                        TreeNode.right_child_id.is_(None),
-                    )
-                    .all()
-                )
+            doc_store_for_validate = store.for_document(result.document_id)
+            doc_leaves = doc_store_for_validate.nodes.get_leaves()
 
             run_validate(
                 lambda: validate_document_coverage(text, doc_leaves),
@@ -312,10 +324,9 @@ def index(
 
         # Save telemetry if requested
         if telemetry_file and telemetry_data:
-            click.echo(f"\n📁 Saving telemetry to {telemetry_file}...")
             with open(telemetry_file, "w") as f:
                 json.dump(telemetry_data, f, indent=2)
-            click.echo(f"✅ Telemetry saved to {telemetry_file}")
+            click.echo(f"✅ Saved telemetry: {telemetry_file}")
 
     except OSError as e:
         # Clean user-friendly errors (no "Error indexing document" prefix)
@@ -356,17 +367,9 @@ def documents(ctx: click.Context) -> None:
             click.echo(f"Chunks: {doc.chunk_count}")
             click.echo(f"Total nodes: {doc.node_count}")
 
-            # Calculate leaf count separately if needed
-            with store.SessionLocal() as session:
-                leaf_count = (
-                    session.query(TreeNode)
-                    .filter_by(document_id=doc.document_id)
-                    .filter(
-                        TreeNode.left_child_id.is_(None),
-                        TreeNode.right_child_id.is_(None),
-                    )
-                    .count()
-                )
+            # Calculate leaf count via DocumentStore
+            doc_store = store.for_document(doc.document_id)
+            leaf_count = len(doc_store.nodes.get_leaves())
             click.echo(f"Leaf nodes: {leaf_count}")
 
     except Exception as e:
@@ -591,31 +594,19 @@ def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
             operational_config, embedding_model=index_config.embedding_model
         )
 
-        # If document_id not provided, detect it from the node
-        if not document_id:
-            node = store.node_repo.get_node(node_id)
-            if not node:
-                click.echo(f"❌ Node {node_id} not found")
-                sys.exit(1)
-            document_id = node.document_id
-            if document_id:
-                click.echo(f"Auto-detected document: {document_id}")
-
-        # Use document-scoped store for consistency (though pinning affects the node globally)
-        document_store = store.for_document(document_id)
-
-        # Verify the node belongs to this document
-        node = document_store.nodes.get(node_id)
-        if not node:
-            click.echo(
-                f"❌ Node {node_id} not found"
-                + (f" in document {document_id}" if document_id else "")
-            )
-            sys.exit(1)
-
-        # Pin the node using DocumentService (this affects the node globally)
         document_service = DocumentService(store)
+        # If a document was provided, verify the node belongs to it
+        if document_id:
+            ds = store.for_document(document_id)
+            if not ds.nodes.get_node(node_id):
+                click.echo(
+                    f"❌ Node {node_id} not found"
+                    + (f" in document {document_id}" if document_id else "")
+                )
+                sys.exit(1)
+        # Delegate to service to find and pin the node
         document_service.pin_node(node_id)
+
         click.echo(f"✅ Node {node_id} pinned successfully!")
 
     except NodeNotFoundError:
@@ -732,8 +723,13 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
 @cli.command()
 @click.argument("output_file", type=click.Path())
 @click.option("--format", type=click.Choice(["json", "text"]), default="text")
+@click.option(
+    "--stream/--no-stream",
+    default=False,
+    help="Stream output to avoid loading all nodes in memory",
+)
 @click.pass_context
-def export(ctx: click.Context, output_file: str, format: str) -> None:
+def export(ctx: click.Context, output_file: str, format: str, stream: bool) -> None:
     """Export tree structure to file."""
     try:
         # Create services for this command
@@ -743,56 +739,135 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
             operational_config, embedding_model=index_config.embedding_model
         )
 
-        # Get all nodes
-        nodes_data = []
-        with store.SessionLocal() as session:
-            from ragzoom.models import TreeNode
-
-            nodes = session.query(TreeNode).all()
-            for node in nodes:
-                node_dict = {
-                    "id": node.id,
-                    "parent_id": node.parent_id,
-                    "height": node.height,
-                    "span_start": node.span_start,
-                    "span_end": node.span_end,
-                    "is_leaf": node.left_child_id is None
-                    and node.right_child_id is None,
-                    "text_preview": (
-                        node.text[:100] + "..." if len(node.text) > 100 else node.text
-                    ),
-                }
-                nodes_data.append(node_dict)
-
-        # Write output
         output_path = Path(output_file)
-        if format == "json":
-            output_path.write_text(json.dumps(nodes_data, indent=2))
-        else:
-            # Text format
-            lines = []
-            for node_dict in sorted(
-                nodes_data, key=lambda x: (x["height"], x["span_start"])
-            ):
-                height = node_dict.get("height", 0)
-                if isinstance(height, int):
-                    indent = "  " * height
-                else:
-                    indent = ""
-                leaf_marker = "🍃" if node_dict.get("is_leaf") else "📁"
-                node_id = node_dict.get("id", "")
-                if isinstance(node_id, str):
-                    node_id_short = node_id[:8] if len(node_id) > 8 else node_id
-                else:
-                    node_id_short = str(node_id)[:8]
-                span_start = node_dict.get("span_start", 0)
-                span_end = node_dict.get("span_end", 0)
-                lines.append(
-                    f"{indent}{leaf_marker} {node_id_short}... [{span_start}-{span_end}]"
-                )
-            output_path.write_text("\n".join(lines))
 
-        click.echo(f"✅ Exported {len(nodes_data)} nodes to {output_file}")
+        if stream:
+            # Streaming mode: write incrementally without building large lists
+            if format == "json":
+                with output_path.open("w", encoding="utf-8") as f:
+                    f.write("[")
+                    first = True
+                    for doc in store.list_documents():
+                        ds = store.for_document(doc.id)
+                        batches = ds.nodes.get_all_paginated(page_size=1000)
+                        for batch in batches:
+                            for node in batch:
+                                node_dict = {
+                                    "id": node.id,
+                                    "parent_id": node.parent_id,
+                                    "height": node.height,
+                                    "span_start": node.span_start,
+                                    "span_end": node.span_end,
+                                    "is_leaf": (
+                                        node.left_child_id is None
+                                        and node.right_child_id is None
+                                    ),
+                                    "text_preview": (
+                                        node.text[:100] + "..."
+                                        if len(node.text) > 100
+                                        else node.text
+                                    ),
+                                }
+                                if not first:
+                                    f.write(",\n")
+                                f.write(json.dumps(node_dict))
+                                first = False
+                    f.write("]\n")
+            else:  # text
+                with output_path.open("w", encoding="utf-8") as f:
+                    for doc in store.list_documents():
+                        ds = store.for_document(doc.id)
+                        batches = ds.nodes.get_all_paginated(page_size=1000)
+                        for batch in batches:
+                            for node in batch:
+                                # Coerce to ints to satisfy type checker and ensure stability
+                                height_val = getattr(node, "height", 0)
+                                try:
+                                    height = int(height_val)
+                                except Exception:
+                                    height = 0
+                                indent = "  " * height
+                                leaf_marker = (
+                                    "🍃"
+                                    if (
+                                        node.left_child_id is None
+                                        and node.right_child_id is None
+                                    )
+                                    else "📁"
+                                )
+                                node_id_short = (
+                                    node.id[:8]
+                                    if isinstance(node.id, str) and len(node.id) > 8
+                                    else str(node.id)
+                                )
+                                # Coerce spans to ints defensively
+                                try:
+                                    span_start = int(getattr(node, "span_start", 0))
+                                except Exception:
+                                    span_start = 0
+                                try:
+                                    span_end = int(getattr(node, "span_end", 0))
+                                except Exception:
+                                    span_end = 0
+                                preview = (
+                                    node.text[:100] + "..."
+                                    if len(node.text) > 100
+                                    else node.text
+                                )
+                                f.write(
+                                    f"{indent}{leaf_marker} {node_id_short} [{span_start},{span_end}) {preview}\n"
+                                )
+            click.echo(f"✅ Exported data to {output_file} (streaming mode)")
+        else:
+            # Legacy collect-and-write mode
+            nodes_data = []
+            for doc in store.list_documents():
+                ds = store.for_document(doc.id)
+                for node in ds.nodes.get_all():
+                    node_dict = {
+                        "id": node.id,
+                        "parent_id": node.parent_id,
+                        "height": node.height,
+                        "span_start": node.span_start,
+                        "span_end": node.span_end,
+                        "is_leaf": (
+                            node.left_child_id is None and node.right_child_id is None
+                        ),
+                        "text_preview": (
+                            node.text[:100] + "..."
+                            if len(node.text) > 100
+                            else node.text
+                        ),
+                    }
+                    nodes_data.append(node_dict)
+
+            if format == "json":
+                output_path.write_text(json.dumps(nodes_data, indent=2))
+            else:
+                lines = []
+                for node_dict in sorted(
+                    nodes_data, key=lambda x: (x["height"], x["span_start"])
+                ):
+                    height_val = node_dict.get("height", 0)
+                    height = int(height_val) if isinstance(height_val, int) else 0
+                    indent = "  " * height
+                    leaf_marker = "🍃" if node_dict.get("is_leaf") else "📁"
+                    node_id = node_dict.get("id", "")
+                    node_id_short = (
+                        node_id[:8]
+                        if isinstance(node_id, str) and len(node_id) > 8
+                        else str(node_id)
+                    )
+                    ss = node_dict.get("span_start", 0)
+                    se = node_dict.get("span_end", 0)
+                    span_start = int(ss) if isinstance(ss, int) else 0
+                    span_end = int(se) if isinstance(se, int) else 0
+                    lines.append(
+                        f"{indent}{leaf_marker} {node_id_short} [{span_start},{span_end}) {node_dict.get('text_preview','')}"
+                    )
+                output_path.write_text("\n".join(lines))
+
+            click.echo(f"✅ Exported {len(nodes_data)} nodes to {output_file}")
 
     except Exception as e:
         handle_cli_error(e, "exporting data")
@@ -939,41 +1014,48 @@ def doctor() -> None:
     else:
         click.echo("⚠️  Virtual environment: None (consider using one)")
 
-    # Check Docker availability
-    try:
-        result = subprocess.run(
-            ["docker", "--version"], capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            version = result.stdout.strip()
-            click.echo(f"✅ Docker: {version}")
+    # Check Docker availability (only if using postgres backend)
+    from ragzoom.config import OperationalConfig
 
-            # Check Docker daemon
-            try:
-                subprocess.run(
-                    ["docker", "ps"], capture_output=True, check=True, timeout=5
-                )
-                click.echo("✅ Docker daemon: Running")
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                click.echo("❌ Docker daemon: Not running")
-                click.echo(
-                    "   Start Docker Desktop or run: sudo systemctl start docker"
-                )
-                issues_found = True
-        else:
-            raise subprocess.CalledProcessError(result.returncode, "docker")
+    _cfg = OperationalConfig()
+    if _cfg.backend == "sqlite":
+        click.echo("✅ Backend: SQLite (file-backed)")
+        click.echo("   Skipping Docker checks")
+    else:
+        try:
+            result = subprocess.run(
+                ["docker", "--version"], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                version = result.stdout.strip()
+                click.echo(f"✅ Docker: {version}")
 
-    except (
-        FileNotFoundError,
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-    ):
-        click.echo("❌ Docker: Not found or not working")
-        click.echo("   Install Docker Desktop from https://docker.com")
-        issues_found = True
+                # Check Docker daemon
+                try:
+                    subprocess.run(
+                        ["docker", "ps"], capture_output=True, check=True, timeout=5
+                    )
+                    click.echo("✅ Docker daemon: Running")
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    click.echo("❌ Docker daemon: Not running")
+                    click.echo(
+                        "   Start Docker Desktop or run: sudo systemctl start docker"
+                    )
+                    issues_found = True
+            else:
+                raise subprocess.CalledProcessError(result.returncode, "docker")
+
+        except (
+            FileNotFoundError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+        ):
+            click.echo("❌ Docker: Not found or not working")
+            click.echo("   Install Docker Desktop from https://docker.com")
+            issues_found = True
 
     # Check PostgreSQL container status
-    if not issues_found:  # Only check if Docker is working
+    if not issues_found and _cfg.backend != "sqlite":  # Only if using postgres
         try:
             from ragzoom.docker_postgres import DockerPostgres
 
@@ -1010,15 +1092,12 @@ def doctor() -> None:
             # Create operational config
             operational_config = OperationalConfig()
 
-            # Try to create a store (this will auto-start PostgreSQL if needed)
+            # Try to create a store (auto-start only if postgres)
             store = create_store_with_docker(operational_config)
 
-            # Test basic operation
-            with store.SessionLocal() as session:
-                # Simple query to test connection
-                from sqlalchemy import text
-
-                session.execute(text("SELECT 1"))
+            # Test basic operation without exposing sessions
+            # Attempt a lightweight repository call
+            _ = store.list_documents()
 
             click.echo("✅ Database connection: Working")
             store.close()

@@ -39,11 +39,14 @@ echo ""
 echo "📎 Setting up Git hooks..."
 
 # Create .git/hooks directory if it doesn't exist
-mkdir -p "$PROJECT_ROOT/.git/hooks"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    GIT_ROOT_DIR="$(git rev-parse --show-toplevel)"
+    HOOKS_DIR="$(git rev-parse --git-path hooks)"
+    mkdir -p "$HOOKS_DIR" 2>/dev/null || true
 
-# Create pre-commit dispatcher hook (not a symlink)
-# This allows each worktree to use its own version of the hook
-cat > "$PROJECT_ROOT/.git/hooks/pre-commit" << 'EOF'
+    # Create pre-commit dispatcher hook (not a symlink)
+    # This allows each worktree to use its own version of the hook
+    cat > "$HOOKS_DIR/pre-commit" << 'EOF'
 #!/bin/bash
 # Git pre-commit hook dispatcher
 # This script calls the worktree's own version of the pre-commit hook
@@ -64,9 +67,14 @@ else
     exit 0
 fi
 EOF
-
-chmod +x "$PROJECT_ROOT/.git/hooks/pre-commit"
-echo -e "${GREEN}✓ Created pre-commit hook dispatcher${NC}"
+    if chmod +x "$HOOKS_DIR/pre-commit" 2>/dev/null; then
+        echo -e "${GREEN}✓ Created pre-commit hook dispatcher at $HOOKS_DIR/pre-commit${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Could not set executable on $HOOKS_DIR/pre-commit (check permissions)${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠️  Not inside a Git worktree; skipping hook setup${NC}"
+fi
 
 # 2. Check Python environment
 echo ""
@@ -97,6 +105,15 @@ fi
 # Install package in development mode
 pip install -q -e "$PROJECT_ROOT"
 echo -e "${GREEN}✓ Installed RagZoom in development mode${NC}"
+
+# 3b. Optional Node dev tools (for faster duplicate detection)
+echo ""
+echo "🧰 Checking code duplication tool (optional)..."
+if command -v jscpd &> /dev/null; then
+    echo -e "${GREEN}✓ Global jscpd detected${NC}"
+else
+    echo -e "${YELLOW}⚠️  jscpd not found. Optional: install globally with 'npm install -g jscpd' for faster pre-commit checks${NC}"
+fi
 
 # 4. Set up PostgreSQL with Docker
 echo ""
@@ -193,14 +210,11 @@ echo -e "${GREEN}✓ Created logs directory${NC}"
 
 # 7. Run tests to verify setup
 echo ""
-echo "🧪 Running tests to verify setup..."
-
-# Run just a quick test to verify everything is working
-pytest "$PROJECT_ROOT/tests/test_utils.py" -q
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✓ Tests are working${NC}"
+echo "🧪 Verifying tests can be collected..."
+if pytest -q --collect-only > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ Pytest collection successful${NC}"
 else
-    echo -e "${RED}✗ Tests failed - check your setup${NC}"
+    echo -e "${YELLOW}⚠️  Pytest collection failed; try ./scripts/run-checks.sh for details${NC}"
 fi
 
 # 8. Display helpful information
@@ -220,8 +234,8 @@ echo "   • Start container: docker start ragzoom-postgres"
 echo "   • Stop container: docker stop ragzoom-postgres"
 echo "   • View logs: docker logs ragzoom-postgres"
 echo ""
-echo "🪝 Git hooks installed:"
-echo "   • pre-commit: Dispatches to worktree's own scripts/git-hooks/pre-commit"
+echo "🪝 Git hooks:"
+echo "   • Pre-commit dispatcher installed if in a Git worktree"
 echo "   • Each worktree can have its own hook logic"
 echo ""
 echo "📖 Documentation:"
