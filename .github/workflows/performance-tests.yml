@@ -181,6 +181,8 @@ jobs:
             test_data/the_hobbit.txt; then
             echo "❌ Indexing benchmark failed"
             echo "BENCHMARK_ERROR=true" >> $GITHUB_OUTPUT
+            # Fail immediately to surface the root cause in this step's logs
+            exit 1
           else
             echo "✅ Indexing benchmark completed"
             # Check for regression using CI summary
