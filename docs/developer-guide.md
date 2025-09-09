@@ -127,6 +127,9 @@ You can and should run these checks yourself as you code:
 -   **Run only downstream tests for files:** `./scripts/run-checks.sh --impacted-only path/to/file1.py path/to/file2.py`
 -   **Skip specific checks:** `./scripts/run-checks.sh --skip tests,jscpd`
 -   **Stop at first error:** `./scripts/run-checks.sh --fail-fast`
+
+Dev tools (optional, speeds up duplicate detection):
+-   Install Node dev tools once to avoid npx startup: `npm ci` (requires Node/npm)
 -   **Run specific test patterns:** `pytest tests/ -k "pattern"`
 -   **Auto-format your code:** `black ragzoom/ tests/`
 -   **Auto-fix linting issues:** `ruff check ragzoom/ tests/ --fix`

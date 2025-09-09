@@ -426,10 +426,42 @@ fi
 
 # jscpd
 if ! should_skip "jscpd"; then
-    if command -v npx &> /dev/null; then
-        run_check_background "JSCPD" "npx jscpd@latest ragzoom/ --config $GIT_ROOT/.jscpd.json"
+    # Prefer locally installed binary, then global, then npx fallback
+    if [ -x "$GIT_ROOT/node_modules/.bin/jscpd" ]; then
+        JSCPD_BIN="$GIT_ROOT/node_modules/.bin/jscpd"
+    elif command -v jscpd &> /dev/null; then
+        JSCPD_BIN="$(command -v jscpd)"
+    elif command -v npx &> /dev/null; then
+        JSCPD_BIN="npx jscpd@latest"
+        echo "[JSCPD] Using npx fallback (consider npm ci to install locally)"
     else
-        echo "[JSCPD] Skipped (npx not available)"
+        JSCPD_BIN=""
+    fi
+
+    if [ -n "$JSCPD_BIN" ]; then
+        if [ "$IMPACTED_ONLY" = true ]; then
+            # Limit jscpd scan to impacted source files under ragzoom/
+            impacted_src=()
+            for f in "${IMPACTED_FILES[@]}"; do
+                case "$f" in
+                    *.py)
+                        if [[ "$f" == ragzoom/* || "$f" == */ragzoom/* ]]; then
+                            impacted_src+=("$f")
+                        fi
+                        ;;
+                esac
+            done
+            if [ ${#impacted_src[@]} -gt 0 ]; then
+                jscpd_targets="${impacted_src[*]}"
+                run_check_background "JSCPD" "$JSCPD_BIN $jscpd_targets --config $GIT_ROOT/.jscpd.json"
+            else
+                echo "[JSCPD] Skipped (no impacted source files)"
+            fi
+        else
+            run_check_background "JSCPD" "$JSCPD_BIN ragzoom/ --config $GIT_ROOT/.jscpd.json"
+        fi
+    else
+        echo "[JSCPD] Skipped (jscpd not available)"
     fi
 fi
 
@@ -486,13 +518,15 @@ if [ "$FAIL_FAST" = true ]; then
             fi
         done
         pids=("${new_pids[@]+"${new_pids[@]}"}")
-        [ ${#pids[@]} -gt 0 ] && sleep 0.05
+        if [ ${#pids[@]:-0} -gt 0 ]; then sleep 0.05; fi
     done
 else
     # Wait for all processes to complete
-    for pid in "${pids[@]}"; do
-        wait "$pid"
-    done
+    if [ ${#pids[@]:-0} -gt 0 ]; then
+        for pid in "${pids[@]}"; do
+            wait "$pid"
+        done
+    fi
 fi
 
 # Check for auto-fixes after all background processes have completed

@@ -1,0 +1,8 @@
+{
+  "name": "ragzoom-dev-tools",
+  "private": true,
+  "devDependencies": {
+    "jscpd": "^4.0.0"
+  }
+}
+
