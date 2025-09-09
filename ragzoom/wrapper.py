@@ -99,10 +99,18 @@ class RagZoom:
 
         # Create document-scoped store and TreeBuilder
         document_store = self.store.for_document(document_id)
+        from ragzoom.vector_factory import create_vector_index
+
+        vector_index = create_vector_index(
+            self.operational_config.vector_backend,
+            self.operational_config.database_url,
+            self.index_config.embedding_model,
+        )
         tree_builder = TreeBuilder(
             self.index_config,
             document_store,
             self.operational_config.openai_api_key,
+            vector_index=vector_index,
         )
 
         return tree_builder.add_document(text)
@@ -210,10 +218,18 @@ class AsyncRagZoom:
 
         # Create document-scoped store and TreeBuilder
         document_store = self.store.for_document(document_id)
+        from ragzoom.vector_factory import create_vector_index
+
+        vector_index = create_vector_index(
+            self.operational_config.vector_backend,
+            self.operational_config.database_url,
+            self.index_config.embedding_model,
+        )
         tree_builder = TreeBuilder(
             self.index_config,
             document_store,
             self.operational_config.openai_api_key,
+            vector_index=vector_index,
         )
 
         return await tree_builder.add_document_async(text)

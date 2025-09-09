@@ -11,6 +11,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, SecretStr
+from ragzoom.contracts.vector_index_v2 import VectorIndex as VectorIndexV2
 from ragzoom.dataflow import build_tree_dataflow
 from ragzoom.dataflow.core import ProcessingStrategy
 from ragzoom.document_store import DocumentStore
@@ -63,6 +64,7 @@ class TreeBuilder:
         document_store: DocumentStore,
         api_key: str | SecretStr = "",
         max_concurrent: int = 30,
+        vector_index: VectorIndexV2 | None = None,
     ):
         """Initialize tree builder.
 
@@ -75,6 +77,18 @@ class TreeBuilder:
         self.config = config
         self.document_store = document_store
         self.splitter = TextSplitter(config)
+        if vector_index is None:
+            # Transitional fallback: build a default vector index from environment
+            # to keep tests working while callers are updated. This will be removed
+            # before merging the refactor.
+            import os
+
+            from ragzoom.vector_factory import create_vector_index
+
+            backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
+            db_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+            vector_index = create_vector_index(backend, db_url, config.embedding_model)
+        self.vector_index = vector_index
         # Convert string to SecretStr for security
         if isinstance(api_key, str) and not isinstance(api_key, SecretStr):
             api_key = SecretStr(api_key) if api_key else SecretStr("")
@@ -369,27 +383,22 @@ class TreeBuilder:
 
             # Two-phase apply for backends with external vector index (e.g., SQLite + PythonVectorIndex):
             # After all SQL writes are complete and parent references set, upsert vectors.
-            try:
-                upsert_items: list[
-                    tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
-                ] = []
-                for n in tree_nodes:
-                    meta = {
-                        "span_start": int(n.span_start),
-                        "span_end": int(n.span_end),
-                        "parent_id": n.parent_id or "",
-                        "document_id": n.document_id or "",
-                        "is_leaf": 1 if int(getattr(n, "height", 0)) == 0 else 0,
-                    }
-                    # Only include items that have embeddings
-                    if getattr(n, "embedding", None) is not None:
-                        upsert_items.append((n.id, n.embedding, meta))
-                if upsert_items:
-                    # This will no-op on backends whose search service doesn't support upsert
-                    doc_store.search.upsert_vectors(upsert_items)
-            except Exception as e:
-                # Upsert is best-effort for backends with external indices; do not fail indexing
-                logger.warning(f"Vector index upsert failed: {e}")
+            # Upsert vectors into the configured VectorIndex (required dependency)
+            upsert_items: list[
+                tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+            ] = []
+            for n in tree_nodes:
+                meta = {
+                    "span_start": int(n.span_start),
+                    "span_end": int(n.span_end),
+                    "parent_id": n.parent_id or "",
+                    "document_id": n.document_id or "",
+                    "is_leaf": 1 if int(getattr(n, "height", 0)) == 0 else 0,
+                }
+                if getattr(n, "embedding", None) is not None:
+                    upsert_items.append((n.id, n.embedding, meta))
+            if upsert_items:
+                self.vector_index.upsert(upsert_items)
 
             # Finalize telemetry if collector was used
             if reporter:
