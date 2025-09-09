@@ -75,7 +75,7 @@ jobs:
           RAGZOOM_VECTOR_BACKEND: chroma
           RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
-          ./scripts/run-checks.sh
+          ./scripts/run-checks.sh --include-integration-tests
 
   # Test coverage report (only on push to master)
   coverage:
@@ -116,7 +116,7 @@ jobs:
           RAGZOOM_VECTOR_BACKEND: chroma
           RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
-          pytest tests/ -m "not integration" -n 2 --cov=ragzoom --cov-report=term --cov-report=html --no-header
+          pytest tests/ -m "not benchmark" -n 2 --cov=ragzoom --cov-report=term --cov-report=html --no-header
           
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -171,4 +171,4 @@ jobs:
           RAGZOOM_VECTOR_BACKEND: chroma
           RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
-          pytest tests/ -m "not integration" -n 2 --no-header -q
+          pytest tests/ -m "not benchmark" -n 2 --no-header -q

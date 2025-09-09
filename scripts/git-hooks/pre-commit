@@ -10,7 +10,14 @@ GIT_ROOT="$(git rev-parse --show-toplevel)"
 # Run all checks using the common script
 # Don't skip any checks for git commits
 # Fail if auto-fixes are applied (user needs to re-commit)
-"$GIT_ROOT/scripts/run-checks.sh" --fail-on-autofix --impacted-only
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM || true)
+
+# If we have staged files, limit tests to those impacted. Otherwise, run defaults
+if [ -n "$STAGED_FILES" ]; then
+    "$GIT_ROOT/scripts/run-checks.sh" --fail-on-autofix --impacted-only $STAGED_FILES
+else
+    "$GIT_ROOT/scripts/run-checks.sh" --fail-on-autofix
+fi
 RESULT=$?
 
 # Get list of modified Python files to re-add after formatting

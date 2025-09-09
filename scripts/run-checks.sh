@@ -6,12 +6,13 @@
 #   run-checks.sh [OPTIONS] [file_or_directory ...]
 #
 # Options:
-#   --skip CHECKS           Skip specific checks (comma-separated): tests,dmypy,ruff,black,jscpd,bandit
-#   --fail-fast             Stop at first failure (useful for debugging)
-#   --include-slow-tests    (Deprecated) No-op; full suite already runs by default
-#   --ignore-lint-rules RULES  Ignore specific lint rules (comma-separated): F401,E402,etc.
-#   --fail-on-autofix       Exit with failure if any auto-fixes were applied
-#   --help                  Show this help message
+#   --skip CHECKS              Skip specific checks (comma-separated): tests,dmypy,ruff,black,jscpd,bandit
+#   --fail-fast                Stop at first failure (useful for debugging)
+#   --include-integration-tests  Include integration tests (benchmarks still excluded)
+#   --impacted-only FILES...   Run only tests downstream of the provided files (required)
+#   --ignore-lint-rules RULES   Ignore specific lint rules (comma-separated): F401,E402,etc.
+#   --fail-on-autofix          Exit with failure if any auto-fixes were applied
+#   --help                     Show this help message
 #
 # Exit codes:
 #   0 - All checks passed
@@ -23,11 +24,12 @@ set -uo pipefail  # Don't use -e, we handle errors explicitly
 SKIP_CHECKS=""
 TARGETS=""
 FAIL_FAST=false
-INCLUDE_SLOW_TESTS=false
+INCLUDE_INTEGRATION=false
 IGNORE_LINT_RULES=""
 FAIL_ON_AUTOFIX=false
 TEST_SCOPE="fast"  # deprecated; kept for backward-compatibility
 IMPACTED_ONLY=false
+IMPACTED_FILES=()
 
 show_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# *//'
@@ -43,8 +45,8 @@ while [[ $# -gt 0 ]]; do
             FAIL_FAST=true
             shift
             ;;
-        --include-slow-tests)
-            INCLUDE_SLOW_TESTS=true
+        --include-integration-tests)
+            INCLUDE_INTEGRATION=true
             shift
             ;;
         --ignore-lint-rules)
@@ -58,9 +60,14 @@ while [[ $# -gt 0 ]]; do
         --impacted-only)
             IMPACTED_ONLY=true
             shift
+            # Collect file arguments until next option or end
+            while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do
+                IMPACTED_FILES+=("$1")
+                shift
+            done
             ;;
         --test-scope)
-            # Deprecated: use --include-slow-tests or default fast path
+            # Deprecated: use --include-integration-tests or default fast path
             TEST_SCOPE="$2"
             shift 2
             ;;
@@ -75,10 +82,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check for incoherent options
-if [ "$INCLUDE_SLOW_TESTS" = true ] && [[ "$SKIP_CHECKS" == *"tests"* ]]; then
-    echo "Error: Cannot use --include-slow-tests with --skip tests (incoherent)" >&2
+# Validate impacted-only usage
+if [ "$IMPACTED_ONLY" = true ] && [ ${#IMPACTED_FILES[@]} -eq 0 ]; then
+    echo "Error: --impacted-only requires at least one FILE argument" >&2
+    echo "Usage: $0 --impacted-only FILE [FILE ...]" >&2
     exit 1
+fi
+
+# Note: --include-integration-tests with --skip tests is a no-op for tests; keep running other checks
+if [ "$INCLUDE_INTEGRATION" = true ] && [[ "$SKIP_CHECKS" == *"tests"* ]]; then
+    echo "[Tests] Skipped: --include-integration-tests has no effect when tests are skipped" >&2
 fi
 
 # Get repository root (works in main repo and worktrees)
@@ -169,13 +182,6 @@ should_skip() {
     done
     return 1
 }
-
-# Get list of modified files for git context (if available)
-if git diff --cached --name-only &>/dev/null; then
-    modified_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || true)
-else
-    modified_files=""
-fi
 
 # Default targets if none specified (always lint/typecheck code and tests)
 if [[ -z "$TARGETS" ]]; then
@@ -291,8 +297,15 @@ run_check_background() {
 # Tests
 if ! should_skip "tests"; then
     if command -v pytest &> /dev/null; then
-        if [ "$INCLUDE_SLOW_TESTS" = true ] || [ "$TEST_SCOPE" = "all" ]; then
-            # Ensure PostgreSQL is available only when using the postgres backend
+        # Marker expression: always exclude benchmarks; include integration only when requested
+        if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
+            marker_expr="not benchmark"
+        else
+            marker_expr="not benchmark and not integration"
+        fi
+
+        # Ensure PostgreSQL only if integration tests are requested and backend is postgres
+        if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
             BACKEND="${RAGZOOM_BACKEND:-sqlite}"
             DB_URL="${RAGZOOM_DATABASE_URL:-}"
             if [ "$BACKEND" = "postgres" ] || [[ "$DB_URL" =~ ^postgres ]]; then
@@ -307,36 +320,18 @@ if ! should_skip "tests"; then
             else
                 echo "[PostgreSQL] Skipping: backend is '$BACKEND' (using SQLite)"
             fi
-            # Run full suite (still excludes benchmarks)
-            run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark and not integration' -n 8 --no-header"
-        else
-            if [ "$IMPACTED_ONLY" = true ]; then
-                # Impacted-only mode for pre-commit: run only tests downstream of changes
-                if [ -n "$modified_files" ]; then
-                    impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" $modified_files || true)"
-                else
-                    impacted=""
-                fi
-                if [ -n "$impacted" ]; then
-                    run_check_background "Tests" "pytest $impacted -q --tb=short -m 'not benchmark and not integration' -n 8 --no-header"
-                else
-                    # Fallback to full suite
-                    run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark and not integration' -n 8 --no-header"
-                fi
-            else
-                # Run full suite (default): exclude benchmarks and integration
-                run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark and not integration' -n 8 --no-header"
+        fi
 
-                # Additionally, run tests impacted by staged changes (to double-check), still no benchmarks
-                if [ -n "$modified_files" ]; then
-                    impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" $modified_files || true)"
-                else
-                    impacted=""
-                fi
-                if [ -n "$impacted" ]; then
-                    run_check_background "Changes" "pytest $impacted -q --tb=short -m 'not benchmark and not integration' -n 8 --no-header"
-                fi
+        if [ "$IMPACTED_ONLY" = true ]; then
+            impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" ${IMPACTED_FILES[@]} || true)"
+            if [ -n "$impacted" ]; then
+                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$marker_expr' -n 8 --no-header"
+            else
+                echo "[Tests] Skipped (no impacted tests)"
             fi
+        else
+            # Default: run full suite with selected markers
+            run_check_background "Tests" "pytest tests/ -q --tb=short -m '$marker_expr' -n 8 --no-header"
         fi
     else
         echo "[Tests] Skipped (pytest not installed)"

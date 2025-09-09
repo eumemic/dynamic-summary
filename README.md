@@ -377,7 +377,7 @@ ragzoom/
 ./scripts/run-checks.sh
 
 # Include slow and integration tests (auto-starts PostgreSQL if needed)
-./scripts/run-checks.sh --include-slow-tests
+./scripts/run-checks.sh --include-integration-tests
 
 # Run checks without tests
 ./scripts/run-checks.sh --skip tests
@@ -399,8 +399,8 @@ pytest tests/ -k "test_name"     # Run tests matching pattern
 pytest tests/test_file.py        # Run specific test file
 
 # Run by test category
-pytest -m "not slow and not integration"  # Fast tests only (default)
-pytest -m slow                             # Slow tests only
+pytest -m "not benchmark and not integration"  # Default marker selection
+pytest -m "not benchmark"                       # Include integration tests
 pytest -m integration                      # Integration tests only
 ```
 
