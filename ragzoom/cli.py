@@ -783,7 +783,7 @@ def export(ctx: click.Context, output_file: str, format: str, stream: bool) -> N
                                 # Coerce to ints to satisfy type checker and ensure stability
                                 height_val = getattr(node, "height", 0)
                                 try:
-                                    height = int(height_val)  # type: ignore[arg-type]
+                                    height = int(height_val)
                                 except Exception:
                                     height = 0
                                 indent = "  " * height
