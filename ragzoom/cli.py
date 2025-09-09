@@ -723,8 +723,13 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
 @cli.command()
 @click.argument("output_file", type=click.Path())
 @click.option("--format", type=click.Choice(["json", "text"]), default="text")
+@click.option(
+    "--stream/--no-stream",
+    default=False,
+    help="Stream output to avoid loading all nodes in memory",
+)
 @click.pass_context
-def export(ctx: click.Context, output_file: str, format: str) -> None:
+def export(ctx: click.Context, output_file: str, format: str, stream: bool) -> None:
     """Export tree structure to file."""
     try:
         # Create services for this command
@@ -734,55 +739,135 @@ def export(ctx: click.Context, output_file: str, format: str) -> None:
             operational_config, embedding_model=index_config.embedding_model
         )
 
-        # Get all nodes via document-scoped stores (backend-agnostic)
-        nodes_data = []
-        for doc in store.list_documents():
-            ds = store.for_document(doc.id)
-            for node in ds.nodes.get_all():
-                node_dict = {
-                    "id": node.id,
-                    "parent_id": node.parent_id,
-                    "height": node.height,
-                    "span_start": node.span_start,
-                    "span_end": node.span_end,
-                    "is_leaf": (
-                        node.left_child_id is None and node.right_child_id is None
-                    ),
-                    "text_preview": (
-                        node.text[:100] + "..." if len(node.text) > 100 else node.text
-                    ),
-                }
-                nodes_data.append(node_dict)
-
-        # Write output
         output_path = Path(output_file)
-        if format == "json":
-            output_path.write_text(json.dumps(nodes_data, indent=2))
-        else:
-            # Text format
-            lines = []
-            for node_dict in sorted(
-                nodes_data, key=lambda x: (x["height"], x["span_start"])
-            ):
-                height = node_dict.get("height", 0)
-                if isinstance(height, int):
-                    indent = "  " * height
-                else:
-                    indent = ""
-                leaf_marker = "🍃" if node_dict.get("is_leaf") else "📁"
-                node_id = node_dict.get("id", "")
-                if isinstance(node_id, str):
-                    node_id_short = node_id[:8] if len(node_id) > 8 else node_id
-                else:
-                    node_id_short = str(node_id)[:8]
-                span_start = node_dict.get("span_start", 0)
-                span_end = node_dict.get("span_end", 0)
-                lines.append(
-                    f"{indent}{leaf_marker} {node_id_short}... [{span_start}-{span_end}]"
-                )
-            output_path.write_text("\n".join(lines))
 
-        click.echo(f"✅ Exported {len(nodes_data)} nodes to {output_file}")
+        if stream:
+            # Streaming mode: write incrementally without building large lists
+            if format == "json":
+                with output_path.open("w", encoding="utf-8") as f:
+                    f.write("[")
+                    first = True
+                    for doc in store.list_documents():
+                        ds = store.for_document(doc.id)
+                        batches = ds.nodes.get_all_paginated(page_size=1000)
+                        for batch in batches:
+                            for node in batch:
+                                node_dict = {
+                                    "id": node.id,
+                                    "parent_id": node.parent_id,
+                                    "height": node.height,
+                                    "span_start": node.span_start,
+                                    "span_end": node.span_end,
+                                    "is_leaf": (
+                                        node.left_child_id is None
+                                        and node.right_child_id is None
+                                    ),
+                                    "text_preview": (
+                                        node.text[:100] + "..."
+                                        if len(node.text) > 100
+                                        else node.text
+                                    ),
+                                }
+                                if not first:
+                                    f.write(",\n")
+                                f.write(json.dumps(node_dict))
+                                first = False
+                    f.write("]\n")
+            else:  # text
+                with output_path.open("w", encoding="utf-8") as f:
+                    for doc in store.list_documents():
+                        ds = store.for_document(doc.id)
+                        batches = ds.nodes.get_all_paginated(page_size=1000)
+                        for batch in batches:
+                            for node in batch:
+                                # Coerce to ints to satisfy type checker and ensure stability
+                                height_val = getattr(node, "height", 0)
+                                try:
+                                    height = int(height_val)  # type: ignore[arg-type]
+                                except Exception:
+                                    height = 0
+                                indent = "  " * height
+                                leaf_marker = (
+                                    "🍃"
+                                    if (
+                                        node.left_child_id is None
+                                        and node.right_child_id is None
+                                    )
+                                    else "📁"
+                                )
+                                node_id_short = (
+                                    node.id[:8]
+                                    if isinstance(node.id, str) and len(node.id) > 8
+                                    else str(node.id)
+                                )
+                                # Coerce spans to ints defensively
+                                try:
+                                    span_start = int(getattr(node, "span_start", 0))
+                                except Exception:
+                                    span_start = 0
+                                try:
+                                    span_end = int(getattr(node, "span_end", 0))
+                                except Exception:
+                                    span_end = 0
+                                preview = (
+                                    node.text[:100] + "..."
+                                    if len(node.text) > 100
+                                    else node.text
+                                )
+                                f.write(
+                                    f"{indent}{leaf_marker} {node_id_short} [{span_start},{span_end}) {preview}\n"
+                                )
+            click.echo(f"✅ Exported data to {output_file} (streaming mode)")
+        else:
+            # Legacy collect-and-write mode
+            nodes_data = []
+            for doc in store.list_documents():
+                ds = store.for_document(doc.id)
+                for node in ds.nodes.get_all():
+                    node_dict = {
+                        "id": node.id,
+                        "parent_id": node.parent_id,
+                        "height": node.height,
+                        "span_start": node.span_start,
+                        "span_end": node.span_end,
+                        "is_leaf": (
+                            node.left_child_id is None and node.right_child_id is None
+                        ),
+                        "text_preview": (
+                            node.text[:100] + "..."
+                            if len(node.text) > 100
+                            else node.text
+                        ),
+                    }
+                    nodes_data.append(node_dict)
+
+            if format == "json":
+                output_path.write_text(json.dumps(nodes_data, indent=2))
+            else:
+                lines = []
+                for node_dict in sorted(
+                    nodes_data, key=lambda x: (x["height"], x["span_start"])
+                ):
+                    height_val = node_dict.get("height", 0)
+                    height = int(height_val) if isinstance(height_val, int) else 0
+                    indent = "  " * height
+                    leaf_marker = "🍃" if node_dict.get("is_leaf") else "📁"
+                    node_id = node_dict.get("id", "")
+                    node_id_short = (
+                        node_id[:8]
+                        if isinstance(node_id, str) and len(node_id) > 8
+                        else str(node_id)
+                    )
+                    ss = node_dict.get("span_start", 0)
+                    se = node_dict.get("span_end", 0)
+                    span_start = int(ss) if isinstance(ss, int) else 0
+                    span_end = int(se) if isinstance(se, int) else 0
+                    lines.append(
+                        f"{indent}{leaf_marker} {node_id_short} [{span_start},{span_end}) {node_dict.get('text_preview','')}"
+                    )
+                output_path.write_text("\n".join(lines))
+
+            click.echo(f"✅ Exported {len(nodes_data)} nodes to {output_file}")
 
     except Exception as e:
         handle_cli_error(e, "exporting data")
