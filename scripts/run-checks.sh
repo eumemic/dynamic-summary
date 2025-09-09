@@ -426,14 +426,14 @@ fi
 
 # jscpd
 if ! should_skip "jscpd"; then
-    # Prefer locally installed binary, then global, then npx fallback
-    if [ -x "$GIT_ROOT/node_modules/.bin/jscpd" ]; then
-        JSCPD_BIN="$GIT_ROOT/node_modules/.bin/jscpd"
-    elif command -v jscpd &> /dev/null; then
+    # Prefer global jscpd, then local node_modules, then npx fallback
+    if command -v jscpd &> /dev/null; then
         JSCPD_BIN="$(command -v jscpd)"
+    elif [ -x "$GIT_ROOT/node_modules/.bin/jscpd" ]; then
+        JSCPD_BIN="$GIT_ROOT/node_modules/.bin/jscpd"
     elif command -v npx &> /dev/null; then
         JSCPD_BIN="npx jscpd@latest"
-        echo "[JSCPD] Using npx fallback (consider npm ci to install locally)"
+        echo "[JSCPD] Using npx fallback (consider: npm install -g jscpd)"
     else
         JSCPD_BIN=""
     fi

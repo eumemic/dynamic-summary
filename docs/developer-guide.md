@@ -129,7 +129,7 @@ You can and should run these checks yourself as you code:
 -   **Stop at first error:** `./scripts/run-checks.sh --fail-fast`
 
 Dev tools (optional, speeds up duplicate detection):
--   Install Node dev tools once to avoid npx startup: `npm ci` (requires Node/npm)
+-   Install jscpd globally: `npm install -g jscpd` (optional; avoids npx startup)
 -   **Run specific test patterns:** `pytest tests/ -k "pattern"`
 -   **Auto-format your code:** `black ragzoom/ tests/`
 -   **Auto-fix linting issues:** `ruff check ragzoom/ tests/ --fix`

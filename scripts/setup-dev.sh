@@ -108,20 +108,11 @@ echo -e "${GREEN}✓ Installed RagZoom in development mode${NC}"
 
 # 3b. Optional Node dev tools (for faster duplicate detection)
 echo ""
-echo "🧰 Checking Node dev tools (optional)..."
-if command -v npm &> /dev/null; then
-    if [ -f "$PROJECT_ROOT/package.json" ]; then
-        echo "Installing Node dev dependencies (npm install)..."
-        if (cd "$PROJECT_ROOT" && npm install --silent --no-fund --no-audit); then
-            echo -e "${GREEN}✓ Installed Node dev tools (jscpd)${NC}"
-        else
-            echo -e "${YELLOW}⚠️  Node dev tools installation did not complete; continuing (optional step)${NC}"
-        fi
-    else
-        echo -e "${YELLOW}⚠️  No package.json found; skipping Node dev tools${NC}"
-    fi
+echo "🧰 Checking code duplication tool (optional)..."
+if command -v jscpd &> /dev/null; then
+    echo -e "${GREEN}✓ Global jscpd detected${NC}"
 else
-    echo -e "${YELLOW}⚠️  npm not found; skipping Node dev tools${NC}"
+    echo -e "${YELLOW}⚠️  jscpd not found. Optional: install globally with 'npm install -g jscpd' for faster pre-commit checks${NC}"
 fi
 
 # 4. Set up PostgreSQL with Docker
