@@ -12,7 +12,7 @@ from ragzoom.exceptions import (
 )
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store
+from ragzoom.store import create_store, create_store_with_docker
 from ragzoom.wrapper import AsyncRagZoom, RagZoom
 
 __all__ = [
@@ -22,7 +22,8 @@ __all__ = [
     "TreeBuilder",
     "Retriever",
     "Assembler",
-    "Store",
+    "create_store",
+    "create_store_with_docker",
     "RagZoom",
     "AsyncRagZoom",
     "NodeNotFoundError",

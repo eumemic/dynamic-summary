@@ -2,6 +2,8 @@
 
 import hashlib
 import logging
+from collections.abc import Generator
+from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -112,6 +114,36 @@ class DocumentNodeRepository:
             self.document_id, page_size=page_size
         )
 
+    def count(self) -> int:
+        """Get count of nodes for this document efficiently."""
+        counter = getattr(self._repo, "count_nodes_for_document", None)
+        if callable(counter):
+            return int(counter(self.document_id))
+        # Fallback: materialize and count (less efficient)
+        return len(self._repo.get_all_nodes_for_document(self.document_id))
+
+    def leaf_count(self) -> int:
+        """Get count of leaf nodes for this document efficiently."""
+        counter = getattr(self._repo, "count_leaves_for_document", None)
+        if callable(counter):
+            return int(counter(self.document_id))
+        return len(self.get_leaves())
+
+    def max_height(self) -> int:
+        """Get maximum height for nodes in this document efficiently."""
+        getter = getattr(self._repo, "max_height_for_document", None)
+        if callable(getter):
+            return int(getter(self.document_id))
+        nodes = self.get_all()
+        return max((n.height for n in nodes), default=0)
+
+    def pinned_count(self) -> int:
+        """Get count of pinned nodes for this document efficiently."""
+        counter = getattr(self._repo, "count_pinned_for_document", None)
+        if callable(counter):
+            return int(counter(self.document_id))
+        return len(self._repo.get_pinned_nodes(None))
+
     def get_leaves(self) -> list[TreeNode]:
         """Get all leaf nodes for this document."""
         all_leaves = self._repo.get_leaf_nodes()
@@ -159,6 +191,7 @@ class DocumentSearchService:
         results = self._service.search_similar(query_embedding, n_results, where)
         return self._format_search_results(results)
 
+    # jscpd:ignore-start - Delegating wrapper pattern; similarity to SearchService is intentional
     def mmr_diverse(
         self,
         query_embedding: list[float] | NDArray[np.float64],
@@ -166,9 +199,19 @@ class DocumentSearchService:
         lambda_param: float,
         k: int,
     ) -> list[str]:
-        """Apply MMR to get diverse results from candidates."""
-        # For now, just return the top k candidates by similarity score
-        # This maintains the interface while avoiding the broken method call
+        """Apply MMR to get diverse results from candidates.
+
+        Delegates to underlying search service when available; falls back to
+        score-based top-k selection otherwise.
+        """
+        underlying = getattr(self._service, "compute_mmr_diverse_results", None)
+        if callable(underlying):
+            try:
+                out = underlying(query_embedding, candidates, lambda_param, k)
+                # Be explicit for type checker
+                return list(out)
+            except Exception:
+                pass
         sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
         return [c[0] for c in sorted_candidates[:k]]
 
@@ -214,11 +257,31 @@ class DocumentSearchService:
         lambda_param: float,
         k: int,
     ) -> list[str]:
-        """Compatibility wrapper matching SearchService method name."""
-        # For now, just return the top k candidates by similarity score
-        # This maintains the interface while avoiding the broken method call
+        """Compatibility wrapper matching SearchService method name.
+
+        Delegates to the underlying service when available; falls back to
+        score-based top-k selection.
+        """
+        underlying = getattr(self._service, "compute_mmr_diverse_results", None)
+        if callable(underlying):
+            try:
+                out = underlying(query_embedding, candidates, lambda_param, k)
+                return list(out)
+            except Exception:
+                pass
         sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
         return [c[0] for c in sorted_candidates[:k]]
+
+    # jscpd:ignore-end
+
+    # Optional: vector upsert used by backends where embeddings are external to SQL
+    def upsert_vectors(
+        self,
+        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
+    ) -> None:
+        upsert = getattr(self._service, "upsert", None)
+        if callable(upsert):
+            upsert(items)
 
 
 class DocumentTreeNavigator:
@@ -314,11 +377,83 @@ class DocumentStore:
         self.search = DocumentSearchService(document_id, search_service)
         self.tree = DocumentTreeNavigator(document_id, tree_navigator)
 
+        # Transaction state tracking (similar to StoreManager)
+        self._active_transaction = False
+
+    # jscpd:ignore-start - Transaction interface legitimately duplicates StoreManager method for consistency
+    @contextmanager
+    def transaction(self) -> Generator[Session, None, None]:
+        """Context manager for transactional operations.
+
+        Usage:
+            with doc_store.transaction() as session:
+                doc_store.nodes.add_batch(..., session=session)
+                # All operations commit together or all rollback
+
+        Yields:
+            SQLAlchemy session for the transaction
+
+        Raises:
+            RuntimeError: If nested transaction is attempted
+            Any exception from the transactional operations (after rollback)
+        """
+        if self._active_transaction:
+            raise RuntimeError(
+                "Nested transactions are not supported. "
+                "Please use the same session for all operations within a transaction."
+            )
+
+        self._active_transaction = True
+        session_context = self._open_session()
+        session = session_context.__enter__()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            self._active_transaction = False
+            session_context.__exit__(None, None, None)
+
+    def clear_document(
+        self, document_id: str | None = None, *, session: Session | None = None
+    ) -> int:
+        """Delete all nodes for a document.
+
+        Args:
+            document_id: Document ID to clear (defaults to this store's document_id)
+            session: Optional session for transactional operations
+
+        Returns:
+            Number of nodes deleted
+        """
+        target_doc_id = document_id or self.document_id
+        if not target_doc_id:
+            raise ValueError("Cannot clear document without a document_id")
+
+        # Check if the underlying doc_repo has clear_document method
+        if hasattr(self._doc_repo, "clear_document"):
+            return self._doc_repo.clear_document(target_doc_id, session=session)
+        else:
+            # Fallback: use the clear method from this store
+            if target_doc_id == self.document_id:
+                return self.clear()
+            else:
+                raise ValueError(
+                    "Cannot clear different document without doc_repo.clear_document support"
+                )
+
+    # jscpd:ignore-end
+
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         """Get all pinned nodes for this document only."""
-        # Get all pinned nodes from repository
+        # Prefer backend-optimized query if available
+        getter = getattr(self._node_repo, "get_pinned_nodes_for_document", None)
+        if callable(getter) and self.document_id is not None:
+            return list(getter(self.document_id, depth_max))
+        # Fallback: get all pinned nodes and filter by document
         all_pinned = self._node_repo.get_pinned_nodes(depth_max)
-        # Filter to this document only
         return [node for node in all_pinned if node.document_id == self.document_id]
 
     @staticmethod
@@ -333,7 +468,7 @@ class DocumentStore:
             node_id: ID of the node to update
             parent_id: New parent ID
         """
-        with self._node_repo.db_manager.SessionLocal() as session:
+        with self._open_session() as session:
             from ragzoom.models import TreeNode as TreeNodeModel
 
             session.query(TreeNodeModel).filter_by(id=node_id).update(
@@ -393,7 +528,7 @@ class DocumentStore:
 
         from ragzoom.models import Document
 
-        with self._node_repo.db_manager.SessionLocal() as session:
+        with self._open_session() as session:
             return session.query(Document).filter_by(id=self.document_id).first()
 
     def set_metadata(
@@ -418,7 +553,7 @@ class DocumentStore:
 
         from ragzoom.models import Document
 
-        with self._node_repo.db_manager.SessionLocal() as session:
+        with self._open_session() as session:
             # Try to get existing document
             doc = session.query(Document).filter_by(id=self.document_id).first()
 
@@ -472,7 +607,7 @@ class DocumentStore:
         # Use SQL aggregation for efficiency on large documents
         from ragzoom.models import TreeNode as TreeNodeModel
 
-        with self._node_repo.db_manager.SessionLocal() as session:
+        with self._open_session() as session:
             # Query for average token count of leaf nodes (nodes with no children)
             result = (
                 session.query(TreeNodeModel.token_count)
@@ -505,3 +640,13 @@ class DocumentStore:
                 f"Calculated average leaf tokens: {avg_tokens} from {count} leaves for document {self.document_id}"
             )
             return avg_tokens
+
+    # Internal helper to obtain a SQLAlchemy session from either backend type
+    def _open_session(self) -> AbstractContextManager[Session]:
+        session_local = getattr(self._node_repo, "SessionLocal", None)
+        if callable(session_local):
+            return session_local()  # type: ignore[no-any-return]
+        db_manager = getattr(self._node_repo, "db_manager", None)
+        if db_manager is not None and hasattr(db_manager, "SessionLocal"):
+            return db_manager.SessionLocal()  # type: ignore[no-any-return]
+        raise RuntimeError("No session factory available on node repository")

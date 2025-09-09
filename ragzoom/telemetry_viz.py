@@ -453,7 +453,7 @@ class TelemetryVisualizer:
             plt.savefig(self.output_path, bbox_inches="tight")
         plt.close()
 
-        print(f"Saved visualization to {self.output_path}")
+        # Silence direct printing; the CLI reports final output
 
     def _get_cost_functions(
         self, telemetry: TelemetryDataDict

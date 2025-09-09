@@ -1,8 +1,10 @@
-"""Tests for API key redaction functionality."""
+"""Tests for API key redaction functionality using SQLite backend."""
 
 import json
 import logging
-from unittest.mock import Mock, patch
+from unittest.mock import patch
+
+import pytest
 
 from ragzoom.config import OperationalConfig, SecretStr
 from ragzoom.error_utils import (
@@ -16,6 +18,7 @@ from ragzoom.error_utils import (
 from ragzoom.exceptions import ConfigurationError
 
 
+@pytest.mark.usefixtures("sqlite_backend")
 class TestSecretStr:
     """Test SecretStr class behavior."""
 
@@ -52,6 +55,7 @@ class TestSecretStr:
             assert "sk-" not in str(e)
 
 
+@pytest.mark.usefixtures("sqlite_backend")
 class TestOperationalConfigSecretStr:
     """Test OperationalConfig usage of SecretStr."""
 
@@ -84,6 +88,7 @@ class TestOperationalConfigSecretStr:
         assert "sk-" not in config_repr
 
 
+@pytest.mark.usefixtures("sqlite_backend")
 class TestSanitizationFunctions:
     """Test message and data sanitization functions."""
 
@@ -167,6 +172,7 @@ class TestSanitizationFunctions:
         assert result[4] is None
 
 
+@pytest.mark.usefixtures("sqlite_backend")
 class TestLoggingRedaction:
     """Test logging redaction filter."""
 
@@ -240,6 +246,7 @@ class TestLoggingRedaction:
             logger.removeHandler(handler)
 
 
+@pytest.mark.usefixtures("sqlite_backend")
 class TestErrorHandlingRedaction:
     """Test error handling and formatting redaction."""
 
@@ -262,7 +269,7 @@ class TestErrorHandlingRedaction:
         api_key = "sk-1234567890123456789012345678901234567890123456789"
         exc = ConfigurationError("config", "valid configuration")
         # ConfigurationError.context is dynamically added, not in type definition
-        exc.context = {"api_key": api_key, "model": "gpt-4"}  # type: ignore[attr-defined]
+        setattr(exc, "context", {"api_key": api_key, "model": "gpt-4"})
 
         result = format_structured_error(exc)
 
@@ -287,26 +294,28 @@ class TestErrorHandlingRedaction:
             assert api_key not in traceback
 
 
+@pytest.mark.usefixtures("sqlite_backend")
 class TestEndToEndScenarios:
     """Test end-to-end scenarios for API key protection."""
 
-    def test_api_key_not_exposed_in_service_errors(self) -> None:
+    def test_api_key_not_exposed_in_service_errors(
+        self, sqlite_store_factory: object
+    ) -> None:
         """Ensure API keys aren't exposed when services fail."""
         from ragzoom.config import QueryConfig
         from ragzoom.services.query_service import QueryService
 
-        # SimpleMockStore is defined in conftest.py but not exported in __all__
-        from tests.conftest import SimpleMockStore  # type: ignore[attr-defined]
+        # Create a document store for testing
+        doc_store = sqlite_store_factory("doc-id")  # type: ignore[operator]
 
         # Create config with API key
         api_key = "sk-1234567890123456789012345678901234567890123456789"
         operational_config = OperationalConfig(openai_api_key=SecretStr(api_key))
         query_config = QueryConfig()
-        store = Mock(spec=SimpleMockStore)
 
         # This should not expose the API key even if construction fails
         try:
-            service = QueryService(store, query_config, operational_config)
+            service = QueryService(doc_store, query_config, operational_config)
             # The service should be created successfully
             assert service is not None
         except Exception as e:
@@ -337,7 +346,9 @@ class TestEndToEndScenarios:
         assert "***REDACTED***" in json_str
         assert "sk-" not in json_str
 
-    def test_actual_api_functionality_preserved(self) -> None:
+    def test_actual_api_functionality_preserved(
+        self, sqlite_store_factory: object
+    ) -> None:
         """Test that actual API functionality still works with SecretStr."""
         api_key = "test-key-for-functionality"
         secret = SecretStr(api_key)
@@ -349,20 +360,15 @@ class TestEndToEndScenarios:
         # Patch where OpenAI is imported in utils, not the original module
         with patch("tests.utils.OpenAI") as mock_openai:
             from ragzoom.config import QueryConfig
-
-            # SimpleMockStore is defined in conftest.py but not exported in __all__
-            from tests.conftest import SimpleMockStore  # type: ignore[attr-defined]
             from tests.utils import create_retriever
 
             query_config = QueryConfig()
-            store = Mock(spec=SimpleMockStore)
-            # Add for_document method to the mock
-            store.for_document = Mock(return_value=Mock())
+            doc_store = sqlite_store_factory("doc-id")  # type: ignore[operator]
 
             # This should pass the actual API key to the OpenAI client
             # Note: Don't pass a client so create_retriever creates one
             create_retriever(
-                query_config, store, api_key=secret.get_secret_value(), client=None
+                query_config, doc_store, api_key=secret.get_secret_value(), client=None
             )
 
             # Verify the OpenAI client was initialized with the actual key

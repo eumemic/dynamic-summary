@@ -3,9 +3,10 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol
 
-from ragzoom.models import Document, TreeNode
-from ragzoom.store import Store
+from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.repositories.node_repository import NodeRepository
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class SystemStatus:
 class DocumentService:
     """Service for document management operations."""
 
-    def __init__(self, store: Store):
+    def __init__(self, store: StorageBackend):
         """Initialize document service.
 
         Args:
@@ -43,65 +44,45 @@ class DocumentService:
         self.store = store
 
     def list_documents(self) -> list[DocumentInfo]:
-        """List all indexed documents with metadata.
+        """List all indexed documents with metadata (backend-agnostic).
 
-        Returns:
-            List of DocumentInfo objects with document metadata
+        Avoids exposing DB sessions by using Store APIs.
         """
-        documents = []
-
-        with self.store.SessionLocal() as session:
-            docs = session.query(Document).all()
-
-            for doc in docs:
-                # Get node count for this document
-                node_count = (
-                    session.query(TreeNode).filter_by(document_id=doc.id).count()
+        out: list[DocumentInfo] = []
+        for doc in self.store.list_documents():
+            ds = self.store.for_document(doc.id)
+            # Use efficient count to avoid loading all nodes
+            node_count = getattr(ds.nodes, "count", lambda: len(ds.nodes.get_all()))()
+            out.append(
+                DocumentInfo(
+                    document_id=doc.id,
+                    file_path=doc.file_path,
+                    indexed_at=doc.indexed_at,
+                    chunk_count=doc.chunk_count,
+                    node_count=node_count,
                 )
-
-                documents.append(
-                    DocumentInfo(
-                        document_id=doc.id,
-                        file_path=doc.file_path,
-                        indexed_at=doc.indexed_at,
-                        chunk_count=doc.chunk_count,
-                        node_count=node_count,
-                    )
-                )
-
-        return documents
+            )
+        return out
 
     def get_system_status(self) -> SystemStatus:
-        """Get system status information.
-
-        Returns:
-            SystemStatus with node counts and tree information
-        """
-        with self.store.SessionLocal() as session:
-            all_nodes = session.query(TreeNode).count()
-
-            # Count leaf nodes (nodes without children)
-            leaf_count = (
-                session.query(TreeNode)
-                .filter(
-                    TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
-                )
-                .count()
-            )
-
-            # Get max tree height across all documents
-            max_height = (
-                session.query(TreeNode.height).order_by(TreeNode.height.desc()).first()
-            )
-            tree_depth = max_height[0] if max_height else 0
-
-        pinned = self.store.get_pinned_nodes()
+        """Get system status information without exposing sessions."""
+        total_nodes = 0
+        leaf_nodes = 0
+        tree_depth = 0
+        pinned_nodes = 0
+        for doc in self.store.list_documents():
+            ds = self.store.for_document(doc.id)
+            # Use repository-level aggregations when available
+            total_nodes += ds.nodes.count()
+            leaf_nodes += ds.nodes.leaf_count()
+            tree_depth = max(tree_depth, ds.nodes.max_height())
+            pinned_nodes += ds.nodes.pinned_count()
 
         return SystemStatus(
-            total_nodes=all_nodes,
-            leaf_nodes=leaf_count,
+            total_nodes=total_nodes,
+            leaf_nodes=leaf_nodes,
             tree_depth=tree_depth,
-            pinned_nodes=len(pinned),
+            pinned_nodes=pinned_nodes,
         )
 
     def clear_document(self, document_id: str) -> int:
@@ -116,25 +97,11 @@ class DocumentService:
         return self.store.clear_document(document_id)
 
     def clear_all_documents(self) -> int:
-        """Clear all documents and nodes from the database.
-
-        Returns:
-            Number of nodes deleted
-        """
-        with self.store.SessionLocal() as session:
-            # Count nodes before deletion
-            deleted_count = session.query(TreeNode).count()
-
-            # Delete all nodes and documents
-            session.query(TreeNode).delete()
-            session.query(Document).delete()
-            session.commit()
-
-        # Clear the cache
-        self.store.node_cache.clear()
-        self.store.cache_order.clear()
-
-        return deleted_count
+        """Clear all documents and nodes in a backend-agnostic way."""
+        total = 0
+        for doc in self.store.list_documents():
+            total += self.store.clear_document(doc.id)
+        return total
 
     def pin_node(self, node_id: str) -> None:
         """Pin a node to always include it.
@@ -146,4 +113,13 @@ class DocumentService:
             NodeNotFoundError: If node doesn't exist
             InvalidOperationError: If node cannot be pinned
         """
-        self.store.pin_node(node_id)
+        for doc in self.store.list_documents():
+            ds = self.store.for_document(doc.id)
+            if ds.nodes.get_node(node_id):
+                ds._node_repo.pin_node(node_id)
+                return
+        raise ValueError(f"Node {node_id} not found")
+
+
+class HasNodeRepo(Protocol):
+    node_repo: NodeRepository

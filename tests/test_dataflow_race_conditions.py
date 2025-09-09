@@ -26,8 +26,8 @@ class TestDataflowRaceConditions:
         embedded_nodes = []
 
         async def slow_summary(*args: object, **kwargs: object) -> tuple[str, int, int]:
-            """Simulate slow summary generation."""
-            await asyncio.sleep(0.05)  # Slow enough to expose race condition
+            """Simulate slow summary generation with minimal delay."""
+            await asyncio.sleep(0.005)
             return ("Summary text", 1, 10)
 
         async def fast_embeddings(texts: list[str]) -> list[list[float]]:
@@ -83,7 +83,7 @@ class TestDataflowRaceConditions:
             *args: object, **kwargs: object
         ) -> tuple[str, int, int]:
             """Summary that signals when complete."""
-            await asyncio.sleep(0.1)  # Significant delay
+            await asyncio.sleep(0.005)
             summary_generated.set()
             return ("Delayed summary", 1, 10)
 

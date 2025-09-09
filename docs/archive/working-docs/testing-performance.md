@@ -22,7 +22,7 @@ RagZoom's test suite has been optimized for fast local development while maintai
 - Test actual I/O operations
 - Run in CI/CD pipeline
 
-### Slow Tests (@pytest.mark.slow)
+### Benchmark Tests (@pytest.mark.benchmark)
 - Tests that take > 5 seconds with real store
 - Currently: test_incomplete_indexing.py
 - Excluded from pre-commit, run in CI
@@ -31,7 +31,7 @@ RagZoom's test suite has been optimized for fast local development while maintai
 
 ```bash
 # Run fast tests only (pre-commit default)
-pytest tests/ -m "not slow and not integration" -n 8
+pytest tests/ -m "not benchmark and not integration" -n 8
 
 # Run all tests including integration
 pytest tests/ -n 8
@@ -46,7 +46,7 @@ pytest tests/ -m integration --use-real-store
 ## Git Hooks
 
 ### Pre-commit Hook
-1. Runs fast tests (excludes @slow and @integration)
+1. Runs fast tests (excludes integration and benchmarks)
 2. Runs linting (ruff + black) 
 3. Runs type checking (mypy - warning only)
 4. Takes ~8-10 seconds total
@@ -67,5 +67,5 @@ The SimpleMockStore (`tests/mock_store.py`) provides:
 
 1. **New tests should use mock store by default** - just use the `store` fixture
 2. **Mark I/O-heavy tests as @pytest.mark.integration** - they'll use real store automatically
-3. **Mark tests > 5s as @pytest.mark.slow** - excluded from pre-commit
+3. **Tag performance tests as @pytest.mark.benchmark** - excluded from pre-commit
 4. **Use --use-real-store flag** to verify tests work with real storage

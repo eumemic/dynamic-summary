@@ -2,10 +2,11 @@
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
-from ragzoom.store import Store
+from ragzoom.store import create_store
 
 
 def _initialize_components(
@@ -16,7 +17,7 @@ def _initialize_components(
     IndexConfig,
     QueryConfig,
     OperationalConfig,
-    Store,
+    StorageBackend,
 ]:
     """Initialize common RagZoom components.
 
@@ -35,7 +36,7 @@ def _initialize_components(
     query_config = query_config or QueryConfig()
     operational_config = operational_config or OperationalConfig()
 
-    store = Store(operational_config)
+    store = create_store(operational_config)
 
     return (
         index_config,

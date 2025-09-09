@@ -8,7 +8,7 @@ RagZoom uses a multi-layered testing approach with ~4.5 second test execution ti
 
 ### 1. Git Pre-commit Hook (Fast - ~7-8 seconds)
 - **Triggers**: Before every commit
-- **Scope**: Fast tests only (excludes @slow and @integration)
+- **Scope**: Fast tests only (excludes integration and benchmarks)
 - **Also runs**: Linting (ruff + black) and type checking (mypy)
 - **Purpose**: Comprehensive checks without slowing down development
 
@@ -83,7 +83,7 @@ The git pre-commit hook runs in 1-2 seconds by only testing what changed:
 ```
 
 ### 2. Run Full Test Suite Manually
-To run all tests including slow/integration:
+To run all tests including integration:
 ```bash
 # Run all tests:
 pytest tests/ -n 8

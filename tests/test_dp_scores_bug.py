@@ -1,80 +1,141 @@
-"""Test demonstrating the DP algorithm uses scores outside coverage tree."""
+"""Tests for DP algorithm score handling.
+
+Tests demonstrating how the DP algorithm uses scores outside
+the coverage tree.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+from numpy.typing import NDArray
 
 from ragzoom.config import QueryConfig
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.retrieve import RetrievalResult
-from tests.mock_store import SimpleMockStore
 
 
 class TestDPScoresBug:
     """Test that DP algorithm incorrectly uses nodes outside coverage tree."""
 
-    def test_dp_uses_scores_outside_coverage_tree(self) -> None:
+    def test_dp_uses_scores_outside_coverage_tree(
+        self, storage_backend: StorageBackend
+    ) -> None:
         """Demonstrate that DP uses any node with a score, ignoring coverage tree."""
-        # Set up a mock store with a simple tree
-        store = SimpleMockStore()
+        # Get document store and set metadata
+        doc_store = storage_backend.for_document("doc-id")
+        doc_store.set_metadata(
+            file_path="dp_scores_test.txt",
+            content_hash="dp-scores-test-hash",
+            chunk_count=7,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
-        # Create a tree structure:
+        # Set up a tree structure:
         #          root
         #         /    \
         #     node_a   node_b
         #      / \      / \
         #    a1  a2   b1  b2
 
-        # Root
-        store.add_node(
-            node_id="root",
-            text="Root summary of document",
-            span_start=0,
-            span_end=1000,
-            parent_id=None,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="node_a",
-            right_child_id="node_b",
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            # Root
+            {
+                "node_id": "root",
+                "text": "Root summary of document",
+                "span_start": 0,
+                "span_end": 1000,
+                "document_id": "doc-id",
+                "token_count": 100,
+                "height": 2,
+                "left_child_id": "node_a",
+                "right_child_id": "node_b",
+                "path": "",
+            },
+            # Internal nodes
+            {
+                "node_id": "node_a",
+                "text": "Node A summary",
+                "span_start": 0,
+                "span_end": 500,
+                "document_id": "doc-id",
+                "token_count": 50,
+                "height": 1,
+                "left_child_id": "a1",
+                "right_child_id": "a2",
+                "path": "0",
+            },
+            {
+                "node_id": "node_b",
+                "text": "Node B summary",
+                "span_start": 500,
+                "span_end": 1000,
+                "document_id": "doc-id",
+                "token_count": 50,
+                "height": 1,
+                "left_child_id": "b1",
+                "right_child_id": "b2",
+                "path": "1",
+            },
+            # Leaf nodes
+            {
+                "node_id": "a1",
+                "text": "Leaf a1 content",
+                "span_start": 0,
+                "span_end": 250,
+                "document_id": "doc-id",
+                "token_count": 25,
+                "height": 0,
+                "path": "00",
+            },
+            {
+                "node_id": "a2",
+                "text": "Leaf a2 content",
+                "span_start": 250,
+                "span_end": 500,
+                "document_id": "doc-id",
+                "token_count": 25,
+                "height": 0,
+                "path": "01",
+            },
+            {
+                "node_id": "b1",
+                "text": "Leaf b1 content",
+                "span_start": 500,
+                "span_end": 750,
+                "document_id": "doc-id",
+                "token_count": 25,
+                "height": 0,
+                "path": "10",
+            },
+            {
+                "node_id": "b2",
+                "text": "Leaf b2 content",
+                "span_start": 750,
+                "span_end": 1000,
+                "document_id": "doc-id",
+                "token_count": 25,
+                "height": 0,
+                "path": "11",
+            },
+        ]
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [
+                ("node_a", "root"),
+                ("node_b", "root"),
+                ("a1", "node_a"),
+                ("a2", "node_a"),
+                ("b1", "node_b"),
+                ("b2", "node_b"),
+            ]
         )
-
-        # Internal nodes
-        store.add_node(
-            node_id="node_a",
-            text="Node A summary",
-            span_start=0,
-            span_end=500,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="a1",
-            right_child_id="a2",
-        )
-
-        store.add_node(
-            node_id="node_b",
-            text="Node B summary",
-            span_start=500,
-            span_end=1000,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="b1",
-            right_child_id="b2",
-        )
-
-        # Leaf nodes
-        for node_id, start, end, parent in [
-            ("a1", 0, 250, "node_a"),
-            ("a2", 250, 500, "node_a"),
-            ("b1", 500, 750, "node_b"),
-            ("b2", 750, 1000, "node_b"),
-        ]:
-            store.add_node(
-                node_id=node_id,
-                text=f"Leaf {node_id} content",
-                span_start=start,
-                span_end=end,
-                parent_id=parent,
-                document_id="doc1",
-                embedding=[0.5] * 1536,
-            )
 
         # Create config and DP generator
         query_config = QueryConfig(budget_tokens=10000)  # Large budget
@@ -94,7 +155,11 @@ class TestDPScoresBug:
         }
 
         # Load nodes from coverage map
-        nodes = {nid: store.nodes.get_node(nid) for nid in coverage_tree}
+        nodes_map: dict[str, object] = {}
+        for nid in coverage_tree:
+            node = doc_store.nodes.get_node(nid)
+            if node:
+                nodes_map[nid] = node
 
         # Find root node
         root_id = "root"
@@ -102,14 +167,14 @@ class TestDPScoresBug:
         dp_result = dp_generator.find_optimal_tiling(
             budget_tokens=10000,
             scores=scores,
-            nodes=nodes,
+            nodes=nodes_map,  # type: ignore[arg-type]
             root_id=root_id,
         )
         tiling = dp_result.tiling
 
-        # Check results
+        # Check results - need to check if nodes are leaves using document store
         leaf_node_ids = {
-            node_id for node_id in tiling.node_ids if store.tree.is_leaf_node(node_id)
+            node_id for node_id in tiling.node_ids if doc_store.tree.is_leaf(node_id)
         }
 
         # With our fix, all leaf nodes in tiling must be in the coverage tree
@@ -120,40 +185,64 @@ class TestDPScoresBug:
             len(leaf_violations) == 0
         ), f"Found leaf nodes outside coverage tree: {leaf_violations}"
 
-    def test_retrieval_result_demonstrates_bug(self) -> None:
+    def test_retrieval_result_demonstrates_bug(
+        self, storage_backend: StorageBackend
+    ) -> None:
         """Test using actual RetrievalResult to show the bug."""
-        store = SimpleMockStore()
+        # Get document store and set metadata
+        doc_store = storage_backend.for_document("doc-id")
+        doc_store.set_metadata(
+            file_path="retrieval_bug_test.txt",
+            content_hash="retrieval-bug-test-hash",
+            chunk_count=3,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
-        # Same tree setup as above (simplified)
-        store.add_node(
-            node_id="root",
-            text="Root",
-            span_start=0,
-            span_end=1000,
-            parent_id=None,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
+        # Simplified tree setup
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "root",
+                "text": "Root",
+                "span_start": 0,
+                "span_end": 1000,
+                "document_id": "doc-id",
+                "token_count": 100,
+                "height": 1,
+                "left_child_id": "leaf1",
+                "right_child_id": "leaf2",
+                "path": "",
+            },
+            {
+                "node_id": "leaf1",
+                "text": "Leaf 1",
+                "span_start": 0,
+                "span_end": 500,
+                "document_id": "doc-id",
+                "token_count": 50,
+                "height": 0,
+                "path": "0",
+            },
+            {
+                "node_id": "leaf2",
+                "text": "Leaf 2",
+                "span_start": 500,
+                "span_end": 1000,
+                "document_id": "doc-id",
+                "token_count": 50,
+                "height": 0,
+                "path": "1",
+            },
+        ]
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [("leaf1", "root"), ("leaf2", "root")]
         )
-        store.add_node(
-            node_id="leaf1",
-            text="Leaf 1",
-            span_start=0,
-            span_end=500,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-        )
-        store.add_node(
-            node_id="leaf2",
-            text="Leaf 2",
-            span_start=500,
-            span_end=1000,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-        )
-        store._nodes["root"].left_child_id = "leaf1"
-        store._nodes["root"].right_child_id = "leaf2"
 
         query_config = QueryConfig(budget_tokens=10000)
         dp_generator = DynamicTilingGenerator(query_config)
@@ -171,11 +260,11 @@ class TestDPScoresBug:
         )
 
         # Load nodes from coverage map
-        nodes = {}
+        nodes_map: dict[str, object] = {}
         for node_id in result.coverage_map:
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             if node:
-                nodes[node_id] = node
+                nodes_map[node_id] = node
 
         # Find root node
         root_id = "root"
@@ -183,14 +272,14 @@ class TestDPScoresBug:
         dp_result = dp_generator.find_optimal_tiling(
             budget_tokens=10000,
             scores=result.scores,
-            nodes=nodes,
+            nodes=nodes_map,  # type: ignore[arg-type]
             root_id=root_id,
         )
         tiling = dp_result.tiling
 
-        # Check results
+        # Check results - need to check if nodes are leaves using document store
         leaf_node_ids = {
-            node_id for node_id in tiling.node_ids if store.tree.is_leaf_node(node_id)
+            node_id for node_id in tiling.node_ids if doc_store.tree.is_leaf(node_id)
         }
 
         # With our fix: leaf2 should NOT appear in tiling unless it is in the coverage map

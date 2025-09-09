@@ -7,7 +7,7 @@ import pytest
 from typing_extensions import TypedDict
 
 from ragzoom.config import IndexConfig
-from ragzoom.document_store import DocumentStore
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import TelemetryCollector
 
@@ -55,7 +55,9 @@ class MockOpenAIResponse:
 
 
 @pytest.mark.asyncio
-async def test_retry_maintains_conversation_history(mock_store: DocumentStore) -> None:
+async def test_retry_maintains_conversation_history(
+    storage_backend: StorageBackend,
+) -> None:
     """Test that retries append to existing conversation instead of creating new ones."""
     config = IndexConfig.load(
         retry_threshold=0.2,  # 20% deviation
@@ -63,7 +65,15 @@ async def test_retry_maintains_conversation_history(mock_store: DocumentStore) -
         target_chunk_tokens=100,  # Target tokens
     )
 
-    indexer = TreeBuilder(config, mock_store)
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=config.embedding_model,
+        summary_model=config.summary_model,
+    )
+    indexer = TreeBuilder(config, doc_store)
 
     # Track all API calls
     api_calls = []
@@ -157,7 +167,9 @@ async def test_retry_maintains_conversation_history(mock_store: DocumentStore) -
 
 
 @pytest.mark.asyncio
-async def test_retry_preserves_original_context(mock_store: DocumentStore) -> None:
+async def test_retry_preserves_original_context(
+    storage_backend: StorageBackend,
+) -> None:
     """Test that retry requests can still see the original text being summarized."""
     config = IndexConfig.load(
         retry_threshold=0.1,  # 10% deviation
@@ -165,7 +177,15 @@ async def test_retry_preserves_original_context(mock_store: DocumentStore) -> No
         target_chunk_tokens=100,
     )
 
-    indexer = TreeBuilder(config, mock_store)
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=config.embedding_model,
+        summary_model=config.summary_model,
+    )
+    indexer = TreeBuilder(config, doc_store)
     api_calls = []
 
     original_text = (
@@ -230,7 +250,9 @@ async def test_retry_preserves_original_context(mock_store: DocumentStore) -> No
 
 
 @pytest.mark.asyncio
-async def test_multiple_retries_build_conversation(mock_store: DocumentStore) -> None:
+async def test_multiple_retries_build_conversation(
+    storage_backend: StorageBackend,
+) -> None:
     """Test that multiple retries continue building on the same conversation."""
     config = IndexConfig.load(
         retry_threshold=0.1,
@@ -238,7 +260,15 @@ async def test_multiple_retries_build_conversation(mock_store: DocumentStore) ->
         target_chunk_tokens=100,
     )
 
-    indexer = TreeBuilder(config, mock_store)
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=config.embedding_model,
+        summary_model=config.summary_model,
+    )
+    indexer = TreeBuilder(config, doc_store)
     api_calls = []
 
     async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
@@ -299,14 +329,22 @@ async def test_multiple_retries_build_conversation(mock_store: DocumentStore) ->
 
 
 @pytest.mark.asyncio
-async def test_no_retry_when_within_threshold(mock_store: DocumentStore) -> None:
+async def test_no_retry_when_within_threshold(storage_backend: StorageBackend) -> None:
     """Test that no retry occurs when initial summary is within threshold."""
     config = IndexConfig.load(
         retry_threshold=0.2,
         target_chunk_tokens=100,
     )
 
-    indexer = TreeBuilder(config, mock_store)
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=config.embedding_model,
+        summary_model=config.summary_model,
+    )
+    indexer = TreeBuilder(config, doc_store)
     api_calls = []
 
     async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
@@ -338,7 +376,7 @@ async def test_no_retry_when_within_threshold(mock_store: DocumentStore) -> None
 
 @pytest.mark.asyncio
 async def test_accept_retry_within_threshold_immediately(
-    mock_store: DocumentStore,
+    storage_backend: StorageBackend,
 ) -> None:
     """Test that we accept a retry attempt immediately when it's within threshold.
 
@@ -351,7 +389,15 @@ async def test_accept_retry_within_threshold_immediately(
         target_chunk_tokens=100,
     )
 
-    indexer = TreeBuilder(config, mock_store)
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=config.embedding_model,
+        summary_model=config.summary_model,
+    )
+    indexer = TreeBuilder(config, doc_store)
     api_calls = []
 
     async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
@@ -401,10 +447,20 @@ async def test_accept_retry_within_threshold_immediately(
 
 
 @pytest.mark.asyncio
-async def test_passthrough_for_text_under_target(mock_store: DocumentStore) -> None:
+async def test_passthrough_for_text_under_target(
+    storage_backend: StorageBackend,
+) -> None:
     """Test that text under target tokens is passed through without LLM call."""
     config = IndexConfig.load(target_chunk_tokens=100)
-    indexer = TreeBuilder(config, mock_store)
+    doc_store = storage_backend.for_document("doc-id")
+    doc_store.set_metadata(
+        file_path="test.txt",
+        content_hash="test-hash",
+        chunk_count=0,
+        embedding_model=config.embedding_model,
+        summary_model=config.summary_model,
+    )
+    indexer = TreeBuilder(config, doc_store)
 
     api_calls = []
 

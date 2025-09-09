@@ -367,6 +367,30 @@ class TreeBuilder:
                         f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
                     )
 
+            # Two-phase apply for backends with external vector index (e.g., SQLite + PythonVectorIndex):
+            # After all SQL writes are complete and parent references set, upsert vectors.
+            try:
+                upsert_items: list[
+                    tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+                ] = []
+                for n in tree_nodes:
+                    meta = {
+                        "span_start": int(n.span_start),
+                        "span_end": int(n.span_end),
+                        "parent_id": n.parent_id or "",
+                        "document_id": n.document_id or "",
+                        "is_leaf": 1 if int(getattr(n, "height", 0)) == 0 else 0,
+                    }
+                    # Only include items that have embeddings
+                    if getattr(n, "embedding", None) is not None:
+                        upsert_items.append((n.id, n.embedding, meta))
+                if upsert_items:
+                    # This will no-op on backends whose search service doesn't support upsert
+                    doc_store.search.upsert_vectors(upsert_items)
+            except Exception as e:
+                # Upsert is best-effort for backends with external indices; do not fail indexing
+                logger.warning(f"Vector index upsert failed: {e}")
+
             # Finalize telemetry if collector was used
             if reporter:
                 telemetry: TelemetryDataDict = reporter.finalize()

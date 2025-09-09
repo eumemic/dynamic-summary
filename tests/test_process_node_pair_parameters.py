@@ -5,16 +5,13 @@ prev_context, left_token_count, and right_token_count to LLMService,
 causing a 102% increase in retry rate.
 """
 
-from typing import TYPE_CHECKING, cast
-
-if TYPE_CHECKING:
-    from ragzoom.interfaces import StoreInterface
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ragzoom.config import IndexConfig
-from ragzoom.document_store import DocumentStore
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
 from ragzoom.models import TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
@@ -47,7 +44,7 @@ def mock_reporter() -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_process_node_pair_passes_all_parameters(
-    mock_store: "StoreInterface",
+    storage_backend: StorageBackend,
     mock_nodes: tuple[MagicMock, MagicMock],
     mock_reporter: MagicMock,
 ) -> None:
@@ -58,8 +55,18 @@ async def test_process_node_pair_passes_all_parameters(
     """
     left_node, right_node = mock_nodes
 
+    # Get document store and set metadata
+    doc_store = storage_backend.for_document("test_doc")
+    doc_store.set_metadata(
+        file_path="process_node_pair_test.txt",
+        content_hash="process-node-pair-test-hash",
+        chunk_count=0,
+        embedding_model="text-embedding-3-small",
+        summary_model="gpt-4o-mini",
+    )
+
     config = IndexConfig.load(preceding_context_tokens=75, target_chunk_tokens=200)
-    builder = TreeBuilder(config, cast(DocumentStore, mock_store))
+    builder = TreeBuilder(config, doc_store)
 
     # Capture parameters passed to LLMService._summarize_text
     captured_params: dict[str, object] = {}
@@ -119,15 +126,25 @@ async def test_process_node_pair_passes_all_parameters(
 
 @pytest.mark.asyncio
 async def test_prev_context_affects_prompt(
-    mock_store: "StoreInterface",
+    storage_backend: StorageBackend,
     mock_nodes: tuple[MagicMock, MagicMock],
     mock_reporter: MagicMock,
 ) -> None:
     """Test that prev_context actually changes the generated prompt."""
     left_node, right_node = mock_nodes
 
+    # Get document store and set metadata
+    doc_store = storage_backend.for_document("test_doc")
+    doc_store.set_metadata(
+        file_path="prev_context_test.txt",
+        content_hash="prev-context-test-hash",
+        chunk_count=0,
+        embedding_model="text-embedding-3-small",
+        summary_model="gpt-4o-mini",
+    )
+
     config = IndexConfig.load(preceding_context_tokens=75, target_chunk_tokens=200)
-    builder = TreeBuilder(config, cast(DocumentStore, mock_store))
+    builder = TreeBuilder(config, doc_store)
 
     # Test by capturing the parameters passed to _summarize_text
     captured_params_list = []
@@ -183,15 +200,25 @@ async def test_prev_context_affects_prompt(
 
 @pytest.mark.asyncio
 async def test_parameter_validation_would_catch_bug(
-    mock_store: "StoreInterface",
+    storage_backend: StorageBackend,
     mock_nodes: tuple[MagicMock, MagicMock],
     mock_reporter: MagicMock,
 ) -> None:
     """Test that demonstrates how the bug could be caught with parameter validation."""
     left_node, right_node = mock_nodes
 
+    # Get document store and set metadata
+    doc_store = storage_backend.for_document("test_doc")
+    doc_store.set_metadata(
+        file_path="parameter_validation_test.txt",
+        content_hash="parameter-validation-test-hash",
+        chunk_count=0,
+        embedding_model="text-embedding-3-small",
+        summary_model="gpt-4o-mini",
+    )
+
     config = IndexConfig.load(target_chunk_tokens=200)
-    builder = TreeBuilder(config, cast(DocumentStore, mock_store))
+    builder = TreeBuilder(config, doc_store)
 
     # Track what parameters were actually passed to _summarize_text
     actual_calls = []

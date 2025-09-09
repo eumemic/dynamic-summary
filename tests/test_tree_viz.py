@@ -1,81 +1,146 @@
-"""Tests for tree visualization functionality."""
+"""SQLite-based tests for tree visualization functionality.
 
+SQLite-based tests for ASCII tree visualization functionality
+with the real in-memory SQLite backend.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
+from ragzoom.document_store import DocumentStore
 from ragzoom.tree_viz import build_ascii_tree
-from tests.mock_store import SimpleMockStore
 
 
 @pytest.mark.skip_ci
-class TestTreeVisualization:
+@pytest.mark.usefixtures("sqlite_backend")
+class TestTreeVisualizationSQLite:
     """Test tree visualization functionality."""
 
-    def test_basic_tree_visualization(self) -> None:
+    @pytest.fixture
+    def doc_store(
+        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
+    ) -> DocumentStore:
+        return sqlite_store_factory("doc1")
+
+    def test_basic_tree_visualization(self, doc_store: DocumentStore) -> None:
         """Test basic tree visualization with selected nodes."""
-        # Create a mock store with a simple tree
-        store = SimpleMockStore()
-
-        # Root node (no mid_offset in new design)
-        store.add_node(
-            node_id="root",
-            text="Root summary",
-            span_start=0,
-            span_end=100,
-            parent_id=None,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="left",
-            right_child_id="right",
-            height=2,
-        )
-
-        # Left child
-        store.add_node(
-            node_id="left",
-            text="Left content",
-            span_start=0,
-            span_end=50,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="leaf1",
-            right_child_id="leaf2",
-            height=1,
-        )
-
-        # Right child
-        store.add_node(
-            node_id="right",
-            text="Right content",
-            span_start=50,
-            span_end=100,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="leaf3",
-            right_child_id="leaf4",
-            height=1,
-        )
-
-        # Leaf nodes
-        for i, (node_id, start, end, parent) in enumerate(
-            [
-                ("leaf1", 0, 25, "left"),
-                ("leaf2", 25, 50, "left"),
-                ("leaf3", 50, 75, "right"),
-                ("leaf4", 75, 100, "right"),
+        # Create a tree structure with proper parent references
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
             ]
-        ):
-            store.add_node(
-                node_id=node_id,
-                text=f"Leaf {i} text",
-                span_start=start,
-                span_end=end,
-                parent_id=parent,
-                document_id="doc1",
-                embedding=[0.5] * 1536,
-                height=0,  # Leaf nodes have height 0
-            )
+        ] = [
+            # Root node
+            {
+                "node_id": "root",
+                "text": "Root summary",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 100,
+                "height": 2,
+                "left_child_id": "left",
+                "right_child_id": "right",
+                "path": "",
+            },
+            # Left child
+            {
+                "node_id": "left",
+                "text": "Left content",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 50,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 1,
+                "left_child_id": "leaf1",
+                "right_child_id": "leaf2",
+                "parent_id": "root",
+                "path": "0",
+            },
+            # Right child
+            {
+                "node_id": "right",
+                "text": "Right content",
+                "embedding": [],
+                "span_start": 50,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 1,
+                "left_child_id": "leaf3",
+                "right_child_id": "leaf4",
+                "parent_id": "root",
+                "path": "1",
+            },
+            # Leaf nodes
+            {
+                "node_id": "leaf1",
+                "text": "Leaf 0 text",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 25,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 0,
+                "parent_id": "left",
+                "path": "00",
+            },
+            {
+                "node_id": "leaf2",
+                "text": "Leaf 1 text",
+                "embedding": [],
+                "span_start": 25,
+                "span_end": 50,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 0,
+                "parent_id": "left",
+                "path": "01",
+            },
+            {
+                "node_id": "leaf3",
+                "text": "Leaf 2 text",
+                "embedding": [],
+                "span_start": 50,
+                "span_end": 75,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 0,
+                "parent_id": "right",
+                "path": "10",
+            },
+            {
+                "node_id": "leaf4",
+                "text": "Leaf 3 text",
+                "embedding": [],
+                "span_start": 75,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 0,
+                "parent_id": "right",
+                "path": "11",
+            },
+        ]
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [
+                ("left", "root"),
+                ("right", "root"),
+                ("leaf1", "left"),
+                ("leaf2", "left"),
+                ("leaf3", "right"),
+                ("leaf4", "right"),
+            ]
+        )
 
         # Create tiling (list of node IDs)
         tiling = ["left", "leaf3", "leaf4"]
@@ -93,11 +158,10 @@ class TestTreeVisualization:
         # Preload nodes as the production code does
         preloaded_nodes = {}
         for node_id in coverage_map:
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             if node:
                 preloaded_nodes[node_id] = node
 
-        doc_store = store.for_document("doc1")
         viz = build_ascii_tree(
             tiling,
             doc_store,
@@ -116,84 +180,105 @@ class TestTreeVisualization:
         assert "1" in viz  # Second node (leaf3)
         assert "2" in viz  # Third node (leaf4)
 
-    def test_node_with_only_left_child(self) -> None:
+    def test_node_with_only_left_child(self, doc_store: DocumentStore) -> None:
         """Test visualization of nodes with only a left child (document boundary case)."""
-        store = SimpleMockStore()
-
-        # Root node
-        store.add_node(
-            node_id="root",
-            text="Root summary",
-            span_start=0,
-            span_end=150,
-            parent_id=None,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="left",
-            right_child_id="right",
-            height=2,
-        )
-
-        # Left subtree (complete)
-        store.add_node(
-            node_id="left",
-            text="Left content",
-            span_start=0,
-            span_end=100,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="leaf1",
-            right_child_id="leaf2",
-            height=1,
-        )
-
-        # Right subtree (only left child - document boundary)
-        store.add_node(
-            node_id="right",
-            text="Right content",
-            span_start=100,
-            span_end=150,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="leaf3",
-            right_child_id=None,  # No right child - document boundary
-            height=1,
-        )
-
-        # Leaf nodes
-        store.add_node(
-            node_id="leaf1",
-            text="Leaf 1",
-            span_start=0,
-            span_end=50,
-            parent_id="left",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            height=0,
-        )
-
-        store.add_node(
-            node_id="leaf2",
-            text="Leaf 2",
-            span_start=50,
-            span_end=100,
-            parent_id="left",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            height=0,
-        )
-
-        store.add_node(
-            node_id="leaf3",
-            text="Leaf 3",
-            span_start=100,
-            span_end=150,
-            parent_id="right",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            height=0,
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            # Root node
+            {
+                "node_id": "root",
+                "text": "Root summary",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 150,
+                "document_id": "doc1",
+                "token_count": 150,
+                "height": 2,
+                "left_child_id": "left",
+                "right_child_id": "right",
+                "path": "",
+            },
+            # Left subtree (complete)
+            {
+                "node_id": "left",
+                "text": "Left content",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 100,
+                "height": 1,
+                "left_child_id": "leaf1",
+                "right_child_id": "leaf2",
+                "parent_id": "root",
+                "path": "0",
+            },
+            # Right subtree (only left child - document boundary)
+            {
+                "node_id": "right",
+                "text": "Right content",
+                "embedding": [],
+                "span_start": 100,
+                "span_end": 150,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 1,
+                "left_child_id": "leaf3",
+                "right_child_id": None,  # No right child - document boundary
+                "parent_id": "root",
+                "path": "1",
+            },
+            # Leaf nodes
+            {
+                "node_id": "leaf1",
+                "text": "Leaf 1",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 50,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 0,
+                "parent_id": "left",
+                "path": "00",
+            },
+            {
+                "node_id": "leaf2",
+                "text": "Leaf 2",
+                "embedding": [],
+                "span_start": 50,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 0,
+                "parent_id": "left",
+                "path": "01",
+            },
+            {
+                "node_id": "leaf3",
+                "text": "Leaf 3",
+                "embedding": [],
+                "span_start": 100,
+                "span_end": 150,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 0,
+                "parent_id": "right",
+                "path": "10",
+            },
+        ]
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [
+                ("left", "root"),
+                ("right", "root"),
+                ("leaf1", "left"),
+                ("leaf2", "left"),
+                ("leaf3", "right"),
+            ]
         )
 
         # Tiling includes the node with only left child
@@ -212,11 +297,10 @@ class TestTreeVisualization:
         # Preload nodes
         preloaded_nodes = {}
         for node_id in coverage_map:
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             if node:
                 preloaded_nodes[node_id] = node
 
-        doc_store = store.for_document("doc1")
         viz = build_ascii_tree(
             tiling,
             doc_store,
@@ -257,77 +341,100 @@ class TestTreeVisualization:
             "1" in viz
         ), "Second selected node (right with only left child) not labeled"
 
-    def test_empty_tiling(self) -> None:
+    def test_empty_tiling(self, doc_store: DocumentStore) -> None:
         """Test visualization with no selected nodes."""
-        store = SimpleMockStore()
-
         # Add a single node
-        store.add_node(
-            node_id="root",
-            text="Root",
-            span_start=0,
-            span_end=100,
-            parent_id=None,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-        )
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "root",
+                "text": "Root",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 100,
+                "height": 0,
+                "path": "",
+            }
+        ]
+        doc_store.nodes.add_batch(nodes)
 
         # Empty tiling list
         tiling: list[str] = []
 
-        doc_store = store.for_document("doc1")
         viz = build_ascii_tree(tiling, doc_store, width=40)
 
         # Should still show document structure
         assert "H0 " in viz
 
-    def test_no_nodes_for_document(self) -> None:
+    def test_no_nodes_for_document(
+        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
+    ) -> None:
         """Test visualization when document has no nodes."""
-        store = SimpleMockStore()
+        doc_store = sqlite_store_factory("nonexistent")
         tiling: list[str] = []
 
-        doc_store = store.for_document("nonexistent")
         viz = build_ascii_tree(tiling, doc_store, width=40)
 
         assert viz == "No nodes found for document"
 
-    def test_coverage_visualization(self) -> None:
+    def test_coverage_visualization(self, doc_store: DocumentStore) -> None:
         """Test visualization with coverage map showing covered but not selected nodes."""
-        # Create a mock store with a simple tree
-        store = SimpleMockStore()
-
-        # Root node
-        store.add_node(
-            node_id="root",
-            text="Root summary",
-            span_start=0,
-            span_end=100,
-            parent_id=None,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="leaf1",
-            right_child_id="leaf2",
-        )
-
-        # Leaf nodes
-        store.add_node(
-            node_id="leaf1",
-            text="Leaf 1 text",
-            span_start=0,
-            span_end=50,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-        )
-
-        store.add_node(
-            node_id="leaf2",
-            text="Leaf 2 text",
-            span_start=50,
-            span_end=100,
-            parent_id="root",
-            document_id="doc1",
-            embedding=[0.5] * 1536,
+        # Create a simple tree
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            # Root node
+            {
+                "node_id": "root",
+                "text": "Root summary",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 100,
+                "height": 1,
+                "left_child_id": "leaf1",
+                "right_child_id": "leaf2",
+                "path": "",
+            },
+            # Leaf nodes
+            {
+                "node_id": "leaf1",
+                "text": "Leaf 1 text",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 50,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 0,
+                "parent_id": "root",
+                "path": "0",
+            },
+            {
+                "node_id": "leaf2",
+                "text": "Leaf 2 text",
+                "embedding": [],
+                "span_start": 50,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 0,
+                "parent_id": "root",
+                "path": "1",
+            },
+        ]
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [("leaf1", "root"), ("leaf2", "root")]
         )
 
         # Only leaf2 is selected
@@ -339,11 +446,10 @@ class TestTreeVisualization:
         # Preload nodes as the production code does
         preloaded_nodes = {}
         for node_id in coverage_map:
-            node = store.nodes.get_node(node_id)
+            node = doc_store.nodes.get_node(node_id)
             if node:
                 preloaded_nodes[node_id] = node
 
-        doc_store = store.for_document("doc1")
         viz = build_ascii_tree(
             tiling,
             doc_store,
@@ -356,95 +462,236 @@ class TestTreeVisualization:
         assert "0" in viz  # First node (leaf2)
         # The covered but not selected nodes should be shown with ░ characters
 
-    def test_mixed_height_tiling(self) -> None:
+    def test_mixed_height_tiling(self, doc_store: DocumentStore) -> None:
         """Test visualization with nodes at different heights."""
-        store = SimpleMockStore()
-
-        # Create a deeper tree
-        # Root (H3)
-        store.add_node(
-            node_id="root",
-            text="Root",
-            span_start=0,
-            span_end=100,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="l1",
-            right_child_id="r1",
-            height=3,
-        )
-
-        # Height 2
-        store.add_node(
-            node_id="l1",
-            text="L1",
-            span_start=0,
-            span_end=50,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="l2",
-            right_child_id="r2",
-            height=2,
-        )
-
-        store.add_node(
-            node_id="r1",
-            text="R1",
-            span_start=50,
-            span_end=100,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="l3",
-            right_child_id="r3",
-            height=2,
-        )
-
-        # Height 1
-        for node_id, start, end in [
-            ("l2", 0, 25),
-            ("r2", 25, 50),
-            ("l3", 50, 75),
-            ("r3", 75, 100),
-        ]:
-            store.add_node(
-                node_id=node_id,
-                text=node_id,
-                span_start=start,
-                span_end=end,
-                document_id="doc1",
-                embedding=[0.5] * 1536,
-                left_child_id=f"{node_id}_l",
-                right_child_id=f"{node_id}_r",
-                height=1,
-            )
-
-        # Height 0 (leaves)
-        for i, (node_id, start, end) in enumerate(
-            [
-                ("l2_l", 0, 12),
-                ("l2_r", 12, 25),
-                ("r2_l", 25, 37),
-                ("r2_r", 37, 50),
-                ("l3_l", 50, 62),
-                ("l3_r", 62, 75),
-                ("r3_l", 75, 87),
-                ("r3_r", 87, 100),
+        # Create a deeper tree structure
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
             ]
-        ):
-            store.add_node(
-                node_id=node_id,
-                text=f"Leaf {i}",
-                span_start=start,
-                span_end=end,
-                document_id="doc1",
-                embedding=[0.5] * 1536,
-                height=0,
-            )
+        ] = [
+            # Root (H3)
+            {
+                "node_id": "root",
+                "text": "Root",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 100,
+                "height": 3,
+                "left_child_id": "l1",
+                "right_child_id": "r1",
+                "path": "",
+            },
+            # Height 2
+            {
+                "node_id": "l1",
+                "text": "L1",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 50,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 2,
+                "left_child_id": "l2",
+                "right_child_id": "r2",
+                "parent_id": "root",
+                "path": "0",
+            },
+            {
+                "node_id": "r1",
+                "text": "R1",
+                "embedding": [],
+                "span_start": 50,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 50,
+                "height": 2,
+                "left_child_id": "l3",
+                "right_child_id": "r3",
+                "parent_id": "root",
+                "path": "1",
+            },
+            # Height 1
+            {
+                "node_id": "l2",
+                "text": "l2",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 25,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 1,
+                "left_child_id": "l2_l",
+                "right_child_id": "l2_r",
+                "parent_id": "l1",
+                "path": "00",
+            },
+            {
+                "node_id": "r2",
+                "text": "r2",
+                "embedding": [],
+                "span_start": 25,
+                "span_end": 50,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 1,
+                "left_child_id": "r2_l",
+                "right_child_id": "r2_r",
+                "parent_id": "l1",
+                "path": "01",
+            },
+            {
+                "node_id": "l3",
+                "text": "l3",
+                "embedding": [],
+                "span_start": 50,
+                "span_end": 75,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 1,
+                "left_child_id": "l3_l",
+                "right_child_id": "l3_r",
+                "parent_id": "r1",
+                "path": "10",
+            },
+            {
+                "node_id": "r3",
+                "text": "r3",
+                "embedding": [],
+                "span_start": 75,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 25,
+                "height": 1,
+                "left_child_id": "r3_l",
+                "right_child_id": "r3_r",
+                "parent_id": "r1",
+                "path": "11",
+            },
+            # Height 0 (leaves) - only create the ones we reference
+            {
+                "node_id": "l2_l",
+                "text": "Leaf 0",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 12,
+                "document_id": "doc1",
+                "token_count": 12,
+                "height": 0,
+                "parent_id": "l2",
+                "path": "000",
+            },
+            {
+                "node_id": "l2_r",
+                "text": "Leaf 1",
+                "embedding": [],
+                "span_start": 12,
+                "span_end": 25,
+                "document_id": "doc1",
+                "token_count": 13,
+                "height": 0,
+                "parent_id": "l2",
+                "path": "001",
+            },
+            {
+                "node_id": "r2_l",
+                "text": "Leaf 2",
+                "embedding": [],
+                "span_start": 25,
+                "span_end": 37,
+                "document_id": "doc1",
+                "token_count": 12,
+                "height": 0,
+                "parent_id": "r2",
+                "path": "010",
+            },
+            {
+                "node_id": "r2_r",
+                "text": "Leaf 3",
+                "embedding": [],
+                "span_start": 37,
+                "span_end": 50,
+                "document_id": "doc1",
+                "token_count": 13,
+                "height": 0,
+                "parent_id": "r2",
+                "path": "011",
+            },
+            {
+                "node_id": "l3_l",
+                "text": "Leaf 4",
+                "embedding": [],
+                "span_start": 50,
+                "span_end": 62,
+                "document_id": "doc1",
+                "token_count": 12,
+                "height": 0,
+                "parent_id": "l3",
+                "path": "100",
+            },
+            {
+                "node_id": "l3_r",
+                "text": "Leaf 5",
+                "embedding": [],
+                "span_start": 62,
+                "span_end": 75,
+                "document_id": "doc1",
+                "token_count": 13,
+                "height": 0,
+                "parent_id": "l3",
+                "path": "101",
+            },
+            {
+                "node_id": "r3_l",
+                "text": "Leaf 6",
+                "embedding": [],
+                "span_start": 75,
+                "span_end": 87,
+                "document_id": "doc1",
+                "token_count": 12,
+                "height": 0,
+                "parent_id": "r3",
+                "path": "110",
+            },
+            {
+                "node_id": "r3_r",
+                "text": "Leaf 7",
+                "embedding": [],
+                "span_start": 87,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 13,
+                "height": 0,
+                "parent_id": "r3",
+                "path": "111",
+            },
+        ]
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [
+                ("l1", "root"),
+                ("r1", "root"),
+                ("l2", "l1"),
+                ("r2", "l1"),
+                ("l3", "r1"),
+                ("r3", "r1"),
+                ("l2_l", "l2"),
+                ("l2_r", "l2"),
+                ("r2_l", "r2"),
+                ("r2_r", "r2"),
+                ("l3_l", "l3"),
+                ("l3_r", "l3"),
+                ("r3_l", "r3"),
+                ("r3_r", "r3"),
+            ]
+        )
 
         # Mixed height tiling
         tiling = ["l1", "l3", "r3_r"]
 
-        doc_store = store.for_document("doc1")
         viz = build_ascii_tree(tiling, doc_store, width=80)
 
         # Should show all heights
