@@ -94,13 +94,17 @@ class SQLiteStorageBackend(StorageBackend):
             except Exception:
                 url = ""
             # Extract file path from sqlite:/// URL
-            if url.startswith("sqlite:") and ":memory:" not in url:
+            if url.startswith("sqlite:"):
                 # naive parse: sqlite:////abs or sqlite:///rel
-                path_part = url.split("sqlite:///")[-1]
-                import os
+                if ":memory:" not in url:
+                    path_part = url.split("sqlite:///")[-1]
+                    import os
 
-                db_dir = os.path.dirname(path_part)
-                persist_dir = os.path.join(db_dir, DEFAULT_VECTOR_DIR_NAME)
+                    db_dir = os.path.dirname(path_part)
+                    persist_dir = os.path.join(db_dir, DEFAULT_VECTOR_DIR_NAME)
+                else:
+                    # In-memory DB: use default worktree vector dir for persistence
+                    persist_dir = str(get_default_vector_dir(None))
 
         if backend == "chroma":
             from ragzoom.backends.chroma_vector_index import ChromaVectorIndex

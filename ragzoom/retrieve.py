@@ -18,6 +18,7 @@ from ragzoom.retrieval.telemetry_collector import TelemetryCollector
 from ragzoom.telemetry_query import QueryTelemetry
 
 if TYPE_CHECKING:
+    from ragzoom.contracts.vector_index_v2 import VectorIndex as VectorIndexV2
     from ragzoom.document_store import DocumentStore
     from ragzoom.index import TreeBuilder
 
@@ -44,6 +45,7 @@ class Retriever:
         document_store: "DocumentStore",
         embedding_service: EmbeddingService,
         budget_planner: BudgetPlanner,
+        vector_index: "VectorIndexV2",
         tree_builder: Optional["TreeBuilder"] = None,
         use_async_dp: bool = False,
         min_nodes_for_parallel: int = 10,
@@ -64,6 +66,8 @@ class Retriever:
         self.embedding_service = embedding_service
         self.budget_planner = budget_planner
         self.use_async_dp = use_async_dp
+        # Backend-agnostic vector index
+        self.vector_index = vector_index
 
         # Type annotation for async_dp_generator
         from ragzoom.dynamic_tiling import AsyncDynamicTilingGenerator
@@ -142,18 +146,53 @@ class Retriever:
                 "embedding_model", self.query_config.embedding_model
             )
 
-        # Phase 2: Initial retrieval
+        # Phase 2: Initial retrieval (always via VectorIndex v2)
         k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
-        candidates = self.document_store.search.similar(query_embedding, k_candidates)
+        from ragzoom.retrieval import mmr as mmr_v2
+        from ragzoom.retrieval import similarity as sim_v2
+
+        vec_candidates = self.vector_index.search_similar(
+            query_embedding,
+            k_candidates,
+            {"document_id": effective_doc_id} if effective_doc_id else None,
+        )
         if telemetry_collector:
             telemetry_collector.end_phase("search")
             telemetry_collector.start_phase()
-            telemetry_collector.record_metric("candidates_retrieved", len(candidates))
+            telemetry_collector.record_metric(
+                "candidates_retrieved", len(vec_candidates)
+            )
 
-        # Phase 3: Apply MMR
-        selected_ids = self.document_store.search.mmr_diverse(
-            query_embedding, candidates, self.query_config.mmr_lambda, num_seeds
+        # Phase 3: Apply MMR selection using generic math over canonical vectors
+        selected_ids = mmr_v2.select_diverse(
+            query_embedding,
+            vec_candidates,
+            num_seeds,
+            self.query_config.mmr_lambda,
         )
+
+        # Build legacy-shaped candidates for scoring service compatibility
+        rels = sim_v2.relevance_scores(query_embedding, vec_candidates)
+        from typing import cast as _cast
+
+        candidates: list[
+            tuple[str, float, dict[str, str | int | float | bool | None]]
+        ] = []
+        for i, v in enumerate(vec_candidates):
+            md = v.meta
+            candidates.append(
+                (
+                    v.id,
+                    float(rels[i]),
+                    {
+                        "span_start": _cast(int, md["span_start"]),
+                        "span_end": _cast(int, md["span_end"]),
+                        "parent_id": _cast(str, md["parent_id"]),
+                        "document_id": _cast(str, md["document_id"]),
+                        "is_leaf": _cast(int, md["is_leaf"]),
+                    },
+                )
+            )
         if telemetry_collector:
             telemetry_collector.end_phase("mmr")
             telemetry_collector.start_phase()
@@ -170,7 +209,7 @@ class Retriever:
 
         # Phase 5: Build scores map
         # Use document-scoped scoring service
-        doc_scoring_service = ScoringService(self.document_store)
+        doc_scoring_service = ScoringService(self.document_store, self.vector_index)
         scores = doc_scoring_service.compute_scores(
             query_embedding, coverage_map, candidates
         )
