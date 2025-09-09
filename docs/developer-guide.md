@@ -17,6 +17,15 @@ Welcome to the RagZoom project! This comprehensive guide covers the technology s
 
 Getting your environment set up correctly is the most important first step.
 
+### 2.1 Backend & Data Layout (Update)
+
+- Default backend: SQLite (no Docker). Files are created under:
+  - Database: `data/sqlite.db`
+  - Vector index (Chroma): `data/chroma/` (requires `chromadb`)
+- The `data/` directory is ignored by Git.
+- Switch to PostgreSQL by setting `RAGZOOM_BACKEND=postgres` and `RAGZOOM_DATABASE_URL`.
+- Document‑level lock prevents concurrent indexing of the same document (lock files under `data/.ragzoom/locks/`).
+
 1.  **Create a Virtual Environment:** It is strongly recommended to use a Python virtual environment to manage dependencies.
     ```bash
     python -m venv venv
@@ -38,30 +47,26 @@ Getting your environment set up correctly is the most important first step.
 
 Our test suite is organized to balance thoroughness with development speed:
 
-- **Unit Tests**: Fast tests using `SimpleMockStore` for algorithmic logic
-- **Integration Tests**: Tests that use real PostgreSQL (marked with `@pytest.mark.integration`)
-- **Slow Tests**: Tests taking >5 seconds (marked with `@pytest.mark.slow`)
-- **Concurrency Tests**: Thread safety and parallel operation tests
+- **Unit Tests**: Fast tests focused on functional correctness
+- **Integration Tests**: End-to-end tests that exercise full app wiring (marked with `@pytest.mark.integration`)
+- **Concurrency Tests**: Thread safety and concurrent behavior
 
 For the complete list of test markers and pytest configuration options, see [API Reference - Testing](api-reference.md#testing).
 
 ### 3.2. Running Tests
 
 ```bash
-# Run fast tests only (default for pre-commit)
-pytest tests/ -m "not slow and not integration" -n 8  # ~8 seconds
+# Preferred: use the unified checks script
+./scripts/run-checks.sh                       # Default: excludes integration and benchmarks
+./scripts/run-checks.sh --include-integration-tests  # Include integration tests (benchmarks still excluded)
 
-# Run all tests
-pytest tests/ -n 8  # ~11 seconds
+# Run pytest directly (advanced)
+pytest tests/ -m "not benchmark and not integration" -n 8
+pytest tests/ -m "not benchmark" -n 8  # include integration
 
-# Run with real store for all tests
-pytest tests/ --use-real-store -n 8
-
-# Run specific test file
-pytest tests/test_integration.py
-
-# Run single test with verbose output
-pytest tests/test_integration.py::TestIntegration::test_token_budget_enforcement -vv
+# Run specific test file or test
+pytest tests/test_integration.py -n 8
+pytest tests/test_integration.py::TestIntegration::test_token_budget_enforcement -vv -n 8
 ```
 
 ### 3.3. Test Performance
@@ -107,7 +112,7 @@ We use a suite of tools to ensure code quality and consistency. These are run au
 
 The pre-commit hook is defined in `scripts/git-hooks/pre-commit` and is the guardian of our codebase quality. Before any commit is finalized, it runs the following checks in parallel:
 
--   **Tests (`pytest`):** Runs the fast unit tests.
+-   **Tests (`pytest`):** Runs only tests downstream of staged files (`--impacted-only <staged files>`). Defaults exclude integration and benchmarks.
 -   **Formatting (`black`):** Automatically reformats your code to be consistent.
 -   **Linting (`ruff`):** Checks for common errors, style issues, and automatically fixes what it can.
 -   **Type Checking (`mypy`):** Statically analyzes type hints to catch potential bugs.
@@ -117,10 +122,14 @@ The pre-commit hook is defined in `scripts/git-hooks/pre-commit` and is the guar
 ### 4.2. Running Checks Manually
 
 You can and should run these checks yourself as you code:
--   **Run all quality checks:** `./scripts/run-checks.sh` (tests, linting, formatting, types, security)
--   **Include slow/integration tests:** `./scripts/run-checks.sh --include-slow-tests`
+-   **Run all quality checks:** `./scripts/run-checks.sh` (excludes integration/benchmarks by default)
+-   **Include integration tests:** `./scripts/run-checks.sh --include-integration-tests`
+-   **Run only downstream tests for files:** `./scripts/run-checks.sh --impacted-only path/to/file1.py path/to/file2.py`
 -   **Skip specific checks:** `./scripts/run-checks.sh --skip tests,jscpd`
 -   **Stop at first error:** `./scripts/run-checks.sh --fail-fast`
+
+Dev tools (optional, speeds up duplicate detection):
+-   Install jscpd globally: `npm install -g jscpd` (optional; avoids npx startup)
 -   **Run specific test patterns:** `pytest tests/ -k "pattern"`
 -   **Auto-format your code:** `black ragzoom/ tests/`
 -   **Auto-fix linting issues:** `ruff check ragzoom/ tests/ --fix`
@@ -340,8 +349,7 @@ Valid error handling ensures:
 
 ### Test Markers
 
-- `@pytest.mark.integration` - Tests requiring real database/API
-- `@pytest.mark.slow` - Tests taking >5 seconds
+- `@pytest.mark.integration` - End-to-end tests exercising full app wiring
 - `@pytest.mark.asyncio` - Async test functions
 
 ### Test File Mapping
@@ -436,7 +444,7 @@ For detailed telemetry analysis, see [Telemetry Guide](telemetry.md).
 ### 8.1. Pre-commit Hook Details
 
 The hook runs in this order:
-1. Fast tests (excluding @slow and @integration)
+1. Impacted tests only (downstream of staged files), excluding integration and benchmarks
 2. Black formatting (auto-fixes)
 3. Ruff linting (auto-fixes simple issues)
 4. MyPy type checking (blocking on errors)
@@ -473,9 +481,9 @@ pip install -e .
 ### 8.4. Slow Test Suite
 
 If tests are running slowly:
-1. Check you're using mock store: `pytest tests/ -m "not integration"`
+1. Prefer the unified script: `./scripts/run-checks.sh` (excludes integration/benchmarks by default)
 2. Verify parallel execution: `pytest tests/ -n 8`
-3. Skip slow tests: `pytest tests/ -m "not slow"`
+3. Run only downstream tests for specific files: `./scripts/run-checks.sh --impacted-only path/to/file1.py path/to/file2.py`
 
 ## 9. Best Practices
 

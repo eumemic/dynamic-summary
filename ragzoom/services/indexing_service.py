@@ -9,9 +9,8 @@ if TYPE_CHECKING:
     from ragzoom.telemetry_types import TelemetryDataDict
 
 from ragzoom.config import IndexConfig, OperationalConfig
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
-from ragzoom.models import TreeNode
-from ragzoom.store import Store
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,7 @@ class IndexingService:
 
     def __init__(
         self,
-        store: Store,
+        store: StorageBackend,
         index_config: IndexConfig,
         operational_config: OperationalConfig,
     ):
@@ -148,90 +147,86 @@ class IndexingService:
             else:
                 raise ValueError("Either document_id or file_path must be provided")
 
-        # Compute content hash for metadata
-        content_hash = self.store.compute_content_hash(text)
+        # Acquire per-document lock when supported by backend
+        from contextlib import AbstractContextManager, nullcontext
+        from typing import cast
 
-        # Clear existing data for the document
-        deleted_count = self.store.clear_document(document_id)
-        if deleted_count > 0:
-            logger.info(
-                f"Cleared existing data for '{document_id}' ({deleted_count} nodes)"
-            )
-
-        # Create document with full metadata BEFORE indexing
-        # This ensures the document exists with proper metadata before TreeBuilder runs
-        self.store.add_document(
-            document_id=document_id,
-            file_path=file_path,
-            content_hash=content_hash,
-            chunk_count=0,  # Will be updated after indexing
-            embedding_model=self.index_config.embedding_model,
-            summary_model=self.index_config.summary_model,
-        )
-
-        # Create document-scoped store and TreeBuilder
-        document_store = self.store.for_document(document_id)
-
-        tree_builder = TreeBuilder(
-            self.index_config,
-            document_store,
-            api_key=self.operational_config.openai_api_key.get_secret_value(),
-            max_concurrent=30,
-        )
-
-        # Index with or without telemetry
-        if collect_telemetry:
-            # TreeBuilder's add_document_with_telemetry is sync only, so we need to run it in executor
-            import asyncio
-            from functools import partial
-
-            func = partial(
-                tree_builder.add_document_with_telemetry,
-                text,
-                show_progress=show_progress,
-            )
-            loop = asyncio.get_event_loop()
-            doc_id, telemetry = await loop.run_in_executor(None, func)
+        _lock_fn = getattr(self.store, "lock_document", None)
+        cm_any = _lock_fn(document_id) if callable(_lock_fn) else None
+        # Some test doubles (unconfigured Mocks) may return non-context managers; coerce to a valid one
+        if not (hasattr(cm_any, "__enter__") and hasattr(cm_any, "__exit__")):
+            lock_cm = cast(AbstractContextManager[object], nullcontext())
         else:
-            doc_id = await tree_builder.add_document_async(
-                text,
-                show_progress=show_progress,
-            )
-            telemetry = None
+            lock_cm = cast(AbstractContextManager[object], cm_any)
 
-        # Get document statistics and update metadata
-        with self.store.SessionLocal() as session:
-            # Get leaf nodes for this specific document
-            doc_leaves = (
-                session.query(TreeNode)
-                .filter_by(document_id=doc_id)
-                .filter(
-                    TreeNode.left_child_id.is_(None),
-                    TreeNode.right_child_id.is_(None),
+        with lock_cm:
+            # Compute content hash for metadata (backend-agnostic)
+            from ragzoom.document_store import DocumentStore
+
+            content_hash = DocumentStore.compute_content_hash(text)
+
+            # Clear existing data for the document
+            deleted_count = self.store.clear_document(document_id)
+            if deleted_count > 0:
+                logger.info(
+                    f"Cleared existing data for '{document_id}' ({deleted_count} nodes)"
                 )
-                .all()
+
+            # Create document with full metadata BEFORE indexing
+            # This ensures the document exists with proper metadata before TreeBuilder runs
+            self.store.add_document(
+                document_id=document_id,
+                file_path=file_path,
+                content_hash=content_hash,
+                chunk_count=0,  # Will be updated after indexing
+                embedding_model=self.index_config.embedding_model,
+                summary_model=self.index_config.summary_model,
             )
 
-            # Get root node for this document
-            root = (
-                session.query(TreeNode)
-                .filter_by(document_id=doc_id, parent_id=None)
-                .first()
+            # Create document-scoped store and TreeBuilder
+            document_store = self.store.for_document(document_id)
+
+            tree_builder = TreeBuilder(
+                self.index_config,
+                document_store,
+                api_key=self.operational_config.openai_api_key.get_secret_value(),
+                max_concurrent=30,
             )
 
-            # Update the document's chunk count now that indexing is complete
-            from ragzoom.models import Document
+            # Index with or without telemetry
+            if collect_telemetry:
+                # TreeBuilder's add_document_with_telemetry is sync only; run in executor
+                import asyncio
+                from functools import partial
 
-            doc = session.query(Document).filter_by(id=document_id).first()
-            if doc:
-                doc.chunk_count = len(doc_leaves)
-                session.commit()
+                func = partial(
+                    tree_builder.add_document_with_telemetry,
+                    text,
+                    show_progress=show_progress,
+                )
+                loop = asyncio.get_event_loop()
+                doc_id, telemetry = await loop.run_in_executor(None, func)
+            else:
+                doc_id = await tree_builder.add_document_async(
+                    text,
+                    show_progress=show_progress,
+                )
+                telemetry = None
 
+            # Get document statistics and update metadata without exposing sessions
+            doc_store_final = self.store.for_document(doc_id)
+            leaves = doc_store_final.nodes.get_leaves()
+            # Update chunk_count metadata for the document
+            try:
+                doc_store_final.set_metadata(chunk_count=len(leaves))
+            except Exception:
+                pass
+            root = doc_store_final.tree.get_root()
             tree_height = root.height if root else 0
 
-        return IndexingResult(
-            document_id=doc_id,
-            chunks_created=len(doc_leaves),
-            tree_depth=tree_height,
-            telemetry=telemetry,
-        )
+            return IndexingResult(
+                document_id=doc_id,
+                chunks_created=len(leaves),
+                tree_depth=tree_height,
+                telemetry=telemetry,
+            )

@@ -7,15 +7,15 @@ These tests verify the DP tiling algorithm's correctness, including:
 - Budget constraints
 """
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from unittest.mock import Mock
 
 import pytest
 from pytest import MonkeyPatch
 
 from ragzoom.assemble import Assembler
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
-from ragzoom.interfaces import StoreInterface
 from tests.conftest import BackwardCompatibilityConfig
 from tests.utils import (
     create_hash_based_embedding_mock,
@@ -32,15 +32,16 @@ class TestDPIntegration:
     """
 
     @pytest.fixture
-    def config(self, config_factory: object) -> BackwardCompatibilityConfig:
+    def config(
+        self,
+        config_factory: Callable[
+            [int, int, int, str, str | None], BackwardCompatibilityConfig
+        ],
+    ) -> BackwardCompatibilityConfig:
         """Create test configuration."""
-        config = config_factory(  # type: ignore[operator]
-            target_chunk_tokens=50,
-            preceding_context_tokens=0,
-            budget_tokens=500,
-        )
+        config = config_factory(50, 0, 500, "test-key", None)
         # OperationalConfig contains Any in its type hierarchy through dataclass internals
-        return config  # type: ignore[no-any-return]
+        return config
 
     @pytest.fixture
     def mock_openai(
@@ -66,7 +67,7 @@ class TestDPIntegration:
     async def test_no_duplicate_content(
         self,
         config: BackwardCompatibilityConfig,
-        store: StoreInterface,
+        storage_backend: StorageBackend,
         mock_openai: tuple[object, object],
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -85,9 +86,9 @@ class TestDPIntegration:
 
         # Index the document
         # Create document with proper metadata
-        doc_store = store.add_document(
-            document_id="doc1",
-            file_path=None,
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="dp_integration_test.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -96,7 +97,7 @@ class TestDPIntegration:
         # Type assertion for test compatibility
         assert hasattr(doc_store, "nodes"), "Expected DocumentStore-like object"
         tree_builder = TreeBuilder(
-            config.index_config, doc_store, api_key=config.openai_api_key  # type: ignore[arg-type]
+            config.index_config, doc_store, api_key=config.openai_api_key
         )
         await tree_builder.add_document_async(document, show_progress=False)
 
@@ -105,7 +106,7 @@ class TestDPIntegration:
 
         retriever = create_retriever(
             config.query_config,
-            doc_store,  # type: ignore[arg-type]
+            doc_store,
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
             client=mock_client,
@@ -114,7 +115,7 @@ class TestDPIntegration:
         result = await retriever.retrieve_async(query, document_id="doc1")
 
         # Assemble the result
-        assembler = Assembler(doc_store)  # type: ignore[arg-type]
+        assembler = Assembler(doc_store)
         assembled = assembler.assemble(result)
         # With the new leaf node behavior, check for no duplicate content
         # Count occurrences of each unique line
@@ -136,7 +137,7 @@ class TestDPIntegration:
     async def test_parent_child_deduplication(
         self,
         config: BackwardCompatibilityConfig,
-        store: StoreInterface,
+        storage_backend: StorageBackend,
         mock_openai: tuple[object, object],
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -154,9 +155,9 @@ class TestDPIntegration:
         )  # Very small chunks
         # Create document-scoped store
         # Create document with proper metadata
-        doc_store = store.add_document(
-            document_id="doc1",
-            file_path=None,
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="dp_integration_test.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -164,7 +165,7 @@ class TestDPIntegration:
         )
         tree_builder = TreeBuilder(
             config=small_config,
-            document_store=doc_store,  # type: ignore[arg-type]
+            document_store=doc_store,
             api_key=config.openai_api_key,
         )
         await tree_builder.add_document_async(document, show_progress=False)
@@ -172,7 +173,7 @@ class TestDPIntegration:
         # Retrieve
         retriever = create_retriever(
             config.query_config,
-            doc_store,  # type: ignore[arg-type]
+            doc_store,
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
             client=mock_client,
@@ -184,7 +185,7 @@ class TestDPIntegration:
         tiling_node_ids = list(
             set(result.tiling or [])
         )  # tiling is now a list of node IDs
-        tiling_nodes = [doc_store.nodes.get_node(nid) for nid in tiling_node_ids]  # type: ignore[attr-defined]
+        tiling_nodes = [doc_store.nodes.get_node(nid) for nid in tiling_node_ids]
         # Filter out None nodes for type safety
         valid_nodes = [node for node in tiling_nodes if node is not None]
         for i, node in enumerate(valid_nodes):
@@ -203,7 +204,7 @@ class TestDPIntegration:
     async def test_span_coverage(
         self,
         config: BackwardCompatibilityConfig,
-        store: StoreInterface,
+        storage_backend: StorageBackend,
         mock_openai: tuple[object, object],
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -221,9 +222,9 @@ class TestDPIntegration:
         )  # One word per chunk approximately
         # Create document-scoped store
         # Create document with proper metadata
-        doc_store = store.add_document(
-            document_id="doc1",
-            file_path=None,
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="dp_integration_test.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -231,7 +232,7 @@ class TestDPIntegration:
         )
         tree_builder = TreeBuilder(
             config=small_config,
-            document_store=doc_store,  # type: ignore[arg-type]
+            document_store=doc_store,
             api_key=config.openai_api_key,
         )
         await tree_builder.add_document_async(document, show_progress=False)
@@ -239,7 +240,7 @@ class TestDPIntegration:
         # Retrieve with different queries
         retriever = create_retriever(
             config.query_config,
-            doc_store,  # type: ignore[arg-type]
+            doc_store,
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
             client=mock_client,
@@ -248,7 +249,7 @@ class TestDPIntegration:
         # Patch retriever client for sync
         # Query for first half
         result1 = await retriever.retrieve_async("AAAA BBBB", document_id="doc1")
-        assembler = Assembler(doc_store)  # type: ignore[arg-type]
+        assembler = Assembler(doc_store)
         assembled1 = assembler.assemble(result1)
         # Should contain content from first half
         # Note: This test might be flaky due to how the tree is built with very small chunks
@@ -267,7 +268,7 @@ class TestDPIntegration:
     async def test_budget_respected(
         self,
         config: BackwardCompatibilityConfig,
-        store: StoreInterface,
+        storage_backend: StorageBackend,
         mock_openai: tuple[object, object],
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -285,9 +286,9 @@ class TestDPIntegration:
         # Index
         # Create document-scoped store
         # Create document with proper metadata
-        doc_store = store.add_document(
-            document_id="doc1",
-            file_path=None,
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="dp_integration_test.txt",
             content_hash="test-hash",
             chunk_count=0,
             embedding_model="text-embedding-3-small",
@@ -295,7 +296,7 @@ class TestDPIntegration:
         )
         tree_builder = TreeBuilder(
             config=config.index_config,
-            document_store=doc_store,  # type: ignore[arg-type]
+            document_store=doc_store,
             api_key=config.openai_api_key,
         )
         await tree_builder.add_document_async(document, show_progress=False)
@@ -303,7 +304,7 @@ class TestDPIntegration:
         # Retrieve with budget
         retriever = create_retriever(
             small_query_config,
-            doc_store,  # type: ignore[arg-type]
+            doc_store,
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
             client=mock_client,
@@ -313,7 +314,7 @@ class TestDPIntegration:
         )
 
         # Assemble
-        assembler = Assembler(doc_store)  # type: ignore[arg-type]
+        assembler = Assembler(doc_store)
         assembled = assembler.assemble(result)
 
         # Count tokens

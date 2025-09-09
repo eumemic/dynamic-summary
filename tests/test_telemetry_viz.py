@@ -17,8 +17,8 @@ pytest.importorskip("matplotlib")
 pytest.importorskip("seaborn")
 pytest.importorskip("pandas")
 
-from ragzoom.telemetry_types import NodeTelemetryDict, TelemetryDataDict
-from ragzoom.telemetry_viz import TelemetryVisualizer
+from ragzoom.telemetry_types import NodeTelemetryDict, TelemetryDataDict  # noqa: E402
+from ragzoom.telemetry_viz import TelemetryVisualizer  # noqa: E402
 
 
 class TestTelemetryVisualizer:
@@ -506,7 +506,6 @@ class TestVisualizationPerformance:
 
             yield files
 
-    @pytest.mark.slow
     def test_axis_synchronization_performance(
         self, temp_files: dict[int, tuple[Path, Path]]
     ) -> None:
@@ -550,7 +549,6 @@ class TestVisualizationPerformance:
                 time_ratio < size_ratio * 1.5
             ), f"Time scaling ({time_ratio:.2f}x) should be better than linear size scaling ({size_ratio}x)"
 
-    @pytest.mark.slow
     def test_axis_operation_count(self) -> None:
         """Verify that the optimized implementation reduces axis operations."""
         import json

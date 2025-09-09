@@ -23,21 +23,6 @@ jobs:
   validate:
     name: Code Validation (All Checks)
     runs-on: ubuntu-latest
-    # Skip slow/integration tests on draft PRs to save compute
-    
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ragzoom_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
     
     steps:
       - uses: actions/checkout@v4
@@ -80,31 +65,17 @@ jobs:
           pip install -r requirements-dev.txt
           # Install quality check tools
           pip install mypy[dmypy] bandit
-          
-      - name: Initialize PostgreSQL vector extension
-        run: |
-          # Wait for PostgreSQL to be ready
-          until pg_isready -h localhost -p 5432 -U postgres; do
-            echo "Waiting for PostgreSQL..."
-            sleep 1
-          done
-          
-          # Create vector extension
-          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d ragzoom_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
-          
+          # Install vector index for SQLite dev backend
+          pip install chromadb
+      
       - name: Run all quality checks
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
-          RAGZOOM_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test
+          RAGZOOM_BACKEND: sqlite
+          RAGZOOM_VECTOR_BACKEND: chroma
+          RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
-          # For draft PRs, skip slow/integration tests
-          if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
-            echo "Draft PR detected - running fast checks only"
-            ./scripts/run-checks.sh
-          else
-            echo "Running all checks including slow and integration tests"
-            ./scripts/run-checks.sh --include-slow-tests
-          fi
+          ./scripts/run-checks.sh --include-integration-tests
 
   # Test coverage report (only on push to master)
   coverage:
@@ -136,12 +107,16 @@ jobs:
           pip install -e .
           pip install -r requirements-dev.txt
           pip install pytest-cov
+          pip install chromadb
           
       - name: Run tests with coverage
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
+          RAGZOOM_BACKEND: sqlite
+          RAGZOOM_VECTOR_BACKEND: chroma
+          RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
-          pytest tests/ -m "not integration" -n 2 --cov=ragzoom --cov-report=term --cov-report=html --no-header
+          pytest tests/ -m "not benchmark" -n 2 --cov=ragzoom --cov-report=term --cov-report=html --no-header
           
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -187,9 +162,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
           pip install -r requirements-dev.txt
+          pip install chromadb
           
-      - name: Run fast tests
+      - name: Run tests
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
+          RAGZOOM_BACKEND: sqlite
+          RAGZOOM_VECTOR_BACKEND: chroma
+          RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
-          pytest tests/ -m "not slow and not integration" -n 2 --no-header -q
+          pytest tests/ -m "not benchmark" -n 2 --no-header -q

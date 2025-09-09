@@ -3,67 +3,189 @@
 from typing import cast
 from unittest.mock import MagicMock, Mock, patch
 
+import numpy as np
 from click.testing import CliRunner
+from numpy.typing import NDArray
 
 from ragzoom.cli import cli
-from tests.mock_store import SimpleMockStore
+from ragzoom.contracts.storage_backend import StorageBackend
 
 
 class TestCLIPinCommandIsolation:
     """Test that CLI pin command properly uses DocumentStore for isolation."""
 
-    def test_pin_command_with_document_id(self) -> None:
+    def test_pin_command_with_document_id(
+        self,
+        storage_backend: StorageBackend,
+    ) -> None:
         """Test pin command with explicit document ID."""
+        # Create document-scoped stores
+        doc1_store = storage_backend.for_document("doc1")
+        doc2_store = storage_backend.for_document("doc2")
+
+        # Set metadata for both documents
+        doc1_store.set_metadata(
+            file_path="doc1.txt",
+            content_hash="doc1-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc2_store.set_metadata(
+            file_path="doc2.txt",
+            content_hash="doc2-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        # Add nodes to different documents using proper add_batch format
+        nodes: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
+            {
+                "node_id": "doc1_node",
+                "text": "Document 1 content",
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 10,
+                "height": 0,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": None,
+                "right_child_id": None,
+            }
+        ]
+        doc1_store.nodes.add_batch(nodes)
+
+        nodes_doc2: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
+            {
+                "node_id": "doc2_node",
+                "text": "Document 2 content",
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc2",
+                "token_count": 10,
+                "height": 0,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": None,
+                "right_child_id": None,
+            }
+        ]
+        doc2_store.nodes.add_batch(nodes_doc2)
+
+        # Upsert embeddings via the public DocumentStore search API
+        doc1_store.search.upsert_vectors(
+            [
+                (
+                    "doc1_node",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 100,
+                        "parent_id": "",
+                        "document_id": "doc1",
+                        "is_leaf": 1,
+                    },
+                ),
+            ]
+        )
+        doc2_store.search.upsert_vectors(
+            [
+                (
+                    "doc2_node",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 100,
+                        "parent_id": "",
+                        "document_id": "doc2",
+                        "is_leaf": 1,
+                    },
+                )
+            ]
+        )
+
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
-            # Create mock store
-            store = SimpleMockStore()
-            cast(MagicMock, mock_create_store).return_value = store
-
-            # Add nodes to different documents
-            store.add_node(
-                node_id="doc1_node",
-                text="Document 1 content",
-                span_start=0,
-                span_end=100,
-                document_id="doc1",
-                embedding=[0.5] * 1536,
-            )
-            store.add_node(
-                node_id="doc2_node",
-                text="Document 2 content",
-                span_start=0,
-                span_end=100,
-                document_id="doc2",
-                embedding=[0.5] * 1536,
-            )
+            # Return the backend; CLI will scope per document internally
+            mock_create_store.return_value = storage_backend
 
             # Pin a node from doc1 with explicit document ID
             result = runner.invoke(cli, ["pin", "doc1_node", "--document-id", "doc1"])
 
             # Should succeed
             assert result.exit_code == 0
-            assert "doc1_node" in store.pinned_nodes
+            # Verify the node is pinned
+            pinned_nodes = [n.id for n in doc1_store.get_pinned_nodes()]
+            assert "doc1_node" in pinned_nodes
 
-    def test_pin_command_auto_detects_document(self) -> None:
+    def test_pin_command_auto_detects_document(
+        self,
+        storage_backend: StorageBackend,
+    ) -> None:
         """Test pin command auto-detects document from node ID."""
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="doc1.txt",
+            content_hash="doc1-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        # Add node using proper add_batch format
+        nodes: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
+            {
+                "node_id": "doc1_node",
+                "text": "Document 1 content",
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 10,
+                "height": 0,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": None,
+                "right_child_id": None,
+            }
+        ]
+        doc_store.nodes.add_batch(nodes)
+
+        # Upsert embedding
+        doc_store.search.upsert_vectors(
+            [
+                (
+                    "doc1_node",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 100,
+                        "parent_id": "",
+                        "document_id": "doc1",
+                        "is_leaf": 1,
+                    },
+                )
+            ]
+        )
+
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
-            # Create mock store
-            store = SimpleMockStore()
-            cast(MagicMock, mock_create_store).return_value = store
-
-            # Add node
-            store.add_node(
-                node_id="doc1_node",
-                text="Document 1 content",
-                span_start=0,
-                span_end=100,
-                document_id="doc1",
-                embedding=[0.5] * 1536,
-            )
+            mock_create_store.return_value = storage_backend
 
             # Pin without document ID - should auto-detect
             result = runner.invoke(cli, ["pin", "doc1_node"])
@@ -73,26 +195,76 @@ class TestCLIPinCommandIsolation:
                 print(f"Error output: {result.output}")
                 print(f"Exception: {result.exception}")
             assert result.exit_code == 0
-            assert "doc1_node" in store.pinned_nodes
+            # Verify the node is pinned
+            pinned_nodes = [n.id for n in doc_store.get_pinned_nodes()]
+            assert "doc1_node" in pinned_nodes
 
-    def test_pin_command_validates_document_ownership(self) -> None:
+    def test_pin_command_validates_document_ownership(
+        self,
+        storage_backend: StorageBackend,
+    ) -> None:
         """Test pin command validates node belongs to specified document."""
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="doc1.txt",
+            content_hash="doc1-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        # Add node to doc1 using proper add_batch format
+        nodes: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
+            {
+                "node_id": "doc1_node",
+                "text": "Document 1 content",
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 10,
+                "height": 0,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": None,
+                "right_child_id": None,
+            }
+        ]
+        doc_store.nodes.add_batch(nodes)
+
+        # Upsert embedding
+        doc_store.search.upsert_vectors(
+            [
+                (
+                    "doc1_node",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 100,
+                        "parent_id": "",
+                        "document_id": "doc1",
+                        "is_leaf": 1,
+                    },
+                )
+            ]
+        )
+
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
-            # Create mock store
-            store = SimpleMockStore()
-            cast(MagicMock, mock_create_store).return_value = store
-
-            # Add node to doc1
-            store.add_node(
-                node_id="doc1_node",
-                text="Document 1 content",
-                span_start=0,
-                span_end=100,
-                document_id="doc1",
-                embedding=[0.5] * 1536,
+            # Create a doc2 store when wrong document ID is specified
+            doc2_store = storage_backend.for_document("doc2")
+            doc2_store.set_metadata(
+                file_path="doc2.txt",
+                content_hash="doc2-hash",
+                chunk_count=0,
+                embedding_model="text-embedding-3-small",
+                summary_model="gpt-4o-mini",
             )
+            mock_create_store.return_value = storage_backend
 
             # Try to pin with wrong document ID
             result = runner.invoke(cli, ["pin", "doc1_node", "--document-id", "doc2"])
@@ -104,14 +276,23 @@ class TestCLIPinCommandIsolation:
                 or "node not found" in result.output.lower()
             )
 
-    def test_pin_command_error_on_nonexistent_node(self) -> None:
+    def test_pin_command_error_on_nonexistent_node(
+        self, storage_backend: StorageBackend
+    ) -> None:
         """Test pin command handles non-existent nodes gracefully."""
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="doc1.txt",
+            content_hash="doc1-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
         runner = CliRunner()
 
         with patch("ragzoom.cli.create_store_with_docker") as mock_create_store:
-            # Create mock store
-            store = SimpleMockStore()
-            cast(MagicMock, mock_create_store).return_value = store
+            mock_create_store.return_value = storage_backend
 
             # Try to pin non-existent node
             result = runner.invoke(cli, ["pin", "nonexistent_node"])
@@ -130,54 +311,165 @@ class SkipTestQueryVisualizationIsolation:
     @patch("ragzoom.cli.click.echo")
     @patch("ragzoom.cli.create_store_with_docker")
     def test_query_tree_visualization_scoped_to_document(
-        self, mock_create_store: object, mock_echo: object
+        self,
+        mock_create_store: object,
+        mock_echo: object,
+        storage_backend: StorageBackend,
     ) -> None:
         """Test that tree visualization only shows specified document."""
+        # Create document-scoped stores
+        doc1_store = storage_backend.for_document("doc1")
+        doc2_store = storage_backend.for_document("doc2")
+
+        # Set metadata for both documents
+        doc1_store.set_metadata(
+            file_path="doc1.txt",
+            content_hash="doc1-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc2_store.set_metadata(
+            file_path="doc2.txt",
+            content_hash="doc2-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        # Add nodes for doc1 using proper add_batch format
+        doc1_nodes: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
+            {
+                "node_id": "doc1_root",
+                "text": "Document 1 root",
+                "span_start": 0,
+                "span_end": 200,
+                "document_id": "doc1",
+                "token_count": 20,
+                "height": 1,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": "doc1_left",
+                "right_child_id": "doc1_right",
+            },
+            {
+                "node_id": "doc1_left",
+                "text": "Document 1 left",
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 10,
+                "height": 0,
+                "path": "0",
+                "parent_id": None,  # Will be set via update_parent_references_batch
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+            {
+                "node_id": "doc1_right",
+                "text": "Document 1 right",
+                "span_start": 100,
+                "span_end": 200,
+                "document_id": "doc1",
+                "token_count": 10,
+                "height": 0,
+                "path": "1",
+                "parent_id": None,  # Will be set via update_parent_references_batch
+                "left_child_id": None,
+                "right_child_id": None,
+            },
+        ]
+        doc1_store.nodes.add_batch(doc1_nodes)
+        # Set parent references
+        doc1_store.nodes.update_parent_references_batch(
+            [
+                ("doc1_left", "doc1_root"),
+                ("doc1_right", "doc1_root"),
+            ]
+        )
+
+        # Add nodes for doc2 using proper add_batch format
+        doc2_nodes: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = [
+            {
+                "node_id": "doc2_root",
+                "text": "Document 2 root",
+                "span_start": 0,
+                "span_end": 200,
+                "document_id": "doc2",
+                "token_count": 20,
+                "height": 0,
+                "path": "",
+                "parent_id": None,
+                "left_child_id": None,
+                "right_child_id": None,
+            }
+        ]
+        doc2_store.nodes.add_batch(doc2_nodes)
+
+        # Upsert embeddings for all nodes
+        doc1_store.search.upsert_vectors(
+            [
+                (
+                    "doc1_root",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 200,
+                        "parent_id": "",
+                        "document_id": "doc1",
+                        "is_leaf": 0,
+                    },
+                ),
+                (
+                    "doc1_left",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 100,
+                        "parent_id": "doc1_root",
+                        "document_id": "doc1",
+                        "is_leaf": 1,
+                    },
+                ),
+                (
+                    "doc1_right",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 100,
+                        "span_end": 200,
+                        "parent_id": "doc1_root",
+                        "document_id": "doc1",
+                        "is_leaf": 1,
+                    },
+                ),
+            ]
+        )
+        doc2_store.search.upsert_vectors(
+            [
+                (
+                    "doc2_root",
+                    [0.5] * 1536,
+                    {
+                        "span_start": 0,
+                        "span_end": 200,
+                        "parent_id": "",
+                        "document_id": "doc2",
+                        "is_leaf": 1,
+                    },
+                )
+            ]
+        )
+
         runner = CliRunner()
-
-        # Create mock store
-        store = SimpleMockStore()
-        cast(MagicMock, mock_create_store).return_value = store
-
-        # Add nodes for doc1
-        store.add_node(
-            node_id="doc1_root",
-            text="Document 1 root",
-            span_start=0,
-            span_end=200,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            left_child_id="doc1_left",
-            right_child_id="doc1_right",
-        )
-        store.add_node(
-            node_id="doc1_left",
-            text="Document 1 left",
-            span_start=0,
-            span_end=100,
-            document_id="doc1",
-            parent_id="doc1_root",
-            embedding=[0.5] * 1536,
-        )
-        store.add_node(
-            node_id="doc1_right",
-            text="Document 1 right",
-            span_start=100,
-            span_end=200,
-            document_id="doc1",
-            parent_id="doc1_root",
-            embedding=[0.5] * 1536,
-        )
-
-        # Add nodes for doc2
-        store.add_node(
-            node_id="doc2_root",
-            text="Document 2 root",
-            span_start=0,
-            span_end=200,
-            document_id="doc2",
-            embedding=[0.5] * 1536,
-        )
+        cast(MagicMock, mock_create_store).return_value = doc1_store
 
         # Mock the query service and tree visualization
         with patch("ragzoom.cli.QueryService") as mock_query_service_class:

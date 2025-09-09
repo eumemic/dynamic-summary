@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import (
     NodeTelemetry,
@@ -194,16 +195,10 @@ class TestTelemetryIntegration:
     """Test telemetry integration with real indexing."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("store_type", ["mock", "real"])
     async def test_telemetry_captures_all_nodes(
-        self, store_type: str, request: pytest.FixtureRequest
+        self, storage_backend: StorageBackend
     ) -> None:
         """Test that telemetry captures all nodes during indexing."""
-        store = request.getfixturevalue(f"{store_type}_store")
-
-        # Skip if real store not available (PostgreSQL not running)
-        if store is None:
-            pytest.skip("PostgreSQL not available for real store test")
         index_config = IndexConfig.load(
             target_chunk_tokens=100,
             preceding_context_tokens=50,
@@ -233,8 +228,8 @@ class TestTelemetryIntegration:
             input_texts = cast(list[str] | str, kwargs.get("input", []))
             if isinstance(input_texts, str):
                 input_texts = [input_texts]
-            # Return appropriate number of embeddings based on store type
-            embedding_value = [0.1] * 1536 if store_type == "real" else "mock-embedding"
+            # Always return numeric embeddings for backend-agnostic runs
+            embedding_value = [0.1] * 1536
             return MagicMock(
                 data=[MagicMock(embedding=embedding_value) for _ in input_texts]
             )
@@ -249,17 +244,15 @@ class TestTelemetryIntegration:
         with patch(
             "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
         ):
-            # Create document-scoped store and ensure document exists
-            # Create document with proper metadata
-            store.add_document(
-                document_id="telemetry-test",
+            # Create document-scoped store and metadata
+            doc_store = storage_backend.for_document("telemetry-test")
+            doc_store.set_metadata(
                 file_path=None,
                 content_hash="test-hash",
                 chunk_count=0,
                 embedding_model="text-embedding-3-small",
                 summary_model="gpt-4o-mini",
             )
-            doc_store = store.for_document("telemetry-test")
             builder = TreeBuilder(
                 index_config,
                 doc_store,
@@ -334,10 +327,7 @@ class TestTelemetryIntegration:
             assert (
                 "embedding" in node_data
             ), f"Node {node_data['node_id']} missing embedding"
-            assert node_data["embedding"]["model"] in [
-                "text-embedding-3-small",
-                "mock-embedding",
-            ]
+            assert node_data["embedding"]["model"] == "text-embedding-3-small"
 
             # Summary nodes (height > 0) should have summary attempts
             # unless they are passthrough nodes (text was already short enough)

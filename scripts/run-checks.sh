@@ -6,12 +6,13 @@
 #   run-checks.sh [OPTIONS] [file_or_directory ...]
 #
 # Options:
-#   --skip CHECKS           Skip specific checks (comma-separated): tests,dmypy,ruff,black,jscpd,bandit
-#   --fail-fast             Stop at first failure (useful for debugging)
-#   --include-slow-tests    Include slow and integration tests (auto-starts PostgreSQL)
-#   --ignore-lint-rules RULES  Ignore specific lint rules (comma-separated): F401,E402,etc.
-#   --fail-on-autofix       Exit with failure if any auto-fixes were applied
-#   --help                  Show this help message
+#   --skip CHECKS              Skip specific checks (comma-separated): tests,dmypy,ruff,black,jscpd,bandit
+#   --fail-fast                Stop at first failure (useful for debugging)
+#   --include-integration-tests  Include integration tests (benchmarks still excluded)
+#   --impacted-only FILES...   Run only tests downstream of the provided files (required)
+#   --ignore-lint-rules RULES   Ignore specific lint rules (comma-separated): F401,E402,etc.
+#   --fail-on-autofix          Exit with failure if any auto-fixes were applied
+#   --help                     Show this help message
 #
 # Exit codes:
 #   0 - All checks passed
@@ -23,9 +24,12 @@ set -uo pipefail  # Don't use -e, we handle errors explicitly
 SKIP_CHECKS=""
 TARGETS=""
 FAIL_FAST=false
-INCLUDE_SLOW_TESTS=false
+INCLUDE_INTEGRATION=false
 IGNORE_LINT_RULES=""
 FAIL_ON_AUTOFIX=false
+TEST_SCOPE="fast"  # deprecated; kept for backward-compatibility
+IMPACTED_ONLY=false
+IMPACTED_FILES=()
 
 show_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# *//'
@@ -41,8 +45,8 @@ while [[ $# -gt 0 ]]; do
             FAIL_FAST=true
             shift
             ;;
-        --include-slow-tests)
-            INCLUDE_SLOW_TESTS=true
+        --include-integration-tests)
+            INCLUDE_INTEGRATION=true
             shift
             ;;
         --ignore-lint-rules)
@@ -52,6 +56,20 @@ while [[ $# -gt 0 ]]; do
         --fail-on-autofix)
             FAIL_ON_AUTOFIX=true
             shift
+            ;;
+        --impacted-only)
+            IMPACTED_ONLY=true
+            shift
+            # Collect file arguments until next option or end
+            while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do
+                IMPACTED_FILES+=("$1")
+                shift
+            done
+            ;;
+        --test-scope)
+            # Deprecated: use --include-integration-tests or default fast path
+            TEST_SCOPE="$2"
+            shift 2
             ;;
         --help|-h)
             show_help
@@ -64,14 +82,89 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check for incoherent options
-if [ "$INCLUDE_SLOW_TESTS" = true ] && [[ "$SKIP_CHECKS" == *"tests"* ]]; then
-    echo "Error: Cannot use --include-slow-tests with --skip tests (incoherent)" >&2
+# Validate impacted-only usage
+if [ "$IMPACTED_ONLY" = true ] && [ ${#IMPACTED_FILES[@]} -eq 0 ]; then
+    echo "Error: --impacted-only requires at least one FILE argument" >&2
+    echo "Usage: $0 --impacted-only FILE [FILE ...]" >&2
     exit 1
+fi
+
+# Note: --include-integration-tests with --skip tests is a no-op for tests; keep running other checks
+if [ "$INCLUDE_INTEGRATION" = true ] && [[ "$SKIP_CHECKS" == *"tests"* ]]; then
+    echo "[Tests] Skipped: --include-integration-tests has no effect when tests are skipped" >&2
 fi
 
 # Get repository root (works in main repo and worktrees)
 GIT_ROOT="$(git rev-parse --show-toplevel)"
+
+# Optional guard: fail if legacy mock store is referenced in tests
+# Enable by setting RZ_GUARD_NO_MOCKS=1 in the environment (disabled by default)
+if [[ "${RZ_GUARD_NO_MOCKS:-}" = "1" ]]; then
+    if command -v rg &> /dev/null; then
+        if rg -n "from tests\\.mock_store import|SimpleMockStore\\b" tests >/tmp/mock_guard_hits 2>/dev/null; then
+            echo "[MockGuard] ❌ SimpleMockStore references detected in tests:" >&2
+            cat /tmp/mock_guard_hits >&2 || true
+            exit 2
+        else
+            echo "[MockGuard] ✅ No SimpleMockStore references detected"
+        fi
+    else
+        if grep -REn "from tests\\.mock_store import|SimpleMockStore\\b" tests >/tmp/mock_guard_hits 2>/dev/null; then
+            echo "[MockGuard] ❌ SimpleMockStore references detected in tests:" >&2
+            cat /tmp/mock_guard_hits >&2 || true
+            exit 2
+        else
+            echo "[MockGuard] ✅ No SimpleMockStore references detected"
+        fi
+    fi
+fi
+
+# Backend-agnostic migration guards - prevent regressions
+if command -v rg &> /dev/null; then
+    # Guard against SQLiteStorageBackend imports in non-sqlite files (except conftest.py)
+    if rg -l "SQLiteStorageBackend" tests --type py | grep -v sqlite | grep -v conftest.py >/tmp/sqlite_guard_hits 2>/dev/null; then
+        echo "❌ Found SQLiteStorageBackend imports in non-*_sqlite*.py files:" >&2
+        cat /tmp/sqlite_guard_hits >&2 || true
+        exit 2
+    fi
+    
+    # Guard against SessionLocal usage in tests
+    if rg -l "SessionLocal\(" tests --type py >/tmp/session_guard_hits 2>/dev/null; then
+        echo "❌ Found SessionLocal() usage in test files:" >&2
+        cat /tmp/session_guard_hits >&2 || true
+        exit 2
+    fi
+    
+    # Guard against LocalStoreAdapter references
+    if rg -l "LocalStoreAdapter" . --type py >/tmp/local_store_guard_hits 2>/dev/null; then
+        echo "❌ Found LocalStoreAdapter references (should be fully migrated):" >&2
+        cat /tmp/local_store_guard_hits >&2 || true
+        exit 2
+    fi
+    
+    echo "✅ Backend-agnostic migration guards passed"
+else
+    # Fallback to find/grep if rg not available
+    if find tests -name "*.py" -not -name "*sqlite*" -not -name "conftest.py" -exec grep -l "SQLiteStorageBackend" {} \; 2>/dev/null | head -1 | grep -q .; then
+        echo "❌ Found SQLiteStorageBackend imports in non-*_sqlite*.py files:" >&2
+        find tests -name "*.py" -not -name "*sqlite*" -not -name "conftest.py" -exec grep -l "SQLiteStorageBackend" {} \; 2>/dev/null >&2
+        exit 2
+    fi
+    
+    if find tests -name "*.py" -exec grep -l "SessionLocal(" {} \; 2>/dev/null | head -1 | grep -q .; then
+        echo "❌ Found SessionLocal() usage in test files:" >&2
+        find tests -name "*.py" -exec grep -l "SessionLocal(" {} \; 2>/dev/null >&2
+        exit 2
+    fi
+    
+    if find . -name "*.py" -exec grep -l "LocalStoreAdapter" {} \; 2>/dev/null | head -1 | grep -q .; then
+        echo "❌ Found LocalStoreAdapter references (should be fully migrated):" >&2
+        find . -name "*.py" -exec grep -l "LocalStoreAdapter" {} \; 2>/dev/null >&2
+        exit 2
+    fi
+    
+    echo "✅ Backend-agnostic migration guards passed"
+fi
 
 # Convert comma-separated skip list to array
 if [[ -n "$SKIP_CHECKS" ]]; then
@@ -90,14 +183,7 @@ should_skip() {
     return 1
 }
 
-# Get list of modified files for git context (if available)
-if git diff --cached --name-only &>/dev/null; then
-    modified_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || true)
-else
-    modified_files=""
-fi
-
-# Default targets if none specified
+# Default targets if none specified (always lint/typecheck code and tests)
 if [[ -z "$TARGETS" ]]; then
     TARGETS="ragzoom tests"
 fi
@@ -111,6 +197,7 @@ tmpdir=$(mktemp -d)
 
 # Store process IDs for parallel execution
 declare -a pids=()
+ANY_PIDS=0
 
 # Cleanup function
 cleanup() {
@@ -204,6 +291,7 @@ run_check_background() {
     ) &
     local pid=$!
     pids+=("$pid")
+    ANY_PIDS=1
 }
 
 # Start all checks in parallel
@@ -211,21 +299,41 @@ run_check_background() {
 # Tests
 if ! should_skip "tests"; then
     if command -v pytest &> /dev/null; then
-        if [ "$INCLUDE_SLOW_TESTS" = true ]; then
-            # Ensure PostgreSQL is available for integration tests
-            if [ -z "$RAGZOOM_DATABASE_URL" ]; then
-                echo "[PostgreSQL] Ensuring PostgreSQL is running for integration tests..."
-                python -c "from ragzoom.docker_postgres import DockerPostgres; dp = DockerPostgres(); dp.ensure_running()" 2>/dev/null || {
-                    echo "[PostgreSQL] Warning: Could not start PostgreSQL, integration tests may fail"
-                }
-            else
-                echo "[PostgreSQL] Using provided database URL: $RAGZOOM_DATABASE_URL"
-            fi
-            # Run all tests including slow and integration
-            run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not benchmark' -n 8 --no-header"
+        # Marker expression: always exclude benchmarks; include integration only when requested
+        if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
+            marker_expr="not benchmark"
         else
-            # Run only fast tests (default)
-            run_check_background "Tests" "pytest tests/ -q --tb=short -m 'not slow and not integration and not benchmark' -n 8 --no-header"
+            marker_expr="not benchmark and not integration"
+        fi
+
+        # Ensure PostgreSQL only if integration tests are requested and backend is postgres
+        if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
+            BACKEND="${RAGZOOM_BACKEND:-sqlite}"
+            DB_URL="${RAGZOOM_DATABASE_URL:-}"
+            if [ "$BACKEND" = "postgres" ] || [[ "$DB_URL" =~ ^postgres ]]; then
+                if [ -z "$DB_URL" ]; then
+                    echo "[PostgreSQL] Ensuring PostgreSQL is running for integration tests..."
+                    python -c "from ragzoom.docker_postgres import DockerPostgres; dp = DockerPostgres(); dp.ensure_running()" 2>/dev/null || {
+                        echo "[PostgreSQL] Warning: Could not start PostgreSQL, integration tests may fail"
+                    }
+                else
+                    echo "[PostgreSQL] Using provided database URL: $DB_URL"
+                fi
+            else
+                echo "[PostgreSQL] Skipping: backend is '$BACKEND' (using SQLite)"
+            fi
+        fi
+
+        if [ "$IMPACTED_ONLY" = true ]; then
+            impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" ${IMPACTED_FILES[@]} || true)"
+            if [ -n "$impacted" ]; then
+                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$marker_expr' -n 8 --no-header"
+            else
+                echo "[Tests] Skipped (no impacted tests)"
+            fi
+        else
+            # Default: run full suite with selected markers
+            run_check_background "Tests" "pytest tests/ -q --tb=short -m '$marker_expr' -n 8 --no-header"
         fi
     else
         echo "[Tests] Skipped (pytest not installed)"
@@ -235,6 +343,8 @@ fi
 # dmypy
 if ! should_skip "dmypy"; then
     if command -v dmypy &> /dev/null; then
+        # Use existing daemon for speed; do not stop/restart here.
+        # Always typecheck both library and tests regardless of --skip tests.
         run_check_background "Mypy" "dmypy run -- ragzoom tests --no-error-summary --check-untyped-defs"
     else
         echo "[Mypy] ❌ dmypy not installed - cannot run type checks" >&2
@@ -245,21 +355,20 @@ fi
 # ruff
 if ! should_skip "ruff"; then
     if command -v ruff &> /dev/null; then
-        # Run on all Python files in targets (modified_files is only for git context)
-        if true; then
-            # Enhanced ruff command that detects auto-fixes
-            ruff_cmd="(
-                # Capture initial state
-                before_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
-                
-                # Run ruff with auto-fix
-                if ruff check $TARGETS --fix --output-format concise"
+        # Run on full targets for reliability
+        # Enhanced ruff command that detects auto-fixes
+        ruff_cmd="(
+            # Capture initial state
+            before_hash=\$(find $TARGETS -name '*.py' -print0 2>/dev/null | xargs -0 md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+            
+            # Run ruff with auto-fix
+            if ruff check $TARGETS --fix --output-format concise"
             if [ -n "$IGNORE_LINT_RULES" ]; then
                 ruff_cmd="$ruff_cmd --ignore $IGNORE_LINT_RULES"
             fi
             ruff_cmd="$ruff_cmd; then
                     # Check if files were modified
-                    after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
+                    after_hash=\$(find $TARGETS -name '*.py' -print0 2>/dev/null | xargs -0 md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
                     if [ \"\$before_hash\" != \"\$after_hash\" ]; then
                         echo '[Ruff] ✨ Auto-fixed all issues!'
                         echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
@@ -270,20 +379,17 @@ if ! should_skip "ruff"; then
                 else
                     exit_code=\$?
                     # Check if files were modified (partial fixes)
-                    after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
-                    if [ \"\$before_hash\" != \"\$after_hash\" ]; then
-                        echo '[Ruff] ⚠️ Auto-fixed some issues, but manual fixes needed above'
-                        echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
-                    else
-                        echo '[Ruff] ❌ Issues found that need manual fixes (see above)'
-                    fi
-                    exit \$exit_code
+                    after_hash=\$(find $TARGETS -name '*.py' -print0 2>/dev/null | xargs -0 md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+                if [ \"\$before_hash\" != \"\$after_hash\" ]; then
+                    echo '[Ruff] ⚠️ Auto-fixed some issues, but manual fixes needed above'
+                    echo 'AUTOFIX_OCCURRED' > $tmpdir/ruff_autofix
+                else
+                    echo '[Ruff] ❌ Issues found that need manual fixes (see above)'
+                fi
+                exit \$exit_code
                 fi
             )"
             run_check_background "Ruff" "$ruff_cmd"
-        else
-            echo "[Ruff] Skipped (no Python files)"
-        fi
     else
         echo "[Ruff] Skipped (not installed)"
     fi
@@ -292,33 +398,29 @@ fi
 # black
 if ! should_skip "black"; then
     if command -v black &> /dev/null; then
-        # Run on all Python files in targets (modified_files is only for git context)
-        if true; then
-            # Enhanced black command that detects formatting changes
-            black_cmd="(
-                # Capture initial state
-                before_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
-                
-                # Run black (it auto-formats by default)
-                if black $TARGETS --quiet; then
-                    # Check if files were modified
-                    after_hash=\$(find $TARGETS -name '*.py' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d' ' -f1)
-                    if [ \"\$before_hash\" != \"\$after_hash\" ]; then
-                        echo '[Black] ✨ Reformatted files!'
-                        echo 'AUTOFIX_OCCURRED' > $tmpdir/black_autofix
-                    else
-                        echo '[Black] ✅ All files already formatted!'
-                    fi
-                    exit 0
+        # Run on full targets for reliability
+        # Enhanced black command that detects formatting changes
+        black_cmd="(
+            # Capture initial state
+            before_hash=\$(find $TARGETS -name '*.py' -print0 2>/dev/null | xargs -0 md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+            
+            # Run black (it auto-formats by default)
+            if black $TARGETS --quiet; then
+                # Check if files were modified
+                after_hash=\$(find $TARGETS -name '*.py' -print0 2>/dev/null | xargs -0 md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+                if [ \"\$before_hash\" != \"\$after_hash\" ]; then
+                    echo '[Black] ✨ Reformatted files!'
+                    echo 'AUTOFIX_OCCURRED' > $tmpdir/black_autofix
                 else
-                    echo '[Black] ❌ Error during formatting'
-                    exit 1
+                    echo '[Black] ✅ All files already formatted!'
                 fi
+                exit 0
+            else
+                echo '[Black] ❌ Error during formatting'
+                exit 1
+            fi
             )"
-            run_check_background "Black" "$black_cmd"
-        else
-            echo "[Black] Skipped (no Python files)"
-        fi
+        run_check_background "Black" "$black_cmd"
     else
         echo "[Black] Skipped (not installed)"
     fi
@@ -326,10 +428,42 @@ fi
 
 # jscpd
 if ! should_skip "jscpd"; then
-    if command -v npx &> /dev/null; then
-        run_check_background "JSCPD" "npx jscpd@latest ragzoom/ --config $GIT_ROOT/.jscpd.json"
+    # Prefer global jscpd, then local node_modules, then npx fallback
+    if command -v jscpd &> /dev/null; then
+        JSCPD_BIN="$(command -v jscpd)"
+    elif [ -x "$GIT_ROOT/node_modules/.bin/jscpd" ]; then
+        JSCPD_BIN="$GIT_ROOT/node_modules/.bin/jscpd"
+    elif command -v npx &> /dev/null; then
+        JSCPD_BIN="npx jscpd@latest"
+        echo "[JSCPD] Using npx fallback (consider: npm install -g jscpd)"
     else
-        echo "[JSCPD] Skipped (npx not available)"
+        JSCPD_BIN=""
+    fi
+
+    if [ -n "$JSCPD_BIN" ]; then
+        if [ "$IMPACTED_ONLY" = true ]; then
+            # Limit jscpd scan to impacted source files under ragzoom/
+            impacted_src=()
+            for f in "${IMPACTED_FILES[@]}"; do
+                case "$f" in
+                    *.py)
+                        if [[ "$f" == ragzoom/* || "$f" == */ragzoom/* ]]; then
+                            impacted_src+=("$f")
+                        fi
+                        ;;
+                esac
+            done
+            if [ ${#impacted_src[@]} -gt 0 ]; then
+                jscpd_targets="${impacted_src[*]}"
+                run_check_background "JSCPD" "$JSCPD_BIN $jscpd_targets --config $GIT_ROOT/.jscpd.json"
+            else
+                echo "[JSCPD] Skipped (no impacted source files)"
+            fi
+        else
+            run_check_background "JSCPD" "$JSCPD_BIN ragzoom/ --config $GIT_ROOT/.jscpd.json"
+        fi
+    else
+        echo "[JSCPD] Skipped (jscpd not available)"
     fi
 fi
 
@@ -386,13 +520,15 @@ if [ "$FAIL_FAST" = true ]; then
             fi
         done
         pids=("${new_pids[@]+"${new_pids[@]}"}")
-        [ ${#pids[@]} -gt 0 ] && sleep 0.05
+        if [ "${#pids[@]}" -gt 0 ] 2>/dev/null; then sleep 0.05; fi
     done
 else
     # Wait for all processes to complete
-    for pid in "${pids[@]}"; do
-        wait "$pid"
-    done
+    if [ "$ANY_PIDS" -eq 1 ]; then
+        for pid in "${pids[@]}"; do
+            wait "$pid"
+        done
+    fi
 fi
 
 # Check for auto-fixes after all background processes have completed

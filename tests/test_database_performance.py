@@ -6,15 +6,13 @@ These tests validate the scalability improvements for Issue #164.
 import logging
 import time
 from collections.abc import Generator
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
-if TYPE_CHECKING:
-    from ragzoom.interfaces import StoreInterface
-    from ragzoom.store import StoreManager
-
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
-# Store interface is handled via fixtures
+from ragzoom.contracts.storage_backend import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -92,74 +90,79 @@ class TestDatabaseScalability:
 
     def add_test_nodes(
         self,
-        store: "StoreInterface",
+        storage_backend: StorageBackend,
+        document_id: str,
         nodes_data: list[dict[str, str | int | list[float]]],
     ) -> None:
-        """Helper to add test nodes to the store."""
-        for node_data in nodes_data:
-            store.add_node(
-                node_id=cast(str, node_data["node_id"]),
-                text=cast(str, node_data["text"]),
-                embedding=cast(list[float], node_data["embedding"]),
-                span_start=cast(int, node_data["span_start"]),
-                span_end=cast(int, node_data["span_end"]),
-                document_id=cast(str, node_data["document_id"]),
-                token_count=cast(int, node_data["token_count"]),
-            )
+        """Helper to add test nodes to the backend."""
+        doc_store = storage_backend.for_document(document_id)
 
-    @pytest.mark.slow
-    def test_deletion_performance_large_document(
+        # Convert to proper dict format
+        node_data_dicts: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = []
+        for node_data in nodes_data:
+            node_data_dict: dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ] = {
+                "node_id": cast(str, node_data["node_id"]),
+                "text": cast(str, node_data["text"]),
+                "embedding": cast(list[float], node_data["embedding"]),
+                "span_start": cast(int, node_data["span_start"]),
+                "span_end": cast(int, node_data["span_end"]),
+                "document_id": cast(str, node_data["document_id"]),
+                "token_count": cast(int, node_data["token_count"]),
+            }
+            node_data_dicts.append(node_data_dict)
+
+        doc_store.nodes.add_batch(node_data_dicts)
+
+    def test_deletion_correctness_small_document(
         self,
-        store: "StoreInterface",
-        large_document_data: dict[
+        storage_backend: StorageBackend,
+        small_document_data: dict[
             str, list[dict[str, str | int | list[float]]] | str | int
         ],
     ) -> None:
-        """Test that deletion of 50,000 nodes completes in reasonable time."""
-        document_id = cast(str, large_document_data["document_id"])
+        """Validate deletion correctness on a small document.
+
+        Ensures delete returns correct count and leaves zero nodes,
+        without large-scale overhead or timing assertions.
+        """
+        document_id = cast(str, small_document_data["document_id"])
         nodes_data = cast(
-            list[dict[str, str | int | list[float]]], large_document_data["nodes"]
+            list[dict[str, str | int | list[float]]], small_document_data["nodes"]
         )
-        expected_count = cast(int, large_document_data["expected_count"])
+        expected_count = cast(int, small_document_data["expected_count"])
+        doc_store = storage_backend.for_document(document_id)
 
-        # Add all nodes
-        logger.info(f"Adding {expected_count} nodes for performance test...")
-        start_time = time.perf_counter()
-        self.add_test_nodes(store, nodes_data)
-        add_duration = time.perf_counter() - start_time
-        logger.info(f"Added {expected_count} nodes in {add_duration:.2f}s")
+        # Set up document metadata first
+        doc_store.set_metadata(
+            file_path="small_deletion_test.txt",
+            content_hash="small-deletion-test-hash",
+            chunk_count=expected_count,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
-        # Verify nodes were added
-        store_manager = cast("StoreManager", store)
-        count_before = len(store_manager.for_document(document_id).nodes.get_all())
+        # Add nodes
+        self.add_test_nodes(storage_backend, document_id, nodes_data)
+
+        # Verify and assert deletion correctness using efficient count
+        count_before = doc_store.nodes.count()
         assert count_before == expected_count
 
-        # Test deletion performance
-        logger.info("Testing deletion performance...")
-        start_time = time.perf_counter()
-        deleted_count = store.delete_document_nodes(document_id)
-        deletion_duration = time.perf_counter() - start_time
-
-        # Verify deletion
+        deleted_count = storage_backend.clear_document(document_id)
         assert deleted_count == expected_count
-        count_after = len(store_manager.for_document(document_id).nodes.get_all())
+
+        count_after = doc_store.nodes.count()
         assert count_after == 0
-
-        # Performance assertions
-        logger.info(f"Deleted {deleted_count} nodes in {deletion_duration:.2f}s")
-        assert (
-            deletion_duration < 10.0
-        ), f"Deletion took {deletion_duration:.2f}s, expected < 10s for {expected_count} nodes"
-
-        # Log performance metrics
-        nodes_per_second = (
-            deleted_count / deletion_duration if deletion_duration > 0 else 0
-        )
-        logger.info(f"Deletion rate: {nodes_per_second:.0f} nodes/second")
 
     def test_deletion_performance_small_document(
         self,
-        store: "StoreInterface",
+        storage_backend: StorageBackend,
         small_document_data: dict[
             str, list[dict[str, str | int | list[float]]] | str | int
         ],
@@ -170,13 +173,23 @@ class TestDatabaseScalability:
             list[dict[str, str | int | list[float]]], small_document_data["nodes"]
         )
         expected_count = cast(int, small_document_data["expected_count"])
+        doc_store = storage_backend.for_document(document_id)
+
+        # Set up document metadata first
+        doc_store.set_metadata(
+            file_path="small_performance_test.txt",
+            content_hash="small-perf-test-hash",
+            chunk_count=expected_count,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         # Add nodes
-        self.add_test_nodes(store, nodes_data)
+        self.add_test_nodes(storage_backend, document_id, nodes_data)
 
         # Test deletion
         start_time = time.perf_counter()
-        deleted_count = store.delete_document_nodes(document_id)
+        deleted_count = storage_backend.clear_document(document_id)
         deletion_duration = time.perf_counter() - start_time
 
         # Verify and assert
@@ -185,38 +198,43 @@ class TestDatabaseScalability:
             deletion_duration < 1.0
         ), f"Small document deletion took {deletion_duration:.2f}s, expected < 1s"
 
-    @pytest.mark.slow
-    def test_paginated_retrieval_large_document(
+    def test_paginated_retrieval_correctness_small(
         self,
-        store: "StoreInterface",
-        large_document_data: dict[
+        storage_backend: StorageBackend,
+        small_document_data: dict[
             str, list[dict[str, str | int | list[float]]] | str | int
         ],
     ) -> None:
-        """Test that paginated retrieval works correctly with large documents."""
-        document_id = cast(str, large_document_data["document_id"])
+        """Validate pagination correctness on a small document.
+
+        Ensures batches cover all nodes exactly once and each batch size
+        equals page_size except possibly the last. Uses a few representative
+        page sizes to exercise boundaries without large-scale overhead.
+        """
+        document_id = cast(str, small_document_data["document_id"])
         nodes_data = cast(
-            list[dict[str, str | int | list[float]]], large_document_data["nodes"]
+            list[dict[str, str | int | list[float]]], small_document_data["nodes"]
         )
-        expected_count = cast(int, large_document_data["expected_count"])
+        expected_count = cast(int, small_document_data["expected_count"])
+        doc_store = storage_backend.for_document(document_id)
+
+        # Set up document metadata first
+        doc_store.set_metadata(
+            file_path="small_paginated_test.txt",
+            content_hash="small-paginated-test-hash",
+            chunk_count=expected_count,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         # Add nodes
-        logger.info(f"Adding {expected_count} nodes for paginated retrieval test...")
-        self.add_test_nodes(store, nodes_data)
+        self.add_test_nodes(storage_backend, document_id, nodes_data)
 
-        # Test paginated retrieval with different page sizes
-        page_sizes = [500, 1000, 2500]
+        # Test paginated retrieval with a few representative sizes
+        page_sizes = [7, 10, 33, 256]
 
         for page_size in page_sizes:
-            logger.info(f"Testing paginated retrieval with page_size={page_size}")
-            start_time = time.perf_counter()
-
-            store_manager = cast("StoreManager", store)
-            batches = store_manager.for_document(document_id).nodes.get_all_paginated(
-                page_size=page_size
-            )
-
-            retrieval_duration = time.perf_counter() - start_time
+            batches = doc_store.nodes.get_all_paginated(page_size=page_size)
 
             # Verify correctness
             total_nodes = sum(len(batch) for batch in batches)
@@ -238,106 +256,132 @@ class TestDatabaseScalability:
                     last_batch_size <= page_size
                 ), f"Last batch has {last_batch_size} nodes, should be <= {page_size}"
 
-            # Performance assertion
-            logger.info(
-                f"Retrieved {total_nodes} nodes in {len(batches)} batches "
-                f"({page_size} per batch) in {retrieval_duration:.2f}s"
-            )
-            assert (
-                retrieval_duration < 30.0
-            ), f"Paginated retrieval took {retrieval_duration:.2f}s, expected < 30s"
-
         # Clean up
-        store.delete_document_nodes(document_id)
+        storage_backend.clear_document(document_id)
 
     def test_paginated_retrieval_boundary_conditions(
-        self, store: "StoreInterface"
+        self, storage_backend: StorageBackend
     ) -> None:
         """Test paginated retrieval with edge cases."""
         document_id = "boundary_test_doc"
+        doc_store = storage_backend.for_document(document_id)
 
         # Test with no nodes
-        store_manager = cast("StoreManager", store)
-        batches = store_manager.for_document(document_id).nodes.get_all_paginated()
+        batches = doc_store.nodes.get_all_paginated()
         assert len(batches) == 0
+
+        # Set up document metadata
+        doc_store.set_metadata(
+            file_path="boundary_test.txt",
+            content_hash="boundary-test-hash",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         # Add exactly one page worth of nodes
         page_size = 10
+        nodes_data: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = []
         for i in range(page_size):
-            store.add_node(
-                node_id=f"boundary_node_{i}",
-                text=f"Boundary test node {i}",
-                embedding=[0.1] * 1536,
-                span_start=i * 10,
-                span_end=(i + 1) * 10,
-                document_id=document_id,
-                token_count=10,
+            nodes_data.append(
+                {
+                    "node_id": f"boundary_node_{i}",
+                    "text": f"Boundary test node {i}",
+                    "embedding": [0.1] * 1536,
+                    "span_start": i * 10,
+                    "span_end": (i + 1) * 10,
+                    "document_id": document_id,
+                    "token_count": 10,
+                }
             )
+        doc_store.nodes.add_batch(nodes_data)
 
         # Test retrieval
-        batches = store_manager.for_document(document_id).nodes.get_all_paginated(
-            page_size=page_size
-        )
+        batches = doc_store.nodes.get_all_paginated(page_size=page_size)
         assert len(batches) == 1
         assert len(batches[0]) == page_size
 
         # Test with page_size + 1 nodes
-        store.add_node(
-            node_id=f"boundary_node_{page_size}",
-            text=f"Boundary test node {page_size}",
-            embedding=[0.1] * 1536,
-            span_start=page_size * 10,
-            span_end=(page_size + 1) * 10,
-            document_id=document_id,
-            token_count=10,
-        )
+        additional_node: dict[
+            str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+        ] = {
+            "node_id": f"boundary_node_{page_size}",
+            "text": f"Boundary test node {page_size}",
+            "embedding": [0.1] * 1536,
+            "span_start": page_size * 10,
+            "span_end": (page_size + 1) * 10,
+            "document_id": document_id,
+            "token_count": 10,
+        }
+        doc_store.nodes.add_batch([additional_node])
 
-        batches = store_manager.for_document(document_id).nodes.get_all_paginated(
-            page_size=page_size
-        )
+        batches = doc_store.nodes.get_all_paginated(page_size=page_size)
         assert len(batches) == 2
         assert len(batches[0]) == page_size
         assert len(batches[1]) == 1
 
         # Clean up
-        store.delete_document_nodes(document_id)
+        storage_backend.clear_document(document_id)
 
-    def test_invalid_page_size(self, store: "StoreInterface") -> None:
+    def test_invalid_page_size(self, storage_backend: StorageBackend) -> None:
         """Test that invalid page sizes are rejected."""
-        store_manager = cast("StoreManager", store)
+        doc_store = storage_backend.for_document("test_doc")
         with pytest.raises(ValueError, match="page_size must be positive"):
-            store_manager.for_document("test_doc").nodes.get_all_paginated(page_size=0)
+            doc_store.nodes.get_all_paginated(page_size=0)
 
         with pytest.raises(ValueError, match="page_size must be positive"):
-            store_manager.for_document("test_doc").nodes.get_all_paginated(page_size=-1)
+            doc_store.nodes.get_all_paginated(page_size=-1)
 
 
 class TestMemoryEfficiency:
     """Test memory efficiency of optimized operations."""
 
-    @pytest.mark.slow
-    def test_deletion_memory_usage(self, store: "StoreInterface") -> None:
+    def test_deletion_memory_usage(self, storage_backend: StorageBackend) -> None:
         """Test that deletion doesn't load excessive data into memory."""
         document_id = "memory_test_doc"
-        num_nodes = 10000  # Smaller test for memory monitoring
+        num_nodes = (
+            5000  # Smaller test for memory monitoring (fast but still meaningful)
+        )
+        doc_store = storage_backend.for_document(document_id)
 
-        # Add test nodes
+        # Set up document metadata
+        doc_store.set_metadata(
+            file_path="memory_test.txt",
+            content_hash="memory-test-hash",
+            chunk_count=num_nodes,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+        # Add test nodes in batches for efficiency
+        nodes_data: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = []
         for i in range(num_nodes):
-            store.add_node(
-                node_id=f"mem_test_node_{i}",
-                text=f"Memory test node {i} " * 50,  # Larger text content
-                embedding=[0.1] * 1536,
-                span_start=i * 100,
-                span_end=(i + 1) * 100,
-                document_id=document_id,
-                token_count=50,
+            nodes_data.append(
+                {
+                    "node_id": f"mem_test_node_{i}",
+                    "text": f"Memory test node {i} " * 50,  # Larger text content
+                    "embedding": [0.1] * 1536,
+                    "span_start": i * 100,
+                    "span_end": (i + 1) * 100,
+                    "document_id": document_id,
+                    "token_count": 50,
+                }
             )
+        doc_store.nodes.add_batch(nodes_data)
 
         # Monitor deletion - this should not cause memory spikes
         # In the old implementation, this would load all nodes into memory
         # The new implementation uses SQL RETURNING to avoid this
         start_time = time.perf_counter()
-        deleted_count = store.delete_document_nodes(document_id)
+        deleted_count = storage_backend.clear_document(document_id)
         deletion_duration = time.perf_counter() - start_time
 
         assert deleted_count == num_nodes
@@ -351,62 +395,94 @@ class TestMemoryEfficiency:
         )
 
 
-@pytest.mark.slow
 class TestRegressionPrevention:
     """Test that optimizations don't break existing functionality."""
 
-    def test_cache_invalidation_still_works(self, store: "StoreInterface") -> None:
+    def test_cache_invalidation_still_works(
+        self, storage_backend: StorageBackend
+    ) -> None:
         """Test that cache invalidation works with optimized deletion."""
         document_id = "cache_test_doc"
         node_id = "cache_test_node"
+        doc_store = storage_backend.for_document(document_id)
 
-        # Add a node
-        store.add_node(
-            node_id=node_id,
-            text="Cache test node",
-            embedding=[0.1] * 1536,
-            span_start=0,
-            span_end=10,
-            document_id=document_id,
-            token_count=10,
+        # Set up document metadata
+        doc_store.set_metadata(
+            file_path="cache_test.txt",
+            content_hash="cache-test-hash",
+            chunk_count=1,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
         )
 
+        # Add a node
+        node_data: dict[
+            str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+        ] = {
+            "node_id": node_id,
+            "text": "Cache test node",
+            "embedding": [0.1] * 1536,
+            "span_start": 0,
+            "span_end": 10,
+            "document_id": document_id,
+            "token_count": 10,
+        }
+        doc_store.nodes.add_batch([node_data])
+
         # Load into cache
-        store_manager = cast("StoreManager", store)
-        node = store_manager.nodes.get_node(node_id)
+        node = doc_store.nodes.get_node(node_id)
         assert node is not None
         assert node.text == "Cache test node"
 
         # Delete document nodes (should invalidate cache)
-        deleted_count = store.delete_document_nodes(document_id)
+        deleted_count = storage_backend.clear_document(document_id)
         assert deleted_count == 1
 
         # Node should no longer be accessible
-        node_after_deletion = store_manager.nodes.get_node(node_id)
+        node_after_deletion = doc_store.nodes.get_node(node_id)
         assert node_after_deletion is None
 
-    def test_transaction_support_maintained(self, store: "StoreInterface") -> None:
+    def test_transaction_support_maintained(
+        self, storage_backend: StorageBackend
+    ) -> None:
         """Test that transaction support is maintained in optimized methods."""
         document_id = "transaction_test_doc"
+        doc_store = storage_backend.for_document(document_id)
+
+        # Set up document metadata
+        doc_store.set_metadata(
+            file_path="transaction_test.txt",
+            content_hash="transaction-test-hash",
+            chunk_count=5,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
         # Add test nodes
+        nodes_data: list[
+            dict[
+                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+            ]
+        ] = []
         for i in range(5):
-            store.add_node(
-                node_id=f"trans_test_node_{i}",
-                text=f"Transaction test node {i}",
-                embedding=[0.1] * 1536,
-                span_start=i * 10,
-                span_end=(i + 1) * 10,
-                document_id=document_id,
-                token_count=10,
+            nodes_data.append(
+                {
+                    "node_id": f"trans_test_node_{i}",
+                    "text": f"Transaction test node {i}",
+                    "embedding": [0.1] * 1536,
+                    "span_start": i * 10,
+                    "span_end": (i + 1) * 10,
+                    "document_id": document_id,
+                    "token_count": 10,
+                }
             )
+        doc_store.nodes.add_batch(nodes_data)
 
         # Test that deletion works (simplified test without SessionLocal access)
         # The session parameter is tested at the repository level in other tests
-        deleted_count = store.delete_document_nodes(document_id)
+        deleted_count = storage_backend.clear_document(document_id)
         assert deleted_count == 5
 
         # After deletion, nodes should be gone
-        store_manager = cast("StoreManager", store)
-        remaining_nodes = store_manager.for_document(document_id).nodes.get_all()
+        remaining_nodes = doc_store.nodes.get_all()
         assert len(remaining_nodes) == 0

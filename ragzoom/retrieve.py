@@ -199,7 +199,9 @@ class Retriever:
         # Find the root node
         root_id = None
         for node_id, node in nodes.items():
-            if node.is_root() or node.parent_id not in nodes:
+            # Check if node is root (compatible with both TreeNode and SqliteTreeNode)
+            is_root = getattr(node, "is_root", lambda: node.parent_id is None)()
+            if is_root or node.parent_id not in nodes:
                 root_id = node_id
                 break
 

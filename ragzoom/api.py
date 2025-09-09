@@ -14,7 +14,7 @@ from ragzoom.config import IndexConfig, IndexConfigDict, OperationalConfig, Quer
 from ragzoom.services.document_service import DocumentInfo, DocumentService
 from ragzoom.services.indexing_service import IndexingService
 from ragzoom.services.query_service import QueryService
-from ragzoom.store import Store
+from ragzoom.store import create_store_with_docker
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class ServiceContainer:
 
         # Initialize multi-document store
         # Services will create document-scoped stores internally as needed
-        self.store = Store(
+        self.store = create_store_with_docker(
             self.operational_config, embedding_model=self.index_config.embedding_model
         )
 
@@ -362,7 +362,7 @@ if __name__ == "__main__":
     import uvicorn
 
     # Configure logging
-    services = ServiceContainer()
+    services: ServiceContainer = ServiceContainer()
     logging.basicConfig(
         level=getattr(logging, services.operational_config.log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",

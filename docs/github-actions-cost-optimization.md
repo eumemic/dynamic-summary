@@ -99,7 +99,6 @@ To track your GitHub Actions usage:
 One of the most effective cost-saving features is our draft PR optimization. Here's how to leverage it:
 
 ### What Gets Skipped on Draft PRs:
-- ❌ **Slow tests** - Skip entirely (saves ~10-15 minutes)
 - ❌ **Integration tests** - Skip entirely (saves ~5-10 minutes)
 - ❌ **Performance benchmarks** - Skip entirely (saves ~20-30 minutes)
 - ❌ **Python version matrix** - Skip compatibility tests (saves ~10-15 minutes)

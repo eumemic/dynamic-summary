@@ -32,11 +32,13 @@ ragzoom index <input> [OPTIONS]
 - `--validate` - Enable validation checks during indexing
 - `--debug` - Enable debug logging (shows token counts, etc.)
 - `--telemetry` - Save telemetry data to JSON file (default: telemetry.json when flag is set)
+- `--database` - Database URL (sqlite:///path/to.db or postgresql+psycopg://host/db)
+- `--data-dir` - Base directory for data (defaults to current directory). SQLite DB is placed at `<data-dir>/data/sqlite.db`.
 
 **Examples:**
 ```bash
 # Index a file using filename as document ID
-ragzoom index document.txt
+ragzoom index document.txt  # defaults to SQLite + local vector index
 
 # Index with custom document ID
 ragzoom index document.txt --document-id my-doc
@@ -544,3 +546,4 @@ operational_config = OperationalConfig(
 - Default: 10,000 requests per minute
 - Automatic retry with exponential backoff
 - Consider batching for large documents
+If another indexing run is already in progress for the same document, the CLI reports a friendly lock message and exits. Locks are per‑document (you can index different documents concurrently).

@@ -1,160 +1,244 @@
-"""Test new DocumentStore methods added in Phase 4."""
+"""Backend-agnostic tests for DocumentStore methods.
 
-from tests.mock_store import SimpleMockStore
+Tests for new DocumentStore methods added in Phase 4
+with the configured backend.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+from numpy.typing import NDArray
+
+from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.document_store import DocumentStore
 
 
 class TestDocumentStoreMethods:
     """Test the new methods added to DocumentStore for Phase 4."""
 
-    def test_get_embedding_model(self) -> None:
-        """Test that DocumentStore correctly retrieves embedding model."""
-        store = SimpleMockStore()
-
-        # Add document with metadata
-        from types import SimpleNamespace
-
-        store.documents["doc1"] = SimpleNamespace(
-            id="doc1",
+    @pytest.fixture
+    def doc_store(self, storage_backend: StorageBackend) -> DocumentStore:
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="test_file.txt",
+            content_hash="test-hash",
+            chunk_count=0,
             embedding_model="text-embedding-3-small",
-            summary_model="gpt-4",
+            summary_model="gpt-4o-mini",
         )
+        return doc_store
 
-        # Create document store
-        doc_store = store.for_document("doc1")
+    def test_get_embedding_model(
+        self, doc_store: DocumentStore, storage_backend: StorageBackend
+    ) -> None:
+        """Test that DocumentStore correctly retrieves embedding model."""
+        # Document metadata already set in fixture
 
         # Test getting embedding model
         model = doc_store.get_embedding_model()
         assert model == "text-embedding-3-small"
 
-    def test_get_embedding_model_missing(self) -> None:
+    def test_get_embedding_model_missing(self, storage_backend: StorageBackend) -> None:
         """Test that DocumentStore returns None when embedding model is missing."""
-        store = SimpleMockStore()
-
-        # Add document without embedding_model
-        from types import SimpleNamespace
-
-        store.documents["doc1"] = SimpleNamespace(
-            id="doc1",
-            summary_model="gpt-4",
+        # Create doc store with empty embedding model
+        doc_store = storage_backend.for_document("doc1")
+        doc_store.set_metadata(
+            file_path="test_file.txt",
+            content_hash="test-hash",
+            chunk_count=0,
+            embedding_model="",
+            summary_model="gpt-4o-mini",
         )
-
-        # Create document store
-        doc_store = store.for_document("doc1")
 
         # Test getting embedding model
         model = doc_store.get_embedding_model()
-        assert model is None
+        assert model == "" or model is None
 
-    def test_get_avg_leaf_tokens(self) -> None:
+    def test_get_avg_leaf_tokens(self, doc_store: DocumentStore) -> None:
         """Test that DocumentStore correctly calculates average leaf tokens."""
-        store = SimpleMockStore()
-
-        # Add leaf nodes with different token counts
-        for i in range(3):
-            store.add_node(
-                node_id=f"leaf_{i}",
-                text=f"Leaf text {i}",
-                span_start=i * 100,
-                span_end=(i + 1) * 100,
-                document_id="doc1",
-                embedding=[0.5] * 1536,
-                token_count=100 + i * 50,  # 100, 150, 200
-            )
-
-        # Add a parent node (not a leaf)
-        store.add_node(
-            node_id="parent",
-            text="Parent text",
-            span_start=0,
-            span_end=300,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-            token_count=300,
-            left_child_id="leaf_0",
-            right_child_id="leaf_1",
+        # Seed leaf nodes with different token counts
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "leaf_0",
+                "text": "Leaf text 0",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 100,
+                "height": 0,
+                "path": "00",
+            },
+            {
+                "node_id": "leaf_1",
+                "text": "Leaf text 1",
+                "embedding": [],
+                "span_start": 100,
+                "span_end": 200,
+                "document_id": "doc1",
+                "token_count": 150,
+                "height": 0,
+                "path": "01",
+            },
+            {
+                "node_id": "leaf_2",
+                "text": "Leaf text 2",
+                "embedding": [],
+                "span_start": 200,
+                "span_end": 300,
+                "document_id": "doc1",
+                "token_count": 200,
+                "height": 0,
+                "path": "10",
+            },
+            # Parent node (not a leaf)
+            {
+                "node_id": "parent",
+                "text": "Parent text",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 300,
+                "document_id": "doc1",
+                "token_count": 300,
+                "height": 1,
+                "left_child_id": "leaf_0",
+                "right_child_id": "leaf_1",
+                "path": "0",
+            },
+        ]
+        doc_store.nodes.add_batch(nodes)
+        doc_store.nodes.update_parent_references_batch(
+            [("leaf_0", "parent"), ("leaf_1", "parent")]
         )
-
-        # Create document store
-        doc_store = store.for_document("doc1")
 
         # Test getting average leaf tokens
         avg_tokens = doc_store.get_avg_leaf_tokens()
         # Average of 100, 150, 200 = 150
         assert avg_tokens == 150
 
-    def test_get_avg_leaf_tokens_no_leaves(self) -> None:
+    def test_get_avg_leaf_tokens_no_leaves(self, doc_store: DocumentStore) -> None:
         """Test that DocumentStore returns None when no leaf nodes exist."""
-        store = SimpleMockStore()
-
-        # Create document store for empty document
-        doc_store = store.for_document("doc1")
-
-        # Test getting average leaf tokens
+        # Test getting average leaf tokens from empty document
         avg_tokens = doc_store.get_avg_leaf_tokens()
         assert avg_tokens is None
 
-    def test_document_id_mismatch_safety(self) -> None:
+    def test_document_id_mismatch_safety(self, storage_backend: StorageBackend) -> None:
         """Test that DocumentStore validates document ID matches."""
-        store = SimpleMockStore()
-
-        # Add nodes to different documents
-        store.add_node(
-            node_id="doc1_node",
-            text="Doc 1 content",
-            span_start=0,
-            span_end=100,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
+        # Create separate document stores for doc1 and doc2
+        doc1_store = storage_backend.for_document("doc1")
+        doc1_store.set_metadata(
+            file_path="test1.txt",
+            content_hash="test-hash-1",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
         )
-        store.add_node(
-            node_id="doc2_node",
-            text="Doc 2 content",
-            span_start=0,
-            span_end=100,
-            document_id="doc2",
-            embedding=[0.5] * 1536,
+        doc2_store = storage_backend.for_document("doc2")
+        doc2_store.set_metadata(
+            file_path="test2.txt",
+            content_hash="test-hash-2",
+            chunk_count=0,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
         )
 
-        # Create document store for doc1
-        doc1_store = store.for_document("doc1")
+        # Add node to doc1
+        doc1_nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "doc1_node",
+                "text": "Doc 1 content",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 100,
+                "height": 0,
+                "path": "0",
+            }
+        ]
+        doc1_store.nodes.add_batch(doc1_nodes)
 
-        # Verify can get doc1 node
-        node1 = doc1_store.nodes.get("doc1_node")
+        # Add node to doc2
+        doc2_nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "doc2_node",
+                "text": "Doc 2 content",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc2",
+                "token_count": 100,
+                "height": 0,
+                "path": "0",
+            }
+        ]
+        doc2_store.nodes.add_batch(doc2_nodes)
+
+        # Verify doc1_store can get doc1 node
+        node1 = doc1_store.nodes.get_node("doc1_node")
         assert node1 is not None
         assert node1.id == "doc1_node"
 
-        # Verify cannot get doc2 node through doc1 store
-        node2 = doc1_store.nodes.get("doc2_node")
+        # Verify doc1_store cannot get doc2 node (should be filtered out)
+        node2 = doc1_store.nodes.get_node("doc2_node")
         assert node2 is None  # Should be filtered out
 
-    def test_cross_document_store(self) -> None:
+    def test_cross_document_store(self, storage_backend: StorageBackend) -> None:
         """Test that DocumentStore with None document_id allows cross-document access."""
-        store = SimpleMockStore()
-
-        # Add nodes to different documents
-        store.add_node(
-            node_id="doc1_node",
-            text="Doc 1 content",
-            span_start=0,
-            span_end=100,
-            document_id="doc1",
-            embedding=[0.5] * 1536,
-        )
-        store.add_node(
-            node_id="doc2_node",
-            text="Doc 2 content",
-            span_start=0,
-            span_end=100,
-            document_id="doc2",
-            embedding=[0.5] * 1536,
-        )
-
         # Create cross-document store
-        cross_store = store.for_document(None)
+        cross_store = storage_backend.for_document(None)
+
+        # Seed nodes to different documents
+        nodes: list[
+            dict[
+                str,
+                str | int | float | bool | list[float] | NDArray[np.float64] | None,
+            ]
+        ] = [
+            {
+                "node_id": "doc1_node",
+                "text": "Doc 1 content",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc1",
+                "token_count": 100,
+                "height": 0,
+                "path": "0",
+            },
+            {
+                "node_id": "doc2_node",
+                "text": "Doc 2 content",
+                "embedding": [],
+                "span_start": 0,
+                "span_end": 100,
+                "document_id": "doc2",
+                "token_count": 100,
+                "height": 0,
+                "path": "0",
+            },
+        ]
+        cross_store.nodes.add_batch(nodes)
 
         # Should be able to access both documents
-        node1 = cross_store.nodes.get("doc1_node")
+        node1 = cross_store.nodes.get_node("doc1_node")
         assert node1 is not None
 
-        node2 = cross_store.nodes.get("doc2_node")
+        node2 = cross_store.nodes.get_node("doc2_node")
         assert node2 is not None

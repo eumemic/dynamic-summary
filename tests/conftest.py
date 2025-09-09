@@ -6,11 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
-from ragzoom.db_utils import create_temp_database, drop_temp_database, get_temp_db_name
-from ragzoom.store import StoreManager
+from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendProtocol
+from ragzoom.db_utils import create_temp_database, get_temp_db_name
+from ragzoom.document_store import DocumentStore
+from ragzoom.store import create_store
 from ragzoom.telemetry_types import TelemetryDataDict
-from tests.mock_store import SimpleMockStore
 from tests.test_builders import DocumentBuilder, TreeNodeBuilder
 
 
@@ -68,6 +70,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run only integration tests with real Store",
     )
+    # Backend selection is not exposed; tests default to SQLite backend for speed
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -75,7 +78,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers", "integration: mark test as integration test requiring real Store"
     )
-    config.addinivalue_line("markers", "slow: mark test as slow running")
+    # 'slow' marker deprecated; full suite runs by default on explicit invocation
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -114,6 +117,8 @@ def pytest_collection_modifyitems(
             for item in items:
                 if "integration" in item.keywords:
                     item.add_marker(skip_integration)
+
+    # No dynamic slow marking; explicit invocation should run everything (except benchmarks)
 
 
 @pytest.fixture
@@ -185,19 +190,9 @@ def config_factory() -> (
 
 
 @pytest.fixture
-def mock_store(
-    base_config: BackwardCompatibilityConfig,
-) -> Generator[SimpleMockStore, None, None]:
-    """Create a mock store for fast testing."""
-    store = SimpleMockStore()
-    yield store
-    store.close()
-
-
-@pytest.fixture
 def real_store(
     base_config: BackwardCompatibilityConfig,
-) -> Generator[StoreManager | None, None, None]:
+) -> Generator[_StorageBackendProtocol | None, None, None]:
     """Create a real store for integration testing (lazy loading)."""
     # Only attempt to create real store when fixture is actually requested
     real_store_instance = _create_real_store(base_config)
@@ -212,69 +207,57 @@ def real_store(
             real_store_instance.close()
 
 
+# --- SQLite in-memory backend fixtures (for migrating off mocks) ---
+
+
 @pytest.fixture
-def store(
-    request: pytest.FixtureRequest,
-    base_config: BackwardCompatibilityConfig,
-    mock_store: SimpleMockStore,
-) -> Generator[SimpleMockStore | StoreManager, None, None]:
-    """Provide either mock or real store based on test requirements.
+def sqlite_backend() -> Generator[SQLiteStorageBackend, None, None]:
+    """Real in-memory SQLite backend for high-fidelity testing.
 
-    This fixture automatically selects the appropriate store:
-    - For tests marked with @pytest.mark.integration: uses real_store (if available)
-    - For tests run with --use-real-store flag: uses real_store (if available)
-    - Otherwise: uses mock_store for speed
+    Provides a true database (no Docker) and pairs with the pure-Python vector
+    index. Use together with `sqlite_store_factory` to obtain document-scoped
+    stores for tests.
     """
-    # Check if test is marked as integration
-    if hasattr(request.node, "get_closest_marker"):
-        if request.node.get_closest_marker("integration"):
-            # Only create real_store when actually needed for integration tests
-            real_store = _create_real_store(base_config)
-            if real_store is None:
-                pytest.skip("PostgreSQL not available for integration test")
-            try:
-                yield real_store
-            finally:
-                # Cleanup test database if needed
-                if hasattr(real_store, "_test_db_cleanup"):
-                    cleanup_info = real_store._test_db_cleanup
-                    try:
-                        drop_temp_database(
-                            cleanup_info["db_name"], cleanup_info["admin_url"]
-                        )
-                    except Exception:
-                        pass  # Ignore cleanup errors
-
-                real_store.close()
-            return
-
-    # Check command-line option
-    if request.config.getoption("--use-real-store"):
-        # Only create real_store when explicitly requested
-        real_store = _create_real_store(base_config)
-        if real_store is None:
-            pytest.skip("PostgreSQL not available for real store test")
-        try:
-            yield real_store
-        finally:
-            # Cleanup test database if needed
-            if hasattr(real_store, "_test_db_cleanup"):
-                cleanup_info = real_store._test_db_cleanup
-                try:
-                    drop_temp_database(
-                        cleanup_info["db_name"], cleanup_info["admin_url"]
-                    )
-                except Exception:
-                    pass  # Ignore cleanup errors
-
-            real_store.close()
-        return
-
-    # Default to mock for speed
-    yield mock_store
+    backend = SQLiteStorageBackend("sqlite:///:memory:")
+    try:
+        yield backend
+    finally:
+        backend.close()
 
 
-def _create_real_store(base_config: BackwardCompatibilityConfig) -> StoreManager | None:
+@pytest.fixture
+def sqlite_store_factory(
+    sqlite_backend: SQLiteStorageBackend,
+) -> Callable[[str | None], DocumentStore]:
+    """Factory to create a document-scoped store from the SQLite backend.
+
+    Example usage in a test:
+        doc_store = sqlite_store_factory("doc1")
+        # use doc_store.nodes.add_batch(...), etc.
+    """
+
+    def _make(doc_id: str | None = None) -> DocumentStore:
+        return sqlite_backend.for_document(doc_id)
+
+    return _make
+
+
+# Generic, backend-agnostic fixtures
+
+
+@pytest.fixture
+def storage_backend() -> Generator[_StorageBackendProtocol, None, None]:
+    """Default StorageBackend for tests: SQLite in-memory."""
+    backend = SQLiteStorageBackend("sqlite:///:memory:")
+    try:
+        yield backend
+    finally:
+        backend.close()
+
+
+def _create_real_store(
+    base_config: BackwardCompatibilityConfig,
+) -> _StorageBackendProtocol | None:
     """Create a real store for integration testing, or return None if unavailable."""
     try:
         # Use test-specific database URL or create unique one
@@ -313,18 +296,9 @@ def _create_real_store(base_config: BackwardCompatibilityConfig) -> StoreManager
                 os.environ["RAGZOOM_DATABASE_URL"] = original_env
 
         # If we get here, PostgreSQL is available
-        store = StoreManager(
-            operational_config,
-            embedding_model=base_config.index_config.embedding_model,
+        store = create_store(
+            operational_config, embedding_model=base_config.index_config.embedding_model
         )
-
-        # Store cleanup info for later
-        if test_db_name:
-            store._test_db_cleanup = {  # type: ignore[attr-defined]
-                "db_name": test_db_name,
-                "admin_url": admin_url,
-            }
-
         return store
     except Exception:
         # Return None - let individual tests decide how to handle unavailable PostgreSQL
