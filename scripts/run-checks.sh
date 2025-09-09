@@ -197,6 +197,7 @@ tmpdir=$(mktemp -d)
 
 # Store process IDs for parallel execution
 declare -a pids=()
+ANY_PIDS=0
 
 # Cleanup function
 cleanup() {
@@ -290,6 +291,7 @@ run_check_background() {
     ) &
     local pid=$!
     pids+=("$pid")
+    ANY_PIDS=1
 }
 
 # Start all checks in parallel
@@ -518,11 +520,11 @@ if [ "$FAIL_FAST" = true ]; then
             fi
         done
         pids=("${new_pids[@]+"${new_pids[@]}"}")
-        if [ ${#pids[@]:-0} -gt 0 ]; then sleep 0.05; fi
+        if [ "${#pids[@]}" -gt 0 ] 2>/dev/null; then sleep 0.05; fi
     done
 else
     # Wait for all processes to complete
-    if [ ${#pids[@]:-0} -gt 0 ]; then
+    if [ "$ANY_PIDS" -eq 1 ]; then
         for pid in "${pids[@]}"; do
             wait "$pid"
         done
