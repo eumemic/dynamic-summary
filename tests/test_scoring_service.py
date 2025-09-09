@@ -19,8 +19,9 @@ class TestScoringService:
         # Create mock store
         mock_store = Mock()
 
-        # Create service
-        service = ScoringService(mock_store)
+        # Create service (vector index not used in this path)
+        dummy_vi = Mock()
+        service = ScoringService(mock_store, dummy_vi)
 
         # Create mock nodes with numpy array embeddings
         nodes = [
@@ -76,7 +77,8 @@ class TestScoringService:
         mock_store = Mock()
 
         # Create service
-        service = ScoringService(mock_store)
+        dummy_vi = Mock()
+        service = ScoringService(mock_store, dummy_vi)
 
         # Create mock node with empty numpy array embedding
         nodes = [
@@ -115,7 +117,8 @@ class TestScoringService:
         mock_store = Mock()
 
         # Create service
-        service = ScoringService(mock_store)
+        dummy_vi = Mock()
+        service = ScoringService(mock_store, dummy_vi)
 
         # Create mock nodes with mixed embedding types
         nodes = [

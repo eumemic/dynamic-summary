@@ -124,6 +124,7 @@ class RagZoom:
 
         from ragzoom.retrieval.budget_planner import BudgetPlanner
         from ragzoom.retrieval.embedding_service import EmbeddingService
+        from ragzoom.vector_factory import create_vector_index
 
         client = OpenAI(
             api_key=self.operational_config.openai_api_key.get_secret_value()
@@ -135,11 +136,17 @@ class RagZoom:
         budget_planner = BudgetPlanner(
             document_store, self.index_config.target_chunk_tokens
         )
+        vector_index = create_vector_index(
+            self.operational_config.vector_backend,
+            self.operational_config.database_url,
+            self.query_config.embedding_model,
+        )
         retriever = Retriever(
             self.query_config,
             document_store,
             embedding_service,
             budget_planner,
+            vector_index,
         )
         assembler = Assembler(document_store)
 
@@ -228,6 +235,7 @@ class AsyncRagZoom:
 
         from ragzoom.retrieval.budget_planner import BudgetPlanner
         from ragzoom.retrieval.embedding_service import EmbeddingService
+        from ragzoom.vector_factory import create_vector_index
 
         client = OpenAI(
             api_key=self.operational_config.openai_api_key.get_secret_value()
@@ -239,11 +247,17 @@ class AsyncRagZoom:
         budget_planner = BudgetPlanner(
             document_store, self.index_config.target_chunk_tokens
         )
+        vector_index = create_vector_index(
+            self.operational_config.vector_backend,
+            self.operational_config.database_url,
+            self.query_config.embedding_model,
+        )
         retriever = Retriever(
             self.query_config,
             document_store,
             embedding_service,
             budget_planner,
+            vector_index,
         )
         assembler = Assembler(document_store)
 

@@ -7,6 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
+    from ragzoom.contracts.vector_index_v2 import VectorIndex as VectorIndexV2
     from ragzoom.document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
@@ -15,13 +16,14 @@ logger = logging.getLogger(__name__)
 class ScoringService:
     """Computes relevance scores for nodes in the coverage map."""
 
-    def __init__(self, store: "DocumentStore"):
+    def __init__(self, store: "DocumentStore", vector_index: "VectorIndexV2"):
         """Initialize scoring service.
 
         Args:
             store: DocumentStore instance for node retrieval
         """
         self.store = store
+        self.vector_index = vector_index
         self.logger = logger
 
     def compute_scores(
@@ -94,31 +96,20 @@ class ScoringService:
             if node_id not in loaded_node_ids:
                 nodes_without_embeddings.add(node_id)
 
-        # For nodes without embeddings, use search service fallback
+        # For nodes without embeddings, use VectorIndex v2
         if nodes_without_embeddings:
             try:
-                # Get total node count efficiently; fallback to materializing if unavailable
-                total_nodes = getattr(
-                    self.store.nodes, "count", lambda: len(self.store.nodes.get_all())
-                )()
+                from ragzoom.vector_api import ensure_normalized
 
-                # Search all vectors in this document via the vector index
-                search_results = self.store.search.similar(
-                    query_embedding, n_results=total_nodes
-                )
-
-                # Build score map from search results
-                score_map = {
-                    node_id: score for (node_id, score, _meta) in search_results
-                }
-
-                # Assign scores for nodes without embeddings
+                vecs = self.vector_index.get_vectors(list(nodes_without_embeddings))
+                qn = ensure_normalized(query_embedding)
+                for v in vecs:
+                    scores[v.id] = float(max(0.0, min(1.0, float(qn @ v.vec))))
+                # Any IDs not returned by vector index get 0.0 score
                 for node_id in nodes_without_embeddings:
-                    scores[node_id] = float(score_map.get(node_id, 0.0))
-
+                    scores.setdefault(node_id, 0.0)
             except Exception as e:
-                self.logger.warning(f"Failed to get scores from search service: {e}")
-                # Fallback: assign zero scores
+                self.logger.warning(f"Failed to score via VectorIndex v2: {e}")
                 for node_id in nodes_without_embeddings:
                     scores[node_id] = 0.0
 

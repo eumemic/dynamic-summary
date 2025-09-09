@@ -1,5 +1,6 @@
 """Shared test utilities and mock setups."""
 
+import os
 from collections.abc import Generator
 from types import SimpleNamespace
 from typing import TypeGuard, cast
@@ -15,6 +16,7 @@ from ragzoom.models import TreeNode
 from ragzoom.retrieval.budget_planner import BudgetPlanner
 from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
+from ragzoom.vector_factory import create_vector_index
 
 
 def create_mock_openai_clients() -> tuple[Mock, Mock, Mock]:
@@ -531,11 +533,17 @@ def create_retriever(
     budget_planner = BudgetPlanner(doc_store, target_chunk_tokens)
 
     # Create and return retriever
+    vector_index = create_vector_index(
+        os.environ.get("RAGZOOM_VECTOR_BACKEND", "python"),
+        os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:"),
+        embedding_model or query_config.embedding_model,
+    )
     return Retriever(
         query_config,
         doc_store,
         embedding_service,
         budget_planner,
+        vector_index,
     )
 
 

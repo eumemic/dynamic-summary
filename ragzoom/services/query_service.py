@@ -7,6 +7,7 @@ from ragzoom.assemble import Assembler
 from ragzoom.config import OperationalConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.retrieve import Retriever
+from ragzoom.vector_factory import create_vector_index
 
 logger = logging.getLogger(__name__)
 
@@ -80,11 +81,17 @@ class QueryService:
         )
         index_cfg = IndexConfig.load()
         budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
+        vector_index = create_vector_index(
+            self.operational_config.vector_backend,
+            self.operational_config.database_url,
+            self.query_config.embedding_model,
+        )
         retriever = Retriever(
             self.query_config,
             document_store,
             embedding_service,
             budget_planner,
+            vector_index,
         )
         assembler = Assembler(document_store)
 
@@ -147,11 +154,17 @@ class QueryService:
         )
         index_cfg = IndexConfig.load()
         budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
+        vector_index = create_vector_index(
+            self.operational_config.vector_backend,
+            self.operational_config.database_url,
+            self.query_config.embedding_model,
+        )
         retriever = Retriever(
             self.query_config,
             document_store,
             embedding_service,
             budget_planner,
+            vector_index,
         )
         assembler = Assembler(document_store)
 

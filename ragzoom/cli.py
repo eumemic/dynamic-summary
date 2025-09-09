@@ -452,6 +452,7 @@ def query(
             from ragzoom.retrieval.budget_planner import BudgetPlanner
             from ragzoom.retrieval.embedding_service import EmbeddingService
             from ragzoom.retrieve import Retriever
+            from ragzoom.vector_factory import create_vector_index
 
             client = OpenAI(
                 api_key=operational_config.openai_api_key.get_secret_value()
@@ -464,11 +465,17 @@ def query(
             budget_planner = BudgetPlanner(
                 document_store, index_cfg.target_chunk_tokens
             )
+            vector_index = create_vector_index(
+                operational_config.vector_backend,
+                operational_config.database_url,
+                query_config.embedding_model,
+            )
             retriever = Retriever(
                 query_config,
                 document_store,
                 embedding_service,
                 budget_planner,
+                vector_index,
             )
             result = retriever.retrieve(
                 query_text,
