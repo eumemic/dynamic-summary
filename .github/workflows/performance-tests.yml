@@ -173,29 +173,25 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          set -euo pipefail
           echo "Running indexing benchmark with full Hobbit text and current defaults..."
-          if ! ./scripts/run-indexing-benchmarks \
+          ./scripts/run-indexing-benchmarks \
             --database "postgresql+psycopg://postgres:postgres@localhost:5432/ragzoom_test" \
             --baseline baseline_results/telemetry.json \
             --output-dir benchmark_results \
-            test_data/the_hobbit.txt; then
-            echo "❌ Indexing benchmark failed"
-            echo "BENCHMARK_ERROR=true" >> $GITHUB_OUTPUT
-            # Fail immediately to surface the root cause in this step's logs
-            exit 1
-          else
-            echo "✅ Indexing benchmark completed"
-            # Check for regression using CI summary
-            if [ -f benchmark_results/ci-summary.json ]; then
-              REGRESSION=$(jq -r '.regression_detected' benchmark_results/ci-summary.json)
-              if [ "$REGRESSION" = "true" ]; then
-                echo "REGRESSION=true" >> $GITHUB_OUTPUT
-                echo "⚠️ Performance regression detected"
-              fi
+            test_data/the_hobbit.txt
+          echo "✅ Indexing benchmark completed"
+          # Check for regression using CI summary
+          if [ -f benchmark_results/ci-summary.json ]; then
+            REGRESSION=$(jq -r '.regression_detected' benchmark_results/ci-summary.json)
+            if [ "$REGRESSION" = "true" ]; then
+              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              echo "⚠️ Performance regression detected"
             fi
           fi
       
       - name: Update comment - indexing complete
+        if: success()
         uses: actions/github-script@v7
         with:
           script: |
@@ -256,6 +252,7 @@ jobs:
           fi
       
       - name: Update comment - benchmarks complete
+        if: success()
         uses: actions/github-script@v7
         with:
           script: |
@@ -283,6 +280,7 @@ jobs:
       
       - name: Analyze telemetry for verbatim issues
         id: analyze_telemetry
+        if: success()
         run: |
           echo "🔍 Analyzing telemetry for potential issues..."
           
@@ -312,13 +310,7 @@ jobs:
             echo "⚠️ Telemetry file not found: $file"
           fi
       
-      - name: Check benchmark execution
-        id: benchmark_check
-        run: |
-          if [ "${{ steps.benchmark.outputs.BENCHMARK_FAILED }}" == "true" ]; then
-            echo "❌ Critical benchmark failures detected"
-            echo "REGRESSION=true" >> $GITHUB_OUTPUT
-          fi
+      # Removed separate benchmark error check; the indexing step fails immediately on error now
       
       - name: Generate visualization
         id: visualize
@@ -542,9 +534,8 @@ jobs:
             body += `_View [workflow run](${workflowUrl})_\n\n`;
             
             // Check for benchmark errors first
-            const hasErrors = `${{ steps.benchmark.outputs.BENCHMARK_ERROR }}` === 'true';
-            
-            if (hasErrors) {
+            // If job reached here with failure, show a generic error
+            if ('${{ job.status }}' === 'failure') {
               body += '## ❌ Benchmark Execution Error\n\n';
               body += 'The benchmarks failed to run due to code errors.\n\n';
               body += 'This typically means:\n';
@@ -596,13 +587,7 @@ jobs:
               });
             }
       
-      - name: Fail if benchmark errors occurred
-        if: steps.benchmark.outputs.BENCHMARK_ERROR == 'true'
-        run: |
-          echo "❌ Benchmark execution errors detected!"
-          echo "The benchmarks failed to run due to code errors."
-          echo "Check the workflow logs for details."
-          exit 1
+      # Step removed: indexing step now fails directly on error, surfacing the root cause
       
       - name: Fail if query benchmarks failed
         if: steps.query_benchmark.outputs.QUERY_BENCHMARK_FAILED == 'true'
