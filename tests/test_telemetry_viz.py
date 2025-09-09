@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
@@ -17,8 +19,8 @@ pytest.importorskip("matplotlib")
 pytest.importorskip("seaborn")
 pytest.importorskip("pandas")
 
-from ragzoom.telemetry_types import NodeTelemetryDict, TelemetryDataDict
-from ragzoom.telemetry_viz import TelemetryVisualizer
+from ragzoom.telemetry_types import NodeTelemetryDict, TelemetryDataDict  # noqa: E402
+from ragzoom.telemetry_viz import TelemetryVisualizer  # noqa: E402
 
 
 class TestTelemetryVisualizer:

@@ -118,6 +118,26 @@ def pytest_collection_modifyitems(
                 if "integration" in item.keywords:
                     item.add_marker(skip_integration)
 
+    # Dynamically mark slow tests based on patterns in tests/slowtests.txt
+    try:
+        from pathlib import Path
+
+        slow_file = Path(__file__).parent / "slowtests.txt"
+        if slow_file.exists():
+            patterns = [
+                line.strip()
+                for line in slow_file.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
+            if patterns:
+                for item in items:
+                    nid = item.nodeid
+                    if any(nid.startswith(p) for p in patterns):
+                        item.add_marker(pytest.mark.slow)
+    except Exception:
+        # Never block collection if dynamic slow marking fails
+        pass
+
 
 @pytest.fixture
 def base_config() -> BackwardCompatibilityConfig:
