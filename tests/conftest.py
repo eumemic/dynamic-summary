@@ -2,6 +2,8 @@
 
 import os
 from collections.abc import Callable, Generator
+import math
+import signal
 from unittest.mock import MagicMock
 
 import pytest
@@ -70,6 +72,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run only integration tests with real Store",
     )
+    parser.addoption(
+        "--max-test-duration",
+        type=float,
+        default=float(os.getenv("RZ_MAX_TEST_DURATION", "1.0")),
+        help=(
+            "Fail any test whose call phase exceeds N seconds (default 1.0). "
+            "Override via env RZ_MAX_TEST_DURATION or this option."
+        ),
+    )
     # Backend selection is not exposed; tests default to SQLite backend for speed
 
 
@@ -77,6 +88,10 @@ def pytest_configure(config: pytest.Config) -> None:
     """Configure pytest with custom markers."""
     config.addinivalue_line(
         "markers", "integration: mark test as integration test requiring real Store"
+    )
+    config.addinivalue_line(
+        "markers",
+        "slow_threshold(seconds): optional per-test duration threshold override",
     )
     # 'slow' marker deprecated; full suite runs by default on explicit invocation
 
@@ -253,6 +268,36 @@ def storage_backend() -> Generator[_StorageBackendProtocol, None, None]:
         yield backend
     finally:
         backend.close()
+
+
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
+
+
+@pytest.fixture
+def vector_index() -> Generator[_VectorIndexProtocol, None, None]:
+    """Backend-agnostic VectorIndex fixture built via the factory.
+
+    Uses environment overrides when provided:
+      - RAGZOOM_VECTOR_BACKEND (python|chroma|pgvector)
+      - RAGZOOM_DATABASE_URL (to co-locate vectors for sqlite tests)
+
+    Default embedding model mirrors test defaults: text-embedding-3-small.
+    """
+    import os
+
+    from ragzoom.vector_factory import create_vector_index
+
+    backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
+    database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+    embedding_model = os.environ.get(
+        "RAGZOOM_TEST_EMBEDDING_MODEL", "text-embedding-3-small"
+    )
+    idx = create_vector_index(backend, database_url, embedding_model)
+    try:
+        yield idx
+    finally:
+        # No standard close API across vector backends; rely on GC
+        pass
 
 
 def _create_real_store(
@@ -484,3 +529,76 @@ def empty_telemetry_data() -> TelemetryDataDict:
         },
         "nodes": [],
     }
+
+
+# Enforce per-test time budget (call phase) with default 1.0s
+# This fails tests that exceed the threshold, keeping suites fast.
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[object]
+) -> Generator[None, None, None]:
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.when != "call":
+        return
+    # Skip if test already failed/skipped
+    if getattr(rep, "failed", False) or getattr(rep, "skipped", False):
+        return
+    # Determine threshold: marker override or global option
+    marker = item.get_closest_marker("slow_threshold")
+    if marker and marker.args:
+        try:
+            threshold = float(marker.args[0])
+        except Exception:
+            threshold = item.config.getoption("--max-test-duration")
+    else:
+        threshold = item.config.getoption("--max-test-duration")
+
+    duration = getattr(rep, "duration", None)
+    if duration is None:
+        return
+    if duration > threshold:
+        rep.outcome = "failed"
+        rep.longrepr = (
+            f"Test exceeded time budget: {duration:.3f}s > {threshold:.3f}s"
+        )
+
+
+# Hard per-test timeout: interrupt the test call phase using POSIX timers.
+# This enforces the threshold even if the test blocks (best-effort within process).
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
+    threshold = float(item.config.getoption("--max-test-duration"))
+    if threshold <= 0:
+        yield
+        return
+
+    def _on_timeout(signum: int, frame: object) -> None:
+        try:
+            import faulthandler  # type: ignore
+
+            faulthandler.dump_traceback()
+        except Exception:
+            pass
+        raise TimeoutError(f"Per-test timeout exceeded: {threshold:.3f}s")
+
+    prev_handler = signal.getsignal(signal.SIGALRM)
+    try:
+        signal.signal(signal.SIGALRM, _on_timeout)
+        if hasattr(signal, "setitimer"):
+            signal.setitimer(signal.ITIMER_REAL, threshold)
+        else:
+            signal.alarm(int(math.ceil(threshold)))
+        outcome = yield
+    finally:
+        try:
+            if hasattr(signal, "setitimer"):
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            else:
+                signal.alarm(0)
+        except Exception:
+            pass
+        try:
+            signal.signal(signal.SIGALRM, prev_handler)
+        except Exception:
+            pass
