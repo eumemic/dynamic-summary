@@ -19,7 +19,7 @@ from ragzoom.backends.sqlite_db import (
     SqliteDocument,
     SQLiteTreeNode,
 )
-from ragzoom.models import TreeNode  # For type hints only
+from ragzoom.contracts.tree_node import TreeNode  # For type hints only
 from ragzoom.services.cache_manager import CacheManager
 
 

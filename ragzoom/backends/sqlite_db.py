@@ -76,10 +76,6 @@ class SQLiteTreeNode(SqliteBase):
         return len(self.path or "")
 
 
-# Backward-compatibility alias (to be removed after callers migrate)
-SqliteTreeNode = SQLiteTreeNode
-
-
 class SqliteDocument(SqliteBase):
     __tablename__ = "documents"
 

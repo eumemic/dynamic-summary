@@ -15,10 +15,10 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
-from ragzoom.models import TreeNode
 from tests.conftest import BackwardCompatibilityConfig
 
 
@@ -104,7 +104,10 @@ class TestSpanCorruptionSQLite:
         await tree_builder.add_document_async(text, show_progress=False)
 
         # Check for span corruption
-        nodes: list[TreeNode] = doc_store.nodes.get_all()
+        from collections.abc import Sequence
+        from typing import cast
+
+        nodes = cast(Sequence[TreeNode], doc_store.nodes.get_all())
 
         # Check for invalid spans
         corrupt_nodes = []
@@ -179,7 +182,10 @@ class TestSpanCorruptionSQLite:
         await tree_builder.add_document_async(text, show_progress=False)
 
         # Verify tree structure
-        nodes: list[TreeNode] = doc_store.nodes.get_all()
+        from collections.abc import Sequence
+        from typing import cast
+
+        nodes = cast(Sequence[TreeNode], doc_store.nodes.get_all())
 
         # Group nodes by height
         nodes_by_height: dict[int, list[TreeNode]] = {}

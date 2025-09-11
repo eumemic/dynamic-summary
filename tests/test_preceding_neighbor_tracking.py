@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
-from ragzoom.models import TreeNode
+from ragzoom.models import PostgresTreeNode as TreeNode
 from tests.conftest import BackwardCompatibilityConfig
 
 
