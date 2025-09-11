@@ -7,7 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 from typing_extensions import TypedDict
 
-from ragzoom.models import Document, TreeNode
+from ragzoom.models import Document, PostgresTreeNode
 
 
 class NodeData(TypedDict, total=False):
@@ -64,11 +64,11 @@ class StoreInterface(Protocol):
         token_count: int = 0,
         height: int = 0,
         is_left_child: bool | None = None,
-    ) -> TreeNode:
+    ) -> PostgresTreeNode:
         """Add a node to the store."""
         ...
 
-    def add_nodes_batch(self, nodes_data: list[NodeData]) -> list[TreeNode]:
+    def add_nodes_batch(self, nodes_data: list[NodeData]) -> list[PostgresTreeNode]:
         """Add multiple nodes in batch."""
         ...
 
@@ -76,11 +76,11 @@ class StoreInterface(Protocol):
         """Update parent references for multiple nodes."""
         ...
 
-    def get_node(self, node_id: str) -> TreeNode | None:
+    def get_node(self, node_id: str) -> PostgresTreeNode | None:
         """Get a node by ID."""
         ...
 
-    def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
+    def get_nodes(self, node_ids: list[str]) -> list[PostgresTreeNode]:
         """Get multiple nodes by their IDs."""
         ...
 
@@ -88,7 +88,7 @@ class StoreInterface(Protocol):
         """Update access time and count for a node."""
         ...
 
-    def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
+    def get_pinned_nodes(self, depth_max: int | None = None) -> list[PostgresTreeNode]:
         """Get all pinned nodes up to optional max depth."""
         ...
 
@@ -96,17 +96,19 @@ class StoreInterface(Protocol):
         """Pin a node."""
         ...
 
-    def get_leaf_nodes(self) -> list[TreeNode]:
+    def get_leaf_nodes(self) -> list[PostgresTreeNode]:
         """Get all leaf nodes."""
         ...
 
-    def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
+    def get_all_nodes_for_document(
+        self, document_id: str | None
+    ) -> list[PostgresTreeNode]:
         """Get all nodes for a specific document."""
         ...
 
     def get_all_nodes_for_document_paginated(
         self, document_id: str | None, *, page_size: int = 1000
-    ) -> list[list[TreeNode]]:
+    ) -> list[list[PostgresTreeNode]]:
         """Get all nodes for a document in paginated batches for memory efficiency."""
         ...
 
@@ -168,19 +170,23 @@ class StoreInterface(Protocol):
         ...
 
     # Tree navigation operations
-    def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
+    def get_children(
+        self, node_id: str
+    ) -> tuple[PostgresTreeNode | None, PostgresTreeNode | None]:
         """Get left and right children of a node."""
         ...
 
-    def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
+    def get_ancestors(self, node_ids: list[str]) -> list[PostgresTreeNode]:
         """Get all ancestors of given nodes."""
         ...
 
-    def get_root_node(self) -> TreeNode | None:
+    def get_root_node(self) -> PostgresTreeNode | None:
         """Get the root node."""
         ...
 
-    def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
+    def get_root_node_for_document(
+        self, document_id: str | None
+    ) -> PostgresTreeNode | None:
         """Get the root node for a specific document."""
         ...
 
