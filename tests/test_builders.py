@@ -2,7 +2,8 @@
 
 from types import SimpleNamespace
 
-from ragzoom.models import Document, TreeNode
+from ragzoom.models import Document
+from ragzoom.models import PostgresTreeNode as TreeNode
 
 
 class TreeNodeBuilder:
