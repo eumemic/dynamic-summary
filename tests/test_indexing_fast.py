@@ -5,6 +5,7 @@ from typing import cast
 from unittest.mock import MagicMock, Mock
 
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from tests.conftest import BackwardCompatibilityConfig
 
@@ -17,6 +18,7 @@ class TestIndexingFast:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test that the entire document is indexed, not just first 37%."""
         config = base_config.index_config
@@ -43,7 +45,7 @@ class TestIndexingFast:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
+        tree_builder = TreeBuilder(config, doc_store, vector_index, max_concurrent=5)
         tree_builder.llm_service.client = mock_client
 
         # Index the document
@@ -107,6 +109,7 @@ class TestIndexingFast:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test indexing a very small document to isolate the issue."""
         config = base_config.index_config
@@ -128,7 +131,7 @@ class TestIndexingFast:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, max_concurrent=1)
+        tree_builder = TreeBuilder(config, doc_store, vector_index, max_concurrent=1)
         tree_builder.llm_service.client = mock_client
 
         # Index the document
@@ -157,6 +160,7 @@ class TestIndexingFast:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test if there's a limit on API batching causing truncation."""
         config = base_config.index_config
@@ -197,7 +201,7 @@ class TestIndexingFast:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
+        tree_builder = TreeBuilder(config, doc_store, vector_index, max_concurrent=5)
         tree_builder.llm_service.client = mock_client
 
         # Index the document

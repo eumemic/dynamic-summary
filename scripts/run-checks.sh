@@ -12,6 +12,7 @@
 #   --impacted-only FILES...   Run only tests downstream of the provided files (required)
 #   --ignore-lint-rules RULES   Ignore specific lint rules (comma-separated): F401,E402,etc.
 #   --fail-on-autofix          Exit with failure if any auto-fixes were applied
+#   --per-test-timeout SECONDS Run tests with a hard per-test timeout by enumerating tests
 #   --help                     Show this help message
 #
 # Exit codes:
@@ -30,6 +31,7 @@ FAIL_ON_AUTOFIX=false
 TEST_SCOPE="fast"  # deprecated; kept for backward-compatibility
 IMPACTED_ONLY=false
 IMPACTED_FILES=()
+PER_TEST_TIMEOUT=""
 
 show_help() {
     sed -n '2,/^$/p' "$0" | sed 's/^# *//'
@@ -56,6 +58,10 @@ while [[ $# -gt 0 ]]; do
         --fail-on-autofix)
             FAIL_ON_AUTOFIX=true
             shift
+            ;;
+        --per-test-timeout)
+            PER_TEST_TIMEOUT="$2"
+            shift 2
             ;;
         --impacted-only)
             IMPACTED_ONLY=true
@@ -324,7 +330,14 @@ if ! should_skip "tests"; then
             fi
         fi
 
-        if [ "$IMPACTED_ONLY" = true ]; then
+        if [ -n "$PER_TEST_TIMEOUT" ]; then
+            # Use hard per-test timeout runner (enumerates tests, runs them individually)
+            runner_cmd="python $GIT_ROOT/scripts/run_tests_with_timeouts.py --per-test-seconds $PER_TEST_TIMEOUT"
+            if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
+                runner_cmd="$runner_cmd --include-integration"
+            fi
+            run_check_background "Tests" "$runner_cmd"
+        elif [ "$IMPACTED_ONLY" = true ]; then
             impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" ${IMPACTED_FILES[@]} || true)"
             if [ -n "$impacted" ]; then
                 run_check_background "Tests" "pytest $impacted -q --tb=short -m '$marker_expr' -n 8 --no-header"

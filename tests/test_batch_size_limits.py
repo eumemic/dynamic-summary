@@ -31,7 +31,13 @@ class TestBatchSizeLimits:
             mock_doc_store.session_local = Mock
             mock_doc_store.node_cache = {}
             mock_doc_store.cache_order = []
-            builder = TreeBuilder(config, mock_doc_store, api_key="test-key")
+            # Provide a minimal vector index via factory for TreeBuilder
+            from ragzoom.vector_factory import create_vector_index
+
+            vi = create_vector_index(
+                "python", "sqlite:///:memory:", config.embedding_model
+            )
+            builder = TreeBuilder(config, mock_doc_store, vi, api_key="test-key")
 
             # Mock the OpenAI client on the LLM service
             builder.llm_service.client = Mock()

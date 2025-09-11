@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from tests.conftest import BackwardCompatibilityConfig
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
@@ -42,7 +43,12 @@ class TestWhitespaceReconstructionSQLite:
             yield
 
     @pytest.fixture
-    def setup(self, mock_openai: None, doc_store: DocumentStore) -> Generator[
+    def setup(
+        self,
+        mock_openai: None,
+        doc_store: DocumentStore,
+        vector_index: _VectorIndexProtocol,
+    ) -> Generator[
         tuple[
             BackwardCompatibilityConfig,
             DocumentStore,
@@ -66,6 +72,7 @@ class TestWhitespaceReconstructionSQLite:
         tree_builder = TreeBuilder(
             index_config,
             doc_store,
+            vector_index,
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
 

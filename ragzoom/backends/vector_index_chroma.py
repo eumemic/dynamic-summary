@@ -12,11 +12,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.backends.chroma_vector_index import ChromaVectorIndex
-from ragzoom.contracts.vector_index_v2 import VectorIndex as VectorIndexV2
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.vector_api import MetaDict, Vector
 
 
-class ChromaVectorIndexV2(VectorIndexV2):
+class ChromaVectorIndexAdapter(VectorIndex):
     def __init__(self, persist_dir: str, model_id: str) -> None:
         self._under = ChromaVectorIndex(persist_dir)
         self._model_id = model_id

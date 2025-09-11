@@ -5,6 +5,7 @@ import asyncio
 from openai import AsyncOpenAI
 
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from ragzoom.models import TreeNode
 from tests.conftest import BackwardCompatibilityConfig
@@ -18,6 +19,7 @@ class TestPrecedingNeighborTracking:
         storage_backend: StorageBackend,
         base_config: BackwardCompatibilityConfig,
         mock_openai_async_client: AsyncOpenAI,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test that leaf nodes correctly track their preceding neighbor."""
         config = base_config.index_config
@@ -37,7 +39,7 @@ class TestPrecedingNeighborTracking:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
+        tree_builder = TreeBuilder(config, doc_store, vector_index, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
@@ -67,6 +69,7 @@ class TestPrecedingNeighborTracking:
         storage_backend: StorageBackend,
         base_config: BackwardCompatibilityConfig,
         mock_openai_async_client: AsyncOpenAI,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test that internal nodes at each tree level track their preceding neighbor."""
         config = base_config.index_config
@@ -86,7 +89,7 @@ class TestPrecedingNeighborTracking:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
+        tree_builder = TreeBuilder(config, doc_store, vector_index, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
@@ -127,6 +130,7 @@ class TestPrecedingNeighborTracking:
         storage_backend: StorageBackend,
         base_config: BackwardCompatibilityConfig,
         mock_openai_async_client: AsyncOpenAI,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test that we can reconstruct preceding context using preceding_neighbor_id."""
         config = base_config.index_config
@@ -146,7 +150,7 @@ class TestPrecedingNeighborTracking:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
+        tree_builder = TreeBuilder(config, doc_store, vector_index, max_concurrent=5)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document

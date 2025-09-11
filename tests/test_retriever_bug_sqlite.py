@@ -15,6 +15,7 @@ from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.document_store import DocumentStore
 from ragzoom.models import TreeNode
+from ragzoom.vector_api import Vector
 
 
 @pytest.mark.usefixtures("sqlite_backend")
@@ -155,13 +156,18 @@ class TestRetrieverBugSQLite:
             ]
         )
 
+        from ragzoom.vector_factory import create_vector_index
         from tests.utils import create_retriever
 
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", query_config.embedding_model
+        )
         retriever = create_retriever(
             query_config=query_config,
             store=doc_store,
             document_id="test-doc",
             api_key=operational_config.openai_api_key.get_secret_value(),
+            vector_index=vi,
         )
         yield index_config, doc_store, retriever
 
@@ -176,12 +182,28 @@ class TestRetrieverBugSQLite:
         # Mock the search similar functionality to return only L3
         def mock_search_similar(
             query_embedding: list[float] | NDArray[np.float64],
-            n_results: int,
+            k: int,
             where: dict[str, str | int | float | bool | None] | None = None,
-        ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
-            return [("L3", 0.95, {})]
+        ) -> list[Vector]:
+            import numpy as _np
 
-        doc_store.search.similar = mock_search_similar  # type: ignore[method-assign]
+            return [
+                Vector(
+                    id="L3",
+                    vec=_np.ones(1536, dtype=_np.float32),
+                    meta={
+                        "document_id": "test-doc",
+                        "span_start": 0,
+                        "span_end": 0,
+                        "parent_id": "P2",
+                        "is_leaf": 1,
+                    },
+                    model_id="text-embedding-3-small",
+                    dim=1536,
+                )
+            ]
+
+        retriever.vector_index.search_similar = mock_search_similar  # type: ignore[method-assign]
 
         # We don't need vector embeddings since we're mocking search
 
@@ -216,12 +238,28 @@ class TestRetrieverBugSQLite:
         # Mock the search similar functionality to return only L3
         def mock_search_similar(
             query_embedding: list[float] | NDArray[np.float64],
-            n_results: int,
+            k: int,
             where: dict[str, str | int | float | bool | None] | None = None,
-        ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
-            return [("L3", 0.95, {})]
+        ) -> list[Vector]:
+            import numpy as _np
 
-        doc_store.search.similar = mock_search_similar  # type: ignore[method-assign]
+            return [
+                Vector(
+                    id="L3",
+                    vec=_np.ones(1536, dtype=_np.float32),
+                    meta={
+                        "document_id": "test-doc",
+                        "span_start": 0,
+                        "span_end": 0,
+                        "parent_id": "P2",
+                        "is_leaf": 1,
+                    },
+                    model_id="text-embedding-3-small",
+                    dim=1536,
+                )
+            ]
+
+        retriever.vector_index.search_similar = mock_search_similar  # type: ignore[method-assign]
 
         # We don't need vector embeddings since we're mocking search
 

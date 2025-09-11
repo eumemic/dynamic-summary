@@ -16,6 +16,7 @@ from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.dynamic_tiling import AsyncDynamicTilingGenerator, DynamicTilingGenerator
 from ragzoom.index import TreeBuilder
+from ragzoom.vector_factory import create_vector_index
 from tests.utils import create_predictable_summary_mock, mock_openai_context
 
 
@@ -45,11 +46,12 @@ class TestParallelDPPerformance:
 
             # Create document-scoped store
             doc_store = storage_backend.for_document("large-test-doc")
-            tree_builder = TreeBuilder(
-                index_config,
-                doc_store,
-                api_key="test-key",
+            from ragzoom.vector_factory import create_vector_index
+
+            vi = create_vector_index(
+                "python", "sqlite:///:memory:", index_config.embedding_model
             )
+            tree_builder = TreeBuilder(index_config, doc_store, vi, api_key="test-key")
 
             # Create a smaller document for testing (4 chunks = 2-3 levels)
             # Each chunk is ~200 tokens, create enough for basic tree testing
@@ -85,10 +87,16 @@ class TestParallelDPPerformance:
         from tests.utils import create_retriever
 
         doc_store = storage_backend.for_document("large-test-doc")
+        from ragzoom.vector_factory import create_vector_index
+
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", query_config.embedding_model
+        )
         retriever = create_retriever(
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         result = await retriever.retrieve_async("test content", budget_tokens=1500)
 
@@ -144,10 +152,14 @@ class TestParallelDPPerformance:
 
         # Get test data
         doc_store = storage_backend.for_document("large-test-doc")
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", query_config.embedding_model
+        )
         retriever = create_retriever(
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         result = await retriever.retrieve_async("test content", budget_tokens=1800)
 
@@ -209,10 +221,14 @@ class TestParallelDPPerformance:
         from tests.utils import create_retriever
 
         doc_store = storage_backend.for_document("large-test-doc")
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", query_config.embedding_model
+        )
         sync_retriever = create_retriever(
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         sync_retriever.use_async_dp = False
 
@@ -220,6 +236,7 @@ class TestParallelDPPerformance:
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         async_retriever.use_async_dp = True
 
@@ -262,10 +279,14 @@ class TestParallelDPPerformance:
         from tests.utils import create_retriever
 
         doc_store = storage_backend.for_document("large-test-doc")
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", query_config.embedding_model
+        )
         retriever = create_retriever(
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         result = await retriever.retrieve_async("test content", budget_tokens=1000)
 
@@ -311,10 +332,14 @@ class TestParallelDPPerformance:
         )
 
         doc_store = storage_backend.for_document("large-test-doc")
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", query_config.embedding_model
+        )
         retriever = create_retriever(
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         result = await retriever.retrieve_async("test content", budget_tokens=1000)
 

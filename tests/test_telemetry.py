@@ -7,6 +7,7 @@ import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import (
     NodeTelemetry,
@@ -196,7 +197,7 @@ class TestTelemetryIntegration:
 
     @pytest.mark.asyncio
     async def test_telemetry_captures_all_nodes(
-        self, storage_backend: StorageBackend
+        self, storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
     ) -> None:
         """Test that telemetry captures all nodes during indexing."""
         index_config = IndexConfig.load(
@@ -256,6 +257,7 @@ class TestTelemetryIntegration:
             builder = TreeBuilder(
                 index_config,
                 doc_store,
+                vector_index,
                 operational_config.openai_api_key.get_secret_value(),
             )
 

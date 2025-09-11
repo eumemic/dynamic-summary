@@ -17,7 +17,6 @@ from ragzoom.models import Document, TreeNode
 from ragzoom.repositories.document_repository import DocumentRepository
 from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.cache_manager import CacheManager
-from ragzoom.services.search_service import SearchService
 from ragzoom.services.tree_navigator import TreeNavigator
 from ragzoom.storage.database_manager import DatabaseManager
 
@@ -53,7 +52,6 @@ class PostgresStorageBackend(StorageBackend):
         )
         self.node_repo = NodeRepository(self.db_manager, self.cache_manager)
         self.doc_repo = DocumentRepository(self.db_manager, self.cache_manager)
-        self.search_service = SearchService(self.db_manager)
         self.tree_navigator = TreeNavigator(self.node_repo)
 
     # Document-scoped API
@@ -61,7 +59,6 @@ class PostgresStorageBackend(StorageBackend):
         return DocumentStore(
             document_id=doc_id,
             node_repo=self.node_repo,
-            search_service=self.search_service,
             tree_navigator=self.tree_navigator,
             doc_repo=self.doc_repo,
         )

@@ -13,27 +13,18 @@ from pathlib import Path
 from types import TracebackType
 from typing import cast
 
-import numpy as np
-from numpy.typing import NDArray
-
-from ragzoom.backends.python_vector_index import PythonVectorIndex
 from ragzoom.backends.sqlite_db import SqliteDatabaseManager
 from ragzoom.backends.sqlite_repositories import (
     SqliteDocumentRepository,
     SqliteNodeRepository,
 )
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.contracts.vector_index import VectorSearchMetadata
 from ragzoom.document_store import DocumentStore
 from ragzoom.models import Document, TreeNode
 from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.services.tree_navigator import TreeNavigator
 from ragzoom.utils.locks import FileDocumentLock, document_lock_path
-from ragzoom.worktree_utils import (
-    DEFAULT_VECTOR_DIR_NAME,
-    get_default_vector_dir,
-)
 
 
 class _InProcessDocLock(AbstractContextManager[None]):
@@ -72,58 +63,16 @@ class SQLiteStorageBackend(StorageBackend):
         # Per-document in-process locks
         self._locks: dict[str | None, threading.Lock] = {}
 
-        # Vector index for this backend
-        self.vector_index = self._make_vector_index(vector_backend, vector_persist_dir)
+        # No embedded VectorIndex; use independent VectorIndex via factory where needed
 
         # Repositories
         self.node_repo = SqliteNodeRepository(self.db, self.cache)
         self.doc_repo = SqliteDocumentRepository(self.db)
         # Tree navigation uses repository path operations
         self.tree_nav = TreeNavigator(cast(NodeRepository, self.node_repo))
-        # SearchService-compatible shim over configured VectorIndex is provided here
-        # For now, keep the interface by composing a thin adapter
-        self.search_service = _VectorIndexSearchAdapter(self.vector_index)
+        # Vector search is handled by independent VectorIndex; no search shim here
 
-    def _make_vector_index(
-        self, backend: str, persist_dir: str | None
-    ) -> PythonVectorIndex:
-        # Resolve persistence dir default based on sqlite database path
-        if persist_dir is None:
-            try:
-                url = str(self.db.url)
-            except Exception:
-                url = ""
-            # Extract file path from sqlite:/// URL
-            if url.startswith("sqlite:"):
-                # naive parse: sqlite:////abs or sqlite:///rel
-                if ":memory:" not in url:
-                    path_part = url.split("sqlite:///")[-1]
-                    import os
-
-                    db_dir = os.path.dirname(path_part)
-                    persist_dir = os.path.join(db_dir, DEFAULT_VECTOR_DIR_NAME)
-                else:
-                    # In-memory DB: use default worktree vector dir for persistence
-                    persist_dir = str(get_default_vector_dir(None))
-
-        if backend == "chroma":
-            from ragzoom.backends.chroma_vector_index import ChromaVectorIndex
-
-            # Chroma requires a directory path
-            if persist_dir is None:
-                base = str(get_default_vector_dir(None))
-            else:
-                base = persist_dir
-            try:
-                import os
-
-                os.makedirs(base, exist_ok=True)
-            except Exception:
-                pass
-            return ChromaVectorIndex(base)  # type: ignore[return-value]
-
-        # Default to PythonVectorIndex (optionally persistent)
-        return PythonVectorIndex(persist_dir)
+    # Removed internal vector index; backends do not manage vector storage
 
     def _get_lock(self, doc_id: str | None) -> threading.Lock:
         lock = self._locks.get(doc_id)
@@ -138,7 +87,6 @@ class SQLiteStorageBackend(StorageBackend):
         return DocumentStore(
             document_id=document_id,
             node_repo=self.node_repo,  # type: ignore[arg-type]
-            search_service=self.search_service,  # type: ignore[arg-type]
             tree_navigator=self.tree_nav,
             doc_repo=self.doc_repo,  # type: ignore[arg-type]
         )
@@ -220,68 +168,4 @@ class SQLiteStorageBackend(StorageBackend):
         self.db.close()
 
 
-class _VectorIndexSearchAdapter:
-    """Thin adapter exposing SearchService-like methods over PythonVectorIndex.
-
-    Only the methods used by DocumentStore wrappers are implemented.
-    """
-
-    def __init__(self, index: PythonVectorIndex) -> None:
-        # We don't hold a DatabaseManager here; this class only exposes compatible methods
-        self._index = index
-
-    def search_similar(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        n_results: int,
-        where: dict[str, str | int | float] | None = None,
-    ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
-        # Convert to NodeMetadataDict shape expected downstream
-        results = self._index.search_similar(
-            query_embedding,
-            n_results,
-            cast(dict[str, str | int | float | bool | None] | None, where),
-        )
-        out: list[tuple[str, float, dict[str, str | int | float | bool | None]]] = []
-        for node_id, score, meta in results:
-            if isinstance(meta, dict):
-                md: dict[str, str | int | float | bool | None] = {
-                    "span_start": int(meta.get("span_start", 0)),
-                    "span_end": int(meta.get("span_end", 0)),
-                    "parent_id": str(meta.get("parent_id", "")),
-                    "document_id": str(meta.get("document_id", "")),
-                    "is_leaf": int(meta.get("is_leaf", 0)),
-                }
-            else:
-                # Assume VectorSearchMetadata with attributes
-                md = {
-                    "span_start": int(getattr(meta, "span_start", 0)),
-                    "span_end": int(getattr(meta, "span_end", 0)),
-                    "parent_id": str(getattr(meta, "parent_id", "")),
-                    "document_id": str(getattr(meta, "document_id", "")),
-                    "is_leaf": int(getattr(meta, "is_leaf", 0)),
-                }
-            out.append((node_id, score, md))
-        return out
-
-    def compute_mmr_diverse_results(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        conv: list[tuple[str, float, VectorSearchMetadata]] = cast(
-            list[tuple[str, float, VectorSearchMetadata]],
-            [(nid, sc, cast(VectorSearchMetadata, md)) for (nid, sc, md) in candidates],
-        )
-        return self._index.compute_mmr_diverse_results(
-            query_embedding, conv, lambda_param, k
-        )
-
-    # Optional upsert API used during indexing when embeddings are not stored in SQL
-    def upsert(
-        self,
-        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
-    ) -> None:
-        self._index.upsert(items)
+# (search adapter removed; VectorIndex is used directly where needed)

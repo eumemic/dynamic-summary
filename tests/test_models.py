@@ -25,7 +25,6 @@ class TestTreeNodeModel:
             span_start=0,
             span_end=100,
             text="Root text",
-            embedding=[0.1] * 1536,
         )
         assert root.get_depth() == 0
 
@@ -36,7 +35,6 @@ class TestTreeNodeModel:
             span_start=0,
             span_end=50,
             text="Left child",
-            embedding=[0.1] * 1536,
         )
         assert left_child.get_depth() == 1
 
@@ -46,7 +44,6 @@ class TestTreeNodeModel:
             span_start=50,
             span_end=100,
             text="Right child",
-            embedding=[0.1] * 1536,
         )
         assert right_child.get_depth() == 1
 
@@ -57,7 +54,6 @@ class TestTreeNodeModel:
             span_start=25,
             span_end=30,
             text="Deep node",
-            embedding=[0.1] * 1536,
         )
         assert deep_node.get_depth() == 4
 
@@ -68,7 +64,6 @@ class TestTreeNodeModel:
             span_start=10,
             span_end=15,
             text="Very deep",
-            embedding=[0.1] * 1536,
         )
         assert very_deep.get_depth() == 8
 
@@ -79,7 +74,7 @@ class TestTreeNodeModel:
         assert hasattr(TreeNode, "span_start")
         assert hasattr(TreeNode, "span_end")
         assert hasattr(TreeNode, "text")
-        assert hasattr(TreeNode, "embedding")
+        # Embeddings are no longer stored in SQL
         assert hasattr(TreeNode, "token_count")
 
     def test_optional_fields(self) -> None:
@@ -187,7 +182,6 @@ class TestModelIntegration:
             span_start=0,
             span_end=100,
             text="Test content",
-            embedding=[0.1] * 1536,  # Standard embedding dimension
         )
         assert node.id == "test_node"
         assert node.span_start == 0
@@ -214,7 +208,6 @@ class TestModelIntegration:
             span_start=0,
             span_end=100,
             text="Test content",
-            embedding=[0.1] * 1536,
             created_at=now,
             last_accessed=now,
         )
@@ -229,7 +222,6 @@ class TestModelIntegration:
             span_start=0,
             span_end=100,
             text="Test content",
-            embedding=[0.1] * 1536,
             parent_id=None,
             left_child_id=None,
             right_child_id=None,
@@ -257,18 +249,7 @@ class TestModelIntegration:
 class TestModelValidation:
     """Test model field validation and constraints."""
 
-    def test_embedding_dimension_flexibility(self) -> None:
-        """Test that embedding field accepts different dimensions."""
-        # Test different embedding dimensions
-        for dim in [512, 1024, 1536, 3072]:
-            node = TreeNode(
-                id=f"test_node_{dim}",
-                span_start=0,
-                span_end=100,
-                text="Test content",
-                embedding=[0.1] * dim,
-            )
-            assert len(node.embedding) == dim
+    # Embeddings removed from storage; dimension flexibility not applicable
 
     def test_text_field_flexibility(self) -> None:
         """Test that text field accepts various content types."""
@@ -286,6 +267,5 @@ class TestModelValidation:
                 span_start=0,
                 span_end=len(text),
                 text=text,
-                embedding=[0.1] * 1536,
             )
             assert node.text == text
