@@ -1,9 +1,9 @@
 """Pytest configuration and fixtures for RagZoom tests."""
 
-import os
-from collections.abc import Callable, Generator
 import math
+import os
 import signal
+from collections.abc import Callable, Generator
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,6 +11,7 @@ import pytest
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendProtocol
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.db_utils import create_temp_database, get_temp_db_name
 from ragzoom.document_store import DocumentStore
 from ragzoom.store import create_store
@@ -268,9 +269,6 @@ def storage_backend() -> Generator[_StorageBackendProtocol, None, None]:
         yield backend
     finally:
         backend.close()
-
-
-from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 
 
 @pytest.fixture
@@ -537,8 +535,13 @@ def empty_telemetry_data() -> TelemetryDataDict:
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[object]
 ) -> Generator[None, None, None]:
-    outcome = yield
-    rep = outcome.get_result()
+    from typing import cast
+
+    outcome_obj: object = yield
+    get_result = getattr(outcome_obj, "get_result", None)
+    if get_result is None:
+        return
+    rep = cast(pytest.TestReport, get_result())
     if rep.when != "call":
         return
     # Skip if test already failed/skipped
@@ -559,9 +562,7 @@ def pytest_runtest_makereport(
         return
     if duration > threshold:
         rep.outcome = "failed"
-        rep.longrepr = (
-            f"Test exceeded time budget: {duration:.3f}s > {threshold:.3f}s"
-        )
+        rep.longrepr = f"Test exceeded time budget: {duration:.3f}s > {threshold:.3f}s"
 
 
 # Hard per-test timeout: interrupt the test call phase using POSIX timers.
@@ -589,7 +590,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
             signal.setitimer(signal.ITIMER_REAL, threshold)
         else:
             signal.alarm(int(math.ceil(threshold)))
-        outcome = yield
+        _outcome = yield
     finally:
         try:
             if hasattr(signal, "setitimer"):

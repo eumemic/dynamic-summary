@@ -15,6 +15,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.models import TreeNode
@@ -32,7 +33,7 @@ class TestSpanCorruptionSQLite:
         return sqlite_store_factory("test-doc")
 
     def setup_system(
-        self, doc_store: DocumentStore
+        self, doc_store: DocumentStore, vector_index: _VectorIndexProtocol
     ) -> tuple[BackwardCompatibilityConfig, DocumentStore, TreeBuilder, AsyncMock]:
         """Set up test system."""
         # Create separate configs
@@ -49,6 +50,7 @@ class TestSpanCorruptionSQLite:
         tree_builder = TreeBuilder(
             index_config,
             doc_store,
+            vector_index,
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
 
@@ -65,10 +67,12 @@ class TestSpanCorruptionSQLite:
 
     @pytest.mark.asyncio
     async def test_odd_nodes_create_invalid_spans(
-        self, doc_store: DocumentStore
+        self, doc_store: DocumentStore, vector_index: _VectorIndexProtocol
     ) -> None:
         """Test that odd number of nodes creates span corruption."""
-        config, doc_store, tree_builder, mock_client = self.setup_system(doc_store)
+        config, doc_store, tree_builder, mock_client = self.setup_system(
+            doc_store, vector_index
+        )
 
         # Create text that will split into an odd number of chunks
         # Each chunk is ~100 tokens, so we need longer content
@@ -140,9 +144,13 @@ class TestSpanCorruptionSQLite:
         ), f"Found {len(corrupt_nodes)} nodes with invalid spans"
 
     @pytest.mark.asyncio
-    async def test_wraparound_pairing(self, doc_store: DocumentStore) -> None:
+    async def test_wraparound_pairing(
+        self, doc_store: DocumentStore, vector_index: _VectorIndexProtocol
+    ) -> None:
         """Test that demonstrates wraparound pairing issue."""
-        config, doc_store, tree_builder, mock_client = self.setup_system(doc_store)
+        config, doc_store, tree_builder, mock_client = self.setup_system(
+            doc_store, vector_index
+        )
 
         # Create 5 chunks that will split properly at 100 tokens each
         # Each chunk needs to be long enough to hit the token limit

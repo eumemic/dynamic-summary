@@ -12,6 +12,7 @@ import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from ragzoom.models import TreeNode
 from tests.conftest import BackwardCompatibilityConfig
@@ -21,7 +22,7 @@ class TestSpanCorruption:
     """Test span corruption issues in tree building."""
 
     def setup_system(
-        self, storage_backend: StorageBackend
+        self, storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
     ) -> tuple[BackwardCompatibilityConfig, TreeBuilder, AsyncMock]:
         """Set up test system."""
         # Get document store first
@@ -50,6 +51,7 @@ class TestSpanCorruption:
         tree_builder = TreeBuilder(
             index_config,
             doc_store,
+            vector_index,
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
 
@@ -66,10 +68,12 @@ class TestSpanCorruption:
 
     @pytest.mark.asyncio
     async def test_odd_nodes_create_invalid_spans(
-        self, storage_backend: StorageBackend
+        self, storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
     ) -> None:
         """Test that odd number of nodes creates span corruption."""
-        config, tree_builder, mock_client = self.setup_system(storage_backend)
+        config, tree_builder, mock_client = self.setup_system(
+            storage_backend, vector_index
+        )
         doc_store = storage_backend.for_document("test-doc")
 
         # Create text that will split into an odd number of chunks
@@ -142,9 +146,13 @@ class TestSpanCorruption:
         ), f"Found {len(corrupt_nodes)} nodes with invalid spans"
 
     @pytest.mark.asyncio
-    async def test_wraparound_pairing(self, storage_backend: StorageBackend) -> None:
+    async def test_wraparound_pairing(
+        self, storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
+    ) -> None:
         """Test that demonstrates wraparound pairing issue."""
-        config, tree_builder, mock_client = self.setup_system(storage_backend)
+        config, tree_builder, mock_client = self.setup_system(
+            storage_backend, vector_index
+        )
         doc_store = storage_backend.for_document("test-doc")
 
         # Create 5 chunks that will split properly at 100 tokens each

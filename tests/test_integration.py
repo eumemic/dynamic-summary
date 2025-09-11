@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from tests.utils import mock_openai_context
 
@@ -44,6 +45,7 @@ class TestIntegration:
         request: pytest.FixtureRequest,
         mock_openai: tuple[Mock, Mock, Mock],
         storage_backend: StorageBackend,
+        vector_index: _VectorIndexProtocol,
     ) -> Generator[
         tuple[IndexConfig, QueryConfig, StorageBackend, "TreeBuilderFactory", Mock],
         None,
@@ -65,7 +67,9 @@ class TestIntegration:
             # Create DocumentStore for that document
             doc_store = storage_backend.for_document(document_id)
             # Create TreeBuilder with that DocumentStore
-            return TreeBuilder(index_config, doc_store, api_key="test-key")
+            return TreeBuilder(
+                index_config, doc_store, vector_index, api_key="test-key"
+            )
 
         yield index_config, query_config, storage_backend, create_tree_builder, mock_retrieve_client
 
@@ -108,6 +112,7 @@ class TestIntegration:
             query_config,
             doc_store,
             client=mock_client,
+            vector_index=tree_builder.vector_index,
         )
         assembler = Assembler(doc_store)
 
@@ -202,6 +207,7 @@ class TestIntegration:
             query_config,
             doc_store,
             client=mock_client,
+            vector_index=tree_builder.vector_index,
         )
 
         # Query about cats (should get diverse cat-related content)
@@ -239,6 +245,7 @@ class TestIntegration:
             query_config,
             doc_store,
             client=mock_client,
+            vector_index=tree_builder.vector_index,
         )
         assembler = Assembler(doc_store)
 
@@ -292,6 +299,7 @@ class TestIntegration:
                 query_config,
                 doc_store,
                 client=mock_client,
+                vector_index=tree_builder.vector_index,
             )
 
             # Query for unrelated content

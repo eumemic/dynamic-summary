@@ -1,8 +1,7 @@
-"""SQLAlchemy models for RagZoom using PostgreSQL with pgvector."""
+"""SQLAlchemy models for RagZoom (storage only; no embeddings)."""
 
 from datetime import datetime
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     DateTime,
     ForeignKey,
@@ -18,8 +17,8 @@ class Base(DeclarativeBase):
     pass
 
 
-class TreeNode(Base):
-    """Database model for tree nodes with embedded vectors."""
+class PostgresTreeNode(Base):
+    """Database model for tree nodes (no embeddings in storage)."""
 
     __tablename__ = "tree_nodes"
 
@@ -32,7 +31,6 @@ class TreeNode(Base):
     span_start: Mapped[int] = mapped_column(Integer, nullable=False)
     span_end: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
     token_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # Token count of text content (raw text for leaves, summary for internal nodes)
@@ -91,6 +89,10 @@ class TreeNode(Base):
     def get_depth(self) -> int:
         """Return the depth of this node in the tree (0 for root)."""
         return len(self.path)
+
+
+# Backward-compatibility alias (to be removed after callers migrate)
+TreeNode = PostgresTreeNode
 
 
 class Document(Base):

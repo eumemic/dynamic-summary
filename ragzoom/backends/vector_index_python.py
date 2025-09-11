@@ -10,11 +10,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.backends.python_vector_index import PythonVectorIndex
-from ragzoom.contracts.vector_index_v2 import VectorIndex as VectorIndexV2
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.vector_api import MetaDict, Vector
 
 
-class PythonVectorIndexV2(VectorIndexV2):
+class PythonVectorIndexAdapter(VectorIndex):
     def __init__(self, persist_dir: str | None, model_id: str) -> None:
         self._idx = PythonVectorIndex(persist_dir)
         self._model_id = model_id

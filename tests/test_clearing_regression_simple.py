@@ -15,7 +15,9 @@ def test_index_document_always_clears(storage_backend: StorageBackend) -> None:
     index_config = IndexConfig.load()
 
     # Prepare a real document with pre-existing nodes
-    doc_id = "test.txt"
+    import uuid
+
+    doc_id = f"test-{uuid.uuid4().hex}.txt"
     doc_store = storage_backend.for_document(doc_id)
     doc_store.set_metadata(
         file_path=None,

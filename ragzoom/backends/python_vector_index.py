@@ -19,11 +19,9 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from ragzoom.contracts.vector_index import VectorIndex, VectorSearchMetadata
-
 
 @dataclass
-class _Meta(VectorSearchMetadata):
+class _Meta:
     span_start: int
     span_end: int
     parent_id: str
@@ -31,7 +29,7 @@ class _Meta(VectorSearchMetadata):
     is_leaf: int
 
 
-class PythonVectorIndex(VectorIndex):
+class PythonVectorIndex:
     """Simple vector index using numpy arrays.
 
     Persistence (optional):
@@ -211,7 +209,7 @@ class PythonVectorIndex(VectorIndex):
         query_embedding: list[float] | NDArray[np.float64],
         n_results: int,
         where: dict[str, str | int | float | bool | None] | None = None,
-    ) -> list[tuple[str, float, VectorSearchMetadata]]:
+    ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
         if self._vectors is None or not self._ids:
             return []
         q = np.asarray(query_embedding, dtype=np.float32)
@@ -239,16 +237,29 @@ class PythonVectorIndex(VectorIndex):
             topk_idx = np.argsort(-sims)[:n_results]
             result_rows = topk_idx
 
-        out: list[tuple[str, float, VectorSearchMetadata]] = []
+        out: list[tuple[str, float, dict[str, str | int | float | bool | None]]] = []
         for r in result_rows:
             node_id = self._ids[int(r)]
-            out.append((node_id, float(sims[int(r)]), self._meta[node_id]))
+            m = self._meta[node_id]
+            out.append(
+                (
+                    node_id,
+                    float(sims[int(r)]),
+                    {
+                        "span_start": m.span_start,
+                        "span_end": m.span_end,
+                        "parent_id": m.parent_id,
+                        "document_id": m.document_id,
+                        "is_leaf": m.is_leaf,
+                    },
+                )
+            )
         return out
 
     def compute_mmr_diverse_results(
         self,
         query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, VectorSearchMetadata]],
+        candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
         lambda_param: float,
         k: int,
     ) -> list[str]:

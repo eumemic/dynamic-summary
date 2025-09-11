@@ -149,83 +149,141 @@ class TestNumSeedsFixSQLite:
             ]
         )
 
-        # Mock the search methods using patch (use correct method names)
-        with (
-            patch.object(
-                document_store.search,
-                "similar",  # Correct method name used by retriever
-                return_value=[
-                    ("leaf1", 0.9, {}),  # High similarity, empty metadata
-                    ("leaf2", 0.9, {}),
-                    ("leaf3", 0.9, {}),
-                    ("leaf4", 0.9, {}),
-                ],
-            ),
-            patch.object(
-                document_store.search,
-                "mmr_diverse",
-                return_value=["leaf1"],  # Correct method name
-            ),
-        ):
-            # Create config and retriever
-            query_config = QueryConfig(budget_tokens=10000)
-            operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
+        # Create config and retriever
+        query_config = QueryConfig(budget_tokens=10000)
+        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
-            # Mock OpenAI client
-            with patch("openai.OpenAI") as mock_client:
-                mock_embeddings = Mock()
-                mock_embeddings.create = Mock(
-                    return_value=Mock(data=[Mock(embedding=[0.9] * 1536)])
-                )
-                mock_instance = Mock()
-                mock_instance.embeddings = mock_embeddings
-                mock_client.return_value = mock_instance
+        # Mock OpenAI client
+        with patch("openai.OpenAI") as mock_client:
+            mock_embeddings = Mock()
+            mock_embeddings.create = Mock(
+                return_value=Mock(data=[Mock(embedding=[0.9] * 1536)])
+            )
+            mock_instance = Mock()
+            mock_instance.embeddings = mock_embeddings
+            mock_client.return_value = mock_instance
 
-                from tests.utils import create_retriever
+            from ragzoom.vector_factory import create_vector_index
+            from tests.utils import create_retriever
 
-                retriever = create_retriever(
-                    query_config=query_config,
-                    store=document_store,
-                    document_id="doc1",
-                    api_key=operational_config.openai_api_key.get_secret_value(),
-                    client=mock_instance,
-                )
-
-                # Retrieve with num_seeds=1
-                result = retriever.retrieve("dragon", num_seeds=1, document_id="doc1")
-
-            # Verify selected nodes
-            assert result.node_ids == ["leaf1"]
-
-            # Verify coverage map contains selected + ancestors + siblings to maintain full binary tree
-            # Since leaf1 is included and nodeA is its parent, leaf2 (sibling) must be included
-            # Since nodeA is included and root is its parent, nodeB (sibling) must be included
-            expected_coverage = {"leaf1", "leaf2", "nodeA", "nodeB", "root"}
-            assert set(result.coverage_map.keys()) == expected_coverage
-
-            # CRITICAL: Verify scores only contain nodes from coverage map
-            assert set(result.scores.keys()).issubset(expected_coverage), (
-                f"Scores contain nodes outside coverage map! "
-                f"Scores: {set(result.scores.keys())}, "
-                f"Coverage: {expected_coverage}"
+            vi = create_vector_index(
+                "python", "sqlite:///:memory:", query_config.embedding_model
+            )
+            retriever = create_retriever(
+                query_config=query_config,
+                store=document_store,
+                document_id="doc1",
+                api_key=operational_config.openai_api_key.get_secret_value(),
+                client=mock_instance,
+                vector_index=vi,
             )
 
-            # Verify tiling only uses nodes from coverage tree
-            if result.tiling:
-                tiling_nodes = set(result.tiling)  # tiling is now a list of node IDs
-                assert tiling_nodes.issubset(expected_coverage), (
-                    f"Tiling contains nodes outside coverage tree! "
-                    f"Tiling: {tiling_nodes}, Coverage: {expected_coverage}"
-                )
+            # Patch vector index
 
-                # Count leaf nodes in tiling (using height == 0)
-                leaf_count = 0
-                for node_id in result.tiling:
-                    node = document_store.nodes.get_node(node_id)
-                    if node and node.height == 0:
-                        leaf_count += 1
-                # Since we have to include leaf2 to maintain coverage property, the DP algorithm
-                # might choose to use both leaves instead of their parent
-                assert (
-                    leaf_count <= 2
-                ), f"Expected at most 2 leaf nodes, got {leaf_count}"
+            import numpy as _np
+            from numpy.typing import NDArray as _NDArray
+
+            from ragzoom.vector_api import Vector as _Vector
+
+            def _mock_search_similar(
+                query_embedding: list[float] | _NDArray[_np.float64],
+                k: int,
+                where: dict[str, str | int | float | bool | None] | None = None,
+            ) -> list[_Vector]:
+                import numpy as _np
+
+                from ragzoom.vector_api import Vector
+
+                return [
+                    Vector(
+                        "leaf1",
+                        _np.ones(1536, dtype=_np.float32),
+                        {
+                            "document_id": "doc1",
+                            "span_start": 0,
+                            "span_end": 0,
+                            "parent_id": "nodeA",
+                            "is_leaf": 1,
+                        },
+                        "m",
+                        3,
+                    ),
+                    Vector(
+                        "leaf2",
+                        _np.ones(1536, dtype=_np.float32),
+                        {
+                            "document_id": "doc1",
+                            "span_start": 0,
+                            "span_end": 0,
+                            "parent_id": "nodeA",
+                            "is_leaf": 1,
+                        },
+                        "m",
+                        3,
+                    ),
+                    Vector(
+                        "leaf3",
+                        _np.ones(1536, dtype=_np.float32),
+                        {
+                            "document_id": "doc1",
+                            "span_start": 0,
+                            "span_end": 0,
+                            "parent_id": "nodeB",
+                            "is_leaf": 1,
+                        },
+                        "m",
+                        3,
+                    ),
+                    Vector(
+                        "leaf4",
+                        _np.ones(1536, dtype=_np.float32),
+                        {
+                            "document_id": "doc1",
+                            "span_start": 0,
+                            "span_end": 0,
+                            "parent_id": "nodeB",
+                            "is_leaf": 1,
+                        },
+                        "m",
+                        3,
+                    ),
+                ]
+
+            retriever.vector_index.search_similar = _mock_search_similar  # type: ignore[method-assign]
+
+            # Retrieve with num_seeds=1
+            result = retriever.retrieve("dragon", num_seeds=1, document_id="doc1")
+
+        # Verify selected nodes
+        assert result.node_ids == ["leaf1"]
+
+        # Verify coverage map contains selected + ancestors + siblings to maintain full binary tree
+        # Since leaf1 is included and nodeA is its parent, leaf2 (sibling) must be included
+        # Since nodeA is included and root is its parent, nodeB (sibling) must be included
+        expected_coverage = {"leaf1", "leaf2", "nodeA", "nodeB", "root"}
+        assert set(result.coverage_map.keys()) == expected_coverage
+
+        # CRITICAL: Verify scores only contain nodes from coverage map
+        assert set(result.scores.keys()).issubset(expected_coverage), (
+            f"Scores contain nodes outside coverage map! "
+            f"Scores: {set(result.scores.keys())}, "
+            f"Coverage: {expected_coverage}"
+        )
+
+        # Verify tiling only uses nodes from coverage tree
+        if result.tiling:
+            tiling_nodes = set(result.tiling)  # tiling is now a list of node IDs
+            assert tiling_nodes.issubset(expected_coverage), (
+                f"Tiling contains nodes outside coverage tree! "
+                f"Tiling: {tiling_nodes}, Coverage: {expected_coverage}"
+            )
+
+            # Count leaf nodes in tiling (using height == 0)
+            leaf_count = 0
+            for node_id in result.tiling:
+                node = document_store.nodes.get_node(node_id)
+                if node and node.height == 0:
+                    leaf_count += 1
+            # Since we have to include leaf2 to maintain coverage property, the DP algorithm
+            # might choose to use both leaves instead of their parent
+            assert leaf_count <= 2, f"Expected at most 2 leaf nodes, got {leaf_count}"

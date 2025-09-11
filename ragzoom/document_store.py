@@ -10,10 +10,9 @@ import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy.orm import Session
 
-from ragzoom.models import TreeNode
+from ragzoom.models import PostgresTreeNode as TreeNode
 from ragzoom.repositories.document_repository import DocumentRepository
 from ragzoom.repositories.node_repository import NodeRepository
-from ragzoom.services.search_service import NodeMetadataDict, SearchService
 from ragzoom.services.tree_navigator import TreeNavigator
 
 if TYPE_CHECKING:
@@ -171,117 +170,7 @@ class DocumentNodeRepository:
         self._repo.update_parent_references_batch(updates, session=session)
 
 
-class DocumentSearchService:
-    """Search service automatically scoped to a specific document."""
-
-    def __init__(self, document_id: str | None, search_service: SearchService):
-        self.document_id = document_id
-        self._service = search_service
-
-    def similar(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        n_results: int,
-    ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
-        """Search for similar nodes within this document only."""
-        where: dict[str, str | int | float] | None = (
-            {"document_id": self.document_id} if self.document_id else None
-        )
-        # Cast return to match our type signature while maintaining compatibility
-        results = self._service.search_similar(query_embedding, n_results, where)
-        return self._format_search_results(results)
-
-    # jscpd:ignore-start - Delegating wrapper pattern; similarity to SearchService is intentional
-    def mmr_diverse(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        """Apply MMR to get diverse results from candidates.
-
-        Delegates to underlying search service when available; falls back to
-        score-based top-k selection otherwise.
-        """
-        underlying = getattr(self._service, "compute_mmr_diverse_results", None)
-        if callable(underlying):
-            try:
-                out = underlying(query_embedding, candidates, lambda_param, k)
-                # Be explicit for type checker
-                return list(out)
-            except Exception:
-                pass
-        sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
-        return [c[0] for c in sorted_candidates[:k]]
-
-    # Backward-compatible method names to match SearchService API
-    def _format_search_results(
-        self,
-        results: list[tuple[str, float, NodeMetadataDict]],
-    ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
-        """Format search results to extract required metadata fields."""
-        return [
-            (
-                r[0],
-                r[1],
-                {
-                    "span_start": r[2]["span_start"],
-                    "span_end": r[2]["span_end"],
-                    "parent_id": r[2]["parent_id"],
-                    "document_id": r[2]["document_id"],
-                    "is_leaf": r[2]["is_leaf"],
-                },
-            )
-            for r in results
-        ]
-
-    def search_similar(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        n_results: int,
-        where: dict[str, str | int | float | bool | None] | None = None,
-    ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
-        """Compatibility wrapper matching SearchService signature (ignores where)."""
-        scoped_where: dict[str, str | int | float] | None = (
-            {"document_id": self.document_id} if self.document_id else None
-        )
-        # Cast return to match our type signature while maintaining compatibility
-        results = self._service.search_similar(query_embedding, n_results, scoped_where)
-        return self._format_search_results(results)
-
-    def compute_mmr_diverse_results(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        """Compatibility wrapper matching SearchService method name.
-
-        Delegates to the underlying service when available; falls back to
-        score-based top-k selection.
-        """
-        underlying = getattr(self._service, "compute_mmr_diverse_results", None)
-        if callable(underlying):
-            try:
-                out = underlying(query_embedding, candidates, lambda_param, k)
-                return list(out)
-            except Exception:
-                pass
-        sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
-        return [c[0] for c in sorted_candidates[:k]]
-
-    # jscpd:ignore-end
-
-    # Optional: vector upsert used by backends where embeddings are external to SQL
-    def upsert_vectors(
-        self,
-        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
-    ) -> None:
-        upsert = getattr(self._service, "upsert", None)
-        if callable(upsert):
-            upsert(items)
+# Legacy DocumentSearchService removed; retrieval uses VectorIndex directly
 
 
 class DocumentTreeNavigator:
@@ -355,7 +244,6 @@ class DocumentStore:
         self,
         document_id: str | None,
         node_repo: NodeRepository,
-        search_service: SearchService,
         tree_navigator: TreeNavigator,
         doc_repo: DocumentRepository,
     ):
@@ -364,7 +252,6 @@ class DocumentStore:
         Args:
             document_id: Document ID to scope all operations to
             node_repo: Node repository to wrap
-            search_service: Search service to wrap
             tree_navigator: Tree navigator to wrap
             doc_repo: Document repository for metadata access
         """
@@ -374,7 +261,6 @@ class DocumentStore:
 
         # Create document-scoped wrappers
         self.nodes = DocumentNodeRepository(document_id, node_repo)
-        self.search = DocumentSearchService(document_id, search_service)
         self.tree = DocumentTreeNavigator(document_id, tree_navigator)
 
         # Transaction state tracking (similar to StoreManager)
@@ -469,7 +355,7 @@ class DocumentStore:
             parent_id: New parent ID
         """
         with self._open_session() as session:
-            from ragzoom.models import TreeNode as TreeNodeModel
+            from ragzoom.models import PostgresTreeNode as TreeNodeModel
 
             session.query(TreeNodeModel).filter_by(id=node_id).update(
                 {"parent_id": parent_id}
@@ -605,7 +491,7 @@ class DocumentStore:
             return None
 
         # Use SQL aggregation for efficiency on large documents
-        from ragzoom.models import TreeNode as TreeNodeModel
+        from ragzoom.models import PostgresTreeNode as TreeNodeModel
 
         with self._open_session() as session:
             # Query for average token count of leaf nodes (nodes with no children)

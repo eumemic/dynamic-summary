@@ -15,6 +15,7 @@ from numpy.typing import NDArray
 from ragzoom.assemble import Assembler
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, QueryConfig
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from tests.utils import create_retriever, mock_openai_context
@@ -39,6 +40,7 @@ class TestDocumentIsolationSQLite:
         sqlite_store_factory: Callable[[str | None], DocumentStore],
         sqlite_backend: SQLiteStorageBackend,
         mock_openai: tuple[Mock, Mock, Mock],
+        vector_index: VectorIndex,
     ) -> None:
         """Test that queries only return results from the specified document."""
         # Create document stores
@@ -51,12 +53,16 @@ class TestDocumentIsolationSQLite:
 
         # Index documents using TreeBuilder
         doc1_text = "The mighty dragon breathed fire upon the castle. Dragons are powerful creatures."
-        tree_builder1 = TreeBuilder(index_config, dragons_store, api_key="test-key")
+        tree_builder1 = TreeBuilder(
+            index_config, dragons_store, vector_index, api_key="test-key"
+        )
         doc1_id = tree_builder1.add_document(doc1_text)
         assert doc1_id == "dragons.txt"
 
         doc2_text = "The wise wizard cast a spell. Wizards study magic for many years."
-        tree_builder2 = TreeBuilder(index_config, wizards_store, api_key="test-key")
+        tree_builder2 = TreeBuilder(
+            index_config, wizards_store, vector_index, api_key="test-key"
+        )
         doc2_id = tree_builder2.add_document(doc2_text)
         assert doc2_id == "wizards.txt"
 
@@ -91,7 +97,7 @@ class TestDocumentIsolationSQLite:
                 )
             )
 
-        sqlite_backend.vector_index.upsert(embedding_entries)
+        vector_index.upsert(embedding_entries)
 
         # Create retrievers using the utility function
         retriever1 = create_retriever(
@@ -100,6 +106,7 @@ class TestDocumentIsolationSQLite:
             document_id="dragons.txt",
             api_key="test-key",
             client=mock_openai[1],  # Use mock retrieve client
+            vector_index=vector_index,
         )
 
         retriever2 = create_retriever(
@@ -108,6 +115,7 @@ class TestDocumentIsolationSQLite:
             document_id="wizards.txt",
             api_key="test-key",
             client=mock_openai[1],  # Use mock retrieve client
+            vector_index=vector_index,
         )
 
         # Query about dragons in the dragons document
@@ -163,6 +171,7 @@ class TestDocumentIsolationSQLite:
         self,
         sqlite_store_factory: Callable[[str | None], DocumentStore],
         mock_openai: tuple[Mock, Mock, Mock],
+        vector_index: VectorIndex,
     ) -> None:
         """Test that filename is used as document_id when not specified."""
         # Create document store
@@ -174,7 +183,9 @@ class TestDocumentIsolationSQLite:
 
         # Index with file_path but no explicit document_id
         text = "Test content for filename ID"
-        tree_builder = TreeBuilder(index_config, doc_store, api_key="test-key")
+        tree_builder = TreeBuilder(
+            index_config, doc_store, vector_index, api_key="test-key"
+        )
         doc_id = tree_builder.add_document(text)
 
         # Should use filename as document_id
@@ -187,6 +198,7 @@ class TestDocumentIsolationSQLite:
             document_id="test_file.txt",
             api_key="test-key",
             client=mock_openai[1],  # Use mock retrieve client
+            vector_index=vector_index,
         )
 
         # Verify we can query using the filename
@@ -214,10 +226,18 @@ class TestDocumentIsolationSQLite:
         query_config = QueryConfig(budget_tokens=1000)
 
         # Index multiple documents
-        tree_builder1 = TreeBuilder(index_config, doc1_store, api_key="test-key")
+        from ragzoom.vector_factory import create_vector_index
+
+        vi1 = create_vector_index(
+            "python", "sqlite:///:memory:", index_config.embedding_model
+        )
+        tree_builder1 = TreeBuilder(index_config, doc1_store, vi1, api_key="test-key")
         tree_builder1.add_document("Dragons are fierce")
 
-        tree_builder2 = TreeBuilder(index_config, doc2_store, api_key="test-key")
+        vi2 = create_vector_index(
+            "python", "sqlite:///:memory:", index_config.embedding_model
+        )
+        tree_builder2 = TreeBuilder(index_config, doc2_store, vi2, api_key="test-key")
         tree_builder2.add_document("Wizards are wise")
 
         # Query both documents independently and combine results
@@ -227,6 +247,7 @@ class TestDocumentIsolationSQLite:
             document_id="doc1",
             api_key="test-key",
             client=mock_openai[1],
+            vector_index=vi1,
         )
         retriever2 = create_retriever(
             query_config,
@@ -234,6 +255,7 @@ class TestDocumentIsolationSQLite:
             document_id="doc2",
             api_key="test-key",
             client=mock_openai[1],
+            vector_index=vi2,
         )
 
         result_all = []

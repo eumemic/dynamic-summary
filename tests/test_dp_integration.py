@@ -15,6 +15,7 @@ from pytest import MonkeyPatch
 
 from ragzoom.assemble import Assembler
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from tests.conftest import BackwardCompatibilityConfig
 from tests.utils import (
@@ -96,8 +97,13 @@ class TestDPIntegration:
         )
         # Type assertion for test compatibility
         assert hasattr(doc_store, "nodes"), "Expected DocumentStore-like object"
+        from ragzoom.vector_factory import create_vector_index
+
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", config.index_config.embedding_model
+        )
         tree_builder = TreeBuilder(
-            config.index_config, doc_store, api_key=config.openai_api_key
+            config.index_config, doc_store, vi, api_key=config.openai_api_key
         )
         await tree_builder.add_document_async(document, show_progress=False)
 
@@ -110,6 +116,7 @@ class TestDPIntegration:
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
             client=mock_client,
+            vector_index=vi,
         )
         query = "First chunk Second chunk"  # Query that should match the first half
         result = await retriever.retrieve_async(query, document_id="doc1")
@@ -163,9 +170,15 @@ class TestDPIntegration:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
+        from ragzoom.vector_factory import create_vector_index
+
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", small_config.embedding_model
+        )
         tree_builder = TreeBuilder(
             config=small_config,
             document_store=doc_store,
+            vector_index=vi,
             api_key=config.openai_api_key,
         )
         await tree_builder.add_document_async(document, show_progress=False)
@@ -177,6 +190,7 @@ class TestDPIntegration:
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
             client=mock_client,
+            vector_index=vi,
         )
         result = await retriever.retrieve_async("test document", document_id="doc1")
 
@@ -207,6 +221,7 @@ class TestDPIntegration:
         storage_backend: StorageBackend,
         mock_openai: tuple[object, object],
         monkeypatch: MonkeyPatch,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test that the assembled text covers the document span correctly."""
         from tests.utils import create_retriever
@@ -233,6 +248,7 @@ class TestDPIntegration:
         tree_builder = TreeBuilder(
             config=small_config,
             document_store=doc_store,
+            vector_index=vector_index,
             api_key=config.openai_api_key,
         )
         await tree_builder.add_document_async(document, show_progress=False)
@@ -244,6 +260,7 @@ class TestDPIntegration:
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
             client=mock_client,
+            vector_index=vector_index,
         )
 
         # Patch retriever client for sync
@@ -294,9 +311,15 @@ class TestDPIntegration:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
+        from ragzoom.vector_factory import create_vector_index
+
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", config.index_config.embedding_model
+        )
         tree_builder = TreeBuilder(
             config=config.index_config,
             document_store=doc_store,
+            vector_index=vi,
             api_key=config.openai_api_key,
         )
         await tree_builder.add_document_async(document, show_progress=False)
@@ -308,6 +331,7 @@ class TestDPIntegration:
             document_id="doc1",  # Specify the document we indexed
             api_key=config.openai_api_key,
             client=mock_client,
+            vector_index=vi,
         )
         result = await retriever.retrieve_async(
             "Sentence", document_id="doc1", budget_tokens=100

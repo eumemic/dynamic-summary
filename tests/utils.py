@@ -1,6 +1,5 @@
 """Shared test utilities and mock setups."""
 
-import os
 from collections.abc import Generator
 from types import SimpleNamespace
 from typing import TypeGuard, cast
@@ -11,12 +10,12 @@ from openai import OpenAI
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.models import TreeNode
 from ragzoom.retrieval.budget_planner import BudgetPlanner
 from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
-from ragzoom.vector_factory import create_vector_index
 
 
 def create_mock_openai_clients() -> tuple[Mock, Mock, Mock]:
@@ -489,6 +488,8 @@ def create_retriever(
     embedding_model: str | None = None,
     target_chunk_tokens: int | None = None,
     client: object | None = None,  # Accept any client type for testing
+    *,
+    vector_index: _VectorIndex,  # REQUIRED VectorIndex to reuse
 ) -> Retriever:
     """Create a Retriever instance with proper service dependencies.
 
@@ -532,12 +533,8 @@ def create_retriever(
 
     budget_planner = BudgetPlanner(doc_store, target_chunk_tokens)
 
-    # Create and return retriever
-    vector_index = create_vector_index(
-        os.environ.get("RAGZOOM_VECTOR_BACKEND", "python"),
-        os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:"),
-        embedding_model or query_config.embedding_model,
-    )
+    # Require caller to pass the VectorIndex explicitly (no implicit creation)
+    # vector_index is required; no implicit creation here
     return Retriever(
         query_config,
         doc_store,
@@ -548,6 +545,25 @@ def create_retriever(
 
 
 # Type conversion utilities for common test patterns
+
+
+def _safe_int(val: object, default: int = 0) -> int:
+    """Convert common scalar types to int safely for typing.
+
+    Accepts int, float, bool, and numeric strings; returns default otherwise.
+    """
+    if isinstance(val, bool):
+        return int(val)
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return int(val)
+    if isinstance(val, str):
+        try:
+            return int(val)
+        except Exception:
+            return default
+    return default
 
 
 def ensure_document_store(
