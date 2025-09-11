@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
-from ragzoom.contracts.tree_node import TreeNode as ProtoTreeNode
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import TreeNode as ORMTreeNode
+from ragzoom.models import PostgresTreeNode as ORMTreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +266,7 @@ def validate_tiling(
     doc_store: DocumentStore,
     original_text: str | None = None,
     budget_tokens: int | None = None,
-    preloaded_nodes: dict[str, ProtoTreeNode] | None = None,
+    preloaded_nodes: dict[str, TreeNode] | None = None,
 ) -> str | None:
     """Validate that a tiling has no overlaps, no duplicates, and (optionally) covers the document.
 
@@ -315,9 +315,9 @@ def validate_tiling(
 
     if preloaded_nodes:
         # Determine bounds from preloaded protocol nodes without introducing model types
-        vals: Sequence[ProtoTreeNode] = tuple(preloaded_nodes.values())
+        vals: Sequence[TreeNode] = tuple(preloaded_nodes.values())
         # Prefer nodes that appear to be roots within the preloaded set
-        root_like: list[ProtoTreeNode] = []
+        root_like: list[TreeNode] = []
         for pt in vals:
             pid = pt.parent_id
             is_root = getattr(pt, "is_root", lambda: pid is None)()
