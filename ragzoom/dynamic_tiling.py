@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -8,7 +9,7 @@ from ragzoom.tiling import Tiling
 from ragzoom.utils.tokenization import tokenizer
 
 if TYPE_CHECKING:
-    from ragzoom.models import TreeNode
+    from ragzoom.contracts.tree_node import TreeNode as ProtoTreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +41,16 @@ class BaseDynamicTilingGenerator:
         self.config = config
         self.tokenizer = tokenizer
         self._subtree_relevance_cache: dict[str, float] = {}
-        self._nodes: dict[str, TreeNode] = {}  # Will be set per tiling request
+        self._nodes: Mapping[str, ProtoTreeNode] = {}  # Will be set per tiling request
 
-    def _get_node_cost(self, node: "TreeNode") -> int:
+    def _get_node_cost(self, node: "ProtoTreeNode") -> int:
         """Get the token cost of a node."""
         if not node:
             return 0
         return node.token_count
 
     def _get_subtree_relevance(
-        self, node: "TreeNode", scores: dict[str, float]
+        self, node: "ProtoTreeNode", scores: dict[str, float]
     ) -> float:
         """Recursively sum all relevance scores in a subtree with memoization."""
         if node.id in self._subtree_relevance_cache:
@@ -73,7 +74,7 @@ class BaseDynamicTilingGenerator:
         return total
 
     def _split_budget_proportionally(
-        self, budget: int, node: "TreeNode", scores: dict[str, float]
+        self, budget: int, node: "ProtoTreeNode", scores: dict[str, float]
     ) -> tuple[int, int]:
         """Split budget between left and right children based on their relevance."""
         # Get children from our nodes dict
@@ -129,7 +130,9 @@ class BaseDynamicTilingGenerator:
 
         return budget_l, budget_r
 
-    def _build_result(self, tiling: Tiling, nodes: dict[str, "TreeNode"]) -> DPResult:
+    def _build_result(
+        self, tiling: Tiling, nodes: Mapping[str, "ProtoTreeNode"]
+    ) -> DPResult:
         """Build DPResult from tiling and nodes."""
         node_infos = []
         for node_id in tiling.node_ids:
@@ -161,7 +164,7 @@ class DynamicTilingGenerator(BaseDynamicTilingGenerator):
         self,
         budget_tokens: int,
         scores: dict[str, float],
-        nodes: dict[str, "TreeNode"],
+        nodes: Mapping[str, "ProtoTreeNode"],
         root_id: str,
     ) -> DPResult:
         logger.info("Using DP tiling generation")
@@ -184,7 +187,7 @@ class DynamicTilingGenerator(BaseDynamicTilingGenerator):
 
     # jscpd:ignore-start - Legitimate async/sync wrapper pattern for DP algorithm
     def _find_optimal_tiling_for_span_unmemoized(
-        self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
+        self, node: Optional["ProtoTreeNode"], budget: int, scores: dict[str, float]
     ) -> Tiling:
         if not node:
             return Tiling.empty()
@@ -244,7 +247,7 @@ class DynamicTilingGenerator(BaseDynamicTilingGenerator):
 
     # jscpd:ignore-start - Legitimate async/sync wrapper pattern for memoization
     def _find_optimal_tiling_for_span(
-        self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
+        self, node: Optional["ProtoTreeNode"], budget: int, scores: dict[str, float]
     ) -> Tiling:
         node_id = node.id if node else None
         cache_key = (node_id, budget)
@@ -277,7 +280,7 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
         self,
         budget_tokens: int,
         scores: dict[str, float],
-        nodes: dict[str, "TreeNode"],
+        nodes: Mapping[str, "ProtoTreeNode"],
         root_id: str,
     ) -> DPResult:
         logger.info("Using async DP tiling generation")
@@ -300,7 +303,7 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
 
         return self._build_result(tiling, nodes)
 
-    def _count_subtree_nodes(self, node: "TreeNode") -> int:
+    def _count_subtree_nodes(self, node: "ProtoTreeNode") -> int:
         """Count total nodes in a subtree."""
         count = 1
         if node.left_child_id and node.left_child_id in self._nodes:
@@ -312,7 +315,7 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
         return count
 
     def _should_parallelize(
-        self, left_child: "TreeNode", right_child: "TreeNode"
+        self, left_child: "ProtoTreeNode", right_child: "ProtoTreeNode"
     ) -> bool:
         """Determine if subtrees are large enough to warrant parallelization."""
         left_nodes = self._count_subtree_nodes(left_child)
@@ -321,7 +324,7 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
 
     # jscpd:ignore-start - Legitimate async/sync wrapper pattern for DP algorithm
     async def _find_optimal_tiling_for_span_unmemoized(
-        self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
+        self, node: Optional["ProtoTreeNode"], budget: int, scores: dict[str, float]
     ) -> Tiling:
         if not node:
             return Tiling.empty()
@@ -431,7 +434,7 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
 
     # jscpd:ignore-start - Legitimate async/sync wrapper pattern for memoization
     async def _find_optimal_tiling_for_span(
-        self, node: Optional["TreeNode"], budget: int, scores: dict[str, float]
+        self, node: Optional["ProtoTreeNode"], budget: int, scores: dict[str, float]
     ) -> Tiling:
         node_id = node.id if node else None
         cache_key = (node_id, budget)

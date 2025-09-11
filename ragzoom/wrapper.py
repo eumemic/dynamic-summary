@@ -109,8 +109,8 @@ class RagZoom:
         tree_builder = TreeBuilder(
             self.index_config,
             document_store,
-            self.operational_config.openai_api_key,
-            vector_index=vector_index,
+            vector_index,
+            api_key=self.operational_config.openai_api_key,
         )
 
         return tree_builder.add_document(text)
@@ -228,8 +228,8 @@ class AsyncRagZoom:
         tree_builder = TreeBuilder(
             self.index_config,
             document_store,
-            self.operational_config.openai_api_key,
-            vector_index=vector_index,
+            vector_index,
+            api_key=self.operational_config.openai_api_key,
         )
 
         return await tree_builder.add_document_async(text)
