@@ -46,7 +46,8 @@ class PythonVectorIndexAdapter(VectorIndex):
         self,
         items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
     ) -> None:
-        self._idx.upsert(items)
+        # Avoid disk I/O in test/dev by not persisting on every upsert
+        self._idx.upsert(items, persist=False)
 
     def delete(
         self,
@@ -59,7 +60,7 @@ class PythonVectorIndexAdapter(VectorIndex):
                 tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
             ] = []
             # Snapshot all current ids from internal mapping
-            all_ids = list(self._idx._ids)  # type: ignore[attr-defined]
+            all_ids = list(self._idx._ids)
             for i in all_ids:
                 if i in ids:
                     continue
@@ -70,24 +71,24 @@ class PythonVectorIndexAdapter(VectorIndex):
                     (i, list(map(float, v.tolist())), dict(meta))
                 )  # upcast meta
             # Reset internal state by reinitializing index
-            self._idx = PythonVectorIndex(getattr(self._idx, "_persist_dir", None))  # type: ignore[arg-type]
+            self._idx = PythonVectorIndex(getattr(self._idx, "_persist_dir", None))
             self._idx.upsert(remaining)
             return len(ids)
         return 0
 
     # --- internals ---
     def _vector_for_id(self, node_id: str) -> NDArray[np.float32]:
-        id_to_row = self._idx._id_to_row  # type: ignore[attr-defined]
+        id_to_row = self._idx._id_to_row
         row = id_to_row.get(node_id)
         if row is None:
             raise KeyError(f"Vector not found for id {node_id}")
-        mat = self._idx._vectors  # type: ignore[attr-defined]
+        mat = self._idx._vectors
         if mat is None:
             raise RuntimeError("Vector matrix is empty")
         return np.asarray(mat[int(row), :], dtype=np.float32)
 
     def _meta_for_id(self, node_id: str) -> MetaDict:
-        meta_obj = self._idx._meta.get(node_id)  # type: ignore[attr-defined]
+        meta_obj = self._idx._meta.get(node_id)
         if meta_obj is None:
             return {}
         if hasattr(meta_obj, "span_start"):

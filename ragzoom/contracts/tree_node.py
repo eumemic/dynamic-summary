@@ -17,7 +17,7 @@ class TreeNode(Protocol):
 
     # Identity and scope
     id: str
-    document_id: str
+    document_id: str | None
 
     # Tree relations
     parent_id: str | None
@@ -33,7 +33,7 @@ class TreeNode(Protocol):
     token_count: int
     height: int  # 0 for leaves, increasing toward root
     path: str  # binary path ("" for root)
-    is_pinned: bool
+    is_pinned: bool | int
 
     # Optional helpers many implementations already provide
     def is_leaf(self) -> bool: ...  # pragma: no cover - protocol signature

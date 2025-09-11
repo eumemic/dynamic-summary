@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ragzoom.exceptions import NodeNotFoundError
-from ragzoom.models import TreeNode
+from ragzoom.models import PostgresTreeNode
 from ragzoom.repositories.node_repository import NodeRepository
 
 if TYPE_CHECKING:
@@ -24,7 +24,9 @@ class TreeNavigator:
         """
         self.node_repo = node_repository
 
-    def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
+    def get_children(
+        self, node_id: str
+    ) -> tuple[PostgresTreeNode | None, PostgresTreeNode | None]:
         """Get left and right children of a node.
 
         Args:
@@ -47,7 +49,7 @@ class TreeNavigator:
         )
         return left, right
 
-    def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
+    def get_ancestors(self, node_ids: list[str]) -> list[PostgresTreeNode]:
         """Get all ancestors of given nodes using path-based traversal for instant lookup.
 
         Args:
@@ -74,19 +76,21 @@ class TreeNavigator:
 
         return []
 
-    def get_root_node(self) -> TreeNode | None:
+    def get_root_node(self) -> PostgresTreeNode | None:
         """Get the root node (node with no parent).
 
         Returns:
             Root TreeNode if found, None otherwise
         """
         with self.node_repo.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(parent_id=None).first()
+            node = session.query(PostgresTreeNode).filter_by(parent_id=None).first()
             if node:
                 session.expunge(node)
             return node
 
-    def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
+    def get_root_node_for_document(
+        self, document_id: str | None
+    ) -> PostgresTreeNode | None:
         """Get the root node for a specific document.
 
         Args:
@@ -96,7 +100,7 @@ class TreeNavigator:
             Root TreeNode for document if found, None otherwise
         """
         with self.node_repo.SessionLocal() as session:
-            query = session.query(TreeNode).filter_by(parent_id=None)
+            query = session.query(PostgresTreeNode).filter_by(parent_id=None)
             if document_id:
                 query = query.filter_by(document_id=document_id)
             node = query.first()
@@ -158,7 +162,7 @@ class TreeNavigator:
         # Prefer structural check to support multiple model types
         return getattr(node, "parent_id", None) is None
 
-    def get_parent_node(self, node_id: str) -> TreeNode | None:
+    def get_parent_node(self, node_id: str) -> PostgresTreeNode | None:
         """Get the parent node using path-based lookup.
 
         Args:
@@ -181,7 +185,7 @@ class TreeNavigator:
         parents = self.node_repo.get_nodes_by_paths([parent_path])
         return parents[0] if parents else None
 
-    def get_sibling_node(self, node_id: str) -> TreeNode | None:
+    def get_sibling_node(self, node_id: str) -> PostgresTreeNode | None:
         """Get the sibling node using path-based lookup.
 
         Args:
