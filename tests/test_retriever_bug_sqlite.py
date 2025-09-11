@@ -13,8 +13,8 @@ if TYPE_CHECKING:
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import TreeNode
 from ragzoom.vector_api import Vector
 
 

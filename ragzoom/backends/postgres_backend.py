@@ -13,7 +13,7 @@ from types import TracebackType
 from ragzoom.config import OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import Document, TreeNode
+from ragzoom.models import Document, PostgresTreeNode
 from ragzoom.repositories.document_repository import DocumentRepository
 from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.cache_manager import CacheManager
@@ -47,7 +47,7 @@ class PostgresStorageBackend(StorageBackend):
         self.config = config
         # Initialize core components
         self.db_manager = DatabaseManager(config, embedding_model)
-        self.cache_manager = CacheManager[TreeNode](
+        self.cache_manager = CacheManager[PostgresTreeNode](
             config.cache_size or self.DEFAULT_CACHE_SIZE
         )
         self.node_repo = NodeRepository(self.db_manager, self.cache_manager)

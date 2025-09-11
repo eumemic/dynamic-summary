@@ -6,7 +6,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
-from ragzoom.models import Base, Document, TreeNode
+from ragzoom.models import Base, Document
+from ragzoom.models import PostgresTreeNode as TreeNode
 
 
 class TestTreeNodeModel:

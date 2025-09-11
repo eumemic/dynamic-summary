@@ -1,8 +1,11 @@
 """Test budget splitting logic in dynamic tiling."""
 
+from typing import cast
+
 from ragzoom.config import QueryConfig
+from ragzoom.contracts.tree_node import TreeNode as ProtoTreeNode
+from ragzoom.dataflow.domain import DomainNode as TreeNode
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
-from ragzoom.models import TreeNode
 
 
 class TestBudgetSplitting:
@@ -25,6 +28,7 @@ class TestBudgetSplitting:
             span_start=0,
             span_end=100,
             parent_id="parent",
+            document_id="doc",
             token_count=100,
         )
 
@@ -34,6 +38,7 @@ class TestBudgetSplitting:
             span_start=100,
             span_end=200,
             parent_id="parent",
+            document_id="doc",
             token_count=100,
         )
 
@@ -44,11 +49,20 @@ class TestBudgetSplitting:
             span_end=200,
             left_child_id="left",
             right_child_id="right",
+            document_id="doc",
             token_count=10,
         )
 
         # Set up generator's nodes dict
-        generator._nodes = {"left": left_child, "right": right_child, "parent": parent}
+        from typing import cast
+
+        from ragzoom.contracts.tree_node import TreeNode as ProtoTreeNode
+
+        generator._nodes = {
+            "left": cast(ProtoTreeNode, left_child),
+            "right": cast(ProtoTreeNode, right_child),
+            "parent": cast(ProtoTreeNode, parent),
+        }
 
         # Test case from user: budget=300, both children need 100, relevance ratio 1:2
         budget = 300
@@ -61,7 +75,7 @@ class TestBudgetSplitting:
         generator._subtree_relevance_cache = {"left": 1.0, "right": 2.0}
 
         budget_l, budget_r = generator._split_budget_proportionally(
-            budget, parent, scores
+            budget, cast(ProtoTreeNode, parent), scores
         )
 
         # Should allocate 100 to left (1/3 of 300) and 200 to right (2/3 of 300)
@@ -91,6 +105,7 @@ class TestBudgetSplitting:
             span_start=0,
             span_end=150,
             parent_id="parent",
+            document_id="doc",
             token_count=150,
         )
 
@@ -100,6 +115,7 @@ class TestBudgetSplitting:
             span_start=150,
             span_end=200,
             parent_id="parent",
+            document_id="doc",
             token_count=50,
         )
 
@@ -110,10 +126,15 @@ class TestBudgetSplitting:
             span_end=200,
             left_child_id="left",
             right_child_id="right",
+            document_id="doc",
             token_count=10,
         )
 
-        generator._nodes = {"left": left_child, "right": right_child, "parent": parent}
+        generator._nodes = {
+            "left": cast(ProtoTreeNode, left_child),
+            "right": cast(ProtoTreeNode, right_child),
+            "parent": cast(ProtoTreeNode, parent),
+        }
 
         # High relevance on right, but it needs fewer tokens
         scores = {"left": 1.0, "right": 9.0}  # 10% vs 90% relevance
@@ -124,7 +145,7 @@ class TestBudgetSplitting:
         # But left needs minimum 150, so it should get 150 and right gets 100
         budget = 250
         budget_l, budget_r = generator._split_budget_proportionally(
-            budget, parent, scores
+            budget, cast(ProtoTreeNode, parent), scores
         )
 
         # Verify minimums are met
@@ -146,6 +167,7 @@ class TestBudgetSplitting:
             span_start=0,
             span_end=100,
             parent_id="parent",
+            document_id="doc",
             token_count=100,
         )
 
@@ -155,6 +177,7 @@ class TestBudgetSplitting:
             span_start=100,
             span_end=200,
             parent_id="parent",
+            document_id="doc",
             token_count=100,
         )
 
@@ -165,10 +188,15 @@ class TestBudgetSplitting:
             span_end=200,
             left_child_id="left",
             right_child_id="right",
+            document_id="doc",
             token_count=10,
         )
 
-        generator._nodes = {"left": left_child, "right": right_child, "parent": parent}
+        generator._nodes = {
+            "left": cast(ProtoTreeNode, left_child),
+            "right": cast(ProtoTreeNode, right_child),
+            "parent": cast(ProtoTreeNode, parent),
+        }
 
         # Budget exactly equals minimum requirements
         budget = 200  # Each child needs 100
@@ -176,7 +204,7 @@ class TestBudgetSplitting:
         generator._subtree_relevance_cache = {"left": 1.0, "right": 2.0}
 
         budget_l, budget_r = generator._split_budget_proportionally(
-            budget, parent, scores
+            budget, cast(ProtoTreeNode, parent), scores
         )
 
         # With tight budget, should split by minimum costs (equal in this case)
