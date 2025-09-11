@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from ragzoom.config import QueryConfig
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
-from ragzoom.models import TreeNode
 from ragzoom.retrieval import (
     BudgetPlanner,
     CoverageBuilder,
@@ -18,7 +18,7 @@ from ragzoom.retrieval.telemetry_collector import TelemetryCollector
 from ragzoom.telemetry_query import QueryTelemetry
 
 if TYPE_CHECKING:
-    from ragzoom.contracts.vector_index_v2 import VectorIndex as VectorIndexV2
+    from ragzoom.contracts.vector_index import VectorIndex
     from ragzoom.document_store import DocumentStore
     from ragzoom.index import TreeBuilder
 
@@ -45,7 +45,7 @@ class Retriever:
         document_store: "DocumentStore",
         embedding_service: EmbeddingService,
         budget_planner: BudgetPlanner,
-        vector_index: "VectorIndexV2",
+        vector_index: "VectorIndex",
         tree_builder: Optional["TreeBuilder"] = None,
         use_async_dp: bool = False,
         min_nodes_for_parallel: int = 10,
@@ -148,14 +148,22 @@ class Retriever:
 
         # Phase 2: Initial retrieval (always via VectorIndex v2)
         k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
-        from ragzoom.retrieval import mmr as mmr_v2
-        from ragzoom.retrieval import similarity as sim_v2
+        from ragzoom.retrieval import mmr
+        from ragzoom.retrieval import similarity as sim
 
         vec_candidates = self.vector_index.search_similar(
             query_embedding,
             k_candidates,
             {"document_id": effective_doc_id} if effective_doc_id else None,
         )
+        # Fallback: if vector index returns no candidates, try using the document root
+        if not vec_candidates:
+            try:
+                root = self.document_store.tree.get_root()
+                if root is not None:
+                    vec_candidates = self.vector_index.get_vectors([root.id])
+            except Exception:
+                vec_candidates = []
         if telemetry_collector:
             telemetry_collector.end_phase("search")
             telemetry_collector.start_phase()
@@ -164,15 +172,17 @@ class Retriever:
             )
 
         # Phase 3: Apply MMR selection using generic math over canonical vectors
-        selected_ids = mmr_v2.select_diverse(
+        selected_ids = mmr.select_diverse(
             query_embedding,
             vec_candidates,
             num_seeds,
             self.query_config.mmr_lambda,
         )
+        if not selected_ids and vec_candidates:
+            selected_ids = [vec_candidates[0].id]
 
         # Build legacy-shaped candidates for scoring service compatibility
-        rels = sim_v2.relevance_scores(query_embedding, vec_candidates)
+        rels = sim.relevance_scores(query_embedding, vec_candidates)
         from typing import cast as _cast
 
         candidates: list[
@@ -217,8 +227,29 @@ class Retriever:
             telemetry_collector.end_phase("scoring")
             telemetry_collector.start_phase()
 
-        # Handle empty coverage map case
+        # Handle empty coverage map case with a conservative fallback
         if not coverage_map:
+            try:
+                leaves = self.document_store.nodes.get_leaves()
+            except Exception:
+                leaves = []
+            if leaves:
+                # Use left-to-right smallest tiling of a few leaves
+                leaves.sort(key=lambda n: n.span_start)
+                k_fallback = max(1, int(num_seeds or 1))
+                tiling_ids = [n.id for n in leaves[:k_fallback]]
+                from typing import cast as _cast
+
+                nodes_map = _cast(
+                    dict[str, TreeNode], {n.id: n for n in leaves[:k_fallback]}
+                )
+                return RetrievalResult(
+                    node_ids=selected_ids,
+                    scores=scores,
+                    coverage_map={tid: True for tid in tiling_ids},
+                    tiling=tiling_ids,
+                    nodes=nodes_map,
+                )
             return RetrievalResult(
                 node_ids=selected_ids,
                 scores=scores,
@@ -232,15 +263,18 @@ class Retriever:
         node_ids_to_load = list(coverage_map.keys())
         if node_ids_to_load:
             loaded_nodes = self.document_store.nodes.get_nodes(node_ids_to_load)
+            from typing import cast as _cast
+
             for node in loaded_nodes:
-                nodes[node.id] = node
+                nodes[node.id] = _cast(TreeNode, node)
 
         # Find the root node
         root_id = None
-        for node_id, node in nodes.items():
+        for node_id in list(nodes.keys()):
+            node_p: TreeNode = nodes[node_id]
             # Check if node is root (compatible with both TreeNode and SqliteTreeNode)
-            is_root = getattr(node, "is_root", lambda: node.parent_id is None)()
-            if is_root or node.parent_id not in nodes:
+            is_root = getattr(node_p, "is_root", lambda: node_p.parent_id is None)()
+            if is_root or node_p.parent_id not in nodes:
                 root_id = node_id
                 break
 

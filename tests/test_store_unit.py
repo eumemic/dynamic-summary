@@ -5,11 +5,14 @@ with the configured backend, providing higher fidelity testing while
 maintaining the unit test focus.
 """
 
+from typing import cast
+
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as VectorIndexV2
 from ragzoom.document_store import DocumentStore
 from tests.test_builders import TreeNodeBuilder
 
@@ -285,7 +288,9 @@ class TestStoreUnit:
         assert doc_store_1.nodes.get_node("node-2") is None
         assert doc_store_2.nodes.get_node("node-1") is None
 
-    def test_search_functionality(self, doc_store: DocumentStore) -> None:
+    def test_search_functionality(
+        self, doc_store: DocumentStore, vector_index: VectorIndexV2
+    ) -> None:
         """Test search within document scope."""
         # Add nodes for searching
         nodes_data: list[
@@ -316,17 +321,42 @@ class TestStoreUnit:
             },
         ]
 
+        # Persist nodes and upsert embeddings
         doc_store.nodes.add_batch(nodes_data)
+        vector_entries = [
+            (
+                cast(str, d["node_id"]),
+                cast(list[float], list(np.asarray(d["embedding"], dtype=np.float64))),
+                {
+                    "span_start": cast(int, d["span_start"]),
+                    "span_end": cast(int, d["span_end"]),
+                    "parent_id": "",
+                    "document_id": "test-doc",
+                    "is_leaf": 1,
+                },
+            )
+            for d in nodes_data
+        ]
+        from typing import cast as _cast
 
-        # Test similarity search
-        query_embedding = np.array([0.75, 0.25] + [0.1] * 1534, dtype=np.float64)
-        results = doc_store.search.similar(query_embedding, n_results=2)
+        import numpy as _np
+        from numpy.typing import NDArray as _NDArray
+
+        typed_entries = _cast(
+            list[tuple[str, list[float] | _NDArray[_np.float64], dict[str, object]]],
+            vector_entries,
+        )
+        vector_index.upsert(typed_entries)
+
+        # Test similarity search via VectorIndex
+        query_embedding = [0.75, 0.25] + [0.1] * 1534
+        results = vector_index.search_similar(
+            query_embedding, 2, {"document_id": "test-doc"}
+        )
 
         assert len(results) <= 2
-        assert all(isinstance(r, tuple) and len(r) == 3 for r in results)
-        # Results should be sorted by similarity score (descending)
-        if len(results) > 1:
-            assert results[0][1] >= results[1][1]
+        for v in results:
+            assert hasattr(v, "id") and hasattr(v, "vec") and hasattr(v, "meta")
 
     def test_node_builder_integration(
         self, doc_store: DocumentStore, tree_node_builder: TreeNodeBuilder
@@ -368,7 +398,6 @@ class TestStoreUnit:
         # Test that core methods exist and are callable
         core_methods = [
             "nodes",
-            "search",
             "tree",
             "get_pinned_nodes",
         ]
@@ -407,19 +436,7 @@ class TestStoreUnit:
                 getattr(doc_store.tree, method_name)
             ), f"Not callable: tree.{method_name}"
 
-        # Test search methods
-        search_methods = [
-            "similar",
-            "search_similar",
-        ]
-
-        for method_name in search_methods:
-            assert hasattr(
-                doc_store.search, method_name
-            ), f"Missing search method: {method_name}"
-            assert callable(
-                getattr(doc_store.search, method_name)
-            ), f"Not callable: search.{method_name}"
+        # Search surface removed; retrieval uses VectorIndex independently
 
     def test_error_handling(self, doc_store: DocumentStore) -> None:
         """Test proper error handling for invalid operations."""

@@ -47,8 +47,12 @@ def test_tree_height_accessed_within_session(storage_backend: StorageBackend) ->
         "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
     ):
         service = IndexingService(storage_backend, index_config, config)
+        import uuid
+
         result = service.index_document(
-            "Test content", document_id="test.txt", show_progress=False
+            "Test content",
+            document_id=f"session-{uuid.uuid4().hex}.txt",
+            show_progress=False,
         )
         # Should not raise; ensure tree_depth computed
         assert isinstance(result.tree_depth, int)

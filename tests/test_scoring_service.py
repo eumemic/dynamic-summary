@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import numpy as np
 
 from ragzoom.retrieval.scoring_service import ScoringService
+from ragzoom.vector_api import Vector
 
 
 class TestScoringService:
@@ -19,8 +20,22 @@ class TestScoringService:
         # Create mock store
         mock_store = Mock()
 
-        # Create service (vector index not used in this path)
+        # Create service with a dummy VectorIndex that returns vectors for ids
         dummy_vi = Mock()
+
+        def _gv(ids: list[str]) -> list[Vector]:
+            m = {
+                "node1": Vector(
+                    "node1", np.array([0.1, 0.2, 0.3], dtype=np.float32), {}, "m", 3
+                ),
+                "node2": Vector(
+                    "node2", np.array([0.4, 0.5, 0.6], dtype=np.float32), {}, "m", 3
+                ),
+            }
+            # Only return vectors for known ids; unknowns will be treated as 0.0
+            return [m[i] for i in ids if i in m]
+
+        dummy_vi.get_vectors.side_effect = _gv
         service = ScoringService(mock_store, dummy_vi)
 
         # Create mock nodes with numpy array embeddings
@@ -39,7 +54,7 @@ class TestScoringService:
             ),
         ]
 
-        # Mock store.nodes.get_nodes to return our nodes
+        # Store is not used for embeddings any more, but keep minimal shape
         mock_store.nodes = Mock()
         mock_store.nodes.get_nodes.return_value = nodes
 
@@ -105,7 +120,7 @@ class TestScoringService:
             scores=scores,
         )
 
-        # Node with empty embedding should get 0 score
+        # Node with zero vector embedding should get 0 score
         assert scores["node1"] == 0.0
 
     def test_compute_scores_mixed_embedding_types(self) -> None:
@@ -118,6 +133,19 @@ class TestScoringService:
 
         # Create service
         dummy_vi = Mock()
+
+        def _gv2(ids: list[str]) -> list[Vector]:
+            m = {
+                "node1": Vector(
+                    "node1", np.array([0.1, 0.2, 0.3], dtype=np.float32), {}, "m", 3
+                ),
+                "node2": Vector(
+                    "node2", np.array([0.4, 0.5, 0.6], dtype=np.float32), {}, "m", 3
+                ),
+            }
+            return [m[i] for i in ids]
+
+        dummy_vi.get_vectors.side_effect = _gv2
         service = ScoringService(mock_store, dummy_vi)
 
         # Create mock nodes with mixed embedding types

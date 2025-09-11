@@ -75,7 +75,12 @@ def test_indexing_performance(
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )
-    builder = TreeBuilder(index_config, doc_store, api_key)
+    from ragzoom.vector_factory import create_vector_index
+
+    vi = create_vector_index(
+        "python", "sqlite:///:memory:", index_config.embedding_model
+    )
+    builder = TreeBuilder(index_config, doc_store, vi, api_key)
 
     # Warm up tokenizer
     _ = builder.splitter.tokenizer.encode("warmup")

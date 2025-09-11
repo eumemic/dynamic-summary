@@ -11,11 +11,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, SecretStr
-from ragzoom.contracts.vector_index_v2 import VectorIndex as VectorIndexV2
+from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.dataflow import build_tree_dataflow
 from ragzoom.dataflow.core import ProcessingStrategy
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import TreeNode
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.services.llm_service import LLMService
 from ragzoom.splitter import TextSplitter
@@ -62,9 +62,9 @@ class TreeBuilder:
         self,
         config: IndexConfig,
         document_store: DocumentStore,
+        vector_index: VectorIndex,
         api_key: str | SecretStr = "",
         max_concurrent: int = 30,
-        vector_index: VectorIndexV2 | None = None,
     ):
         """Initialize tree builder.
 
@@ -77,17 +77,6 @@ class TreeBuilder:
         self.config = config
         self.document_store = document_store
         self.splitter = TextSplitter(config)
-        if vector_index is None:
-            # Transitional fallback: build a default vector index from environment
-            # to keep tests working while callers are updated. This will be removed
-            # before merging the refactor.
-            import os
-
-            from ragzoom.vector_factory import create_vector_index
-
-            backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-            db_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
-            vector_index = create_vector_index(backend, db_url, config.embedding_model)
         self.vector_index = vector_index
         # Convert string to SecretStr for security
         if isinstance(api_key, str) and not isinstance(api_key, SecretStr):
@@ -346,7 +335,7 @@ class TreeBuilder:
                         "right_child_id": node.right_child_id,
                         "preceding_neighbor_id": node.preceding_neighbor_id,
                         "following_neighbor_id": node.following_neighbor_id,
-                        "embedding": node.embedding,
+                        # Embeddings are not stored in SQL; kept separate for VectorIndex
                         "token_count": node.token_count,
                         "height": node.height,
                         "path": node.path,
@@ -387,6 +376,8 @@ class TreeBuilder:
             upsert_items: list[
                 tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
             ] = []
+            from typing import cast as _cast
+
             for n in tree_nodes:
                 meta = {
                     "span_start": int(n.span_start),
@@ -395,8 +386,9 @@ class TreeBuilder:
                     "document_id": n.document_id or "",
                     "is_leaf": 1 if int(getattr(n, "height", 0)) == 0 else 0,
                 }
-                if getattr(n, "embedding", None) is not None:
-                    upsert_items.append((n.id, n.embedding, meta))
+                emb = getattr(n, "embedding", None)
+                if emb is not None:
+                    upsert_items.append((n.id, _cast(list[float], emb), meta))
             if upsert_items:
                 self.vector_index.upsert(upsert_items)
 
@@ -490,10 +482,12 @@ class TreeBuilder:
         parent_id = self._generate_node_id()
 
         # Use pre-fetched nodes if provided, otherwise fetch them
+        from typing import cast as _cast
+
         if left_node is None:
-            left_node = doc_store.nodes.get(left_id)
+            left_node = _cast(TreeNode | None, doc_store.nodes.get(left_id))
         if right_id and right_node is None:
-            right_node = doc_store.nodes.get(right_id)
+            right_node = _cast(TreeNode | None, doc_store.nodes.get(right_id))
 
         if not left_node:
             logger.error(f"Failed to retrieve left child node: {left_id}")

@@ -1,10 +1,11 @@
-"""Factory for constructing VectorIndex v2 implementations from config."""
+"""Factory for constructing VectorIndex implementations from config."""
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
-from ragzoom.contracts.vector_index_v2 import VectorIndex
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.worktree_utils import (
     DEFAULT_VECTOR_DIR_NAME,
     get_default_vector_dir,
@@ -14,7 +15,7 @@ from ragzoom.worktree_utils import (
 def create_vector_index(
     backend: str, database_url: str, embedding_model: str
 ) -> VectorIndex:
-    """Create a VectorIndex v2 instance based on backend hints.
+    """Create a VectorIndex instance based on backend hints.
 
     Args:
         backend: vector backend key ("python", "chroma", "pgvector")
@@ -23,9 +24,7 @@ def create_vector_index(
     """
     b = backend.strip().lower()
     if b not in {"python", "chroma", "pgvector"}:
-        raise NotImplementedError(
-            f"Vector backend '{backend}' is not supported yet in v2"
-        )
+        raise NotImplementedError(f"Vector backend '{backend}' is not supported")
 
     # Derive a vector persistence directory near the sqlite database when possible
     persist_dir: str | None = None
@@ -34,25 +33,26 @@ def create_vector_index(
         base_dir = Path(path_part).parent
         persist_dir = str(base_dir / DEFAULT_VECTOR_DIR_NAME)
     else:
-        # Fallback to repository default location (worktree-aware)
-        persist_dir = str(get_default_vector_dir(None))
+        # For ephemeral/in-memory or non-sqlite URLs, isolate each index to avoid cross-test contamination
+        base = get_default_vector_dir(None)
+        persist_dir = str(Path(base) / f"idx-{uuid.uuid4().hex}")
 
     if b == "python":
-        from ragzoom.backends.vector_index_v2_python import PythonVectorIndexV2
+        from ragzoom.backends.vector_index_python import PythonVectorIndexAdapter
 
-        return PythonVectorIndexV2(persist_dir, embedding_model)
+        return PythonVectorIndexAdapter(persist_dir, embedding_model)
     elif b == "chroma":
         try:
-            from ragzoom.backends.vector_index_v2_chroma import ChromaVectorIndexV2
+            from ragzoom.backends.vector_index_chroma import ChromaVectorIndexAdapter
         except Exception as e:  # pragma: no cover - optional dependency
             raise ImportError(
                 "chromadb is not installed but vector backend 'chroma' was selected. "
                 "Install with `pip install chromadb` or set RAGZOOM_VECTOR_BACKEND=python."
             ) from e
         # Chroma requires directory path
-        return ChromaVectorIndexV2(persist_dir, embedding_model)  # type: ignore[arg-type]
+        return ChromaVectorIndexAdapter(persist_dir, embedding_model)
     else:
-        # pgvector backend placeholder for now
-        raise NotImplementedError(
-            "Vector backend 'pgvector' is planned but not implemented in this step."
-        )
+        # Use Postgres database URL to create pgvector-backed index
+        from ragzoom.backends.vector_index_pgvector import PgVectorIndexAdapter
+
+        return PgVectorIndexAdapter(database_url, embedding_model)
