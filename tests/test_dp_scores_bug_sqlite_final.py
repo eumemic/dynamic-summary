@@ -14,9 +14,9 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import QueryConfig
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
-from ragzoom.models import TreeNode
 from ragzoom.retrieve import RetrievalResult
 
 

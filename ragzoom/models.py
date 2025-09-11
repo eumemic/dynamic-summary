@@ -91,10 +91,6 @@ class PostgresTreeNode(Base):
         return len(self.path)
 
 
-# Backward-compatibility alias (to be removed after callers migrate)
-TreeNode = PostgresTreeNode
-
-
 class Document(Base):
     """Database model for documents."""
 

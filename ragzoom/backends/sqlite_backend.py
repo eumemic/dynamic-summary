@@ -19,8 +19,9 @@ from ragzoom.backends.sqlite_repositories import (
     SqliteNodeRepository,
 )
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import Document, TreeNode
+from ragzoom.models import Document
 from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.services.tree_navigator import TreeNavigator
