@@ -99,10 +99,17 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture(scope="session", autouse=True)
 def ensure_api_key() -> Generator[None, None, None]:
-    """Ensure API key is set for all tests."""
+    """Ensure API key and test-safe defaults are set for all tests.
+
+    - Provides a dummy OpenAI API key to avoid network.
+    - Forces the in-memory Python vector index backend by default to keep
+      tests fast and deterministic. Integration tests can override via env.
+    """
     # Set test API key for tests
     if "OPENAI_API_KEY" not in os.environ:
         os.environ["OPENAI_API_KEY"] = "test-key-for-tests"
+    # Default vector backend to python for unit tests unless explicitly overridden
+    os.environ.setdefault("RAGZOOM_VECTOR_BACKEND", "python")
     yield
     # Don't clean up - let other tests use it
 

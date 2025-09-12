@@ -20,7 +20,7 @@ def benchmark_old_way(texts: list[str], iterations: int = 100) -> float:
         for text in texts:
             # This simulates the old pattern from the codebase
             tokenizer = tiktoken.get_encoding("cl100k_base")
-            count = len(tokenizer.encode(text))
+            len(tokenizer.encode(text))
 
     return time.time() - start_time
 

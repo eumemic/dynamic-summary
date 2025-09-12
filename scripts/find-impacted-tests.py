@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: I001
 """Find impacted tests for changed Python files.
 
 Given a list of changed files, compute which tests are downstream:
@@ -12,10 +13,8 @@ Outputs a whitespace-separated list of test paths suitable for pytest.
 from __future__ import annotations
 
 import ast
-import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,13 +33,13 @@ def module_name_from_path(p: Path) -> str | None:
     return None
 
 
-def parse_imports(py_path: Path) -> Set[str]:
+def parse_imports(py_path: Path) -> set[str]:
     src = py_path.read_text(encoding="utf-8")
     try:
         tree = ast.parse(src, filename=str(py_path))
     except Exception:
         return set()
-    mods: Set[str] = set()
+    mods: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -53,9 +52,9 @@ def parse_imports(py_path: Path) -> Set[str]:
     return mods
 
 
-def build_internal_graph() -> Tuple[Dict[str, Set[str]], Dict[str, Path]]:
+def build_internal_graph() -> tuple[dict[str, set[str]], dict[str, Path]]:
     """Return (reverse_deps, module_to_path) for ragzoom.* modules."""
-    mod_to_path: Dict[str, Path] = {}
+    mod_to_path: dict[str, Path] = {}
     for p in ROOT.glob("ragzoom/**/*.py"):
         if p.name == "__init__.py":
             continue
@@ -64,21 +63,21 @@ def build_internal_graph() -> Tuple[Dict[str, Set[str]], Dict[str, Path]]:
             mod_to_path[mn] = p
 
     # forward deps: mod -> set(imported mods)
-    fwd: Dict[str, Set[str]] = {m: set() for m in mod_to_path}
+    fwd: dict[str, set[str]] = {m: set() for m in mod_to_path}
     for m, p in mod_to_path.items():
         for dep in parse_imports(p):
             if dep in fwd:
                 fwd[m].add(dep)
     # reverse deps: dep -> set(importers)
-    rev: Dict[str, Set[str]] = {m: set() for m in mod_to_path}
+    rev: dict[str, set[str]] = {m: set() for m in mod_to_path}
     for m, deps in fwd.items():
         for d in deps:
             rev[d].add(m)
     return rev, mod_to_path
 
 
-def transitive_dependents(changed: Set[str], rev: Dict[str, Set[str]]) -> Set[str]:
-    out: Set[str] = set()
+def transitive_dependents(changed: set[str], rev: dict[str, set[str]]) -> set[str]:
+    out: set[str] = set()
     stack = list(changed)
     while stack:
         m = stack.pop()
@@ -91,11 +90,11 @@ def transitive_dependents(changed: Set[str], rev: Dict[str, Set[str]]) -> Set[st
     return out
 
 
-def impacted_tests(changed_files: List[str]) -> List[str]:
+def impacted_tests(changed_files: list[str]) -> list[str]:
     changed_paths = [Path(p).resolve() for p in changed_files if p.endswith(".py")]
 
     # Always include changed tests directly
-    tests: Set[str] = set(str(p) for p in changed_paths if "/tests/" in str(p))
+    tests: set[str] = set(str(p) for p in changed_paths if "/tests/" in str(p))
 
     # Determine changed ragzoom modules
     changed_modules = {mn for p in changed_paths if (mn := module_name_from_path(p))}
@@ -128,4 +127,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -67,7 +67,8 @@ pip install ragzoom
 By default RagZoom uses SQLite (file‑backed) and a local vector index:
 
 - DB: `sqlite:///data/sqlite.db`
-- Vector index: Chroma in `data/chroma/` (if `chromadb` is installed). Otherwise set `RAGZOOM_VECTOR_BACKEND=python`.
+- Vector index (CLI): Chroma in `data/chroma/` (requires `pip install chromadb`). The CLI fails loudly if Chroma is not available.
+- Vector index (programmatic/tests): You may explicitly set `OperationalConfig(vector_backend="python")` to use an in‑memory index for tests. This adapter never persists and is not used by the CLI.
 
 Switch to PostgreSQL:
 ```bash

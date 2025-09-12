@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Analyze bad summaries from indexing runs with distribution testing."""
 
 import argparse
@@ -125,7 +126,7 @@ class BadSummaryAnalyzer:
         """
         if self.has_token_count:
             query = """
-            SELECT 
+            SELECT
                 n.id as node_id,
                 n.text as summary,
                 n.token_count as original_tokens,
@@ -161,7 +162,7 @@ class BadSummaryAnalyzer:
         else:
             # Use text length as approximation (roughly 4 chars per token)
             query = """
-            SELECT 
+            SELECT
                 n.id as node_id,
                 n.text as summary,
                 LENGTH(n.text) / 4 as original_tokens,

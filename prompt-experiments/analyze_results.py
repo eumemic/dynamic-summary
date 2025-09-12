@@ -22,7 +22,7 @@ def load_results(results_path: str = "experiments/results/raw_results.json") -> 
 
 def calculate_strategy_statistics(results: list[dict]) -> pd.DataFrame:
     """Calculate statistics for each strategy.
-    
+
     Returns:
         DataFrame with statistics per strategy
     """
@@ -68,7 +68,7 @@ def calculate_strategy_statistics(results: list[dict]) -> pd.DataFrame:
 
 def analyze_by_compression_ratio(results: list[dict]) -> pd.DataFrame:
     """Analyze performance by compression ratio.
-    
+
     Returns:
         DataFrame with statistics per strategy per compression ratio
     """
@@ -102,7 +102,7 @@ def analyze_by_compression_ratio(results: list[dict]) -> pd.DataFrame:
 
 def analyze_by_input_size(results: list[dict]) -> pd.DataFrame:
     """Analyze performance by input size category.
-    
+
     Returns:
         DataFrame with statistics per strategy per input size category
     """
@@ -150,7 +150,7 @@ def analyze_by_input_size(results: list[dict]) -> pd.DataFrame:
 
 def test_nice_fractions_hypothesis(results: list[dict]) -> dict[str, Any]:
     """Test if 'nice' fractions perform better than 'messy' ones.
-    
+
     Returns:
         Dictionary with analysis results
     """
@@ -161,7 +161,6 @@ def test_nice_fractions_hypothesis(results: list[dict]) -> dict[str, Any]:
 
     # Define nice and messy ratios
     nice_ratios = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    messy_ratios = [0.37, 0.42, 0.58, 0.63, 0.73]
 
     # Categorize
     df["is_nice"] = df["compression_ratio"].apply(lambda x: x in nice_ratios)
@@ -190,7 +189,7 @@ def test_nice_fractions_hypothesis(results: list[dict]) -> dict[str, Any]:
 
 def identify_compensation_factors(results: list[dict]) -> pd.DataFrame:
     """Identify systematic biases that can be compensated for.
-    
+
     Returns:
         DataFrame with compensation factors per strategy
     """
@@ -222,7 +221,7 @@ def identify_compensation_factors(results: list[dict]) -> pd.DataFrame:
 
 def create_visualizations(results: list[dict], output_dir: str = "experiments/results"):
     """Create visualization plots for the analysis.
-    
+
     Args:
         results: List of experiment results
         output_dir: Directory to save visualizations
@@ -328,7 +327,7 @@ def create_visualizations(results: list[dict], output_dir: str = "experiments/re
 
 def generate_report(results_path: str = "experiments/results/raw_results.json"):
     """Generate a comprehensive analysis report.
-    
+
     Args:
         results_path: Path to the raw results JSON file
     """
@@ -338,7 +337,7 @@ def generate_report(results_path: str = "experiments/results/raw_results.json"):
 
     # Calculate statistics
     strategy_stats = calculate_strategy_statistics(results)
-    ratio_stats = analyze_by_compression_ratio(results)
+    # ratio_stats currently not used; can be added to report later
     size_stats = analyze_by_input_size(results)
     nice_fractions = test_nice_fractions_hypothesis(results)
     compensation = identify_compensation_factors(results)
