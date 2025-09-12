@@ -576,7 +576,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
 
     def _on_timeout(signum: int, frame: object) -> None:
         try:
-            import faulthandler  # type: ignore
+            import faulthandler
 
             faulthandler.dump_traceback()
         except Exception:

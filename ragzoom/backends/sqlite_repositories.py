@@ -179,7 +179,7 @@ class SqliteNodeRepository:
                     session.expunge(row)
                 except Exception:
                     pass
-            return row  # type: ignore[return-value]
+            return row
 
     def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
         if not node_ids:
@@ -333,8 +333,8 @@ class SqliteNodeRepository:
             )
             rows = session.execute(stmt).scalars().all()
             if depth_max is None:
-                return rows  # type: ignore[return-value]
-            return [r for r in rows if len(r.path) <= depth_max]  # type: ignore[misc]
+                return cast(list[TreeNode], list(rows))
+            return cast(list[TreeNode], [r for r in rows if len(r.path) <= depth_max])
 
     def count_pinned_for_document(self, document_id: str | None) -> int:
         with self.SessionLocal() as session:
@@ -352,8 +352,8 @@ class SqliteNodeRepository:
             stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.is_pinned == 1)
             rows = session.execute(stmt).scalars().all()
             if depth_max is None:
-                return rows  # type: ignore[return-value]
-            return [r for r in rows if len(r.path) <= depth_max]  # type: ignore[misc]
+                return cast(list[TreeNode], list(rows))
+            return cast(list[TreeNode], [r for r in rows if len(r.path) <= depth_max])
 
     # --- Mutations ---
     def pin_node(self, node_id: str) -> None:

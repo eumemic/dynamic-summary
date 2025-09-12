@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.repositories.node_repository import NodeRepository
 
 logger = logging.getLogger(__name__)
 
@@ -122,4 +122,4 @@ class DocumentService:
 
 
 class HasNodeRepo(Protocol):
-    node_repo: NodeRepository
+    node_repo: NodeRepositoryProtocol

@@ -3,7 +3,7 @@
 from typing import cast
 from unittest.mock import MagicMock
 
-from ragzoom.models import PostgresTreeNode as TreeNode
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.validate import (
     validate_chunk_sizes,
     validate_document_coverage,

@@ -12,9 +12,9 @@ import pytest
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
-from ragzoom.models import PostgresTreeNode as TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
 
 
@@ -25,11 +25,14 @@ def mock_nodes() -> tuple[MagicMock, MagicMock]:
     left_node.token_count = 150
     left_node.span_start = 0
     left_node.span_end = 100
+    # Provide minimal path attribute required by _process_node_pair logic
+    left_node.path = "0"
 
     right_node = MagicMock(spec=TreeNode)
     right_node.token_count = 200
     right_node.span_start = 100
     right_node.span_end = 250
+    right_node.path = "1"
 
     return left_node, right_node
 

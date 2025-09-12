@@ -9,7 +9,6 @@ if TYPE_CHECKING:
 
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import PostgresTreeNode as ORMTreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +48,7 @@ def validate(validation_fn: Callable[[], str | None], context: str = "") -> None
 
 def _validate_with_nodes(
     doc_store: DocumentStore,
-    validator: Callable[[Sequence[ORMTreeNode]], str | None],
+    validator: Callable[[Sequence[TreeNode]], str | None],
     empty_error: str = "No nodes found for document",
 ) -> str | None:
     """Base validation helper that handles common node retrieval.
@@ -69,7 +68,7 @@ def _validate_with_nodes(
 
 
 def validate_document_coverage(
-    original_text: str, leaf_nodes: Sequence[ORMTreeNode]
+    original_text: str, leaf_nodes: Sequence[TreeNode]
 ) -> str | None:
     """Validate that leaf nodes cover the entire document.
 
@@ -114,7 +113,7 @@ def validate_document_coverage(
 
 
 def validate_chunk_sizes(
-    leaf_nodes: Sequence[ORMTreeNode], target_tokens: int, tolerance: float = 0.2
+    leaf_nodes: Sequence[TreeNode], target_tokens: int, tolerance: float = 0.2
 ) -> str | None:
     """Validate that chunk sizes are within tolerance of target.
 
@@ -385,7 +384,7 @@ def validate_tree_is_left_balanced(doc_store: DocumentStore) -> str | None:
     No node can have only a right child without a left child.
     """
 
-    def check_balance(nodes: Sequence[ORMTreeNode]) -> str | None:
+    def check_balance(nodes: Sequence[TreeNode]) -> str | None:
         # A single-node tree is valid
         if len(nodes) == 1:
             node = nodes[0]
@@ -427,9 +426,9 @@ def validate_equal_leaf_depth(doc_store: DocumentStore) -> str | None:
     mixing of raw text and summaries at different heights.
     """
 
-    def check_leaf_depths(nodes: Sequence[ORMTreeNode]) -> str | None:
+    def check_leaf_depths(nodes: Sequence[TreeNode]) -> str | None:
         # Build node lookup and identify leaf nodes
-        node_lookup: dict[str, ORMTreeNode] = {node.id: node for node in nodes}
+        node_lookup: dict[str, TreeNode] = {node.id: node for node in nodes}
         leaf_nodes = []
 
         for node in nodes:
@@ -441,7 +440,7 @@ def validate_equal_leaf_depth(doc_store: DocumentStore) -> str | None:
             return "No leaf nodes found"
 
         # Find root node (node with no parent)
-        root_node: ORMTreeNode | None = None
+        root_node: TreeNode | None = None
         for node in nodes:
             if node.is_root():
                 root_node = node

@@ -1239,10 +1239,19 @@ class TestStore:
         doc_store.nodes.add_batch(nodes)
         doc_store.nodes.update_parent_references_batch(parent_refs)
         # Cast to exact expected type for upsert
+        from typing import cast
+
+        import numpy as np
+        from numpy.typing import NDArray
+
         typed_entries: list[tuple[str, list[float], dict[str, object]]] = [
             (entry[0], list(entry[1]), entry[2]) for entry in vector_entries
         ]
-        vector_index.upsert(typed_entries)  # type: ignore[attr-defined,arg-type]
+        typed_entries_u = cast(
+            list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
+            typed_entries,
+        )
+        vector_index.upsert(typed_entries_u)
 
         # Test depths
         for i in range(10):
