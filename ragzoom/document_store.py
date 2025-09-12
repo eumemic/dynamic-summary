@@ -10,9 +10,9 @@ import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy.orm import Session
 
-from ragzoom.models import PostgresTreeNode as TreeNode
-from ragzoom.repositories.document_repository import DocumentRepository
-from ragzoom.repositories.node_repository import NodeRepository
+from ragzoom.contracts.document_repository import DocumentRepository
+from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.services.tree_navigator import TreeNavigator
 
 if TYPE_CHECKING:
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class DocumentNodeRepository:
     """Node repository automatically scoped to a specific document."""
 
-    def __init__(self, document_id: str | None, node_repo: NodeRepository):
+    def __init__(self, document_id: str | None, node_repo: NodeRepositoryProtocol):
         self.document_id = document_id
         self._repo = node_repo
 
@@ -43,10 +43,17 @@ class DocumentNodeRepository:
         is_left_child: bool | None = None,
     ) -> TreeNode:
         """Add a node scoped to this document."""
+        # Ensure embedding type matches repository protocol
+        emb: list[float]
+        if isinstance(embedding, np.ndarray):
+            emb = [float(x) for x in embedding.tolist()]
+        else:
+            emb = [float(x) for x in embedding]
+
         return self._repo.add_node(
             node_id=node_id,
             text=text,
-            embedding=embedding,
+            embedding=emb,
             span_start=span_start,
             span_end=span_end,
             parent_id=parent_id,
@@ -69,10 +76,8 @@ class DocumentNodeRepository:
         session: Session | None = None,
     ) -> list[TreeNode]:
         """Add multiple nodes to this document in batch."""
-        # Ensure all nodes have the document_id set and convert to NodeDataDict format
-        from ragzoom.repositories.node_repository import NodeDataDict
-
-        processed_data: list[NodeDataDict] = []
+        # Ensure all nodes have the document_id set
+        processed_data: list[dict[str, object]] = []
         for node_data in nodes_data:
             # Create a copy and set document_id
             processed_node = node_data.copy()
@@ -243,7 +248,7 @@ class DocumentStore:
     def __init__(
         self,
         document_id: str | None,
-        node_repo: NodeRepository,
+        node_repo: NodeRepositoryProtocol,
         tree_navigator: TreeNavigator,
         doc_repo: DocumentRepository,
     ):
@@ -354,19 +359,8 @@ class DocumentStore:
             node_id: ID of the node to update
             parent_id: New parent ID
         """
-        with self._open_session() as session:
-            from ragzoom.models import PostgresTreeNode as TreeNodeModel
-
-            session.query(TreeNodeModel).filter_by(id=node_id).update(
-                {"parent_id": parent_id}
-            )
-            session.commit()
-
-            # Invalidate the cache entry for this node since we've updated it
-            if node_id in self._node_repo.cache_manager.cache:
-                del self._node_repo.cache_manager.cache[node_id]
-                if node_id in self._node_repo.cache_manager.cache_order:
-                    self._node_repo.cache_manager.cache_order.remove(node_id)
+        # Delegate to repository which handles cache invalidation
+        self._node_repo.update_parent_references_batch([(node_id, parent_id)])
 
     def clear(self) -> int:
         """Delete all nodes for this document.
@@ -391,17 +385,12 @@ class DocumentStore:
         if not self.document_id:
             raise ValueError("Cannot ensure document exists without a document_id")
 
-        from ragzoom.models import Document
-
-        with self._node_repo.db_manager.SessionLocal() as session:
-            # Check if document already exists
-            doc = session.query(Document).filter_by(id=self.document_id).first()
-
-            if not doc:
-                raise RuntimeError(
-                    f"Document '{self.document_id}' does not exist. "
-                    "Documents must be created before operations can be performed on them."
-                )
+        doc = self._doc_repo.get_document_by_id(self.document_id)
+        if not doc:
+            raise RuntimeError(
+                f"Document '{self.document_id}' does not exist. "
+                "Documents must be created before operations can be performed on them."
+            )
 
     def get_metadata(self) -> "Document | None":
         """Get the document metadata record.
@@ -490,42 +479,22 @@ class DocumentStore:
             logger.debug("No document_id provided for token statistics")
             return None
 
-        # Use SQL aggregation for efficiency on large documents
-        from ragzoom.models import PostgresTreeNode as TreeNodeModel
-
-        with self._open_session() as session:
-            # Query for average token count of leaf nodes (nodes with no children)
-            result = (
-                session.query(TreeNodeModel.token_count)
-                .filter(
-                    TreeNodeModel.document_id == self.document_id,
-                    TreeNodeModel.left_child_id.is_(None),
-                    TreeNodeModel.right_child_id.is_(None),
-                )
-                .all()
-            )
-
-            if not result:
-                logger.debug(
-                    f"No leaf nodes found for document {self.document_id} when calculating average tokens"
-                )
-                return None
-
-            # Calculate average from results
-            total_tokens = sum(row[0] for row in result if row[0] is not None)
-            count = len([r for r in result if r[0] is not None])
-
-            if count == 0:
-                logger.warning(
-                    f"Leaf nodes exist but have no token counts for document {self.document_id}"
-                )
-                return None
-
-            avg_tokens: int = total_tokens // count
+        leaves = self.nodes.get_leaves()
+        if not leaves:
             logger.debug(
-                f"Calculated average leaf tokens: {avg_tokens} from {count} leaves for document {self.document_id}"
+                f"No leaf nodes found for document {self.document_id} when calculating average tokens"
             )
-            return avg_tokens
+            return None
+
+        total_tokens = sum(int(n.token_count) for n in leaves)
+        count = len(leaves)
+        if count == 0:
+            return None
+        avg_tokens: int = total_tokens // count
+        logger.debug(
+            f"Calculated average leaf tokens: {avg_tokens} from {count} leaves for document {self.document_id}"
+        )
+        return avg_tokens
 
     # Internal helper to obtain a SQLAlchemy session from either backend type
     def _open_session(self) -> AbstractContextManager[Session]:

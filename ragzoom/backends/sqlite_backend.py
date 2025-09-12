@@ -18,11 +18,11 @@ from ragzoom.backends.sqlite_repositories import (
     SqliteDocumentRepository,
     SqliteNodeRepository,
 )
+from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
 from ragzoom.models import Document
-from ragzoom.repositories.node_repository import NodeRepository
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.services.tree_navigator import TreeNavigator
 from ragzoom.utils.locks import FileDocumentLock, document_lock_path
@@ -70,7 +70,7 @@ class SQLiteStorageBackend(StorageBackend):
         self.node_repo = SqliteNodeRepository(self.db, self.cache)
         self.doc_repo = SqliteDocumentRepository(self.db)
         # Tree navigation uses repository path operations
-        self.tree_nav = TreeNavigator(cast(NodeRepository, self.node_repo))
+        self.tree_nav = TreeNavigator(cast(NodeRepositoryProtocol, self.node_repo))
         # Vector search is handled by independent VectorIndex; no search shim here
 
     # Removed internal vector index; backends do not manage vector storage
@@ -87,9 +87,9 @@ class SQLiteStorageBackend(StorageBackend):
         # Compose a DocumentStore with SQLite-backed repositories
         return DocumentStore(
             document_id=document_id,
-            node_repo=self.node_repo,  # type: ignore[arg-type]
+            node_repo=self.node_repo,
             tree_navigator=self.tree_nav,
-            doc_repo=self.doc_repo,  # type: ignore[arg-type]
+            doc_repo=self.doc_repo,
         )
 
     # jscpd:ignore-end

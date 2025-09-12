@@ -482,12 +482,10 @@ class TreeBuilder:
         parent_id = self._generate_node_id()
 
         # Use pre-fetched nodes if provided, otherwise fetch them
-        from typing import cast as _cast
-
         if left_node is None:
-            left_node = _cast(TreeNode | None, doc_store.nodes.get(left_id))
+            left_node = doc_store.nodes.get(left_id)
         if right_id and right_node is None:
-            right_node = _cast(TreeNode | None, doc_store.nodes.get(right_id))
+            right_node = doc_store.nodes.get(right_id)
 
         if not left_node:
             logger.error(f"Failed to retrieve left child node: {left_id}")

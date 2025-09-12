@@ -7,8 +7,9 @@ from numpy.typing import NDArray
 from openai import AsyncOpenAI
 
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
-from ragzoom.models import PostgresTreeNode as TreeNode
+from ragzoom.models import PostgresTreeNode as ORMTreeNode
 from tests.conftest import BackwardCompatibilityConfig
 
 
@@ -18,10 +19,10 @@ class TestFollowingNeighbor:
     def test_tree_node_has_following_neighbor_id_column(self) -> None:
         """TreeNode model should have following_neighbor_id column."""
         # Verify the column exists on the model
-        assert hasattr(TreeNode, "following_neighbor_id")
+        assert hasattr(ORMTreeNode, "following_neighbor_id")
 
         # Verify it's a mapped column
-        column = TreeNode.__table__.columns.get("following_neighbor_id")
+        column = ORMTreeNode.__table__.columns.get("following_neighbor_id")
         assert column is not None
         assert (
             column.nullable is True

@@ -156,14 +156,6 @@ class Retriever:
             k_candidates,
             {"document_id": effective_doc_id} if effective_doc_id else None,
         )
-        # Fallback: if vector index returns no candidates, try using the document root
-        if not vec_candidates:
-            try:
-                root = self.document_store.tree.get_root()
-                if root is not None:
-                    vec_candidates = self.vector_index.get_vectors([root.id])
-            except Exception:
-                vec_candidates = []
         if telemetry_collector:
             telemetry_collector.end_phase("search")
             telemetry_collector.start_phase()
@@ -178,8 +170,6 @@ class Retriever:
             num_seeds,
             self.query_config.mmr_lambda,
         )
-        if not selected_ids and vec_candidates:
-            selected_ids = [vec_candidates[0].id]
 
         # Build legacy-shaped candidates for scoring service compatibility
         rels = sim.relevance_scores(query_embedding, vec_candidates)
@@ -227,46 +217,13 @@ class Retriever:
             telemetry_collector.end_phase("scoring")
             telemetry_collector.start_phase()
 
-        # Handle empty coverage map case with a conservative fallback
-        if not coverage_map:
-            try:
-                leaves = self.document_store.nodes.get_leaves()
-            except Exception:
-                leaves = []
-            if leaves:
-                # Use left-to-right smallest tiling of a few leaves
-                leaves.sort(key=lambda n: n.span_start)
-                k_fallback = max(1, int(num_seeds or 1))
-                tiling_ids = [n.id for n in leaves[:k_fallback]]
-                from typing import cast as _cast
-
-                nodes_map = _cast(
-                    dict[str, TreeNode], {n.id: n for n in leaves[:k_fallback]}
-                )
-                return RetrievalResult(
-                    node_ids=selected_ids,
-                    scores=scores,
-                    coverage_map={tid: True for tid in tiling_ids},
-                    tiling=tiling_ids,
-                    nodes=nodes_map,
-                )
-            return RetrievalResult(
-                node_ids=selected_ids,
-                scores=scores,
-                coverage_map=coverage_map,
-                tiling=[],
-                nodes={},
-            )
-
         # Load all nodes in coverage map
         nodes: dict[str, TreeNode] = {}
         node_ids_to_load = list(coverage_map.keys())
         if node_ids_to_load:
             loaded_nodes = self.document_store.nodes.get_nodes(node_ids_to_load)
-            from typing import cast as _cast
-
             for node in loaded_nodes:
-                nodes[node.id] = _cast(TreeNode, node)
+                nodes[node.id] = node
 
         # Find the root node
         root_id = None

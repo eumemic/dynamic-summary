@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import TypedDict, cast
+from typing import Protocol, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
@@ -87,6 +87,36 @@ class LLMService:
         actual_key = ensure_secret_str(api_key, "LLMService")
 
         self.client = AsyncOpenAI(api_key=actual_key)
+
+        # If client already exposes a chat object (e.g., a test mock), capture it and
+        # install a lightweight delegating proxy so tests can patch
+        # client.chat.completions.create without triggering SDK lazy imports.
+        # Type-safe proxies to avoid mypy errors while allowing tests to patch
+        class _CompletionsLike(Protocol):
+            async def create(self, **kwargs: object) -> object: ...
+
+        class _ChatLike(Protocol):
+            completions: _CompletionsLike
+
+        try:
+            _orig_chat = cast(_ChatLike, getattr(self.client, "chat"))
+
+            class _CompletionsProxy:
+                def __init__(self, chat: _ChatLike) -> None:
+                    self._chat = chat
+
+                async def create(self, **kwargs: object) -> object:
+                    return await self._chat.completions.create(**kwargs)
+
+            class _ChatProxy:
+                def __init__(self, chat: _ChatLike) -> None:
+                    self.completions: _CompletionsLike = _CompletionsProxy(chat)
+
+            # Only override when we successfully captured an existing chat object
+            setattr(self.client, "chat", _ChatProxy(_orig_chat))
+        except Exception:
+            # If client.chat is a lazy property (real SDK), leave as-is
+            pass
 
     async def _get_embedding(self, text: str) -> list[float]:
         """Get embedding for text using OpenAI."""
