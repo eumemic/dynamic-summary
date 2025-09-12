@@ -78,6 +78,24 @@ ragzoom index document.txt
 ```
 Docker auto-start is used only for Postgres if you use the default local URL. For SQLite, Docker is not required.
 
+### Backend Matrix
+
+- Storage: SQLite by default. PostgreSQL optional for multi-user or external DB setups.
+- Vector index: Chroma by default for CLI; Python in-memory adapter for tests/dev.
+
+- SQLite + Chroma:
+  - Default for CLI and typical local runs
+  - Requires `pip install chromadb`
+  - Persists vectors under `data/chroma/`
+- SQLite + Python (in-memory):
+  - Tests/dev only; set `RAGZOOM_VECTOR_BACKEND=python` or `OperationalConfig(vector_backend="python")`
+  - Non-persistent; fastest path; no extra dependencies
+- PostgreSQL storage:
+  - Enable with `RAGZOOM_BACKEND=postgres` and `RAGZOOM_DATABASE_URL`
+  - Vector index still selected via `RAGZOOM_VECTOR_BACKEND` (`chroma` recommended for persistence)
+
+Policy: No hidden fallbacks. If `chroma` is selected but `chromadb` is not installed, the system raises `ImportError` with guidance to install the dependency or switch to the Python in-memory adapter.
+
 #### Troubleshooting
 
 ```bash
