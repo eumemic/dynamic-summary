@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ragzoom.dynamic_tiling import NodeInfo
@@ -57,11 +57,21 @@ class CharacterPositionResolver(PositionResolver):
     def get_node_position_in_tiling(
         self, node_id: str, node_index: int
     ) -> tuple[float, float]:
-        if node_id not in self.preloaded_nodes:
+        node: TreeNode | None = None
+        if node_id in self.preloaded_nodes:
+            node = self.preloaded_nodes[node_id]
+        else:
+            # Defensive fallback: fetch from store to avoid visualization crash
+            getter = getattr(self.doc_store, "nodes", None)
+            if getter is not None:
+                try:
+                    node = getter.get(node_id)
+                except Exception:
+                    node = None
+        if node is None:
             raise ValueError(
-                f"Node {node_id} not found in preloaded_nodes - invariant violated"
+                f"Node {node_id} not found for visualization (missing in cache and store)"
             )
-        node = self.preloaded_nodes[node_id]
         return (
             float(node.span_start - self.doc_start),
             float(node.span_end - self.doc_start),
@@ -129,13 +139,22 @@ class TokenPositionResolver(PositionResolver):
         self.node_positions: dict[str, tuple[float, float]] = {}
         self._compute_node_positions()
 
-    def _get_node(self, node_id: str) -> "TreeNode":
+    def _get_node(self, node_id: str) -> TreeNode:
         """Get node from preloaded cache - must be present (correct-by-construction)."""
-        if node_id not in self.preloaded_nodes:
-            raise ValueError(
-                f"Node {node_id} not found in preloaded_nodes - invariant violated"
-            )
-        return self.preloaded_nodes[node_id]
+        if node_id in self.preloaded_nodes:
+            return self.preloaded_nodes[node_id]
+        # Defensive fallback: fetch from store to avoid visualization crash
+        nodes_api = getattr(self.doc_store, "nodes", None)
+        if nodes_api is not None:
+            try:
+                fetched = nodes_api.get(node_id)
+            except Exception:
+                fetched = None
+            if fetched is not None:
+                return cast(TreeNode, fetched)
+        raise ValueError(
+            f"Node {node_id} not found for visualization (missing in cache and store)"
+        )
 
     def get_extent(self) -> float:
         return self.total_tokens
@@ -314,19 +333,31 @@ def build_ascii_tree(
 
             node_infos = []
             for node_id in tiling:
-                if not preloaded_nodes or node_id not in preloaded_nodes:
+                if preloaded_nodes and node_id in preloaded_nodes:
+                    node_info_node = preloaded_nodes[node_id]
+                else:
+                    # Defensive fallback: fetch from store
+                    node_info_node = None
+                    nodes_api = getattr(doc_store, "nodes", None)
+                    if nodes_api is not None:
+                        try:
+                            fetched = nodes_api.get(node_id)
+                        except Exception:
+                            fetched = None
+                        if fetched is not None:
+                            node_info_node = cast(TreeNode, fetched)
+                if node_info_node is None:
                     raise ValueError(
-                        f"Node {node_id} not found in preloaded_nodes - invariant violated"
+                        f"Node {node_id} not found for visualization (missing in cache and store)"
                     )
-                node = preloaded_nodes[node_id]
 
-                token_cost = node.token_count
+                token_cost = node_info_node.token_count
                 node_infos.append(
                     NodeInfo(
                         node_id=node_id,
                         token_cost=token_cost,
-                        span_start=node.span_start,
-                        span_end=node.span_end,
+                        span_start=node_info_node.span_start,
+                        span_end=node_info_node.span_end,
                     )
                 )
 
