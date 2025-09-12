@@ -53,6 +53,20 @@ logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
 
 def handle_cli_error(e: Exception, operation: str) -> None:
     """Handle CLI errors with appropriate user-friendly messages."""
+    # Helpful guidance for optional dependencies
+    msg = str(e)
+    if isinstance(e, ImportError) and "chromadb" in msg.lower():
+        click.echo(
+            "\n❌ Missing optional dependency for Chroma.\n\n"
+            "You selected the Chroma vector index, but 'chromadb' is not installed.\n"
+            "Fix one of the following:\n"
+            "  • pip install ragzoom[chroma]\n"
+            "  • pip install chromadb\n"
+            "  • Or switch to in-memory vector index: export RAGZOOM_VECTOR_BACKEND=python\n\n"
+            f"Technical error: {e}",
+            err=True,
+        )
+        sys.exit(1)
     if isinstance(e, DatabaseError):
         click.echo(
             f"\n❌ Database error during {operation}.\n\n"
@@ -1026,10 +1040,23 @@ def doctor() -> None:
     # Check Docker availability (only if using postgres backend)
     from ragzoom.config import OperationalConfig
 
-    _cfg = OperationalConfig(vector_backend="chroma")
+    chroma_available = True
+    try:
+        _cfg = OperationalConfig(vector_backend="chroma")
+    except ImportError:
+        chroma_available = False
+        # Fall back to python vector backend for diagnostics so doctor can continue
+        _cfg = OperationalConfig(vector_backend="python")
+
     if _cfg.backend == "sqlite":
         click.echo("✅ Backend: SQLite (file-backed)")
         click.echo("   Skipping Docker checks")
+        # Report vector index availability
+        if chroma_available:
+            click.echo("✅ Vector index: Chroma available")
+        else:
+            click.echo("⚠️  Vector index: Chroma not installed")
+            click.echo("   Install with: pip install chromadb")
     else:
         try:
             result = subprocess.run(

@@ -26,8 +26,6 @@ dependencies = [
     "python-dotenv==1.1.1",
     "httpx==0.28.1",
     "psutil==7.0.0",
-    "pgvector==0.4.1",
-    "psycopg[binary]==3.2.9",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -50,6 +48,13 @@ dev = [
     "types-psutil",
     "types-seaborn",
     "tomli>=1.0.0; python_version < '3.11'",
+]
+chroma = [
+    "chromadb>=0.5.0",
+]
+postgres = [
+    "psycopg[binary]==3.2.9",
+    "pgvector==0.4.1",
 ]
 
 [project.scripts]
