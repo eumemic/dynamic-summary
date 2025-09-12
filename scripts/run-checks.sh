@@ -191,7 +191,10 @@ should_skip() {
 
 # Default targets if none specified (always lint/typecheck code and tests)
 if [[ -z "$TARGETS" ]]; then
-    TARGETS="ragzoom tests"
+    # Always lint library, tests, and developer scripts/experiments.
+    # Mypy uses its own explicit targets (ragzoom tests), so this only widens
+    # Ruff/Black scope without changing type-check coverage.
+    TARGETS="ragzoom tests scripts prompt-experiments"
 fi
 
 # Track overall success and auto-fixes
