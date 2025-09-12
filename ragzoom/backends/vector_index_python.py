@@ -46,8 +46,8 @@ class PythonVectorIndexAdapter(VectorIndex):
         self,
         items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
     ) -> None:
-        # Avoid disk I/O in test/dev by not persisting on every upsert
-        self._idx.upsert(items, persist=False)
+        # Persist vectors so query processes (possibly in fresh processes) can reuse the index
+        self._idx.upsert(items, persist=True)
 
     def delete(
         self,

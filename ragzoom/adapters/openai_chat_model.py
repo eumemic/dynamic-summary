@@ -6,6 +6,7 @@ from typing import Literal, cast
 from typing import cast as _cast
 
 from openai import AsyncOpenAI
+from openai._types import NOT_GIVEN, NotGiven
 from openai.types.chat import ChatCompletionMessageParam
 
 from ragzoom.contracts.chat_model import ChatModel, ChatResult, Message, UsageInfo
@@ -31,16 +32,24 @@ class OpenAIChatModel(ChatModel):
         # Convert provider-neutral Message to OpenAI's param shape
         oa_messages = cast(list[ChatCompletionMessageParam], messages)
 
+        temp_arg: float | NotGiven | None = (
+            float(temperature) if temperature is not None else NOT_GIVEN
+        )
+        max_tokens_arg: int | NotGiven | None = (
+            int(max_tokens) if max_tokens is not None else NOT_GIVEN
+        )
+        reasoning_arg: Literal["minimal", "low", "medium", "high"] | NotGiven | None = (
+            _cast(Literal["minimal", "low", "medium", "high"], reasoning_effort)
+            if reasoning_effort is not None
+            else NOT_GIVEN
+        )
+
         response = await self._client.chat.completions.create(
             model=self._model_id,
             messages=oa_messages,
-            temperature=float(temperature) if temperature is not None else None,
-            max_tokens=int(max_tokens) if max_tokens is not None else None,
-            reasoning_effort=(
-                _cast(Literal["minimal", "low", "medium", "high"], reasoning_effort)
-                if reasoning_effort is not None
-                else None
-            ),
+            temperature=temp_arg,
+            max_tokens=max_tokens_arg,
+            reasoning_effort=reasoning_arg,
         )
 
         content = response.choices[0].message.content or ""
