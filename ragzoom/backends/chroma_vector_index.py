@@ -15,6 +15,7 @@ from typing import Literal, cast
 
 import numpy as np
 from numpy.typing import NDArray
+from typing_extensions import TypedDict
 
 try:
     import logging
@@ -83,19 +84,32 @@ class ChromaVectorIndex:
             for k, v in where.items():
                 cw[k] = v if isinstance(v, dict) else {"$eq": v}
             where_param = cw
-        res = self._collection.query(
-            query_embeddings=[cast(Sequence[float], emb)],
-            n_results=n_results,
-            include=include,
-            where=where_param,  # type: ignore[arg-type]
+
+        class _QueryResult(TypedDict, total=False):
+            ids: Sequence[Sequence[str]]
+            distances: Sequence[Sequence[float]]
+            metadatas: Sequence[Sequence[Mapping[str, str | int | float | bool | None]]]
+
+        res = cast(
+            _QueryResult,
+            self._collection.query(
+                query_embeddings=[cast(Sequence[float], emb)],
+                n_results=n_results,
+                include=include,
+                where=where_param,  # type: ignore[arg-type]
+            ),
         )
-        # Mypy types for chroma response are loose; cast progressively
-        ids = (res.get("ids") or [[]])[0] if res else []
-        dists = (res.get("distances") or [[]])[0] if res else []
-        metas = cast(
-            list[list[dict[str, str | int | float | bool | None]]],
-            res.get("metadatas", [[]]) if res else [[]],
-        )[0]
+        # Normalize response fields
+        ids_nested = res.get("ids")
+        ids = list(ids_nested[0]) if ids_nested else []
+        dists_nested = res.get("distances")
+        dists = list(dists_nested[0]) if dists_nested else []
+        metas_nested = res.get("metadatas")
+        metas = (
+            [dict(m) for m in metas_nested[0]]
+            if metas_nested and len(metas_nested) > 0
+            else []
+        )
         out: list[tuple[str, float, dict[str, str | int | float | bool | None]]] = []
         for i, node_id in enumerate(ids):
             # Convert distance to similarity ~ 1/(1+d)
