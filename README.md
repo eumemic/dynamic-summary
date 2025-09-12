@@ -58,8 +58,22 @@ ragzoom doctor
 
 ### Install from PyPI
 
+Recommended (includes Chroma for the default CLI vector index):
+
+```bash
+pip install "ragzoom[chroma]"
+```
+
+Base install (no optional backends):
+
 ```bash
 pip install ragzoom
+```
+
+PostgreSQL extras (when using a Postgres storage backend):
+
+```bash
+pip install "ragzoom[postgres]"
 ```
 
 ### Backend Selection
@@ -67,7 +81,7 @@ pip install ragzoom
 By default RagZoom uses SQLite (file‑backed) and a local vector index:
 
 - DB: `sqlite:///data/sqlite.db`
-- Vector index (CLI): Chroma in `data/chroma/` (requires `pip install chromadb`). The CLI fails loudly if Chroma is not available.
+- Vector index (CLI): Chroma in `data/chroma/` (requires `pip install ragzoom[chroma]` or `pip install chromadb`). The CLI fails loudly if Chroma is not available.
 - Vector index (programmatic/tests): You may explicitly set `OperationalConfig(vector_backend="python")` to use an in‑memory index for tests. This adapter never persists and is not used by the CLI.
 
 Switch to PostgreSQL:
@@ -85,13 +99,14 @@ Docker auto-start is used only for Postgres if you use the default local URL. Fo
 
 - SQLite + Chroma:
   - Default for CLI and typical local runs
-  - Requires `pip install chromadb`
+  - Requires `pip install ragzoom[chroma]` (or `pip install chromadb`)
   - Persists vectors under `data/chroma/`
 - SQLite + Python (in-memory):
   - Tests/dev only; set `RAGZOOM_VECTOR_BACKEND=python` or `OperationalConfig(vector_backend="python")`
   - Non-persistent; fastest path; no extra dependencies
 - PostgreSQL storage:
   - Enable with `RAGZOOM_BACKEND=postgres` and `RAGZOOM_DATABASE_URL`
+  - Install extras: `pip install ragzoom[postgres]`
   - Vector index still selected via `RAGZOOM_VECTOR_BACKEND` (`chroma` recommended for persistence)
 
 Policy: No hidden fallbacks. If `chroma` is selected but `chromadb` is not installed, the system raises `ImportError` with guidance to install the dependency or switch to the Python in-memory adapter.
