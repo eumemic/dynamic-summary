@@ -45,7 +45,13 @@ class ChromaVectorIndex:
 
     def __init__(self, persist_dir: str) -> None:
         # Use persistent client to keep data across runs
-        self._client = chromadb.PersistentClient(path=persist_dir)
+        try:
+            settings = chromadb.config.Settings(anonymized_telemetry=False)
+            self._client = chromadb.PersistentClient(
+                path=persist_dir, settings=settings
+            )
+        except Exception:
+            self._client = chromadb.PersistentClient(path=persist_dir)
         self._collection = self._client.get_or_create_collection(
             name="ragzoom",
             metadata={"hnsw:space": "cosine"},

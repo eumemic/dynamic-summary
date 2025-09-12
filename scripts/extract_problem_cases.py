@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Extract problematic summarization cases from database."""
 
 import argparse
@@ -35,7 +36,7 @@ def extract_problem_cases(
     max_cases: int = 50
 ):
     """Extract problematic cases from database using telemetry config.
-    
+
     Args:
         telemetry_path: Path to telemetry JSON (for config only)
         db_path: Path to ragzoom.db
@@ -65,7 +66,7 @@ def extract_problem_cases(
     conn.row_factory = sqlite3.Row
 
     query = """
-    SELECT 
+    SELECT
         n.*,
         (n.token_count - ?) as divergence,
         (n.token_count - ?) * 100.0 / ? as divergence_pct

@@ -16,7 +16,8 @@ from ragzoom.vector_api import MetaDict, Vector
 
 class PythonVectorIndexAdapter(VectorIndex):
     def __init__(self, persist_dir: str | None, model_id: str) -> None:
-        # Intentionally ignore persist_dir: PythonVectorIndex is in-memory only
+        # Intentionally ignore persist_dir: PythonVectorIndex is in-memory only and
+        # never persists to disk. This adapter is intended for tests/dev only.
         self._idx = PythonVectorIndex(None)
         self._model_id = model_id
 

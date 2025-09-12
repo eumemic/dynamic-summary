@@ -6,7 +6,8 @@ canonical Vector objects for core consumption.
 
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import Mapping, Sequence
+from typing import TypedDict, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -59,7 +60,16 @@ class ChromaVectorIndexAdapter(VectorIndex):
     def get_vectors(self, ids: list[str]) -> list[Vector]:
         if not ids:
             return []
-        read = self._under._collection.get(ids=ids, include=["embeddings", "metadatas"])
+
+        class _GetResult(TypedDict, total=False):
+            ids: Sequence[str]
+            embeddings: Sequence[Sequence[float]]
+            metadatas: Sequence[Mapping[str, object]]
+
+        read = cast(
+            _GetResult,
+            self._under._collection.get(ids=ids, include=["embeddings", "metadatas"]),
+        )
 
         # Normalize response fields without relying on truthiness of numpy arrays
         raw_ids = read.get("ids")
