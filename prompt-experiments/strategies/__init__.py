@@ -20,7 +20,6 @@ ALL_STRATEGIES = [
     RelativeCharStrategy(),
     PercentageStrategy(),  # Known to be broken but kept for comparison
     WordCountStrategy(),
-
     # New generation 1 strategies based on discoveries
     ShortenPercentageStrategy(),  # Best performer in testing
     ReducePercentageStrategy(),

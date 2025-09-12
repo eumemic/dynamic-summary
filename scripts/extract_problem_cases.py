@@ -18,6 +18,7 @@ from ragzoom.config import IndexConfig
 @dataclass
 class ProblemCase:
     """A problematic summarization case."""
+
     node_id: str
     height: int
     left_text: str
@@ -30,11 +31,8 @@ class ProblemCase:
     document_id: str | None = None
     preceding_context: str | None = None
 
-def extract_problem_cases(
-    telemetry_path: Path,
-    db_path: Path,
-    max_cases: int = 50
-):
+
+def extract_problem_cases(telemetry_path: Path, db_path: Path, max_cases: int = 50):
     """Extract problematic cases from database using telemetry config.
 
     Args:
@@ -59,7 +57,9 @@ def extract_problem_cases(
     # Extract all node IDs from telemetry for validation
     # Even with same document, database could have nodes from a different indexing run
     telemetry_nodes = telemetry.get("nodes", [])
-    telemetry_node_ids = {node.get("node_id") for node in telemetry_nodes if node.get("node_id")}
+    telemetry_node_ids = {
+        node.get("node_id") for node in telemetry_nodes if node.get("node_id")
+    }
 
     # Step 2: Query database for worst divergences
     conn = sqlite3.connect(db_path)
@@ -79,7 +79,9 @@ def extract_problem_cases(
     """
     # Note: The * selector will automatically include preceding_neighbor_id if it exists
 
-    cursor = conn.execute(query, (target_tokens, target_tokens, target_tokens, document_id, target_tokens))
+    cursor = conn.execute(
+        query, (target_tokens, target_tokens, target_tokens, document_id, target_tokens)
+    )
     problem_nodes = cursor.fetchall()
 
     # Build cases with full context
@@ -128,12 +130,14 @@ def extract_problem_cases(
             divergence=node["divergence"],
             divergence_pct=node["divergence_pct"],
             document_id=node["document_id"],
-            preceding_context=preceding_context
+            preceding_context=preceding_context,
         )
         cases.append(case)
 
     if skipped_not_in_telemetry > 0:
-        print(f"Warning: Skipped {skipped_not_in_telemetry} nodes not found in telemetry (likely from different run)")
+        print(
+            f"Warning: Skipped {skipped_not_in_telemetry} nodes not found in telemetry (likely from different run)"
+        )
 
     # Just take the top N most divergent cases
     # They're already sorted by divergence from the SQL query
@@ -152,9 +156,9 @@ def extract_problem_cases(
             "telemetry_path": str(telemetry_path),
             "config": config_dict,  # Save as dict for JSON serialization
             "total_problem_nodes": len(cases),
-            "cases_included": len(selected_cases)
+            "cases_included": len(selected_cases),
         },
-        "cases": [asdict(c) for c in selected_cases]
+        "cases": [asdict(c) for c in selected_cases],
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -163,13 +167,22 @@ def extract_problem_cases(
 
     # Print summary
     print(f"Extracted {len(selected_cases)} problem cases (from {len(cases)} total):")
-    print(f"  Verbatim (>150%): {sum(1 for c in selected_cases if c.divergence_pct > 150)}")
-    print(f"  Severe overshoot (50-150%): {sum(1 for c in selected_cases if 50 < c.divergence_pct <= 150)}")
-    print(f"  Severe undershoot (<-30%): {sum(1 for c in selected_cases if c.divergence_pct < -30)}")
-    print(f"  Moderate (other): {sum(1 for c in selected_cases if -30 <= c.divergence_pct <= 50)}")
+    print(
+        f"  Verbatim (>150%): {sum(1 for c in selected_cases if c.divergence_pct > 150)}"
+    )
+    print(
+        f"  Severe overshoot (50-150%): {sum(1 for c in selected_cases if 50 < c.divergence_pct <= 150)}"
+    )
+    print(
+        f"  Severe undershoot (<-30%): {sum(1 for c in selected_cases if c.divergence_pct < -30)}"
+    )
+    print(
+        f"  Moderate (other): {sum(1 for c in selected_cases if -30 <= c.divergence_pct <= 50)}"
+    )
     print(f"  Output: {output_path}")
 
     return selected_cases
+
 
 def get_node(conn, node_id):
     """Get node from database."""
@@ -178,14 +191,19 @@ def get_node(conn, node_id):
     cursor = conn.execute("SELECT * FROM tree_nodes WHERE id = ?", (node_id,))
     return cursor.fetchone()
 
+
 def calculate_height(conn, node_id):
     """Calculate height recursively."""
     node = get_node(conn, node_id)
     if not node or (not node["left_child_id"] and not node["right_child_id"]):
         return 0
 
-    left_height = calculate_height(conn, node["left_child_id"]) if node["left_child_id"] else 0
-    right_height = calculate_height(conn, node["right_child_id"]) if node["right_child_id"] else 0
+    left_height = (
+        calculate_height(conn, node["left_child_id"]) if node["left_child_id"] else 0
+    )
+    right_height = (
+        calculate_height(conn, node["right_child_id"]) if node["right_child_id"] else 0
+    )
 
     return 1 + max(left_height, right_height)
 
@@ -199,10 +217,9 @@ def main():
     args = parser.parse_args()
 
     extract_problem_cases(
-        telemetry_path=args.telemetry,
-        db_path=args.db,
-        max_cases=args.max_cases
+        telemetry_path=args.telemetry, db_path=args.db, max_cases=args.max_cases
     )
+
 
 if __name__ == "__main__":
     main()

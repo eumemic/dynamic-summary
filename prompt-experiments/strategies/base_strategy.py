@@ -10,7 +10,9 @@ class TargetingStrategy(ABC):
         self.name = name
 
     @abstractmethod
-    def get_prompt(self, text: str, input_metrics: dict[str, int], target_tokens: int) -> str:
+    def get_prompt(
+        self, text: str, input_metrics: dict[str, int], target_tokens: int
+    ) -> str:
         """Generate the summarization prompt for this strategy.
 
         Args:
@@ -24,7 +26,9 @@ class TargetingStrategy(ABC):
         pass
 
     @abstractmethod
-    def get_length_instruction(self, input_metrics: dict[str, int], target_tokens: int) -> str:
+    def get_length_instruction(
+        self, input_metrics: dict[str, int], target_tokens: int
+    ) -> str:
         """Generate just the length instruction part of the prompt.
 
         Args:

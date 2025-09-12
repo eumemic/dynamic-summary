@@ -51,7 +51,7 @@ def generate_corpus():
             embedding_model="text-embedding-3-small",
             retry_threshold=0.2,
             max_retries=0,
-            embedding_batch_size=100
+            embedding_batch_size=100,
         )
 
         # Create splitter
@@ -80,8 +80,8 @@ def generate_corpus():
                 "metrics": {
                     "tokens": token_count,
                     "characters": char_count,
-                    "words": word_count
-                }
+                    "words": word_count,
+                },
             }
 
             all_chunks.append(chunk_data)
@@ -89,7 +89,9 @@ def generate_corpus():
 
             # Show sample info for first few chunks
             if i < 3:
-                print(f"    Chunk {i}: {token_count} tokens, {char_count} chars, {word_count} words")
+                print(
+                    f"    Chunk {i}: {token_count} tokens, {char_count} chars, {word_count} words"
+                )
 
     # Save corpus
     output_file = Path("experiments/results/corpus.json")
@@ -99,7 +101,7 @@ def generate_corpus():
         "source_file": str(source_file),
         "chunk_sizes": chunk_sizes,
         "total_chunks": len(all_chunks),
-        "chunks": all_chunks
+        "chunks": all_chunks,
     }
 
     with open(output_file, "w", encoding="utf-8") as f:

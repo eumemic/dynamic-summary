@@ -11,7 +11,9 @@ class ShortenPercentageStrategy(TargetingStrategy):
 
     def get_length_instruction(self, input_metrics, target_tokens):
         # Calculate reduction percentage
-        reduction = ((input_metrics["tokens"] - target_tokens) / input_metrics["tokens"]) * 100
+        reduction = (
+            (input_metrics["tokens"] - target_tokens) / input_metrics["tokens"]
+        ) * 100
         reduction = round(reduction, 1)
 
         return f"by PRECISELY {reduction}%"
