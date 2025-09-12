@@ -138,6 +138,28 @@ class ChromaVectorIndexAdapter(VectorIndex):
         if ids:
             self._under._collection.delete(ids=ids)
             return len(ids)
+        if filter:
+            # Normalize simple equality filters to Chroma operator form
+            where_param: dict[str, object] = {}
+            for k, v in filter.items():
+                if v is None:
+                    continue
+                where_param[k] = v if isinstance(v, dict) else {"$eq": v}
+
+            # Fetch matching ids to report a count
+            from typing import TypedDict
+            from typing import cast as _cast
+
+            class _GetIds(TypedDict, total=False):
+                ids: list[str]
+
+            read = _cast(
+                _GetIds, self._under._collection.get(where=where_param)  # type: ignore[arg-type]
+            )
+            matched_ids = list(read.get("ids", []))
+
+            self._under._collection.delete(where=where_param)  # type: ignore[arg-type]
+            return len(matched_ids)
         return 0
 
 
