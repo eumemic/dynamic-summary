@@ -127,7 +127,8 @@ def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
     ctx.obj["index_config"] = IndexConfig.load()  # Load defaults
     ctx.obj["query_config"] = QueryConfig()
-    ctx.obj["operational_config"] = OperationalConfig()
+    # CLI defaults to Chroma for vector index; fail if not installed
+    ctx.obj["operational_config"] = OperationalConfig(vector_backend="chroma")
 
 
 @cli.command()
@@ -226,7 +227,8 @@ def index(
             embedding_batch_size=embedding_batch_size,
         )
         query_config = QueryConfig()  # Use defaults for indexing command
-        operational_config = OperationalConfig()
+        # Prefer Chroma by default in CLI; fail loudly if unavailable
+        operational_config = OperationalConfig(vector_backend="chroma")
 
         # Override storage location if provided
         if data_dir:
@@ -1024,7 +1026,7 @@ def doctor() -> None:
     # Check Docker availability (only if using postgres backend)
     from ragzoom.config import OperationalConfig
 
-    _cfg = OperationalConfig()
+    _cfg = OperationalConfig(vector_backend="chroma")
     if _cfg.backend == "sqlite":
         click.echo("✅ Backend: SQLite (file-backed)")
         click.echo("   Skipping Docker checks")
