@@ -60,9 +60,25 @@ class ChromaVectorIndexAdapter(VectorIndex):
         if not ids:
             return []
         read = self._under._collection.get(ids=ids, include=["embeddings", "metadatas"])
-        emb_list = cast(list[list[float]] | None, read.get("embeddings")) or []
-        metas = cast(list[dict[str, object]] | None, read.get("metadatas")) or []
-        got_ids = read.get("ids") or []
+
+        # Normalize response fields without relying on truthiness of numpy arrays
+        raw_ids = read.get("ids")
+        got_ids: list[str] = list(raw_ids) if raw_ids is not None else []
+
+        raw_embeddings = read.get("embeddings")
+        if raw_embeddings is None:
+            emb_list: list[list[float]] = []
+        else:
+            # Accept iterable of sequences (list or numpy array); coerce to list[list[float]]
+            emb_list = [list(map(float, e)) for e in raw_embeddings]
+
+        raw_metas = read.get("metadatas")
+        metas: list[dict[str, object]] = []
+        if raw_metas is not None:
+            for m in raw_metas:
+                # Each m is Mapping[str, str|int|float|bool|None]; copy to plain dict[str, object]
+                metas.append({k: v for k, v in dict(m).items()})
+
         by_id = {
             got_ids[i]: (emb_list[i], metas[i] if i < len(metas) else {})
             for i in range(len(got_ids))
