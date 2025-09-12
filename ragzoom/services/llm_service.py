@@ -160,9 +160,8 @@ class LLMService:
         self._summarizer = Summarizer(self._chat_model, self.config)
         self._embedding_batcher = EmbeddingBatcher(self._embedding_model)
 
-    async def _get_embedding(self, text: str) -> list[float]:
-        """Get embedding for a single text using the batcher."""
-        # Ensure the adapter sees the latest client (tests may swap it)
+    def _ensure_embedding_adapter_current(self) -> None:
+        """Refresh embedding adapter if client or model changed."""
         if (
             not hasattr(self, "_embedding_model")
             or getattr(self._embedding_model, "_client", None) is not self.client
@@ -173,6 +172,21 @@ class LLMService:
                 self.client, self.config.embedding_model
             )
             self._embedding_batcher = EmbeddingBatcher(self._embedding_model)
+
+    def _ensure_chat_adapter_current(self) -> None:
+        """Refresh chat adapter if client or model changed."""
+        if (
+            not hasattr(self, "_chat_model")
+            or getattr(self._chat_model, "_client", None) is not self.client
+            or getattr(self._chat_model, "model_id", "") != self.config.summary_model
+        ):
+            self._chat_model = OpenAIChatModel(self.client, self.config.summary_model)
+            self._summarizer = Summarizer(self._chat_model, self.config)
+
+    async def _get_embedding(self, text: str) -> list[float]:
+        """Get embedding for a single text using the batcher."""
+        # Ensure the adapter sees the latest client (tests may swap it)
+        self._ensure_embedding_adapter_current()
         embeddings = await self._embedding_batcher.embed([text])
         if not embeddings or len(embeddings) != 1:
             raise ValueError("Expected exactly one embedding from single-text call")
@@ -181,18 +195,7 @@ class LLMService:
     async def _get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
         """Get embeddings for multiple texts in batches to respect API limits."""
         # Ensure the adapter sees the latest client (tests may swap it)
-        # jscpd:ignore-start - same pattern as in _get_embedding
-        if (
-            not hasattr(self, "_embedding_model")
-            or getattr(self._embedding_model, "_client", None) is not self.client
-            or getattr(self._embedding_model, "model_id", "")
-            != self.config.embedding_model
-        ):
-            self._embedding_model = OpenAIEmbeddingModel(
-                self.client, self.config.embedding_model
-            )
-            self._embedding_batcher = EmbeddingBatcher(self._embedding_model)
-        # jscpd:ignore-end
+        self._ensure_embedding_adapter_current()
         return await self._embedding_batcher.embed(texts)
 
     def _tokens_to_words(self, target_tokens: int) -> int:
@@ -209,15 +212,7 @@ class LLMService:
         """Kept for backward compatibility; forwards to Summarizer with compatibility cast."""  # jscpd:ignore-end
         # Convert to provider-neutral Message type and delegate
         # Ensure adapters see the latest client (tests may swap it)
-        # jscpd:ignore-start - same pattern as in _make_summary_call
-        if (
-            not hasattr(self, "_chat_model")
-            or getattr(self._chat_model, "_client", None) is not self.client
-            or getattr(self._chat_model, "model_id", "") != self.config.summary_model
-        ):
-            self._chat_model = OpenAIChatModel(self.client, self.config.summary_model)
-            self._summarizer = Summarizer(self._chat_model, self.config)
-        # jscpd:ignore-end
+        self._ensure_chat_adapter_current()
         converted: list[dict[str, str]] = []
         for m in messages:
             # Minimal shape used by our Summarizer
