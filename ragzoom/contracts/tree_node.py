@@ -34,6 +34,8 @@ class TreeNode(Protocol):
     height: int  # 0 for leaves, increasing toward root
     path: str  # binary path ("" for root)
     is_pinned: bool | int
+    preceding_neighbor_id: str | None
+    following_neighbor_id: str | None
 
     # Optional helpers many implementations already provide
     def is_leaf(self) -> bool: ...  # pragma: no cover - protocol signature

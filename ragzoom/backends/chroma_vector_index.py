@@ -1,9 +1,8 @@
 """Chroma-based vector index adapter.
 
-This provides a minimal VectorIndex-compatible surface:
+This provides a minimal surface over Chroma for:
  - upsert: add/update vectors and metadata
  - search_similar: cosine similarity search with optional metadata filter
- - compute_mmr_diverse_results: fallback MMR using cosine similarities
 
 Requires the optional dependency: chromadb
 """
@@ -52,6 +51,7 @@ class ChromaVectorIndex:
         )
 
     # API: list[tuple[id, score, meta]] with score being similarity
+    # jscpd:ignore-start - structure intentionally mirrors python adapter
     def search_similar(
         self,
         query_embedding: list[float] | NDArray[np.float64],
@@ -97,54 +97,6 @@ class ChromaVectorIndex:
             meta = metas[i] if i < len(metas) and isinstance(metas[i], dict) else {}
             out.append((node_id, sim, meta))
         return out
-
-    # jscpd:ignore-start - MMR logic mirrors PythonVectorIndex for parity
-    def compute_mmr_diverse_results(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        # Fallback: simple MMR implemented on top of returned result vectors
-        if not candidates or k <= 0:
-            return []
-        # Fetch vectors for candidate IDs
-        ids = [c[0] for c in candidates]
-        read = self._collection.get(ids=ids, include=["embeddings"])
-        embs = cast(list[list[float]] | None, read.get("embeddings")) if read else None
-        if not embs:
-            # Degrade to top-k by score
-            return [
-                c[0] for c in sorted(candidates, key=lambda x: x[1], reverse=True)[:k]
-            ]
-        mat = np.asarray(embs, dtype=np.float32)
-        q = np.asarray(query_embedding, dtype=np.float32)
-        qn = q / (np.linalg.norm(q) + 1e-12)
-        rel = mat @ qn
-        selected: list[int] = []
-        selected_mask = np.zeros(len(ids), dtype=bool)
-        # pick most relevant first
-        first = int(np.argmax(rel))
-        selected.append(first)
-        selected_mask[first] = True
-        if len(ids) == 1 or k == 1:
-            return [ids[first]]
-        pairwise = (mat @ mat.T).astype(np.float32)
-        while len(selected) < min(k, len(ids)):
-            unselected = np.where(~selected_mask)[0]
-            if selected:
-                un = np.asarray(unselected, dtype=int)
-                sel = np.asarray(selected, dtype=int)
-                max_sim = np.max(pairwise[un][:, sel], axis=1)
-            else:
-                max_sim = np.zeros(unselected.shape[0], dtype=np.float32)
-            mmr = lambda_param * rel[unselected] - (1.0 - lambda_param) * max_sim
-            idx_in_unselected = int(np.argmax(mmr))
-            chosen = int(unselected[idx_in_unselected])
-            selected.append(chosen)
-            selected_mask[chosen] = True
-        return [ids[i] for i in selected]
 
     # jscpd:ignore-end
 

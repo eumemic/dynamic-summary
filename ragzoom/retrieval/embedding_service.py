@@ -27,6 +27,7 @@ class EmbeddingService:
         self.client = client
         self.document_store = document_store
         self.default_model = default_model
+        self._warned_missing_model: set[str] = set()
 
     def get_query_embedding(
         self, query: str, document_id: str | None = None
@@ -77,8 +78,11 @@ class EmbeddingService:
             )
             return doc_embedding_model
         else:
-            logger.warning(
-                f"No embedding model found for document {document_id}, using config default: {self.default_model}. "
-                f"This may indicate the document was indexed before model tracking was implemented."
-            )
+            # Warn once per document to avoid log spam in tight loops
+            if document_id not in self._warned_missing_model:
+                self._warned_missing_model.add(document_id)
+                logger.warning(
+                    f"No embedding model found for document {document_id}, using config default: {self.default_model}. "
+                    f"This may indicate the document was indexed before model tracking was implemented."
+                )
             return self.default_model

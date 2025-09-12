@@ -9,6 +9,12 @@ from typing import Optional
 
 import tiktoken
 
+try:
+    # Pre-initialize encoder at import time to avoid per-test slow starts
+    _DEFAULT_ENCODER = tiktoken.get_encoding("cl100k_base")
+except Exception as _tok_err:  # pragma: no cover - environment specific
+    raise
+
 
 class TokenizerUtil:
     """Thread-safe singleton tokenizer utility.
@@ -19,7 +25,7 @@ class TokenizerUtil:
 
     _instance: Optional["TokenizerUtil"] = None
     _lock = threading.Lock()
-    _encoder: tiktoken.Encoding | None = None
+    _encoder: tiktoken.Encoding | None = _DEFAULT_ENCODER
 
     def __new__(cls) -> "TokenizerUtil":
         """Ensure singleton pattern with thread safety."""
@@ -35,7 +41,7 @@ class TokenizerUtil:
         if TokenizerUtil._encoder is None:
             with TokenizerUtil._lock:
                 if TokenizerUtil._encoder is None:
-                    TokenizerUtil._encoder = tiktoken.get_encoding("cl100k_base")
+                    TokenizerUtil._encoder = _DEFAULT_ENCODER
         return TokenizerUtil._encoder
 
     def count_tokens(self, text: str) -> int:
