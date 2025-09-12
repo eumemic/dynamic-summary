@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# ruff: noqa: E402
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -52,11 +53,14 @@ def get_node_data(node_id: str, db_path: str = "ragzoom.db"):
     left = cursor.fetchone()
 
     # Get right child
-    cursor.execute("""
-        SELECT text, token_count  
+    cursor.execute(
+        """
+        SELECT text, token_count
         FROM tree_nodes
         WHERE id = ?
-    """, (right_id,))
+        """,
+        (right_id,),
+    )
     right = cursor.fetchone()
 
     conn.close()

@@ -21,30 +21,10 @@ from ragzoom.contracts.chat_model import UsageInfo as _UsageInfo
 from ragzoom.services.embedding_batcher import EmbeddingBatcher
 from ragzoom.services.summarizer import Summarizer
 from ragzoom.telemetry_collection import TelemetryCollector
+from ragzoom.utils.tokenization import tokenizer as _rz_tokenizer
 
-_tz: object
-try:
-    # Expose tokenizer at module scope for tests that patch it
-    from ragzoom.utils.tokenization import tokenizer as _real_tokenizer
-
-    _tz = _real_tokenizer
-except Exception:  # pragma: no cover - fallback for isolated test import timing
-
-    class _TokenizerSentinel:
-        def encode(self, text: str) -> list[int]:
-            return []
-
-        def count_tokens(self, text: str) -> int:
-            return 0
-
-        def decode(self, tokens: list[int]) -> str:
-            return ""
-
-    _tz = _TokenizerSentinel()
-
-# Re-export as module-level attribute for tests
-tokenizer = _tz
-
+tokenizer: object | None  # module-level patch point for tests; assigned below
+tokenizer = _rz_tokenizer
 logger = logging.getLogger(__name__)
 
 
@@ -146,7 +126,9 @@ class LLMService:
                 def __init__(self, chat: _ChatLike) -> None:
                     self.completions: _CompletionsLike = _CompletionsProxy(chat)
 
-            # Only override when we successfully captured an existing chat object
+            # Test-only patch point: Only override when we successfully captured an
+            # existing chat object. This enables fast test mocks without triggering
+            # heavy SDK lazy imports. No-ops in production when chat is lazy.
             setattr(self.client, "chat", _ChatProxy(_orig_chat))
         except Exception:
             # If client.chat is a lazy property (real SDK), leave as-is

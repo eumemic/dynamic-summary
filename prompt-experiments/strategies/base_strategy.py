@@ -12,12 +12,12 @@ class TargetingStrategy(ABC):
     @abstractmethod
     def get_prompt(self, text: str, input_metrics: dict[str, int], target_tokens: int) -> str:
         """Generate the summarization prompt for this strategy.
-        
+
         Args:
             text: The text to summarize
             input_metrics: Dictionary with 'tokens', 'characters', 'words' counts
             target_tokens: Target token count for the summary
-            
+
         Returns:
             Complete prompt string
         """
@@ -26,11 +26,11 @@ class TargetingStrategy(ABC):
     @abstractmethod
     def get_length_instruction(self, input_metrics: dict[str, int], target_tokens: int) -> str:
         """Generate just the length instruction part of the prompt.
-        
+
         Args:
-            input_metrics: Dictionary with 'tokens', 'characters', 'words' counts  
+            input_metrics: Dictionary with 'tokens', 'characters', 'words' counts
             target_tokens: Target token count for the summary
-            
+
         Returns:
             Length instruction string (e.g., "in PRECISELY 200 tokens")
         """
@@ -38,11 +38,11 @@ class TargetingStrategy(ABC):
 
     def get_base_prompt(self, text: str, length_instruction: str) -> str:
         """Generate the base prompt template with length instruction.
-        
+
         Args:
             text: The text to summarize
             length_instruction: The length targeting instruction
-            
+
         Returns:
             Complete prompt
         """

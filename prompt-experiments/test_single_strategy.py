@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Quick test of a single strategy to verify the setup works."""
 
 import asyncio

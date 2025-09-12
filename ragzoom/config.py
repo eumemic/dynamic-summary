@@ -363,7 +363,7 @@ class OperationalConfig:
     backend: str = "sqlite"  # "sqlite" | "postgres"
     database_url: str = ""
     # Vector index backend for non-PostgreSQL setups
-    vector_backend: str = "python"  # "python" | "chroma"
+    vector_backend: str = "chroma"  # "python" | "chroma"
     cache_size: int = 1000
     log_level: str = "INFO"
     validate_pipeline: bool = False

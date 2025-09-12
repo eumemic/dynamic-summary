@@ -25,6 +25,7 @@ from openai import AsyncOpenAI
 
 load_dotenv()
 
+# ruff: noqa: E402
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -109,7 +110,7 @@ class RetryStrategyTester:
         """Get outlier nodes from database with >20% deviation"""
         if self.has_token_count:
             query = """
-            SELECT 
+            SELECT
                 n.id as node_id,
                 n.text as summary,
                 n.token_count as original_tokens,
@@ -131,7 +132,7 @@ class RetryStrategyTester:
         else:
             # Use text length approximation
             query = """
-            SELECT 
+            SELECT
                 n.id as node_id,
                 n.text as summary,
                 LENGTH(n.text) / 4 as original_tokens,

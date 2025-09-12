@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """
 Run summarization length targeting experiments.
 Tests different strategies for hitting target summary lengths.
@@ -30,10 +31,9 @@ from openai import AsyncOpenAI
 class ExperimentRunner:
     """Run summarization experiments with different targeting strategies."""
 
-    def __init__(self, corpus_path: str = "results/corpus.json",
-                 max_concurrent: int = 30):
+    def __init__(self, corpus_path: str = "results/corpus.json", max_concurrent: int = 30):
         """Initialize the experiment runner.
-        
+
         Args:
             corpus_path: Path to the test corpus JSON file
             max_concurrent: Maximum concurrent API requests
@@ -66,16 +66,17 @@ class ExperimentRunner:
         self.chunks = corpus_data["chunks"]
         print(f"Loaded {len(self.chunks)} chunks from corpus")
 
-    async def run_single_experiment(self, chunk: dict, strategy: Any,
-                                   target_tokens: int, pbar: tqdm = None) -> dict[str, Any]:
+    async def run_single_experiment(
+        self, chunk: dict, strategy: Any, target_tokens: int, pbar: tqdm | None = None
+    ) -> dict[str, Any]:
         """Run a single summarization experiment.
-        
+
         Args:
             chunk: Chunk data with text and metrics
             strategy: The targeting strategy to use
             target_tokens: Target token count for the summary
             pbar: Optional progress bar to update
-            
+
         Returns:
             Dictionary with experiment results
         """
@@ -152,12 +153,14 @@ class ExperimentRunner:
         # This covers practical summarization use cases
         return [0.30, 0.40, 0.50, 0.60, 0.70, 0.80]
 
-    async def run_all_experiments(self,
-                                  sample_size: int = None,
-                                  strategies: list = None,
-                                  compression_ratios: list[float] = None):
+    async def run_all_experiments(
+        self,
+        sample_size: int | None = None,
+        strategies: list | None = None,
+        compression_ratios: list[float] | None = None,
+    ) -> list[dict]:
         """Run all experiments across strategies and compression ratios.
-        
+
         Args:
             sample_size: If set, sample this many chunks with balanced representation
             strategies: List of strategies to test (default: ALL_STRATEGIES)
@@ -262,9 +265,9 @@ class ExperimentRunner:
 
         return results
 
-    def save_results(self, results: list[dict], output_path: str = None):
+    def save_results(self, results: list[dict], output_path: str | None = None) -> None:
         """Save experiment results to JSON.
-        
+
         Args:
             results: List of experiment results
             output_path: Path to save results (default: experiments/results/raw_results.json)
