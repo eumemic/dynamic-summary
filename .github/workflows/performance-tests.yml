@@ -98,7 +98,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-tools
           pip-sync requirements/dev.lock
-          pip install -e .[telemetry,chroma,postgres]
+          pip install -e .[telemetry,chroma]
           pip install awscli
       
       - name: Setup baseline from S3
