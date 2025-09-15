@@ -93,14 +93,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
       
-      - name: Install dependencies
+      - name: Install dependencies (locked)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          # Install main package with telemetry dependencies
-          pip install -e .[telemetry]
-          # Ensure Chroma vector backend is available for benchmarks
-          pip install chromadb
+          pip install pip-tools
+          pip-sync requirements/dev.lock
+          # Install main package with telemetry dependencies and chroma (extras)
+          pip install -e .[telemetry,chroma]
           
           # Install AWS CLI for S3 baseline syncing
           pip install awscli
