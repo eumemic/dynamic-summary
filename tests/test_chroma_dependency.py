@@ -31,3 +31,14 @@ def test_operational_config_requires_chromadb_when_selected(
         OperationalConfig(
             openai_api_key=SecretStr("test-key"),
         )
+
+
+def test_operational_config_defaults_to_chroma(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default configuration should prefer the Chroma backend for the CLI."""
+    monkeypatch.delenv("RAGZOOM_VECTOR_BACKEND", raising=False)
+    monkeypatch.delenv("RAGZOOM_BACKEND", raising=False)
+
+    from ragzoom.config import OperationalConfig
+
+    config = OperationalConfig()
+    assert config.vector_backend == "chroma"
