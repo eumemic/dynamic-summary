@@ -7,6 +7,7 @@ for tests and development.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import cast
 
 import numpy as np
@@ -21,6 +22,20 @@ from ragzoom.backends.sqlite_db import (
 )
 from ragzoom.contracts.tree_node import TreeNode  # For type hints only
 from ragzoom.services.cache_manager import CacheManager
+
+
+def _detach_rows(session: Session, rows: Sequence[SQLiteTreeNode]) -> list[TreeNode]:
+    """Detach ORM instances and return typed list for callers.
+
+    Centralizes a repeated pattern used by read helpers to avoid retaining
+    session-bound instances beyond the query scope.
+    """
+    for r in rows:
+        try:
+            session.expunge(r)
+        except Exception:
+            pass
+    return cast(list[TreeNode], list(rows))
 
 
 class SqliteNodeRepository:
@@ -81,14 +96,7 @@ class SqliteNodeRepository:
                 .scalars()
                 .all()
             )
-            # jscpd:ignore-start - Detach loop repeats across helpers by design
-            for r in rows:
-                try:
-                    session.expunge(r)
-                except Exception:
-                    pass
-            # jscpd:ignore-end
-            return rows  # type: ignore[return-value]
+            return _detach_rows(session, rows)
         finally:
             if own_session:
                 session.close()
@@ -180,18 +188,12 @@ class SqliteNodeRepository:
                 .scalars()
                 .all()
             )
-            for r in rows:
-                try:
-                    session.expunge(r)
-                except Exception:
-                    pass
-            return rows  # type: ignore[return-value]
+            return _detach_rows(session, rows)
 
     def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
         if not paths:
             return []
         with self.SessionLocal() as session:
-            # jscpd:ignore-start - Query + detach pattern repeats across helpers by design
             rows = (
                 session.execute(
                     select(SQLiteTreeNode).where(SQLiteTreeNode.path.in_(paths))
@@ -199,13 +201,7 @@ class SqliteNodeRepository:
                 .scalars()
                 .all()
             )
-            for r in rows:
-                try:
-                    session.expunge(r)
-                except Exception:
-                    pass
-            # jscpd:ignore-end
-            return rows  # type: ignore[return-value]
+            return _detach_rows(session, rows)
 
     def get_nodes_by_paths_for_document(
         self, document_id: str | None, paths: list[str]
@@ -217,14 +213,7 @@ class SqliteNodeRepository:
             if document_id:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             rows = session.execute(stmt).scalars().all()
-            # jscpd:ignore-start - Detach loop repeats across helpers by design
-            for r in rows:
-                try:
-                    session.expunge(r)
-                except Exception:
-                    pass
-            # jscpd:ignore-end
-            return rows  # type: ignore[return-value]
+            return _detach_rows(session, rows)
 
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
         with self.SessionLocal() as session:

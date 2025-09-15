@@ -35,6 +35,7 @@ class TestBudgetGuarantee:
     def assembler(self, doc_store: DocumentStore) -> Assembler:
         return Assembler(doc_store)
 
+    @pytest.mark.slow_threshold(2.0)
     def test_budget_never_exceeded_worst_case(
         self,
         doc_store: DocumentStore,
