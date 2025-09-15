@@ -1,0 +1,10 @@
+-r app.in
+pytest
+pytest-asyncio
+pytest-xdist
+pytest-cov
+black
+ruff
+mypy[dmypy]
+bandit
+pre-commit
