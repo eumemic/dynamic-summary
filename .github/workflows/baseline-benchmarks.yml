@@ -37,15 +37,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
       
-      - name: Install dependencies
+      - name: Install dependencies (locked)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          # Install main package with telemetry extras for reporting tools
-          pip install -e .[telemetry]
-          # Ensure Chroma backend is available for benchmarks
-          pip install chromadb
-          
+          pip install pip-tools
+          pip-sync requirements/dev.lock
           # Install AWS CLI for S3 uploads
           pip install awscli
       
