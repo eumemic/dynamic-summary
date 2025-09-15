@@ -98,10 +98,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-tools
           pip-sync requirements/dev.lock
-          # Install main package with telemetry dependencies and chroma (extras)
           pip install -e .[telemetry,chroma,postgres]
-          
-          # Install AWS CLI for S3 baseline syncing
           pip install awscli
       
       - name: Setup baseline from S3
