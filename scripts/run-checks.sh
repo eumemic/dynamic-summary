@@ -333,6 +333,9 @@ if ! should_skip "tests"; then
             fi
         fi
 
+        # Ensure across-the-board 1s per-test timeout unless explicitly overridden via env
+        export RZ_MAX_TEST_DURATION="${RZ_MAX_TEST_DURATION:-1.0}"
+
         if [ -n "$PER_TEST_TIMEOUT" ]; then
             # Use hard per-test timeout runner (enumerates tests, runs them individually)
             runner_cmd="python $GIT_ROOT/scripts/run_tests_with_timeouts.py --per-test-seconds $PER_TEST_TIMEOUT"
@@ -343,13 +346,13 @@ if ! should_skip "tests"; then
         elif [ "$IMPACTED_ONLY" = true ]; then
             impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" ${IMPACTED_FILES[@]} || true)"
             if [ -n "$impacted" ]; then
-                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$marker_expr' -n 8 --no-header"
+                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$marker_expr' -n 8 --no-header --max-test-duration ${RZ_MAX_TEST_DURATION}"
             else
                 echo "[Tests] Skipped (no impacted tests)"
             fi
         else
             # Default: run full suite with selected markers
-            run_check_background "Tests" "pytest tests/ -q --tb=short -m '$marker_expr' -n 8 --no-header"
+            run_check_background "Tests" "pytest tests/ -q --tb=short -m '$marker_expr' -n 8 --no-header --max-test-duration ${RZ_MAX_TEST_DURATION}"
         fi
     else
         echo "[Tests] Skipped (pytest not installed)"

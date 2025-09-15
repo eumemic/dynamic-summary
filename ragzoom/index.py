@@ -211,14 +211,19 @@ class TreeBuilder:
             tuple: (progress_tracker, async_progress_wrapper)
         """
         # Create progress tracker early so we can use it for logging
-        # When progress bar is active, we suppress info logs to avoid disrupting the display
+        # Respect global progress configuration to fully suppress bars in tests
+        from ragzoom.progress import get_progress_config
+
+        global_cfg = get_progress_config()
+        effective_show = show_progress and not global_cfg.disable_bars
+
         progress = (
             GlobalProgressTracker(
                 chunk_count,
-                show_progress,
+                effective_show,
                 embedding_batch_size=self.config.embedding_batch_size,
             )
-            if show_progress
+            if effective_show
             else None
         )
 

@@ -506,6 +506,7 @@ class TestVisualizationPerformance:
 
             yield files
 
+    @pytest.mark.slow_threshold(3.0)
     def test_axis_synchronization_performance(
         self, temp_files: dict[int, tuple[Path, Path]]
     ) -> None:
