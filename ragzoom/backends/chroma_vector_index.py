@@ -135,7 +135,15 @@ class ChromaVectorIndex:
             return
         ids: list[str] = []
         embeddings: list[Sequence[float]] = []
-        metadatas: list[Mapping[str, str | int | float | bool | None]] = []
+        # Use upstream Chroma Metadata type to stay in lockstep with provider typings
+        try:
+            from chromadb.api.types import Metadata as _ChromaMetadata
+        except (
+            Exception
+        ):  # pragma: no cover - fallback when chromadb not installed at runtime
+            from collections.abc import Mapping as _ChromaMetadata
+
+        metadatas: list[_ChromaMetadata] = []
         for node_id, emb, meta in items:
             ids.append(str(node_id))
             embeddings.append([float(x) for x in cast(list[float], emb)])
