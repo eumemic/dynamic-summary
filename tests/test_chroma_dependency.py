@@ -33,12 +33,12 @@ def test_operational_config_requires_chromadb_when_selected(
         )
 
 
-def test_operational_config_defaults_to_python(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Base configuration should default to the lightweight Python vector index."""
+def test_operational_config_defaults_to_chroma(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Base configuration should default to the production Chroma vector index."""
     monkeypatch.delenv("RAGZOOM_VECTOR_BACKEND", raising=False)
     monkeypatch.delenv("RAGZOOM_BACKEND", raising=False)
 
     from ragzoom.config import OperationalConfig
 
     config = OperationalConfig()
-    assert config.vector_backend == "python"
+    assert config.vector_backend == "chroma"
