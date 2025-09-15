@@ -312,6 +312,11 @@ run_check_background() {
 
 # Start non-test checks in parallel; tests will run after type checking passes
 
+# Guard: workflows should not use unpinned pip installs
+if [ -x scripts/check-workflow-installs.sh ]; then
+    run_check_background "WorkflowPins" "bash scripts/check-workflow-installs.sh"
+fi
+
 # dmypy
 if ! should_skip "dmypy"; then
     if command -v dmypy &> /dev/null; then
@@ -544,7 +549,7 @@ for check in Ruff Black; do
 done
 
 # Display results in order
-for check in Tests Mypy Ruff Black JSCPD Bandit; do
+for check in WorkflowPins Tests Mypy Ruff Black JSCPD Bandit; do
     output_file="$tmpdir/${check}.output"
     result_file="$tmpdir/${check}.result"
     if [ -f "$output_file" ]; then
