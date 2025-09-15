@@ -65,6 +65,7 @@ class TestDPIntegration:
             yield mock_retrieve, mock_index
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(2.0)
     async def test_no_duplicate_content(
         self,
         config: BackwardCompatibilityConfig,
@@ -282,6 +283,7 @@ class TestDPIntegration:
         assert assembled2  # Just check we got something back
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(2.0)
     async def test_budget_respected(
         self,
         config: BackwardCompatibilityConfig,

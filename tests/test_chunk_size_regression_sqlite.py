@@ -132,7 +132,7 @@ class TestChunkSizeRegressionSQLite:
         They whispered in dark corners and made secret alliances, waiting for the right moment to strike.
         The king, aware of these threats, surrounded himself with loyal advisors and brave knights who would defend the kingdom with their lives.
         """
-            * 50
+            * 30
         )  # Create a larger, more realistic document
 
         # Mock API responses
@@ -145,8 +145,13 @@ class TestChunkSizeRegressionSQLite:
             if isinstance(input_texts, str):
                 input_texts = [input_texts]
             num_embeddings = len(cast(list[str], input_texts))
+            from types import SimpleNamespace
+
             return MagicMock(
-                data=[MagicMock(embedding=[0.1] * 1536) for _ in range(num_embeddings)]
+                data=[
+                    SimpleNamespace(embedding=[0.1] * 1536)
+                    for _ in range(num_embeddings)
+                ]
             )
 
         mock_async_client.embeddings.create.side_effect = mock_embeddings

@@ -29,16 +29,28 @@ def create_mock_openai_clients() -> tuple[Mock, Mock, Mock]:
     async def mock_embeddings_create_async(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
-            return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
+            from types import SimpleNamespace
+
+            return Mock(
+                data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_data]
+            )
         else:
-            return Mock(data=[Mock(embedding=[0.1] * 1536)])
+            from types import SimpleNamespace
+
+            return Mock(data=[SimpleNamespace(embedding=[0.1] * 1536)])
 
     def mock_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
-            return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
+            from types import SimpleNamespace
+
+            return Mock(
+                data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_data]
+            )
         else:
-            return Mock(data=[Mock(embedding=[0.1] * 1536)])
+            from types import SimpleNamespace
+
+            return Mock(data=[SimpleNamespace(embedding=[0.1] * 1536)])
 
     # Standard chat completion response
     async def mock_chat_create_async(*args: object, **kwargs: object) -> Mock:
@@ -219,7 +231,9 @@ def create_mock_embedding_response(
     if isinstance(texts, str):
         texts = [texts]
 
-    return Mock(data=[Mock(embedding=[0.1] * embedding_dim) for _ in texts])
+    from types import SimpleNamespace
+
+    return Mock(data=[SimpleNamespace(embedding=[0.1] * embedding_dim) for _ in texts])
 
 
 def create_mock_chat_response(content: str) -> Mock:
@@ -323,7 +337,9 @@ def create_hash_based_embedding_mock() -> tuple[object, object]:
         for text in texts:
             text_str = str(text) if not isinstance(text, str) else text
             embedding = calculate_hash_embedding(text_str)
-            embeddings.append(Mock(embedding=embedding))
+            from types import SimpleNamespace
+
+            embeddings.append(SimpleNamespace(embedding=embedding))
         return Mock(data=embeddings)
 
     def hash_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
@@ -336,7 +352,9 @@ def create_hash_based_embedding_mock() -> tuple[object, object]:
         for text in texts:
             text_str = str(text) if not isinstance(text, str) else text
             embedding = calculate_hash_embedding(text_str)
-            embeddings.append(Mock(embedding=embedding))
+            from types import SimpleNamespace
+
+            embeddings.append(SimpleNamespace(embedding=embedding))
         return Mock(data=embeddings)
 
     return hash_embeddings_create_sync, hash_embeddings_create_async
@@ -426,14 +444,18 @@ def create_specialized_openai_mocks(
             for text in input_data:
                 text_str = str(text) if not isinstance(text, str) else text
                 embedding = _calculate_embedding_from_rules(text_str, embedding_rules)
-                embeddings.append(Mock(embedding=embedding))
+                from types import SimpleNamespace
+
+                embeddings.append(SimpleNamespace(embedding=embedding))
             return Mock(data=embeddings)
         else:
             text_str = (
                 str(input_data) if not isinstance(input_data, str) else input_data
             )
             embedding = _calculate_embedding_from_rules(text_str, embedding_rules)
-            return Mock(data=[Mock(embedding=embedding)])
+            from types import SimpleNamespace
+
+            return Mock(data=[SimpleNamespace(embedding=embedding)])
 
     def specialized_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
