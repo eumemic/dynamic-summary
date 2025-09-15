@@ -14,6 +14,7 @@ from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendP
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.db_utils import create_temp_database, get_temp_db_name
 from ragzoom.document_store import DocumentStore
+from ragzoom.progress import configure_progress, get_progress_config
 from ragzoom.store import create_store
 from ragzoom.telemetry_types import TelemetryDataDict
 from tests.test_builders import DocumentBuilder, TreeNodeBuilder
@@ -112,6 +113,20 @@ def ensure_api_key() -> Generator[None, None, None]:
     os.environ.setdefault("RAGZOOM_VECTOR_BACKEND", "python")
     yield
     # Don't clean up - let other tests use it
+
+
+# Globally disable the tqdm monitor thread in tests (no background thread)
+@pytest.fixture(scope="session", autouse=True)
+def suppress_progress_globally() -> Generator[None, None, None]:
+    cfg = get_progress_config()
+    prev_disable_monitor = cfg.disable_monitor_thread
+    try:
+        # Disable monitor thread to avoid background thread interference
+        configure_progress(disable_monitor_thread=True)
+        yield
+    finally:
+        # Restore previous settings
+        configure_progress(disable_monitor_thread=prev_disable_monitor)
 
 
 def pytest_collection_modifyitems(
@@ -576,7 +591,15 @@ def pytest_runtest_makereport(
 # This enforces the threshold even if the test blocks (best-effort within process).
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
-    threshold = float(item.config.getoption("--max-test-duration"))
+    # Determine threshold: allow per-test override via slow_threshold marker
+    marker = item.get_closest_marker("slow_threshold")
+    if marker and marker.args:
+        try:
+            threshold = float(marker.args[0])
+        except Exception:
+            threshold = float(item.config.getoption("--max-test-duration"))
+    else:
+        threshold = float(item.config.getoption("--max-test-duration"))
     if threshold <= 0:
         yield
         return

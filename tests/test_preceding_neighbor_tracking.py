@@ -2,6 +2,7 @@
 
 import asyncio
 
+import pytest
 from openai import AsyncOpenAI
 
 from ragzoom.contracts.storage_backend import StorageBackend
@@ -64,6 +65,7 @@ class TestPrecedingNeighborTracking:
                     f"but got {node.preceding_neighbor_id}"
                 )
 
+    @pytest.mark.slow_threshold(2.0)
     def test_internal_nodes_track_preceding_neighbor(
         self,
         storage_backend: StorageBackend,

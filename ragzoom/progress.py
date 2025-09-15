@@ -1,7 +1,12 @@
-"""Progress tracking utilities for RagZoom."""
+"""Progress tracking utilities for RagZoom.
+
+Adds a minimal global ProgressConfig so tests can disable progress bars and the
+underlying tqdm monitor thread to avoid background threads and overhead.
+"""
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from types import TracebackType
 
 try:
@@ -14,6 +19,64 @@ except ImportError:
     tqdm = None  # type: ignore[assignment, misc]  # tqdm is None when not installed
 
 logger = logging.getLogger(__name__)
+
+
+# --- Global progress configuration ---
+
+
+@dataclass
+class ProgressConfig:
+    """Global progress configuration.
+
+    - disable_bars: when True, suppresses creating progress bars entirely.
+    - disable_monitor_thread: when True and tqdm is present, turns off tqdm's
+      monitor thread globally by setting ``tqdm.monitor_interval = 0``.
+    """
+
+    disable_bars: bool = False
+    disable_monitor_thread: bool = False
+
+
+_PROGRESS_CONFIG = ProgressConfig()
+_DEFAULT_TQDM_MONITOR_INTERVAL = (
+    getattr(tqdm, "monitor_interval", None) if HAS_TQDM else None
+)
+
+
+def get_progress_config() -> ProgressConfig:
+    """Return the global progress configuration (mutable object)."""
+    return _PROGRESS_CONFIG
+
+
+def configure_progress(
+    *, disable_bars: bool | None = None, disable_monitor_thread: bool | None = None
+) -> None:
+    """Update global progress settings and apply effects.
+
+    Args:
+        disable_bars: If provided, set global suppression of progress bars.
+        disable_monitor_thread: If provided, set/clear the global tqdm monitor thread
+            disabling by adjusting ``tqdm.monitor_interval`` if tqdm is available.
+    """
+    if disable_bars is not None:
+        _PROGRESS_CONFIG.disable_bars = disable_bars
+
+    if disable_monitor_thread is not None:
+        _PROGRESS_CONFIG.disable_monitor_thread = disable_monitor_thread
+        if HAS_TQDM:
+            try:
+                if disable_monitor_thread:
+                    # Disable tqdm's background monitor thread globally
+                    setattr(tqdm, "monitor_interval", 0)
+                else:
+                    # Restore default if known
+                    if _DEFAULT_TQDM_MONITOR_INTERVAL is not None:
+                        setattr(
+                            tqdm, "monitor_interval", _DEFAULT_TQDM_MONITOR_INTERVAL
+                        )
+            except Exception:
+                # Never fail due to tqdm internals; just log when in debug
+                logger.debug("Failed to adjust tqdm.monitor_interval", exc_info=True)
 
 
 class GlobalProgressTracker:
@@ -34,7 +97,16 @@ class GlobalProgressTracker:
         """
         self.total_chunks = total_chunks
         self.embedding_batch_size = embedding_batch_size
-        self.show_progress = show_progress and HAS_TQDM
+        # Respect global configuration for tests/CI
+        global_cfg = get_progress_config()
+        self.show_progress = show_progress and HAS_TQDM and not global_cfg.disable_bars
+
+        # Optionally disable tqdm monitor thread globally
+        if HAS_TQDM and global_cfg.disable_monitor_thread:
+            try:
+                setattr(tqdm, "monitor_interval", 0)
+            except Exception:
+                logger.debug("Unable to set tqdm.monitor_interval=0", exc_info=True)
 
         # Calculate expected operations
         self.total_operations = self._calculate_total_operations(total_chunks)
