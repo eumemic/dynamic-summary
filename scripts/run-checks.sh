@@ -279,12 +279,19 @@ run_check_background() {
     local output_file="$tmpdir/${check_name}.output"
     local result_file="$tmpdir/${check_name}.result"
     
+    # Choose a portable time command
+    local TIME_BIN="/usr/bin/time"
+    if command -v gtime >/dev/null 2>&1; then
+        TIME_BIN="gtime"
+    fi
+
     (
         # Handle SIGTERM gracefully in subshell
         trap 'exit 143' TERM
         
         echo "[$check_name] Starting..." > "$output_file"
-        if eval "$check_cmd" >> "$output_file" 2>&1; then
+        # Measure wall time for the check; append timing to output
+        if $TIME_BIN -p bash -lc "$check_cmd" >> "$output_file" 2>&1; then
             echo 0 > "$result_file"
             # Don't add generic "Passed!" message - let each check provide its own
             if ! grep -q "✅\|✨" "$output_file"; then
@@ -303,61 +310,7 @@ run_check_background() {
     ANY_PIDS=1
 }
 
-# Start all checks in parallel
-
-# Tests
-if ! should_skip "tests"; then
-    if command -v pytest &> /dev/null; then
-        # Marker expression: always exclude benchmarks; include integration only when requested
-        if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
-            marker_expr="not benchmark"
-        else
-            marker_expr="not benchmark and not integration"
-        fi
-
-        # Ensure PostgreSQL only if integration tests are requested and backend is postgres
-        if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
-            BACKEND="${RAGZOOM_BACKEND:-sqlite}"
-            DB_URL="${RAGZOOM_DATABASE_URL:-}"
-            if [ "$BACKEND" = "postgres" ] || [[ "$DB_URL" =~ ^postgres ]]; then
-                if [ -z "$DB_URL" ]; then
-                    echo "[PostgreSQL] Ensuring PostgreSQL is running for integration tests..."
-                    python -c "from ragzoom.docker_postgres import DockerPostgres; dp = DockerPostgres(); dp.ensure_running()" 2>/dev/null || {
-                        echo "[PostgreSQL] Warning: Could not start PostgreSQL, integration tests may fail"
-                    }
-                else
-                    echo "[PostgreSQL] Using provided database URL: $DB_URL"
-                fi
-            else
-                echo "[PostgreSQL] Skipping: backend is '$BACKEND' (using SQLite)"
-            fi
-        fi
-
-        # Ensure across-the-board 1s per-test timeout unless explicitly overridden via env
-        export RZ_MAX_TEST_DURATION="${RZ_MAX_TEST_DURATION:-1.0}"
-
-        if [ -n "$PER_TEST_TIMEOUT" ]; then
-            # Use hard per-test timeout runner (enumerates tests, runs them individually)
-            runner_cmd="python $GIT_ROOT/scripts/run_tests_with_timeouts.py --per-test-seconds $PER_TEST_TIMEOUT"
-            if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
-                runner_cmd="$runner_cmd --include-integration"
-            fi
-            run_check_background "Tests" "$runner_cmd"
-        elif [ "$IMPACTED_ONLY" = true ]; then
-            impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" ${IMPACTED_FILES[@]} || true)"
-            if [ -n "$impacted" ]; then
-                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$marker_expr' -n 8 --no-header --max-test-duration ${RZ_MAX_TEST_DURATION}"
-            else
-                echo "[Tests] Skipped (no impacted tests)"
-            fi
-        else
-            # Default: run full suite with selected markers
-            run_check_background "Tests" "pytest tests/ -q --tb=short -m '$marker_expr' -n 8 --no-header --max-test-duration ${RZ_MAX_TEST_DURATION}"
-        fi
-    else
-        echo "[Tests] Skipped (pytest not installed)"
-    fi
-fi
+# Start non-test checks in parallel; tests will run after type checking passes
 
 # dmypy
 if ! should_skip "dmypy"; then
@@ -497,57 +450,88 @@ if ! should_skip "bandit"; then
     fi
 fi
 
-# Wait for all processes or fail-fast
-if [ "$FAIL_FAST" = true ]; then
-    # Monitor processes and exit on first failure
-    while [ ${#pids[@]} -gt 0 ]; do
-        new_pids=()
-        for pid in "${pids[@]}"; do
-            if ! kill -0 "$pid" 2>/dev/null; then
-                # Process finished, check result
-                for check in Tests Mypy Ruff Black JSCPD Bandit; do
-                    result_file="$tmpdir/${check}.result"
-                    if [ -f "$result_file" ] && [ "$(cat "$result_file")" = "1" ]; then
-                        # Found a failure, gracefully terminate all other processes
-                        {
-                            # Send SIGTERM to all processes
-                            for other_pid in "${pids[@]}"; do
-                                if [ "$other_pid" != "$pid" ] && kill -0 "$other_pid" 2>/dev/null; then
-                                    kill -TERM "$other_pid" 2>/dev/null || true
-                                fi
-                            done
-                            # Give processes a moment to exit cleanly
-                            sleep 0.1
-                            # Force kill any stragglers
-                            for other_pid in "${pids[@]}"; do
-                                if [ "$other_pid" != "$pid" ] && kill -0 "$other_pid" 2>/dev/null; then
-                                    kill -KILL "$other_pid" 2>/dev/null || true
-                                fi
-                            done
-                            # Wait for all processes to exit
-                            for other_pid in "${pids[@]}"; do
-                                wait "$other_pid" 2>/dev/null || true
-                            done
-                        } &>/dev/null
-                        # Output the failure
-                        cat "$tmpdir/${check}.output" >&2
-                        exit 2
-                    fi
-                done
-            else
-                new_pids+=("$pid")
-            fi
-        done
-        pids=("${new_pids[@]+"${new_pids[@]}"}")
-        if [ "${#pids[@]}" -gt 0 ] 2>/dev/null; then sleep 0.05; fi
+######## Phase 1: wait for non-test checks ########
+if [ "$ANY_PIDS" -eq 1 ]; then
+    for pid in "${pids[@]}"; do
+        wait "$pid"
     done
-else
-    # Wait for all processes to complete
-    if [ "$ANY_PIDS" -eq 1 ]; then
-        for pid in "${pids[@]}"; do
-            wait "$pid"
-        done
+fi
+
+# Determine if Mypy passed; if not, skip tests
+MYPY_RESULT_FILE="$tmpdir/Mypy.result"
+RUN_TESTS=true
+if should_skip "tests"; then
+    RUN_TESTS=false
+elif [ -f "$MYPY_RESULT_FILE" ] && [ "$(cat "$MYPY_RESULT_FILE")" != "0" ]; then
+    echo "[Tests] Skipped (type checking failed)" > "$tmpdir/Tests.output"
+    echo 1 > "$tmpdir/Tests.result"
+    RUN_TESTS=false
+fi
+
+######## Phase 2: run tests (after Mypy passes) ########
+if [ "$RUN_TESTS" = true ]; then
+    if command -v pytest &> /dev/null; then
+        # Marker expression: always exclude benchmarks; include integration only when requested
+        if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
+            marker_expr="not benchmark"
+        else
+            marker_expr="not benchmark and not integration"
+        fi
+
+        # Ensure PostgreSQL only if integration tests are requested and backend is postgres
+        if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
+            BACKEND="${RAGZOOM_BACKEND:-sqlite}"
+            DB_URL="${RAGZOOM_DATABASE_URL:-}"
+            if [ "$BACKEND" = "postgres" ] || [[ "$DB_URL" =~ ^postgres ]]; then
+                if [ -z "$DB_URL" ]; then
+                    echo "[PostgreSQL] Ensuring PostgreSQL is running for integration tests..."
+                    python -c "from ragzoom.docker_postgres import DockerPostgres; dp = DockerPostgres(); dp.ensure_running()" 2>/dev/null || {
+                        echo "[PostgreSQL] Warning: Could not start PostgreSQL, integration tests may fail"
+                    }
+                else
+                    echo "[PostgreSQL] Using provided database URL: $DB_URL"
+                fi
+            else
+                echo "[PostgreSQL] Skipping: backend is '$BACKEND' (using SQLite)"
+            fi
+        fi
+
+        # Ensure across-the-board 1s per-test timeout unless explicitly overridden via env
+        export RZ_MAX_TEST_DURATION="${RZ_MAX_TEST_DURATION:-1.0}"
+
+        dur_flag=""
+        if [ -n "${PYTEST_DURATIONS:-}" ]; then
+            dur_flag="--durations=$PYTEST_DURATIONS"
+        fi
+
+        if [ -n "$PER_TEST_TIMEOUT" ]; then
+            runner_cmd="python $GIT_ROOT/scripts/run_tests_with_timeouts.py --per-test-seconds $PER_TEST_TIMEOUT"
+            if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
+                runner_cmd="$runner_cmd --include-integration"
+            fi
+            run_check_background "Tests" "$runner_cmd"
+        elif [ "$IMPACTED_ONLY" = true ]; then
+            impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" ${IMPACTED_FILES[@]} || true)"
+            if [ -n "$impacted" ]; then
+                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$marker_expr' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}"
+            else
+                echo "[Tests] Skipped (no impacted tests)" > "$tmpdir/Tests.output"
+                echo 0 > "$tmpdir/Tests.result"
+            fi
+        else
+            run_check_background "Tests" "pytest tests/ -q --tb=short -m '$marker_expr' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}"
+        fi
+    else
+        echo "[Tests] Skipped (pytest not installed)" > "$tmpdir/Tests.output"
+        echo 0 > "$tmpdir/Tests.result"
     fi
+fi
+
+# Wait for tests (if any) to complete
+if [ ${#pids[@]} -gt 0 ]; then
+    for pid in "${pids[@]}"; do
+        wait "$pid"
+    done
 fi
 
 # Check for auto-fixes after all background processes have completed
