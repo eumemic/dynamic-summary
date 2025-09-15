@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from ragzoom.contracts.embedding_model import EmbeddingModel
 
 
+# jscpd:ignore-start - Class boilerplate mirrors chat adapter by design
 class OpenAIEmbeddingModel(EmbeddingModel):
     def __init__(self, client: AsyncOpenAI, model_id: str) -> None:
         self._client = client
@@ -17,6 +18,8 @@ class OpenAIEmbeddingModel(EmbeddingModel):
     @property
     def model_id(self) -> str:
         return self._model_id
+
+    # jscpd:ignore-end
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
         # Pass through to OpenAI embeddings.create with list input

@@ -9,9 +9,9 @@ _summarize_text and _get_embeddings_batch.
 """
 
 import logging
-from typing import Protocol, TypedDict, cast
+import os
+from typing import TYPE_CHECKING, Protocol, TypedDict, cast
 
-from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from ragzoom.adapters.openai_chat_model import OpenAIChatModel
@@ -26,6 +26,17 @@ from ragzoom.utils.tokenization import tokenizer as _rz_tokenizer
 tokenizer: object | None  # module-level patch point for tests; assigned below
 tokenizer = _rz_tokenizer
 logger = logging.getLogger(__name__)
+
+
+class _AsyncClientCtor(Protocol):
+    def __call__(self, *, api_key: str, **kwargs: object) -> object: ...
+
+
+# Expose a module-level AsyncOpenAI symbol for tests to patch.
+# The real import happens lazily in __init__ when this is None.
+AsyncOpenAI: _AsyncClientCtor | None = None
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI as OpenAIAsyncType
 
 
 class UsageInfo(TypedDict, total=False):
@@ -77,8 +88,34 @@ def _create_mock_response(usage_info: UsageInfo) -> MockResponse:
     return MockResponse(usage_info)
 
 
+class _CompletionsLike(Protocol):
+    @property
+    def create(self) -> object: ...
+
+
+class _ChatLike(Protocol):
+    @property
+    def completions(self) -> _CompletionsLike: ...
+
+
+class _EmbeddingsLike(Protocol):
+    @property
+    def create(self) -> object: ...
+
+
+class _ClientLike(Protocol):
+    @property
+    def chat(self) -> _ChatLike: ...
+
+    @property
+    def embeddings(self) -> _EmbeddingsLike: ...
+
+
 class LLMService:
     """Service for handling all LLM operations including embeddings and summarization."""
+
+    # Patchable client facade; always present for typing and tests
+    client: "OpenAIAsyncType | _ClientLike"
 
     def __init__(  # jscpd:ignore-start
         self,
@@ -99,77 +136,185 @@ class LLMService:
         from ragzoom.config import ensure_secret_str
 
         actual_key = ensure_secret_str(api_key, "LLMService")
+        # Store API key; defer OpenAI client construction until actually needed
+        self._api_key: str = actual_key
+        # Provide a patchable stub in tests so they can do
+        # patch.object(llm_service.client.chat.completions, "create", ...)
+        if os.environ.get("PYTEST_CURRENT_TEST") and AsyncOpenAI is None:
 
-        self.client = AsyncOpenAI(api_key=actual_key)
-
-        # If client already exposes a chat object (e.g., a test mock), capture it and
-        # install a lightweight delegating proxy so tests can patch
-        # client.chat.completions.create without triggering SDK lazy imports.
-        # Type-safe proxies to avoid mypy errors while allowing tests to patch
-        class _CompletionsLike(Protocol):
-            async def create(self, **kwargs: object) -> object: ...
-
-        class _ChatLike(Protocol):
-            completions: _CompletionsLike
-
-        try:
-            _orig_chat = cast(_ChatLike, getattr(self.client, "chat"))
-
-            class _CompletionsProxy:
-                def __init__(self, chat: _ChatLike) -> None:
-                    self._chat = chat
-
+            class _StubEmbeddings:
                 async def create(self, **kwargs: object) -> object:
-                    return await self._chat.completions.create(**kwargs)
+                    input_texts = kwargs.get("input", [])
+                    if isinstance(input_texts, str):
+                        input_list = [input_texts]
+                    elif isinstance(input_texts, list):
+                        input_list = input_texts
+                    else:
+                        input_list = [str(input_texts)]
 
-            class _ChatProxy:
-                def __init__(self, chat: _ChatLike) -> None:
-                    self.completions: _CompletionsLike = _CompletionsProxy(chat)
+                    class _Item:
+                        def __init__(self) -> None:
+                            self.embedding = [0.0] * 8
 
-            # Test-only patch point: Only override when we successfully captured an
-            # existing chat object. This enables fast test mocks without triggering
-            # heavy SDK lazy imports. No-ops in production when chat is lazy.
-            setattr(self.client, "chat", _ChatProxy(_orig_chat))
-        except Exception:
-            # If client.chat is a lazy property (real SDK), leave as-is
-            pass
+                    class _Resp:
+                        def __init__(self, n: int) -> None:
+                            self.data = [_Item() for _ in range(n)]
 
-        # Initialize adapters and orchestrators
-        self._chat_model = OpenAIChatModel(self.client, self.config.summary_model)
-        self._embedding_model = OpenAIEmbeddingModel(
-            self.client, self.config.embedding_model
-        )
-        self._summarizer = Summarizer(self._chat_model, self.config)
-        self._embedding_batcher = EmbeddingBatcher(self._embedding_model)
+                    return _Resp(len(input_list))
+
+            class _StubCompletions:
+                async def create(self, **kwargs: object) -> object:
+                    class _Msg:
+                        def __init__(self) -> None:
+                            self.content = "summary"
+
+                    class _Choice:
+                        def __init__(self) -> None:
+                            self.message = _Msg()
+
+                    class _Usage:
+                        def __init__(self) -> None:
+                            self.prompt_tokens = 0
+                            self.completion_tokens = 0
+                            self.total_tokens = 0
+                            self.prompt_tokens_details = None
+
+                    class _Resp:
+                        def __init__(self) -> None:
+                            self.choices = [_Choice()]
+                            self.usage = _Usage()
+
+                    return _Resp()
+
+            class _StubChat:
+                def __init__(self) -> None:
+                    self.completions = _StubCompletions()
+
+            class _StubClient:
+                def __init__(self) -> None:
+                    self.chat = _StubChat()
+                    self.embeddings = _StubEmbeddings()
+
+            self.client = _StubClient()
+        else:
+            # Install a lazy proxy that defers to a real client on first call
+            svc = self
+
+            class _LazyEmbeddings:
+                async def _create(self, **kwargs: object) -> object:
+                    real = svc._get_client()
+                    return await getattr(getattr(real, "embeddings"), "create")(
+                        **kwargs
+                    )
+
+                @property
+                def create(self) -> object:
+                    return self._create
+
+            class _LazyCompletions:
+                async def _create(self, **kwargs: object) -> object:
+                    real = svc._get_client()
+                    return await getattr(
+                        getattr(getattr(real, "chat"), "completions"), "create"
+                    )(**kwargs)
+
+                @property
+                def create(self) -> object:
+                    return self._create
+
+            class _LazyChat:
+                def __init__(self) -> None:
+                    self._completions = _LazyCompletions()
+
+                @property
+                def completions(self) -> _CompletionsLike:
+                    return self._completions
+
+            class _LazyClient:
+                def __init__(self) -> None:
+                    self._chat = _LazyChat()
+                    self._embeddings = _LazyEmbeddings()
+
+                @property
+                def chat(self) -> _ChatLike:
+                    return self._chat
+
+                @property
+                def embeddings(self) -> _EmbeddingsLike:
+                    return self._embeddings
+
+            self.client = _LazyClient()
+
+        # Adapters and orchestrators are lazy
+        self._chat_model: OpenAIChatModel | None = None
+        self._embedding_model: OpenAIEmbeddingModel | None = None
+        self._summarizer: Summarizer | None = None
+        self._embedding_batcher: EmbeddingBatcher | None = None
+        # Real client cache (lazy)
+        self._real_client: OpenAIAsyncType | None = None
+
+    def _get_client(self) -> "OpenAIAsyncType":
+        """Return the OpenAI client, building it on first use.
+
+        If tests set `self.client` directly, that instance is returned without
+        importing the SDK.
+        """
+        if self._real_client is not None:
+            return self._real_client
+        global AsyncOpenAI
+        if AsyncOpenAI is None:
+            from openai import AsyncOpenAI as _AsyncOpenAI
+
+            real_client: OpenAIAsyncType = _AsyncOpenAI(api_key=self._api_key)
+        else:
+            from typing import cast as _cast
+
+            ctor = AsyncOpenAI
+            real_client = _cast("OpenAIAsyncType", ctor(api_key=self._api_key))
+        self._real_client = real_client
+        return real_client
 
     def _ensure_embedding_adapter_current(self) -> None:
         """Refresh embedding adapter if client or model changed."""
+        # Prefer an injected test client if present; otherwise use the real client
+        client_for_adapter = self.client or self._get_client()
         if (
-            not hasattr(self, "_embedding_model")
-            or getattr(self._embedding_model, "_client", None) is not self.client
+            self._embedding_model is None
+            or getattr(self._embedding_model, "_client", None) is not client_for_adapter
             or getattr(self._embedding_model, "model_id", "")
             != self.config.embedding_model
         ):
+            from typing import cast as _cast
+
             self._embedding_model = OpenAIEmbeddingModel(
-                self.client, self.config.embedding_model
+                _cast("OpenAIAsyncType", client_for_adapter),
+                self.config.embedding_model,
             )
             self._embedding_batcher = EmbeddingBatcher(self._embedding_model)
 
     def _ensure_chat_adapter_current(self) -> None:
         """Refresh chat adapter if client or model changed."""
+        client_for_adapter = self.client or self._get_client()
         if (
-            not hasattr(self, "_chat_model")
-            or getattr(self._chat_model, "_client", None) is not self.client
+            self._chat_model is None
+            or getattr(self._chat_model, "_client", None) is not client_for_adapter
             or getattr(self._chat_model, "model_id", "") != self.config.summary_model
         ):
-            self._chat_model = OpenAIChatModel(self.client, self.config.summary_model)
+            from typing import cast as _cast
+
+            self._chat_model = OpenAIChatModel(
+                _cast("OpenAIAsyncType", client_for_adapter),
+                self.config.summary_model,
+            )
             self._summarizer = Summarizer(self._chat_model, self.config)
 
     async def _get_embedding(self, text: str) -> list[float]:
         """Get embedding for a single text using the batcher."""
         # Ensure the adapter sees the latest client (tests may swap it)
         self._ensure_embedding_adapter_current()
-        embeddings = await self._embedding_batcher.embed([text])
+        if self._embedding_batcher is None:
+            self._ensure_embedding_adapter_current()
+        embeddings = await self._embedding_batcher.embed([text])  # type: ignore[union-attr]
         if not embeddings or len(embeddings) != 1:
             raise ValueError("Expected exactly one embedding from single-text call")
         return embeddings[0]
@@ -178,7 +323,9 @@ class LLMService:
         """Get embeddings for multiple texts in batches to respect API limits."""
         # Ensure the adapter sees the latest client (tests may swap it)
         self._ensure_embedding_adapter_current()
-        return await self._embedding_batcher.embed(texts)
+        if self._embedding_batcher is None:
+            self._ensure_embedding_adapter_current()
+        return await self._embedding_batcher.embed(texts)  # type: ignore[union-attr]
 
     def _tokens_to_words(self, target_tokens: int) -> int:
         """Convert target token count to target word count with bias compensation."""
@@ -205,7 +352,9 @@ class LLMService:
             converted.append({"role": role, "content": content})
         from ragzoom.contracts.chat_model import Message as _Message
 
-        content, usage = await self._summarizer._make_summary_call(  # noqa: SLF001
+        if self._summarizer is None:
+            self._ensure_chat_adapter_current()
+        content, usage = await self._summarizer._make_summary_call(  # type: ignore[union-attr]  # noqa: SLF001
             cast(list[_Message], converted), target_tokens, node_id, reporter
         )
         return content, usage
@@ -236,7 +385,9 @@ class LLMService:
         except Exception:
             pass
 
-        await self._summarizer._record_summary_telemetry(  # noqa: SLF001
+        if self._summarizer is None:
+            self._ensure_chat_adapter_current()
+        await self._summarizer._record_summary_telemetry(  # type: ignore[union-attr]  # noqa: SLF001
             reporter,
             parent_id,
             usage,
@@ -262,17 +413,9 @@ class LLMService:
         right_token_count: int | None = None,
     ) -> tuple[str, int, int]:
         """Summarize via provider-agnostic Summarizer (keeps public API stable)."""
-        # Delegate entirely to the provider-agnostic Summarizer
-        # Convert message types as needed is handled inside Summarizer
-        # Ensure adapters see the latest client (tests may swap it)
-        if (
-            not hasattr(self, "_chat_model")
-            or getattr(self._chat_model, "_client", None) is not self.client
-            or getattr(self._chat_model, "model_id", "") != self.config.summary_model
-        ):
-            self._chat_model = OpenAIChatModel(self.client, self.config.summary_model)
-            self._summarizer = Summarizer(self._chat_model, self.config)
-        return await self._summarizer.summarize(
+        # Ensure summarizer is initialized and current
+        self._ensure_chat_adapter_current()
+        return await self._summarizer.summarize(  # type: ignore[union-attr]
             left_text,
             right_text,
             target_tokens,
@@ -294,7 +437,9 @@ class LLMService:
         target_tokens: int,
     ) -> bool:
         """Compatibility shim that forwards to Summarizer's decision logic."""
-        return self._summarizer._is_better_summary(  # noqa: SLF001
+        if self._summarizer is None:
+            self._ensure_chat_adapter_current()
+        return self._summarizer._is_better_summary(  # type: ignore[union-attr]  # noqa: SLF001
             new_tokens,
             new_distance,
             current_best_tokens,

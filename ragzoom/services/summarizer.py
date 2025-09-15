@@ -246,7 +246,10 @@ class Summarizer:
     ) -> tuple[str, int, int]:
         combined_text = f"{left_text} {right_text}".strip()
 
-        combined_tokens = tokenizer.count_tokens(combined_text)
+        if left_token_count is not None and right_token_count is not None:
+            combined_tokens = left_token_count + right_token_count
+        else:
+            combined_tokens = tokenizer.count_tokens(combined_text)
         if combined_tokens <= target_tokens:
             if reporter and parent_id:
                 start_time = time.time()
