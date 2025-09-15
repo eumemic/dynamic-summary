@@ -68,7 +68,7 @@ jobs:
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_BACKEND: sqlite
-          RAGZOOM_VECTOR_BACKEND: chroma
+          RAGZOOM_VECTOR_BACKEND: python
           RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
           ./scripts/run-checks.sh --include-integration-tests
@@ -108,7 +108,7 @@ jobs:
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_BACKEND: sqlite
-          RAGZOOM_VECTOR_BACKEND: chroma
+          RAGZOOM_VECTOR_BACKEND: python
           RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
           pytest tests/ -m "not benchmark" -n 2 --cov=ragzoom --cov-report=term --cov-report=html --no-header
@@ -162,7 +162,7 @@ jobs:
         env:
           RAGZOOM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key-for-tests' }}
           RAGZOOM_BACKEND: sqlite
-          RAGZOOM_VECTOR_BACKEND: chroma
+          RAGZOOM_VECTOR_BACKEND: python
           RAGZOOM_DATA_DIR: ${{ github.workspace }}
         run: |
           pytest tests/ -m "not benchmark" -n 2 --no-header -q
