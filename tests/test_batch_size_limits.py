@@ -61,6 +61,7 @@ class TestBatchSizeLimits:
         assert len(result) == 100
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(4.0)
     async def test_large_batch_automatic_splitting(
         self, tree_builder: TreeBuilder
     ) -> None:
