@@ -362,8 +362,8 @@ class OperationalConfig:
     # Durable backend selection and storage location
     backend: str = "sqlite"  # "sqlite" | "postgres"
     database_url: str = ""
-    # Vector index backend for non-PostgreSQL setups. CLI overrides to use Chroma.
-    vector_backend: str = "python"  # "python" | "chroma"
+    # Vector index backend for non-PostgreSQL setups. Tests override via env to use python.
+    vector_backend: str = "chroma"  # "python" | "chroma"
     cache_size: int = 1000
     log_level: str = "INFO"
     validate_pipeline: bool = False
