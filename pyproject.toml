@@ -50,7 +50,7 @@ dev = [
     "tomli>=1.0.0; python_version < '3.11'",
 ]
 chroma = [
-    "chromadb>=0.5.0",
+    "chromadb==1.0.15",
 ]
 postgres = [
     "psycopg[binary]==3.2.9",
