@@ -113,7 +113,7 @@ jobs:
           pip install pip-tools
           pip-sync requirements/dev.lock
           # Install main package with telemetry dependencies and chroma (extras)
-          pip install -e .[telemetry,chroma]
+          pip install -e .[telemetry,chroma,postgres]
           
           # Install AWS CLI for S3 baseline syncing
           pip install awscli
