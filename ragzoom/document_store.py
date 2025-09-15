@@ -150,6 +150,12 @@ class DocumentNodeRepository:
 
     def get_leaves(self) -> list[TreeNode]:
         """Get all leaf nodes for this document."""
+        # Prefer document-scoped repository method when available to avoid full-table scans
+        get_scoped = getattr(self._repo, "get_leaf_nodes_for_document", None)
+        if callable(get_scoped):
+            from typing import cast as _cast
+
+            return _cast(list[TreeNode], get_scoped(self.document_id))
         all_leaves = self._repo.get_leaf_nodes()
         return [node for node in all_leaves if node.document_id == self.document_id]
 
@@ -163,7 +169,14 @@ class DocumentNodeRepository:
     # Additional helper used by CoverageBuilder sibling logic
     def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
         """Get nodes by path values, filtered to this document only."""
-        nodes = self._repo.get_nodes_by_paths(paths)
+        # Use document-scoped path lookup if repository supports it
+        get_scoped = getattr(self._repo, "get_nodes_by_paths_for_document", None)
+        if callable(get_scoped):
+            from typing import cast as _cast
+
+            nodes = _cast(list[TreeNode], get_scoped(self.document_id, paths))
+        else:
+            nodes = self._repo.get_nodes_by_paths(paths)
         return [node for node in nodes if node.document_id == self.document_id]
 
     def update_parent_references_batch(
@@ -197,7 +210,7 @@ class DocumentTreeNavigator:
     def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
         """Get ancestors of nodes within this document."""
         # Filter input nodes to this document first
-        valid_nodes = []
+        valid_nodes: list[str] = []
         for node_id in node_ids:
             node = self._navigator.node_repo.get_node(node_id)
             if node and node.document_id == self.document_id:
@@ -206,8 +219,28 @@ class DocumentTreeNavigator:
         if not valid_nodes:
             return []
 
+        # Prefer document-scoped path lookup to avoid loading ancestors from other documents
+        repo = self._navigator.node_repo
+        get_scoped = getattr(repo, "get_nodes_by_paths_for_document", None)
+        if callable(get_scoped):
+            from ragzoom.utils.path_utils import get_all_ancestor_paths
+
+            nodes = repo.get_nodes(valid_nodes)
+            if not nodes:
+                return []
+            ancestor_paths = set()
+            for n in nodes:
+                ancestor_paths.update(get_all_ancestor_paths(n.path))
+            if not ancestor_paths:
+                return []
+            from typing import cast as _cast
+
+            return _cast(
+                list[TreeNode], get_scoped(self.document_id, list(ancestor_paths))
+            )
+
+        # Fallback to generic navigator and filter
         ancestors = self._navigator.get_ancestors(valid_nodes)
-        # Filter ancestors to this document (should already be the case, but defensive)
         return [node for node in ancestors if node.document_id == self.document_id]
 
     def get_root(self) -> TreeNode | None:

@@ -151,11 +151,20 @@ class Retriever:
         from ragzoom.retrieval import mmr
         from ragzoom.retrieval import similarity as sim
 
-        vec_candidates = self.vector_index.search_similar(
+        raw_candidates = self.vector_index.search_similar(
             query_embedding,
             k_candidates,
             {"document_id": effective_doc_id} if effective_doc_id else None,
         )
+        # Filter out stale vectors that don't exist in storage to preserve invariants
+        cand_ids = [v.id for v in raw_candidates]
+        existing_nodes = self.document_store.nodes.get_nodes(cand_ids)
+        existing_ids = {n.id for n in existing_nodes}
+        vec_candidates = [v for v in raw_candidates if v.id in existing_ids]
+        if telemetry_collector:
+            telemetry_collector.record_metric(
+                "candidates_filtered", len(vec_candidates)
+            )
         if telemetry_collector:
             telemetry_collector.end_phase("search")
             telemetry_collector.start_phase()
@@ -242,6 +251,9 @@ class Retriever:
                 f"up to the document root. Selected node IDs: {selected_ids[:5]}{'...' if len(selected_ids) > 5 else ''}"
             )
 
+        # Sanity: drop any selected ids that aren't present in the document store
+        selected_ids = [nid for nid in selected_ids if nid in nodes]
+
         # Phase 6: Extract tiling using DP algorithm
         final_budget = (
             budget_tokens
@@ -265,11 +277,21 @@ class Retriever:
                 "tiling_size", len(dp_result.tiling.node_ids)
             )
 
-        # Calculate output tokens
+        # Ensure tiling nodes are present in the preloaded set (robust against edge cases)
+        tiling_ids = list(dp_result.tiling.node_ids)
+        missing_in_nodes = [nid for nid in tiling_ids if nid not in nodes]
+        if missing_in_nodes:
+            try:
+                loaded_more = self.document_store.nodes.get_nodes(missing_in_nodes)
+                for n in loaded_more:
+                    nodes[n.id] = n
+            except Exception:
+                # Leave as-is; downstream consumers guard against missing nodes
+                pass
+
+        # Calculate output tokens (after best-effort completion)
         output_tokens = sum(
-            nodes[node_id].token_count
-            for node_id in dp_result.tiling.node_ids
-            if node_id in nodes
+            nodes[node_id].token_count for node_id in tiling_ids if node_id in nodes
         )
         if telemetry_collector:
             telemetry_collector.record_metric("output_tokens", output_tokens)

@@ -70,6 +70,14 @@ class TreeNavigator:
 
         # Single batch fetch of all ancestors by their paths
         if ancestor_paths:
+            # Use document-scoped fetch when available to avoid cross-document contamination
+            get_scoped = getattr(
+                self.node_repo, "get_nodes_by_paths_for_document", None
+            )
+            if callable(get_scoped):
+                # We don't have document_id here; fetch all and let caller filter
+                # Document-scoped variant is handled by DocumentTreeNavigator
+                return self.node_repo.get_nodes_by_paths(list(ancestor_paths))
             return self.node_repo.get_nodes_by_paths(list(ancestor_paths))
 
         return []

@@ -406,7 +406,7 @@ class TreeBuilder:
     def add_document(
         self,
         text: str,
-        show_progress: bool = True,
+        show_progress: bool = False,
     ) -> str:
         """Sync wrapper for add_document."""
         return asyncio.run(self.add_document_async(text, show_progress))
@@ -450,7 +450,7 @@ class TreeBuilder:
     async def add_document_async(
         self,
         text: str,
-        show_progress: bool = True,
+        show_progress: bool = False,
     ) -> str:
         """Async version of add_document - called by sync wrapper."""
         result = await self._add_document_impl(text, show_progress)
