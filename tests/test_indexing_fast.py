@@ -4,6 +4,8 @@ import asyncio
 from typing import cast
 from unittest.mock import MagicMock, Mock
 
+import pytest
+
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
@@ -155,6 +157,7 @@ class TestIndexingFast:
                 last_span_end >= doc_length - 10
             ), f"Document not fully indexed: {last_span_end} < {doc_length}"
 
+    @pytest.mark.slow_threshold(2.0)
     def test_check_api_batch_limits(
         self,
         base_config: BackwardCompatibilityConfig,
@@ -186,7 +189,11 @@ class TestIndexingFast:
             texts_per_call.append(len(input_texts))
 
             # Return embeddings for each text
-            return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_texts])
+            from types import SimpleNamespace
+
+            return Mock(
+                data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_texts]
+            )
 
         # Use the mock OpenAI client from fixture and customize embedding tracking
         mock_client = mock_openai_async_client

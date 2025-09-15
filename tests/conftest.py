@@ -395,7 +395,11 @@ def mock_openai_client() -> MagicMock:
             input_texts = [input_texts]
         # Return one embedding for each input text
         input_list = input_texts if isinstance(input_texts, list) else [input_texts]
-        return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in input_list])
+        from types import SimpleNamespace
+
+        return MagicMock(
+            data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_list]
+        )
 
     mock_client.embeddings.create = mock_embeddings_create
 
@@ -426,7 +430,11 @@ def mock_openai_async_client() -> MagicMock:
             input_texts = [input_texts]
         # Return one embedding for each input text
         input_list = input_texts if isinstance(input_texts, list) else [input_texts]
-        return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in input_list])
+        from types import SimpleNamespace
+
+        return MagicMock(
+            data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_list]
+        )
 
     mock_client.embeddings.create = mock_async_embeddings_create
 

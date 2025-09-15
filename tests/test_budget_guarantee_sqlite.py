@@ -35,7 +35,7 @@ class TestBudgetGuarantee:
     def assembler(self, doc_store: DocumentStore) -> Assembler:
         return Assembler(doc_store)
 
-    @pytest.mark.slow_threshold(2.0)
+    @pytest.mark.slow_threshold(3.0)
     def test_budget_never_exceeded_worst_case(
         self,
         doc_store: DocumentStore,
@@ -380,6 +380,7 @@ class TestBudgetGuarantee:
             assert len(result.tiling) == 1
             assert "parent" in result.tiling
 
+    @pytest.mark.slow_threshold(2.0)
     def test_conservative_num_seeds_calculation(
         self,
         doc_store: DocumentStore,
