@@ -605,17 +605,23 @@ async def _process_embedding_batch(
             if any(node.is_root() for node in batch)
             else f"h{min(heights)}-{max(heights)}"
         )
-        total_tokens = sum(tokenizer.count_tokens(node.text) for node in batch)
         elapsed = time.time() - start_time
-        logger.debug(
-            f"Embedded batch size={len(batch)} type={batch_type} tokens={total_tokens} time={elapsed:.2f}s"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            total_tokens = sum(tokenizer.count_tokens(node.text) for node in batch)
+            logger.debug(
+                f"Embedded batch size={len(batch)} type={batch_type} tokens={total_tokens} time={elapsed:.2f}s"
+            )
+        else:
+            logger.debug(
+                f"Embedded batch size={len(batch)} type={batch_type} time={elapsed:.2f}s"
+            )
 
         # Track telemetry
         if reporter:
             # Prepare node embeddings data
             node_embeddings = []
             for node in batch:
+                # Token counts are only needed for telemetry; compute lazily here
                 token_count = tokenizer.count_tokens(node.text)
                 node_embeddings.append((node.id, token_count))
 

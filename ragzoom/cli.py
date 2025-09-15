@@ -726,6 +726,25 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
                 )
 
             deleted_count = document_service.clear_document(document_id)
+            # Clear vectors for this document (fail-soft)
+            try:
+                from ragzoom.vector_factory import create_vector_index
+
+                # Use the document's embedding model if available
+                doc_row = store.get_document_by_id(document_id)
+                emb_model = (
+                    doc_row.embedding_model
+                    if doc_row and doc_row.embedding_model
+                    else index_config.embedding_model
+                )
+                vindex = create_vector_index(
+                    operational_config.vector_backend,
+                    operational_config.database_url,
+                    emb_model,
+                )
+                vindex.delete(filter={"document_id": document_id})
+            except Exception:
+                pass
             click.echo(
                 f"✅ Cleared document '{document_id}' ({deleted_count} nodes deleted)"
             )
@@ -735,6 +754,31 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
                 click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
 
             deleted_count = document_service.clear_all_documents()
+            # Also clear all vectors for all documents
+            try:
+                from ragzoom.vector_factory import create_vector_index
+
+                # Attempt to clear vectors by iterating all documents first
+                docs = store.list_documents()
+                if docs:
+                    # Use embedding model from first doc, or default
+                    emb_model = (
+                        docs[0].embedding_model
+                        if hasattr(docs[0], "embedding_model")
+                        else index_config.embedding_model
+                    )
+                    vindex = create_vector_index(
+                        operational_config.vector_backend,
+                        operational_config.database_url,
+                        emb_model,
+                    )
+                    for doc in docs:
+                        try:
+                            vindex.delete(filter={"document_id": doc.id})
+                        except Exception:
+                            continue
+            except Exception:
+                pass
             click.echo(f"✅ Cleared {deleted_count} nodes from the database")
 
     except click.Abort:

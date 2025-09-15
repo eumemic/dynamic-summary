@@ -172,6 +172,17 @@ class IndexingService:
                 logger.info(
                     f"Cleared existing data for '{document_id}' ({deleted_count} nodes)"
                 )
+            # Also clear vectors for this document to avoid stale candidates
+            try:
+                vector_index_for_clear = create_vector_index(
+                    self.operational_config.vector_backend,
+                    self.operational_config.database_url,
+                    self.index_config.embedding_model,
+                )
+                _ = vector_index_for_clear.delete(filter={"document_id": document_id})
+            except Exception:
+                # Non-fatal; retrieval path defensively filters any stale vectors
+                pass
 
             # Create document with full metadata BEFORE indexing
             # This ensures the document exists with proper metadata before TreeBuilder runs

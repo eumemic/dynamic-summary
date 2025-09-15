@@ -56,7 +56,7 @@ class PythonVectorIndexAdapter(VectorIndex):
         filter: dict[str, object] | None = None,
         ids: list[str] | None = None,
     ) -> int:
-        # Simple implementation: recreate without deleted IDs if provided; otherwise no-op
+        # Simple implementation: recreate without deleted IDs or those matching filter
         if ids:
             remaining: list[
                 tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
@@ -76,6 +76,26 @@ class PythonVectorIndexAdapter(VectorIndex):
             self._idx = PythonVectorIndex(getattr(self._idx, "_persist_dir", None))
             self._idx.upsert(remaining)
             return len(ids)
+        if filter and "document_id" in filter:
+            doc = (
+                str(filter["document_id"]) if filter["document_id"] is not None else ""
+            )
+            remaining2: list[
+                tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+            ] = []
+            deleted = 0
+            all_ids = list(self._idx._ids)
+            for i in all_ids:
+                meta = self._meta_for_id(i)
+                if str(meta.get("document_id", "")) == doc:
+                    deleted += 1
+                    continue
+                v = self._vector_for_id(i)
+                remaining2.append((i, list(map(float, v.tolist())), dict(meta)))
+            self._idx = PythonVectorIndex(getattr(self._idx, "_persist_dir", None))
+            if remaining2:
+                self._idx.upsert(remaining2)
+            return deleted
         return 0
 
     # --- internals ---
