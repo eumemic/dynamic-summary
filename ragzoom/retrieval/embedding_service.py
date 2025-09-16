@@ -27,6 +27,8 @@ class EmbeddingService:
         self.client = client
         self.document_store = document_store
         self.default_model = default_model
+        self._warned_missing_model: set[str] = set()
+        self._cache: dict[tuple[str, str], list[float]] = {}
 
     def get_query_embedding(
         self, query: str, document_id: str | None = None
@@ -45,12 +47,18 @@ class EmbeddingService:
         """
         embedding_model = self._detect_embedding_model(document_id)
 
+        cache_key = (embedding_model, query)
+        if cache_key in self._cache:
+            return list(self._cache[cache_key])
+
         try:
             response = self.client.embeddings.create(
                 model=embedding_model,
                 input=query,
             )
-            return response.data[0].embedding
+            embedding = list(response.data[0].embedding)
+            self._cache[cache_key] = embedding
+            return list(embedding)
         except Exception as e:
             logger.error(
                 f"Error getting query embedding with model {embedding_model}: {e}"
@@ -77,8 +85,10 @@ class EmbeddingService:
             )
             return doc_embedding_model
         else:
-            logger.warning(
-                f"No embedding model found for document {document_id}, using config default: {self.default_model}. "
-                f"This may indicate the document was indexed before model tracking was implemented."
-            )
+            if document_id not in self._warned_missing_model:
+                self._warned_missing_model.add(document_id)
+                logger.warning(
+                    f"No embedding model found for document {document_id}, using config default: {self.default_model}. "
+                    f"This may indicate the document was indexed before model tracking was implemented."
+                )
             return self.default_model
