@@ -195,6 +195,16 @@ jobs:
           # Note: Uses default QUERY_BENCHMARK_RUNS=3 for statistical variance
         run: |
           echo "Running query performance benchmark (optimized for CI)..."
+          DB_INFO_FILE="benchmark_results/benchmark_db.txt"
+          if [ -f "$DB_INFO_FILE" ]; then
+            DB_URL=$(sed -n '2p' "$DB_INFO_FILE")
+            if [ -n "$DB_URL" ]; then
+              export RAGZOOM_DATABASE_URL="$DB_URL"
+              export RAGZOOM_BACKEND="sqlite"
+            fi
+          fi
+          # Ensure we reuse the same persistent vector index as indexing
+          export RAGZOOM_VECTOR_BACKEND="chroma"
           # Run only the "broad" query configuration to save CI time (67% reduction)
           # This provides a representative test while maintaining statistical robustness
           

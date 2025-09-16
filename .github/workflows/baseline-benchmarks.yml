@@ -59,6 +59,15 @@ jobs:
           
           # Run query benchmark (optimized configuration)
           echo "Running query performance benchmark..."
+          DB_INFO_FILE="benchmark_results/benchmark_db.txt"
+          if [ -f "$DB_INFO_FILE" ]; then
+            DB_URL=$(sed -n '2p' "$DB_INFO_FILE")
+            if [ -n "$DB_URL" ]; then
+              export RAGZOOM_DATABASE_URL="$DB_URL"
+              export RAGZOOM_BACKEND="sqlite"
+            fi
+          fi
+          export RAGZOOM_VECTOR_BACKEND="chroma"
           config="broad-2000-10"
           echo "Running query benchmark with config=$config (3 runs for variance)"
           pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v

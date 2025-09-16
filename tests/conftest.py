@@ -285,8 +285,21 @@ def sqlite_store_factory(
 
 @pytest.fixture
 def storage_backend() -> Generator[_StorageBackendProtocol, None, None]:
-    """Default StorageBackend for tests: SQLite in-memory."""
-    backend = SQLiteStorageBackend("sqlite:///:memory:")
+    """Default StorageBackend for tests.
+
+    Honors environment overrides so benchmarks can reuse the same database and
+    vector index as upstream indexing jobs.
+    """
+
+    db_url = os.getenv("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+    vector_backend = os.getenv("RAGZOOM_VECTOR_BACKEND", "python")
+    vector_dir = os.getenv("RAGZOOM_VECTOR_PERSIST_DIR")
+
+    backend = SQLiteStorageBackend(
+        db_url,
+        vector_backend=vector_backend,
+        vector_persist_dir=vector_dir,
+    )
     try:
         yield backend
     finally:

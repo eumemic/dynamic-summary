@@ -94,7 +94,14 @@ def impacted_tests(changed_files: list[str]) -> list[str]:
     changed_paths = [Path(p).resolve() for p in changed_files if p.endswith(".py")]
 
     # Always include changed tests directly
-    tests: set[str] = set(str(p) for p in changed_paths if "/tests/" in str(p))
+    tests: set[str] = set()
+    for p in changed_paths:
+        if "/tests/" in str(p):
+            if p.name.startswith("test_"):
+                tests.add(str(p))
+            else:
+                # Fixture/helpers (conftest, utils, __init__, etc.) may impact many tests
+                tests.add(str(ROOT / "tests"))
 
     # Determine changed ragzoom modules
     changed_modules = {mn for p in changed_paths if (mn := module_name_from_path(p))}
