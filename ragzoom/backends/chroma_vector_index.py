@@ -25,7 +25,7 @@ try:
     logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
     logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
     import chromadb
-    from chromadb.api.types import Metadatas
+    from chromadb.api.types import Metadata
 except Exception as e:  # pragma: no cover - optional dependency
     raise ImportError(
         "chromadb is not installed. Install with `pip install chromadb`."
@@ -135,19 +135,7 @@ class ChromaVectorIndex:
             return
         ids: list[str] = []
         embeddings: list[Sequence[float]] = []
-<<<<<<< HEAD
-        metadatas: Metadatas = []
-=======
-        # Use upstream Chroma Metadata type to stay in lockstep with provider typings
-        try:
-            from chromadb.api.types import Metadata as _ChromaMetadata
-        except (
-            Exception
-        ):  # pragma: no cover - fallback when chromadb not installed at runtime
-            from collections.abc import Mapping as _ChromaMetadata
-
-        metadatas: list[_ChromaMetadata] = []
->>>>>>> 111dc7b (deps: enforce reproducible installs and match CI/local)
+        metadatas: list[Metadata] = []
         for node_id, emb, meta in items:
             ids.append(str(node_id))
             embeddings.append([float(x) for x in cast(list[float], emb)])
