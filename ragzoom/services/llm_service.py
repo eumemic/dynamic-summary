@@ -149,6 +149,19 @@ def _build_test_openai_client(model_id: str) -> "OpenAIAsyncType":
     return cast("OpenAIAsyncType", _StubClient())
 
 
+def _extract_cached_tokens(details: object | None) -> int:
+    """Return cached token count from mixed detail structures."""
+    if details is None:
+        return 0
+    if isinstance(details, dict):
+        cached = details.get("cached_tokens", 0)
+    else:
+        cached = getattr(details, "cached_tokens", 0)
+    if isinstance(cached, int | float) and cached > 0:
+        return int(cached)
+    return 0
+
+
 class LLMService:
     """Service for handling all LLM operations including embeddings and summarization."""
 
@@ -303,35 +316,23 @@ class LLMService:
             if not response.usage:
                 raise ValueError("No usage information in OpenAI response")
 
-            usage_info = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-                "model": self.config.summary_model,
-            }
+            usage_info = cast(
+                UsageInfo,
+                {
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens,
+                    "model": self.config.summary_model,
+                },
+            )
 
-            # Extract cached tokens if available (for prompt caching)
-            if (
-                hasattr(response.usage, "prompt_tokens_details")
-                and response.usage.prompt_tokens_details
-            ):
-                prompt_tokens_details = response.usage.prompt_tokens_details
-                # Handle both dict and object formats
-                cached_tokens = 0
-                if isinstance(prompt_tokens_details, dict):
-                    cached_tokens = prompt_tokens_details.get("cached_tokens", 0) or 0
-                elif hasattr(prompt_tokens_details, "cached_tokens"):
-                    cached_tokens = prompt_tokens_details.cached_tokens or 0
+            cached_tokens = _extract_cached_tokens(
+                getattr(response.usage, "prompt_tokens_details", None)
+            )
+            if cached_tokens > 0:
+                usage_info["cached_tokens"] = cached_tokens
 
-                # Handle Mock objects in tests - they won't compare properly
-                try:
-                    if cached_tokens and cached_tokens > 0:
-                        usage_info["cached_tokens"] = cached_tokens
-                except (TypeError, AttributeError):
-                    # cached_tokens might be a mock object, skip it
-                    pass
-
-            return content, cast(UsageInfo, usage_info)
+            return content, usage_info
 
         except Exception as e:
             from ragzoom.error_utils import preserve_exception_chain
@@ -359,14 +360,9 @@ class LLMService:
         if not reporter or not parent_id:
             return
 
-        # Extract cached tokens if available
-        cached_tokens = 0
-        if (
-            hasattr(response, "usage")
-            and hasattr(response.usage, "prompt_tokens_details")
-            and response.usage.prompt_tokens_details
-        ):
-            cached_tokens = response.usage.prompt_tokens_details.get("cached_tokens", 0)
+        cached_tokens = _extract_cached_tokens(
+            getattr(response.usage, "prompt_tokens_details", None)
+        )
 
         try:
             reporter.record_summary_attempt_v2(
