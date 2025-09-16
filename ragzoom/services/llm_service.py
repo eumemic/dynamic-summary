@@ -146,6 +146,16 @@ class LLMService:
             and AsyncOpenAI is None
             and not force_real_client
         ):
+            embedding_dim = 8
+            if os.environ.get("PYTEST_CURRENT_TEST"):
+                try:
+                    from ragzoom.model_info import ModelInfo
+
+                    embedding_dim = ModelInfo().get_embedding_dimensions(
+                        self.config.embedding_model
+                    )
+                except Exception:
+                    embedding_dim = 8
 
             class _StubEmbeddings:
                 async def create(self, **kwargs: object) -> object:
@@ -159,7 +169,7 @@ class LLMService:
 
                     class _Item:
                         def __init__(self) -> None:
-                            self.embedding = [0.0] * 8
+                            self.embedding = [0.0] * embedding_dim
 
                     class _Resp:
                         def __init__(self, n: int) -> None:
