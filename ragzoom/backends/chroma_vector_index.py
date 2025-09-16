@@ -25,6 +25,7 @@ try:
     logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
     logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
     import chromadb
+    from chromadb.api.types import Metadatas
 except Exception as e:  # pragma: no cover - optional dependency
     raise ImportError(
         "chromadb is not installed. Install with `pip install chromadb`."
@@ -162,7 +163,7 @@ class ChromaVectorIndex:
             return
         ids: list[str] = []
         embeddings: list[Sequence[float]] = []
-        metadatas: list[Mapping[str, str | int | float | bool | None]] = []
+        metadatas: Metadatas = []
         for node_id, emb, meta in items:
             ids.append(str(node_id))
             embeddings.append([float(x) for x in cast(list[float], emb)])
