@@ -85,7 +85,6 @@ class EmbeddingService:
             )
             return doc_embedding_model
         else:
-            # Warn once per document to avoid log spam in tight loops
             if document_id not in self._warned_missing_model:
                 self._warned_missing_model.add(document_id)
                 logger.warning(

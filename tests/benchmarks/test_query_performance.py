@@ -16,8 +16,11 @@ from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.telemetry_query import QueryMetricsDict
 
+
 # Skip benchmarks by default unless explicitly requested
-pytestmark = pytest.mark.benchmark
+def test_query_performance_placeholder() -> None:
+    """Placeholder so marker exclusion doesn't yield exit code 5 when deselected."""
+    pytest.skip("Benchmark tests require explicit opt-in")
 
 
 def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
@@ -93,6 +96,7 @@ def setup_test_document(
     return builder.add_document(test_doc)
 
 
+@pytest.mark.benchmark
 @pytest.mark.parametrize("num_seeds", [5, 10, 20])
 @pytest.mark.parametrize("budget_tokens", [1000, 2000, 4000])
 @pytest.mark.parametrize("query_type", ["specific", "broad", "complex"])
@@ -320,6 +324,7 @@ def test_query_performance(
     assert total_stats["median"] > 0, "Invalid timing"
 
 
+@pytest.mark.benchmark
 def test_query_performance_comparison() -> None:
     """Compare query benchmark results if available."""
     output_dir = Path("benchmark_results")
