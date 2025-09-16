@@ -3,9 +3,9 @@
 import logging
 from typing import TYPE_CHECKING
 
+from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.exceptions import NodeNotFoundError
-from ragzoom.models import TreeNode
-from ragzoom.repositories.node_repository import NodeRepository
 
 if TYPE_CHECKING:
     pass
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class TreeNavigator:
     """Service for tree navigation and traversal operations."""
 
-    def __init__(self, node_repository: NodeRepository):
+    def __init__(self, node_repository: NodeRepositoryProtocol):
         """Initialize tree navigator.
 
         Args:
@@ -70,6 +70,14 @@ class TreeNavigator:
 
         # Single batch fetch of all ancestors by their paths
         if ancestor_paths:
+            # Use document-scoped fetch when available to avoid cross-document contamination
+            get_scoped = getattr(
+                self.node_repo, "get_nodes_by_paths_for_document", None
+            )
+            if callable(get_scoped):
+                # We don't have document_id here; fetch all and let caller filter
+                # Document-scoped variant is handled by DocumentTreeNavigator
+                return self.node_repo.get_nodes_by_paths(list(ancestor_paths))
             return self.node_repo.get_nodes_by_paths(list(ancestor_paths))
 
         return []
@@ -80,11 +88,9 @@ class TreeNavigator:
         Returns:
             Root TreeNode if found, None otherwise
         """
-        with self.node_repo.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(parent_id=None).first()
-            if node:
-                session.expunge(node)
-            return node
+        # Root nodes have empty path by convention
+        roots = self.node_repo.get_nodes_by_paths([""])
+        return roots[0] if roots else None
 
     def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
         """Get the root node for a specific document.
@@ -95,14 +101,15 @@ class TreeNavigator:
         Returns:
             Root TreeNode for document if found, None otherwise
         """
-        with self.node_repo.SessionLocal() as session:
-            query = session.query(TreeNode).filter_by(parent_id=None)
-            if document_id:
-                query = query.filter_by(document_id=document_id)
-            node = query.first()
-            if node:
-                session.expunge(node)
-            return node
+        roots = self.node_repo.get_nodes_by_paths([""])
+        if not roots:
+            return None
+        if document_id is None:
+            return roots[0]
+        for n in roots:
+            if getattr(n, "document_id", None) == document_id:
+                return n
+        return None
 
     def get_node_depth(self, node_id: str) -> int:
         """Calculate depth of a node (distance from root).

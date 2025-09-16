@@ -7,7 +7,9 @@ from numpy.typing import NDArray
 from openai import AsyncOpenAI
 
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.models import TreeNode
+from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
+from ragzoom.models import PostgresTreeNode as ORMTreeNode
 from tests.conftest import BackwardCompatibilityConfig
 
 
@@ -17,10 +19,10 @@ class TestFollowingNeighbor:
     def test_tree_node_has_following_neighbor_id_column(self) -> None:
         """TreeNode model should have following_neighbor_id column."""
         # Verify the column exists on the model
-        assert hasattr(TreeNode, "following_neighbor_id")
+        assert hasattr(ORMTreeNode, "following_neighbor_id")
 
         # Verify it's a mapped column
-        column = TreeNode.__table__.columns.get("following_neighbor_id")
+        column = ORMTreeNode.__table__.columns.get("following_neighbor_id")
         assert column is not None
         assert (
             column.nullable is True
@@ -101,6 +103,7 @@ class TestFollowingNeighbor:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: AsyncOpenAI,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test that leaf nodes created during indexing have correct neighbor relationships."""
         import asyncio
@@ -121,7 +124,7 @@ class TestFollowingNeighbor:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store)
+        tree_builder = TreeBuilder(config, doc_store, vector_index)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document
@@ -169,6 +172,7 @@ class TestFollowingNeighbor:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: AsyncOpenAI,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test that parent nodes at each level have correct neighbor relationships."""
         import asyncio
@@ -189,7 +193,7 @@ class TestFollowingNeighbor:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store)
+        tree_builder = TreeBuilder(config, doc_store, vector_index)
         tree_builder.llm_service.client = mock_openai_async_client
 
         # Index the document

@@ -58,8 +58,22 @@ ragzoom doctor
 
 ### Install from PyPI
 
+Recommended (includes Chroma for the default CLI vector index):
+
+```bash
+pip install "ragzoom[chroma]"
+```
+
+Base install (no optional backends):
+
 ```bash
 pip install ragzoom
+```
+
+PostgreSQL extras (when using a Postgres storage backend):
+
+```bash
+pip install "ragzoom[postgres]"
 ```
 
 ### Backend Selection
@@ -67,7 +81,8 @@ pip install ragzoom
 By default RagZoom uses SQLite (file‑backed) and a local vector index:
 
 - DB: `sqlite:///data/sqlite.db`
-- Vector index: Chroma in `data/chroma/` (if `chromadb` is installed). Otherwise set `RAGZOOM_VECTOR_BACKEND=python`.
+- Vector index (CLI): Chroma in `data/chroma/` (requires `pip install ragzoom[chroma]` or `pip install chromadb`). The CLI fails loudly if Chroma is not available.
+- Vector index (programmatic/tests): You may explicitly set `OperationalConfig(vector_backend="python")` to use an in‑memory index for tests. This adapter never persists and is not used by the CLI.
 
 Switch to PostgreSQL:
 ```bash
@@ -76,6 +91,25 @@ export RAGZOOM_DATABASE_URL="postgresql+psycopg://user:pass@host/db"
 ragzoom index document.txt
 ```
 Docker auto-start is used only for Postgres if you use the default local URL. For SQLite, Docker is not required.
+
+### Backend Matrix
+
+- Storage: SQLite by default. PostgreSQL optional for multi-user or external DB setups.
+- Vector index: Chroma by default for CLI; Python in-memory adapter for tests/dev.
+
+- SQLite + Chroma:
+  - Default for CLI and typical local runs
+  - Requires `pip install ragzoom[chroma]` (or `pip install chromadb`)
+  - Persists vectors under `data/chroma/`
+- SQLite + Python (in-memory):
+  - Tests/dev only; set `RAGZOOM_VECTOR_BACKEND=python` or `OperationalConfig(vector_backend="python")`
+  - Non-persistent; fastest path; no extra dependencies
+- PostgreSQL storage:
+  - Enable with `RAGZOOM_BACKEND=postgres` and `RAGZOOM_DATABASE_URL`
+  - Install extras: `pip install ragzoom[postgres]`
+  - Vector index still selected via `RAGZOOM_VECTOR_BACKEND` (`chroma` recommended for persistence)
+
+Policy: No hidden fallbacks. If `chroma` is selected but `chromadb` is not installed, the system raises `ImportError` with guidance to install the dependency or switch to the Python in-memory adapter.
 
 #### Troubleshooting
 
@@ -109,6 +143,44 @@ This approach provides:
 - **Idiomatic Python**: Follows PEP 517/518 standards
 
 For comprehensive telemetry documentation, see [docs/telemetry.md](docs/telemetry.md)
+
+## Development
+
+### Reproducible installs (lockfiles)
+
+We use pip-tools to provide npm-style lockfiles for reproducible installs.
+
+- Lock files:
+  - `requirements/app.in` → application entry (`-e .[chroma]`)
+  - `requirements/dev.in` → `-r app.in` plus dev tools (pytest, xdist, mypy[dmypy], ruff, black, bandit, etc.)
+  - `requirements/app.lock` and `requirements/dev.lock` are generated from the above and committed
+
+Install (locked):
+```
+pip install pip-tools
+pip-sync requirements/dev.lock
+```
+
+Update locks to latest (including chromadb):
+```
+pip install pip-tools
+pip-compile -o requirements/app.lock requirements/app.in
+pip-compile -o requirements/dev.lock requirements/dev.in
+```
+Commit the updated lock files. CI installs from locks via `pip-sync` to guarantee parity with local.
+
+Workflow guard: `scripts/run-checks.sh` contains a check that fails if workflows include unpinned `pip install` lines. Only pip-tools/pip-sync or specific tooling installs (e.g. pytest-cov, awscli) are allowed.
+
+### Running checks
+
+```
+./scripts/run-checks.sh
+```
+
+- Runs ruff/black/mypy/js-cpd/bandit and the test suite.
+- Enforces per-test 1s timeout by default (override via `RZ_MAX_TEST_DURATION`).
+- Lists slowest tests when `PYTEST_DURATIONS` is set (e.g., `PYTEST_DURATIONS=25`).
+- Runs tests after type checks pass to fail fast and reduce contention.
 
 ## Quick Start
 

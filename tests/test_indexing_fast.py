@@ -4,7 +4,10 @@ import asyncio
 from typing import cast
 from unittest.mock import MagicMock, Mock
 
+import pytest
+
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from tests.conftest import BackwardCompatibilityConfig
 
@@ -17,6 +20,7 @@ class TestIndexingFast:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test that the entire document is indexed, not just first 37%."""
         config = base_config.index_config
@@ -43,7 +47,7 @@ class TestIndexingFast:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
+        tree_builder = TreeBuilder(config, doc_store, vector_index, max_concurrent=5)
         tree_builder.llm_service.client = mock_client
 
         # Index the document
@@ -107,6 +111,7 @@ class TestIndexingFast:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test indexing a very small document to isolate the issue."""
         config = base_config.index_config
@@ -128,7 +133,7 @@ class TestIndexingFast:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, max_concurrent=1)
+        tree_builder = TreeBuilder(config, doc_store, vector_index, max_concurrent=1)
         tree_builder.llm_service.client = mock_client
 
         # Index the document
@@ -152,11 +157,13 @@ class TestIndexingFast:
                 last_span_end >= doc_length - 10
             ), f"Document not fully indexed: {last_span_end} < {doc_length}"
 
+    @pytest.mark.slow_threshold(2.0)
     def test_check_api_batch_limits(
         self,
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test if there's a limit on API batching causing truncation."""
         config = base_config.index_config
@@ -182,7 +189,11 @@ class TestIndexingFast:
             texts_per_call.append(len(input_texts))
 
             # Return embeddings for each text
-            return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_texts])
+            from types import SimpleNamespace
+
+            return Mock(
+                data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_texts]
+            )
 
         # Use the mock OpenAI client from fixture and customize embedding tracking
         mock_client = mock_openai_async_client
@@ -197,7 +208,7 @@ class TestIndexingFast:
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, max_concurrent=5)
+        tree_builder = TreeBuilder(config, doc_store, vector_index, max_concurrent=5)
         tree_builder.llm_service.client = mock_client
 
         # Index the document

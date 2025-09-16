@@ -12,8 +12,9 @@ import pytest
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
-from ragzoom.models import TreeNode
 from ragzoom.telemetry_collection import TelemetryCollector
 
 
@@ -24,11 +25,14 @@ def mock_nodes() -> tuple[MagicMock, MagicMock]:
     left_node.token_count = 150
     left_node.span_start = 0
     left_node.span_end = 100
+    # Provide minimal path attribute required by _process_node_pair logic
+    left_node.path = "0"
 
     right_node = MagicMock(spec=TreeNode)
     right_node.token_count = 200
     right_node.span_start = 100
     right_node.span_end = 250
+    right_node.path = "1"
 
     return left_node, right_node
 
@@ -47,6 +51,7 @@ async def test_process_node_pair_passes_all_parameters(
     storage_backend: StorageBackend,
     mock_nodes: tuple[MagicMock, MagicMock],
     mock_reporter: MagicMock,
+    vector_index: _VectorIndexProtocol,
 ) -> None:
     """Regression test: ensure _process_node_pair passes all parameters to LLMService.
 
@@ -66,7 +71,7 @@ async def test_process_node_pair_passes_all_parameters(
     )
 
     config = IndexConfig.load(preceding_context_tokens=75, target_chunk_tokens=200)
-    builder = TreeBuilder(config, doc_store)
+    builder = TreeBuilder(config, doc_store, vector_index)
 
     # Capture parameters passed to LLMService._summarize_text
     captured_params: dict[str, object] = {}
@@ -129,6 +134,7 @@ async def test_prev_context_affects_prompt(
     storage_backend: StorageBackend,
     mock_nodes: tuple[MagicMock, MagicMock],
     mock_reporter: MagicMock,
+    vector_index: _VectorIndexProtocol,
 ) -> None:
     """Test that prev_context actually changes the generated prompt."""
     left_node, right_node = mock_nodes
@@ -144,7 +150,7 @@ async def test_prev_context_affects_prompt(
     )
 
     config = IndexConfig.load(preceding_context_tokens=75, target_chunk_tokens=200)
-    builder = TreeBuilder(config, doc_store)
+    builder = TreeBuilder(config, doc_store, vector_index)
 
     # Test by capturing the parameters passed to _summarize_text
     captured_params_list = []
@@ -203,6 +209,7 @@ async def test_parameter_validation_would_catch_bug(
     storage_backend: StorageBackend,
     mock_nodes: tuple[MagicMock, MagicMock],
     mock_reporter: MagicMock,
+    vector_index: _VectorIndexProtocol,
 ) -> None:
     """Test that demonstrates how the bug could be caught with parameter validation."""
     left_node, right_node = mock_nodes
@@ -218,7 +225,7 @@ async def test_parameter_validation_would_catch_bug(
     )
 
     config = IndexConfig.load(target_chunk_tokens=200)
-    builder = TreeBuilder(config, doc_store)
+    builder = TreeBuilder(config, doc_store, vector_index)
 
     # Track what parameters were actually passed to _summarize_text
     actual_calls = []

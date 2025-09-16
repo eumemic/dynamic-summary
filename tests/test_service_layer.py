@@ -140,6 +140,17 @@ class TestIndexingService:
         with patch(
             "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
         ):
+            # Ensure any stale lock file is removed
+            import os
+            from pathlib import Path
+
+            lock_path = Path("data/.ragzoom/locks/test-doc.lock")
+            try:
+                if lock_path.exists():
+                    os.remove(lock_path)
+            except Exception:
+                pass
+
             service = IndexingService(storage_backend, index_config, operational_config)
             result = service.index_document("test text", document_id="test-doc")
 

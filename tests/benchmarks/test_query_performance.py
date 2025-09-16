@@ -11,6 +11,7 @@ import pytest
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.telemetry_query import QueryMetricsDict
@@ -58,7 +59,9 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
         pytest.skip(f"Could not load test document {file_path}: {e}")
 
 
-def setup_test_document(storage_backend: StorageBackend, api_key: str) -> str:
+def setup_test_document(
+    storage_backend: StorageBackend, api_key: str, vector_index: _VectorIndexProtocol
+) -> str:
     """Get or reuse the test document for query benchmarking.
 
     Returns the document ID of the indexed document.
@@ -88,17 +91,22 @@ def setup_test_document(storage_backend: StorageBackend, api_key: str) -> str:
     )
 
     # Create TreeBuilder with the DocumentStore
-    builder = TreeBuilder(index_config, doc_store, api_key)
+    builder = TreeBuilder(index_config, doc_store, vector_index, api_key)
     # add_document returns the document_id from the DocumentStore
     return builder.add_document(test_doc)
 
 
 @pytest.mark.benchmark
+@pytest.mark.slow_threshold(4.0)
 @pytest.mark.parametrize("num_seeds", [5, 10, 20])
 @pytest.mark.parametrize("budget_tokens", [1000, 2000, 4000])
 @pytest.mark.parametrize("query_type", ["specific", "broad", "complex"])
 def test_query_performance(
-    storage_backend: StorageBackend, num_seeds: int, budget_tokens: int, query_type: str
+    storage_backend: StorageBackend,
+    num_seeds: int,
+    budget_tokens: int,
+    query_type: str,
+    vector_index: _VectorIndexProtocol,
 ) -> None:
     """Benchmark query performance at different parameter combinations."""
     # Create config for this specific test
@@ -124,7 +132,7 @@ def test_query_performance(
 
     # Run query with metrics
     # Index document first (or reuse if exists)
-    doc_id = setup_test_document(storage_backend, api_key)
+    doc_id = setup_test_document(storage_backend, api_key, vector_index)
 
     # Create services for Retriever
     from openai import OpenAI
@@ -150,6 +158,7 @@ def test_query_performance(
         doc_store,
         embedding_service,
         budget_planner,
+        vector_index,
     )
     assembler = Assembler(doc_store)
 

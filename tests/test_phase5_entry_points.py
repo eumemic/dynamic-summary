@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 
 from ragzoom.cli import cli
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex
 
 
 class TestCLIPinCommandIsolation:
@@ -17,6 +18,7 @@ class TestCLIPinCommandIsolation:
     def test_pin_command_with_document_id(
         self,
         storage_backend: StorageBackend,
+        vector_index: VectorIndex,
     ) -> None:
         """Test pin command with explicit document ID."""
         # Create document-scoped stores
@@ -82,8 +84,8 @@ class TestCLIPinCommandIsolation:
         ]
         doc2_store.nodes.add_batch(nodes_doc2)
 
-        # Upsert embeddings via the public DocumentStore search API
-        doc1_store.search.upsert_vectors(
+        # Upsert embeddings via VectorIndex (no longer through DocumentStore)
+        vector_index.upsert(
             [
                 (
                     "doc1_node",
@@ -98,7 +100,7 @@ class TestCLIPinCommandIsolation:
                 ),
             ]
         )
-        doc2_store.search.upsert_vectors(
+        vector_index.upsert(
             [
                 (
                     "doc2_node",
@@ -132,6 +134,7 @@ class TestCLIPinCommandIsolation:
     def test_pin_command_auto_detects_document(
         self,
         storage_backend: StorageBackend,
+        vector_index: VectorIndex,
     ) -> None:
         """Test pin command auto-detects document from node ID."""
         doc_store = storage_backend.for_document("doc1")
@@ -165,8 +168,8 @@ class TestCLIPinCommandIsolation:
         ]
         doc_store.nodes.add_batch(nodes)
 
-        # Upsert embedding
-        doc_store.search.upsert_vectors(
+        # Upsert embedding via VectorIndex
+        vector_index.upsert(
             [
                 (
                     "doc1_node",
@@ -202,6 +205,7 @@ class TestCLIPinCommandIsolation:
     def test_pin_command_validates_document_ownership(
         self,
         storage_backend: StorageBackend,
+        vector_index: VectorIndex,
     ) -> None:
         """Test pin command validates node belongs to specified document."""
         doc_store = storage_backend.for_document("doc1")
@@ -235,8 +239,8 @@ class TestCLIPinCommandIsolation:
         ]
         doc_store.nodes.add_batch(nodes)
 
-        # Upsert embedding
-        doc_store.search.upsert_vectors(
+        # Upsert embedding via VectorIndex
+        vector_index.upsert(
             [
                 (
                     "doc1_node",
@@ -315,6 +319,7 @@ class SkipTestQueryVisualizationIsolation:
         mock_create_store: object,
         mock_echo: object,
         storage_backend: StorageBackend,
+        vector_index: VectorIndex,
     ) -> None:
         """Test that tree visualization only shows specified document."""
         # Create document-scoped stores
@@ -414,8 +419,8 @@ class SkipTestQueryVisualizationIsolation:
         ]
         doc2_store.nodes.add_batch(doc2_nodes)
 
-        # Upsert embeddings for all nodes
-        doc1_store.search.upsert_vectors(
+        # Upsert embeddings for all nodes via VectorIndex
+        vector_index.upsert(
             [
                 (
                     "doc1_root",
@@ -452,7 +457,7 @@ class SkipTestQueryVisualizationIsolation:
                 ),
             ]
         )
-        doc2_store.search.upsert_vectors(
+        vector_index.upsert(
             [
                 (
                     "doc2_root",

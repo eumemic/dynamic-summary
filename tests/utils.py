@@ -10,8 +10,9 @@ from openai import OpenAI
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndex
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import TreeNode
 from ragzoom.retrieval.budget_planner import BudgetPlanner
 from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
@@ -28,16 +29,28 @@ def create_mock_openai_clients() -> tuple[Mock, Mock, Mock]:
     async def mock_embeddings_create_async(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
-            return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
+            from types import SimpleNamespace
+
+            return Mock(
+                data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_data]
+            )
         else:
-            return Mock(data=[Mock(embedding=[0.1] * 1536)])
+            from types import SimpleNamespace
+
+            return Mock(data=[SimpleNamespace(embedding=[0.1] * 1536)])
 
     def mock_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
-            return Mock(data=[Mock(embedding=[0.1] * 1536) for _ in input_data])
+            from types import SimpleNamespace
+
+            return Mock(
+                data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_data]
+            )
         else:
-            return Mock(data=[Mock(embedding=[0.1] * 1536)])
+            from types import SimpleNamespace
+
+            return Mock(data=[SimpleNamespace(embedding=[0.1] * 1536)])
 
     # Standard chat completion response
     async def mock_chat_create_async(*args: object, **kwargs: object) -> Mock:
@@ -218,7 +231,9 @@ def create_mock_embedding_response(
     if isinstance(texts, str):
         texts = [texts]
 
-    return Mock(data=[Mock(embedding=[0.1] * embedding_dim) for _ in texts])
+    from types import SimpleNamespace
+
+    return Mock(data=[SimpleNamespace(embedding=[0.1] * embedding_dim) for _ in texts])
 
 
 def create_mock_chat_response(content: str) -> Mock:
@@ -322,7 +337,9 @@ def create_hash_based_embedding_mock() -> tuple[object, object]:
         for text in texts:
             text_str = str(text) if not isinstance(text, str) else text
             embedding = calculate_hash_embedding(text_str)
-            embeddings.append(Mock(embedding=embedding))
+            from types import SimpleNamespace
+
+            embeddings.append(SimpleNamespace(embedding=embedding))
         return Mock(data=embeddings)
 
     def hash_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
@@ -335,7 +352,9 @@ def create_hash_based_embedding_mock() -> tuple[object, object]:
         for text in texts:
             text_str = str(text) if not isinstance(text, str) else text
             embedding = calculate_hash_embedding(text_str)
-            embeddings.append(Mock(embedding=embedding))
+            from types import SimpleNamespace
+
+            embeddings.append(SimpleNamespace(embedding=embedding))
         return Mock(data=embeddings)
 
     return hash_embeddings_create_sync, hash_embeddings_create_async
@@ -425,14 +444,18 @@ def create_specialized_openai_mocks(
             for text in input_data:
                 text_str = str(text) if not isinstance(text, str) else text
                 embedding = _calculate_embedding_from_rules(text_str, embedding_rules)
-                embeddings.append(Mock(embedding=embedding))
+                from types import SimpleNamespace
+
+                embeddings.append(SimpleNamespace(embedding=embedding))
             return Mock(data=embeddings)
         else:
             text_str = (
                 str(input_data) if not isinstance(input_data, str) else input_data
             )
             embedding = _calculate_embedding_from_rules(text_str, embedding_rules)
-            return Mock(data=[Mock(embedding=embedding)])
+            from types import SimpleNamespace
+
+            return Mock(data=[SimpleNamespace(embedding=embedding)])
 
     def specialized_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
@@ -487,6 +510,8 @@ def create_retriever(
     embedding_model: str | None = None,
     target_chunk_tokens: int | None = None,
     client: object | None = None,  # Accept any client type for testing
+    *,
+    vector_index: _VectorIndex,  # REQUIRED VectorIndex to reuse
 ) -> Retriever:
     """Create a Retriever instance with proper service dependencies.
 
@@ -530,16 +555,37 @@ def create_retriever(
 
     budget_planner = BudgetPlanner(doc_store, target_chunk_tokens)
 
-    # Create and return retriever
+    # Require caller to pass the VectorIndex explicitly (no implicit creation)
+    # vector_index is required; no implicit creation here
     return Retriever(
         query_config,
         doc_store,
         embedding_service,
         budget_planner,
+        vector_index,
     )
 
 
 # Type conversion utilities for common test patterns
+
+
+def _safe_int(val: object, default: int = 0) -> int:
+    """Convert common scalar types to int safely for typing.
+
+    Accepts int, float, bool, and numeric strings; returns default otherwise.
+    """
+    if isinstance(val, bool):
+        return int(val)
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return int(val)
+    if isinstance(val, str):
+        try:
+            return int(val)
+        except Exception:
+            return default
+    return default
 
 
 def ensure_document_store(

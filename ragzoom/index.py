@@ -11,10 +11,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, SecretStr
+from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.dataflow import build_tree_dataflow
 from ragzoom.dataflow.core import ProcessingStrategy
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import TreeNode
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.services.llm_service import LLMService
 from ragzoom.splitter import TextSplitter
@@ -61,6 +62,7 @@ class TreeBuilder:
         self,
         config: IndexConfig,
         document_store: DocumentStore,
+        vector_index: VectorIndex,
         api_key: str | SecretStr = "",
         max_concurrent: int = 30,
     ):
@@ -75,10 +77,12 @@ class TreeBuilder:
         self.config = config
         self.document_store = document_store
         self.splitter = TextSplitter(config)
+        self.vector_index = vector_index
         # Convert string to SecretStr for security
         if isinstance(api_key, str) and not isinstance(api_key, SecretStr):
             api_key = SecretStr(api_key) if api_key else SecretStr("")
         self.llm_service = LLMService(config, api_key, max_concurrent)
+        self._summarize_text = self.llm_service._summarize_text
 
         # Backward compatibility: provide access to centralized tokenizer
         self.tokenizer = tokenizer
@@ -127,30 +131,6 @@ class TreeBuilder:
         tokens = tokenizer.encode(text)
         half_size = len(tokens) // 2
         return min(self.config.target_chunk_tokens, half_size)
-
-    async def _summarize_text(
-        self,
-        left_text: str,
-        right_text: str,
-        target_tokens: int,
-        *,
-        prev_context: str | None = None,
-        parent_id: str | None = None,
-        reporter: TelemetryCollector | None = None,
-        left_token_count: int | None = None,
-        right_token_count: int | None = None,
-    ) -> tuple[str, int, int]:
-        """Delegate to LLMService for text summarization."""
-        return await self.llm_service._summarize_text(
-            left_text,
-            right_text,
-            target_tokens,
-            parent_id=parent_id,
-            reporter=reporter,
-            prev_context=prev_context,
-            left_token_count=left_token_count,
-            right_token_count=right_token_count,
-        )
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference."""
@@ -208,14 +188,19 @@ class TreeBuilder:
             tuple: (progress_tracker, async_progress_wrapper)
         """
         # Create progress tracker early so we can use it for logging
-        # When progress bar is active, we suppress info logs to avoid disrupting the display
+        # Respect global progress configuration to fully suppress bars in tests
+        from ragzoom.progress import get_progress_config
+
+        global_cfg = get_progress_config()
+        effective_show = show_progress and not global_cfg.disable_bars
+
         progress = (
             GlobalProgressTracker(
                 chunk_count,
-                show_progress,
+                effective_show,
                 embedding_batch_size=self.config.embedding_batch_size,
             )
-            if show_progress
+            if effective_show
             else None
         )
 
@@ -332,7 +317,7 @@ class TreeBuilder:
                         "right_child_id": node.right_child_id,
                         "preceding_neighbor_id": node.preceding_neighbor_id,
                         "following_neighbor_id": node.following_neighbor_id,
-                        "embedding": node.embedding,
+                        # Embeddings are not stored in SQL; kept separate for VectorIndex
                         "token_count": node.token_count,
                         "height": node.height,
                         "path": node.path,
@@ -369,27 +354,25 @@ class TreeBuilder:
 
             # Two-phase apply for backends with external vector index (e.g., SQLite + PythonVectorIndex):
             # After all SQL writes are complete and parent references set, upsert vectors.
-            try:
-                upsert_items: list[
-                    tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
-                ] = []
-                for n in tree_nodes:
-                    meta = {
-                        "span_start": int(n.span_start),
-                        "span_end": int(n.span_end),
-                        "parent_id": n.parent_id or "",
-                        "document_id": n.document_id or "",
-                        "is_leaf": 1 if int(getattr(n, "height", 0)) == 0 else 0,
-                    }
-                    # Only include items that have embeddings
-                    if getattr(n, "embedding", None) is not None:
-                        upsert_items.append((n.id, n.embedding, meta))
-                if upsert_items:
-                    # This will no-op on backends whose search service doesn't support upsert
-                    doc_store.search.upsert_vectors(upsert_items)
-            except Exception as e:
-                # Upsert is best-effort for backends with external indices; do not fail indexing
-                logger.warning(f"Vector index upsert failed: {e}")
+            # Upsert vectors into the configured VectorIndex (required dependency)
+            upsert_items: list[
+                tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+            ] = []
+            from typing import cast as _cast
+
+            for n in tree_nodes:
+                meta = {
+                    "span_start": int(n.span_start),
+                    "span_end": int(n.span_end),
+                    "parent_id": n.parent_id or "",
+                    "document_id": n.document_id or "",
+                    "is_leaf": 1 if int(getattr(n, "height", 0)) == 0 else 0,
+                }
+                emb = getattr(n, "embedding", None)
+                if emb is not None:
+                    upsert_items.append((n.id, _cast(list[float], emb), meta))
+            if upsert_items:
+                self.vector_index.upsert(upsert_items)
 
             # Finalize telemetry if collector was used
             if reporter:

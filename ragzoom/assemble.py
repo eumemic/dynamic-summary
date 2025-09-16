@@ -2,8 +2,8 @@
 
 import logging
 
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import TreeNode
 from ragzoom.retrieve import RetrievalResult
 from ragzoom.utils.tokenization import tokenizer
 

@@ -33,7 +33,7 @@ class SqliteBase(DeclarativeBase):
     pass
 
 
-class SqliteTreeNode(SqliteBase):
+class SQLiteTreeNode(SqliteBase):
     __tablename__ = "tree_nodes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -43,8 +43,6 @@ class SqliteTreeNode(SqliteBase):
     span_start: Mapped[int] = mapped_column(Integer, nullable=False)
     span_end: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    # Compatibility column: present in PostgreSQL model, not used by SQLite backend
-    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed: Mapped[dt.datetime] = mapped_column(

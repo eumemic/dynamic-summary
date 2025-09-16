@@ -7,11 +7,17 @@ simplified metrics in telemetry_cli.py.
 
 import json
 import logging
+import os
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Literal
 
 import matplotlib
+
+# Force non-interactive backend in headless/test environments to avoid GUI stalls
+if not os.environ.get("MPLBACKEND"):
+    matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns

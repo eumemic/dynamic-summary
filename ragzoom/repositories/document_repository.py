@@ -3,7 +3,7 @@
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from ragzoom.models import Document, TreeNode
+from ragzoom.models import Document, PostgresTreeNode
 from ragzoom.repositories.base_repository import BaseRepository
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.storage.database_manager import DatabaseManager
@@ -18,7 +18,9 @@ class DocumentRepository(BaseRepository):
     """Repository for Document database operations."""
 
     def __init__(
-        self, database_manager: DatabaseManager, cache_manager: CacheManager[TreeNode]
+        self,
+        database_manager: DatabaseManager,
+        cache_manager: CacheManager[PostgresTreeNode],
     ):
         """Initialize document repository.
 
@@ -192,15 +194,15 @@ class DocumentRepository(BaseRepository):
 
             result = (
                 session.query(
-                    func.avg(TreeNode.token_count).label("avg_tokens"),
-                    func.min(TreeNode.token_count).label("min_tokens"),
-                    func.max(TreeNode.token_count).label("max_tokens"),
-                    func.sum(TreeNode.token_count).label("total_tokens"),
-                    func.count(TreeNode.id).label("node_count"),
+                    func.avg(PostgresTreeNode.token_count).label("avg_tokens"),
+                    func.min(PostgresTreeNode.token_count).label("min_tokens"),
+                    func.max(PostgresTreeNode.token_count).label("max_tokens"),
+                    func.sum(PostgresTreeNode.token_count).label("total_tokens"),
+                    func.count(PostgresTreeNode.id).label("node_count"),
                 )
                 .filter(
-                    TreeNode.document_id == document_id,
-                    TreeNode.token_count.isnot(None),
+                    PostgresTreeNode.document_id == document_id,
+                    PostgresTreeNode.token_count.isnot(None),
                 )
                 .one()
             )

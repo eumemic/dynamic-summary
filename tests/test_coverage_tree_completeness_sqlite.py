@@ -156,13 +156,18 @@ class TestCoverageTreeCompletenessSQLite:
             ]
         )
 
+        from ragzoom.vector_factory import create_vector_index
         from tests.utils import create_retriever
 
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", query_config.embedding_model
+        )
         retriever = create_retriever(
             query_config,
             doc_store,
             document_id="test-doc",
             api_key=operational_config.openai_api_key.get_secret_value(),
+            vector_index=vi,
         )
         dp_generator = retriever.dp_generator
 
