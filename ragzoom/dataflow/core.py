@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 
-from ragzoom.models import TreeNode
+from ragzoom.dataflow.domain import DomainNode as TreeNode
 from ragzoom.progress import AsyncProgressWrapper
 from ragzoom.services.llm_service import LLMService
 from ragzoom.telemetry_collection import TelemetryCollector
@@ -246,7 +246,7 @@ def create_leaf_nodes(
             preceding_neighbor_id=previous_leaf.id if previous_leaf else None,
             following_neighbor_id=None,  # Will be set by next leaf
             # Leaves need embeddings but we'll generate them later
-            embedding=[],  # Empty list for now
+            embedding=None,
             token_count=chunk_tokens,  # Set actual token count
         )
 
@@ -329,8 +329,8 @@ def build_internal_nodes(
                 # Neighbors
                 preceding_neighbor_id=previous_parent.id if previous_parent else None,
                 following_neighbor_id=None,  # Will be set by next parent
-                # Empty embedding until generated
-                embedding=[],
+                # No embedding attached yet; captured later
+                embedding=None,
                 token_count=0,
             )
 
@@ -565,12 +565,8 @@ async def embedding_worker(
             for _ in batch:
                 embedding_queue.task_done()
 
-            # Check if we processed the root (depth==0)
-            if any(node.get_depth() == 0 for node in batch):
-                logger.debug(
-                    f"Embedding worker {worker_id}: Root node processed, exiting"
-                )
-                break
+            # Continue processing until queue empties; do not exit early on root
+            # BatchAwareQueue will return None when root is queued and queue drains
 
         except asyncio.CancelledError:
             break
@@ -595,9 +591,12 @@ async def _process_embedding_batch(
         start_time = time.time()
         embeddings = await llm_service._get_embeddings_batch(texts)
 
-        # Store embeddings directly on nodes
+        # Store embeddings on domain nodes for later VectorIndex upsert
         for node, embedding in zip(batch, embeddings):
-            node.embedding = embedding
+            try:
+                node.embedding = list(embedding)  # ensure JSON-serializable list
+            except Exception:
+                node.embedding = [float(x) for x in embedding]
 
         # Log embedding batch processing
         heights = [node.height for node in batch]
@@ -606,17 +605,23 @@ async def _process_embedding_batch(
             if any(node.is_root() for node in batch)
             else f"h{min(heights)}-{max(heights)}"
         )
-        total_tokens = sum(tokenizer.count_tokens(node.text) for node in batch)
         elapsed = time.time() - start_time
-        logger.debug(
-            f"Embedded batch size={len(batch)} type={batch_type} tokens={total_tokens} time={elapsed:.2f}s"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            total_tokens = sum(tokenizer.count_tokens(node.text) for node in batch)
+            logger.debug(
+                f"Embedded batch size={len(batch)} type={batch_type} tokens={total_tokens} time={elapsed:.2f}s"
+            )
+        else:
+            logger.debug(
+                f"Embedded batch size={len(batch)} type={batch_type} time={elapsed:.2f}s"
+            )
 
         # Track telemetry
         if reporter:
             # Prepare node embeddings data
             node_embeddings = []
             for node in batch:
+                # Token counts are only needed for telemetry; compute lazily here
                 token_count = tokenizer.count_tokens(node.text)
                 node_embeddings.append((node.id, token_count))
 

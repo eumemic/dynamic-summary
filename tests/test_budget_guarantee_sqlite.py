@@ -15,6 +15,7 @@ from numpy.typing import NDArray
 from ragzoom.assemble import Assembler
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import QueryConfig
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.validate import validate_tiling
 from tests.utils import create_retriever, mock_openai_context
@@ -34,11 +35,13 @@ class TestBudgetGuarantee:
     def assembler(self, doc_store: DocumentStore) -> Assembler:
         return Assembler(doc_store)
 
+    @pytest.mark.slow_threshold(3.0)
     def test_budget_never_exceeded_worst_case(
         self,
         doc_store: DocumentStore,
         assembler: Assembler,
         sqlite_backend: SQLiteStorageBackend,
+        vector_index: VectorIndex,
     ) -> None:
         """Test that assembly never exceeds budget even in worst case."""
         # Create a multi-level tree with known token costs
@@ -157,7 +160,7 @@ class TestBudgetGuarantee:
         )
 
         # Add embeddings for vector search
-        sqlite_backend.vector_index.upsert(
+        vector_index.upsert(
             [
                 (
                     "leaf1",
@@ -248,6 +251,7 @@ class TestBudgetGuarantee:
                 doc_store,
                 document_id="test-doc",
                 client=mock_retrieve,
+                vector_index=vector_index,
             )
 
             test_queries = [
@@ -280,6 +284,7 @@ class TestBudgetGuarantee:
         doc_store: DocumentStore,
         assembler: Assembler,
         sqlite_backend: SQLiteStorageBackend,
+        vector_index: VectorIndex,
     ) -> None:
         """Test worst case where parent-child extraction could double content."""
         # Create a simple parent-child structure with precise token costs
@@ -321,7 +326,7 @@ class TestBudgetGuarantee:
         doc_store.nodes.update_parent_references_batch([("expensive_leaf", "parent")])
 
         # Add embeddings with high score for leaf
-        sqlite_backend.vector_index.upsert(
+        vector_index.upsert(
             [
                 (
                     "expensive_leaf",
@@ -356,6 +361,7 @@ class TestBudgetGuarantee:
                 doc_store,
                 document_id="test-doc",
                 client=mock_retrieve,
+                vector_index=vector_index,
             )
 
             # Test that retriever respects budget even with parent + child preference
@@ -374,11 +380,13 @@ class TestBudgetGuarantee:
             assert len(result.tiling) == 1
             assert "parent" in result.tiling
 
+    @pytest.mark.slow_threshold(2.0)
     def test_conservative_num_seeds_calculation(
         self,
         doc_store: DocumentStore,
         assembler: Assembler,
         sqlite_backend: SQLiteStorageBackend,
+        vector_index: VectorIndex,
     ) -> None:
         """Test that the conservative num_seeds calculation respects budget."""
         # Create multiple nodes with varying token costs
@@ -461,7 +469,11 @@ class TestBudgetGuarantee:
             )
         )
 
-        sqlite_backend.vector_index.upsert(embeddings_data)  # type: ignore[arg-type]  # List variance issue with Union types
+        # Cast to precise type for upsert
+        typed_entries: list[
+            tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+        ] = [(i, list(vec), meta) for (i, vec, meta) in embeddings_data]
+        vector_index.upsert(typed_entries)
 
         query_config = QueryConfig(budget_tokens=1000)
 
@@ -471,6 +483,7 @@ class TestBudgetGuarantee:
                 doc_store,
                 document_id="test-doc",
                 client=mock_retrieve,
+                vector_index=vector_index,
             )
 
             # Test various budget sizes
@@ -509,6 +522,7 @@ class TestBudgetGuarantee:
         doc_store: DocumentStore,
         assembler: Assembler,
         sqlite_backend: SQLiteStorageBackend,
+        vector_index: VectorIndex,
     ) -> None:
         """Test mixed mode where both budget and num_seeds are specified."""
         # Create several nodes that could exceed budget if all selected
@@ -578,7 +592,7 @@ class TestBudgetGuarantee:
         )
 
         # Add embeddings
-        sqlite_backend.vector_index.upsert(
+        vector_index.upsert(
             [
                 (
                     "node1",
@@ -635,6 +649,7 @@ class TestBudgetGuarantee:
                 doc_store,
                 document_id="test-doc",
                 client=mock_retrieve,
+                vector_index=vector_index,
             )
 
             # Specify both budget and num_seeds
@@ -659,6 +674,7 @@ class TestBudgetGuarantee:
         doc_store: DocumentStore,
         assembler: Assembler,
         sqlite_backend: SQLiteStorageBackend,
+        vector_index: VectorIndex,
     ) -> None:
         """Test num_seeds only mode (no budget enforcement)."""
         # Create a simple tree structure
@@ -715,7 +731,7 @@ class TestBudgetGuarantee:
         )
 
         # Add embeddings with high score for leaf1
-        sqlite_backend.vector_index.upsert(
+        vector_index.upsert(
             [
                 (
                     "leaf1",
@@ -761,6 +777,7 @@ class TestBudgetGuarantee:
                 doc_store,
                 document_id="test-doc",
                 client=mock_retrieve,
+                vector_index=vector_index,
             )
 
             # Retrieve with only num_seeds (no budget)

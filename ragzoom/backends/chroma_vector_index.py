@@ -1,9 +1,8 @@
 """Chroma-based vector index adapter.
 
-This provides a minimal VectorIndex-compatible surface:
+This provides a minimal surface over Chroma for:
  - upsert: add/update vectors and metadata
  - search_similar: cosine similarity search with optional metadata filter
- - compute_mmr_diverse_results: fallback MMR using cosine similarities
 
 Requires the optional dependency: chromadb
 """
@@ -16,6 +15,7 @@ from typing import Literal, cast
 
 import numpy as np
 from numpy.typing import NDArray
+from typing_extensions import TypedDict
 
 try:
     import logging
@@ -25,7 +25,7 @@ try:
     logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
     logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
     import chromadb
-    from chromadb.api.types import Metadatas
+    from chromadb.api.types import Metadata
 except Exception as e:  # pragma: no cover - optional dependency
     raise ImportError(
         "chromadb is not installed. Install with `pip install chromadb`."
@@ -46,13 +46,20 @@ class ChromaVectorIndex:
 
     def __init__(self, persist_dir: str) -> None:
         # Use persistent client to keep data across runs
-        self._client = chromadb.PersistentClient(path=persist_dir)
+        try:
+            settings = chromadb.config.Settings(anonymized_telemetry=False)
+            self._client = chromadb.PersistentClient(
+                path=persist_dir, settings=settings
+            )
+        except Exception:
+            self._client = chromadb.PersistentClient(path=persist_dir)
         self._collection = self._client.get_or_create_collection(
             name="ragzoom",
             metadata={"hnsw:space": "cosine"},
         )
 
     # API: list[tuple[id, score, meta]] with score being similarity
+    # jscpd:ignore-start - structure intentionally mirrors python adapter
     def search_similar(
         self,
         query_embedding: list[float] | NDArray[np.float64],
@@ -77,19 +84,32 @@ class ChromaVectorIndex:
             for k, v in where.items():
                 cw[k] = v if isinstance(v, dict) else {"$eq": v}
             where_param = cw
-        res = self._collection.query(
-            query_embeddings=[cast(Sequence[float], emb)],
-            n_results=n_results,
-            include=include,
-            where=where_param,  # type: ignore[arg-type]
+
+        class _QueryResult(TypedDict, total=False):
+            ids: Sequence[Sequence[str]]
+            distances: Sequence[Sequence[float]]
+            metadatas: Sequence[Sequence[Mapping[str, str | int | float | bool | None]]]
+
+        res = cast(
+            _QueryResult,
+            self._collection.query(
+                query_embeddings=[cast(Sequence[float], emb)],
+                n_results=n_results,
+                include=include,
+                where=where_param,  # type: ignore[arg-type]
+            ),
         )
-        # Mypy types for chroma response are loose; cast progressively
-        ids = (res.get("ids") or [[]])[0] if res else []
-        dists = (res.get("distances") or [[]])[0] if res else []
-        metas = cast(
-            list[list[dict[str, str | int | float | bool | None]]],
-            res.get("metadatas", [[]]) if res else [[]],
-        )[0]
+        # Normalize response fields
+        ids_nested = res.get("ids")
+        ids = list(ids_nested[0]) if ids_nested else []
+        dists_nested = res.get("distances")
+        dists = list(dists_nested[0]) if dists_nested else []
+        metas_nested = res.get("metadatas")
+        metas = (
+            [dict(m) for m in metas_nested[0]]
+            if metas_nested and len(metas_nested) > 0
+            else []
+        )
         out: list[tuple[str, float, dict[str, str | int | float | bool | None]]] = []
         for i, node_id in enumerate(ids):
             # Convert distance to similarity ~ 1/(1+d)
@@ -98,54 +118,6 @@ class ChromaVectorIndex:
             meta = metas[i] if i < len(metas) and isinstance(metas[i], dict) else {}
             out.append((node_id, sim, meta))
         return out
-
-    # jscpd:ignore-start - MMR logic mirrors PythonVectorIndex for parity
-    def compute_mmr_diverse_results(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        # Fallback: simple MMR implemented on top of returned result vectors
-        if not candidates or k <= 0:
-            return []
-        # Fetch vectors for candidate IDs
-        ids = [c[0] for c in candidates]
-        read = self._collection.get(ids=ids, include=["embeddings"])
-        embs = cast(list[list[float]] | None, read.get("embeddings")) if read else None
-        if not embs:
-            # Degrade to top-k by score
-            return [
-                c[0] for c in sorted(candidates, key=lambda x: x[1], reverse=True)[:k]
-            ]
-        mat = np.asarray(embs, dtype=np.float32)
-        q = np.asarray(query_embedding, dtype=np.float32)
-        qn = q / (np.linalg.norm(q) + 1e-12)
-        rel = mat @ qn
-        selected: list[int] = []
-        selected_mask = np.zeros(len(ids), dtype=bool)
-        # pick most relevant first
-        first = int(np.argmax(rel))
-        selected.append(first)
-        selected_mask[first] = True
-        if len(ids) == 1 or k == 1:
-            return [ids[first]]
-        pairwise = (mat @ mat.T).astype(np.float32)
-        while len(selected) < min(k, len(ids)):
-            unselected = np.where(~selected_mask)[0]
-            if selected:
-                un = np.asarray(unselected, dtype=int)
-                sel = np.asarray(selected, dtype=int)
-                max_sim = np.max(pairwise[un][:, sel], axis=1)
-            else:
-                max_sim = np.zeros(unselected.shape[0], dtype=np.float32)
-            mmr = lambda_param * rel[unselected] - (1.0 - lambda_param) * max_sim
-            idx_in_unselected = int(np.argmax(mmr))
-            chosen = int(unselected[idx_in_unselected])
-            selected.append(chosen)
-            selected_mask[chosen] = True
-        return [ids[i] for i in selected]
 
     # jscpd:ignore-end
 
@@ -163,7 +135,7 @@ class ChromaVectorIndex:
             return
         ids: list[str] = []
         embeddings: list[Sequence[float]] = []
-        metadatas: Metadatas = []
+        metadatas: list[Metadata] = []
         for node_id, emb, meta in items:
             ids.append(str(node_id))
             embeddings.append([float(x) for x in cast(list[float], emb)])

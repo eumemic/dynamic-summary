@@ -28,7 +28,7 @@ class TestParallelDPPerformance:
         self,
         storage_backend: StorageBackend,
     ) -> Generator[
-        tuple[IndexConfig, QueryConfig, StorageBackend, object, object],
+        tuple[IndexConfig, QueryConfig, StorageBackend, TreeBuilder, object],
         None,
         None,
     ]:
@@ -45,11 +45,12 @@ class TestParallelDPPerformance:
 
             # Create document-scoped store
             doc_store = storage_backend.for_document("large-test-doc")
-            tree_builder = TreeBuilder(
-                index_config,
-                doc_store,
-                api_key="test-key",
+            from ragzoom.vector_factory import create_vector_index
+
+            vi = create_vector_index(
+                "python", "sqlite:///:memory:", index_config.embedding_model
             )
+            tree_builder = TreeBuilder(index_config, doc_store, vi, api_key="test-key")
 
             # Create a smaller document for testing (4 chunks = 2-3 levels)
             # Each chunk is ~200 tokens, create enough for basic tree testing
@@ -67,11 +68,11 @@ class TestParallelDPPerformance:
     async def test_sync_vs_async_dp_correctness(
         self,
         large_document_setup: tuple[
-            IndexConfig, QueryConfig, StorageBackend, object, object
+            IndexConfig, QueryConfig, StorageBackend, TreeBuilder, object
         ],
     ) -> None:
         """Test that sync and async DP generators produce identical results."""
-        index_config, query_config, storage_backend, _, mock_client = (
+        index_config, query_config, storage_backend, tree_builder, mock_client = (
             large_document_setup
         )
 
@@ -85,10 +86,13 @@ class TestParallelDPPerformance:
         from tests.utils import create_retriever
 
         doc_store = storage_backend.for_document("large-test-doc")
+        # Reuse the same vector index used during indexing
+        vi = tree_builder.vector_index
         retriever = create_retriever(
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         result = await retriever.retrieve_async("test content", budget_tokens=1500)
 
@@ -126,13 +130,13 @@ class TestParallelDPPerformance:
     async def test_async_dp_performance_benefit(
         self,
         large_document_setup: tuple[
-            IndexConfig, QueryConfig, StorageBackend, object, object
+            IndexConfig, QueryConfig, StorageBackend, TreeBuilder, object
         ],
     ) -> None:
         """Test that async DP provides performance benefit on larger trees."""
         from tests.utils import create_retriever
 
-        index_config, query_config, storage_backend, _, mock_client = (
+        index_config, query_config, storage_backend, tree_builder, mock_client = (
             large_document_setup
         )
 
@@ -144,10 +148,12 @@ class TestParallelDPPerformance:
 
         # Get test data
         doc_store = storage_backend.for_document("large-test-doc")
+        vi = tree_builder.vector_index
         retriever = create_retriever(
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         result = await retriever.retrieve_async("test content", budget_tokens=1800)
 
@@ -197,11 +203,11 @@ class TestParallelDPPerformance:
     async def test_retriever_with_async_dp(
         self,
         large_document_setup: tuple[
-            IndexConfig, QueryConfig, StorageBackend, object, object
+            IndexConfig, QueryConfig, StorageBackend, TreeBuilder, object
         ],
     ) -> None:
         """Test retriever using async DP generator."""
-        index_config, query_config, storage_backend, _, mock_client = (
+        index_config, query_config, storage_backend, tree_builder, mock_client = (
             large_document_setup
         )
 
@@ -209,10 +215,12 @@ class TestParallelDPPerformance:
         from tests.utils import create_retriever
 
         doc_store = storage_backend.for_document("large-test-doc")
+        vi = tree_builder.vector_index
         sync_retriever = create_retriever(
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         sync_retriever.use_async_dp = False
 
@@ -220,6 +228,7 @@ class TestParallelDPPerformance:
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         async_retriever.use_async_dp = True
 
@@ -246,11 +255,11 @@ class TestParallelDPPerformance:
     async def test_error_handling_in_parallel_dp(
         self,
         large_document_setup: tuple[
-            IndexConfig, QueryConfig, StorageBackend, object, object
+            IndexConfig, QueryConfig, StorageBackend, TreeBuilder, object
         ],
     ) -> None:
         """Test graceful error handling in parallel DP execution."""
-        index_config, query_config, storage_backend, _, mock_client = (
+        index_config, query_config, storage_backend, tree_builder, mock_client = (
             large_document_setup
         )
 
@@ -262,10 +271,12 @@ class TestParallelDPPerformance:
         from tests.utils import create_retriever
 
         doc_store = storage_backend.for_document("large-test-doc")
+        vi = tree_builder.vector_index
         retriever = create_retriever(
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         result = await retriever.retrieve_async("test content", budget_tokens=1000)
 
@@ -290,13 +301,13 @@ class TestParallelDPPerformance:
     async def test_parallelization_threshold(
         self,
         large_document_setup: tuple[
-            IndexConfig, QueryConfig, StorageBackend, object, object
+            IndexConfig, QueryConfig, StorageBackend, TreeBuilder, object
         ],
     ) -> None:
         """Test that parallelization threshold works correctly."""
         from tests.utils import create_retriever
 
-        index_config, query_config, storage_backend, _, mock_client = (
+        index_config, query_config, storage_backend, tree_builder, mock_client = (
             large_document_setup
         )
 
@@ -311,10 +322,12 @@ class TestParallelDPPerformance:
         )
 
         doc_store = storage_backend.for_document("large-test-doc")
+        vi = tree_builder.vector_index
         retriever = create_retriever(
             query_config,
             doc_store,
             client=cast("OpenAI", mock_client),
+            vector_index=vi,
         )
         result = await retriever.retrieve_async("test content", budget_tokens=1000)
 

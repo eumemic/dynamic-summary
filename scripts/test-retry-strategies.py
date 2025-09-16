@@ -25,6 +25,7 @@ from openai import AsyncOpenAI
 
 load_dotenv()
 
+# ruff: noqa: E402
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -32,9 +33,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 WORDS_PER_TOKEN = 0.75 * 0.94  # 0.705
 MODEL = "gpt-5-nano"
 
+
 @dataclass
 class SummaryCase:
     """A summary case to test."""
+
     node_id: str
     left_text: str
     right_text: str
@@ -44,9 +47,11 @@ class SummaryCase:
     divergence_pct: float
     preceding_context: str | None = None
 
+
 @dataclass
 class RetryResult:
     """Result of a single retry attempt"""
+
     node_id: str
     strategy: str  # "continuation" or "fresh"
     trial: int
@@ -58,14 +63,14 @@ class RetryResult:
 
     def to_dict(self):
         return {
-            'node_id': self.node_id,
-            'strategy': self.strategy,
-            'trial': self.trial,
-            'target_tokens': self.target_tokens,
-            'actual_tokens': self.actual_tokens,
-            'deviation_pct': self.deviation_pct,
-            'success': self.success,
-            'retries_used': self.retries_used
+            "node_id": self.node_id,
+            "strategy": self.strategy,
+            "trial": self.trial,
+            "target_tokens": self.target_tokens,
+            "actual_tokens": self.actual_tokens,
+            "deviation_pct": self.deviation_pct,
+            "success": self.success,
+            "retries_used": self.retries_used,
         }
 
 
@@ -109,7 +114,7 @@ class RetryStrategyTester:
         """Get outlier nodes from database with >20% deviation"""
         if self.has_token_count:
             query = """
-            SELECT 
+            SELECT
                 n.id as node_id,
                 n.text as summary,
                 n.token_count as original_tokens,
@@ -126,12 +131,18 @@ class RetryStrategyTester:
             """
             cursor = self.conn.execute(
                 query,
-                (self.target_tokens, self.target_tokens, self.target_tokens, self.target_tokens, limit)
+                (
+                    self.target_tokens,
+                    self.target_tokens,
+                    self.target_tokens,
+                    self.target_tokens,
+                    limit,
+                ),
             )
         else:
             # Use text length approximation
             query = """
-            SELECT 
+            SELECT
                 n.id as node_id,
                 n.text as summary,
                 LENGTH(n.text) / 4 as original_tokens,
@@ -148,7 +159,13 @@ class RetryStrategyTester:
             """
             cursor = self.conn.execute(
                 query,
-                (self.target_tokens, self.target_tokens, self.target_tokens, self.target_tokens, limit)
+                (
+                    self.target_tokens,
+                    self.target_tokens,
+                    self.target_tokens,
+                    self.target_tokens,
+                    limit,
+                ),
             )
 
         cases = []
@@ -167,16 +184,18 @@ class RetryStrategyTester:
                 if preceding_node:
                     preceding_context = preceding_node["text"]
 
-            cases.append(SummaryCase(
-                node_id=row["node_id"],
-                left_text=left_child["text"],
-                right_text=right_child["text"],
-                original_summary=row["summary"],
-                original_tokens=int(row["original_tokens"]),
-                target_tokens=self.target_tokens,
-                divergence_pct=row["divergence_pct"],
-                preceding_context=preceding_context
-            ))
+            cases.append(
+                SummaryCase(
+                    node_id=row["node_id"],
+                    left_text=left_child["text"],
+                    right_text=right_child["text"],
+                    original_summary=row["summary"],
+                    original_tokens=int(row["original_tokens"]),
+                    target_tokens=self.target_tokens,
+                    divergence_pct=row["divergence_pct"],
+                    preceding_context=preceding_context,
+                )
+            )
 
         return cases
 
@@ -220,7 +239,9 @@ Write your summary."""
 
         return system_message, user_message
 
-    async def test_continuation_strategy(self, case: SummaryCase, trial: int) -> RetryResult:
+    async def test_continuation_strategy(
+        self, case: SummaryCase, trial: int
+    ) -> RetryResult:
         """Test the continuation strategy (current approach)"""
         async with self.semaphore:
             system_msg, user_msg = self.build_prompt_messages(case)
@@ -229,14 +250,12 @@ Write your summary."""
 
             messages = [
                 {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg}
+                {"role": "user", "content": user_msg},
             ]
 
             # First attempt
             response = await self.client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                reasoning_effort="minimal"
+                model=MODEL, messages=messages, reasoning_effort="minimal"
             )
 
             first_summary = response.choices[0].message.content
@@ -253,7 +272,7 @@ Write your summary."""
                     actual_tokens=first_tokens,
                     deviation_pct=deviation_pct,
                     success=True,
-                    retries_used=0
+                    retries_used=0,
                 )
 
             # Need retry - continue conversation
@@ -264,9 +283,7 @@ Write your summary."""
             messages.append({"role": "user", "content": retry_prompt})
 
             retry_response = await self.client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                reasoning_effort="minimal"
+                model=MODEL, messages=messages, reasoning_effort="minimal"
             )
 
             retry_summary = retry_response.choices[0].message.content
@@ -281,7 +298,7 @@ Write your summary."""
                 actual_tokens=retry_tokens,
                 deviation_pct=retry_deviation,
                 success=abs(retry_deviation) <= 10,
-                retries_used=1
+                retries_used=1,
             )
 
     async def test_fresh_strategy(self, case: SummaryCase, trial: int) -> RetryResult:
@@ -292,14 +309,12 @@ Write your summary."""
 
             messages = [
                 {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg}
+                {"role": "user", "content": user_msg},
             ]
 
             # First attempt
             response = await self.client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                reasoning_effort="minimal"
+                model=MODEL, messages=messages, reasoning_effort="minimal"
             )
 
             first_summary = response.choices[0].message.content
@@ -316,14 +331,14 @@ Write your summary."""
                     actual_tokens=first_tokens,
                     deviation_pct=deviation_pct,
                     success=True,
-                    retries_used=0
+                    retries_used=0,
                 )
 
             # Need retry - start fresh conversation with same prompt
             retry_response = await self.client.chat.completions.create(
                 model=MODEL,
                 messages=messages,  # Same original messages
-                reasoning_effort="minimal"
+                reasoning_effort="minimal",
             )
 
             retry_summary = retry_response.choices[0].message.content
@@ -338,14 +353,19 @@ Write your summary."""
                 actual_tokens=retry_tokens,
                 deviation_pct=retry_deviation,
                 success=abs(retry_deviation) <= 10,
-                retries_used=1
+                retries_used=1,
             )
 
     async def run_trials(self, case: SummaryCase, trials_per_strategy: int = 3):
         """Run multiple trials for both strategies on a single case"""
         # Create all trial tasks
-        cont_tasks = [self.test_continuation_strategy(case, i + 1) for i in range(trials_per_strategy)]
-        fresh_tasks = [self.test_fresh_strategy(case, i + 1) for i in range(trials_per_strategy)]
+        cont_tasks = [
+            self.test_continuation_strategy(case, i + 1)
+            for i in range(trials_per_strategy)
+        ]
+        fresh_tasks = [
+            self.test_fresh_strategy(case, i + 1) for i in range(trials_per_strategy)
+        ]
 
         # Run all trials in parallel
         all_tasks = cont_tasks + fresh_tasks
@@ -356,9 +376,13 @@ Write your summary."""
         fresh_results = results[trials_per_strategy:]
 
         for i, result in enumerate(cont_results):
-            print(f"  Continuation trial {i + 1}: deviation={result.deviation_pct:.1f}%, success={result.success}")
+            print(
+                f"  Continuation trial {i + 1}: deviation={result.deviation_pct:.1f}%, success={result.success}"
+            )
         for i, result in enumerate(fresh_results):
-            print(f"  Fresh trial {i + 1}: deviation={result.deviation_pct:.1f}%, success={result.success}")
+            print(
+                f"  Fresh trial {i + 1}: deviation={result.deviation_pct:.1f}%, success={result.success}"
+            )
 
         return results
 
@@ -377,7 +401,9 @@ Write your summary."""
         all_results = []
 
         for i, case in enumerate(cases, 1):
-            print(f"Case {i}/{len(cases)}: {case.node_id} (original deviation: {case.divergence_pct:.1f}%)")
+            print(
+                f"Case {i}/{len(cases)}: {case.node_id} (original deviation: {case.divergence_pct:.1f}%)"
+            )
             results = await self.run_trials(case, trials_per_strategy)
             all_results.extend(results)
             print()
@@ -386,8 +412,10 @@ Write your summary."""
         self.analyze_results(all_results)
 
         # Save raw results
-        output_file = Path(f"retry_experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-        with open(output_file, 'w') as f:
+        output_file = Path(
+            f"retry_experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        with open(output_file, "w") as f:
             json.dump([r.to_dict() for r in all_results], f, indent=2)
         print(f"\nRaw results saved to {output_file}")
 
@@ -396,21 +424,35 @@ Write your summary."""
         continuation_results = [r for r in results if r.strategy == "continuation"]
         fresh_results = [r for r in results if r.strategy == "fresh"]
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("EXPERIMENT RESULTS")
-        print("="*60)
+        print("=" * 60)
 
         # Success rates
-        cont_success = sum(1 for r in continuation_results if r.success) / len(continuation_results) * 100
-        fresh_success = sum(1 for r in fresh_results if r.success) / len(fresh_results) * 100
+        cont_success = (
+            sum(1 for r in continuation_results if r.success)
+            / len(continuation_results)
+            * 100
+        )
+        fresh_success = (
+            sum(1 for r in fresh_results if r.success) / len(fresh_results) * 100
+        )
 
         print("\nSuccess Rate (within 10% of target):")
-        print(f"  Continuation: {cont_success:.1f}% ({sum(1 for r in continuation_results if r.success)}/{len(continuation_results)})")
-        print(f"  Fresh:        {fresh_success:.1f}% ({sum(1 for r in fresh_results if r.success)}/{len(fresh_results)})")
+        print(
+            f"  Continuation: {cont_success:.1f}% ({sum(1 for r in continuation_results if r.success)}/{len(continuation_results)})"
+        )
+        print(
+            f"  Fresh:        {fresh_success:.1f}% ({sum(1 for r in fresh_results if r.success)}/{len(fresh_results)})"
+        )
 
         # Average deviation
-        cont_avg_dev = sum(abs(r.deviation_pct) for r in continuation_results) / len(continuation_results)
-        fresh_avg_dev = sum(abs(r.deviation_pct) for r in fresh_results) / len(fresh_results)
+        cont_avg_dev = sum(abs(r.deviation_pct) for r in continuation_results) / len(
+            continuation_results
+        )
+        fresh_avg_dev = sum(abs(r.deviation_pct) for r in fresh_results) / len(
+            fresh_results
+        )
 
         print("\nAverage Absolute Deviation:")
         print(f"  Continuation: {cont_avg_dev:.1f}%")
@@ -435,7 +477,9 @@ Write your summary."""
         fresh_dist = get_distribution(fresh_results)
 
         for bucket in ["0-10%", "10-20%", "20-30%", ">30%"]:
-            print(f"  {bucket:8} - Continuation: {cont_dist[bucket]:3d}, Fresh: {fresh_dist[bucket]:3d}")
+            print(
+                f"  {bucket:8} - Continuation: {cont_dist[bucket]:3d}, Fresh: {fresh_dist[bucket]:3d}"
+            )
 
         # Per-node comparison
         print("\nPer-Node Performance (average across trials):")
@@ -451,13 +495,19 @@ Write your summary."""
             cont_avg = sum(abs(r.deviation_pct) for r in cont_node) / len(cont_node)
             fresh_avg = sum(abs(r.deviation_pct) for r in fresh_node) / len(fresh_node)
 
-            winner = "CONT" if cont_avg < fresh_avg else "FRESH" if fresh_avg < cont_avg else "TIE"
+            winner = (
+                "CONT"
+                if cont_avg < fresh_avg
+                else "FRESH" if fresh_avg < cont_avg else "TIE"
+            )
             if cont_avg < fresh_avg:
                 better_with_continuation += 1
             elif fresh_avg < cont_avg:
                 better_with_fresh += 1
 
-            print(f"  {node_id[:8]}... Cont: {cont_avg:5.1f}%, Fresh: {fresh_avg:5.1f}% [{winner}]")
+            print(
+                f"  {node_id[:8]}... Cont: {cont_avg:5.1f}%, Fresh: {fresh_avg:5.1f}% [{winner}]"
+            )
 
         if len(node_ids) > 5:
             print(f"  ... and {len(node_ids) - 5} more nodes")
@@ -478,13 +528,24 @@ Write your summary."""
         print("\nNodes performing better with:")
         print(f"  Continuation: {better_with_continuation}")
         print(f"  Fresh:        {better_with_fresh}")
-        print(f"  Tie:          {len(node_ids) - better_with_continuation - better_with_fresh}")
+        print(
+            f"  Tie:          {len(node_ids) - better_with_continuation - better_with_fresh}"
+        )
 
 
 @click.command()
-@click.option('--database', type=click.Path(exists=True), default='benchmarks_words/ragzoom.db', help='Path to database')
-@click.option('--max-nodes', type=int, default=10, help='Maximum number of nodes to test')
-@click.option('--trials', type=int, default=3, help='Number of trials per strategy per node')
+@click.option(
+    "--database",
+    type=click.Path(exists=True),
+    default="benchmarks_words/ragzoom.db",
+    help="Path to database",
+)
+@click.option(
+    "--max-nodes", type=int, default=10, help="Maximum number of nodes to test"
+)
+@click.option(
+    "--trials", type=int, default=3, help="Number of trials per strategy per node"
+)
 def main(database, max_nodes, trials):
     """Test retry strategies for summarization"""
     db_path = Path(database)

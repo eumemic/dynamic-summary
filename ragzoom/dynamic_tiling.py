@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -8,7 +9,7 @@ from ragzoom.tiling import Tiling
 from ragzoom.utils.tokenization import tokenizer
 
 if TYPE_CHECKING:
-    from ragzoom.models import TreeNode
+    from ragzoom.contracts.tree_node import TreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class BaseDynamicTilingGenerator:
         self.config = config
         self.tokenizer = tokenizer
         self._subtree_relevance_cache: dict[str, float] = {}
-        self._nodes: dict[str, TreeNode] = {}  # Will be set per tiling request
+        self._nodes: Mapping[str, TreeNode] = {}  # Will be set per tiling request
 
     def _get_node_cost(self, node: "TreeNode") -> int:
         """Get the token cost of a node."""
@@ -129,7 +130,9 @@ class BaseDynamicTilingGenerator:
 
         return budget_l, budget_r
 
-    def _build_result(self, tiling: Tiling, nodes: dict[str, "TreeNode"]) -> DPResult:
+    def _build_result(
+        self, tiling: Tiling, nodes: Mapping[str, "TreeNode"]
+    ) -> DPResult:
         """Build DPResult from tiling and nodes."""
         node_infos = []
         for node_id in tiling.node_ids:
@@ -161,7 +164,7 @@ class DynamicTilingGenerator(BaseDynamicTilingGenerator):
         self,
         budget_tokens: int,
         scores: dict[str, float],
-        nodes: dict[str, "TreeNode"],
+        nodes: Mapping[str, "TreeNode"],
         root_id: str,
     ) -> DPResult:
         logger.info("Using DP tiling generation")
@@ -277,7 +280,7 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
         self,
         budget_tokens: int,
         scores: dict[str, float],
-        nodes: dict[str, "TreeNode"],
+        nodes: Mapping[str, "TreeNode"],
         root_id: str,
     ) -> DPResult:
         logger.info("Using async DP tiling generation")

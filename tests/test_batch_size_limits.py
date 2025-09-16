@@ -1,5 +1,6 @@
 """Test handling of large embedding batches."""
 
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -31,7 +32,13 @@ class TestBatchSizeLimits:
             mock_doc_store.session_local = Mock
             mock_doc_store.node_cache = {}
             mock_doc_store.cache_order = []
-            builder = TreeBuilder(config, mock_doc_store, api_key="test-key")
+            # Provide a minimal vector index via factory for TreeBuilder
+            from ragzoom.vector_factory import create_vector_index
+
+            vi = create_vector_index(
+                "python", "sqlite:///:memory:", config.embedding_model
+            )
+            builder = TreeBuilder(config, mock_doc_store, vi, api_key="test-key")
 
             # Mock the OpenAI client on the LLM service
             builder.llm_service.client = Mock()
@@ -44,7 +51,10 @@ class TestBatchSizeLimits:
         """Test that small batches are processed normally."""
         # Mock response for a small batch
         mock_response = Mock()
-        mock_response.data = [Mock(embedding=[0.1, 0.2, 0.3]) for _ in range(100)]
+        # Lightweight items to avoid heavy Mock creation
+        mock_response.data = [
+            SimpleNamespace(embedding=[0.1, 0.2, 0.3]) for _ in range(100)
+        ]
         tree_builder.llm_service.client.embeddings.create.return_value = mock_response  # type: ignore[attr-defined]
 
         texts = [f"text {i}" for i in range(100)]
@@ -55,6 +65,7 @@ class TestBatchSizeLimits:
         assert len(result) == 100
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(2.0)
     async def test_large_batch_automatic_splitting(
         self, tree_builder: TreeBuilder
     ) -> None:
@@ -65,7 +76,7 @@ class TestBatchSizeLimits:
             batch_size = len(cast(list[str], kwargs["input"]))
             mock_response = Mock()
             mock_response.data = [
-                Mock(embedding=[0.1, 0.2, 0.3]) for _ in range(batch_size)
+                SimpleNamespace(embedding=[0.1, 0.2, 0.3]) for _ in range(batch_size)
             ]
             return mock_response
 
@@ -83,7 +94,9 @@ class TestBatchSizeLimits:
     async def test_exactly_max_batch_size(self, tree_builder: TreeBuilder) -> None:
         """Test batch exactly at the limit."""
         mock_response = Mock()
-        mock_response.data = [Mock(embedding=[0.1, 0.2, 0.3]) for _ in range(1000)]
+        mock_response.data = [
+            SimpleNamespace(embedding=[0.1, 0.2, 0.3]) for _ in range(1000)
+        ]
         tree_builder.llm_service.client.embeddings.create.return_value = mock_response  # type: ignore[attr-defined]
 
         texts = [f"text {i}" for i in range(1000)]
@@ -102,7 +115,7 @@ class TestBatchSizeLimits:
             batch_size = len(cast(list[str], kwargs["input"]))
             mock_response = Mock()
             mock_response.data = [
-                Mock(embedding=[0.1, 0.2, 0.3]) for _ in range(batch_size)
+                SimpleNamespace(embedding=[0.1, 0.2, 0.3]) for _ in range(batch_size)
             ]
             return mock_response
 

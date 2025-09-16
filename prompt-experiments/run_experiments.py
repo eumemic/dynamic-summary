@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """
 Run summarization length targeting experiments.
 Tests different strategies for hitting target summary lengths.
@@ -30,10 +31,11 @@ from openai import AsyncOpenAI
 class ExperimentRunner:
     """Run summarization experiments with different targeting strategies."""
 
-    def __init__(self, corpus_path: str = "results/corpus.json",
-                 max_concurrent: int = 30):
+    def __init__(
+        self, corpus_path: str = "results/corpus.json", max_concurrent: int = 30
+    ):
         """Initialize the experiment runner.
-        
+
         Args:
             corpus_path: Path to the test corpus JSON file
             max_concurrent: Maximum concurrent API requests
@@ -66,26 +68,23 @@ class ExperimentRunner:
         self.chunks = corpus_data["chunks"]
         print(f"Loaded {len(self.chunks)} chunks from corpus")
 
-    async def run_single_experiment(self, chunk: dict, strategy: Any,
-                                   target_tokens: int, pbar: tqdm = None) -> dict[str, Any]:
+    async def run_single_experiment(
+        self, chunk: dict, strategy: Any, target_tokens: int, pbar: tqdm | None = None
+    ) -> dict[str, Any]:
         """Run a single summarization experiment.
-        
+
         Args:
             chunk: Chunk data with text and metrics
             strategy: The targeting strategy to use
             target_tokens: Target token count for the summary
             pbar: Optional progress bar to update
-            
+
         Returns:
             Dictionary with experiment results
         """
         async with self.semaphore:
             # Get the prompt for this strategy
-            prompt = strategy.get_prompt(
-                chunk["text"],
-                chunk["metrics"],
-                target_tokens
-            )
+            prompt = strategy.get_prompt(chunk["text"], chunk["metrics"], target_tokens)
 
             # Record start time
             start_time = time.time()
@@ -94,9 +93,7 @@ class ExperimentRunner:
                 # Make API call to GPT-5-nano
                 response = await self.client.chat.completions.create(
                     model="gpt-5-nano",
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ],
+                    messages=[{"role": "user", "content": prompt}],
                     reasoning_effort="minimal",  # GPT-5 parameter
                 )
 
@@ -152,12 +149,14 @@ class ExperimentRunner:
         # This covers practical summarization use cases
         return [0.30, 0.40, 0.50, 0.60, 0.70, 0.80]
 
-    async def run_all_experiments(self,
-                                  sample_size: int = None,
-                                  strategies: list = None,
-                                  compression_ratios: list[float] = None):
+    async def run_all_experiments(
+        self,
+        sample_size: int | None = None,
+        strategies: list | None = None,
+        compression_ratios: list[float] | None = None,
+    ) -> list[dict]:
         """Run all experiments across strategies and compression ratios.
-        
+
         Args:
             sample_size: If set, sample this many chunks with balanced representation
             strategies: List of strategies to test (default: ALL_STRATEGIES)
@@ -226,27 +225,28 @@ class ExperimentRunner:
                     continue
 
                 for strategy in strategies:
-                    experiment_configs.append({
-                        "chunk": chunk,
-                        "strategy": strategy,
-                        "compression_ratio": ratio,
-                        "target_tokens": target_tokens,
-                    })
+                    experiment_configs.append(
+                        {
+                            "chunk": chunk,
+                            "strategy": strategy,
+                            "compression_ratio": ratio,
+                            "target_tokens": target_tokens,
+                        }
+                    )
 
         print(f"\nActual experiments after filtering: {len(experiment_configs)}")
         print("Starting experiments...\n")
 
         # Create progress bar
-        pbar = tqdm(total=len(experiment_configs), desc="Running experiments", unit="exp")
+        pbar = tqdm(
+            total=len(experiment_configs), desc="Running experiments", unit="exp"
+        )
 
         # Create tasks with progress bar
         tasks = []
         for config in experiment_configs:
             task = self.run_single_experiment(
-                config["chunk"],
-                config["strategy"],
-                config["target_tokens"],
-                pbar
+                config["chunk"], config["strategy"], config["target_tokens"], pbar
             )
             tasks.append(task)
 
@@ -262,9 +262,9 @@ class ExperimentRunner:
 
         return results
 
-    def save_results(self, results: list[dict], output_path: str = None):
+    def save_results(self, results: list[dict], output_path: str | None = None) -> None:
         """Save experiment results to JSON.
-        
+
         Args:
             results: List of experiment results
             output_path: Path to save results (default: experiments/results/raw_results.json)
@@ -286,7 +286,7 @@ class ExperimentRunner:
             "failed": failed,
             "strategies": [s.name for s in ACTIVE_STRATEGIES],
             "compression_ratios": self.get_compression_ratios(),
-            "results": results
+            "results": results,
         }
 
         with open(output_file, "w", encoding="utf-8") as f:
@@ -301,11 +301,21 @@ async def main():
     """Main entry point for running experiments."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run summarization length targeting experiments")
-    parser.add_argument("--sample", type=int, help="Sample size with balanced chunk representation (default: use all chunks)")
+    parser = argparse.ArgumentParser(
+        description="Run summarization length targeting experiments"
+    )
+    parser.add_argument(
+        "--sample",
+        type=int,
+        help="Sample size with balanced chunk representation (default: use all chunks)",
+    )
     parser.add_argument("--output", help="Output file path")
-    parser.add_argument("--max-concurrent", type=int, default=30,
-                       help="Maximum concurrent API requests (default: 30)")
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=30,
+        help="Maximum concurrent API requests (default: 30)",
+    )
 
     args = parser.parse_args()
 
@@ -336,6 +346,7 @@ async def main():
     import sys
 
     from analyze_results import main as analyze_main
+
     old_argv = sys.argv
     sys.argv = ["analyze_results.py", str(output_file)]
 

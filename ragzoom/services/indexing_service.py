@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
+from ragzoom.vector_factory import create_vector_index
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +172,17 @@ class IndexingService:
                 logger.info(
                     f"Cleared existing data for '{document_id}' ({deleted_count} nodes)"
                 )
+            # Also clear vectors for this document to avoid stale candidates
+            try:
+                vector_index_for_clear = create_vector_index(
+                    self.operational_config.vector_backend,
+                    self.operational_config.database_url,
+                    self.index_config.embedding_model,
+                )
+                _ = vector_index_for_clear.delete(filter={"document_id": document_id})
+            except Exception:
+                # Non-fatal; retrieval path defensively filters any stale vectors
+                pass
 
             # Create document with full metadata BEFORE indexing
             # This ensures the document exists with proper metadata before TreeBuilder runs
@@ -186,11 +198,17 @@ class IndexingService:
             # Create document-scoped store and TreeBuilder
             document_store = self.store.for_document(document_id)
 
+            vector_index = create_vector_index(
+                self.operational_config.vector_backend,
+                self.operational_config.database_url,
+                self.index_config.embedding_model,
+            )
             tree_builder = TreeBuilder(
                 self.index_config,
                 document_store,
                 api_key=self.operational_config.openai_api_key.get_secret_value(),
                 max_concurrent=30,
+                vector_index=vector_index,
             )
 
             # Index with or without telemetry

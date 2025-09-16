@@ -1,14 +1,15 @@
-"""Repository for TreeNode CRUD operations using PostgreSQL with pgvector."""
+"""Repository for PostgresTreeNode CRUD operations using PostgreSQL with pgvector."""
 
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional, TypedDict
+from typing import TYPE_CHECKING, Optional, TypedDict, cast
 
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import func, update
 
-from ragzoom.models import TreeNode
+from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.models import PostgresTreeNode
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -42,11 +43,13 @@ class NodeDataDict(TypedDict, total=False):
     path: str
 
 
-class NodeRepository(BaseRepository):
-    """Repository for TreeNode database operations."""
+class PostgresNodeRepository(BaseRepository):
+    """Repository for PostgresTreeNode database operations."""
 
     def __init__(
-        self, database_manager: DatabaseManager, cache_manager: CacheManager[TreeNode]
+        self,
+        database_manager: DatabaseManager,
+        cache_manager: CacheManager[PostgresTreeNode],
     ):
         """Initialize node repository.
 
@@ -58,7 +61,9 @@ class NodeRepository(BaseRepository):
         self.cache_manager = cache_manager
         self.SessionLocal = database_manager.SessionLocal
 
-    def _force_load_and_detach(self, session: "Session", node: TreeNode) -> None:
+    def _force_load_and_detach(
+        self, session: "Session", node: PostgresTreeNode
+    ) -> None:
         """Force load all attributes and detach node from session."""
         # Force load all attributes before detaching
         _ = (
@@ -69,7 +74,6 @@ class NodeRepository(BaseRepository):
             node.span_start,
             node.span_end,
             node.text,
-            node.embedding,  # Load embedding too
             node.token_count,
             node.is_pinned,
             node.last_accessed,
@@ -96,7 +100,7 @@ class NodeRepository(BaseRepository):
         height: int = 0,
         is_left_child: bool | None = None,
     ) -> TreeNode:
-        """Add a node to the database with its embedding.
+        """Add a node to the database (embedding ignored).
 
         Args:
             node_id: Unique identifier for the node
@@ -114,16 +118,15 @@ class NodeRepository(BaseRepository):
                           If None, will attempt to determine from parent's existing child pointers.
 
         Returns:
-            Created TreeNode
+            Created PostgresTreeNode
         """
-        # Validate embedding dimension
-        self.db_manager.validate_embedding_dimension(embedding)
+        # Embeddings are not stored in SQL; ignore validation
 
         with self.SessionLocal() as session:
             # Calculate path based on parent relationship
             path = ""  # Default for root nodes
             if parent_id:
-                parent = session.query(TreeNode).filter_by(id=parent_id).first()
+                parent = session.query(PostgresTreeNode).filter_by(id=parent_id).first()
                 if parent and parent.path is not None:
                     # Use explicit child position if provided
                     if is_left_child is not None:
@@ -139,7 +142,7 @@ class NodeRepository(BaseRepository):
                             # Defer path assignment - it will be set later when relationships are established
                             path = ""  # Temporary placeholder - should be updated later
 
-            node = TreeNode(
+            node = PostgresTreeNode(
                 id=node_id,
                 parent_id=parent_id,
                 left_child_id=left_child_id,
@@ -147,7 +150,6 @@ class NodeRepository(BaseRepository):
                 span_start=span_start,
                 span_end=span_end,
                 text=text,
-                embedding=list(map(float, embedding)),  # Store embedding in DB
                 document_id=document_id,
                 token_count=token_count,
                 height=height,
@@ -168,7 +170,10 @@ class NodeRepository(BaseRepository):
         return node
 
     def add_nodes_batch(
-        self, nodes_data: list["NodeDataDict"], *, session: Optional["Session"] = None
+        self,
+        nodes_data: list[dict[str, object]],
+        *,
+        session: Optional["Session"] = None,
     ) -> list[TreeNode]:
         """Add multiple nodes to the database in batch.
 
@@ -177,57 +182,54 @@ class NodeRepository(BaseRepository):
             session: Optional database session for transactional operations
 
         Returns:
-            List of created TreeNode objects
+            List of created PostgresTreeNode objects
         """
         if not nodes_data:
             return []
 
-        # Validate all embeddings first
-        for data in nodes_data:
-            if data["embedding"] is not None:
-                self.db_manager.validate_embedding_dimension(data["embedding"])
+        # Embeddings not stored in SQL; ignore any provided embedding values
 
         db_session, should_commit = self._get_session(session)
         try:
-            # Create TreeNode objects for regular session.add_all()
-            nodes = []
-            for data in nodes_data:
-                node = TreeNode(
-                    id=data["node_id"],
-                    parent_id=data.get("parent_id"),
-                    left_child_id=data.get("left_child_id"),
-                    right_child_id=data.get("right_child_id"),
-                    span_start=data["span_start"],
-                    span_end=data["span_end"],
-                    text=data["text"],
-                    embedding=(
-                        list(map(float, data["embedding"]))
-                        if data["embedding"] is not None
-                        else []
-                    ),  # Store embedding in DB
-                    document_id=data.get("document_id"),
-                    token_count=data.get("token_count", 0),
-                    preceding_neighbor_id=data.get("preceding_neighbor_id"),
-                    height=data.get("height", 0),
-                    path=data.get("path", ""),
+            # Create PostgresTreeNode objects for regular session.add_all()
+            nodes_pg: list[PostgresTreeNode] = []
+            out: list[TreeNode] = []
+            for raw in nodes_data:
+                data = raw  # accept generic dicts per protocol
+                node = PostgresTreeNode(
+                    id=str(data["node_id"]),
+                    parent_id=cast(str | None, data.get("parent_id")),
+                    left_child_id=cast(str | None, data.get("left_child_id")),
+                    right_child_id=cast(str | None, data.get("right_child_id")),
+                    span_start=cast(int, data["span_start"]),
+                    span_end=cast(int, data["span_end"]),
+                    text=cast(str, data["text"]),
+                    document_id=cast(str | None, data.get("document_id")),
+                    token_count=cast(int, data.get("token_count", 0)),
+                    preceding_neighbor_id=cast(
+                        str | None, data.get("preceding_neighbor_id")
+                    ),
+                    height=cast(int, data.get("height", 0)),
+                    path=cast(str, data.get("path", "")),
                 )
-                nodes.append(node)
+                nodes_pg.append(node)
+                out.append(node)
 
             # Use add_all for proper object tracking and session management
-            db_session.add_all(nodes)
+            db_session.add_all(nodes_pg)
             if should_commit:
                 db_session.commit()
 
             # Force load and detach all nodes
-            for node in nodes:
+            for node in nodes_pg:
                 db_session.refresh(node)
                 self._force_load_and_detach(db_session, node)
 
             # Add all to cache
-            for node in nodes:
+            for node in nodes_pg:
                 self.cache_manager.put(node.id, node)
 
-            return nodes
+            return out
 
         except Exception:
             if should_commit:
@@ -253,8 +255,8 @@ class NodeRepository(BaseRepository):
             # Update parent references
             for node_id, parent_id in updates:
                 db_session.execute(
-                    update(TreeNode)
-                    .where(TreeNode.id == node_id)
+                    update(PostgresTreeNode)
+                    .where(PostgresTreeNode.id == node_id)
                     .values(parent_id=parent_id)
                 )
 
@@ -275,7 +277,7 @@ class NodeRepository(BaseRepository):
         """
         with self._session_scope(session) as db_session:
             # Get all nodes and build the tree structure
-            nodes = db_session.query(TreeNode).all()
+            nodes = db_session.query(PostgresTreeNode).all()
 
             # Find root nodes (nodes with no parent)
             root_nodes = [node for node in nodes if node.is_root()]
@@ -285,7 +287,7 @@ class NodeRepository(BaseRepository):
                 self._update_node_path_recursive(root, "", db_session, set())
 
     def _update_node_path_recursive(
-        self, node: "TreeNode", path: str, session: "Session", visited: set[str]
+        self, node: "PostgresTreeNode", path: str, session: "Session", visited: set[str]
     ) -> None:
         """Recursively update node paths in the tree.
 
@@ -301,7 +303,9 @@ class NodeRepository(BaseRepository):
 
         # Update this node's path
         session.execute(
-            update(TreeNode).where(TreeNode.id == node.id).values(path=path)
+            update(PostgresTreeNode)
+            .where(PostgresTreeNode.id == node.id)
+            .values(path=path)
         )
 
         # Invalidate cache
@@ -310,7 +314,7 @@ class NodeRepository(BaseRepository):
         # Update children
         if node.left_child_id:
             left_child = (
-                session.query(TreeNode).filter_by(id=node.left_child_id).first()
+                session.query(PostgresTreeNode).filter_by(id=node.left_child_id).first()
             )
             if left_child:
                 self._update_node_path_recursive(
@@ -319,7 +323,9 @@ class NodeRepository(BaseRepository):
 
         if node.right_child_id:
             right_child = (
-                session.query(TreeNode).filter_by(id=node.right_child_id).first()
+                session.query(PostgresTreeNode)
+                .filter_by(id=node.right_child_id)
+                .first()
             )
             if right_child:
                 self._update_node_path_recursive(
@@ -333,7 +339,7 @@ class NodeRepository(BaseRepository):
             node_id: Node ID to retrieve
 
         Returns:
-            TreeNode if found, None otherwise
+            PostgresTreeNode if found, None otherwise
         """
         # Check cache first
         cached = self.cache_manager.get(node_id)
@@ -342,7 +348,7 @@ class NodeRepository(BaseRepository):
 
         # Load from database
         with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
+            node = session.query(PostgresTreeNode).filter_by(id=node_id).first()
             if node:
                 # Force load and detach
                 self._force_load_and_detach(session, node)
@@ -359,12 +365,12 @@ class NodeRepository(BaseRepository):
             node_ids: List of node IDs to retrieve
 
         Returns:
-            List of TreeNode objects found
+            List of PostgresTreeNode objects found
         """
         if not node_ids:
             return []
 
-        nodes = []
+        nodes: list[TreeNode] = []
         uncached_ids = []
 
         # Check cache first
@@ -379,7 +385,9 @@ class NodeRepository(BaseRepository):
         if uncached_ids:
             with self.SessionLocal() as session:
                 db_nodes = (
-                    session.query(TreeNode).filter(TreeNode.id.in_(uncached_ids)).all()
+                    session.query(PostgresTreeNode)
+                    .filter(PostgresTreeNode.id.in_(uncached_ids))
+                    .all()
                 )
                 for node in db_nodes:
                     # Force load and detach
@@ -397,14 +405,18 @@ class NodeRepository(BaseRepository):
             paths: List of path strings to retrieve
 
         Returns:
-            List of TreeNode objects found
+            List of PostgresTreeNode objects found
         """
         if not paths:
             return []
 
         with self.SessionLocal() as session:
-            db_nodes = session.query(TreeNode).filter(TreeNode.path.in_(paths)).all()
-            nodes = []
+            db_nodes = (
+                session.query(PostgresTreeNode)
+                .filter(PostgresTreeNode.path.in_(paths))
+                .all()
+            )
+            nodes: list[TreeNode] = []
             for node in db_nodes:
                 # Force load and detach
                 self._force_load_and_detach(session, node)
@@ -421,7 +433,7 @@ class NodeRepository(BaseRepository):
             node_id: Node ID to update access info
         """
         with self.SessionLocal() as session:
-            node = session.query(TreeNode).filter_by(id=node_id).first()
+            node = session.query(PostgresTreeNode).filter_by(id=node_id).first()
             if node:
                 node.last_accessed = datetime.utcnow()
                 node.access_count += 1
@@ -440,22 +452,26 @@ class NodeRepository(BaseRepository):
             depth_max: Maximum depth for pinned nodes (optional)
 
         Returns:
-            List of pinned TreeNode objects
+            List of pinned PostgresTreeNode objects
         """
         with self.SessionLocal() as session:
-            query = session.query(TreeNode).filter(TreeNode.is_pinned == 1)
+            query = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.is_pinned == 1
+            )
 
             # Use database-level path filtering for better performance if depth_max specified
             if depth_max is not None:
-                query = query.filter(func.length(TreeNode.path) <= depth_max)
+                query = query.filter(func.length(PostgresTreeNode.path) <= depth_max)
 
-            nodes = query.all()
+            db_nodes = query.all()
 
             # Force load and detach all
-            for node in nodes:
+            out: list[TreeNode] = []
+            for node in db_nodes:
                 self._force_load_and_detach(session, node)
+                out.append(node)
 
-            return nodes
+            return out
 
     def _calculate_depth(self, node_id: str) -> int:
         """Calculate depth of a node from root using path field.
@@ -482,7 +498,9 @@ class NodeRepository(BaseRepository):
         """
         with self.SessionLocal() as session:
             session.execute(
-                update(TreeNode).where(TreeNode.id == node_id).values(is_pinned=1)
+                update(PostgresTreeNode)
+                .where(PostgresTreeNode.id == node_id)
+                .values(is_pinned=1)
             )
             session.commit()
 
@@ -495,40 +513,43 @@ class NodeRepository(BaseRepository):
         """Get all leaf nodes (nodes with no children).
 
         Returns:
-            List of leaf TreeNode objects
+            List of leaf PostgresTreeNode objects
         """
         with self.SessionLocal() as session:
-            nodes = (
-                session.query(TreeNode)
+            db_nodes = (
+                session.query(PostgresTreeNode)
                 .filter(
-                    TreeNode.left_child_id.is_(None),
-                    TreeNode.right_child_id.is_(None),
+                    PostgresTreeNode.left_child_id.is_(None),
+                    PostgresTreeNode.right_child_id.is_(None),
                 )
                 .all()
             )
 
             # Force load and detach all
-            for node in nodes:
+            out: list[TreeNode] = []
+            for node in db_nodes:
                 self._force_load_and_detach(session, node)
+                out.append(node)
 
-            return nodes
+            return out
 
     def count_leaves_for_document(self, document_id: str | None) -> int:
         """Return count of leaf nodes for a document (fast COUNT(*))"""
         with self.SessionLocal() as session:
-            q = session.query(func.count(TreeNode.id)).filter(
-                TreeNode.left_child_id.is_(None), TreeNode.right_child_id.is_(None)
+            q = session.query(func.count(PostgresTreeNode.id)).filter(
+                PostgresTreeNode.left_child_id.is_(None),
+                PostgresTreeNode.right_child_id.is_(None),
             )
             if document_id:
-                q = q.filter(TreeNode.document_id == document_id)
+                q = q.filter(PostgresTreeNode.document_id == document_id)
             return int(q.scalar() or 0)
 
     def max_height_for_document(self, document_id: str | None) -> int:
         """Return maximum node height for a document (fast MAX(height))"""
         with self.SessionLocal() as session:
-            q = session.query(func.max(TreeNode.height))
+            q = session.query(func.max(PostgresTreeNode.height))
             if document_id:
-                q = q.filter(TreeNode.document_id == document_id)
+                q = q.filter(PostgresTreeNode.document_id == document_id)
             return int(q.scalar() or 0)
 
     def get_pinned_nodes_for_document(
@@ -536,22 +557,27 @@ class NodeRepository(BaseRepository):
     ) -> list[TreeNode]:
         """Return pinned nodes filtered by a specific document."""
         with self.SessionLocal() as session:
-            q = session.query(TreeNode).filter(
-                TreeNode.is_pinned == 1, TreeNode.document_id == document_id
+            q = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.is_pinned == 1,
+                PostgresTreeNode.document_id == document_id,
             )
             if depth_max is not None:
-                q = q.filter(func.length(TreeNode.path) <= depth_max)
-            nodes = q.all()
-            for node in nodes:
+                q = q.filter(func.length(PostgresTreeNode.path) <= depth_max)
+            db_nodes = q.all()
+            out: list[TreeNode] = []
+            for node in db_nodes:
                 self._force_load_and_detach(session, node)
-            return nodes
+                out.append(node)
+            return out
 
     def count_pinned_for_document(self, document_id: str | None) -> int:
         """Return count of pinned nodes for a document."""
         with self.SessionLocal() as session:
-            q = session.query(func.count(TreeNode.id)).filter(TreeNode.is_pinned == 1)
+            q = session.query(func.count(PostgresTreeNode.id)).filter(
+                PostgresTreeNode.is_pinned == 1
+            )
             if document_id:
-                q = q.filter(TreeNode.document_id == document_id)
+                q = q.filter(PostgresTreeNode.document_id == document_id)
             return int(q.scalar() or 0)
 
     def get_all_nodes_for_document_paginated(
@@ -567,7 +593,7 @@ class NodeRepository(BaseRepository):
             page_size: Number of nodes per batch (default 1000)
 
         Returns:
-            List of batches, where each batch is a list of TreeNode objects
+            List of batches, where each batch is a list of PostgresTreeNode objects
 
         Note:
             For small documents (<5000 nodes), get_all_nodes_for_document() is more efficient.
@@ -576,7 +602,7 @@ class NodeRepository(BaseRepository):
         if page_size <= 0:
             raise ValueError("page_size must be positive")
 
-        batches = []
+        batches: list[list[TreeNode]] = []
         offset = 0
 
         with self.SessionLocal() as session:
@@ -584,7 +610,7 @@ class NodeRepository(BaseRepository):
                 # Query one batch at a time
                 if document_id:
                     query = (
-                        session.query(TreeNode)
+                        session.query(PostgresTreeNode)
                         .filter_by(document_id=document_id)
                         .offset(offset)
                         .limit(page_size)
@@ -593,18 +619,22 @@ class NodeRepository(BaseRepository):
                     logger.warning(
                         "No document_id provided for paginated query. This will process all nodes."
                     )
-                    query = session.query(TreeNode).offset(offset).limit(page_size)
+                    query = (
+                        session.query(PostgresTreeNode).offset(offset).limit(page_size)
+                    )
 
-                batch = query.all()
+                db_batch = query.all()
 
-                if not batch:
+                if not db_batch:
                     break  # No more nodes
 
                 # Force load and detach all nodes in this batch
-                for node in batch:
+                current: list[TreeNode] = []
+                for node in db_batch:
                     self._force_load_and_detach(session, node)
+                    current.append(node)
 
-                batches.append(batch)
+                batches.append(current)
                 offset += page_size
 
                 # Log progress for very large documents
@@ -623,31 +653,37 @@ class NodeRepository(BaseRepository):
             document_id: Document ID to get nodes for
 
         Returns:
-            List of TreeNode objects for the document
+            List of PostgresTreeNode objects for the document
         """
         with self.SessionLocal() as session:
             if document_id:
-                nodes = session.query(TreeNode).filter_by(document_id=document_id).all()
+                db_nodes = (
+                    session.query(PostgresTreeNode)
+                    .filter_by(document_id=document_id)
+                    .all()
+                )
             else:
                 # If no document_id, return all nodes (but this could be memory intensive)
                 logger.warning("No document_id provided, returning all nodes in store.")
-                nodes = session.query(TreeNode).all()
+                db_nodes = session.query(PostgresTreeNode).all()
 
             # Force load and detach all
-            for node in nodes:
+            out: list[TreeNode] = []
+            for node in db_nodes:
                 self._force_load_and_detach(session, node)
+                out.append(node)
 
-            return nodes
+            return out
 
     def count_nodes_for_document(self, document_id: str | None) -> int:
         """Return count of nodes for the given document (fast COUNT(*))"""
         with self.SessionLocal() as session:
             if document_id:
                 count_val = (
-                    session.query(func.count(TreeNode.id))
+                    session.query(func.count(PostgresTreeNode.id))
                     .filter_by(document_id=document_id)
                     .scalar()
                 )
             else:
-                count_val = session.query(func.count(TreeNode.id)).scalar()
+                count_val = session.query(func.count(PostgresTreeNode.id)).scalar()
             return int(count_val or 0)

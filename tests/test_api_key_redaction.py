@@ -360,6 +360,7 @@ class TestEndToEndScenarios:
         # Patch where OpenAI is imported in utils, not the original module
         with patch("tests.utils.OpenAI") as mock_openai:
             from ragzoom.config import QueryConfig
+            from ragzoom.vector_factory import create_vector_index
             from tests.utils import create_retriever
 
             query_config = QueryConfig()
@@ -367,8 +368,15 @@ class TestEndToEndScenarios:
 
             # This should pass the actual API key to the OpenAI client
             # Note: Don't pass a client so create_retriever creates one
+            vi = create_vector_index(
+                "python", "sqlite:///:memory:", query_config.embedding_model
+            )
             create_retriever(
-                query_config, doc_store, api_key=secret.get_secret_value(), client=None
+                query_config,
+                doc_store,
+                api_key=secret.get_secret_value(),
+                client=None,
+                vector_index=vi,
             )
 
             # Verify the OpenAI client was initialized with the actual key

@@ -6,6 +6,7 @@ import pytest
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from ragzoom.services.llm_service import LLMService
 from ragzoom.telemetry_collection import TelemetryCollector
@@ -30,7 +31,9 @@ class MockOpenAIResponse:
 
 
 @pytest.mark.asyncio
-async def test_mark_accepted_attempt_is_called(storage_backend: StorageBackend) -> None:
+async def test_mark_accepted_attempt_is_called(
+    storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
+) -> None:
     """Test that mark_accepted_attempt is called after summarization completes."""
     config = IndexConfig.load(
         retry_threshold=0.2,  # 20% deviation triggers retry
@@ -48,7 +51,7 @@ async def test_mark_accepted_attempt_is_called(storage_backend: StorageBackend) 
         summary_model="gpt-4o-mini",
     )
 
-    indexer = TreeBuilder(config, doc_store)
+    indexer = TreeBuilder(config, doc_store, vector_index)
 
     # Track API calls and telemetry calls
     api_calls = []
@@ -185,7 +188,7 @@ async def test_is_better_summary_logic(storage_backend: StorageBackend) -> None:
 
 @pytest.mark.asyncio
 async def test_retry_selection_uses_proper_logic(
-    storage_backend: StorageBackend,
+    storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
 ) -> None:
     """Test that retry selection uses the proper _is_better_summary logic."""
     config = IndexConfig.load(
@@ -204,7 +207,7 @@ async def test_retry_selection_uses_proper_logic(
         summary_model="gpt-4o-mini",
     )
 
-    indexer = TreeBuilder(config, doc_store)
+    indexer = TreeBuilder(config, doc_store, vector_index)
 
     api_calls = []
     summaries_returned = []

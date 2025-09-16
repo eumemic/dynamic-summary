@@ -15,6 +15,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 
 
@@ -179,6 +180,7 @@ class TestDocumentAPISQLite:
         self,
         sqlite_store_factory: Callable[[str | None], DocumentStore],
         sqlite_backend: SQLiteStorageBackend,
+        vector_index: VectorIndex,
     ) -> None:
         """Test vector search isolation between documents."""
         # Create stores for different document types
@@ -229,7 +231,7 @@ class TestDocumentAPISQLite:
         technical_embedding = [0.9, 0.1, 0.1] + [0.2] * 1533  # High first dimension
         creative_embedding = [0.1, 0.9, 0.1] + [0.2] * 1533  # High second dimension
 
-        sqlite_backend.vector_index.upsert(
+        vector_index.upsert(
             [
                 (
                     "tech_node1",
@@ -258,32 +260,34 @@ class TestDocumentAPISQLite:
 
         # Test technical document search
         technical_query = [0.9, 0.1, 0.1] + [0.2] * 1533  # Similar to technical
-        technical_results = technical_store.search.similar(technical_query, n_results=3)
+        technical_results = vector_index.search_similar(
+            technical_query, 3, {"document_id": "technical-docs"}
+        )
 
         # Should find technical content
         technical_found = False
-        for node_id, score, metadata in technical_results:
-            document_id = metadata.get("document_id")
-            if node_id == "tech_node1":
+        for v in technical_results:
+            if v.id == "tech_node1":
                 technical_found = True
-                assert document_id == "technical-docs"
+                assert v.meta.get("document_id") == "technical-docs"
             # Should not find creative content in technical store results
-            assert node_id != "creative_node1"
+            assert v.id != "creative_node1"
         assert technical_found
 
         # Test creative document search
         creative_query = [0.1, 0.9, 0.1] + [0.2] * 1533  # Similar to creative
-        creative_results = creative_store.search.similar(creative_query, n_results=3)
+        creative_results = vector_index.search_similar(
+            creative_query, 3, {"document_id": "creative-writing"}
+        )
 
         # Should find creative content
         creative_found = False
-        for node_id, score, metadata in creative_results:
-            document_id = metadata.get("document_id")
-            if node_id == "creative_node1":
+        for v in creative_results:
+            if v.id == "creative_node1":
                 creative_found = True
-                assert document_id == "creative-writing"
+                assert v.meta.get("document_id") == "creative-writing"
             # Should not find technical content in creative store results
-            assert node_id != "tech_node1"
+            assert v.id != "tech_node1"
         assert creative_found
 
     def test_sqlite_backend_node_operations(

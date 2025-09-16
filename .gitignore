@@ -57,6 +57,7 @@ chroma_db/
 # Logs
 *.log
 logs/
+agent_logs/
 
 # OS
 .DS_Store

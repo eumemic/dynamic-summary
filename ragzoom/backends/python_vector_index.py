@@ -19,11 +19,9 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from ragzoom.contracts.vector_index import VectorIndex, VectorSearchMetadata
-
 
 @dataclass
-class _Meta(VectorSearchMetadata):
+class _Meta:
     span_start: int
     span_end: int
     parent_id: str
@@ -31,7 +29,7 @@ class _Meta(VectorSearchMetadata):
     is_leaf: int
 
 
-class PythonVectorIndex(VectorIndex):
+class PythonVectorIndex:
     """Simple vector index using numpy arrays.
 
     Persistence (optional):
@@ -211,7 +209,7 @@ class PythonVectorIndex(VectorIndex):
         query_embedding: list[float] | NDArray[np.float64],
         n_results: int,
         where: dict[str, str | int | float | bool | None] | None = None,
-    ) -> list[tuple[str, float, VectorSearchMetadata]]:
+    ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
         if self._vectors is None or not self._ids:
             return []
         q = np.asarray(query_embedding, dtype=np.float32)
@@ -239,61 +237,23 @@ class PythonVectorIndex(VectorIndex):
             topk_idx = np.argsort(-sims)[:n_results]
             result_rows = topk_idx
 
-        out: list[tuple[str, float, VectorSearchMetadata]] = []
+        out: list[tuple[str, float, dict[str, str | int | float | bool | None]]] = []
         for r in result_rows:
             node_id = self._ids[int(r)]
-            out.append((node_id, float(sims[int(r)]), self._meta[node_id]))
+            m = self._meta[node_id]
+            out.append(
+                (
+                    node_id,
+                    float(sims[int(r)]),
+                    {
+                        "span_start": m.span_start,
+                        "span_end": m.span_end,
+                        "parent_id": m.parent_id,
+                        "document_id": m.document_id,
+                        "is_leaf": m.is_leaf,
+                    },
+                )
+            )
         return out
 
-    def compute_mmr_diverse_results(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, VectorSearchMetadata]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        if not candidates or k <= 0:
-            return []
-        # Build candidate matrix
-        ids = [c[0] for c in candidates]
-        rows = [int(self._id_to_row[i]) for i in ids]
-        cand_mat = (
-            self._vectors[rows, :]
-            if self._vectors is not None
-            else np.zeros((0, 0), dtype=np.float32)
-        )
-        q = np.asarray(query_embedding, dtype=np.float32)
-        qn = q / (np.linalg.norm(q) + 1e-12)
-        rel = cand_mat @ qn  # relevance
-
-        selected_mask = np.zeros(len(candidates), dtype=bool)
-        selected: list[int] = []
-
-        # pick most relevant first
-        first = int(np.argmax(rel))
-        selected.append(first)
-        selected_mask[first] = True
-
-        if len(candidates) == 1 or k == 1:
-            return [ids[first]]
-
-        # Precompute pairwise similarities among candidates
-        # (vectors are L2-normalized, so dot = cosine)
-        pairwise = (cand_mat @ cand_mat.T).astype(np.float32)
-
-        while len(selected) < min(k, len(candidates)):
-            unselected = np.where(~selected_mask)[0]
-            # Max sim to any selected
-            if selected:
-                un = np.asarray(unselected, dtype=int)
-                sel = np.asarray(selected, dtype=int)
-                max_sim = np.max(pairwise[un][:, sel], axis=1)
-            else:
-                max_sim = np.zeros(unselected.shape[0], dtype=np.float32)
-            mmr = lambda_param * rel[unselected] - (1.0 - lambda_param) * max_sim
-            idx_in_unselected = int(np.argmax(mmr))
-            chosen = int(unselected[idx_in_unselected])
-            selected.append(chosen)
-            selected_mask[chosen] = True
-
-        return [ids[i] for i in selected]
+    # Note: MMR selection is performed in core via generic utilities.

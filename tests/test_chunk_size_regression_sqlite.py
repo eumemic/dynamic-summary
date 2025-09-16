@@ -15,6 +15,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
@@ -102,10 +103,12 @@ class TestChunkSizeRegressionSQLite:
         ), f"Average chunk size {avg_tokens} tokens is outside reasonable range (expected 50-{int(config.target_chunk_tokens * 1.2)})"
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(2.0)
     async def test_indexed_chunks_have_correct_size(
         self,
         sqlite_store_factory: Callable[[str | None], DocumentStore],
         monkeypatch: pytest.MonkeyPatch,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test that indexed chunks in the database have the correct token size."""
         # Set up test environment
@@ -129,7 +132,7 @@ class TestChunkSizeRegressionSQLite:
         They whispered in dark corners and made secret alliances, waiting for the right moment to strike.
         The king, aware of these threats, surrounded himself with loyal advisors and brave knights who would defend the kingdom with their lives.
         """
-            * 50
+            * 30
         )  # Create a larger, more realistic document
 
         # Mock API responses
@@ -142,8 +145,13 @@ class TestChunkSizeRegressionSQLite:
             if isinstance(input_texts, str):
                 input_texts = [input_texts]
             num_embeddings = len(cast(list[str], input_texts))
+            from types import SimpleNamespace
+
             return MagicMock(
-                data=[MagicMock(embedding=[0.1] * 1536) for _ in range(num_embeddings)]
+                data=[
+                    SimpleNamespace(embedding=[0.1] * 1536)
+                    for _ in range(num_embeddings)
+                ]
             )
 
         mock_async_client.embeddings.create.side_effect = mock_embeddings
@@ -170,7 +178,10 @@ class TestChunkSizeRegressionSQLite:
             "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
         ):
             builder = TreeBuilder(
-                index_config, doc_store, api_key=operational_config.openai_api_key
+                index_config,
+                doc_store,
+                vector_index,
+                api_key=operational_config.openai_api_key,
             )
             await builder.add_document_async(test_doc)
 

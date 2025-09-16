@@ -62,7 +62,7 @@ pivot = df.pivot_table(
     values="token_error_pct",
     index="strategy",
     columns="chunk_size",
-    aggfunc=lambda x: np.abs(x).mean()
+    aggfunc=lambda x: np.abs(x).mean(),
 )
 
 # Format as string with 1 decimal place
@@ -110,10 +110,16 @@ for chunk_size in [200, 500, 1000]:
         continue
 
     # Group by compression ratio bins
-    size_df["compression_bin"] = pd.cut(size_df["compression_ratio"],
-                                        bins=[0, 0.3, 0.5, 0.7, 1.0],
-                                        labels=["Heavy (10-30%)", "Medium (30-50%)",
-                                               "Light (50-70%)", "Minimal (70-90%)"])
+    size_df["compression_bin"] = pd.cut(
+        size_df["compression_ratio"],
+        bins=[0, 0.3, 0.5, 0.7, 1.0],
+        labels=[
+            "Heavy (10-30%)",
+            "Medium (30-50%)",
+            "Light (50-70%)",
+            "Minimal (70-90%)",
+        ],
+    )
 
     for strategy in ["word_count", "absolute_token", "absolute_char"]:
         strat_df = size_df[size_df["strategy"] == strategy]
@@ -124,4 +130,6 @@ for chunk_size in [200, 500, 1000]:
                 if len(bin_df) > 0:
                     abs_error = bin_df["token_error_pct"].abs().mean()
                     within_20 = (bin_df["token_error_pct"].abs() <= 20).mean() * 100
-                    print(f"    {comp_bin}: {abs_error:.1f}% error, {within_20:.0f}% within ±20%")
+                    print(
+                        f"    {comp_bin}: {abs_error:.1f}% error, {within_20:.0f}% within ±20%"
+                    )

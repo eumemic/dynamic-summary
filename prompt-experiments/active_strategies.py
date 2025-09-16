@@ -12,5 +12,5 @@ from strategies.library.word_count_compensated import WordCountCompensatedStrate
 # Dropped: absolute_char (28% error too high)
 ACTIVE_STRATEGIES = [
     WordCountCompensatedStrategy(),  # 7.3% error - BEST
-    WordCountStrategy(),             # 9.5% error - excellent for comparison
+    WordCountStrategy(),  # 9.5% error - excellent for comparison
 ]

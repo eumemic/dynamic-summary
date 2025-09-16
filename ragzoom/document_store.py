@@ -10,10 +10,9 @@ import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy.orm import Session
 
-from ragzoom.models import TreeNode
-from ragzoom.repositories.document_repository import DocumentRepository
-from ragzoom.repositories.node_repository import NodeRepository
-from ragzoom.services.search_service import NodeMetadataDict, SearchService
+from ragzoom.contracts.document_repository import DocumentRepository
+from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.services.tree_navigator import TreeNavigator
 
 if TYPE_CHECKING:
@@ -25,7 +24,7 @@ logger = logging.getLogger(__name__)
 class DocumentNodeRepository:
     """Node repository automatically scoped to a specific document."""
 
-    def __init__(self, document_id: str | None, node_repo: NodeRepository):
+    def __init__(self, document_id: str | None, node_repo: NodeRepositoryProtocol):
         self.document_id = document_id
         self._repo = node_repo
 
@@ -44,10 +43,17 @@ class DocumentNodeRepository:
         is_left_child: bool | None = None,
     ) -> TreeNode:
         """Add a node scoped to this document."""
+        # Ensure embedding type matches repository protocol
+        emb: list[float]
+        if isinstance(embedding, np.ndarray):
+            emb = [float(x) for x in embedding.tolist()]
+        else:
+            emb = [float(x) for x in embedding]
+
         return self._repo.add_node(
             node_id=node_id,
             text=text,
-            embedding=embedding,
+            embedding=emb,
             span_start=span_start,
             span_end=span_end,
             parent_id=parent_id,
@@ -70,10 +76,8 @@ class DocumentNodeRepository:
         session: Session | None = None,
     ) -> list[TreeNode]:
         """Add multiple nodes to this document in batch."""
-        # Ensure all nodes have the document_id set and convert to NodeDataDict format
-        from ragzoom.repositories.node_repository import NodeDataDict
-
-        processed_data: list[NodeDataDict] = []
+        # Ensure all nodes have the document_id set
+        processed_data: list[dict[str, object]] = []
         for node_data in nodes_data:
             # Create a copy and set document_id
             processed_node = node_data.copy()
@@ -146,6 +150,12 @@ class DocumentNodeRepository:
 
     def get_leaves(self) -> list[TreeNode]:
         """Get all leaf nodes for this document."""
+        # Prefer document-scoped repository method when available to avoid full-table scans
+        get_scoped = getattr(self._repo, "get_leaf_nodes_for_document", None)
+        if callable(get_scoped):
+            from typing import cast as _cast
+
+            return _cast(list[TreeNode], get_scoped(self.document_id))
         all_leaves = self._repo.get_leaf_nodes()
         return [node for node in all_leaves if node.document_id == self.document_id]
 
@@ -159,7 +169,14 @@ class DocumentNodeRepository:
     # Additional helper used by CoverageBuilder sibling logic
     def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
         """Get nodes by path values, filtered to this document only."""
-        nodes = self._repo.get_nodes_by_paths(paths)
+        # Use document-scoped path lookup if repository supports it
+        get_scoped = getattr(self._repo, "get_nodes_by_paths_for_document", None)
+        if callable(get_scoped):
+            from typing import cast as _cast
+
+            nodes = _cast(list[TreeNode], get_scoped(self.document_id, paths))
+        else:
+            nodes = self._repo.get_nodes_by_paths(paths)
         return [node for node in nodes if node.document_id == self.document_id]
 
     def update_parent_references_batch(
@@ -171,117 +188,7 @@ class DocumentNodeRepository:
         self._repo.update_parent_references_batch(updates, session=session)
 
 
-class DocumentSearchService:
-    """Search service automatically scoped to a specific document."""
-
-    def __init__(self, document_id: str | None, search_service: SearchService):
-        self.document_id = document_id
-        self._service = search_service
-
-    def similar(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        n_results: int,
-    ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
-        """Search for similar nodes within this document only."""
-        where: dict[str, str | int | float] | None = (
-            {"document_id": self.document_id} if self.document_id else None
-        )
-        # Cast return to match our type signature while maintaining compatibility
-        results = self._service.search_similar(query_embedding, n_results, where)
-        return self._format_search_results(results)
-
-    # jscpd:ignore-start - Delegating wrapper pattern; similarity to SearchService is intentional
-    def mmr_diverse(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        """Apply MMR to get diverse results from candidates.
-
-        Delegates to underlying search service when available; falls back to
-        score-based top-k selection otherwise.
-        """
-        underlying = getattr(self._service, "compute_mmr_diverse_results", None)
-        if callable(underlying):
-            try:
-                out = underlying(query_embedding, candidates, lambda_param, k)
-                # Be explicit for type checker
-                return list(out)
-            except Exception:
-                pass
-        sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
-        return [c[0] for c in sorted_candidates[:k]]
-
-    # Backward-compatible method names to match SearchService API
-    def _format_search_results(
-        self,
-        results: list[tuple[str, float, NodeMetadataDict]],
-    ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
-        """Format search results to extract required metadata fields."""
-        return [
-            (
-                r[0],
-                r[1],
-                {
-                    "span_start": r[2]["span_start"],
-                    "span_end": r[2]["span_end"],
-                    "parent_id": r[2]["parent_id"],
-                    "document_id": r[2]["document_id"],
-                    "is_leaf": r[2]["is_leaf"],
-                },
-            )
-            for r in results
-        ]
-
-    def search_similar(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        n_results: int,
-        where: dict[str, str | int | float | bool | None] | None = None,
-    ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
-        """Compatibility wrapper matching SearchService signature (ignores where)."""
-        scoped_where: dict[str, str | int | float] | None = (
-            {"document_id": self.document_id} if self.document_id else None
-        )
-        # Cast return to match our type signature while maintaining compatibility
-        results = self._service.search_similar(query_embedding, n_results, scoped_where)
-        return self._format_search_results(results)
-
-    def compute_mmr_diverse_results(
-        self,
-        query_embedding: list[float] | NDArray[np.float64],
-        candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
-        lambda_param: float,
-        k: int,
-    ) -> list[str]:
-        """Compatibility wrapper matching SearchService method name.
-
-        Delegates to the underlying service when available; falls back to
-        score-based top-k selection.
-        """
-        underlying = getattr(self._service, "compute_mmr_diverse_results", None)
-        if callable(underlying):
-            try:
-                out = underlying(query_embedding, candidates, lambda_param, k)
-                return list(out)
-            except Exception:
-                pass
-        sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
-        return [c[0] for c in sorted_candidates[:k]]
-
-    # jscpd:ignore-end
-
-    # Optional: vector upsert used by backends where embeddings are external to SQL
-    def upsert_vectors(
-        self,
-        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
-    ) -> None:
-        upsert = getattr(self._service, "upsert", None)
-        if callable(upsert):
-            upsert(items)
+# Legacy DocumentSearchService removed; retrieval uses VectorIndex directly
 
 
 class DocumentTreeNavigator:
@@ -303,7 +210,7 @@ class DocumentTreeNavigator:
     def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
         """Get ancestors of nodes within this document."""
         # Filter input nodes to this document first
-        valid_nodes = []
+        valid_nodes: list[str] = []
         for node_id in node_ids:
             node = self._navigator.node_repo.get_node(node_id)
             if node and node.document_id == self.document_id:
@@ -312,8 +219,28 @@ class DocumentTreeNavigator:
         if not valid_nodes:
             return []
 
+        # Prefer document-scoped path lookup to avoid loading ancestors from other documents
+        repo = self._navigator.node_repo
+        get_scoped = getattr(repo, "get_nodes_by_paths_for_document", None)
+        if callable(get_scoped):
+            from ragzoom.utils.path_utils import get_all_ancestor_paths
+
+            nodes = repo.get_nodes(valid_nodes)
+            if not nodes:
+                return []
+            ancestor_paths = set()
+            for n in nodes:
+                ancestor_paths.update(get_all_ancestor_paths(n.path))
+            if not ancestor_paths:
+                return []
+            from typing import cast as _cast
+
+            return _cast(
+                list[TreeNode], get_scoped(self.document_id, list(ancestor_paths))
+            )
+
+        # Fallback to generic navigator and filter
         ancestors = self._navigator.get_ancestors(valid_nodes)
-        # Filter ancestors to this document (should already be the case, but defensive)
         return [node for node in ancestors if node.document_id == self.document_id]
 
     def get_root(self) -> TreeNode | None:
@@ -354,8 +281,7 @@ class DocumentStore:
     def __init__(
         self,
         document_id: str | None,
-        node_repo: NodeRepository,
-        search_service: SearchService,
+        node_repo: NodeRepositoryProtocol,
         tree_navigator: TreeNavigator,
         doc_repo: DocumentRepository,
     ):
@@ -364,7 +290,6 @@ class DocumentStore:
         Args:
             document_id: Document ID to scope all operations to
             node_repo: Node repository to wrap
-            search_service: Search service to wrap
             tree_navigator: Tree navigator to wrap
             doc_repo: Document repository for metadata access
         """
@@ -374,7 +299,6 @@ class DocumentStore:
 
         # Create document-scoped wrappers
         self.nodes = DocumentNodeRepository(document_id, node_repo)
-        self.search = DocumentSearchService(document_id, search_service)
         self.tree = DocumentTreeNavigator(document_id, tree_navigator)
 
         # Transaction state tracking (similar to StoreManager)
@@ -468,19 +392,8 @@ class DocumentStore:
             node_id: ID of the node to update
             parent_id: New parent ID
         """
-        with self._open_session() as session:
-            from ragzoom.models import TreeNode as TreeNodeModel
-
-            session.query(TreeNodeModel).filter_by(id=node_id).update(
-                {"parent_id": parent_id}
-            )
-            session.commit()
-
-            # Invalidate the cache entry for this node since we've updated it
-            if node_id in self._node_repo.cache_manager.cache:
-                del self._node_repo.cache_manager.cache[node_id]
-                if node_id in self._node_repo.cache_manager.cache_order:
-                    self._node_repo.cache_manager.cache_order.remove(node_id)
+        # Delegate to repository which handles cache invalidation
+        self._node_repo.update_parent_references_batch([(node_id, parent_id)])
 
     def clear(self) -> int:
         """Delete all nodes for this document.
@@ -505,17 +418,12 @@ class DocumentStore:
         if not self.document_id:
             raise ValueError("Cannot ensure document exists without a document_id")
 
-        from ragzoom.models import Document
-
-        with self._node_repo.db_manager.SessionLocal() as session:
-            # Check if document already exists
-            doc = session.query(Document).filter_by(id=self.document_id).first()
-
-            if not doc:
-                raise RuntimeError(
-                    f"Document '{self.document_id}' does not exist. "
-                    "Documents must be created before operations can be performed on them."
-                )
+        doc = self._doc_repo.get_document_by_id(self.document_id)
+        if not doc:
+            raise RuntimeError(
+                f"Document '{self.document_id}' does not exist. "
+                "Documents must be created before operations can be performed on them."
+            )
 
     def get_metadata(self) -> "Document | None":
         """Get the document metadata record.
@@ -604,42 +512,22 @@ class DocumentStore:
             logger.debug("No document_id provided for token statistics")
             return None
 
-        # Use SQL aggregation for efficiency on large documents
-        from ragzoom.models import TreeNode as TreeNodeModel
-
-        with self._open_session() as session:
-            # Query for average token count of leaf nodes (nodes with no children)
-            result = (
-                session.query(TreeNodeModel.token_count)
-                .filter(
-                    TreeNodeModel.document_id == self.document_id,
-                    TreeNodeModel.left_child_id.is_(None),
-                    TreeNodeModel.right_child_id.is_(None),
-                )
-                .all()
-            )
-
-            if not result:
-                logger.debug(
-                    f"No leaf nodes found for document {self.document_id} when calculating average tokens"
-                )
-                return None
-
-            # Calculate average from results
-            total_tokens = sum(row[0] for row in result if row[0] is not None)
-            count = len([r for r in result if r[0] is not None])
-
-            if count == 0:
-                logger.warning(
-                    f"Leaf nodes exist but have no token counts for document {self.document_id}"
-                )
-                return None
-
-            avg_tokens: int = total_tokens // count
+        leaves = self.nodes.get_leaves()
+        if not leaves:
             logger.debug(
-                f"Calculated average leaf tokens: {avg_tokens} from {count} leaves for document {self.document_id}"
+                f"No leaf nodes found for document {self.document_id} when calculating average tokens"
             )
-            return avg_tokens
+            return None
+
+        total_tokens = sum(int(n.token_count) for n in leaves)
+        count = len(leaves)
+        if count == 0:
+            return None
+        avg_tokens: int = total_tokens // count
+        logger.debug(
+            f"Calculated average leaf tokens: {avg_tokens} from {count} leaves for document {self.document_id}"
+        )
+        return avg_tokens
 
     # Internal helper to obtain a SQLAlchemy session from either backend type
     def _open_session(self) -> AbstractContextManager[Session]:

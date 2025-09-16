@@ -11,6 +11,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 
 
@@ -29,7 +30,9 @@ class TestStore:
         )
         return doc_store
 
-    def test_add_node(self, doc_store: DocumentStore) -> None:
+    def test_add_node(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test adding a node to the store."""
         nodes: list[
             dict[
@@ -51,7 +54,8 @@ class TestStore:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        # Upsert embeddings via VectorIndex
+        vector_index.upsert(
             [
                 (
                     "test-1",
@@ -74,7 +78,9 @@ class TestStore:
         assert node.span_start == 0
         assert node.span_end == 10
 
-    def test_get_node(self, doc_store: DocumentStore) -> None:
+    def test_get_node(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test retrieving a node."""
         nodes: list[
             dict[
@@ -96,7 +102,7 @@ class TestStore:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        vector_index.upsert(
             [
                 (
                     "test-2",
@@ -122,7 +128,9 @@ class TestStore:
         node = doc_store.nodes.get_node("non-existent")
         assert node is None
 
-    def test_node_relationships(self, doc_store: DocumentStore) -> None:
+    def test_node_relationships(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test parent-child relationships."""
         nodes: list[
             dict[
@@ -176,7 +184,7 @@ class TestStore:
         )
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        vector_index.upsert(
             [
                 (
                     "child1",
@@ -226,7 +234,9 @@ class TestStore:
         assert len(ancestors) == 1
         assert ancestors[0].id == "parent"
 
-    def test_search_similar(self, doc_store: DocumentStore) -> None:
+    def test_search_similar(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test vector similarity search."""
         nodes: list[
             dict[
@@ -268,25 +278,36 @@ class TestStore:
 
         doc_store.nodes.add_batch(nodes)
         # Cast to exact expected type for upsert
-        typed_entries: list[tuple[str, list[float], dict[str, object]]] = [
-            (entry[0], list(entry[1]), entry[2]) for entry in vector_entries
-        ]
-        doc_store.search.upsert_vectors(typed_entries)  # type: ignore[arg-type]
+        typed_entries: list[
+            tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+        ] = [(entry[0], list(entry[1]), entry[2]) for entry in vector_entries]
+        # Upsert via VectorIndex
+        vector_index.upsert(typed_entries)
 
         # Search with a query embedding
         query_embedding = [0.25] * 1536
-        results = doc_store.search.search_similar(query_embedding, n_results=3)
+        results = vector_index.search_similar(
+            query_embedding, 3, {"document_id": "doc-id"}
+        )
 
         assert len(results) == 3
-        assert all(isinstance(r, tuple) for r in results)
-        assert all(len(r) == 3 for r in results)  # (id, distance, metadata)
+        # Canonical Vectors: ensure shape
+        for v in results:
+            assert hasattr(v, "id") and hasattr(v, "vec") and hasattr(v, "meta")
+            assert isinstance(v.meta, dict)
 
-    def test_mmr_diverse_results(self, doc_store: DocumentStore) -> None:
+    def test_mmr_diverse_results(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test MMR diversity computation."""
-        from ragzoom.services.search_service import NodeMetadataDict
+        from collections.abc import Sequence
+
+        from ragzoom.retrieval import mmr as _mmr
 
         # Create candidates with different similarities
-        candidates: list[tuple[str, float, NodeMetadataDict]] = [
+        candidates: list[
+            tuple[str, float, dict[str, str | int | float | bool | None]]
+        ] = [
             (
                 "node-1",
                 0.1,
@@ -359,8 +380,6 @@ class TestStore:
                 str | int | float | bool | list[float] | NDArray[np.float64] | None,
             ]
         ] = []
-        from collections.abc import Sequence
-
         vector_entries: list[tuple[str, Sequence[float], dict[str, object]]] = []
 
         for i, (node_id, _, metadata) in enumerate(candidates):
@@ -382,33 +401,16 @@ class TestStore:
 
         doc_store.nodes.add_batch(nodes)
         # Cast to exact expected type for upsert
-        typed_entries: list[tuple[str, list[float], dict[str, object]]] = [
-            (entry[0], list(entry[1]), entry[2]) for entry in vector_entries
-        ]
-        doc_store.search.upsert_vectors(typed_entries)  # type: ignore[arg-type]
+        typed_entries: list[
+            tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+        ] = [(entry[0], list(entry[1]), entry[2]) for entry in vector_entries]
+        vector_index.upsert(typed_entries)
 
-        # Test MMR selection
-        query_embedding = [1.0, 0.0, 0.0] + [0.0] * 1533  # Similar to node-1
-        # Convert NodeMetadataDict to the expected format
-        formatted_candidates: list[
-            tuple[str, float, dict[str, str | int | float | bool | None]]
-        ] = [
-            (
-                cand[0],
-                cand[1],
-                {
-                    "span_start": cand[2]["span_start"],
-                    "span_end": cand[2]["span_end"],
-                    "parent_id": cand[2]["parent_id"],
-                    "document_id": cand[2]["document_id"],
-                    "is_leaf": cand[2]["is_leaf"],
-                },
-            )
-            for cand in candidates
-        ]
-        selected = doc_store.search.compute_mmr_diverse_results(
-            query_embedding, formatted_candidates, lambda_param=0.7, k=3
-        )
+        # Test MMR selection using generic implementation over canonical vectors
+        query_embedding = [1.0, 0.0, 0.0] + [0.0] * 1533
+        cand_ids = [c[0] for c in candidates]
+        cand_vectors = vector_index.get_vectors(cand_ids)
+        selected = _mmr.select_diverse(query_embedding, cand_vectors, 3, 0.7)
 
         assert len(selected) == 3
         # Should select node-1 (most relevant) and diverse nodes
@@ -416,7 +418,9 @@ class TestStore:
         # Should include some diversity
         assert len(set(selected)) == 3
 
-    def test_pinned_nodes(self, doc_store: DocumentStore) -> None:
+    def test_pinned_nodes(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test node pinning functionality."""
         # Create a tree structure with proper depths
         nodes: list[
@@ -487,8 +491,8 @@ class TestStore:
             [("level1", "root"), ("level2", "level1"), ("level3", "level2")]
         )
 
-        # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        # Upsert embeddings via VectorIndex
+        vector_index.upsert(
             [
                 (
                     "root",
@@ -556,7 +560,9 @@ class TestStore:
         pinned = doc_store.get_pinned_nodes(depth_max=0)
         assert isinstance(pinned, list)
 
-    def test_cache_functionality(self, doc_store: DocumentStore) -> None:
+    def test_cache_functionality(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test LRU cache behavior."""
         nodes: list[
             dict[
@@ -578,7 +584,7 @@ class TestStore:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        vector_index.upsert(
             [
                 (
                     "cached",
@@ -609,7 +615,9 @@ class TestStore:
         assert node3 is not None
         assert node3.id == node1.id
 
-    def test_node_depth_calculation(self, doc_store: DocumentStore) -> None:
+    def test_node_depth_calculation(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test dynamic depth calculation."""
         # Create a tree structure:
         #     root
@@ -718,7 +726,7 @@ class TestStore:
         )
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        vector_index.upsert(
             [
                 (
                     "root",
@@ -809,7 +817,9 @@ class TestStore:
         with pytest.raises(ValueError):
             doc_store.tree.get_depth("non-existent")
 
-    def test_node_height_calculation(self, doc_store: DocumentStore) -> None:
+    def test_node_height_calculation(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test dynamic height calculation."""
         # Create the same tree structure
         nodes: list[
@@ -909,7 +919,7 @@ class TestStore:
         )
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        vector_index.upsert(
             [
                 (
                     "root",
@@ -1010,7 +1020,9 @@ class TestStore:
         # Test non-existent node
         assert doc_store.nodes.get_node("non-existent") is None
 
-    def test_depth_height_edge_cases(self, doc_store: DocumentStore) -> None:
+    def test_depth_height_edge_cases(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test edge cases for depth/height calculation."""
         # Test single node (both root and leaf)
         nodes: list[
@@ -1096,7 +1108,7 @@ class TestStore:
         )
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        vector_index.upsert(
             [
                 (
                     "single",
@@ -1170,7 +1182,9 @@ class TestStore:
         assert parent_right_only_node is not None and parent_right_only_node.height == 1
         assert doc_store.tree.is_leaf("parent_right_only") is False
 
-    def test_depth_calculation_performance(self, doc_store: DocumentStore) -> None:
+    def test_depth_calculation_performance(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test that depth calculation is O(log n) by creating a deep tree."""
         # Create a linear chain of nodes to test worst case
         nodes: list[
@@ -1225,10 +1239,19 @@ class TestStore:
         doc_store.nodes.add_batch(nodes)
         doc_store.nodes.update_parent_references_batch(parent_refs)
         # Cast to exact expected type for upsert
+        from typing import cast
+
+        import numpy as np
+        from numpy.typing import NDArray
+
         typed_entries: list[tuple[str, list[float], dict[str, object]]] = [
             (entry[0], list(entry[1]), entry[2]) for entry in vector_entries
         ]
-        doc_store.search.upsert_vectors(typed_entries)  # type: ignore[arg-type]
+        typed_entries_u = cast(
+            list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
+            typed_entries,
+        )
+        vector_index.upsert(typed_entries_u)
 
         # Test depths
         for i in range(10):
@@ -1239,7 +1262,9 @@ class TestStore:
         # This is O(depth) = O(log n) for balanced trees
         assert doc_store.tree.get_depth("chain_9") == 9
 
-    def test_error_handling_patterns(self, doc_store: DocumentStore) -> None:
+    def test_error_handling_patterns(
+        self, doc_store: DocumentStore, vector_index: VectorIndex
+    ) -> None:
         """Test consistent error handling patterns."""
         # Create a simple tree for testing
         nodes: list[
@@ -1265,7 +1290,7 @@ class TestStore:
         doc_store.nodes.add_batch(nodes)
 
         # Upsert embeddings
-        doc_store.search.upsert_vectors(
+        vector_index.upsert(
             [
                 (
                     "root",
