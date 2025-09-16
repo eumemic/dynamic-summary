@@ -82,6 +82,7 @@ class TreeBuilder:
         if isinstance(api_key, str) and not isinstance(api_key, SecretStr):
             api_key = SecretStr(api_key) if api_key else SecretStr("")
         self.llm_service = LLMService(config, api_key, max_concurrent)
+        self._summarize_text = self.llm_service._summarize_text
 
         # Backward compatibility: provide access to centralized tokenizer
         self.tokenizer = tokenizer
@@ -130,30 +131,6 @@ class TreeBuilder:
         tokens = tokenizer.encode(text)
         half_size = len(tokens) // 2
         return min(self.config.target_chunk_tokens, half_size)
-
-    async def _summarize_text(
-        self,
-        left_text: str,
-        right_text: str,
-        target_tokens: int,
-        *,
-        prev_context: str | None = None,
-        parent_id: str | None = None,
-        reporter: TelemetryCollector | None = None,
-        left_token_count: int | None = None,
-        right_token_count: int | None = None,
-    ) -> tuple[str, int, int]:
-        """Delegate to LLMService for text summarization."""
-        return await self.llm_service._summarize_text(
-            left_text,
-            right_text,
-            target_tokens,
-            parent_id=parent_id,
-            reporter=reporter,
-            prev_context=prev_context,
-            left_token_count=left_token_count,
-            right_token_count=right_token_count,
-        )
 
     def _update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference."""
