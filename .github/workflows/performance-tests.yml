@@ -203,6 +203,10 @@ jobs:
               export RAGZOOM_BACKEND="sqlite"
             fi
           fi
+          # Reset vector index to avoid stale dimension conflicts between runs
+          if [ -d "benchmark_results/chroma" ]; then
+            rm -rf benchmark_results/chroma
+          fi
           # Ensure we reuse the same persistent vector index as indexing
           export RAGZOOM_VECTOR_BACKEND="chroma"
           # Run only the "broad" query configuration to save CI time (67% reduction)
