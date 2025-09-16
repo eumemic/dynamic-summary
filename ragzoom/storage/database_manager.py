@@ -5,28 +5,18 @@ import os
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import create_engine, event, select, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from ragzoom.config import OperationalConfig
 from ragzoom.exceptions import InvalidOperationError
-from ragzoom.models import Base, TreeNode
+from ragzoom.models import Base
 
 logger = logging.getLogger(__name__)
 
-# Import pgvector registration function
-try:
-    from pgvector.psycopg import register_vector
-
-    PGVECTOR_AVAILABLE = True
-except ImportError:
-    try:
-        from pgvector.psycopg2 import register_vector
-
-        PGVECTOR_AVAILABLE = True
-    except ImportError:
-        PGVECTOR_AVAILABLE = False
-        register_vector = None
+# Embeddings are not stored in SQL; pgvector registration not required
+register_vector: object | None = None
+PGVECTOR_AVAILABLE = False
 
 
 class DatabaseManager:
@@ -62,28 +52,7 @@ class DatabaseManager:
             pool_pre_ping=True,  # Verify connections before using
         )
 
-        # Register pgvector extension only for PostgreSQL connections
-        if database_url.startswith("postgresql") and PGVECTOR_AVAILABLE:
-
-            @event.listens_for(self.engine, "connect")
-            def register_vector_extension(
-                dbapi_conn: object, connection_record: object
-            ) -> None:
-                try:
-                    # Get the underlying psycopg connection for pgvector registration
-                    raw_conn = (
-                        dbapi_conn.connection
-                        if hasattr(dbapi_conn, "connection")
-                        else dbapi_conn
-                    )
-                    if register_vector:
-                        register_vector(raw_conn)
-                except Exception as e:
-                    logger.debug(f"pgvector registration note: {e}")
-                    # Don't fail the connection - tables can still be created
-
-        # Create vector extension first (required for Vector columns)
-        self._create_vector_extension()
+        # No pgvector registration or extension needed
 
         # Create all tables (will only create missing ones)
         Base.metadata.create_all(self.engine)
@@ -93,8 +62,8 @@ class DatabaseManager:
 
         self.SessionLocal = sessionmaker(bind=self.engine)
 
-        # Cache expected embedding dimension for validation
-        self._expected_embedding_dim = self._get_expected_embedding_dimension()
+        # No embedding dimension validation in storage
+        self._expected_embedding_dim: int | None = None
 
     def _get_expected_embedding_dimension(self) -> int | None:
         """Get expected embedding dimension from existing data.
@@ -104,12 +73,9 @@ class DatabaseManager:
         """
         # Try to infer from existing data
         try:
-            with self.SessionLocal() as session:
-                result = session.execute(select(TreeNode.embedding).limit(1)).first()
-                if result and result[0] is not None:
-                    return len(result[0])
-        except Exception as e:
-            logger.debug(f"Could not infer embedding dimension: {e}")
+            return None
+        except Exception:
+            return None
 
         # If no existing data, don't enforce validation
         # This allows tests and first-time setups to work with any dimension
@@ -155,31 +121,7 @@ class DatabaseManager:
 
         This must be done before creating tables that use Vector columns.
         """
-        try:
-            with self.engine.begin() as conn:
-                # Create vector extension - this is required for pgvector Vector() columns
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                logger.debug("Vector extension created successfully")
-        except Exception as e:
-            # This is a critical error - we can't create Vector columns without the extension
-            error_msg = str(e).lower()
-            if "permission denied" in error_msg:
-                raise OSError(
-                    f"\n❌ Unable to create vector extension: permission denied.\n\n"
-                    f"This usually happens when the database user lacks superuser privileges.\n"
-                    f"Try running 'ragzoom doctor' to check your setup.\n\n"
-                    f"Technical error: {e}"
-                )
-            elif "could not access file" in error_msg or "no such file" in error_msg:
-                raise OSError(
-                    f"\n❌ Vector extension not available in this PostgreSQL installation.\n\n"
-                    f"Make sure you're using the pgvector/pgvector Docker image.\n"
-                    f"Run 'ragzoom doctor' to check your setup.\n\n"
-                    f"Technical error: {e}"
-                )
-            else:
-                # Extension might already exist, which is fine
-                logger.debug(f"Vector extension note: {e}")
+        return
 
     def _run_migrations(self) -> None:
         """Run database migrations for existing databases.
@@ -202,25 +144,6 @@ class DatabaseManager:
                         ) THEN
                             ALTER TABLE tree_nodes
                             ADD COLUMN height INTEGER NOT NULL DEFAULT 0;
-                        END IF;
-                    END $$;
-                """
-                    )
-                )
-
-                # Add embedding column if it doesn't exist (for migration from old SQLite)
-                conn.execute(
-                    text(
-                        """
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name = 'tree_nodes'
-                            AND column_name = 'embedding'
-                        ) THEN
-                            ALTER TABLE tree_nodes
-                            ADD COLUMN embedding vector;
                         END IF;
                     END $$;
                 """

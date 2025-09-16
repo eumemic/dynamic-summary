@@ -15,6 +15,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.document_store import DocumentStore
 from ragzoom.index import TreeBuilder
 from ragzoom.validate import (
@@ -401,7 +402,7 @@ class TestIndexingCreatesValidTreesSQLite:
 
     @pytest.fixture
     def setup_indexing(
-        self, doc_store: DocumentStore
+        self, doc_store: DocumentStore, vector_index: _VectorIndexProtocol
     ) -> tuple[
         tuple[IndexConfig, QueryConfig, OperationalConfig], DocumentStore, TreeBuilder
     ]:
@@ -418,6 +419,7 @@ class TestIndexingCreatesValidTreesSQLite:
         tree_builder = TreeBuilder(
             index_config,
             doc_store,
+            vector_index,
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
 

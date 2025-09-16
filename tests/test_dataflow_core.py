@@ -11,7 +11,7 @@ from ragzoom.dataflow.core import (
     build_tree_dataflow,
     poke,
 )
-from ragzoom.models import TreeNode
+from ragzoom.dataflow.domain import DomainNode as TreeNode
 
 
 class TestPokeMechanism:

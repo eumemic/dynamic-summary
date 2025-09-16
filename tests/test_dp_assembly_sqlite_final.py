@@ -305,10 +305,16 @@ class TestDPAssemblySQLite:
             database_url="sqlite:///:memory:",
         )
 
+        from ragzoom.vector_factory import create_vector_index
+
+        vi = create_vector_index(
+            "python", "sqlite:///:memory:", query_config.embedding_model
+        )
         retriever = create_retriever(
             query_config=query_config,
             store=doc_store,
             api_key=operational_config.openai_api_key.get_secret_value(),
+            vector_index=vi,
         )
         dp_generator = retriever.dp_generator
 

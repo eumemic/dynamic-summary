@@ -8,6 +8,7 @@ from typing_extensions import TypedDict
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import TelemetryCollector
 
@@ -57,6 +58,7 @@ class MockOpenAIResponse:
 @pytest.mark.asyncio
 async def test_retry_maintains_conversation_history(
     storage_backend: StorageBackend,
+    vector_index: _VectorIndexProtocol,
 ) -> None:
     """Test that retries append to existing conversation instead of creating new ones."""
     config = IndexConfig.load(
@@ -73,7 +75,7 @@ async def test_retry_maintains_conversation_history(
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
-    indexer = TreeBuilder(config, doc_store)
+    indexer = TreeBuilder(config, doc_store, vector_index)
 
     # Track all API calls
     api_calls = []
@@ -169,6 +171,7 @@ async def test_retry_maintains_conversation_history(
 @pytest.mark.asyncio
 async def test_retry_preserves_original_context(
     storage_backend: StorageBackend,
+    vector_index: _VectorIndexProtocol,
 ) -> None:
     """Test that retry requests can still see the original text being summarized."""
     config = IndexConfig.load(
@@ -185,7 +188,7 @@ async def test_retry_preserves_original_context(
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
-    indexer = TreeBuilder(config, doc_store)
+    indexer = TreeBuilder(config, doc_store, vector_index)
     api_calls = []
 
     original_text = (
@@ -252,6 +255,7 @@ async def test_retry_preserves_original_context(
 @pytest.mark.asyncio
 async def test_multiple_retries_build_conversation(
     storage_backend: StorageBackend,
+    vector_index: _VectorIndexProtocol,
 ) -> None:
     """Test that multiple retries continue building on the same conversation."""
     config = IndexConfig.load(
@@ -268,7 +272,7 @@ async def test_multiple_retries_build_conversation(
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
-    indexer = TreeBuilder(config, doc_store)
+    indexer = TreeBuilder(config, doc_store, vector_index)
     api_calls = []
 
     async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
@@ -329,7 +333,9 @@ async def test_multiple_retries_build_conversation(
 
 
 @pytest.mark.asyncio
-async def test_no_retry_when_within_threshold(storage_backend: StorageBackend) -> None:
+async def test_no_retry_when_within_threshold(
+    storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
+) -> None:
     """Test that no retry occurs when initial summary is within threshold."""
     config = IndexConfig.load(
         retry_threshold=0.2,
@@ -344,7 +350,7 @@ async def test_no_retry_when_within_threshold(storage_backend: StorageBackend) -
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
-    indexer = TreeBuilder(config, doc_store)
+    indexer = TreeBuilder(config, doc_store, vector_index)
     api_calls = []
 
     async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
@@ -377,6 +383,7 @@ async def test_no_retry_when_within_threshold(storage_backend: StorageBackend) -
 @pytest.mark.asyncio
 async def test_accept_retry_within_threshold_immediately(
     storage_backend: StorageBackend,
+    vector_index: _VectorIndexProtocol,
 ) -> None:
     """Test that we accept a retry attempt immediately when it's within threshold.
 
@@ -397,7 +404,7 @@ async def test_accept_retry_within_threshold_immediately(
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
-    indexer = TreeBuilder(config, doc_store)
+    indexer = TreeBuilder(config, doc_store, vector_index)
     api_calls = []
 
     async def mock_create(**kwargs) -> MockOpenAIResponse:  # type: ignore[no-untyped-def]
@@ -449,6 +456,7 @@ async def test_accept_retry_within_threshold_immediately(
 @pytest.mark.asyncio
 async def test_passthrough_for_text_under_target(
     storage_backend: StorageBackend,
+    vector_index: _VectorIndexProtocol,
 ) -> None:
     """Test that text under target tokens is passed through without LLM call."""
     config = IndexConfig.load(target_chunk_tokens=100)
@@ -460,7 +468,7 @@ async def test_passthrough_for_text_under_target(
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
-    indexer = TreeBuilder(config, doc_store)
+    indexer = TreeBuilder(config, doc_store, vector_index)
 
     api_calls = []
 

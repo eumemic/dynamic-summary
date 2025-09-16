@@ -74,11 +74,18 @@ class CoverageBuilder:
         if not selected_ids:
             return {}
 
-        coverage_map = {node_id: True for node_id in selected_ids}
-        for node_id in selected_ids:
-            self.store.nodes.update_access(node_id)
+        # Start with only node IDs that actually exist in the store
+        existing_nodes = []
+        try:
+            existing_nodes = self.store.nodes.get_nodes(selected_ids)
+        except Exception:
+            existing_nodes = []
+        coverage_map = {node.id: True for node in existing_nodes}
+        for node in existing_nodes:
+            self.store.nodes.update_access(node.id)
 
-        ancestors = self.store.tree.get_ancestors(selected_ids)
+        # Only fetch ancestors for existing nodes to avoid phantom IDs
+        ancestors = self.store.tree.get_ancestors(list(coverage_map.keys()))
         for ancestor in ancestors:
             coverage_map[ancestor.id] = True
 

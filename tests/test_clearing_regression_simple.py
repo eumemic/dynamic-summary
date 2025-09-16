@@ -3,11 +3,14 @@
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.services.indexing_service import IndexingService
 
 
+@pytest.mark.slow_threshold(2.0)
 def test_index_document_always_clears(storage_backend: StorageBackend) -> None:
     """Test that index_document ALWAYS clears, even when content hash matches."""
 
@@ -15,7 +18,9 @@ def test_index_document_always_clears(storage_backend: StorageBackend) -> None:
     index_config = IndexConfig.load()
 
     # Prepare a real document with pre-existing nodes
-    doc_id = "test.txt"
+    import uuid
+
+    doc_id = f"test-{uuid.uuid4().hex}.txt"
     doc_store = storage_backend.for_document(doc_id)
     doc_store.set_metadata(
         file_path=None,
@@ -44,11 +49,14 @@ def test_index_document_always_clears(storage_backend: StorageBackend) -> None:
     mock_async_client = MagicMock()
 
     async def mock_embeddings(*args: object, **kwargs: object) -> object:
+        from types import SimpleNamespace
 
         input_texts = cast(list[str] | str, kwargs.get("input", []))
         if isinstance(input_texts, str):
             input_texts = [input_texts]
-        return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts])
+        return SimpleNamespace(
+            data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_texts]
+        )
 
     mock_async_client.embeddings.create = mock_embeddings
     mock_async_client.chat.completions.create = MagicMock(

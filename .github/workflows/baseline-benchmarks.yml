@@ -37,15 +37,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
       
-      - name: Install dependencies
+      - name: Install dependencies (locked)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          # Install main package with telemetry extras for reporting tools
-          pip install -e .[telemetry]
-          # Ensure Chroma backend is available for benchmarks
-          pip install chromadb
-          
+          pip install pip-tools
+          pip-sync requirements/dev.lock
           # Install AWS CLI for S3 uploads
           pip install awscli
       
@@ -81,6 +77,7 @@ jobs:
           rm -rf benchmark_results/chroma
           export RAGZOOM_VECTOR_BACKEND="chroma"
           export RAGZOOM_VECTOR_PERSIST_DIR="benchmark_results/chroma"
+          export RAGZOOM_FORCE_REAL_OPENAI=1
           config="broad-2000-10"
           echo "Running query benchmark with config=$config (3 runs for variance)"
           pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v

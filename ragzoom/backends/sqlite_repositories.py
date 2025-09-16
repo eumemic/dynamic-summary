@@ -7,20 +7,35 @@ for tests and development.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import case, delete, func, insert, select, update
 from sqlalchemy.orm import Session
 
 from ragzoom.backends.sqlite_db import (
     SqliteDatabaseManager,
     SqliteDocument,
-    SqliteTreeNode,
+    SQLiteTreeNode,
 )
-from ragzoom.models import TreeNode  # For type hints only
+from ragzoom.contracts.tree_node import TreeNode  # For type hints only
 from ragzoom.services.cache_manager import CacheManager
+
+
+def _detach_rows(session: Session, rows: Sequence[SQLiteTreeNode]) -> list[TreeNode]:
+    """Detach ORM instances and return typed list for callers.
+
+    Centralizes a repeated pattern used by read helpers to avoid retaining
+    session-bound instances beyond the query scope.
+    """
+    for r in rows:
+        try:
+            session.expunge(r)
+        except Exception:
+            pass
+    return cast(list[TreeNode], list(rows))
 
 
 class SqliteNodeRepository:
@@ -40,74 +55,48 @@ class SqliteNodeRepository:
             session = self.SessionLocal()
             own_session = True
         try:
-            # For very large batches, use Core bulk insert for speed and lower overhead
+            # Build payload once to avoid duplication
+            payload = [
+                {
+                    "id": str(data["node_id"]),
+                    "parent_id": cast(str | None, data.get("parent_id")),
+                    "left_child_id": cast(str | None, data.get("left_child_id")),
+                    "right_child_id": cast(str | None, data.get("right_child_id")),
+                    "span_start": cast(int, data["span_start"]),
+                    "span_end": cast(int, data["span_end"]),
+                    "text": cast(str, data["text"]),
+                    "token_count": cast(int, data.get("token_count", 0)),
+                    "document_id": cast(str | None, data.get("document_id")),
+                    "preceding_neighbor_id": cast(
+                        str | None, data.get("preceding_neighbor_id")
+                    ),
+                    "following_neighbor_id": cast(
+                        str | None, data.get("following_neighbor_id")
+                    ),
+                    "height": cast(int, data.get("height", 0)),
+                    "path": cast(str, data.get("path", "")),
+                }
+                for data in nodes_data
+            ]
+
+            session.execute(insert(SQLiteTreeNode), payload)
+            if own_session:
+                session.commit()
+
+            # For very large batches, callers typically don't need returned rows
             if len(nodes_data) >= 1000:
-                payload = [
-                    {
-                        "id": str(data["node_id"]),
-                        "parent_id": cast(str | None, data.get("parent_id")),
-                        "left_child_id": cast(str | None, data.get("left_child_id")),
-                        "right_child_id": cast(str | None, data.get("right_child_id")),
-                        "span_start": cast(int, data["span_start"]),
-                        "span_end": cast(int, data["span_end"]),
-                        "text": cast(str, data["text"]),
-                        "token_count": cast(int, data.get("token_count", 0)),
-                        "document_id": cast(str | None, data.get("document_id")),
-                        "preceding_neighbor_id": cast(
-                            str | None, data.get("preceding_neighbor_id")
-                        ),
-                        "following_neighbor_id": cast(
-                            str | None, data.get("following_neighbor_id")
-                        ),
-                        "height": cast(int, data.get("height", 0)),
-                        "path": cast(str, data.get("path", "")),
-                    }
-                    for data in nodes_data
-                ]
-                session.execute(insert(SqliteTreeNode), payload)
-                if own_session:
-                    session.commit()
-                # For massive inserts, callers typically don't use returned objects; return empty list
                 return []
-            else:
-                # Build ORM objects and add in one call for moderate batches
-                created = [
-                    SqliteTreeNode(
-                        id=str(data["node_id"]),
-                        parent_id=cast(str | None, data.get("parent_id")),
-                        left_child_id=cast(str | None, data.get("left_child_id")),
-                        right_child_id=cast(str | None, data.get("right_child_id")),
-                        span_start=cast(int, data["span_start"]),
-                        span_end=cast(int, data["span_end"]),
-                        text=cast(str, data["text"]),
-                        token_count=cast(int, data.get("token_count", 0)),
-                        document_id=cast(str | None, data.get("document_id")),
-                        preceding_neighbor_id=cast(
-                            str | None, data.get("preceding_neighbor_id")
-                        ),
-                        following_neighbor_id=cast(
-                            str | None, data.get("following_neighbor_id")
-                        ),
-                        height=cast(int, data.get("height", 0)),
-                        path=cast(str, data.get("path", "")),
-                    )
-                    for data in nodes_data
-                ]
-                session.add_all(created)
-                if own_session:
-                    session.commit()
 
-                # Ensure attributes are loaded and detach before returning
-                for n in created:
-                    try:
-                        session.refresh(n)
-                        session.expunge(n)
-                    except Exception:
-                        # Best effort; tests mainly need scalar attributes
-                        pass
-
-                # Cache invalidation is minimal here; callers rarely read immediately
-                return created  # type: ignore[return-value]
+            # Fetch and detach inserted rows so callers receive ORM-like objects
+            ids = [str(data["node_id"]) for data in nodes_data]
+            rows = (
+                session.execute(
+                    select(SQLiteTreeNode).where(SQLiteTreeNode.id.in_(ids))
+                )
+                .scalars()
+                .all()
+            )
+            return _detach_rows(session, rows)
         finally:
             if own_session:
                 session.close()
@@ -158,12 +147,19 @@ class SqliteNodeRepository:
             session = self.SessionLocal()
             own_session = True
         try:
-            for node_id, parent_id in updates:
-                session.execute(
-                    update(SqliteTreeNode)
-                    .where(SqliteTreeNode.id == node_id)
-                    .values(parent_id=parent_id)
-                )
+            # Perform a single bulk UPDATE using CASE to map ids->parent_ids
+            id_list = [node_id for node_id, _ in updates]
+            when_clauses = [
+                (SQLiteTreeNode.id == node_id, parent_id)
+                for node_id, parent_id in updates
+            ]
+            parent_case = case(*when_clauses, else_=SQLiteTreeNode.parent_id)
+            stmt = (
+                update(SQLiteTreeNode)
+                .where(SQLiteTreeNode.id.in_(id_list))
+                .values(parent_id=parent_case)
+            )
+            session.execute(stmt)
             if own_session:
                 session.commit()
         finally:
@@ -173,13 +169,13 @@ class SqliteNodeRepository:
     # --- Read ---
     def get_node(self, node_id: str) -> TreeNode | None:
         with self.SessionLocal() as session:
-            row = session.get(SqliteTreeNode, node_id)
+            row = session.get(SQLiteTreeNode, node_id)
             if row:
                 try:
                     session.expunge(row)
                 except Exception:
                     pass
-            return row  # type: ignore[return-value]
+            return row
 
     def get_nodes(self, node_ids: list[str]) -> list[TreeNode]:
         if not node_ids:
@@ -187,17 +183,12 @@ class SqliteNodeRepository:
         with self.SessionLocal() as session:
             rows = (
                 session.execute(
-                    select(SqliteTreeNode).where(SqliteTreeNode.id.in_(node_ids))
+                    select(SQLiteTreeNode).where(SQLiteTreeNode.id.in_(node_ids))
                 )
                 .scalars()
                 .all()
             )
-            for r in rows:
-                try:
-                    session.expunge(r)
-                except Exception:
-                    pass
-            return rows  # type: ignore[return-value]
+            return _detach_rows(session, rows)
 
     def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
         if not paths:
@@ -205,34 +196,39 @@ class SqliteNodeRepository:
         with self.SessionLocal() as session:
             rows = (
                 session.execute(
-                    select(SqliteTreeNode).where(SqliteTreeNode.path.in_(paths))
+                    select(SQLiteTreeNode).where(SQLiteTreeNode.path.in_(paths))
                 )
                 .scalars()
                 .all()
             )
-            # jscpd:ignore-start - Detach loop repeats across helpers by design
-            for r in rows:
-                try:
-                    session.expunge(r)
-                except Exception:
-                    pass
-            # jscpd:ignore-end
-            return rows  # type: ignore[return-value]
+            return _detach_rows(session, rows)
+
+    def get_nodes_by_paths_for_document(
+        self, document_id: str | None, paths: list[str]
+    ) -> list[TreeNode]:
+        if not paths:
+            return []
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.path.in_(paths))
+            if document_id:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            rows = session.execute(stmt).scalars().all()
+            return _detach_rows(session, rows)
 
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
         with self.SessionLocal() as session:
             if document_id:
                 rows = (
                     session.execute(
-                        select(SqliteTreeNode).where(
-                            SqliteTreeNode.document_id == document_id
+                        select(SQLiteTreeNode).where(
+                            SQLiteTreeNode.document_id == document_id
                         )
                     )
                     .scalars()
                     .all()
                 )
             else:
-                rows = session.execute(select(SqliteTreeNode)).scalars().all()
+                rows = session.execute(select(SQLiteTreeNode)).scalars().all()
             return rows  # type: ignore[return-value]
 
     def count_nodes_for_document(self, document_id: str | None) -> int:
@@ -241,12 +237,12 @@ class SqliteNodeRepository:
             if document_id:
                 result = session.execute(
                     select(func.count())
-                    .select_from(SqliteTreeNode)
-                    .where(SqliteTreeNode.document_id == document_id)
+                    .select_from(SQLiteTreeNode)
+                    .where(SQLiteTreeNode.document_id == document_id)
                 ).scalar_one()
             else:
                 result = session.execute(
-                    select(func.count()).select_from(SqliteTreeNode)
+                    select(func.count()).select_from(SQLiteTreeNode)
                 ).scalar_one()
             return int(result or 0)
 
@@ -257,14 +253,14 @@ class SqliteNodeRepository:
             raise ValueError("page_size must be positive")
         with self.SessionLocal() as session:
             # Build ORM query scoped by document if provided
-            q = session.query(SqliteTreeNode)
+            q = session.query(SQLiteTreeNode)
             if document_id:
-                q = q.filter(SqliteTreeNode.document_id == document_id)
+                q = q.filter(SQLiteTreeNode.document_id == document_id)
             # Stable ordering and streaming iteration to avoid large materialization
-            q = q.order_by(SqliteTreeNode.id).yield_per(page_size)
+            q = q.order_by(SQLiteTreeNode.id).yield_per(page_size)
 
             batches: list[list[TreeNode]] = []
-            current: list[SqliteTreeNode] = []
+            current: list[SQLiteTreeNode] = []
             for row in q:
                 current.append(row)
                 if len(current) >= page_size:
@@ -289,9 +285,9 @@ class SqliteNodeRepository:
         with self.SessionLocal() as session:
             rows = (
                 session.execute(
-                    select(SqliteTreeNode).where(
-                        SqliteTreeNode.left_child_id.is_(None),
-                        SqliteTreeNode.right_child_id.is_(None),
+                    select(SQLiteTreeNode).where(
+                        SQLiteTreeNode.left_child_id.is_(None),
+                        SQLiteTreeNode.right_child_id.is_(None),
                     )
                 )
                 .scalars()
@@ -299,27 +295,38 @@ class SqliteNodeRepository:
             )
             return rows  # type: ignore[return-value]
 
+    def get_leaf_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(
+                SQLiteTreeNode.left_child_id.is_(None),
+                SQLiteTreeNode.right_child_id.is_(None),
+            )
+            if document_id:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            rows = session.execute(stmt).scalars().all()
+            return rows  # type: ignore[return-value]
+
     def count_leaves_for_document(self, document_id: str | None) -> int:
         """Return count of leaf nodes for a document."""
         with self.SessionLocal() as session:
             stmt = (
                 select(func.count())
-                .select_from(SqliteTreeNode)
+                .select_from(SQLiteTreeNode)
                 .where(
-                    SqliteTreeNode.left_child_id.is_(None),
-                    SqliteTreeNode.right_child_id.is_(None),
+                    SQLiteTreeNode.left_child_id.is_(None),
+                    SQLiteTreeNode.right_child_id.is_(None),
                 )
             )
             if document_id:
-                stmt = stmt.where(SqliteTreeNode.document_id == document_id)
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             return int(session.execute(stmt).scalar_one() or 0)
 
     def max_height_for_document(self, document_id: str | None) -> int:
         """Return maximum node height for a document."""
         with self.SessionLocal() as session:
-            stmt = select(func.max(SqliteTreeNode.height))
+            stmt = select(func.max(SQLiteTreeNode.height))
             if document_id:
-                stmt = stmt.where(SqliteTreeNode.document_id == document_id)
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             result = session.execute(stmt).scalar_one()
             return int(result or 0)
 
@@ -327,47 +334,47 @@ class SqliteNodeRepository:
         self, document_id: str, depth_max: int | None = None
     ) -> list[TreeNode]:
         with self.SessionLocal() as session:
-            stmt = select(SqliteTreeNode).where(
-                SqliteTreeNode.is_pinned == 1,
-                SqliteTreeNode.document_id == document_id,
+            stmt = select(SQLiteTreeNode).where(
+                SQLiteTreeNode.is_pinned == 1,
+                SQLiteTreeNode.document_id == document_id,
             )
             rows = session.execute(stmt).scalars().all()
             if depth_max is None:
-                return rows  # type: ignore[return-value]
-            return [r for r in rows if len(r.path) <= depth_max]  # type: ignore[misc]
+                return cast(list[TreeNode], list(rows))
+            return cast(list[TreeNode], [r for r in rows if len(r.path) <= depth_max])
 
     def count_pinned_for_document(self, document_id: str | None) -> int:
         with self.SessionLocal() as session:
             stmt = (
                 select(func.count())
-                .select_from(SqliteTreeNode)
-                .where(SqliteTreeNode.is_pinned == 1)
+                .select_from(SQLiteTreeNode)
+                .where(SQLiteTreeNode.is_pinned == 1)
             )
             if document_id:
-                stmt = stmt.where(SqliteTreeNode.document_id == document_id)
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             return int(session.execute(stmt).scalar_one() or 0)
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         with self.SessionLocal() as session:
-            stmt = select(SqliteTreeNode).where(SqliteTreeNode.is_pinned == 1)
+            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.is_pinned == 1)
             rows = session.execute(stmt).scalars().all()
             if depth_max is None:
-                return rows  # type: ignore[return-value]
-            return [r for r in rows if len(r.path) <= depth_max]  # type: ignore[misc]
+                return cast(list[TreeNode], list(rows))
+            return cast(list[TreeNode], [r for r in rows if len(r.path) <= depth_max])
 
     # --- Mutations ---
     def pin_node(self, node_id: str) -> None:
         with self.SessionLocal() as session:
             session.execute(
-                update(SqliteTreeNode)
-                .where(SqliteTreeNode.id == node_id)
+                update(SQLiteTreeNode)
+                .where(SQLiteTreeNode.id == node_id)
                 .values(is_pinned=1)
             )
             session.commit()
 
     def update_node_access(self, node_id: str) -> None:
         with self.SessionLocal() as session:
-            row = session.get(SqliteTreeNode, node_id)
+            row = session.get(SQLiteTreeNode, node_id)
             if row:
                 row.access_count = (row.access_count or 0) + 1
                 session.add(row)
@@ -420,7 +427,7 @@ class SqliteDocumentRepository:
         try:
             # Delete nodes then document
             del_nodes = session.execute(
-                delete(SqliteTreeNode).where(SqliteTreeNode.document_id == document_id)
+                delete(SQLiteTreeNode).where(SQLiteTreeNode.document_id == document_id)
             )
             session.execute(
                 delete(SqliteDocument).where(SqliteDocument.id == document_id)
@@ -443,7 +450,7 @@ class SqliteDocumentRepository:
             own_session = True
         try:
             del_nodes = session.execute(
-                delete(SqliteTreeNode).where(SqliteTreeNode.document_id == document_id)
+                delete(SQLiteTreeNode).where(SQLiteTreeNode.document_id == document_id)
             )
             if own_session:
                 session.commit()

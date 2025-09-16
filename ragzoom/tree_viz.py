@@ -2,13 +2,14 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ragzoom.dynamic_tiling import NodeInfo
 
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import TreeNode
 from ragzoom.utils.tokenization import tokenizer as default_tokenizer
 
 logger = logging.getLogger(__name__)
@@ -40,12 +41,13 @@ class CharacterPositionResolver(PositionResolver):
 
     def __init__(
         self,
-        all_nodes: list[TreeNode],
+        all_nodes: "Sequence[TreeNode]",
         doc_store: DocumentStore,
-        preloaded_nodes: dict[str, "TreeNode"] | None = None,
+        preloaded_nodes: Mapping[str, "TreeNode"] | None = None,
     ):
         self.doc_store = doc_store
-        self.preloaded_nodes = preloaded_nodes or {}
+        # Accept Mapping to avoid dict invariance; store as Mapping
+        self.preloaded_nodes: Mapping[str, TreeNode] = preloaded_nodes or {}
         self.doc_start = min(node.span_start for node in all_nodes)
         self.doc_end = max(node.span_end for node in all_nodes)
 
@@ -55,11 +57,21 @@ class CharacterPositionResolver(PositionResolver):
     def get_node_position_in_tiling(
         self, node_id: str, node_index: int
     ) -> tuple[float, float]:
-        if node_id not in self.preloaded_nodes:
+        node: TreeNode | None = None
+        if node_id in self.preloaded_nodes:
+            node = self.preloaded_nodes[node_id]
+        else:
+            # Defensive fallback: fetch from store to avoid visualization crash
+            getter = getattr(self.doc_store, "nodes", None)
+            if getter is not None:
+                try:
+                    node = getter.get(node_id)
+                except Exception:
+                    node = None
+        if node is None:
             raise ValueError(
-                f"Node {node_id} not found in preloaded_nodes - invariant violated"
+                f"Node {node_id} not found for visualization (missing in cache and store)"
             )
-        node = self.preloaded_nodes[node_id]
         return (
             float(node.span_start - self.doc_start),
             float(node.span_end - self.doc_start),
@@ -81,7 +93,7 @@ class TokenPositionResolver(PositionResolver):
         coverage_map: dict[str, bool],
         doc_store: DocumentStore,
         tokenizer: object | None = None,
-        preloaded_nodes: dict[str, "TreeNode"] | None = None,
+        preloaded_nodes: Mapping[str, "TreeNode"] | None = None,
     ):
         # Validate inputs
         if not node_infos:
@@ -93,7 +105,8 @@ class TokenPositionResolver(PositionResolver):
         self.node_infos = node_infos
         self.coverage_map = coverage_map
         self.tokenizer = tokenizer or default_tokenizer
-        self.preloaded_nodes = preloaded_nodes or {}
+        # Accept Mapping to avoid dict invariance; store as Mapping
+        self.preloaded_nodes: Mapping[str, TreeNode] = preloaded_nodes or {}
 
         # Build node lookup for quick access
         self.node_lookup = {info.node_id: idx for idx, info in enumerate(node_infos)}
@@ -126,13 +139,22 @@ class TokenPositionResolver(PositionResolver):
         self.node_positions: dict[str, tuple[float, float]] = {}
         self._compute_node_positions()
 
-    def _get_node(self, node_id: str) -> "TreeNode":
+    def _get_node(self, node_id: str) -> TreeNode:
         """Get node from preloaded cache - must be present (correct-by-construction)."""
-        if node_id not in self.preloaded_nodes:
-            raise ValueError(
-                f"Node {node_id} not found in preloaded_nodes - invariant violated"
-            )
-        return self.preloaded_nodes[node_id]
+        if node_id in self.preloaded_nodes:
+            return self.preloaded_nodes[node_id]
+        # Defensive fallback: fetch from store to avoid visualization crash
+        nodes_api = getattr(self.doc_store, "nodes", None)
+        if nodes_api is not None:
+            try:
+                fetched = nodes_api.get(node_id)
+            except Exception:
+                fetched = None
+            if fetched is not None:
+                return cast(TreeNode, fetched)
+        raise ValueError(
+            f"Node {node_id} not found for visualization (missing in cache and store)"
+        )
 
     def get_extent(self) -> float:
         return self.total_tokens
@@ -246,7 +268,7 @@ def build_ascii_tree(
     position_resolver: PositionResolver | None = None,
     node_infos: list["NodeInfo"] | None = None,  # List of NodeInfo objects
     use_token_coords: bool = False,
-    preloaded_nodes: dict[str, "TreeNode"] | None = None,
+    preloaded_nodes: Mapping[str, "TreeNode"] | None = None,
 ) -> str:
     """Build an ASCII tree visualization showing the tiling structure.
 
@@ -262,15 +284,17 @@ def build_ascii_tree(
     """
     # Use pre-loaded nodes if available
     document_id = doc_store.document_id
+    all_nodes_seq: Sequence[TreeNode] = tuple()
     if preloaded_nodes:
-        all_nodes = [
+        collected_pre: list[TreeNode] = [
             node for node in preloaded_nodes.values() if node.document_id == document_id
         ]
-        if not all_nodes:
+        if not collected_pre:
             return "No nodes found in preloaded nodes"
+        all_nodes_seq = collected_pre
     elif coverage_map:
         # Load only nodes that are in the coverage map
-        all_nodes = []
+        collected: list[TreeNode] = []
         for node_id in coverage_map:
             if not preloaded_nodes or node_id not in preloaded_nodes:
                 raise ValueError(
@@ -278,19 +302,20 @@ def build_ascii_tree(
                 )
             node = preloaded_nodes[node_id]
             if node.document_id == document_id:
-                all_nodes.append(node)
-        if not all_nodes:
+                collected.append(node)
+        if not collected:
             return "No nodes found in coverage map"
+        all_nodes_seq = collected
     else:
         # Fallback to all nodes only if no coverage map provided
-        all_nodes = doc_store.nodes.get_all()
-        if not all_nodes:
+        all_nodes_seq = doc_store.nodes.get_all()
+        if not all_nodes_seq:
             return "No nodes found for document"
 
         # Warn about potential memory issues with very large documents
-        if len(all_nodes) > 20000:
+        if len(all_nodes_seq) > 20000:
             logger.warning(
-                f"Rendering visualization for {len(all_nodes)} nodes may use significant memory. "
+                f"Rendering visualization for {len(all_nodes_seq)} nodes may use significant memory. "
                 f"Consider using coverage_map parameter to limit the scope of visualization."
             )
 
@@ -308,19 +333,31 @@ def build_ascii_tree(
 
             node_infos = []
             for node_id in tiling:
-                if not preloaded_nodes or node_id not in preloaded_nodes:
+                if preloaded_nodes and node_id in preloaded_nodes:
+                    node_info_node = preloaded_nodes[node_id]
+                else:
+                    # Defensive fallback: fetch from store
+                    node_info_node = None
+                    nodes_api = getattr(doc_store, "nodes", None)
+                    if nodes_api is not None:
+                        try:
+                            fetched = nodes_api.get(node_id)
+                        except Exception:
+                            fetched = None
+                        if fetched is not None:
+                            node_info_node = cast(TreeNode, fetched)
+                if node_info_node is None:
                     raise ValueError(
-                        f"Node {node_id} not found in preloaded_nodes - invariant violated"
+                        f"Node {node_id} not found for visualization (missing in cache and store)"
                     )
-                node = preloaded_nodes[node_id]
 
-                token_cost = node.token_count
+                token_cost = node_info_node.token_count
                 node_infos.append(
                     NodeInfo(
                         node_id=node_id,
                         token_cost=token_cost,
-                        span_start=node.span_start,
-                        span_end=node.span_end,
+                        span_start=node_info_node.span_start,
+                        span_end=node_info_node.span_end,
                     )
                 )
 
@@ -330,7 +367,7 @@ def build_ascii_tree(
     else:
         # Default to character-based resolver
         position_resolver = CharacterPositionResolver(
-            all_nodes, doc_store, preloaded_nodes
+            all_nodes_seq, doc_store, preloaded_nodes
         )
 
     # Get coordinate space extent
@@ -341,7 +378,7 @@ def build_ascii_tree(
     # Group nodes by height (distance to furthest leaf)
     nodes_by_height: dict[int, list[TreeNode]] = {}
     max_height = 0
-    for node in all_nodes:
+    for node in all_nodes_seq:
         height = node.height  # Use stored height instead of recursive calculation
         if height not in nodes_by_height:
             nodes_by_height[height] = []

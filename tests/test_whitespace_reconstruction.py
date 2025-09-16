@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
 from tests.utils import mock_openai_context
@@ -34,7 +35,12 @@ class TestWhitespaceReconstruction:
             yield
 
     @pytest.fixture
-    def setup(self, mock_openai: None, storage_backend: StorageBackend) -> Generator[
+    def setup(
+        self,
+        mock_openai: None,
+        storage_backend: StorageBackend,
+        vector_index: _VectorIndexProtocol,
+    ) -> Generator[
         tuple[
             BackwardCompatibilityConfig,
             TreeBuilder,
@@ -67,6 +73,7 @@ class TestWhitespaceReconstruction:
         tree_builder = TreeBuilder(
             index_config,
             doc_store,
+            vector_index,
             api_key=operational_config.openai_api_key.get_secret_value(),
         )
 
@@ -157,7 +164,7 @@ class TestWhitespaceReconstruction:
         assert "\n    \n" in reconstructed
 
     def test_indexing_with_whitespace_gaps(
-        self, storage_backend: StorageBackend
+        self, storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
     ) -> None:
         """Test that indexing works correctly with whitespace gap reconstruction."""
         # Get document store and set metadata
@@ -184,6 +191,7 @@ class TestWhitespaceReconstruction:
             tree_builder = TreeBuilder(
                 index_config,
                 doc_store,
+                vector_index,
                 api_key=operational_config.openai_api_key.get_secret_value(),
             )
 
@@ -264,7 +272,9 @@ class TestWhitespaceReconstruction:
         assert "Word3" in reconstructed
 
     def test_validation_passes_with_reconstruction(
-        self, storage_backend: StorageBackend
+        self,
+        storage_backend: StorageBackend,
+        vector_index: _VectorIndexProtocol,
     ) -> None:
         """Test that validation passes when whitespace gaps are reconstructed."""
         # Get document store and set metadata
@@ -297,6 +307,7 @@ class TestWhitespaceReconstruction:
                 tree_builder = TreeBuilder(
                     index_config,
                     doc_store,
+                    vector_index,
                     api_key=operational_config.openai_api_key.get_secret_value(),
                 )
 

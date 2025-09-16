@@ -20,7 +20,7 @@ def benchmark_old_way(texts: list[str], iterations: int = 100) -> float:
         for text in texts:
             # This simulates the old pattern from the codebase
             tokenizer = tiktoken.get_encoding("cl100k_base")
-            count = len(tokenizer.encode(text))
+            len(tokenizer.encode(text))
 
     return time.time() - start_time
 
@@ -44,9 +44,18 @@ def run_benchmark():
     # Test with different text sizes
     test_cases = [
         ("Short text", "Hello world"),
-        ("Medium text", "This is a medium length text with multiple words and sentences. " * 5),
-        ("Long text", "This is a longer text that contains many words and sentences. " * 50),
-        ("Very long text", "Lorem ipsum dolor sit amet, consectetur adipiscing elit. " * 200)
+        (
+            "Medium text",
+            "This is a medium length text with multiple words and sentences. " * 5,
+        ),
+        (
+            "Long text",
+            "This is a longer text that contains many words and sentences. " * 50,
+        ),
+        (
+            "Very long text",
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit. " * 200,
+        ),
     ]
 
     iterations = 100
@@ -66,7 +75,7 @@ def run_benchmark():
         new_time = benchmark_new_way([text], iterations)
 
         # Calculate improvement
-        improvement = old_time / new_time if new_time > 0 else float('inf')
+        improvement = old_time / new_time if new_time > 0 else float("inf")
 
         print(f"  Old way (create encoder each time): {old_time:.4f}s")
         print(f"  New way (singleton encoder):        {new_time:.4f}s")
@@ -77,14 +86,18 @@ def run_benchmark():
         total_new_time += new_time
 
     # Overall results
-    overall_improvement = total_old_time / total_new_time if total_new_time > 0 else float('inf')
+    overall_improvement = (
+        total_old_time / total_new_time if total_new_time > 0 else float("inf")
+    )
 
     print("📊 Overall Results")
     print("-" * 30)
     print(f"Total old way time:      {total_old_time:.4f}s")
     print(f"Total new way time:      {total_new_time:.4f}s")
     print(f"Overall improvement:     {overall_improvement:.2f}x faster")
-    print(f"Time saved per test:     {(total_old_time - total_new_time) / len(test_cases):.4f}s")
+    print(
+        f"Time saved per test:     {(total_old_time - total_new_time) / len(test_cases):.4f}s"
+    )
 
     # Memory usage implications
     print("\n💾 Memory Benefits")
@@ -97,9 +110,15 @@ def run_benchmark():
     print("\n🎯 Practical Impact")
     print("-" * 20)
     print("• In a typical RagZoom session with 1000 tokenizations:")
-    print(f"  - Old way would take: ~{(total_old_time / (iterations * len(test_cases))) * 1000:.2f}s")
-    print(f"  - New way takes:      ~{(total_new_time / (iterations * len(test_cases))) * 1000:.2f}s")
-    print(f"  - Time saved:         ~{((total_old_time - total_new_time) / (iterations * len(test_cases))) * 1000:.2f}s")
+    print(
+        f"  - Old way would take: ~{(total_old_time / (iterations * len(test_cases))) * 1000:.2f}s"
+    )
+    print(
+        f"  - New way takes:      ~{(total_new_time / (iterations * len(test_cases))) * 1000:.2f}s"
+    )
+    print(
+        f"  - Time saved:         ~{((total_old_time - total_new_time) / (iterations * len(test_cases))) * 1000:.2f}s"
+    )
 
     print("\n📈 Key Benefits")
     print("-" * 16)
@@ -157,9 +176,15 @@ def benchmark_concurrent_access():
 
     new_concurrent_time = time.time() - start_time
 
-    concurrent_improvement = old_concurrent_time / new_concurrent_time if new_concurrent_time > 0 else float('inf')
+    concurrent_improvement = (
+        old_concurrent_time / new_concurrent_time
+        if new_concurrent_time > 0
+        else float("inf")
+    )
 
-    print(f"Concurrent operations: {num_threads} threads × {operations_per_thread} ops = {num_threads * operations_per_thread} total")
+    print(
+        f"Concurrent operations: {num_threads} threads × {operations_per_thread} ops = {num_threads * operations_per_thread} total"
+    )
     print(f"Old way (concurrent):  {old_concurrent_time:.4f}s")
     print(f"New way (concurrent):  {new_concurrent_time:.4f}s")
     print(f"Improvement:           {concurrent_improvement:.2f}x faster")

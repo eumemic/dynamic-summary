@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from ragzoom.config import QueryConfig
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
-from ragzoom.models import TreeNode
 from ragzoom.retrieval import (
     BudgetPlanner,
     CoverageBuilder,
@@ -18,6 +18,7 @@ from ragzoom.retrieval.telemetry_collector import TelemetryCollector
 from ragzoom.telemetry_query import QueryTelemetry
 
 if TYPE_CHECKING:
+    from ragzoom.contracts.vector_index import VectorIndex
     from ragzoom.document_store import DocumentStore
     from ragzoom.index import TreeBuilder
 
@@ -44,6 +45,7 @@ class Retriever:
         document_store: "DocumentStore",
         embedding_service: EmbeddingService,
         budget_planner: BudgetPlanner,
+        vector_index: "VectorIndex",
         tree_builder: Optional["TreeBuilder"] = None,
         use_async_dp: bool = False,
         min_nodes_for_parallel: int = 10,
@@ -64,6 +66,8 @@ class Retriever:
         self.embedding_service = embedding_service
         self.budget_planner = budget_planner
         self.use_async_dp = use_async_dp
+        # Backend-agnostic vector index
+        self.vector_index = vector_index
 
         # Type annotation for async_dp_generator
         from ragzoom.dynamic_tiling import AsyncDynamicTilingGenerator
@@ -142,18 +146,62 @@ class Retriever:
                 "embedding_model", self.query_config.embedding_model
             )
 
-        # Phase 2: Initial retrieval
+        # Phase 2: Initial retrieval (always via VectorIndex v2)
         k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
-        candidates = self.document_store.search.similar(query_embedding, k_candidates)
+        from ragzoom.retrieval import mmr
+        from ragzoom.retrieval import similarity as sim
+
+        raw_candidates = self.vector_index.search_similar(
+            query_embedding,
+            k_candidates,
+            {"document_id": effective_doc_id} if effective_doc_id else None,
+        )
+        # Filter out stale vectors that don't exist in storage to preserve invariants
+        cand_ids = [v.id for v in raw_candidates]
+        existing_nodes = self.document_store.nodes.get_nodes(cand_ids)
+        existing_ids = {n.id for n in existing_nodes}
+        vec_candidates = [v for v in raw_candidates if v.id in existing_ids]
+        if telemetry_collector:
+            telemetry_collector.record_metric(
+                "candidates_filtered", len(vec_candidates)
+            )
         if telemetry_collector:
             telemetry_collector.end_phase("search")
             telemetry_collector.start_phase()
-            telemetry_collector.record_metric("candidates_retrieved", len(candidates))
+            telemetry_collector.record_metric(
+                "candidates_retrieved", len(vec_candidates)
+            )
 
-        # Phase 3: Apply MMR
-        selected_ids = self.document_store.search.mmr_diverse(
-            query_embedding, candidates, self.query_config.mmr_lambda, num_seeds
+        # Phase 3: Apply MMR selection using generic math over canonical vectors
+        selected_ids = mmr.select_diverse(
+            query_embedding,
+            vec_candidates,
+            num_seeds,
+            self.query_config.mmr_lambda,
         )
+
+        # Build legacy-shaped candidates for scoring service compatibility
+        rels = sim.relevance_scores(query_embedding, vec_candidates)
+        from typing import cast as _cast
+
+        candidates: list[
+            tuple[str, float, dict[str, str | int | float | bool | None]]
+        ] = []
+        for i, v in enumerate(vec_candidates):
+            md = v.meta
+            candidates.append(
+                (
+                    v.id,
+                    float(rels[i]),
+                    {
+                        "span_start": _cast(int, md["span_start"]),
+                        "span_end": _cast(int, md["span_end"]),
+                        "parent_id": _cast(str, md["parent_id"]),
+                        "document_id": _cast(str, md["document_id"]),
+                        "is_leaf": _cast(int, md["is_leaf"]),
+                    },
+                )
+            )
         if telemetry_collector:
             telemetry_collector.end_phase("mmr")
             telemetry_collector.start_phase()
@@ -170,23 +218,13 @@ class Retriever:
 
         # Phase 5: Build scores map
         # Use document-scoped scoring service
-        doc_scoring_service = ScoringService(self.document_store)
+        doc_scoring_service = ScoringService(self.document_store, self.vector_index)
         scores = doc_scoring_service.compute_scores(
             query_embedding, coverage_map, candidates
         )
         if telemetry_collector:
             telemetry_collector.end_phase("scoring")
             telemetry_collector.start_phase()
-
-        # Handle empty coverage map case
-        if not coverage_map:
-            return RetrievalResult(
-                node_ids=selected_ids,
-                scores=scores,
-                coverage_map=coverage_map,
-                tiling=[],
-                nodes={},
-            )
 
         # Load all nodes in coverage map
         nodes: dict[str, TreeNode] = {}
@@ -198,10 +236,11 @@ class Retriever:
 
         # Find the root node
         root_id = None
-        for node_id, node in nodes.items():
+        for node_id in list(nodes.keys()):
+            node_p: TreeNode = nodes[node_id]
             # Check if node is root (compatible with both TreeNode and SqliteTreeNode)
-            is_root = getattr(node, "is_root", lambda: node.parent_id is None)()
-            if is_root or node.parent_id not in nodes:
+            is_root = getattr(node_p, "is_root", lambda: node_p.parent_id is None)()
+            if is_root or node_p.parent_id not in nodes:
                 root_id = node_id
                 break
 
@@ -211,6 +250,9 @@ class Retriever:
                 f"This indicates the coverage tree is incomplete - all ancestors should be included "
                 f"up to the document root. Selected node IDs: {selected_ids[:5]}{'...' if len(selected_ids) > 5 else ''}"
             )
+
+        # Sanity: drop any selected ids that aren't present in the document store
+        selected_ids = [nid for nid in selected_ids if nid in nodes]
 
         # Phase 6: Extract tiling using DP algorithm
         final_budget = (
@@ -235,11 +277,21 @@ class Retriever:
                 "tiling_size", len(dp_result.tiling.node_ids)
             )
 
-        # Calculate output tokens
+        # Ensure tiling nodes are present in the preloaded set (robust against edge cases)
+        tiling_ids = list(dp_result.tiling.node_ids)
+        missing_in_nodes = [nid for nid in tiling_ids if nid not in nodes]
+        if missing_in_nodes:
+            try:
+                loaded_more = self.document_store.nodes.get_nodes(missing_in_nodes)
+                for n in loaded_more:
+                    nodes[n.id] = n
+            except Exception:
+                # Leave as-is; downstream consumers guard against missing nodes
+                pass
+
+        # Calculate output tokens (after best-effort completion)
         output_tokens = sum(
-            nodes[node_id].token_count
-            for node_id in dp_result.tiling.node_ids
-            if node_id in nodes
+            nodes[node_id].token_count for node_id in tiling_ids if node_id in nodes
         )
         if telemetry_collector:
             telemetry_collector.record_metric("output_tokens", output_tokens)

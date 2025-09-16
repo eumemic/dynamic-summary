@@ -53,6 +53,20 @@ logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
 
 def handle_cli_error(e: Exception, operation: str) -> None:
     """Handle CLI errors with appropriate user-friendly messages."""
+    # Helpful guidance for optional dependencies
+    msg = str(e)
+    if isinstance(e, ImportError) and "chromadb" in msg.lower():
+        click.echo(
+            "\n❌ Missing optional dependency for Chroma.\n\n"
+            "You selected the Chroma vector index, but 'chromadb' is not installed.\n"
+            "Fix one of the following:\n"
+            "  • pip install ragzoom[chroma]\n"
+            "  • pip install chromadb\n"
+            "  • Or switch to in-memory vector index: export RAGZOOM_VECTOR_BACKEND=python\n\n"
+            f"Technical error: {e}",
+            err=True,
+        )
+        sys.exit(1)
     if isinstance(e, DatabaseError):
         click.echo(
             f"\n❌ Database error during {operation}.\n\n"
@@ -127,7 +141,8 @@ def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
     ctx.obj["index_config"] = IndexConfig.load()  # Load defaults
     ctx.obj["query_config"] = QueryConfig()
-    ctx.obj["operational_config"] = OperationalConfig()
+    # CLI defaults to Chroma for vector index; fail if not installed
+    ctx.obj["operational_config"] = OperationalConfig(vector_backend="chroma")
 
 
 @cli.command()
@@ -226,7 +241,8 @@ def index(
             embedding_batch_size=embedding_batch_size,
         )
         query_config = QueryConfig()  # Use defaults for indexing command
-        operational_config = OperationalConfig()
+        # Prefer Chroma by default in CLI; fail loudly if unavailable
+        operational_config = OperationalConfig(vector_backend="chroma")
 
         # Override storage location if provided
         if data_dir:
@@ -452,6 +468,7 @@ def query(
             from ragzoom.retrieval.budget_planner import BudgetPlanner
             from ragzoom.retrieval.embedding_service import EmbeddingService
             from ragzoom.retrieve import Retriever
+            from ragzoom.vector_factory import create_vector_index
 
             client = OpenAI(
                 api_key=operational_config.openai_api_key.get_secret_value()
@@ -464,11 +481,17 @@ def query(
             budget_planner = BudgetPlanner(
                 document_store, index_cfg.target_chunk_tokens
             )
+            vector_index = create_vector_index(
+                operational_config.vector_backend,
+                operational_config.database_url,
+                query_config.embedding_model,
+            )
             retriever = Retriever(
                 query_config,
                 document_store,
                 embedding_service,
                 budget_planner,
+                vector_index,
             )
             result = retriever.retrieve(
                 query_text,
@@ -703,6 +726,25 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
                 )
 
             deleted_count = document_service.clear_document(document_id)
+            # Clear vectors for this document (fail-soft)
+            try:
+                from ragzoom.vector_factory import create_vector_index
+
+                # Use the document's embedding model if available
+                doc_row = store.get_document_by_id(document_id)
+                emb_model = (
+                    doc_row.embedding_model
+                    if doc_row and doc_row.embedding_model
+                    else index_config.embedding_model
+                )
+                vindex = create_vector_index(
+                    operational_config.vector_backend,
+                    operational_config.database_url,
+                    emb_model,
+                )
+                vindex.delete(filter={"document_id": document_id})
+            except Exception:
+                pass
             click.echo(
                 f"✅ Cleared document '{document_id}' ({deleted_count} nodes deleted)"
             )
@@ -712,6 +754,31 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
                 click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
 
             deleted_count = document_service.clear_all_documents()
+            # Also clear all vectors for all documents
+            try:
+                from ragzoom.vector_factory import create_vector_index
+
+                # Attempt to clear vectors by iterating all documents first
+                docs = store.list_documents()
+                if docs:
+                    # Use embedding model from first doc, or default
+                    emb_model = (
+                        docs[0].embedding_model
+                        if hasattr(docs[0], "embedding_model")
+                        else index_config.embedding_model
+                    )
+                    vindex = create_vector_index(
+                        operational_config.vector_backend,
+                        operational_config.database_url,
+                        emb_model,
+                    )
+                    for doc in docs:
+                        try:
+                            vindex.delete(filter={"document_id": doc.id})
+                        except Exception:
+                            continue
+            except Exception:
+                pass
             click.echo(f"✅ Cleared {deleted_count} nodes from the database")
 
     except click.Abort:
@@ -1017,10 +1084,23 @@ def doctor() -> None:
     # Check Docker availability (only if using postgres backend)
     from ragzoom.config import OperationalConfig
 
-    _cfg = OperationalConfig()
+    chroma_available = True
+    try:
+        _cfg = OperationalConfig(vector_backend="chroma")
+    except ImportError:
+        chroma_available = False
+        # Fall back to python vector backend for diagnostics so doctor can continue
+        _cfg = OperationalConfig(vector_backend="python")
+
     if _cfg.backend == "sqlite":
         click.echo("✅ Backend: SQLite (file-backed)")
         click.echo("   Skipping Docker checks")
+        # Report vector index availability
+        if chroma_available:
+            click.echo("✅ Vector index: Chroma available")
+        else:
+            click.echo("⚠️  Vector index: Chroma not installed")
+            click.echo("   Install with: pip install chromadb")
     else:
         try:
             result = subprocess.run(

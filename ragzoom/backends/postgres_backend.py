@@ -13,11 +13,12 @@ from types import TracebackType
 from ragzoom.config import OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
-from ragzoom.models import Document, TreeNode
-from ragzoom.repositories.document_repository import DocumentRepository
-from ragzoom.repositories.node_repository import NodeRepository
+from ragzoom.models import Document, PostgresTreeNode
+from ragzoom.repositories.document_repository import (
+    DocumentRepository as PostgresDocumentRepository,
+)
+from ragzoom.repositories.postgres_node_repository import PostgresNodeRepository
 from ragzoom.services.cache_manager import CacheManager
-from ragzoom.services.search_service import SearchService
 from ragzoom.services.tree_navigator import TreeNavigator
 from ragzoom.storage.database_manager import DatabaseManager
 
@@ -48,12 +49,11 @@ class PostgresStorageBackend(StorageBackend):
         self.config = config
         # Initialize core components
         self.db_manager = DatabaseManager(config, embedding_model)
-        self.cache_manager = CacheManager[TreeNode](
+        self.cache_manager = CacheManager[PostgresTreeNode](
             config.cache_size or self.DEFAULT_CACHE_SIZE
         )
-        self.node_repo = NodeRepository(self.db_manager, self.cache_manager)
-        self.doc_repo = DocumentRepository(self.db_manager, self.cache_manager)
-        self.search_service = SearchService(self.db_manager)
+        self.node_repo = PostgresNodeRepository(self.db_manager, self.cache_manager)
+        self.doc_repo = PostgresDocumentRepository(self.db_manager, self.cache_manager)
         self.tree_navigator = TreeNavigator(self.node_repo)
 
     # Document-scoped API
@@ -61,7 +61,6 @@ class PostgresStorageBackend(StorageBackend):
         return DocumentStore(
             document_id=doc_id,
             node_repo=self.node_repo,
-            search_service=self.search_service,
             tree_navigator=self.tree_navigator,
             doc_repo=self.doc_repo,
         )

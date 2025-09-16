@@ -102,8 +102,13 @@ async def test_cached_tokens_recorded_in_telemetry(
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )
+    from ragzoom.vector_factory import create_vector_index
+
+    vi = create_vector_index(
+        "python", "sqlite:///:memory:", index_config.embedding_model
+    )
     indexer = TreeBuilder(
-        index_config, doc_store, api_key=operational_config.openai_api_key
+        index_config, doc_store, vi, api_key=operational_config.openai_api_key
     )
     reporter = create_test_reporter(config)
 
@@ -190,8 +195,13 @@ async def test_backward_compatibility_without_cached_tokens(
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )
+    from ragzoom.vector_factory import create_vector_index
+
+    vi = create_vector_index(
+        "python", "sqlite:///:memory:", index_config.embedding_model
+    )
     indexer = TreeBuilder(
-        index_config, doc_store, api_key=operational_config.openai_api_key
+        index_config, doc_store, vi, api_key=operational_config.openai_api_key
     )
     reporter = create_test_reporter(config)
 
@@ -276,8 +286,13 @@ async def test_cached_tokens_across_multiple_retries(
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )
+    from ragzoom.vector_factory import create_vector_index
+
+    vi = create_vector_index(
+        "python", "sqlite:///:memory:", index_config.embedding_model
+    )
     indexer = TreeBuilder(
-        index_config, doc_store, api_key=operational_config.openai_api_key
+        index_config, doc_store, vi, api_key=operational_config.openai_api_key
     )
     reporter = create_test_reporter(config)
 
@@ -372,8 +387,13 @@ async def test_passthrough_summary_has_no_cached_tokens(
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )
+    from ragzoom.vector_factory import create_vector_index
+
+    vi = create_vector_index(
+        "python", "sqlite:///:memory:", index_config.embedding_model
+    )
     indexer = TreeBuilder(
-        index_config, doc_store, api_key=operational_config.openai_api_key
+        index_config, doc_store, vi, api_key=operational_config.openai_api_key
     )
     reporter = create_test_reporter(config)
 
@@ -440,8 +460,13 @@ async def test_cached_tokens_with_high_cache_rate(
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )
+    from ragzoom.vector_factory import create_vector_index
+
+    vi = create_vector_index(
+        "python", "sqlite:///:memory:", index_config.embedding_model
+    )
     indexer = TreeBuilder(
-        index_config, doc_store, api_key=operational_config.openai_api_key
+        index_config, doc_store, vi, api_key=operational_config.openai_api_key
     )
     reporter = create_test_reporter(config)
 
