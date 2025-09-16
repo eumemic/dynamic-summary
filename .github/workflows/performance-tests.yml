@@ -205,14 +205,19 @@ jobs:
             if [ -n "$DB_URL" ]; then
               export RAGZOOM_DATABASE_URL="$DB_URL"
               export RAGZOOM_BACKEND="sqlite"
+              if [[ "$DB_URL" == sqlite:///* ]]; then
+                DB_PATH="${DB_URL#sqlite:///}"
+                if [ -f "$DB_PATH" ]; then
+                  rm -f "$DB_PATH"
+                fi
+              fi
             fi
           fi
           # Reset vector index to avoid stale dimension conflicts between runs
-          if [ -d "benchmark_results/chroma" ]; then
-            rm -rf benchmark_results/chroma
-          fi
+          rm -rf benchmark_results/chroma
           # Ensure we reuse the same persistent vector index as indexing
           export RAGZOOM_VECTOR_BACKEND="chroma"
+          export RAGZOOM_VECTOR_PERSIST_DIR="benchmark_results/chroma"
           # Run only the "broad" query configuration to save CI time (67% reduction)
           # This provides a representative test while maintaining statistical robustness
           
