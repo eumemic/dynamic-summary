@@ -1,42 +1,25 @@
-"""LLM service for handling OpenAI API interactions.
-
-This class now composes small, focused components:
-- ChatModel + Summarizer for summaries
-- EmbeddingModel + EmbeddingBatcher for embeddings
-
-Public behavior remains the same; existing callers continue using
-_summarize_text and _get_embeddings_batch.
-"""
+"""LLM service for handling OpenAI API interactions."""
 
 import logging
 import os
-from typing import TYPE_CHECKING, Protocol, TypedDict, cast
+import time
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, TypedDict, cast
 
+from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
-from ragzoom.adapters.openai_chat_model import OpenAIChatModel
-from ragzoom.adapters.openai_embedding_model import OpenAIEmbeddingModel
-from ragzoom.config import IndexConfig, SecretStr
-from ragzoom.contracts.chat_model import UsageInfo as _UsageInfo
-from ragzoom.services.embedding_batcher import EmbeddingBatcher
-from ragzoom.services.summarizer import Summarizer
+from ragzoom.config import IndexConfig, SecretStr, is_gpt5_model
 from ragzoom.telemetry_collection import TelemetryCollector
-from ragzoom.utils.tokenization import tokenizer as _rz_tokenizer
+from ragzoom.utils.tokenization import tokenizer
 
-tokenizer: object | None  # module-level patch point for tests; assigned below
-tokenizer = _rz_tokenizer
 logger = logging.getLogger(__name__)
 
 
-class _AsyncClientCtor(Protocol):
-    def __call__(self, *, api_key: str, **kwargs: object) -> object: ...
-
-
-# Expose a module-level AsyncOpenAI symbol for tests to patch.
-# The real import happens lazily in __init__ when this is None.
-AsyncOpenAI: _AsyncClientCtor | None = None
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover - typing helper only
     from openai import AsyncOpenAI as OpenAIAsyncType
+else:  # pragma: no cover - runtime alias for test stubs
+    OpenAIAsyncType = AsyncOpenAI
 
 
 class UsageInfo(TypedDict, total=False):
@@ -88,34 +71,86 @@ def _create_mock_response(usage_info: UsageInfo) -> MockResponse:
     return MockResponse(usage_info)
 
 
-class _CompletionsLike(Protocol):
-    @property
-    def create(self) -> object: ...
+def _get_embedding_dimension(model_id: str) -> int:
+    try:
+        from ragzoom.model_info import ModelInfo
+
+        return ModelInfo().get_embedding_dimensions(model_id)
+    except Exception:
+        return 8
 
 
-class _ChatLike(Protocol):
-    @property
-    def completions(self) -> _CompletionsLike: ...
+def _build_test_openai_client(model_id: str) -> "OpenAIAsyncType":
+    """Return a lightweight AsyncOpenAI stand-in for pytest runs.
 
+    The stub avoids network calls while preserving realistic vector shapes so
+    downstream components (e.g., Chroma adapters) see non-zero embeddings that
+    match the configured model dimensionality.
+    """
 
-class _EmbeddingsLike(Protocol):
-    @property
-    def create(self) -> object: ...
+    dim = _get_embedding_dimension(model_id)
 
+    class _StubEmbeddings:
+        def __init__(self) -> None:
+            unit = [0.0] * dim
+            if dim > 0:
+                unit[0] = 1.0
+            self._vector = unit
 
-class _ClientLike(Protocol):
-    @property
-    def chat(self) -> _ChatLike: ...
+        async def create(self, *, input: object, **kwargs: object) -> object:
+            if isinstance(input, str):
+                texts: list[str] = [input]
+            else:
+                texts = list(cast(Sequence[str], input))
 
-    @property
-    def embeddings(self) -> _EmbeddingsLike: ...
+            class _Item:
+                def __init__(self, embedding: list[float]) -> None:
+                    self.embedding = embedding
+
+            class _Resp:
+                def __init__(self, items: list[_Item]) -> None:
+                    self.data = items
+
+            return _Resp([_Item(list(self._vector)) for _ in texts])
+
+    class _StubCompletions:
+        async def create(self, **kwargs: object) -> object:
+            class _Msg:
+                def __init__(self) -> None:
+                    self.content = "summary"
+
+            class _Choice:
+                def __init__(self) -> None:
+                    self.message = _Msg()
+
+            class _Usage:
+                def __init__(self) -> None:
+                    self.prompt_tokens = 0
+                    self.completion_tokens = 0
+                    self.total_tokens = 0
+                    self.prompt_tokens_details = {"cached_tokens": 0}
+
+            class _Resp:
+                def __init__(self) -> None:
+                    self.choices = [_Choice()]
+                    self.usage = _Usage()
+
+            return _Resp()
+
+    class _StubChat:
+        def __init__(self) -> None:
+            self.completions = _StubCompletions()
+
+    class _StubClient:
+        def __init__(self) -> None:
+            self.embeddings = _StubEmbeddings()
+            self.chat = _StubChat()
+
+    return cast("OpenAIAsyncType", _StubClient())
 
 
 class LLMService:
     """Service for handling all LLM operations including embeddings and summarization."""
-
-    # Patchable client facade; always present for typing and tests
-    client: "OpenAIAsyncType | _ClientLike"
 
     def __init__(  # jscpd:ignore-start
         self,
@@ -136,211 +171,99 @@ class LLMService:
         from ragzoom.config import ensure_secret_str
 
         actual_key = ensure_secret_str(api_key, "LLMService")
-        # Store API key; defer OpenAI client construction until actually needed
-        self._api_key: str = actual_key
-        # Provide a patchable stub in tests so they can do
-        # patch.object(llm_service.client.chat.completions, "create", ...)
-        force_real_client = os.environ.get("RAGZOOM_FORCE_REAL_OPENAI")
-        if (
-            os.environ.get("PYTEST_CURRENT_TEST")
-            and AsyncOpenAI is None
-            and not force_real_client
-        ):
-            embedding_dim = 8
-            if os.environ.get("PYTEST_CURRENT_TEST"):
-                try:
-                    from ragzoom.model_info import ModelInfo
 
-                    embedding_dim = ModelInfo().get_embedding_dimensions(
-                        self.config.embedding_model
-                    )
-                except Exception:
-                    embedding_dim = 8
-
-            class _StubEmbeddings:
-                async def create(self, **kwargs: object) -> object:
-                    input_texts = kwargs.get("input", [])
-                    if isinstance(input_texts, str):
-                        input_list = [input_texts]
-                    elif isinstance(input_texts, list):
-                        input_list = input_texts
-                    else:
-                        input_list = [str(input_texts)]
-
-                    class _Item:
-                        def __init__(self) -> None:
-                            self.embedding = [0.0] * embedding_dim
-
-                    class _Resp:
-                        def __init__(self, n: int) -> None:
-                            self.data = [_Item() for _ in range(n)]
-
-                    return _Resp(len(input_list))
-
-            class _StubCompletions:
-                async def create(self, **kwargs: object) -> object:
-                    class _Msg:
-                        def __init__(self) -> None:
-                            self.content = "summary"
-
-                    class _Choice:
-                        def __init__(self) -> None:
-                            self.message = _Msg()
-
-                    class _Usage:
-                        def __init__(self) -> None:
-                            self.prompt_tokens = 0
-                            self.completion_tokens = 0
-                            self.total_tokens = 0
-                            self.prompt_tokens_details = None
-
-                    class _Resp:
-                        def __init__(self) -> None:
-                            self.choices = [_Choice()]
-                            self.usage = _Usage()
-
-                    return _Resp()
-
-            class _StubChat:
-                def __init__(self) -> None:
-                    self.completions = _StubCompletions()
-
-            class _StubClient:
-                def __init__(self) -> None:
-                    self.chat = _StubChat()
-                    self.embeddings = _StubEmbeddings()
-
-            self.client = _StubClient()
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            self.client = _build_test_openai_client(self.config.embedding_model)
         else:
-            # Install a lazy proxy that defers to a real client on first call
-            svc = self
-
-            class _LazyEmbeddings:
-                async def _create(self, **kwargs: object) -> object:
-                    real = svc._get_client()
-                    return await getattr(getattr(real, "embeddings"), "create")(
-                        **kwargs
-                    )
-
-                @property
-                def create(self) -> object:
-                    return self._create
-
-            class _LazyCompletions:
-                async def _create(self, **kwargs: object) -> object:
-                    real = svc._get_client()
-                    return await getattr(
-                        getattr(getattr(real, "chat"), "completions"), "create"
-                    )(**kwargs)
-
-                @property
-                def create(self) -> object:
-                    return self._create
-
-            class _LazyChat:
-                def __init__(self) -> None:
-                    self._completions = _LazyCompletions()
-
-                @property
-                def completions(self) -> _CompletionsLike:
-                    return self._completions
-
-            class _LazyClient:
-                def __init__(self) -> None:
-                    self._chat = _LazyChat()
-                    self._embeddings = _LazyEmbeddings()
-
-                @property
-                def chat(self) -> _ChatLike:
-                    return self._chat
-
-                @property
-                def embeddings(self) -> _EmbeddingsLike:
-                    return self._embeddings
-
-            self.client = _LazyClient()
-
-        # Adapters and orchestrators are lazy
-        self._chat_model: OpenAIChatModel | None = None
-        self._embedding_model: OpenAIEmbeddingModel | None = None
-        self._summarizer: Summarizer | None = None
-        self._embedding_batcher: EmbeddingBatcher | None = None
-        # Real client cache (lazy)
-        self._real_client: OpenAIAsyncType | None = None
-
-    def _get_client(self) -> "OpenAIAsyncType":
-        """Return the OpenAI client, building it on first use.
-
-        If tests set `self.client` directly, that instance is returned without
-        importing the SDK.
-        """
-        if self._real_client is not None:
-            return self._real_client
-        global AsyncOpenAI
-        if AsyncOpenAI is None:
-            from openai import AsyncOpenAI as _AsyncOpenAI
-
-            real_client: OpenAIAsyncType = _AsyncOpenAI(api_key=self._api_key)
-        else:
-            from typing import cast as _cast
-
-            ctor = AsyncOpenAI
-            real_client = _cast("OpenAIAsyncType", ctor(api_key=self._api_key))
-        self._real_client = real_client
-        return real_client
-
-    def _ensure_embedding_adapter_current(self) -> None:
-        """Refresh embedding adapter if client or model changed."""
-        # Prefer an injected test client if present; otherwise use the real client
-        client_for_adapter = self.client or self._get_client()
-        if (
-            self._embedding_model is None
-            or getattr(self._embedding_model, "_client", None) is not client_for_adapter
-            or getattr(self._embedding_model, "model_id", "")
-            != self.config.embedding_model
-        ):
-            from typing import cast as _cast
-
-            self._embedding_model = OpenAIEmbeddingModel(
-                _cast("OpenAIAsyncType", client_for_adapter),
-                self.config.embedding_model,
-            )
-            self._embedding_batcher = EmbeddingBatcher(self._embedding_model)
-
-    def _ensure_chat_adapter_current(self) -> None:
-        """Refresh chat adapter if client or model changed."""
-        client_for_adapter = self.client or self._get_client()
-        if (
-            self._chat_model is None
-            or getattr(self._chat_model, "_client", None) is not client_for_adapter
-            or getattr(self._chat_model, "model_id", "") != self.config.summary_model
-        ):
-            from typing import cast as _cast
-
-            self._chat_model = OpenAIChatModel(
-                _cast("OpenAIAsyncType", client_for_adapter),
-                self.config.summary_model,
-            )
-            self._summarizer = Summarizer(self._chat_model, self.config)
+            self.client = AsyncOpenAI(api_key=actual_key)
 
     async def _get_embedding(self, text: str) -> list[float]:
-        """Get embedding for a single text using the batcher."""
-        # Ensure the adapter sees the latest client (tests may swap it)
-        self._ensure_embedding_adapter_current()
-        if self._embedding_batcher is None:
-            self._ensure_embedding_adapter_current()
-        embeddings = await self._embedding_batcher.embed([text])  # type: ignore[union-attr]
-        if not embeddings or len(embeddings) != 1:
-            raise ValueError("Expected exactly one embedding from single-text call")
-        return embeddings[0]
+        """Get embedding for text using OpenAI."""
+        try:
+            # Check token count before embedding
+            tokens = tokenizer.encode(text)
+            token_count = len(tokens)
+
+            # Hard limit at 8000 tokens to leave margin for API overhead
+            if token_count > 8000:
+                logger.error(
+                    f"Text exceeds embedding token limit: {token_count} tokens "
+                    f"(limit: 8000). First 200 chars: {text[:200]}..."
+                )
+                raise ValueError(
+                    f"Text too large for embedding: {token_count} tokens exceeds "
+                    f"limit of 8000. This is likely due to summary size growth "
+                    f"at higher tree levels."
+                )
+
+            response = await self.client.embeddings.create(
+                model=self.config.embedding_model,
+                input=text,
+                # Let OpenAI API determine dimensions - no need for hardcoded values
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            from ragzoom.error_utils import preserve_exception_chain
+            from ragzoom.exceptions import LLMError
+
+            llm_error = LLMError(
+                operation="get_embedding",
+                model=self.config.embedding_model,
+                message=f"Failed to get embedding: {e}",
+                text_length=len(text),
+            )
+            raise preserve_exception_chain(llm_error, e)
 
     async def _get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
         """Get embeddings for multiple texts in batches to respect API limits."""
-        # Ensure the adapter sees the latest client (tests may swap it)
-        self._ensure_embedding_adapter_current()
-        if self._embedding_batcher is None:
-            self._ensure_embedding_adapter_current()
-        return await self._embedding_batcher.embed(texts)  # type: ignore[union-attr]
+        if not texts:
+            return []
+
+        # OpenAI embeddings API has a limit of ~2048 inputs per batch
+        # Use a conservative limit to avoid hitting API constraints
+        max_batch_size = 1000
+
+        if len(texts) > max_batch_size:
+            logger.debug(
+                f"Large batch of {len(texts)} texts - splitting into smaller batches of {max_batch_size}"
+            )
+            all_embeddings = []
+            for i in range(0, len(texts), max_batch_size):
+                batch = texts[i : i + max_batch_size]
+                logger.debug(
+                    f"Processing batch {i//max_batch_size + 1}/{(len(texts) + max_batch_size - 1)//max_batch_size} ({len(batch)} texts)"
+                )
+                batch_embeddings = await self._get_embeddings_batch(batch)
+                all_embeddings.extend(batch_embeddings)
+            return all_embeddings
+
+        # Safety net: Check for empty strings that could cause API errors
+        for i, text in enumerate(texts):
+            if not text or not text.strip():
+                logger.error(
+                    f"Empty text at index {i} in embedding batch - this will cause API errors"
+                )
+                raise ValueError(
+                    f"Empty text at index {i} in embedding batch. This should be filtered by the caller."
+                )
+
+        try:
+            response = await self.client.embeddings.create(
+                model=self.config.embedding_model,
+                input=texts,
+            )
+            return [data.embedding for data in response.data]
+        except Exception as e:
+            from ragzoom.error_utils import preserve_exception_chain
+            from ragzoom.exceptions import LLMError
+
+            llm_error = LLMError(
+                operation="get_batch_embeddings",
+                model=self.config.embedding_model,
+                message=f"Failed to get batch embeddings: {e}",
+                batch_size=len(texts),
+            )
+            raise preserve_exception_chain(llm_error, e)
 
     def _tokens_to_words(self, target_tokens: int) -> int:
         """Convert target token count to target word count with bias compensation."""
@@ -353,26 +276,74 @@ class LLMService:
         node_id: str,
         reporter: TelemetryCollector | None = None,
     ) -> tuple[str, UsageInfo]:
-        """Kept for backward compatibility; forwards to Summarizer with compatibility cast."""  # jscpd:ignore-end
-        # Convert to provider-neutral Message type and delegate
-        # Ensure adapters see the latest client (tests may swap it)
-        self._ensure_chat_adapter_current()
-        converted: list[dict[str, str]] = []
-        for m in messages:
-            # Minimal shape used by our Summarizer
-            role = cast(
-                str, m["role"]
-            )  # ChatCompletionMessageParam role is a Literal[str]
-            content = cast(str, m["content"])  # content is str in our usage
-            converted.append({"role": role, "content": content})
-        from ragzoom.contracts.chat_model import Message as _Message
+        """Make OpenAI API call for summarization with telemetry tracking."""  # jscpd:ignore-end
+        try:
+            # GPT-5 models have different parameter requirements
+            if is_gpt5_model(self.config.summary_model):
+                # Use reasoning_effort="minimal" (valid despite SDK type hints saying otherwise)
+                response = await self.client.chat.completions.create(
+                    model=self.config.summary_model,
+                    messages=messages,
+                    reasoning_effort="minimal",
+                )
+            else:
+                # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
+                # Use a hardcoded reasonable temperature for summaries
+                response = await self.client.chat.completions.create(
+                    model=self.config.summary_model,
+                    messages=messages,
+                    temperature=0.3,
+                )
 
-        if self._summarizer is None:
-            self._ensure_chat_adapter_current()
-        content, usage = await self._summarizer._make_summary_call(  # type: ignore[union-attr]  # noqa: SLF001
-            cast(list[_Message], converted), target_tokens, node_id, reporter
-        )
-        return content, usage
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("Empty response from OpenAI")
+
+            # Extract usage information for telemetry
+            if not response.usage:
+                raise ValueError("No usage information in OpenAI response")
+
+            usage_info = {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+                "model": self.config.summary_model,
+            }
+
+            # Extract cached tokens if available (for prompt caching)
+            if (
+                hasattr(response.usage, "prompt_tokens_details")
+                and response.usage.prompt_tokens_details
+            ):
+                prompt_tokens_details = response.usage.prompt_tokens_details
+                # Handle both dict and object formats
+                cached_tokens = 0
+                if isinstance(prompt_tokens_details, dict):
+                    cached_tokens = prompt_tokens_details.get("cached_tokens", 0) or 0
+                elif hasattr(prompt_tokens_details, "cached_tokens"):
+                    cached_tokens = prompt_tokens_details.cached_tokens or 0
+
+                # Handle Mock objects in tests - they won't compare properly
+                try:
+                    if cached_tokens and cached_tokens > 0:
+                        usage_info["cached_tokens"] = cached_tokens
+                except (TypeError, AttributeError):
+                    # cached_tokens might be a mock object, skip it
+                    pass
+
+            return content, cast(UsageInfo, usage_info)
+
+        except Exception as e:
+            from ragzoom.error_utils import preserve_exception_chain
+            from ragzoom.exceptions import LLMError
+
+            llm_error = LLMError(
+                operation="summarize_text",
+                model=self.config.summary_model,
+                message=f"Failed to summarize text for node {node_id}: {e}",
+                node_id=node_id,
+            )
+            raise preserve_exception_chain(llm_error, e)
 
     async def _record_summary_telemetry(
         self,
@@ -384,37 +355,246 @@ class LLMService:
         actual_tokens: int,
         start_time: float,
     ) -> None:
-        """Backward-compatible wrapper that adapts MockResponse to UsageInfo and forwards."""
-        usage: _UsageInfo = {
-            "prompt_tokens": int(response.usage.prompt_tokens),
-            "completion_tokens": int(response.usage.completion_tokens),
-            "total_tokens": int(response.usage.total_tokens),
-            "model": getattr(response.usage, "model", self.config.summary_model),
-        }
-        details = getattr(response.usage, "prompt_tokens_details", None)
-        try:
-            if isinstance(details, dict):
-                cached = int(details.get("cached_tokens", 0) or 0)
-                if cached > 0:
-                    usage["cached_tokens"] = cached
-        except Exception:
-            pass
+        """Record telemetry for a summary attempt."""
+        if not reporter or not parent_id:
+            return
 
-        if self._summarizer is None:
-            self._ensure_chat_adapter_current()
-        await self._summarizer._record_summary_telemetry(  # type: ignore[union-attr]  # noqa: SLF001
-            reporter,
-            parent_id,
-            usage,
-            target_tokens,
-            input_text_tokens,
-            actual_tokens,
-            start_time,
+        # Extract cached tokens if available
+        cached_tokens = 0
+        if (
+            hasattr(response, "usage")
+            and hasattr(response.usage, "prompt_tokens_details")
+            and response.usage.prompt_tokens_details
+        ):
+            cached_tokens = response.usage.prompt_tokens_details.get("cached_tokens", 0)
+
+        try:
+            reporter.record_summary_attempt_v2(
+                node_id=parent_id,
+                target_tokens=target_tokens,
+                input_text_tokens=input_text_tokens,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                actual_tokens=actual_tokens,
+                model=self.config.summary_model,
+                start_time=start_time,
+                cached_tokens=cached_tokens,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record summary telemetry: {e}")
+
+    def _should_retry_summary(
+        self, summary: str, current_tokens: int, target_tokens: int
+    ) -> bool:
+        """Determine if a summary should be retried.
+
+        Retries if:
+        - Summary is empty or only whitespace
+        - Summary overshoots target by more than the configured threshold
+
+        Undershoots are accepted as they're already concise.
+
+        Returns True if the summary should be retried.
+        """
+        # Always retry empty summaries
+        if not summary or not summary.strip():
+            return True
+
+        if target_tokens <= 0:
+            return False
+
+        # Only retry overshoots - undershoots are always acceptable
+        if current_tokens <= target_tokens:
+            return False
+
+        # Check if overshoot exceeds threshold
+        deviation = (current_tokens - target_tokens) / target_tokens
+        return deviation > self.config.retry_threshold
+
+    def _is_better_summary(
+        self,
+        new_tokens: int,
+        new_distance: float,
+        current_best_tokens: int,
+        current_best_distance: float,
+        target_tokens: int,
+    ) -> bool:
+        """Determine if a new summary is better than the current best.
+
+        Follows the original TreeBuilder logic:
+        - Prefer summaries that are under target and closer to target
+        - When current best is over target, prefer smaller summaries
+
+        Args:
+            new_tokens: Token count of new summary
+            new_distance: Absolute distance from target for new summary
+            current_best_tokens: Token count of current best
+            current_best_distance: Absolute distance from target for current best
+            target_tokens: Target token count
+
+        Returns:
+            True if new summary is better than current best
+        """
+        # If new is under target and current is over, new is better
+        if new_tokens <= target_tokens and current_best_tokens > target_tokens:
+            return True
+
+        # If both are under target, prefer the one closer to target (larger)
+        if new_tokens <= target_tokens and current_best_tokens <= target_tokens:
+            return new_tokens > current_best_tokens
+
+        # If both are over target, prefer the smaller one
+        if new_tokens > target_tokens and current_best_tokens > target_tokens:
+            return new_tokens < current_best_tokens
+
+        # Current is under and new is over - keep current
+        return False
+
+    async def _execute_retry_attempt(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        previous_summary: str,
+        previous_tokens: int,
+        target_tokens: int,
+        node_id: str,
+        attempt_number: int,
+        reporter: TelemetryCollector | None = None,  # jscpd:ignore-start
+    ) -> tuple[str, UsageInfo]:
+        """Execute a single retry attempt for summary correction."""  # jscpd:ignore-end
+        # Calculate deviation details for retry prompt
+        deviation_pct = (
+            (previous_tokens - target_tokens) / target_tokens * 100
+            if target_tokens > 0
+            else 0
+        )
+        deviation_pct_rounded = round(abs(deviation_pct))
+        larger = previous_tokens > target_tokens
+        direction = "larger" if larger else "smaller"
+        target_words = self._tokens_to_words(target_tokens)
+
+        # Append the previous response and correction request to conversation
+        messages.append({"role": "assistant", "content": previous_summary})
+
+        # Build retry prompt matching original format
+        addendum = (
+            " Use your last attempt as a starting point and aggressively prune details to hit the target words."
+            if larger
+            else ""
+        )
+        retry_prompt = f"Your summary was {deviation_pct_rounded}% {direction} than the target length. Try again, making it AT MOST {target_words} words.{addendum}"
+
+        messages.append({"role": "user", "content": retry_prompt})
+
+        # Make the API call
+        summary, usage_info = await self._make_summary_call(
+            messages, target_tokens, node_id, reporter
         )
 
-    # The retry decision and attempt logic now lives in Summarizer.
+        return summary, usage_info
 
-    # jscpd:ignore-start - Thin compatibility wrapper delegating to Summarizer
+    async def _retry_summary_correction(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        initial_summary: str,
+        initial_tokens: int,
+        target_tokens: int,
+        node_id: str,
+        reporter: TelemetryCollector | None = None,
+    ) -> tuple[str, int, int]:
+        """Attempt to correct a summary that doesn't meet target token count.
+
+        Returns:
+            tuple: (best_summary, actual_retry_count, best_token_count)
+        """
+        best_summary = initial_summary
+        best_tokens = initial_tokens
+        best_deviation = (
+            abs(initial_tokens - target_tokens) / target_tokens
+            if target_tokens > 0
+            else float("inf")
+        )
+        best_attempt_index = 0  # Track which attempt is best (0 = initial)
+
+        # Track actual retries made
+        actual_retries = 0
+
+        # Create a copy of messages for retry attempts
+        retry_messages = messages.copy()
+
+        for attempt in range(1, self.config.max_retries + 1):
+            try:
+                # Use the best attempt so far as the base for the next retry
+                retry_start_time = time.time()
+                retry_summary, retry_usage_info = await self._execute_retry_attempt(
+                    retry_messages,
+                    best_summary,
+                    best_tokens,
+                    target_tokens,
+                    node_id,
+                    attempt
+                    + 1,  # attempt_number (1-indexed for initial, 2+ for retries)
+                    reporter,
+                )
+
+                # We made an actual retry attempt
+                actual_retries = attempt
+
+                retry_tokens = tokenizer.count_tokens(retry_summary)
+
+                # Record telemetry for retry attempt
+                if reporter and node_id:
+                    mock_response = _create_mock_response(retry_usage_info)
+                    await self._record_summary_telemetry(
+                        reporter=reporter,
+                        parent_id=node_id,
+                        response=mock_response,
+                        target_tokens=target_tokens,
+                        input_text_tokens=best_tokens,  # Input was the previous best attempt
+                        actual_tokens=retry_tokens,
+                        start_time=retry_start_time,
+                    )
+
+                # Check if this attempt is acceptable (within threshold)
+                if not self._should_retry_summary(
+                    retry_summary, retry_tokens, target_tokens
+                ):
+                    # This attempt is within threshold - accept it immediately
+                    return retry_summary, actual_retries, actual_retries
+
+                # This attempt is still outside threshold, but check if it's better
+                retry_distance = abs(retry_tokens - target_tokens)
+                best_distance = abs(best_tokens - target_tokens)
+
+                if self._is_better_summary(
+                    retry_tokens,
+                    retry_distance,
+                    best_tokens,
+                    best_distance,
+                    target_tokens,
+                ):
+                    best_summary = retry_summary
+                    best_tokens = retry_tokens
+                    best_deviation = (
+                        retry_distance / target_tokens
+                        if target_tokens > 0
+                        else float("inf")
+                    )
+                    best_attempt_index = actual_retries  # Track this is the best
+
+                # Retry attempt completed - details tracked via telemetry
+
+            except Exception as e:
+                logger.error(f"Retry attempt {attempt} failed for node {node_id}: {e}")
+                break
+
+        # Return the best attempt we found with actual retry count
+        logger.debug(
+            f"Summary retry complete for node {node_id}. "
+            f"Best result: {best_tokens} tokens (deviation: {best_deviation:.1%})"
+        )
+
+        return best_summary, actual_retries, best_attempt_index
+
     async def _summarize_text(
         self,
         left_text: str,
@@ -427,37 +607,167 @@ class LLMService:
         left_token_count: int | None = None,
         right_token_count: int | None = None,
     ) -> tuple[str, int, int]:
-        """Summarize via provider-agnostic Summarizer (keeps public API stable)."""
-        # Ensure summarizer is initialized and current
-        self._ensure_chat_adapter_current()
-        return await self._summarizer.summarize(  # type: ignore[union-attr]
-            left_text,
-            right_text,
-            target_tokens,
-            parent_id=parent_id,
-            reporter=reporter,
-            prev_context=prev_context,
-            left_token_count=left_token_count,
-            right_token_count=right_token_count,
-        )
+        """Summarize combined text to approximately target token count.
 
-    # jscpd:ignore-end
+        Returns:
+            tuple: (summary, retry_count, actual_token_count)
+        """
+        # Combine texts
+        combined_text = f"{left_text} {right_text}".strip()
 
-    def _is_better_summary(
-        self,
-        new_tokens: int,
-        new_distance: int,
-        current_best_tokens: int,
-        current_best_distance: int,
-        target_tokens: int,
-    ) -> bool:
-        """Compatibility shim that forwards to Summarizer's decision logic."""
-        if self._summarizer is None:
-            self._ensure_chat_adapter_current()
-        return self._summarizer._is_better_summary(  # type: ignore[union-attr]  # noqa: SLF001
-            new_tokens,
-            new_distance,
-            current_best_tokens,
-            current_best_distance,
-            target_tokens,
-        )
+        # Check if we need to summarize at all
+        combined_tokens = tokenizer.count_tokens(combined_text)
+        if combined_tokens <= target_tokens:
+            # Skip summarization since text is already under target
+            # No need to log this as it's expected behavior for small inputs
+            # Record passthrough as a summary attempt for telemetry visualization
+            if reporter and parent_id:
+                start_time = time.time()
+                reporter.record_summary_attempt_v2(
+                    node_id=parent_id,
+                    target_tokens=target_tokens,
+                    input_text_tokens=combined_tokens,
+                    prompt_tokens=0,  # No LLM call made
+                    completion_tokens=0,  # No LLM call made
+                    actual_tokens=combined_tokens,
+                    model="passthrough",  # Indicates no summarization needed - text used as-is
+                    start_time=start_time,
+                )
+            return combined_text, 0, combined_tokens
+
+        # Handle preceding context if provided
+        trimmed_prev = None
+        if prev_context and self.config.preceding_context_tokens > 0:
+            # Trim prev_context to adjacent_context_tokens
+            prev_tokens = tokenizer.encode(prev_context)
+            if len(prev_tokens) > self.config.preceding_context_tokens:
+                context_tokens = prev_tokens[-self.config.preceding_context_tokens :]
+                trimmed_prev = tokenizer.decode(context_tokens)
+            else:
+                trimmed_prev = prev_context
+
+        # Build the summarization prompt inline
+        target_words = self._tokens_to_words(target_tokens)
+
+        instruction = f"""You will be given a piece of content to summarize. You are to summarize ONLY the content between the <SUMMARIZE_TEXT> tags in AT MOST {target_words} words. Use the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.
+
+Make your summary information-dense, covering the full temporal scope of the source material. Match the voice, tense, and tone of the original text insofar as possible. Abstract over details as necessary to fit within the word limit while preserving key events and themes.
+
+Here's the content to summarize:"""
+
+        prompt_parts = [instruction]
+
+        # Add preceding context if available
+        if prev_context and self.config.preceding_context_tokens > 0 and trimmed_prev:
+            prompt_parts.append(
+                f"\n<PRECEDING_TEXT>\n...{trimmed_prev.strip()}\n</PRECEDING_TEXT>"
+            )
+
+        # Add the content to summarize (concatenated)
+        prompt_parts.append(f"\n<SUMMARIZE_TEXT>\n{combined_text}\n</SUMMARIZE_TEXT>")
+
+        full_prompt = "\n\n".join(prompt_parts)
+
+        # Calculate input text tokens for metrics tracking
+        if left_token_count is not None and right_token_count is not None:
+            input_text_tokens = left_token_count + right_token_count
+        else:
+            # Fallback if token counts not provided
+            input_text_tokens = tokenizer.count_tokens(left_text)
+            if right_text:
+                input_text_tokens += tokenizer.count_tokens(right_text)
+
+        # Build messages in conversational format to match test expectations
+        messages: list[ChatCompletionMessageParam] = [
+            {
+                "role": "system",
+                "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
+            },
+            {"role": "user", "content": full_prompt},
+        ]
+
+        # Anti-verbatim vaccine: Insert fake conversation showing verbatim copy being rejected
+        # This prevents the most common failure mode and improves consistency
+        if self.config.use_anti_verbatim_vaccine:
+            messages.append({"role": "assistant", "content": combined_text})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"UNACCEPTABLE. You just returned the input text verbatim! I need you to CREATE A SUMMARY - extract and compress the key information to AT MOST {target_words} words. Do not copy passages directly. Try again.",
+                }
+            )
+
+        # Make initial summary attempt
+        try:
+            start_time = time.time()
+            summary, usage_info = await self._make_summary_call(
+                messages,
+                target_tokens,
+                parent_id or "",
+                reporter,
+            )
+
+            summary_tokens = tokenizer.count_tokens(summary)
+
+            # Record telemetry for initial attempt - create a mock response object
+            if reporter and parent_id:
+                mock_response = _create_mock_response(usage_info)
+                await self._record_summary_telemetry(
+                    reporter=reporter,
+                    parent_id=parent_id,
+                    response=mock_response,
+                    target_tokens=target_tokens,
+                    input_text_tokens=input_text_tokens,
+                    actual_tokens=summary_tokens,
+                    start_time=start_time,
+                )
+
+            # Check if retry is needed
+            if not self._should_retry_summary(summary, summary_tokens, target_tokens):
+                accepted_attempt = 0  # Initial attempt was accepted
+                # Mark which attempt was accepted
+                if reporter and parent_id:
+                    reporter.mark_accepted_attempt(parent_id, accepted_attempt)
+                return summary, 0, summary_tokens
+
+            # Attempt to correct the summary
+            if self.config.max_retries > 0:
+                final_summary, retry_count, best_attempt_index = (
+                    await self._retry_summary_correction(
+                        messages,
+                        summary,
+                        summary_tokens,
+                        target_tokens,
+                        parent_id or "",
+                        reporter,
+                    )
+                )
+                # Track which attempt was accepted (like master does)
+                accepted_attempt = best_attempt_index
+                # Mark which attempt was accepted
+                if reporter and parent_id:
+                    reporter.mark_accepted_attempt(parent_id, accepted_attempt)
+                return (
+                    final_summary,
+                    retry_count,
+                    tokenizer.count_tokens(final_summary),
+                )
+
+            # No retries allowed, return initial attempt
+            accepted_attempt = 0  # Initial attempt was accepted
+            # Mark which attempt was accepted
+            if reporter and parent_id:
+                reporter.mark_accepted_attempt(parent_id, accepted_attempt)
+            return summary, 0, summary_tokens
+
+        except Exception as e:
+            from ragzoom.error_utils import preserve_exception_chain
+            from ragzoom.exceptions import LLMError
+
+            llm_error = LLMError(
+                operation="batch_summarize",
+                model=self.config.summary_model,
+                message=f"Failed to summarize text for node {parent_id}: {e}",
+                node_id=parent_id,
+            )
+            raise preserve_exception_chain(llm_error, e)
