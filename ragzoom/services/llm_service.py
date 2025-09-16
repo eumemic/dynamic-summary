@@ -140,7 +140,12 @@ class LLMService:
         self._api_key: str = actual_key
         # Provide a patchable stub in tests so they can do
         # patch.object(llm_service.client.chat.completions, "create", ...)
-        if os.environ.get("PYTEST_CURRENT_TEST") and AsyncOpenAI is None:
+        force_real_client = os.environ.get("RAGZOOM_FORCE_REAL_OPENAI")
+        if (
+            os.environ.get("PYTEST_CURRENT_TEST")
+            and AsyncOpenAI is None
+            and not force_real_client
+        ):
 
             class _StubEmbeddings:
                 async def create(self, **kwargs: object) -> object:

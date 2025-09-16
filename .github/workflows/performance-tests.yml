@@ -213,6 +213,7 @@ jobs:
           rm -rf benchmark_results/chroma
           # Ensure we reuse the same persistent vector index as indexing
           export RAGZOOM_VECTOR_BACKEND="chroma"
+          export RAGZOOM_FORCE_REAL_OPENAI=1
           export RAGZOOM_VECTOR_PERSIST_DIR="benchmark_results/chroma"
           # Run only the "broad" query configuration to save CI time (67% reduction)
           # This provides a representative test while maintaining statistical robustness

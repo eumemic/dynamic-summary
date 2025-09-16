@@ -77,6 +77,7 @@ jobs:
           rm -rf benchmark_results/chroma
           export RAGZOOM_VECTOR_BACKEND="chroma"
           export RAGZOOM_VECTOR_PERSIST_DIR="benchmark_results/chroma"
+          export RAGZOOM_FORCE_REAL_OPENAI=1
           config="broad-2000-10"
           echo "Running query benchmark with config=$config (3 runs for variance)"
           pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v
