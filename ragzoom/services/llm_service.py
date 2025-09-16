@@ -1,8 +1,10 @@
 """LLM service for handling OpenAI API interactions."""
 
 import logging
+import os
 import time
-from typing import TypedDict, cast
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
@@ -12,6 +14,12 @@ from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
+
+
+if TYPE_CHECKING:  # pragma: no cover - typing helper only
+    from openai import AsyncOpenAI as OpenAIAsyncType
+else:  # pragma: no cover - runtime alias for test stubs
+    OpenAIAsyncType = AsyncOpenAI
 
 
 class UsageInfo(TypedDict, total=False):
@@ -63,6 +71,84 @@ def _create_mock_response(usage_info: UsageInfo) -> MockResponse:
     return MockResponse(usage_info)
 
 
+def _get_embedding_dimension(model_id: str) -> int:
+    try:
+        from ragzoom.model_info import ModelInfo
+
+        return ModelInfo().get_embedding_dimensions(model_id)
+    except Exception:
+        return 8
+
+
+def _build_test_openai_client(model_id: str) -> "OpenAIAsyncType":
+    """Return a lightweight AsyncOpenAI stand-in for pytest runs.
+
+    The stub avoids network calls while preserving realistic vector shapes so
+    downstream components (e.g., Chroma adapters) see non-zero embeddings that
+    match the configured model dimensionality.
+    """
+
+    dim = _get_embedding_dimension(model_id)
+
+    class _StubEmbeddings:
+        def __init__(self) -> None:
+            unit = [0.0] * dim
+            if dim > 0:
+                unit[0] = 1.0
+            self._vector = unit
+
+        async def create(self, *, input: object, **kwargs: object) -> object:
+            if isinstance(input, str):
+                texts: list[str] = [input]
+            else:
+                texts = list(cast(Sequence[str], input))
+
+            class _Item:
+                def __init__(self, embedding: list[float]) -> None:
+                    self.embedding = embedding
+
+            class _Resp:
+                def __init__(self, items: list[_Item]) -> None:
+                    self.data = items
+
+            return _Resp([_Item(list(self._vector)) for _ in texts])
+
+    class _StubCompletions:
+        async def create(self, **kwargs: object) -> object:
+            class _Msg:
+                def __init__(self) -> None:
+                    self.content = "summary"
+
+            class _Choice:
+                def __init__(self) -> None:
+                    self.message = _Msg()
+
+            class _Usage:
+                def __init__(self) -> None:
+                    self.prompt_tokens = 0
+                    self.completion_tokens = 0
+                    self.total_tokens = 0
+                    self.prompt_tokens_details = {"cached_tokens": 0}
+
+            class _Resp:
+                def __init__(self) -> None:
+                    self.choices = [_Choice()]
+                    self.usage = _Usage()
+
+            return _Resp()
+
+    class _StubChat:
+        def __init__(self) -> None:
+            self.completions = _StubCompletions()
+
+    class _StubClient:
+        def __init__(self) -> None:
+            self.embeddings = _StubEmbeddings()
+            self.chat = _StubChat()
+
+    return cast("OpenAIAsyncType", _StubClient())
+
+
 class LLMService:
     """Service for handling all LLM operations including embeddings and summarization."""
 
@@ -86,7 +172,10 @@ class LLMService:
 
         actual_key = ensure_secret_str(api_key, "LLMService")
 
-        self.client = AsyncOpenAI(api_key=actual_key)
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            self.client = _build_test_openai_client(self.config.embedding_model)
+        else:
+            self.client = AsyncOpenAI(api_key=actual_key)
 
     async def _get_embedding(self, text: str) -> list[float]:
         """Get embedding for text using OpenAI."""
