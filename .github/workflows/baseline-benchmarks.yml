@@ -65,13 +65,18 @@ jobs:
             if [ -n "$DB_URL" ]; then
               export RAGZOOM_DATABASE_URL="$DB_URL"
               export RAGZOOM_BACKEND="sqlite"
+              if [[ "$DB_URL" == sqlite:///* ]]; then
+                DB_PATH="${DB_URL#sqlite:///}"
+                if [ -f "$DB_PATH" ]; then
+                  rm -f "$DB_PATH"
+                fi
+              fi
             fi
           fi
           # Reset vector index to avoid stale dimension conflicts between runs
-          if [ -d "benchmark_results/chroma" ]; then
-            rm -rf benchmark_results/chroma
-          fi
+          rm -rf benchmark_results/chroma
           export RAGZOOM_VECTOR_BACKEND="chroma"
+          export RAGZOOM_VECTOR_PERSIST_DIR="benchmark_results/chroma"
           config="broad-2000-10"
           echo "Running query benchmark with config=$config (3 runs for variance)"
           pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v
