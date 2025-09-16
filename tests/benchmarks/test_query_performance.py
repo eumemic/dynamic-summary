@@ -97,6 +97,7 @@ def setup_test_document(
 
 
 @pytest.mark.benchmark
+@pytest.mark.slow_threshold(4.0)
 @pytest.mark.parametrize("num_seeds", [5, 10, 20])
 @pytest.mark.parametrize("budget_tokens", [1000, 2000, 4000])
 @pytest.mark.parametrize("query_type", ["specific", "broad", "complex"])
