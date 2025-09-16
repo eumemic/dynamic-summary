@@ -153,13 +153,6 @@ def test_query_performance(
     )
 
     # Create retriever and assembler
-    from ragzoom.vector_factory import create_vector_index
-
-    vector_index = create_vector_index(
-        os.environ.get("RAGZOOM_VECTOR_BACKEND", "python"),
-        os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:"),
-        query_config.embedding_model,
-    )
     retriever = Retriever(
         query_config,
         doc_store,
