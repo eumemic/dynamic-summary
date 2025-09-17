@@ -63,7 +63,6 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 20,
                 "height": 0,
-                "path": "000",
             },
             {
                 "node_id": "leaf2",
@@ -74,7 +73,6 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 21,
                 "height": 0,
-                "path": "001",
             },
             {
                 "node_id": "leaf3",
@@ -85,7 +83,6 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 20,
                 "height": 0,
-                "path": "010",
             },
             {
                 "node_id": "leaf4",
@@ -96,7 +93,6 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 21,
                 "height": 0,
-                "path": "011",
             },
             # Internal nodes
             {
@@ -110,7 +106,6 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 35,
                 "height": 1,
-                "path": "00",
             },
             {
                 "node_id": "right",
@@ -123,7 +118,6 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 36,
                 "height": 1,
-                "path": "01",
             },
             {
                 "node_id": "root",
@@ -136,7 +130,6 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 26,
                 "height": 2,
-                "path": "",
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -237,7 +230,6 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 0,
                 "height": 0,
-                "path": "100",
             }
         ]
         doc_store.nodes.add_batch(empty_nodes)
@@ -334,7 +326,6 @@ class TestDPAssemblySQLite:
                 "document_id": "test-doc-single",
                 "token_count": 11,
                 "height": 0,
-                "path": "",
             }
         ]
         doc_store.nodes.add_batch(single_node)

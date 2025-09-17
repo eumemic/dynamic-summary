@@ -1,16 +1,13 @@
 """Service for tree navigation and traversal operations."""
 
-import logging
-from typing import TYPE_CHECKING
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import cast
 
 from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.exceptions import NodeNotFoundError
-
-if TYPE_CHECKING:
-    pass
-
-logger = logging.getLogger(__name__)
 
 
 class TreeNavigator:
@@ -23,6 +20,21 @@ class TreeNavigator:
             node_repository: Node repository for data access
         """
         self.node_repo = node_repository
+        self._depth_cache: dict[str, int] = {}
+
+    def _get_node(self, node_id: str) -> TreeNode | None:
+        """Fetch a node with cache awareness."""
+
+        return self.node_repo.get_node(node_id)
+
+    def _get_parent(self, node: TreeNode) -> TreeNode | None:
+        parent_id = getattr(node, "parent_id", None)
+        if not parent_id:
+            return None
+        try:
+            return self.node_repo.get_node(parent_id)
+        except Exception:  # pragma: no cover - repository handles errors
+            return None
 
     def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
         """Get left and right children of a node.
@@ -37,50 +49,56 @@ class TreeNavigator:
         if not node:
             return None, None
 
-        left = (
-            self.node_repo.get_node(node.left_child_id) if node.left_child_id else None
-        )
-        right = (
-            self.node_repo.get_node(node.right_child_id)
-            if node.right_child_id
-            else None
-        )
+        child_ids = [
+            child_id
+            for child_id in (node.left_child_id, node.right_child_id)
+            if child_id
+        ]
+        fetched = self._batched_fetch(child_ids)
+        left = fetched.get(node.left_child_id) if node.left_child_id else None
+        right = fetched.get(node.right_child_id) if node.right_child_id else None
         return left, right
 
+    def _batched_fetch(self, node_ids: Iterable[str]) -> dict[str, TreeNode]:
+        """Fetch nodes in batches and return an id -> node mapping."""
+
+        ids = list(node_ids)
+        if not ids:
+            return {}
+        fetched = self.node_repo.get_nodes(ids)
+        return {node.id: node for node in fetched}
+
     def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
-        """Get all ancestors of given nodes using path-based traversal for instant lookup.
+        """Return ancestors for the supplied nodes using structural traversal."""
 
-        Args:
-            node_ids: List of node identifiers
-
-        Returns:
-            List of ancestor TreeNodes
-        """
-        from ragzoom.utils.path_utils import get_all_ancestor_paths
-
-        # Get the nodes to access their paths
-        nodes = self.node_repo.get_nodes(node_ids)
-        if not nodes:
+        current = self._batched_fetch(node_ids)
+        if not current:
             return []
 
-        # Use path-based logic to find all ancestors
-        ancestor_paths = set()
-        for node in nodes:
-            ancestor_paths.update(get_all_ancestor_paths(node.path))
+        seen: set[str] = set(current.keys())
+        ancestors: list[TreeNode] = []
+        frontier: set[str] = {
+            cast(str, node.parent_id)
+            for node in current.values()
+            if getattr(node, "parent_id", None)
+        }
 
-        # Single batch fetch of all ancestors by their paths
-        if ancestor_paths:
-            # Use document-scoped fetch when available to avoid cross-document contamination
-            get_scoped = getattr(
-                self.node_repo, "get_nodes_by_paths_for_document", None
-            )
-            if callable(get_scoped):
-                # We don't have document_id here; fetch all and let caller filter
-                # Document-scoped variant is handled by DocumentTreeNavigator
-                return self.node_repo.get_nodes_by_paths(list(ancestor_paths))
-            return self.node_repo.get_nodes_by_paths(list(ancestor_paths))
+        while frontier:
+            parents = self._batched_fetch(frontier)
+            if not parents:
+                break
 
-        return []
+            frontier = set()
+            for parent in parents.values():
+                if parent.id in seen:
+                    continue
+                ancestors.append(parent)
+                seen.add(parent.id)
+                parent_key = getattr(parent, "parent_id", None)
+                if parent_key:
+                    frontier.add(cast(str, parent_key))
+
+        return ancestors
 
     def get_root_node(self) -> TreeNode | None:
         """Get the root node (node with no parent).
@@ -88,8 +106,7 @@ class TreeNavigator:
         Returns:
             Root TreeNode if found, None otherwise
         """
-        # Root nodes have empty path by convention
-        roots = self.node_repo.get_nodes_by_paths([""])
+        roots = self.node_repo.get_root_nodes()
         return roots[0] if roots else None
 
     def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
@@ -101,15 +118,8 @@ class TreeNavigator:
         Returns:
             Root TreeNode for document if found, None otherwise
         """
-        roots = self.node_repo.get_nodes_by_paths([""])
-        if not roots:
-            return None
-        if document_id is None:
-            return roots[0]
-        for n in roots:
-            if getattr(n, "document_id", None) == document_id:
-                return n
-        return None
+        roots = self.node_repo.get_root_nodes(document_id)
+        return roots[0] if roots else None
 
     def get_node_depth(self, node_id: str) -> int:
         """Calculate depth of a node (distance from root).
@@ -123,13 +133,49 @@ class TreeNavigator:
         Raises:
             NodeNotFoundError: If node not found
         """
-        from ragzoom.utils.path_utils import get_depth
+        cached_depth = self._depth_cache.get(node_id)
+        if cached_depth is not None:
+            return cached_depth
 
-        node = self.node_repo.get_node(node_id)
+        node = self._get_node(node_id)
         if not node:
             raise NodeNotFoundError(node_id)
 
-        return get_depth(node.path)
+        depth_attr = getattr(node, "depth", None)
+        if depth_attr is not None:
+            self._depth_cache[node_id] = int(depth_attr)
+            return int(depth_attr)
+
+        trail: list[TreeNode] = []
+        current = node
+        base_depth = 0
+
+        while True:
+            cached = getattr(current, "depth", None)
+            if cached is not None:
+                base_depth = int(cached)
+                self._depth_cache[current.id] = base_depth
+                break
+
+            parent = self._get_parent(current)
+            if parent is None:
+                base_depth = 0
+                setattr(current, "depth", 0)
+                self._depth_cache[current.id] = 0
+                break
+
+            trail.append(current)
+            current = parent
+
+        depth = base_depth
+        for descendant in reversed(trail):
+            depth += 1
+            setattr(descendant, "depth", depth)
+            self._depth_cache[descendant.id] = depth
+
+        result = depth if trail else base_depth
+        self._depth_cache[node_id] = result
+        return result
 
     def is_leaf_node(self, node_id: str) -> bool:
         """Check if a node is a leaf (has no children).
@@ -166,7 +212,7 @@ class TreeNavigator:
         return getattr(node, "parent_id", None) is None
 
     def get_parent_node(self, node_id: str) -> TreeNode | None:
-        """Get the parent node using path-based lookup.
+        """Return the parent node using structural relationships.
 
         Args:
             node_id: Node identifier
@@ -174,22 +220,14 @@ class TreeNavigator:
         Returns:
             Parent TreeNode or None if this is root or node not found
         """
-        from ragzoom.utils.path_utils import get_parent_path
-
-        node = self.node_repo.get_node(node_id)
+        node = self._get_node(node_id)
         if not node:
             return None
 
-        parent_path = get_parent_path(node.path)
-        # For root node (path=""), get_parent_path returns "", but root has no parent
-        if node.path == "":  # Root node
-            return None
-
-        parents = self.node_repo.get_nodes_by_paths([parent_path])
-        return parents[0] if parents else None
+        return self._get_parent(node)
 
     def get_sibling_node(self, node_id: str) -> TreeNode | None:
-        """Get the sibling node using path-based lookup.
+        """Return the sibling node using the shared parent reference.
 
         Args:
             node_id: Node identifier
@@ -197,20 +235,37 @@ class TreeNavigator:
         Returns:
             Sibling TreeNode or None if no sibling or node not found
         """
-        from ragzoom.utils.path_utils import get_sibling_path
-
-        node = self.node_repo.get_node(node_id)
+        node = self._get_node(node_id)
         if not node:
             return None
+        parent = self._get_parent(node)
+        if parent is None:
+            return None
 
-        sibling_path = get_sibling_path(node.path)
-        if sibling_path is not None:  # Root has no sibling
-            siblings = self.node_repo.get_nodes_by_paths([sibling_path])
-            return siblings[0] if siblings else None
-        return None
+        child_ids = [
+            child_id
+            for child_id in (parent.left_child_id, parent.right_child_id)
+            if child_id
+        ]
+        if not child_ids:
+            return None
+
+        children = self._batched_fetch(child_ids)
+
+        if parent.left_child_id == node.id:
+            sibling_id = parent.right_child_id
+        elif parent.right_child_id == node.id:
+            sibling_id = parent.left_child_id
+        else:
+            sibling_id = None
+
+        if not sibling_id:
+            return None
+
+        return children.get(sibling_id)
 
     def is_left_child(self, node_id: str) -> bool:
-        """Check if node is a left child of its parent.
+        """Check if node is the left child of its parent.
 
         Args:
             node_id: Node identifier
@@ -218,14 +273,17 @@ class TreeNavigator:
         Returns:
             True if node is a left child, False if right child or root
         """
-        node = self.node_repo.get_node(node_id)
-        if not node or not node.path:
+        node = self._get_node(node_id)
+        if not node:
+            return False
+        parent = self._get_parent(node)
+        if parent is None:
             return False
 
-        return node.path[-1] == "0"
+        return parent.left_child_id == node.id
 
     def is_right_child(self, node_id: str) -> bool:
-        """Check if node is a right child of its parent.
+        """Check if node is the right child of its parent.
 
         Args:
             node_id: Node identifier
@@ -233,8 +291,11 @@ class TreeNavigator:
         Returns:
             True if node is a right child, False if left child or root
         """
-        node = self.node_repo.get_node(node_id)
-        if not node or not node.path:
+        node = self._get_node(node_id)
+        if not node:
+            return False
+        parent = self._get_parent(node)
+        if parent is None:
             return False
 
-        return node.path[-1] == "1"
+        return parent.right_child_id == node.id

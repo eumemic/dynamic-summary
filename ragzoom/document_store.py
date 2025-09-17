@@ -103,6 +103,15 @@ class DocumentNodeRepository:
         nodes = self._repo.get_nodes(node_ids)
         return [node for node in nodes if node.document_id == self.document_id]
 
+    def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]:
+        """Get root nodes scoped to the provided or default document."""
+
+        target_doc = document_id or self.document_id
+        nodes = self._repo.get_root_nodes(target_doc)
+        if target_doc is None:
+            return nodes
+        return [node for node in nodes if node.document_id == target_doc]
+
     def get_many(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes, filtering to this document only."""
         nodes = self._repo.get_nodes(node_ids)
@@ -166,19 +175,6 @@ class DocumentNodeRepository:
         if node:
             self._repo.update_node_access(node_id)
 
-    # Additional helper used by CoverageBuilder sibling logic
-    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
-        """Get nodes by path values, filtered to this document only."""
-        # Use document-scoped path lookup if repository supports it
-        get_scoped = getattr(self._repo, "get_nodes_by_paths_for_document", None)
-        if callable(get_scoped):
-            from typing import cast as _cast
-
-            nodes = _cast(list[TreeNode], get_scoped(self.document_id, paths))
-        else:
-            nodes = self._repo.get_nodes_by_paths(paths)
-        return [node for node in nodes if node.document_id == self.document_id]
-
     def update_parent_references_batch(
         self, updates: list[tuple[str, str]], *, session: Session | None = None
     ) -> None:
@@ -219,27 +215,6 @@ class DocumentTreeNavigator:
         if not valid_nodes:
             return []
 
-        # Prefer document-scoped path lookup to avoid loading ancestors from other documents
-        repo = self._navigator.node_repo
-        get_scoped = getattr(repo, "get_nodes_by_paths_for_document", None)
-        if callable(get_scoped):
-            from ragzoom.utils.path_utils import get_all_ancestor_paths
-
-            nodes = repo.get_nodes(valid_nodes)
-            if not nodes:
-                return []
-            ancestor_paths = set()
-            for n in nodes:
-                ancestor_paths.update(get_all_ancestor_paths(n.path))
-            if not ancestor_paths:
-                return []
-            from typing import cast as _cast
-
-            return _cast(
-                list[TreeNode], get_scoped(self.document_id, list(ancestor_paths))
-            )
-
-        # Fallback to generic navigator and filter
         ancestors = self._navigator.get_ancestors(valid_nodes)
         return [node for node in ancestors if node.document_id == self.document_id]
 
@@ -372,13 +347,29 @@ class DocumentStore:
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         """Get all pinned nodes for this document only."""
-        # Prefer backend-optimized query if available
+        # Prefer backend-optimized query if available to scope by document
         getter = getattr(self._node_repo, "get_pinned_nodes_for_document", None)
         if callable(getter) and self.document_id is not None:
-            return list(getter(self.document_id, depth_max))
-        # Fallback: get all pinned nodes and filter by document
-        all_pinned = self._node_repo.get_pinned_nodes(depth_max)
-        return [node for node in all_pinned if node.document_id == self.document_id]
+            pinned: list[TreeNode] = list(getter(self.document_id, None))
+        else:
+            pinned = [
+                node
+                for node in self._node_repo.get_pinned_nodes(None)
+                if node.document_id == self.document_id
+            ]
+
+        if depth_max is None:
+            return pinned
+
+        filtered: list[TreeNode] = []
+        for node in pinned:
+            try:
+                depth = self.tree.get_depth(node.id)
+            except Exception:
+                continue
+            if depth_max is None or depth <= depth_max:
+                filtered.append(node)
+        return filtered
 
     @staticmethod
     def compute_content_hash(content: str) -> str:

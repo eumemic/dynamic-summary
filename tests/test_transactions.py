@@ -37,7 +37,6 @@ class TestTransactionContext:
                 "document_id": doc_id,
                 "token_count": 3,
                 "height": 0,
-                "path": "",
             }
         ]
 
@@ -120,7 +119,6 @@ class TestTransactionContext:
                 "document_id": doc_id,
                 "token_count": 2,
                 "height": 0,
-                "path": "0",
             },
             {
                 "node_id": "leaf-2",
@@ -130,7 +128,6 @@ class TestTransactionContext:
                 "document_id": doc_id,
                 "token_count": 2,
                 "height": 0,
-                "path": "1",
             },
             {
                 "node_id": "parent-1",
@@ -140,7 +137,6 @@ class TestTransactionContext:
                 "document_id": doc_id,
                 "token_count": 4,
                 "height": 1,
-                "path": "",
                 "left_child_id": "leaf-1",
                 "right_child_id": "leaf-2",
             },
@@ -233,7 +229,6 @@ class TestBackwardCompatibility:
                 "document_id": doc_id,
                 "token_count": 3,
                 "height": 0,
-                "path": "",
             }
         ]
 
@@ -273,7 +268,6 @@ class TestBackwardCompatibility:
                 "document_id": doc_id,
                 "token_count": 3,
                 "height": 0,
-                "path": "",
             }
         ]
         doc_store.nodes.add_batch(nodes_data)
@@ -319,7 +313,6 @@ class TestAtomicReindexing:
                 "document_id": doc_id,
                 "token_count": 2,
                 "height": 0,
-                "path": "",
             }
         ]
         doc_store.nodes.add_batch(old_nodes_data)
@@ -342,7 +335,6 @@ class TestAtomicReindexing:
                 "document_id": doc_id,
                 "token_count": 2,
                 "height": 0,
-                "path": "",
             }
         ]
 
@@ -387,7 +379,6 @@ class TestAtomicReindexing:
                 "document_id": doc_id,
                 "token_count": 2,
                 "height": 0,
-                "path": "",
             }
         ]
         doc_store.nodes.add_batch(old_nodes_data)
@@ -444,7 +435,6 @@ class TestTransactionSafety:
                 "document_id": doc_id,
                 "token_count": 2,
                 "height": 0,
-                "path": "",
             }
         ]
         doc_store.nodes.add_batch(valid_nodes)
@@ -473,7 +463,6 @@ class TestTransactionSafety:
                         "document_id": doc_id,
                         "token_count": 3,
                         "height": 0,
-                        "path": "",
                     }
                 ]
                 doc_store.nodes.add_batch(invalid_nodes, session=session)

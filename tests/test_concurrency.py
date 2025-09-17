@@ -61,7 +61,6 @@ class TestConcurrency:
                     "document_id": "concurrent-doc",
                     "token_count": 25,
                     "height": 0,
-                    "path": str(i),
                 }
             ]
             doc_store.nodes.add_batch(nodes)
@@ -134,7 +133,6 @@ class TestConcurrency:
                     "document_id": doc_id,
                     "token_count": 25,
                     "height": 0,
-                    "path": "",
                 }
             ]
             doc_store.nodes.add_batch(nodes)
@@ -183,7 +181,6 @@ class TestConcurrency:
                 "document_id": "state-test-1",
                 "token_count": 25,
                 "height": 0,
-                "path": "",
             }
         ]
         store1.nodes.add_batch(nodes1)
@@ -202,7 +199,6 @@ class TestConcurrency:
                 "document_id": "state-test-2",
                 "token_count": 30,
                 "height": 0,
-                "path": "",
             }
         ]
         store2.nodes.add_batch(nodes2)
@@ -253,7 +249,6 @@ class TestConcurrency:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
-                "path": "",
             }
         ]
         doc1_store.nodes.add_batch(nodes_doc1)
@@ -273,7 +268,6 @@ class TestConcurrency:
                 "document_id": "doc2",
                 "token_count": 25,
                 "height": 0,
-                "path": "",
             }
         ]
         doc2_store.nodes.add_batch(nodes_doc2)
@@ -329,7 +323,6 @@ class TestConcurrency:
                         "document_id": "batch-doc",
                         "token_count": 25,
                         "height": 0,
-                        "path": f"{batch_num}{i}",
                     }
                 )
             batches.append(batch_nodes)
@@ -379,7 +372,6 @@ class TestConcurrency:
                 "document_id": "search-doc",
                 "token_count": 25,
                 "height": 0,
-                "path": "0",
             },
             {
                 "node_id": "search2",
@@ -390,7 +382,6 @@ class TestConcurrency:
                 "document_id": "search-doc",
                 "token_count": 25,
                 "height": 0,
-                "path": "1",
             },
         ]
 
