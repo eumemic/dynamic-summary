@@ -59,7 +59,6 @@ class TestDPScoresBugSQLite:
                 "token_count": 25,
                 "height": 0,
                 "parent_id": "node_a",
-                "path": "00",
             },
             {
                 "node_id": "a2",
@@ -71,7 +70,6 @@ class TestDPScoresBugSQLite:
                 "token_count": 25,
                 "height": 0,
                 "parent_id": "node_a",
-                "path": "01",
             },
             {
                 "node_id": "b1",
@@ -83,7 +81,6 @@ class TestDPScoresBugSQLite:
                 "token_count": 25,
                 "height": 0,
                 "parent_id": "node_b",
-                "path": "10",
             },
             {
                 "node_id": "b2",
@@ -95,7 +92,6 @@ class TestDPScoresBugSQLite:
                 "token_count": 25,
                 "height": 0,
                 "parent_id": "node_b",
-                "path": "11",
             },
             # Internal nodes
             {
@@ -110,7 +106,6 @@ class TestDPScoresBugSQLite:
                 "left_child_id": "a1",
                 "right_child_id": "a2",
                 "parent_id": "root",
-                "path": "0",
             },
             {
                 "node_id": "node_b",
@@ -124,7 +119,6 @@ class TestDPScoresBugSQLite:
                 "left_child_id": "b1",
                 "right_child_id": "b2",
                 "parent_id": "root",
-                "path": "1",
             },
             # Root
             {
@@ -138,7 +132,6 @@ class TestDPScoresBugSQLite:
                 "height": 2,
                 "left_child_id": "node_a",
                 "right_child_id": "node_b",
-                "path": "",
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -224,7 +217,6 @@ class TestDPScoresBugSQLite:
                 "token_count": 50,
                 "height": 0,
                 "parent_id": "root",
-                "path": "0",
             },
             {
                 "node_id": "leaf2",
@@ -236,7 +228,6 @@ class TestDPScoresBugSQLite:
                 "token_count": 50,
                 "height": 0,
                 "parent_id": "root",
-                "path": "1",
             },
             {
                 "node_id": "root",
@@ -249,7 +240,6 @@ class TestDPScoresBugSQLite:
                 "height": 1,
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
-                "path": "",
             },
         ]
         doc_store.nodes.add_batch(nodes)

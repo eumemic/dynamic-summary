@@ -48,7 +48,6 @@ class TestTreeVisualizationSQLite:
                 "height": 2,
                 "left_child_id": "left",
                 "right_child_id": "right",
-                "path": "",
             },
             # Left child
             {
@@ -63,7 +62,6 @@ class TestTreeVisualizationSQLite:
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
                 "parent_id": "root",
-                "path": "0",
             },
             # Right child
             {
@@ -78,7 +76,6 @@ class TestTreeVisualizationSQLite:
                 "left_child_id": "leaf3",
                 "right_child_id": "leaf4",
                 "parent_id": "root",
-                "path": "1",
             },
             # Leaf nodes
             {
@@ -91,7 +88,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 25,
                 "height": 0,
                 "parent_id": "left",
-                "path": "00",
             },
             {
                 "node_id": "leaf2",
@@ -103,7 +99,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 25,
                 "height": 0,
                 "parent_id": "left",
-                "path": "01",
             },
             {
                 "node_id": "leaf3",
@@ -115,7 +110,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 25,
                 "height": 0,
                 "parent_id": "right",
-                "path": "10",
             },
             {
                 "node_id": "leaf4",
@@ -127,7 +121,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 25,
                 "height": 0,
                 "parent_id": "right",
-                "path": "11",
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -200,7 +193,6 @@ class TestTreeVisualizationSQLite:
                 "height": 2,
                 "left_child_id": "left",
                 "right_child_id": "right",
-                "path": "",
             },
             # Left subtree (complete)
             {
@@ -215,7 +207,6 @@ class TestTreeVisualizationSQLite:
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
                 "parent_id": "root",
-                "path": "0",
             },
             # Right subtree (only left child - document boundary)
             {
@@ -230,7 +221,6 @@ class TestTreeVisualizationSQLite:
                 "left_child_id": "leaf3",
                 "right_child_id": None,  # No right child - document boundary
                 "parent_id": "root",
-                "path": "1",
             },
             # Leaf nodes
             {
@@ -243,7 +233,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 50,
                 "height": 0,
                 "parent_id": "left",
-                "path": "00",
             },
             {
                 "node_id": "leaf2",
@@ -255,7 +244,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 50,
                 "height": 0,
                 "parent_id": "left",
-                "path": "01",
             },
             {
                 "node_id": "leaf3",
@@ -267,7 +255,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 50,
                 "height": 0,
                 "parent_id": "right",
-                "path": "10",
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -359,7 +346,6 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 0,
-                "path": "",
             }
         ]
         doc_store.nodes.add_batch(nodes)
@@ -404,7 +390,6 @@ class TestTreeVisualizationSQLite:
                 "height": 1,
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
-                "path": "",
             },
             # Leaf nodes
             {
@@ -417,7 +402,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 50,
                 "height": 0,
                 "parent_id": "root",
-                "path": "0",
             },
             {
                 "node_id": "leaf2",
@@ -429,7 +413,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 50,
                 "height": 0,
                 "parent_id": "root",
-                "path": "1",
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -483,7 +466,6 @@ class TestTreeVisualizationSQLite:
                 "height": 3,
                 "left_child_id": "l1",
                 "right_child_id": "r1",
-                "path": "",
             },
             # Height 2
             {
@@ -498,7 +480,6 @@ class TestTreeVisualizationSQLite:
                 "left_child_id": "l2",
                 "right_child_id": "r2",
                 "parent_id": "root",
-                "path": "0",
             },
             {
                 "node_id": "r1",
@@ -512,7 +493,6 @@ class TestTreeVisualizationSQLite:
                 "left_child_id": "l3",
                 "right_child_id": "r3",
                 "parent_id": "root",
-                "path": "1",
             },
             # Height 1
             {
@@ -527,7 +507,6 @@ class TestTreeVisualizationSQLite:
                 "left_child_id": "l2_l",
                 "right_child_id": "l2_r",
                 "parent_id": "l1",
-                "path": "00",
             },
             {
                 "node_id": "r2",
@@ -541,7 +520,6 @@ class TestTreeVisualizationSQLite:
                 "left_child_id": "r2_l",
                 "right_child_id": "r2_r",
                 "parent_id": "l1",
-                "path": "01",
             },
             {
                 "node_id": "l3",
@@ -555,7 +533,6 @@ class TestTreeVisualizationSQLite:
                 "left_child_id": "l3_l",
                 "right_child_id": "l3_r",
                 "parent_id": "r1",
-                "path": "10",
             },
             {
                 "node_id": "r3",
@@ -569,7 +546,6 @@ class TestTreeVisualizationSQLite:
                 "left_child_id": "r3_l",
                 "right_child_id": "r3_r",
                 "parent_id": "r1",
-                "path": "11",
             },
             # Height 0 (leaves) - only create the ones we reference
             {
@@ -582,7 +558,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 12,
                 "height": 0,
                 "parent_id": "l2",
-                "path": "000",
             },
             {
                 "node_id": "l2_r",
@@ -594,7 +569,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 13,
                 "height": 0,
                 "parent_id": "l2",
-                "path": "001",
             },
             {
                 "node_id": "r2_l",
@@ -606,7 +580,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 12,
                 "height": 0,
                 "parent_id": "r2",
-                "path": "010",
             },
             {
                 "node_id": "r2_r",
@@ -618,7 +591,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 13,
                 "height": 0,
                 "parent_id": "r2",
-                "path": "011",
             },
             {
                 "node_id": "l3_l",
@@ -630,7 +602,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 12,
                 "height": 0,
                 "parent_id": "l3",
-                "path": "100",
             },
             {
                 "node_id": "l3_r",
@@ -642,7 +613,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 13,
                 "height": 0,
                 "parent_id": "l3",
-                "path": "101",
             },
             {
                 "node_id": "r3_l",
@@ -654,7 +624,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 12,
                 "height": 0,
                 "parent_id": "r3",
-                "path": "110",
             },
             {
                 "node_id": "r3_r",
@@ -666,7 +635,6 @@ class TestTreeVisualizationSQLite:
                 "token_count": 13,
                 "height": 0,
                 "parent_id": "r3",
-                "path": "111",
             },
         ]
         doc_store.nodes.add_batch(nodes)
