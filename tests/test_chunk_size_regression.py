@@ -253,7 +253,6 @@ class TestChunkSizeRegressionSQLite:
                 "document_id": "chunk-test-doc",
                 "token_count": 2,
                 "height": 0,
-                "path": "00",
             },
             {
                 "node_id": "small2",
@@ -264,7 +263,6 @@ class TestChunkSizeRegressionSQLite:
                 "document_id": "chunk-test-doc",
                 "token_count": 3,
                 "height": 0,
-                "path": "01",
             },
             # Target-size chunks (around 200 tokens)
             {
@@ -276,7 +274,6 @@ class TestChunkSizeRegressionSQLite:
                 "document_id": "chunk-test-doc",
                 "token_count": 200,
                 "height": 0,
-                "path": "10",
             },
             {
                 "node_id": "target2",
@@ -287,7 +284,6 @@ class TestChunkSizeRegressionSQLite:
                 "document_id": "chunk-test-doc",
                 "token_count": 195,
                 "height": 0,
-                "path": "11",
             },
             # Parent nodes (summaries)
             {
@@ -301,7 +297,6 @@ class TestChunkSizeRegressionSQLite:
                 "left_child_id": "small1",
                 "right_child_id": "small2",
                 "token_count": 4,
-                "path": "0",
             },
             {
                 "node_id": "right_parent",
@@ -314,7 +309,6 @@ class TestChunkSizeRegressionSQLite:
                 "left_child_id": "target1",
                 "right_child_id": "target2",
                 "token_count": 5,
-                "path": "1",
             },
             {
                 "node_id": "root",
@@ -327,7 +321,6 @@ class TestChunkSizeRegressionSQLite:
                 "left_child_id": "left_parent",
                 "right_child_id": "right_parent",
                 "token_count": 6,
-                "path": "",
             },
         ]
 
