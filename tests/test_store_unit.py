@@ -537,11 +537,11 @@ class TestStoreUnit:
 
         doc_store.nodes.add_batch(nodes_data)
 
-        # Test path-based retrieval
-        path_nodes = doc_store.nodes.get_nodes_by_paths(["00", "01", "0"])
-        assert len(path_nodes) == 3
-        path_ids = {node.id for node in path_nodes}
-        assert path_ids == {"path-00", "path-01", "path-0"}
+        # Test multi-id retrieval remains document scoped
+        fetched_nodes = doc_store.nodes.get_nodes(["path-00", "path-01", "path-0"])
+        assert len(fetched_nodes) == 3
+        fetched_ids = {node.id for node in fetched_nodes}
+        assert fetched_ids == {"path-00", "path-01", "path-0"}
 
     def test_node_access_patterns(self, doc_store: DocumentStore) -> None:
         """Test node access tracking functionality."""

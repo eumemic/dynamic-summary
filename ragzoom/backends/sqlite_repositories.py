@@ -198,31 +198,6 @@ class SqliteNodeRepository:
             rows = session.execute(stmt).scalars().all()
             return _detach_rows(session, rows)
 
-    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
-        if not paths:
-            return []
-        with self.SessionLocal() as session:
-            rows = (
-                session.execute(
-                    select(SQLiteTreeNode).where(SQLiteTreeNode.path.in_(paths))
-                )
-                .scalars()
-                .all()
-            )
-            return _detach_rows(session, rows)
-
-    def get_nodes_by_paths_for_document(
-        self, document_id: str | None, paths: list[str]
-    ) -> list[TreeNode]:
-        if not paths:
-            return []
-        with self.SessionLocal() as session:
-            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.path.in_(paths))
-            if document_id:
-                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
-            rows = session.execute(stmt).scalars().all()
-            return _detach_rows(session, rows)
-
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
         with self.SessionLocal() as session:
             if document_id:

@@ -175,19 +175,6 @@ class DocumentNodeRepository:
         if node:
             self._repo.update_node_access(node_id)
 
-    # Additional helper used by CoverageBuilder sibling logic
-    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
-        """Get nodes by path values, filtered to this document only."""
-        # Use document-scoped path lookup if repository supports it
-        get_scoped = getattr(self._repo, "get_nodes_by_paths_for_document", None)
-        if callable(get_scoped):
-            from typing import cast as _cast
-
-            nodes = _cast(list[TreeNode], get_scoped(self.document_id, paths))
-        else:
-            nodes = self._repo.get_nodes_by_paths(paths)
-        return [node for node in nodes if node.document_id == self.document_id]
-
     def update_parent_references_batch(
         self, updates: list[tuple[str, str]], *, session: Session | None = None
     ) -> None:

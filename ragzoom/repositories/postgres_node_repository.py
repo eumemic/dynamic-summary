@@ -417,34 +417,6 @@ class PostgresNodeRepository(BaseRepository):
 
             return extracted
 
-    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
-        """Get multiple nodes by their path values.
-
-        Args:
-            paths: List of path strings to retrieve
-
-        Returns:
-            List of PostgresTreeNode objects found
-        """
-        if not paths:
-            return []
-
-        with self.SessionLocal() as session:
-            db_nodes = (
-                session.query(PostgresTreeNode)
-                .filter(PostgresTreeNode.path.in_(paths))
-                .all()
-            )
-            nodes: list[TreeNode] = []
-            for node in db_nodes:
-                # Force load and detach
-                self._force_load_and_detach(session, node)
-                # Add to cache
-                self.cache_manager.put(node.id, node)
-                nodes.append(node)
-
-            return nodes
-
     def update_node_access(self, node_id: str) -> None:
         """Update access time and count for a node.
 
