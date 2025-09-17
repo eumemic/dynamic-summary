@@ -103,6 +103,15 @@ class DocumentNodeRepository:
         nodes = self._repo.get_nodes(node_ids)
         return [node for node in nodes if node.document_id == self.document_id]
 
+    def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]:
+        """Get root nodes scoped to the provided or default document."""
+
+        target_doc = document_id or self.document_id
+        nodes = self._repo.get_root_nodes(target_doc)
+        if target_doc is None:
+            return nodes
+        return [node for node in nodes if node.document_id == target_doc]
+
     def get_many(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes, filtering to this document only."""
         nodes = self._repo.get_nodes(node_ids)
@@ -219,27 +228,6 @@ class DocumentTreeNavigator:
         if not valid_nodes:
             return []
 
-        # Prefer document-scoped path lookup to avoid loading ancestors from other documents
-        repo = self._navigator.node_repo
-        get_scoped = getattr(repo, "get_nodes_by_paths_for_document", None)
-        if callable(get_scoped):
-            from ragzoom.utils.path_utils import get_all_ancestor_paths
-
-            nodes = repo.get_nodes(valid_nodes)
-            if not nodes:
-                return []
-            ancestor_paths = set()
-            for n in nodes:
-                ancestor_paths.update(get_all_ancestor_paths(n.path))
-            if not ancestor_paths:
-                return []
-            from typing import cast as _cast
-
-            return _cast(
-                list[TreeNode], get_scoped(self.document_id, list(ancestor_paths))
-            )
-
-        # Fallback to generic navigator and filter
         ancestors = self._navigator.get_ancestors(valid_nodes)
         return [node for node in ancestors if node.document_id == self.document_id]
 

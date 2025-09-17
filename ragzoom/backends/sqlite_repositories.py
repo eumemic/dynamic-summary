@@ -190,6 +190,14 @@ class SqliteNodeRepository:
             )
             return _detach_rows(session, rows)
 
+    def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]:
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.parent_id.is_(None))
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            rows = session.execute(stmt).scalars().all()
+            return _detach_rows(session, rows)
+
     def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
         if not paths:
             return []

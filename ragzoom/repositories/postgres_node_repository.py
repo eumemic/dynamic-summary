@@ -398,6 +398,25 @@ class PostgresNodeRepository(BaseRepository):
 
         return nodes
 
+    def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]:
+        """Return all nodes whose parent is null, optionally filtered by document."""
+
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.parent_id.is_(None)
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+
+            roots = query.all()
+            extracted: list[TreeNode] = []
+            for node in roots:
+                self._force_load_and_detach(session, node)
+                self.cache_manager.put(node.id, node)
+                extracted.append(node)
+
+            return extracted
+
     def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
         """Get multiple nodes by their path values.
 

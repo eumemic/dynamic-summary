@@ -1,8 +1,7 @@
-"""SQLite-based tests for path-based tree navigation optimizations.
+"""SQLite-based tests for tree navigation operations.
 
-SQLite-based tests for path-based tree navigation optimizations, providing
-higher fidelity testing of the path-based navigation functionality with
-the real SQLite backend.
+These tests validate TreeNavigator behaviour against the SQLite backend
+without depending on precomputed path metadata.
 """
 
 from __future__ import annotations
@@ -18,8 +17,8 @@ from ragzoom.services.tree_navigator import TreeNavigator
 
 
 @pytest.mark.usefixtures("sqlite_backend")
-class TestPathOptimizationsSQLite:
-    """Test path-based optimizations in tree navigation with SQLite backend."""
+class TestTreeNavigationSQLite:
+    """Validate tree navigation helpers with the SQLite backend."""
 
     @pytest.fixture
     def doc_store(
@@ -30,7 +29,7 @@ class TestPathOptimizationsSQLite:
 
     @pytest.fixture
     def seed_nodes(self, doc_store: DocumentStore) -> None:
-        """Create a tree with proper paths directly in the SQLite backend.
+        """Create a small binary tree directly in the SQLite backend.
 
         Structure:
             root ("")
@@ -115,26 +114,22 @@ class TestPathOptimizationsSQLite:
             ]
         )
 
-    def test_get_node_depth_with_paths(
-        self, doc_store: DocumentStore, seed_nodes: None
-    ) -> None:
-        """Test that get_node_depth uses path field for instant calculation."""
+    def test_get_node_depth(self, doc_store: DocumentStore, seed_nodes: None) -> None:
+        """Depth calculation should traverse ancestors correctly."""
         navigator = TreeNavigator(doc_store._node_repo)
 
-        # Test depth calculation using paths
+        # Depth should equal the number of ancestor hops
         assert navigator.get_node_depth("root") == 0  # Root depth
         assert navigator.get_node_depth("left") == 1  # First level
         assert navigator.get_node_depth("right") == 1  # First level
         assert navigator.get_node_depth("left_left") == 2  # Second level
         assert navigator.get_node_depth("left_right") == 2  # Second level
 
-    def test_get_parent_node_with_paths(
-        self, doc_store: DocumentStore, seed_nodes: None
-    ) -> None:
-        """Test that get_parent_node uses path field for instant lookup."""
+    def test_get_parent_node(self, doc_store: DocumentStore, seed_nodes: None) -> None:
+        """Parent lookup should rely on stored parent pointers."""
         navigator = TreeNavigator(doc_store._node_repo)
 
-        # Test parent lookup using paths
+        # Parent lookup relies on stored parent pointers
         root_parent = navigator.get_parent_node("root")
         assert root_parent is None  # Root has no parent
 
@@ -146,13 +141,11 @@ class TestPathOptimizationsSQLite:
         assert left_left_parent is not None
         assert left_left_parent.id == "left"
 
-    def test_get_sibling_node_with_paths(
-        self, doc_store: DocumentStore, seed_nodes: None
-    ) -> None:
-        """Test that get_sibling_node uses path field for instant lookup."""
+    def test_get_sibling_node(self, doc_store: DocumentStore, seed_nodes: None) -> None:
+        """Sibling lookup should consult the shared parent."""
         navigator = TreeNavigator(doc_store._node_repo)
 
-        # Test sibling lookup using paths
+        # Sibling lookup should return the opposite child of the shared parent
         root_sibling = navigator.get_sibling_node("root")
         assert root_sibling is None  # Root has no sibling
 
@@ -168,26 +161,22 @@ class TestPathOptimizationsSQLite:
         assert left_left_sibling is not None
         assert left_left_sibling.id == "left_right"
 
-    def test_is_left_child_with_paths(
-        self, doc_store: DocumentStore, seed_nodes: None
-    ) -> None:
-        """Test that is_left_child uses path field for instant determination."""
+    def test_is_left_child(self, doc_store: DocumentStore, seed_nodes: None) -> None:
+        """Left child detection should use parent pointers."""
         navigator = TreeNavigator(doc_store._node_repo)
 
-        # Test left child detection using paths
+        # Left child detection should reflect the parent's left pointer
         assert not navigator.is_left_child("root")  # Root is neither left nor right
         assert navigator.is_left_child("left")  # Left child
         assert not navigator.is_left_child("right")  # Right child, not left
         assert navigator.is_left_child("left_left")  # Left-left is left child
         assert not navigator.is_left_child("left_right")  # Left-right is right child
 
-    def test_is_right_child_with_paths(
-        self, doc_store: DocumentStore, seed_nodes: None
-    ) -> None:
-        """Test that is_right_child uses path field for instant determination."""
+    def test_is_right_child(self, doc_store: DocumentStore, seed_nodes: None) -> None:
+        """Right child detection should use parent pointers."""
         navigator = TreeNavigator(doc_store._node_repo)
 
-        # Test right child detection using paths
+        # Right child detection should reflect the parent's right pointer
         assert not navigator.is_right_child("root")  # Root is neither left nor right
         assert not navigator.is_right_child("left")  # Left child, not right
         assert navigator.is_right_child("right")  # Right child

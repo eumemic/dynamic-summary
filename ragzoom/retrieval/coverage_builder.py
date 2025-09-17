@@ -94,78 +94,37 @@ class CoverageBuilder:
         return coverage_map
 
     def _ensure_sibling_coverage(self, coverage_map: dict[str, bool]) -> None:
-        """Ensure coverage property by including siblings using path-based logic.
+        """Ensure coverage property by including siblings via structural traversal."""
+        while True:
+            nodes_in_coverage = self.store.nodes.get_nodes(list(coverage_map.keys()))
+            if not nodes_in_coverage:
+                return
 
-        If a node is in coverage, its sibling must also be included (if it exists)
-        to maintain the coverage property that parent span equals union of children spans.
+            new_nodes_added = False
 
-        Args:
-            coverage_map: Coverage map to update in place
-        """
-        # Get all nodes currently in coverage (robust against mocks)
-        node_ids = list(coverage_map.keys())
-        nodes_in_coverage = []
-        try:
-            get_nodes_fn = getattr(self.store.nodes, "get_nodes", None)
-            if callable(get_nodes_fn):
-                result = get_nodes_fn(node_ids)
-                if isinstance(result, list):
-                    nodes_in_coverage = result
-        except Exception:
-            nodes_in_coverage = []
-        if not nodes_in_coverage:
-            try:
-                get_many_fn = getattr(self.store.nodes, "get_many", None)
-                if callable(get_many_fn):
-                    result = get_many_fn(node_ids)
-                    if isinstance(result, list):
-                        nodes_in_coverage = result
-            except Exception:
-                nodes_in_coverage = []
-        if not nodes_in_coverage:
-            getter = getattr(self.store.nodes, "get", None)
-            if callable(getter):
-                for node_id in node_ids:
-                    try:
-                        node = getter(node_id)
-                        if node is not None:
-                            nodes_in_coverage.append(node)
-                    except Exception:
-                        continue
+            for node in nodes_in_coverage:
+                left_id = getattr(node, "left_child_id", None)
+                right_id = getattr(node, "right_child_id", None)
 
-        # Use parent-based sibling inclusion first (works without path fields)
-        for node in nodes_in_coverage:
-            parent_id = getattr(node, "parent_id", None)
-            if not parent_id:
-                continue
-            try:
-                left, right = self.store.tree.get_children(parent_id)
-            except Exception:
-                left, right = None, None
-            if left and getattr(left, "id", None) != node.id:
-                coverage_map[left.id] = True
-            if right and getattr(right, "id", None) != node.id:
-                coverage_map[right.id] = True
+                if left_id:
+                    if (
+                        left_id in coverage_map
+                        and right_id
+                        and right_id not in coverage_map
+                    ):
+                        sibling = self.store.nodes.get_node(right_id)
+                        if sibling is not None:
+                            coverage_map[right_id] = True
+                            new_nodes_added = True
+                    elif (
+                        right_id
+                        and right_id in coverage_map
+                        and left_id not in coverage_map
+                    ):
+                        sibling = self.store.nodes.get_node(left_id)
+                        if sibling is not None:
+                            coverage_map[left_id] = True
+                            new_nodes_added = True
 
-        # Additionally, if path-based retrieval is available, include any missing siblings by path
-        try:
-            get_by_paths_fn = getattr(self.store.nodes, "get_nodes_by_paths", None)
-            if callable(get_by_paths_fn):
-                from ragzoom.utils.path_utils import get_sibling_path
-
-                sibling_paths = set()
-                for node in nodes_in_coverage:
-                    path = getattr(node, "path", None)
-                    if path is None:
-                        continue
-                    sibling_path = get_sibling_path(path)
-                    if sibling_path is not None:
-                        sibling_paths.add(sibling_path)
-
-                if sibling_paths:
-                    siblings = get_by_paths_fn(list(sibling_paths))
-                    for sibling in siblings:
-                        coverage_map[sibling.id] = True
-        except Exception:
-            # If anything goes wrong with path-based method, we already did parent-based inclusion
-            pass
+            if not new_nodes_added:
+                return
