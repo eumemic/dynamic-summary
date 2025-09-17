@@ -61,7 +61,6 @@ class TestTreeNavigation:
                 "document_id": "doc1",
                 "token_count": 3,
                 "height": 0,
-                "path": "00",
             },
             {
                 "node_id": "left_right",
@@ -72,7 +71,6 @@ class TestTreeNavigation:
                 "document_id": "doc1",
                 "token_count": 3,
                 "height": 0,
-                "path": "01",
             },
             # Internal nodes
             {
@@ -85,7 +83,6 @@ class TestTreeNavigation:
                 "height": 1,
                 "left_child_id": "left_left",
                 "right_child_id": "left_right",
-                "path": "0",
             },
             {
                 "node_id": "right",
@@ -95,7 +92,6 @@ class TestTreeNavigation:
                 "span_end": 100,
                 "document_id": "doc1",
                 "height": 1,
-                "path": "1",
             },
             {
                 "node_id": "root",
@@ -107,7 +103,6 @@ class TestTreeNavigation:
                 "height": 2,
                 "left_child_id": "left",
                 "right_child_id": "right",
-                "path": "",
             },
         ]
         doc_store.nodes.add_batch(nodes)

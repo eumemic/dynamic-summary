@@ -111,7 +111,6 @@ class TestBudgetPlannerIsolation:
                 "document_id": "doc1",
                 "token_count": 50,  # Small chunks
                 "height": 0,
-                "path": f"{i:03b}",
                 "parent_id": None,
                 "left_child_id": None,
                 "right_child_id": None,
@@ -135,7 +134,6 @@ class TestBudgetPlannerIsolation:
                 "document_id": "doc2",
                 "token_count": 200,  # Large chunks
                 "height": 0,
-                "path": f"{i:03b}",
                 "parent_id": None,
                 "left_child_id": None,
                 "right_child_id": None,
@@ -194,7 +192,6 @@ class TestBudgetPlannerIsolation:
                 "document_id": "doc1",
                 "token_count": 1000,  # Very large chunk
                 "height": 0,
-                "path": "0",
                 "parent_id": None,
                 "left_child_id": None,
                 "right_child_id": None,

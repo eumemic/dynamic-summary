@@ -84,7 +84,6 @@ class TestStoreSQLite:
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
-                "path": "0",
             },
             {
                 "node_id": "batch-2",
@@ -93,7 +92,6 @@ class TestStoreSQLite:
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
-                "path": "1",
             },
             {
                 "node_id": "batch-root",
@@ -104,7 +102,6 @@ class TestStoreSQLite:
                 "height": 1,
                 "left_child_id": "batch-1",
                 "right_child_id": "batch-2",
-                "path": "",
             },
         ]
 
@@ -140,7 +137,6 @@ class TestStoreSQLite:
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
-                "path": "0",
             },
             {
                 "node_id": "leaf-2",
@@ -149,7 +145,6 @@ class TestStoreSQLite:
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
-                "path": "1",
             },
             {
                 "node_id": "root",
@@ -160,7 +155,6 @@ class TestStoreSQLite:
                 "height": 1,
                 "left_child_id": "leaf-1",
                 "right_child_id": "leaf-2",
-                "path": "",
             },
         ]
 
@@ -496,7 +490,6 @@ class TestStoreSQLite:
                 "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 10,
-                "path": "00",
                 "height": 0,
             },
             {
@@ -505,7 +498,6 @@ class TestStoreSQLite:
                 "embedding": np.array([0.2] * 1536, dtype=np.float64),
                 "span_start": 10,
                 "span_end": 20,
-                "path": "01",
                 "height": 0,
             },
             {
@@ -514,7 +506,6 @@ class TestStoreSQLite:
                 "embedding": np.array([0.3] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 20,
-                "path": "0",
                 "height": 1,
                 "left_child_id": "path-00",
                 "right_child_id": "path-01",
