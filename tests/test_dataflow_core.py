@@ -31,7 +31,7 @@ class TestPokeMechanism:
             height=0,
             span_start=0,
             span_end=5,
-            path="0",
+            depth=1,
             document_id="doc1",
             embedding=[],
             token_count=10,
@@ -42,7 +42,7 @@ class TestPokeMechanism:
             height=0,
             span_start=5,
             span_end=10,
-            path="1",
+            depth=1,
             document_id="doc1",
             embedding=[],
             token_count=10,
@@ -53,7 +53,7 @@ class TestPokeMechanism:
             height=1,
             span_start=0,
             span_end=10,
-            path="",
+            depth=0,
             document_id="doc1",
             left_child_id="left",
             right_child_id="right",
@@ -83,7 +83,7 @@ class TestPokeMechanism:
             height=0,
             span_start=0,
             span_end=5,
-            path="0",
+            depth=1,
             document_id="doc1",
             embedding=[],
             token_count=0,
@@ -94,7 +94,7 @@ class TestPokeMechanism:
             height=0,
             span_start=5,
             span_end=10,
-            path="1",
+            depth=1,
             document_id="doc1",
             embedding=[],
             token_count=10,
@@ -105,7 +105,7 @@ class TestPokeMechanism:
             height=1,
             span_start=0,
             span_end=10,
-            path="",
+            depth=0,
             document_id="doc1",
             left_child_id="left",
             right_child_id="right",
@@ -133,7 +133,7 @@ class TestPokeMechanism:
             height=1,
             span_start=0,
             span_end=5,
-            path="0",
+            depth=1,
             document_id="doc1",
             left_child_id="child1",
             right_child_id="child2",
@@ -146,7 +146,7 @@ class TestPokeMechanism:
             height=1,
             span_start=5,
             span_end=10,
-            path="1",
+            depth=1,
             document_id="doc1",
             left_child_id="child3",
             right_child_id="child4",
@@ -163,7 +163,7 @@ class TestPokeMechanism:
                 height=0,
                 span_start=0,
                 span_end=5,
-                path=str(i),
+                depth=3,
                 document_id="doc1",
                 embedding=[],
                 token_count=10,
@@ -191,7 +191,7 @@ class TestPokeMechanism:
             height=1,
             span_start=100,  # Higher span_start (rightmost)
             span_end=200,
-            path="1",
+            depth=1,
             document_id="doc1",
             embedding=[],
             token_count=10,
@@ -204,7 +204,7 @@ class TestPokeMechanism:
             height=1,
             span_start=0,  # Lower span_start (leftmost)
             span_end=50,
-            path="0",
+            depth=1,
             document_id="doc1",
             embedding=[],
             token_count=10,
@@ -238,7 +238,7 @@ class TestPokeMechanism:
             height=1,  # Lower level
             span_start=100,  # Further right
             span_end=200,
-            path="1",
+            depth=1,
             document_id="doc1",
             embedding=[],
             token_count=10,
@@ -251,7 +251,7 @@ class TestPokeMechanism:
             height=2,  # Higher level
             span_start=0,  # Further left
             span_end=50,
-            path="0",
+            depth=2,
             document_id="doc1",
             embedding=[],
             token_count=10,
@@ -843,11 +843,9 @@ class TestBatchAwareQueuePenultimateBatch:
 
         # Add some regular nodes (depth > 1)
         for i in range(3):
-            path = f"00{i}"
             node = TreeNode(
                 id=f"node_{i}",
-                path=path,
-                depth=len(path),  # depth=3
+                depth=3,
                 text=f"Node {i} text",
                 height=1,
                 span_start=i * 10,
@@ -861,7 +859,6 @@ class TestBatchAwareQueuePenultimateBatch:
         # First depth-1 node shouldn't trigger processing
         left_child_root = TreeNode(
             id="left_root",
-            path="0",  # depth=1
             depth=1,
             text="Left child of root",
             height=2,
@@ -881,7 +878,7 @@ class TestBatchAwareQueuePenultimateBatch:
         # Second depth-1 node SHOULD trigger penultimate batch
         right_child_root = TreeNode(
             id="right_root",
-            path="1",  # depth=1
+            depth=1,
             text="Right child of root",
             height=2,
             span_start=50,
@@ -911,11 +908,9 @@ class TestBatchAwareQueuePenultimateBatch:
 
         # Add nodes to create a substantial batch
         for i in range(8):
-            path = "000"
             node = TreeNode(
                 id=f"n{i}",
-                path=path,
-                depth=len(path),  # depth=3
+                depth=3,
                 text=f"Node {i}",
                 height=1,
                 span_start=i * 10,
@@ -929,7 +924,6 @@ class TestBatchAwareQueuePenultimateBatch:
         # Add depth-1 nodes to trigger penultimate
         left = TreeNode(
             id="left",
-            path="0",
             depth=1,
             text="Left",
             height=2,
@@ -941,7 +935,6 @@ class TestBatchAwareQueuePenultimateBatch:
         )
         right = TreeNode(
             id="right",
-            path="1",
             depth=1,
             text="Right",
             height=2,
@@ -965,7 +958,7 @@ class TestBatchAwareQueuePenultimateBatch:
         # Add root
         root = TreeNode(
             id="root",
-            path="",  # Empty path for root
+            depth=0,
             text="Root",
             height=3,
             span_start=0,
@@ -994,11 +987,9 @@ class TestBatchAwareQueuePenultimateBatch:
 
         # Add some regular nodes
         for i in range(3):
-            path = "00"
             node = TreeNode(
                 id=f"n{i}",
-                path=path,
-                depth=len(path),  # depth=2
+                depth=2,
                 text=f"Node {i}",
                 height=1,
                 span_start=i * 10,
@@ -1012,7 +1003,6 @@ class TestBatchAwareQueuePenultimateBatch:
         # Only one depth-1 node (tree with odd number of leaves)
         only_child = TreeNode(
             id="only_child",
-            path="0",  # depth=1
             depth=1,
             text="Only child at depth 1",
             height=2,
@@ -1032,7 +1022,7 @@ class TestBatchAwareQueuePenultimateBatch:
         # Root should trigger processing of all items
         root = TreeNode(
             id="root",
-            path="",
+            depth=0,
             text="Root",
             height=3,
             span_start=0,

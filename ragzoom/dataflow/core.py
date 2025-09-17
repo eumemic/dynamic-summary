@@ -208,9 +208,9 @@ def create_leaf_nodes(
             id=node_id,
             text=chunk,  # Leaves have actual text
             height=0,  # Leaves are at height 0
+            depth=0,
             span_start=current_pos,
             span_end=current_pos + len(chunk),
-            path="",
             document_id=document_id,
             # No parent/children for leaves initially
             parent_id=None,
@@ -292,9 +292,9 @@ def build_internal_nodes(
                 id=parent_id,
                 text="",  # Empty string until filled by dataflow
                 height=current_height,
+                depth=0,
                 span_start=left.span_start,
                 span_end=right.span_end if right else left.span_end,
-                path="",
                 document_id=document_id,
                 # Children
                 parent_id=None,  # Will be set when grandparent created
