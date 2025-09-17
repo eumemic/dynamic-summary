@@ -20,6 +20,7 @@ class TreeNavigator:
             node_repository: Node repository for data access
         """
         self.node_repo = node_repository
+        self._depth_cache: dict[str, int] = {}
 
     def _get_node(self, node_id: str) -> TreeNode | None:
         """Fetch a node with cache awareness."""
@@ -132,12 +133,49 @@ class TreeNavigator:
         Raises:
             NodeNotFoundError: If node not found
         """
+        cached_depth = self._depth_cache.get(node_id)
+        if cached_depth is not None:
+            return cached_depth
+
         node = self._get_node(node_id)
         if not node:
             raise NodeNotFoundError(node_id)
 
-        ancestors = self.get_ancestors([node_id])
-        return len(ancestors)
+        depth_attr = getattr(node, "depth", None)
+        if depth_attr is not None:
+            self._depth_cache[node_id] = int(depth_attr)
+            return int(depth_attr)
+
+        trail: list[TreeNode] = []
+        current = node
+        base_depth = 0
+
+        while True:
+            cached = getattr(current, "depth", None)
+            if cached is not None:
+                base_depth = int(cached)
+                self._depth_cache[current.id] = base_depth
+                break
+
+            parent = self._get_parent(current)
+            if parent is None:
+                base_depth = 0
+                setattr(current, "depth", 0)
+                self._depth_cache[current.id] = 0
+                break
+
+            trail.append(current)
+            current = parent
+
+        depth = base_depth
+        for descendant in reversed(trail):
+            depth += 1
+            setattr(descendant, "depth", depth)
+            self._depth_cache[descendant.id] = depth
+
+        result = depth if trail else base_depth
+        self._depth_cache[node_id] = result
+        return result
 
     def is_leaf_node(self, node_id: str) -> bool:
         """Check if a node is a leaf (has no children).

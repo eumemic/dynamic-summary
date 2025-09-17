@@ -11,6 +11,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
 from ragzoom.services.tree_navigator import TreeNavigator
 
@@ -126,6 +127,34 @@ class TestTreeNavigation:
         assert navigator.get_node_depth("right") == 1  # First level
         assert navigator.get_node_depth("left_left") == 2  # Second level
         assert navigator.get_node_depth("left_right") == 2  # Second level
+
+    def test_get_node_depth_caches_results(
+        self, doc_store: DocumentStore, seed_nodes: None
+    ) -> None:
+        """Depth lookups cache computed values for subsequent calls."""
+        navigator = TreeNavigator(doc_store._node_repo)
+
+        depth = navigator.get_node_depth("left_left")
+        assert depth == 2
+        # First pass should populate cache for the entire ancestor chain
+        assert navigator._depth_cache["left_left"] == 2
+        assert navigator._depth_cache["left"] == 1
+        assert navigator._depth_cache["root"] == 0
+
+        # Subsequent calls should return without hitting the repository
+        original_get_node = navigator.node_repo.get_node
+        call_counter = {"count": 0}
+
+        def counting_get_node(node_id: str) -> TreeNode | None:
+            call_counter["count"] += 1
+            return original_get_node(node_id)
+
+        navigator.node_repo.get_node = counting_get_node  # type: ignore[method-assign]
+        try:
+            assert navigator.get_node_depth("left_left") == 2
+            assert call_counter["count"] == 0
+        finally:
+            navigator.node_repo.get_node = original_get_node  # type: ignore[method-assign]
 
     def test_get_parent_node(self, doc_store: DocumentStore, seed_nodes: None) -> None:
         """Parent lookup should rely on stored parent pointers."""
