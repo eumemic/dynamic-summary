@@ -432,9 +432,6 @@ class PostgresNodeRepository(BaseRepository):
             )
 
             # Use database-level path filtering for better performance if depth_max specified
-            if depth_max is not None:
-                query = query.filter(func.length(PostgresTreeNode.path) <= depth_max)
-
             db_nodes = query.all()
 
             # Force load and detach all
