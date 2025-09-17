@@ -37,7 +37,7 @@ class TestTreeNodeModel:
         assert hasattr(TreeNode, "text")
         # Embeddings are no longer stored in SQL
         assert hasattr(TreeNode, "token_count")
-        assert "path" not in TreeNode.__table__.columns  # type: ignore[attr-defined]
+        assert "path" not in TreeNode.__table__.columns
 
     def test_optional_fields(self) -> None:
         """Test that TreeNode has correct optional fields."""
