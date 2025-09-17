@@ -29,8 +29,8 @@ class DomainNode:
     text: str = ""
     token_count: int = 0
     height: int = 0
+    path: str = ""
     is_pinned: bool = False
-    depth: int = 0
 
     # Neighbor relationships used by dataflow
     preceding_neighbor_id: str | None = None
@@ -47,4 +47,9 @@ class DomainNode:
         return self.parent_id is None
 
     def get_depth(self) -> int:
-        return int(self.depth)
+        return len(self.path or "")
+
+    # Additional helper used by dataflow scheduling
+    def is_right_child(self) -> bool:
+        p = self.path or ""
+        return len(p) > 0 and p[-1] == "1"

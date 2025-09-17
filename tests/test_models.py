@@ -17,16 +17,56 @@ class TestTreeNodeModel:
         """Test that TreeNode uses correct table name."""
         assert TreeNode.__tablename__ == "tree_nodes"
 
-    def test_get_depth_not_persisted(self) -> None:
-        """TreeNode depth should be derived structurally, not stored."""
-        node = TreeNode(
-            id="node",
+    def test_get_depth_method(self) -> None:
+        """Test that TreeNode.get_depth() returns correct depth based on path."""
+        # Root node (empty path)
+        root = TreeNode(
+            id="root",
+            path="",
             span_start=0,
-            span_end=10,
-            text="content",
+            span_end=100,
+            text="Root text",
         )
-        with pytest.raises(NotImplementedError):
-            node.get_depth()
+        assert root.get_depth() == 0
+
+        # Depth 1 nodes (children of root)
+        left_child = TreeNode(
+            id="left",
+            path="0",
+            span_start=0,
+            span_end=50,
+            text="Left child",
+        )
+        assert left_child.get_depth() == 1
+
+        right_child = TreeNode(
+            id="right",
+            path="1",
+            span_start=50,
+            span_end=100,
+            text="Right child",
+        )
+        assert right_child.get_depth() == 1
+
+        # Deeper nodes
+        deep_node = TreeNode(
+            id="deep",
+            path="0101",
+            span_start=25,
+            span_end=30,
+            text="Deep node",
+        )
+        assert deep_node.get_depth() == 4
+
+        # Another deep node
+        very_deep = TreeNode(
+            id="very_deep",
+            path="00110101",
+            span_start=10,
+            span_end=15,
+            text="Very deep",
+        )
+        assert very_deep.get_depth() == 8
 
     def test_required_fields(self) -> None:
         """Test that TreeNode has all required fields."""
@@ -37,7 +77,6 @@ class TestTreeNodeModel:
         assert hasattr(TreeNode, "text")
         # Embeddings are no longer stored in SQL
         assert hasattr(TreeNode, "token_count")
-        assert "path" not in TreeNode.__table__.columns  # type: ignore[attr-defined]
 
     def test_optional_fields(self) -> None:
         """Test that TreeNode has correct optional fields."""

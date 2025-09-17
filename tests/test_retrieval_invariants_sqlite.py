@@ -46,6 +46,7 @@ class TestRetrievalInvariantsSQLite:
                 "token_count": 5,
                 "height": 0,
                 "parent_id": "root",
+                "path": "0",
             },
             {
                 "node_id": "leafR",
@@ -57,6 +58,7 @@ class TestRetrievalInvariantsSQLite:
                 "token_count": 5,
                 "height": 0,
                 "parent_id": "root",
+                "path": "1",
             },
             {
                 "node_id": "root",
@@ -70,6 +72,7 @@ class TestRetrievalInvariantsSQLite:
                 "left_child_id": "leafL",
                 "right_child_id": "leafR",
                 "parent_id": None,
+                "path": "",
             },
         ]
         doc_store.nodes.add_batch(nodes)

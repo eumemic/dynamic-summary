@@ -68,6 +68,7 @@ class TestContaminationBug:
                 "height": 1,
                 "left_child_id": "doc1_left",
                 "right_child_id": "doc1_right",
+                "path": "",
             },
             {
                 "node_id": "doc1_left",
@@ -78,6 +79,7 @@ class TestContaminationBug:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "path": "0",
             },
             {
                 "node_id": "doc1_right",
@@ -88,6 +90,7 @@ class TestContaminationBug:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "path": "1",
             },
         ]
         doc1_store.nodes.add_batch(doc1_nodes)
@@ -113,6 +116,7 @@ class TestContaminationBug:
                 "height": 1,
                 "left_child_id": "doc2_left",
                 "right_child_id": "doc2_right",
+                "path": "",
             },
             {
                 "node_id": "doc2_left",
@@ -123,6 +127,7 @@ class TestContaminationBug:
                 "document_id": "doc2",
                 "token_count": 25,
                 "height": 0,
+                "path": "0",
             },
             {
                 "node_id": "doc2_right",
@@ -133,6 +138,7 @@ class TestContaminationBug:
                 "document_id": "doc2",
                 "token_count": 25,
                 "height": 0,
+                "path": "1",
             },
         ]
         doc2_store.nodes.add_batch(doc2_nodes)

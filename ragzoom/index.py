@@ -320,6 +320,7 @@ class TreeBuilder:
                         # Embeddings are not stored in SQL; kept separate for VectorIndex
                         "token_count": node.token_count,
                         "height": node.height,
+                        "path": node.path,
                     }
                     nodes_data.append(node_data)
 
@@ -503,6 +504,11 @@ class TreeBuilder:
             right_token_count=right_node.token_count if right_node else 0,
         )
 
+        # Derive parent path from left child path
+        from ragzoom.utils.path_utils import get_parent_path
+
+        parent_path = get_parent_path(left_node.path)
+
         # Embedding will be generated in batch after all summaries are collected
         # This avoids 183 individual API calls for a typical level
 
@@ -519,6 +525,7 @@ class TreeBuilder:
                 "document_id": document_id,
                 "token_count": token_count,
                 "height": current_height,  # Store pre-calculated height
+                "path": parent_path,  # Binary path derived from child paths
             },
             "parent_updates": [
                 (left_id, parent_id),

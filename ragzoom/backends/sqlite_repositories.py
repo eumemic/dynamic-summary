@@ -74,6 +74,7 @@ class SqliteNodeRepository:
                         str | None, data.get("following_neighbor_id")
                     ),
                     "height": cast(int, data.get("height", 0)),
+                    "path": cast(str, data.get("path", "")),
                 }
                 for data in nodes_data
             ]
@@ -189,10 +190,27 @@ class SqliteNodeRepository:
             )
             return _detach_rows(session, rows)
 
-    def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]:
+    def get_nodes_by_paths(self, paths: list[str]) -> list[TreeNode]:
+        if not paths:
+            return []
         with self.SessionLocal() as session:
-            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.parent_id.is_(None))
-            if document_id is not None:
+            rows = (
+                session.execute(
+                    select(SQLiteTreeNode).where(SQLiteTreeNode.path.in_(paths))
+                )
+                .scalars()
+                .all()
+            )
+            return _detach_rows(session, rows)
+
+    def get_nodes_by_paths_for_document(
+        self, document_id: str | None, paths: list[str]
+    ) -> list[TreeNode]:
+        if not paths:
+            return []
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.path.in_(paths))
+            if document_id:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             rows = session.execute(stmt).scalars().all()
             return _detach_rows(session, rows)
@@ -321,7 +339,9 @@ class SqliteNodeRepository:
                 SQLiteTreeNode.document_id == document_id,
             )
             rows = session.execute(stmt).scalars().all()
-            return cast(list[TreeNode], list(rows))
+            if depth_max is None:
+                return cast(list[TreeNode], list(rows))
+            return cast(list[TreeNode], [r for r in rows if len(r.path) <= depth_max])
 
     def count_pinned_for_document(self, document_id: str | None) -> int:
         with self.SessionLocal() as session:
@@ -338,7 +358,9 @@ class SqliteNodeRepository:
         with self.SessionLocal() as session:
             stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.is_pinned == 1)
             rows = session.execute(stmt).scalars().all()
-            return cast(list[TreeNode], list(rows))
+            if depth_max is None:
+                return cast(list[TreeNode], list(rows))
+            return cast(list[TreeNode], [r for r in rows if len(r.path) <= depth_max])
 
     # --- Mutations ---
     def pin_node(self, node_id: str) -> None:
