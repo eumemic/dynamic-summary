@@ -61,7 +61,6 @@ class TestTreeValidationSQLite:
                 "document_id": "test-doc",
                 "token_count": 4,
                 "height": 0,
-                "path": "00",
             },
             {
                 "node_id": "L2",
@@ -72,7 +71,6 @@ class TestTreeValidationSQLite:
                 "document_id": "test-doc",
                 "token_count": 4,
                 "height": 0,
-                "path": "01",
             },
             {
                 "node_id": "L3",
@@ -83,7 +81,6 @@ class TestTreeValidationSQLite:
                 "document_id": "test-doc",
                 "token_count": 4,
                 "height": 0,
-                "path": "10",
             },
             {
                 "node_id": "L4",
@@ -94,7 +91,6 @@ class TestTreeValidationSQLite:
                 "document_id": "test-doc",
                 "token_count": 4,
                 "height": 0,
-                "path": "11",
             },
             # Internal nodes
             {
@@ -107,7 +103,6 @@ class TestTreeValidationSQLite:
                 "height": 1,
                 "left_child_id": "L1",
                 "right_child_id": "L2",
-                "path": "0",
             },
             {
                 "node_id": "P2",
@@ -119,7 +114,6 @@ class TestTreeValidationSQLite:
                 "height": 1,
                 "left_child_id": "L3",
                 "right_child_id": "L4",
-                "path": "1",
             },
             {
                 "node_id": "root",
@@ -131,7 +125,6 @@ class TestTreeValidationSQLite:
                 "height": 2,
                 "left_child_id": "P1",
                 "right_child_id": "P2",
-                "path": "",
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -173,7 +166,6 @@ class TestTreeValidationSQLite:
                 "document_id": "test-doc",
                 "token_count": 4,
                 "height": 0,
-                "path": "00",
             },
             {
                 "node_id": "L2",
@@ -184,7 +176,6 @@ class TestTreeValidationSQLite:
                 "document_id": "test-doc",
                 "token_count": 4,
                 "height": 0,
-                "path": "01",
             },
             {
                 "node_id": "L3",
@@ -195,7 +186,6 @@ class TestTreeValidationSQLite:
                 "document_id": "test-doc",
                 "token_count": 4,
                 "height": 0,
-                "path": "10",
             },
             # Internal nodes
             {
@@ -208,7 +198,6 @@ class TestTreeValidationSQLite:
                 "height": 1,
                 "left_child_id": "L1",
                 "right_child_id": "L2",
-                "path": "0",
             },
             {
                 "node_id": "P2",
@@ -220,7 +209,6 @@ class TestTreeValidationSQLite:
                 "height": 1,
                 "left_child_id": "L3",
                 "right_child_id": None,  # Valid: only left child
-                "path": "1",
             },
             {
                 "node_id": "root",
@@ -232,7 +220,6 @@ class TestTreeValidationSQLite:
                 "height": 2,
                 "left_child_id": "P1",
                 "right_child_id": "P2",
-                "path": "",
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -277,7 +264,6 @@ class TestTreeValidationSQLite:
                 "document_id": "test-doc",
                 "token_count": 4,
                 "height": 0,
-                "path": "",
             }
         ]
         doc_store.nodes.add_batch(nodes)
@@ -303,7 +289,6 @@ class TestTreeValidationSQLite:
                 "height": 1,
                 "left_child_id": "missing-left",
                 "right_child_id": "missing-right",
-                "path": "",
             }
         ]
         doc_store.nodes.add_batch(nodes)
@@ -332,7 +317,6 @@ class TestTreeValidationSQLite:
                 "document_id": "test-doc",
                 "token_count": 4,
                 "height": 0,
-                "path": "10",
             },
             {
                 "node_id": "L2",
@@ -343,7 +327,6 @@ class TestTreeValidationSQLite:
                 "document_id": "test-doc",
                 "token_count": 4,
                 "height": 0,
-                "path": "11",
             },
             # Internal node with both children
             {
@@ -356,7 +339,6 @@ class TestTreeValidationSQLite:
                 "height": 1,
                 "left_child_id": "L1",
                 "right_child_id": "L2",
-                "path": "1",
             },
             # Invalid root with only right child
             {
@@ -369,7 +351,6 @@ class TestTreeValidationSQLite:
                 "height": 2,
                 "left_child_id": None,  # No left child
                 "right_child_id": "P1",  # Only right child - INVALID!
-                "path": "",
             },
         ]
         doc_store.nodes.add_batch(nodes)

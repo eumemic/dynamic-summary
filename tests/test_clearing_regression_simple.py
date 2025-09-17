@@ -38,7 +38,6 @@ def test_index_document_always_clears(storage_backend: StorageBackend) -> None:
             "document_id": doc_id,
             "token_count": 1,
             "height": 0,
-            "path": "",
         }
         for i in range(2)
     ]
