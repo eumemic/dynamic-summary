@@ -246,6 +246,7 @@ class TestSpanCorruptionSQLite:
                 "token_count": 10,
                 "height": 0,
                 "parent_id": "internal0",
+                "path": "000",
             },
             {
                 "node_id": "leaf1",
@@ -257,6 +258,7 @@ class TestSpanCorruptionSQLite:
                 "token_count": 10,
                 "height": 0,
                 "parent_id": "internal0",
+                "path": "001",
             },
             {
                 "node_id": "leaf2",
@@ -268,6 +270,7 @@ class TestSpanCorruptionSQLite:
                 "token_count": 10,
                 "height": 0,
                 "parent_id": "internal1",
+                "path": "010",
             },
             {
                 "node_id": "leaf3",
@@ -279,6 +282,7 @@ class TestSpanCorruptionSQLite:
                 "token_count": 10,
                 "height": 0,
                 "parent_id": "internal1",
+                "path": "011",
             },
             {
                 "node_id": "leaf4",
@@ -290,6 +294,7 @@ class TestSpanCorruptionSQLite:
                 "token_count": 10,
                 "height": 0,
                 "parent_id": "internal2",
+                "path": "100",
             },
             # Internal nodes that pair the leaves
             {
@@ -304,6 +309,7 @@ class TestSpanCorruptionSQLite:
                 "left_child_id": "leaf0",
                 "right_child_id": "leaf1",
                 "parent_id": "internal3",
+                "path": "00",
             },
             {
                 "node_id": "internal1",
@@ -317,6 +323,7 @@ class TestSpanCorruptionSQLite:
                 "left_child_id": "leaf2",
                 "right_child_id": "leaf3",
                 "parent_id": "internal3",
+                "path": "01",
             },
             {
                 "node_id": "internal2",
@@ -330,6 +337,7 @@ class TestSpanCorruptionSQLite:
                 "left_child_id": "leaf4",
                 "right_child_id": None,
                 "parent_id": "root",
+                "path": "1",
             },
             # Higher level internal node
             {
@@ -344,6 +352,7 @@ class TestSpanCorruptionSQLite:
                 "left_child_id": "internal0",
                 "right_child_id": "internal1",
                 "parent_id": "root",
+                "path": "0",
             },
             # Root
             {
@@ -357,6 +366,7 @@ class TestSpanCorruptionSQLite:
                 "height": 3,
                 "left_child_id": "internal3",
                 "right_child_id": "internal2",
+                "path": "",
             },
         ]
 

@@ -57,6 +57,7 @@ class TestZeroScoreCollapse:
                 "token_count": 50,
                 "height": 0,
                 "parent_id": "parent",
+                "path": "00",
             },
             {
                 "node_id": "parent",
@@ -70,6 +71,7 @@ class TestZeroScoreCollapse:
                 "left_child_id": "leaf",
                 "right_child_id": None,
                 "parent_id": "root",
+                "path": "0",
             },
             {
                 "node_id": "root",
@@ -82,6 +84,7 @@ class TestZeroScoreCollapse:
                 "height": 2,
                 "left_child_id": "parent",
                 "right_child_id": None,
+                "path": "",
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -144,6 +147,7 @@ class TestZeroScoreCollapse:
                 "token_count": 30,
                 "height": 0,
                 "parent_id": "level3",
+                "path": "0000",
             },
             {
                 "node_id": "level3",
@@ -157,6 +161,7 @@ class TestZeroScoreCollapse:
                 "left_child_id": "leaf",
                 "right_child_id": None,
                 "parent_id": "level2",
+                "path": "000",
             },
             {
                 "node_id": "level2",
@@ -170,6 +175,7 @@ class TestZeroScoreCollapse:
                 "left_child_id": "level3",
                 "right_child_id": None,
                 "parent_id": "level1",
+                "path": "00",
             },
             {
                 "node_id": "level1",
@@ -183,6 +189,7 @@ class TestZeroScoreCollapse:
                 "left_child_id": "level2",
                 "right_child_id": None,
                 "parent_id": "root",
+                "path": "0",
             },
             {
                 "node_id": "root",
@@ -195,6 +202,7 @@ class TestZeroScoreCollapse:
                 "height": 4,
                 "left_child_id": "level1",
                 "right_child_id": None,
+                "path": "",
             },
         ]
         doc_store.nodes.add_batch(seeds)

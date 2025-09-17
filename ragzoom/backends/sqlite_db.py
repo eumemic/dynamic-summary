@@ -56,6 +56,7 @@ class SQLiteTreeNode(SqliteBase):
     preceding_neighbor_id: Mapped[str | None] = mapped_column(String, nullable=True)
     following_neighbor_id: Mapped[str | None] = mapped_column(String, nullable=True)
     height: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    path: Mapped[str] = mapped_column(String, nullable=False, default="")
 
     def is_leaf(self) -> bool:
         """Check if this node is a leaf node (has no children)."""
@@ -65,10 +66,14 @@ class SQLiteTreeNode(SqliteBase):
     def is_root(self) -> bool:  # noqa: D401 - trivial helper
         return self.parent_id is None
 
+    def is_left_child(self) -> bool:  # noqa: D401 - trivial helper
+        return isinstance(self.path, str) and self.path.endswith("0")
+
+    def is_right_child(self) -> bool:  # noqa: D401 - trivial helper
+        return isinstance(self.path, str) and self.path.endswith("1")
+
     def get_depth(self) -> int:  # noqa: D401 - trivial helper
-        raise NotImplementedError(
-            "SQLiteTreeNode does not persist depth; use TreeNavigator.get_node_depth"
-        )
+        return len(self.path or "")
 
 
 class SqliteDocument(SqliteBase):

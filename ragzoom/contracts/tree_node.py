@@ -2,10 +2,8 @@
 
 This protocol defines the storage-only shape for nodes that the core relies on.
 Implementations (Postgres ORM rows, SQLite rows, or domain dataclasses) should
-conform to this interface. Depth information must be supplied via
-``get_depth()`` or a ``depth`` attribute assigned by the caller — we no longer
-encode it as a persisted binary path. Vector metadata lives outside this
-protocol and is handled by VectorIndex implementations.
+conform to this interface. Importantly, embeddings are NOT part of this
+protocol — vector operations are handled by VectorIndex implementations.
 """
 
 from __future__ import annotations
@@ -34,6 +32,7 @@ class TreeNode(Protocol):
     text: str
     token_count: int
     height: int  # 0 for leaves, increasing toward root
+    path: str  # binary path ("" for root)
     is_pinned: bool | int
     preceding_neighbor_id: str | None
     following_neighbor_id: str | None
@@ -67,14 +66,9 @@ def is_root(node: TreeNode) -> bool:
 
 
 def get_depth(node: TreeNode) -> int:
-    """Backend-agnostic depth computation requiring explicit depth data."""
+    """Backend-agnostic depth computation from the binary path."""
     try:
         return int(node.get_depth())
     except Exception:
-        depth_attr = getattr(node, "depth", None)
-        if depth_attr is None:
-            raise AttributeError(
-                "TreeNode does not expose depth information; implementations must "
-                "define get_depth() or provide a depth attribute."
-            )
-        return int(depth_attr)
+        p = getattr(node, "path", "")
+        return len(p) if isinstance(p, str) else 0

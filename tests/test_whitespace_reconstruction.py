@@ -357,6 +357,7 @@ class TestWhitespaceReconstruction:
                 "token_count": 2,
                 "height": 0,
                 "parent_id": "parent",
+                "path": "00",
             },
             {
                 "node_id": "leaf2",
@@ -368,6 +369,7 @@ class TestWhitespaceReconstruction:
                 "token_count": 3,
                 "height": 0,
                 "parent_id": "parent",
+                "path": "01",
             },
             {
                 "node_id": "parent",
@@ -380,6 +382,7 @@ class TestWhitespaceReconstruction:
                 "height": 1,
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
+                "path": "0",
             },
         ]
 

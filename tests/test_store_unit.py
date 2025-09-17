@@ -89,6 +89,7 @@ class TestStoreUnit:
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
+                "path": "0",
             },
             {
                 "node_id": "batch-2",
@@ -97,6 +98,7 @@ class TestStoreUnit:
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
+                "path": "1",
             },
             {
                 "node_id": "batch-root",
@@ -107,6 +109,7 @@ class TestStoreUnit:
                 "height": 1,
                 "left_child_id": "batch-1",
                 "right_child_id": "batch-2",
+                "path": "",
             },
         ]
 
@@ -142,6 +145,7 @@ class TestStoreUnit:
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
+                "path": "0",
             },
             {
                 "node_id": "leaf-2",
@@ -150,6 +154,7 @@ class TestStoreUnit:
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
+                "path": "1",
             },
             {
                 "node_id": "root",
@@ -160,6 +165,7 @@ class TestStoreUnit:
                 "height": 1,
                 "left_child_id": "leaf-1",
                 "right_child_id": "leaf-2",
+                "path": "",
             },
         ]
 
@@ -504,6 +510,7 @@ class TestStoreUnit:
                 "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 10,
+                "path": "00",
                 "height": 0,
             },
             {
@@ -512,6 +519,7 @@ class TestStoreUnit:
                 "embedding": np.array([0.2] * 1536, dtype=np.float64),
                 "span_start": 10,
                 "span_end": 20,
+                "path": "01",
                 "height": 0,
             },
             {
@@ -520,6 +528,7 @@ class TestStoreUnit:
                 "embedding": np.array([0.3] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 20,
+                "path": "0",
                 "height": 1,
                 "left_child_id": "path-00",
                 "right_child_id": "path-01",
@@ -528,11 +537,11 @@ class TestStoreUnit:
 
         doc_store.nodes.add_batch(nodes_data)
 
-        # Test multi-id retrieval remains document scoped
-        fetched_nodes = doc_store.nodes.get_nodes(["path-00", "path-01", "path-0"])
-        assert len(fetched_nodes) == 3
-        fetched_ids = {node.id for node in fetched_nodes}
-        assert fetched_ids == {"path-00", "path-01", "path-0"}
+        # Test path-based retrieval
+        path_nodes = doc_store.nodes.get_nodes_by_paths(["00", "01", "0"])
+        assert len(path_nodes) == 3
+        path_ids = {node.id for node in path_nodes}
+        assert path_ids == {"path-00", "path-01", "path-0"}
 
     def test_node_access_patterns(self, doc_store: DocumentStore) -> None:
         """Test node access tracking functionality."""

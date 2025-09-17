@@ -75,6 +75,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "path": "000",
             },
             {
                 "node_id": "L2",
@@ -85,6 +86,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "path": "001",
             },
             {
                 "node_id": "L3",
@@ -95,6 +97,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "path": "010",
             },
             {
                 "node_id": "L4",
@@ -105,6 +108,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "path": "011",
             },
             # Parent nodes
             {
@@ -117,6 +121,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "height": 1,
                 "left_child_id": "L1",
                 "right_child_id": "L2",
+                "path": "00",
             },
             {
                 "node_id": "P2",
@@ -128,6 +133,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "height": 1,
                 "left_child_id": "L3",
                 "right_child_id": "L4",
+                "path": "01",
             },
             # Root node
             {
@@ -140,6 +146,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "height": 2,
                 "left_child_id": "P1",
                 "right_child_id": "P2",
+                "path": "",
             },
         ]
 

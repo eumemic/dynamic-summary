@@ -25,11 +25,14 @@ def mock_nodes() -> tuple[MagicMock, MagicMock]:
     left_node.token_count = 150
     left_node.span_start = 0
     left_node.span_end = 100
+    # Provide minimal path attribute required by _process_node_pair logic
+    left_node.path = "0"
 
     right_node = MagicMock(spec=TreeNode)
     right_node.token_count = 200
     right_node.span_start = 100
     right_node.span_end = 250
+    right_node.path = "1"
 
     return left_node, right_node
 

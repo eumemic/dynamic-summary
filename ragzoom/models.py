@@ -50,6 +50,9 @@ class PostgresTreeNode(Base):
     height: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # Distance to furthest leaf (0 for leaves, incrementing upward)
+    path: Mapped[str] = mapped_column(
+        String, nullable=False, default=""
+    )  # Binary path encoding node position in tree (empty string for root)
 
     # Performance indices for frequently queried columns
     __table_args__ = (
@@ -59,9 +62,21 @@ class PostgresTreeNode(Base):
         Index("idx_tree_nodes_parent_id", "parent_id"),
         # Composite index for root node queries (document + no parent)
         Index("idx_tree_nodes_document_root", "document_id", "parent_id"),
+        # Index on path for fast tree traversal operations
+        Index("idx_tree_nodes_path", "path"),
+        # Composite index for document-scoped path queries
+        Index("idx_tree_nodes_document_path", "document_id", "path"),
         # Index on following_neighbor_id for dataflow navigation
         Index("idx_tree_nodes_following_neighbor_id", "following_neighbor_id"),
     )
+
+    def is_left_child(self) -> bool:
+        """Check if this node is a left child based on its path."""
+        return self.path.endswith("0")
+
+    def is_right_child(self) -> bool:
+        """Check if this node is a right child based on its path."""
+        return self.path.endswith("1")
 
     def is_leaf(self) -> bool:
         """Check if this node is a leaf node (has no children)."""
@@ -72,10 +87,8 @@ class PostgresTreeNode(Base):
         return self.parent_id is None
 
     def get_depth(self) -> int:
-        """Depth is not persisted; callers must request it structurally."""
-        raise NotImplementedError(
-            "PostgresTreeNode does not persist depth; use TreeNavigator.get_node_depth"
-        )
+        """Return the depth of this node in the tree (0 for root)."""
+        return len(self.path)
 
 
 class Document(Base):
