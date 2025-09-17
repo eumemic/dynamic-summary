@@ -74,7 +74,6 @@ class SqliteNodeRepository:
                         str | None, data.get("following_neighbor_id")
                     ),
                     "height": cast(int, data.get("height", 0)),
-                    "path": "",
                 }
                 for data in nodes_data
             ]

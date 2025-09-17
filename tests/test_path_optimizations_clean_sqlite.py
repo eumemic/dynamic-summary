@@ -183,10 +183,10 @@ class TestTreeNavigationSQLite:
         assert not navigator.is_right_child("left_left")  # Left-left is left child
         assert navigator.is_right_child("left_right")  # Left-right is right child
 
-    def test_pinned_nodes_path_filtering(
+    def test_pinned_nodes_structural_filtering(
         self, doc_store: DocumentStore, seed_nodes: None
     ) -> None:
-        """Test that get_pinned_nodes uses path-based database filtering."""
+        """Pinned node filtering should rely on structural depth lookups."""
         # Pin some nodes at different depths
         doc_store._node_repo.pin_node("root")  # Depth 0
         doc_store._node_repo.pin_node("left")  # Depth 1
@@ -211,19 +211,19 @@ class TestTreeNavigationSQLite:
         pinned_all = doc_store.get_pinned_nodes()
         assert len(pinned_all) == 3
 
-    def test_path_optimization_performance(
+    def test_structural_traversal_performance(
         self, doc_store: DocumentStore, seed_nodes: None
     ) -> None:
-        """Test that path-based methods avoid database queries where possible."""
+        """Structural traversal should avoid redundant database queries."""
         navigator = TreeNavigator(doc_store._node_repo)
 
-        # With proper paths, these operations should be very fast
-        # and not require traversing up the tree
+        # With parent pointers, these operations should be efficient
+        # and should not require expensive traversal
         depth = navigator.get_node_depth("left_left")
         assert depth == 2
 
-        # The path-based implementation should use string operations
-        # rather than multiple database queries
+        # The structural implementation should lean on cached relationships
+        # rather than repeated database queries
         sibling = navigator.get_sibling_node("left_left")
         assert sibling is not None
         assert sibling.id == "left_right"

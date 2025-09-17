@@ -122,7 +122,6 @@ class PostgresNodeRepository(BaseRepository):
         # Embeddings are not stored in SQL; ignore validation
 
         with self.SessionLocal() as session:
-            path = ""
             node = PostgresTreeNode(
                 id=node_id,
                 parent_id=parent_id,
@@ -134,7 +133,6 @@ class PostgresNodeRepository(BaseRepository):
                 document_id=document_id,
                 token_count=token_count,
                 height=height,
-                path=path,
             )
             session.add(node)
             session.commit()
@@ -191,7 +189,6 @@ class PostgresNodeRepository(BaseRepository):
                         str | None, data.get("preceding_neighbor_id")
                     ),
                     height=cast(int, data.get("height", 0)),
-                    path="",
                 )
                 nodes_pg.append(node)
                 out.append(node)
@@ -244,74 +241,6 @@ class PostgresNodeRepository(BaseRepository):
             # Invalidate cache for updated nodes
             for node_id, _ in updates:
                 self.cache_manager.invalidate(node_id)
-
-    def update_node_paths_from_tree_structure(
-        self, *, session: Optional["Session"] = None
-    ) -> None:
-        """Update node paths based on the current tree structure.
-
-        This method should be called after tree construction is complete to ensure
-        all nodes have correct paths assigned based on their parent-child relationships.
-
-        Args:
-            session: Optional database session for transactional operations
-        """
-        with self._session_scope(session) as db_session:
-            # Get all nodes and build the tree structure
-            nodes = db_session.query(PostgresTreeNode).all()
-
-            # Find root nodes (nodes with no parent)
-            root_nodes = [node for node in nodes if node.is_root()]
-
-            # Update paths starting from root nodes
-            for root in root_nodes:
-                self._update_node_path_recursive(root, "", db_session, set())
-
-    def _update_node_path_recursive(
-        self, node: "PostgresTreeNode", path: str, session: "Session", visited: set[str]
-    ) -> None:
-        """Recursively update node paths in the tree.
-
-        Args:
-            node: Current node to update
-            path: Path to assign to this node
-            session: Database session
-            visited: Set of visited node IDs to prevent infinite loops
-        """
-        if node.id in visited:
-            return
-        visited.add(node.id)
-
-        # Update this node's path
-        session.execute(
-            update(PostgresTreeNode)
-            .where(PostgresTreeNode.id == node.id)
-            .values(path=path)
-        )
-
-        # Invalidate cache
-        self.cache_manager.invalidate(node.id)
-
-        # Update children
-        if node.left_child_id:
-            left_child = (
-                session.query(PostgresTreeNode).filter_by(id=node.left_child_id).first()
-            )
-            if left_child:
-                self._update_node_path_recursive(
-                    left_child, path + "0", session, visited
-                )
-
-        if node.right_child_id:
-            right_child = (
-                session.query(PostgresTreeNode)
-                .filter_by(id=node.right_child_id)
-                .first()
-            )
-            if right_child:
-                self._update_node_path_recursive(
-                    right_child, path + "1", session, visited
-                )
 
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID.
@@ -430,8 +359,6 @@ class PostgresNodeRepository(BaseRepository):
             query = session.query(PostgresTreeNode).filter(
                 PostgresTreeNode.is_pinned == 1
             )
-
-            # Use database-level path filtering for better performance if depth_max specified
             db_nodes = query.all()
 
             # Force load and detach all
