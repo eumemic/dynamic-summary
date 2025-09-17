@@ -843,9 +843,11 @@ class TestBatchAwareQueuePenultimateBatch:
 
         # Add some regular nodes (depth > 1)
         for i in range(3):
+            path = f"00{i}"
             node = TreeNode(
                 id=f"node_{i}",
-                path=f"00{i}",  # depth=3
+                path=path,
+                depth=len(path),  # depth=3
                 text=f"Node {i} text",
                 height=1,
                 span_start=i * 10,
@@ -860,6 +862,7 @@ class TestBatchAwareQueuePenultimateBatch:
         left_child_root = TreeNode(
             id="left_root",
             path="0",  # depth=1
+            depth=1,
             text="Left child of root",
             height=2,
             span_start=0,
@@ -908,9 +911,11 @@ class TestBatchAwareQueuePenultimateBatch:
 
         # Add nodes to create a substantial batch
         for i in range(8):
+            path = "000"
             node = TreeNode(
                 id=f"n{i}",
-                path="000",  # depth=3
+                path=path,
+                depth=len(path),  # depth=3
                 text=f"Node {i}",
                 height=1,
                 span_start=i * 10,
@@ -925,6 +930,7 @@ class TestBatchAwareQueuePenultimateBatch:
         left = TreeNode(
             id="left",
             path="0",
+            depth=1,
             text="Left",
             height=2,
             span_start=0,
@@ -936,6 +942,7 @@ class TestBatchAwareQueuePenultimateBatch:
         right = TreeNode(
             id="right",
             path="1",
+            depth=1,
             text="Right",
             height=2,
             span_start=50,
@@ -987,9 +994,11 @@ class TestBatchAwareQueuePenultimateBatch:
 
         # Add some regular nodes
         for i in range(3):
+            path = "00"
             node = TreeNode(
                 id=f"n{i}",
-                path="00",  # depth=2
+                path=path,
+                depth=len(path),  # depth=2
                 text=f"Node {i}",
                 height=1,
                 span_start=i * 10,
@@ -1004,6 +1013,7 @@ class TestBatchAwareQueuePenultimateBatch:
         only_child = TreeNode(
             id="only_child",
             path="0",  # depth=1
+            depth=1,
             text="Only child at depth 1",
             height=2,
             span_start=0,

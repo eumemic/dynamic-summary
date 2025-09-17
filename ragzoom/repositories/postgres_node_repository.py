@@ -40,7 +40,6 @@ class NodeDataDict(TypedDict, total=False):
     created_at: datetime
     updated_at: datetime
     preceding_neighbor_id: str | None
-    path: str
 
 
 class PostgresNodeRepository(BaseRepository):
@@ -123,25 +122,7 @@ class PostgresNodeRepository(BaseRepository):
         # Embeddings are not stored in SQL; ignore validation
 
         with self.SessionLocal() as session:
-            # Calculate path based on parent relationship
-            path = ""  # Default for root nodes
-            if parent_id:
-                parent = session.query(PostgresTreeNode).filter_by(id=parent_id).first()
-                if parent and parent.path is not None:
-                    # Use explicit child position if provided
-                    if is_left_child is not None:
-                        path = parent.path + ("0" if is_left_child else "1")
-                    else:
-                        # Fallback: determine from parent's current child pointers
-                        if parent.left_child_id == node_id:
-                            path = parent.path + "0"
-                        elif parent.right_child_id == node_id:
-                            path = parent.path + "1"
-                        else:
-                            # Parent-child relationship not yet established and no explicit position given
-                            # Defer path assignment - it will be set later when relationships are established
-                            path = ""  # Temporary placeholder - should be updated later
-
+            path = ""
             node = PostgresTreeNode(
                 id=node_id,
                 parent_id=parent_id,
@@ -210,7 +191,7 @@ class PostgresNodeRepository(BaseRepository):
                         str | None, data.get("preceding_neighbor_id")
                     ),
                     height=cast(int, data.get("height", 0)),
-                    path=cast(str, data.get("path", "")),
+                    path="",
                 )
                 nodes_pg.append(node)
                 out.append(node)
@@ -464,23 +445,6 @@ class PostgresNodeRepository(BaseRepository):
 
             return out
 
-    def _calculate_depth(self, node_id: str) -> int:
-        """Calculate depth of a node from root using path field.
-
-        Args:
-            node_id: Node ID to calculate depth for
-
-        Returns:
-            Depth from root (0 for root nodes)
-        """
-        from ragzoom.utils.path_utils import get_depth
-
-        node = self.get_node(node_id)
-        if not node:
-            return 0
-
-        return get_depth(node.path)
-
     def pin_node(self, node_id: str) -> None:
         """Pin a node (mark as important).
 
@@ -552,8 +516,6 @@ class PostgresNodeRepository(BaseRepository):
                 PostgresTreeNode.is_pinned == 1,
                 PostgresTreeNode.document_id == document_id,
             )
-            if depth_max is not None:
-                q = q.filter(func.length(PostgresTreeNode.path) <= depth_max)
             db_nodes = q.all()
             out: list[TreeNode] = []
             for node in db_nodes:

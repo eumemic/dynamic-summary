@@ -347,13 +347,29 @@ class DocumentStore:
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         """Get all pinned nodes for this document only."""
-        # Prefer backend-optimized query if available
+        # Prefer backend-optimized query if available to scope by document
         getter = getattr(self._node_repo, "get_pinned_nodes_for_document", None)
         if callable(getter) and self.document_id is not None:
-            return list(getter(self.document_id, depth_max))
-        # Fallback: get all pinned nodes and filter by document
-        all_pinned = self._node_repo.get_pinned_nodes(depth_max)
-        return [node for node in all_pinned if node.document_id == self.document_id]
+            pinned: list[TreeNode] = list(getter(self.document_id, None))
+        else:
+            pinned = [
+                node
+                for node in self._node_repo.get_pinned_nodes(None)
+                if node.document_id == self.document_id
+            ]
+
+        if depth_max is None:
+            return pinned
+
+        filtered: list[TreeNode] = []
+        for node in pinned:
+            try:
+                depth = self.tree.get_depth(node.id)
+            except Exception:
+                continue
+            if depth_max is None or depth <= depth_max:
+                filtered.append(node)
+        return filtered
 
     @staticmethod
     def compute_content_hash(content: str) -> str:

@@ -6,9 +6,9 @@ as soon as their dependencies are ready, enabling maximum parallelism.
 
 import asyncio
 import logging
-import math
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -175,23 +175,6 @@ def _generate_node_id() -> str:
     return str(uuid.uuid4())
 
 
-def _calculate_tree_depth(num_leaves: int) -> int:
-    """Calculate the depth of the tree for binary path encoding."""
-    if num_leaves <= 1:
-        return 1
-    return math.ceil(math.log2(num_leaves))
-
-
-def _generate_leaf_path(index: int, tree_depth: int) -> str:
-    """Generate binary path for a leaf node."""
-    return format(index, f"0{tree_depth}b")
-
-
-def _derive_parent_path(child_path: str) -> str:
-    """Derive parent path by removing last bit from child path."""
-    return child_path[:-1] if child_path else ""
-
-
 def create_leaf_nodes(
     chunks: list[str], document_id: str, reporter: TelemetryCollector | None = None
 ) -> tuple[dict[str, TreeNode], list[TreeNode]]:
@@ -210,9 +193,6 @@ def create_leaf_nodes(
     lookup: dict[str, TreeNode] = {}
     leaves: list[TreeNode] = []
 
-    # Calculate tree depth for path generation
-    tree_depth = _calculate_tree_depth(len(chunks))
-
     # Track position in document
     current_pos = 0
 
@@ -223,12 +203,6 @@ def create_leaf_nodes(
         # Calculate token count for this chunk
         chunk_tokens = tokenizer.count_tokens(chunk)
 
-        # Special case for single-node tree: use empty path (root)
-        if len(chunks) == 1:
-            path = ""  # Single node is both leaf and root
-        else:
-            path = _generate_leaf_path(i, tree_depth)
-
         # Create TreeNode with actual text for leaves
         leaf = TreeNode(
             id=node_id,
@@ -236,7 +210,7 @@ def create_leaf_nodes(
             height=0,  # Leaves are at height 0
             span_start=current_pos,
             span_end=current_pos + len(chunk),
-            path=path,
+            path="",
             document_id=document_id,
             # No parent/children for leaves initially
             parent_id=None,
@@ -320,7 +294,7 @@ def build_internal_nodes(
                 height=current_height,
                 span_start=left.span_start,
                 span_end=right.span_end if right else left.span_end,
-                path=_derive_parent_path(left.path),
+                path="",
                 document_id=document_id,
                 # Children
                 parent_id=None,  # Will be set when grandparent created
@@ -365,6 +339,32 @@ def build_internal_nodes(
 
         current_level = parents
         current_height += 1
+
+    if current_level:
+        _assign_depths(current_level[0].id, lookup)
+
+
+def _assign_depths(root_id: str, lookup: dict[str, TreeNode]) -> None:
+    """Propagate depth (distance from root) across the local tree."""
+
+    queue: deque[tuple[str, int]] = deque([(root_id, 0)])
+    visited: set[str] = set()
+
+    while queue:
+        node_id, depth = queue.popleft()
+        node = lookup.get(node_id)
+        if not node or node_id in visited:
+            continue
+        visited.add(node_id)
+        node.depth = depth
+
+        left_id = getattr(node, "left_child_id", None)
+        if left_id:
+            queue.append((left_id, depth + 1))
+
+        right_id = getattr(node, "right_child_id", None)
+        if right_id:
+            queue.append((right_id, depth + 1))
 
 
 def poke(
@@ -489,21 +489,19 @@ async def summary_worker(
                     f"Summary {node.id[:8]} h={node.height} tokens={tokens} attempt={retry_count + 1}"
                 )
 
-                # Poke dependents IMMEDIATELY (no yielding between set and poke!)
-                if node.parent_id:
-                    poke(node.parent_id, lookup, summary_queue, processing_strategy)
+                parent = lookup.get(node.parent_id) if node.parent_id else None
+                if parent:
+                    poke(parent.id, lookup, summary_queue, processing_strategy)
 
-                # Only right children poke their following neighbor's parent
-                # (Left children's following neighbor shares the same parent)
-                if node.is_right_child() and node.following_neighbor_id:
-                    following_neighbor = lookup.get(node.following_neighbor_id)
-                    if following_neighbor and following_neighbor.parent_id:
-                        poke(
-                            following_neighbor.parent_id,
-                            lookup,
-                            summary_queue,
-                            processing_strategy,
-                        )
+                    if parent.right_child_id == node.id and node.following_neighbor_id:
+                        following_neighbor = lookup.get(node.following_neighbor_id)
+                        if following_neighbor and following_neighbor.parent_id:
+                            poke(
+                                following_neighbor.parent_id,
+                                lookup,
+                                summary_queue,
+                                processing_strategy,
+                            )
 
                 # Queue for embedding (will notify waiting workers)
                 await embedding_queue.put(node)
