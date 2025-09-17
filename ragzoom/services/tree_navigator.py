@@ -48,14 +48,14 @@ class TreeNavigator:
         if not node:
             return None, None
 
-        left = (
-            self.node_repo.get_node(node.left_child_id) if node.left_child_id else None
-        )
-        right = (
-            self.node_repo.get_node(node.right_child_id)
-            if node.right_child_id
-            else None
-        )
+        child_ids = [
+            child_id
+            for child_id in (node.left_child_id, node.right_child_id)
+            if child_id
+        ]
+        fetched = self._batched_fetch(child_ids)
+        left = fetched.get(node.left_child_id) if node.left_child_id else None
+        right = fetched.get(node.right_child_id) if node.right_child_id else None
         return left, right
 
     def _batched_fetch(self, node_ids: Iterable[str]) -> dict[str, TreeNode]:
@@ -204,16 +204,27 @@ class TreeNavigator:
         if parent is None:
             return None
 
-        sibling_id: str | None = None
+        child_ids = [
+            child_id
+            for child_id in (parent.left_child_id, parent.right_child_id)
+            if child_id
+        ]
+        if not child_ids:
+            return None
+
+        children = self._batched_fetch(child_ids)
+
         if parent.left_child_id == node.id:
             sibling_id = parent.right_child_id
         elif parent.right_child_id == node.id:
             sibling_id = parent.left_child_id
+        else:
+            sibling_id = None
 
         if not sibling_id:
             return None
 
-        return self._get_node(sibling_id)
+        return children.get(sibling_id)
 
     def is_left_child(self, node_id: str) -> bool:
         """Check if node is the left child of its parent.

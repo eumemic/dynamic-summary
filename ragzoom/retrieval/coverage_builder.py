@@ -100,31 +100,35 @@ class CoverageBuilder:
             if not nodes_in_coverage:
                 return
 
-            new_nodes_added = False
+            missing_siblings: set[str] = set()
 
             for node in nodes_in_coverage:
                 left_id = getattr(node, "left_child_id", None)
                 right_id = getattr(node, "right_child_id", None)
 
-                if left_id:
-                    if (
-                        left_id in coverage_map
-                        and right_id
-                        and right_id not in coverage_map
-                    ):
-                        sibling = self.store.nodes.get_node(right_id)
-                        if sibling is not None:
-                            coverage_map[right_id] = True
-                            new_nodes_added = True
-                    elif (
-                        right_id
-                        and right_id in coverage_map
-                        and left_id not in coverage_map
-                    ):
-                        sibling = self.store.nodes.get_node(left_id)
-                        if sibling is not None:
-                            coverage_map[left_id] = True
-                            new_nodes_added = True
+                if not left_id or not right_id:
+                    continue
+
+                left_present = left_id in coverage_map
+                right_present = right_id in coverage_map
+
+                if left_present and not right_present:
+                    missing_siblings.add(right_id)
+                elif right_present and not left_present:
+                    missing_siblings.add(left_id)
+
+            if not missing_siblings:
+                return
+
+            fetched = self.store.nodes.get_nodes(list(missing_siblings))
+            if not fetched:
+                return
+
+            new_nodes_added = False
+            for sibling in fetched:
+                if sibling.id not in coverage_map:
+                    coverage_map[sibling.id] = True
+                    new_nodes_added = True
 
             if not new_nodes_added:
                 return
