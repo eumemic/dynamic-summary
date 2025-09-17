@@ -59,7 +59,6 @@ class TestDPAssembly:
                     "document_id": "doc1",
                     "token_count": 3,
                     "height": 0,
-                    "path": "00",
                 },
                 {
                     "node_id": "leaf2",
@@ -70,7 +69,6 @@ class TestDPAssembly:
                     "document_id": "doc1",
                     "token_count": 4,
                     "height": 0,
-                    "path": "01",
                 },
                 {
                     "node_id": "leaf3",
@@ -81,7 +79,6 @@ class TestDPAssembly:
                     "document_id": "doc1",
                     "token_count": 4,
                     "height": 0,
-                    "path": "10",
                 },
                 {
                     "node_id": "leaf4",
@@ -92,7 +89,6 @@ class TestDPAssembly:
                     "document_id": "doc1",
                     "token_count": 4,
                     "height": 0,
-                    "path": "11",
                 },
                 # Internal
                 {
@@ -105,7 +101,6 @@ class TestDPAssembly:
                     "height": 1,
                     "left_child_id": "leaf1",
                     "right_child_id": "leaf2",
-                    "path": "0",
                 },
                 {
                     "node_id": "right",
@@ -117,7 +112,6 @@ class TestDPAssembly:
                     "height": 1,
                     "left_child_id": "leaf3",
                     "right_child_id": "leaf4",
-                    "path": "1",
                 },
                 {
                     "node_id": "root",
@@ -129,7 +123,6 @@ class TestDPAssembly:
                     "height": 2,
                     "left_child_id": "left",
                     "right_child_id": "right",
-                    "path": "",
                 },
             ],
         )

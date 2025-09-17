@@ -36,7 +36,6 @@ def test_document_isolation_prevents_contamination_sqlite(
                 "embedding": [0.5] * 1536,
                 "left_child_id": "doc1_left",
                 "right_child_id": "doc1_right",
-                "path": "",
             },
             {
                 "node_id": "doc1_left",
@@ -45,7 +44,6 @@ def test_document_isolation_prevents_contamination_sqlite(
                 "span_end": 50,
                 "parent_id": "doc1_root",
                 "embedding": [0.5] * 1536,
-                "path": "0",
             },
             {
                 "node_id": "doc1_right",
@@ -54,7 +52,6 @@ def test_document_isolation_prevents_contamination_sqlite(
                 "span_end": 100,
                 "parent_id": "doc1_root",
                 "embedding": [0.5] * 1536,
-                "path": "1",
             },
         ]
     )
@@ -71,7 +68,6 @@ def test_document_isolation_prevents_contamination_sqlite(
                 "embedding": [0.5] * 1536,
                 "left_child_id": "doc2_left",
                 "right_child_id": "doc2_right",
-                "path": "",
             },
             {
                 "node_id": "doc2_left",
@@ -80,7 +76,6 @@ def test_document_isolation_prevents_contamination_sqlite(
                 "span_end": 50,
                 "parent_id": "doc2_root",
                 "embedding": [0.5] * 1536,
-                "path": "0",
             },
             {
                 "node_id": "doc2_right",
@@ -89,7 +84,6 @@ def test_document_isolation_prevents_contamination_sqlite(
                 "span_end": 100,
                 "parent_id": "doc2_root",
                 "embedding": [0.5] * 1536,
-                "path": "1",
             },
         ]
     )

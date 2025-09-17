@@ -55,7 +55,6 @@ class TestDocumentAPISQLite:
                 "document_id": "dragons-doc",
                 "token_count": 8,
                 "height": 0,
-                "path": "",
             }
         ]
         dragons_store.nodes.add_batch(dragon_nodes)
@@ -75,7 +74,6 @@ class TestDocumentAPISQLite:
                 "document_id": "wizards-doc",
                 "token_count": 7,
                 "height": 0,
-                "path": "",
             }
         ]
         wizards_store.nodes.add_batch(wizard_nodes)
@@ -153,7 +151,6 @@ class TestDocumentAPISQLite:
                     "document_id": doc_id,
                     "token_count": token_count,
                     "height": 0,
-                    "path": "",
                 }
             ]
             store.nodes.add_batch(nodes)
@@ -202,7 +199,6 @@ class TestDocumentAPISQLite:
                 "document_id": "technical-docs",
                 "token_count": 6,
                 "height": 0,
-                "path": "",
             }
         ]
         technical_store.nodes.add_batch(technical_nodes)
@@ -222,7 +218,6 @@ class TestDocumentAPISQLite:
                 "document_id": "creative-writing",
                 "token_count": 7,
                 "height": 0,
-                "path": "",
             }
         ]
         creative_store.nodes.add_batch(creative_nodes)
@@ -311,7 +306,6 @@ class TestDocumentAPISQLite:
                 "document_id": "test-operations",
                 "token_count": 3,
                 "height": 0,
-                "path": "0",
             },
             {
                 "node_id": "node2",
@@ -321,7 +315,6 @@ class TestDocumentAPISQLite:
                 "document_id": "test-operations",
                 "token_count": 3,
                 "height": 0,
-                "path": "1",
             },
         ]
         store.nodes.add_batch(nodes)
