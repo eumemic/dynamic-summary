@@ -242,6 +242,9 @@ class DocumentTreeNavigator:
         self.document_id = document_id
         self._navigator = tree_navigator
 
+    def clear_depth_cache(self, node_ids: list[str]) -> None:
+        self._navigator.clear_depth_cache(node_ids)
+
     def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
         """Get children of a node, verifying document scope."""
         # First verify the parent node belongs to this document
@@ -498,6 +501,7 @@ class DocumentStore:
         except Exception:
             return 1
 
+    # jscpd:ignore-start - Signature mirrors repository APIs for session support
     def set_metadata(
         self,
         file_path: str | None = None,
@@ -506,6 +510,8 @@ class DocumentStore:
         embedding_model: str | None = None,
         summary_model: str | None = None,
         version: int | None = None,
+        *,
+        session: Session | None = None,
     ) -> None:
         """Set or update metadata for this document.
 
@@ -521,12 +527,10 @@ class DocumentStore:
 
         from ragzoom.models import Document
 
-        with self._open_session() as session:
-            # Try to get existing document
-            doc = session.query(Document).filter_by(id=self.document_id).first()
+        def _apply(session_obj: Session) -> None:
+            doc = session_obj.query(Document).filter_by(id=self.document_id).first()
 
             if doc:
-                # Update existing document
                 if file_path is not None:
                     doc.file_path = file_path
                 if content_hash is not None:
@@ -540,7 +544,6 @@ class DocumentStore:
                 if version is not None:
                     doc.version = version
             else:
-                # Create new document record
                 doc = Document(
                     id=self.document_id,
                     file_path=file_path,
@@ -550,9 +553,17 @@ class DocumentStore:
                     summary_model=summary_model,
                     version=version or 1,
                 )
-                session.add(doc)
+                session_obj.add(doc)
 
-            session.commit()
+        if session is not None:
+            _apply(session)
+            return
+
+        with self._open_session() as session_ctx:
+            _apply(session_ctx)
+            session_ctx.commit()
+
+    # jscpd:ignore-end
 
     def get_embedding_model(self) -> str | None:
         """Get the embedding model used for this document.
