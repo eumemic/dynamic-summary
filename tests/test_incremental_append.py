@@ -150,6 +150,73 @@ class TestIncrementalAppend:
 
         assert incremental_builder.document_store.get_version() == 1 + (len(pieces) - 1)
 
+    def test_append_promotes_new_root(
+        self,
+        base_config: BackwardCompatibilityConfig,
+        storage_backend: StorageBackend,
+        mock_openai_async_client: MagicMock,
+        enable_incremental: None,
+    ) -> None:
+        config = base_config.index_config
+        splitter = TextSplitter(config)
+        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
+        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+
+        incremental_builder, incremental_snapshot = _make_tree_builder(
+            "doc-root-incremental",
+            storage_backend,
+            config,
+            vector_backend,
+            database_url,
+            mock_openai_async_client,
+        )
+        full_builder, full_snapshot = _make_tree_builder(
+            "doc-root-full",
+            storage_backend,
+            config,
+            vector_backend,
+            database_url,
+            mock_openai_async_client,
+        )
+
+        paragraphs = [
+            f"Section {i}. Deterministic paragraph for root promotion testing.\n"
+            for i in range(8)
+        ]
+        full_text = "".join(paragraphs)
+        full_chunks = splitter.split_text(full_text)
+        while len(full_chunks) < 4:
+            start_index = len(paragraphs)
+            paragraphs.extend(
+                f"Section {start_index + j}. Additional deterministic text to force splits.\n"
+                for j in range(4)
+            )
+            full_text = "".join(paragraphs)
+            full_chunks = splitter.split_text(full_text)
+
+        midpoint = len(full_chunks) // 2
+        initial_text = "".join(full_chunks[:midpoint])
+        append_text = "".join(full_chunks[midpoint:])
+
+        asyncio.run(
+            incremental_builder.add_document_async(initial_text, show_progress=False)
+        )
+        root_before = incremental_builder.document_store.tree.get_root()
+        assert root_before is not None
+
+        asyncio.run(
+            incremental_builder.append_text_async(append_text, show_progress=False)
+        )
+        root_after = incremental_builder.document_store.tree.get_root()
+        assert root_after is not None
+        assert root_after.height >= root_before.height
+
+        asyncio.run(full_builder.add_document_async(full_text, show_progress=False))
+
+        assert incremental_snapshot() == full_snapshot()
+        assert _reconstruct_document(incremental_builder.document_store) == full_text
+        assert incremental_builder.document_store.get_version() == 2
+
     def test_small_append_fast_path_preserves_leaf(
         self,
         base_config: BackwardCompatibilityConfig,
@@ -215,6 +282,63 @@ class TestIncrementalAppend:
 
         reconstructed = _reconstruct_document(builder.document_store)
         assert reconstructed == base_text + extra
+
+    def test_append_telemetry_contains_metadata(
+        self,
+        base_config: BackwardCompatibilityConfig,
+        storage_backend: StorageBackend,
+        mock_openai_async_client: MagicMock,
+        enable_incremental: None,
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        config = base_config.index_config
+        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
+        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+
+        builder, _ = _make_tree_builder(
+            "doc-telemetry",
+            storage_backend,
+            config,
+            vector_backend,
+            database_url,
+            mock_openai_async_client,
+        )
+
+        base_text = "Telemetry baseline."
+        asyncio.run(builder.add_document_async(base_text, show_progress=False))
+
+        leaves_before = builder.document_store.nodes.get_leaves()
+        leaves_before.sort(key=lambda n: int(n.span_start))
+        right_leaf = leaves_before[-1]
+
+        extra = " Additional telemetry slice."
+        reporter = MagicMock()
+        reporter.finalize.return_value = {"nodes": []}
+
+        result = asyncio.run(
+            builder.append_text_async(
+                extra,
+                show_progress=False,
+                reporter=reporter,
+            )
+        )
+
+        assert isinstance(result, tuple)
+        _doc_id, telemetry = result
+        assert telemetry.get("nodes") == []
+
+        reporter.record_append_metadata.assert_called_once()
+        metadata_kwargs = reporter.record_append_metadata.call_args.kwargs
+        assert (
+            metadata_kwargs["document_version"] == builder.document_store.get_version()
+        )
+
+        expected_start = int(right_leaf.span_start)
+        expected_end = expected_start + len((right_leaf.text or "") + extra)
+        assert metadata_kwargs["span_start"] == expected_start
+        assert metadata_kwargs["span_end"] == expected_end
+        assert metadata_kwargs["mutated_nodes"] >= metadata_kwargs["summary_nodes"] >= 0
 
     def test_append_rollback_on_vector_failure(
         self,
