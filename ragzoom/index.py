@@ -1055,6 +1055,14 @@ class TreeBuilder:
         )
 
         if reporter:
+            reporter.record_append_metadata(
+                document_version=new_version,
+                span_start=tracking.tail_start,
+                span_end=tracking.tail_start + len(tracking.tail_text),
+                mutated_nodes=len(tracking.mutable_node_ids),
+                summary_nodes=len(tracking.summary_node_ids),
+                leaf_delta=tracking.leaf_delta,
+            )
             telemetry: TelemetryDataDict = reporter.finalize()
             return document_id, telemetry
 

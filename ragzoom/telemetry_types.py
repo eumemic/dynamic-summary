@@ -174,6 +174,7 @@ class TelemetryDataDict(TypedDict):
     nodes: list[NodeTelemetryDict]
     # Optional document path
     document_path: NotRequired[str]
+    append_metadata: NotRequired[dict[str, object]]
 
 
 # Analysis result types

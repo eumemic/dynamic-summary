@@ -306,6 +306,13 @@ class IndexingService:
             if doc_record is None:
                 raise ValueError(f"Document '{document_id}' has not been indexed yet")
 
+            doc_version_attr = getattr(doc_record, "version", None)
+            if doc_version_attr is None:
+                raise RuntimeError(
+                    "Incremental append requires documents.version to be present. "
+                    "Run storage migrations before enabling incremental append."
+                )
+
             tree_builder = self._create_tree_builder(document_id)
 
             reporter = None

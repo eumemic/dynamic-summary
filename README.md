@@ -12,11 +12,33 @@ Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system tha
 - **MMR Diversity**: Maximal Marginal Relevance for diverse, comprehensive results
 - **Slope-Capped Transitions**: Smooth depth transitions (±1 level) for coherent summaries *(planned feature)*
 - **Token Budget Management**: Strict adherence to configurable token limits
-- **Incremental Updates**: Append-only design with efficient dirty node tracking
+- **Incremental Appends (beta)**: Opt-in engine that reuses existing tree structure while appending new content under strict invariants
 - **Optional Features**:
   - Node pinning for always-included content
   - Sliding queue eviction with freshness decay
   - Smoothing pass for enhanced coherence
+
+## Incremental Append (Beta)
+
+Incremental append is opt-in while we finish hardening the feature. To enable it:
+
+1. Run the latest storage migrations so the new columns are present:
+   - PostgreSQL: migrations are applied automatically on startup; ensure `documents.version`
+     and `node_vectors.doc_version` exist.
+   - SQLite: the bundled migrations add the same columns on first access.
+2. Set the feature flag before launching RagZoom:
+
+```bash
+export RAGZOOM_ENABLE_INCREMENTAL=1
+```
+
+When enabled, `IndexingService.append_to_document(...)` and the CLI append command reuse
+the existing tree, resummarize only the affected nodes, and version-gate visibility so
+queries see a consistent snapshot. Telemetry files produced during append runs contain
+an `append_metadata` block describing the patch (document version, span, and node counts).
+
+If the schema is out of date or the flag is unset, append requests fail fast with a
+clear error so you can migrate or re-run in full-reindex mode.
 
 ## Installation
 

@@ -1,7 +1,10 @@
 """Tests for the service layer implementation."""
 
+import asyncio
 from typing import cast
 from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
@@ -157,6 +160,66 @@ class TestIndexingService:
             assert result.chunks_created >= 1
             assert result.tree_depth >= 0
             assert result.telemetry is None
+
+    def test_append_requires_schema_version(
+        self,
+        storage_backend: StorageBackend,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Ensure append fails cleanly when schema is missing version column."""
+
+        index_config = IndexConfig.load()
+        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
+        monkeypatch.setenv("RAGZOOM_ENABLE_INCREMENTAL", "1")
+
+        mock_async_client = MagicMock()
+
+        async def mock_embeddings(*args: object, **kwargs: object) -> object:
+            from typing import cast
+
+            input_texts = cast(list[str] | str, kwargs.get("input", []))
+            if isinstance(input_texts, str):
+                input_texts = [input_texts]
+            return MagicMock(
+                data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts]
+            )
+
+        mock_async_client.embeddings.create = mock_embeddings
+        mock_async_client.chat.completions.create = MagicMock(
+            return_value=MagicMock(
+                choices=[
+                    MagicMock(
+                        message=MagicMock(content="Summary of left and right content")
+                    )
+                ]
+            )
+        )
+
+        with patch(
+            "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
+        ):
+            service = IndexingService(storage_backend, index_config, operational_config)
+            service.index_document("seed text", document_id="doc-append")
+
+            doc = service.store.get_document_by_id("doc-append")
+            assert doc is not None
+            doc.version = None  # type: ignore[assignment]
+
+            monkeypatch.setattr(
+                service.store,
+                "get_document_by_id",
+                lambda _doc_id: doc,
+            )
+
+            async def attempt() -> None:
+                await service.append_to_document_async(
+                    document_id="doc-append",
+                    new_text=" more text",
+                    show_progress=False,
+                )
+
+            with pytest.raises(RuntimeError, match="documents.version"):
+                asyncio.run(attempt())
 
 
 class TestQueryService:
