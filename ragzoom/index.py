@@ -13,7 +13,10 @@ from numpy.typing import NDArray
 from ragzoom.config import IndexConfig, SecretStr
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
-from ragzoom.dataflow import build_tree_dataflow
+from ragzoom.dataflow import (
+    build_full_document_patch,
+    run_tree_patch,
+)
 from ragzoom.dataflow.core import ProcessingStrategy
 from ragzoom.document_store import DocumentStore
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
@@ -257,9 +260,13 @@ class TreeBuilder:
         try:
             # Step 4: Build complete tree using dataflow
             # This creates all nodes (leaves + internal) and generates all embeddings
-            tree_nodes = await build_tree_dataflow(
+            patch = build_full_document_patch(
                 chunks=chunks,
                 document_id=document_id,
+                reporter=reporter,
+            )
+            tree_nodes = await run_tree_patch(
+                patch=patch,
                 llm_service=self.llm_service,
                 target_tokens=self.config.target_chunk_tokens,
                 max_summary_concurrency=30,  # Use default max_concurrent value

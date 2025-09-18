@@ -691,7 +691,7 @@ def _collect_summary_roots(
     return ordered
 
 
-def _build_full_document_patch(
+def build_full_document_patch(
     chunks: list[str],
     document_id: str,
     reporter: TelemetryCollector | None,
@@ -711,7 +711,7 @@ def _build_full_document_patch(
     )
 
 
-async def _run_dataflow_patch(
+async def run_tree_patch(
     patch: TreePatch,
     llm_service: LLMService,
     target_tokens: int,
@@ -815,8 +815,8 @@ async def build_tree_dataflow(
 ) -> list[TreeNode]:
     """Build tree using the shared dataflow engine for a full document."""
 
-    patch = _build_full_document_patch(chunks, document_id, reporter)
-    return await _run_dataflow_patch(
+    patch = build_full_document_patch(chunks, document_id, reporter)
+    return await run_tree_patch(
         patch,
         llm_service,
         target_tokens,
