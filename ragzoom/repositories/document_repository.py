@@ -83,6 +83,7 @@ class DocumentRepository(BaseRepository):
         summary_model: str,
         *,
         session: Optional["Session"] = None,
+        version: int = 1,
     ) -> Document:
         """Add a document record.
 
@@ -109,6 +110,7 @@ class DocumentRepository(BaseRepository):
                 chunk_count=chunk_count,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
+                version=version,
             )
             db_session.add(doc)
             return doc

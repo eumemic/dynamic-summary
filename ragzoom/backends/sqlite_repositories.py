@@ -374,6 +374,7 @@ class SqliteDocumentRepository:
         summary_model: str,
         *,
         session: Session | None = None,
+        version: int = 1,
     ) -> None:
         own_session = False
         if session is None:
@@ -387,6 +388,7 @@ class SqliteDocumentRepository:
                 chunk_count=chunk_count,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
+                version=version,
             )
             session.add(doc)
             if own_session:

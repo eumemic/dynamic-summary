@@ -437,6 +437,7 @@ class DocumentStore:
         chunk_count: int = 0,
         embedding_model: str | None = None,
         summary_model: str | None = None,
+        version: int | None = None,
     ) -> None:
         """Set or update metadata for this document.
 
@@ -468,6 +469,8 @@ class DocumentStore:
                     doc.embedding_model = embedding_model
                 if summary_model is not None:
                     doc.summary_model = summary_model
+                if version is not None:
+                    doc.version = version
             else:
                 # Create new document record
                 doc = Document(
@@ -477,6 +480,7 @@ class DocumentStore:
                     chunk_count=chunk_count,
                     embedding_model=embedding_model,
                     summary_model=summary_model,
+                    version=version or 1,
                 )
                 session.add(doc)
 
