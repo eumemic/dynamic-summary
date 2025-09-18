@@ -4,7 +4,7 @@ import hashlib
 import logging
 from collections.abc import Generator
 from contextlib import AbstractContextManager, contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -85,6 +85,25 @@ class DocumentNodeRepository:
             processed_data.append(processed_node)  # type: ignore[arg-type]
         return self._repo.add_nodes_batch(processed_data, session=session)
 
+    # jscpd:ignore-start - wrappers mirror repository signatures for document scoping
+    def upsert_nodes_batch(
+        self,
+        nodes_data: list[dict[str, object]],
+        *,
+        session: Session | None = None,
+    ) -> list[TreeNode]:
+        """Upsert multiple nodes while enforcing document scope."""
+
+        processed: list[dict[str, object]] = []
+        for node_data in nodes_data:
+            data_copy = dict(node_data)
+            data_copy["document_id"] = self.document_id
+            processed.append(data_copy)
+        upserts = getattr(self._repo, "upsert_nodes_batch", None)
+        if not callable(upserts):
+            raise NotImplementedError("Underlying repository does not support upsert")
+        return cast(list[TreeNode], upserts(processed, session=session))
+
     def get(self, node_id: str) -> TreeNode | None:
         """Get a node by ID, ensuring it belongs to this document."""
         node = self._repo.get_node(node_id)
@@ -111,6 +130,20 @@ class DocumentNodeRepository:
         if target_doc is None:
             return nodes
         return [node for node in nodes if node.document_id == target_doc]
+
+    def get_rightmost_leaf_for_document(
+        self, document_id: str | None
+    ) -> TreeNode | None:
+        target_doc = document_id or self.document_id
+        getter = getattr(self._repo, "get_rightmost_leaf_for_document", None)
+        if not callable(getter):
+            raise NotImplementedError(
+                "Underlying repository does not support rightmost leaf lookup"
+            )
+        node = getter(target_doc)
+        if node and (target_doc is None or node.document_id == target_doc):
+            return cast(TreeNode, node)
+        return None
 
     def get_many(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes, filtering to this document only."""
@@ -182,6 +215,21 @@ class DocumentNodeRepository:
         # Note: We trust that the caller is only updating nodes from this document
         # as this is typically called during tree construction where document consistency is maintained
         self._repo.update_parent_references_batch(updates, session=session)
+
+    def update_neighbors_batch(
+        self,
+        updates: list[tuple[str, str | None, str | None]],
+        *,
+        session: Session | None = None,
+    ) -> None:
+        updater = getattr(self._repo, "update_neighbors_batch", None)
+        if not callable(updater):
+            raise NotImplementedError(
+                "Underlying repository does not support neighbor updates"
+            )
+        updater(updates, session=session)
+
+    # jscpd:ignore-end
 
 
 # Legacy DocumentSearchService removed; retrieval uses VectorIndex directly
