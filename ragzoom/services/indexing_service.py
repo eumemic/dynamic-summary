@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from ragzoom.telemetry_types import TelemetryDataDict
 
-from ragzoom.config import IndexConfig, OperationalConfig
+from ragzoom.config import IndexConfig, OperationalConfig, is_incremental_append_enabled
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
 from ragzoom.vector_factory import create_vector_index
@@ -46,6 +46,42 @@ class IndexingService:
         self.index_config = index_config
         self.operational_config = operational_config
         # TreeBuilder will be created per-request with a DocumentStore
+
+    def _finalize_result(
+        self,
+        document_id: str,
+        telemetry: Optional["TelemetryDataDict"],
+    ) -> IndexingResult:
+        doc_store_final = self.store.for_document(document_id)
+        leaves = doc_store_final.nodes.get_leaves()
+        try:
+            doc_store_final.set_metadata(chunk_count=len(leaves))
+        except Exception:
+            pass
+        root = doc_store_final.tree.get_root()
+        tree_height = root.height if root else 0
+
+        return IndexingResult(
+            document_id=document_id,
+            chunks_created=len(leaves),
+            tree_depth=tree_height,
+            telemetry=telemetry,
+        )
+
+    def _create_tree_builder(self, document_id: str) -> TreeBuilder:
+        document_store = self.store.for_document(document_id)
+        vector_index = create_vector_index(
+            self.operational_config.vector_backend,
+            self.operational_config.database_url,
+            self.index_config.embedding_model,
+        )
+        return TreeBuilder(
+            self.index_config,
+            document_store,
+            api_key=self.operational_config.openai_api_key.get_secret_value(),
+            max_concurrent=30,
+            vector_index=vector_index,
+        )
 
     def index_document(
         self,
@@ -196,20 +232,7 @@ class IndexingService:
             )
 
             # Create document-scoped store and TreeBuilder
-            document_store = self.store.for_document(document_id)
-
-            vector_index = create_vector_index(
-                self.operational_config.vector_backend,
-                self.operational_config.database_url,
-                self.index_config.embedding_model,
-            )
-            tree_builder = TreeBuilder(
-                self.index_config,
-                document_store,
-                api_key=self.operational_config.openai_api_key.get_secret_value(),
-                max_concurrent=30,
-                vector_index=vector_index,
-            )
+            tree_builder = self._create_tree_builder(document_id)
 
             # Index with or without telemetry
             if collect_telemetry:
@@ -231,20 +254,82 @@ class IndexingService:
                 )
                 telemetry = None
 
-            # Get document statistics and update metadata without exposing sessions
-            doc_store_final = self.store.for_document(doc_id)
-            leaves = doc_store_final.nodes.get_leaves()
-            # Update chunk_count metadata for the document
-            try:
-                doc_store_final.set_metadata(chunk_count=len(leaves))
-            except Exception:
-                pass
-            root = doc_store_final.tree.get_root()
-            tree_height = root.height if root else 0
+            return self._finalize_result(doc_id, telemetry)
 
-            return IndexingResult(
-                document_id=doc_id,
-                chunks_created=len(leaves),
-                tree_depth=tree_height,
-                telemetry=telemetry,
+    def append_to_document(
+        self,
+        document_id: str,
+        new_text: str,
+        show_progress: bool = False,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        """Sync wrapper for append_to_document_async."""
+
+        import asyncio
+
+        return asyncio.run(
+            self.append_to_document_async(
+                document_id=document_id,
+                new_text=new_text,
+                show_progress=show_progress,
+                collect_telemetry=collect_telemetry,
             )
+        )
+
+    async def append_to_document_async(
+        self,
+        document_id: str,
+        new_text: str,
+        show_progress: bool = False,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        """Append new text to an existing document incrementally."""
+
+        if not is_incremental_append_enabled():
+            raise RuntimeError("Incremental append is currently disabled")
+
+        if not document_id:
+            raise ValueError("document_id is required for append")
+
+        from contextlib import AbstractContextManager, nullcontext
+        from typing import cast
+
+        _lock_fn = getattr(self.store, "lock_document", None)
+        cm_any = _lock_fn(document_id) if callable(_lock_fn) else None
+        if not (hasattr(cm_any, "__enter__") and hasattr(cm_any, "__exit__")):
+            lock_cm = cast(AbstractContextManager[object], nullcontext())
+        else:
+            lock_cm = cast(AbstractContextManager[object], cm_any)
+
+        with lock_cm:
+            doc_record = self.store.get_document_by_id(document_id)
+            if doc_record is None:
+                raise ValueError(f"Document '{document_id}' has not been indexed yet")
+
+            tree_builder = self._create_tree_builder(document_id)
+
+            reporter = None
+            if collect_telemetry:
+                from ragzoom.telemetry_collection import TelemetryCollector
+
+                token_estimate = tree_builder.tokenizer.count_tokens(new_text)
+                reporter = TelemetryCollector(
+                    document_id,
+                    token_estimate,
+                    self.index_config,
+                    document_path=None,
+                )
+
+            append_result = await tree_builder.append_text_async(
+                new_text,
+                show_progress=show_progress,
+                reporter=reporter,
+            )
+
+            if isinstance(append_result, tuple):
+                doc_id, telemetry = append_result
+            else:
+                doc_id = append_result
+                telemetry = None
+
+            return self._finalize_result(doc_id, telemetry)

@@ -22,6 +22,12 @@ class TreeNavigator:
         self.node_repo = node_repository
         self._depth_cache: dict[str, int] = {}
 
+    def clear_depth_cache(self, node_ids: list[str]) -> None:
+        """Invalidate cached depths for the given node IDs."""
+
+        for node_id in node_ids:
+            self._depth_cache.pop(node_id, None)
+
     def _get_node(self, node_id: str) -> TreeNode | None:
         """Fetch a node with cache awareness."""
 
