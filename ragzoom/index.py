@@ -462,10 +462,6 @@ class TreeBuilder:
                 parent = existing_parent
                 reuse_available = False
             else:
-                if right is None:
-                    # Carry the leftover node upward unchanged
-                    next_level.append(left)
-                    break
                 parent = DomainNode(
                     id=self._generate_node_id(),
                     document_id=document_id,
@@ -476,7 +472,7 @@ class TreeBuilder:
                     span_end=0,
                     text="",
                     token_count=0,
-                    height=max(left.height, right.height) + 1,
+                    height=0,
                 )
                 lookup[parent.id] = parent
                 tracking.mutable_node_ids.add(parent.id)
@@ -487,19 +483,24 @@ class TreeBuilder:
 
             parent.document_id = document_id
             parent.left_child_id = left.id
-            parent.right_child_id = right.id if right else None
             parent.span_start = left.span_start
-            parent.span_end = right.span_end if right else left.span_end
-            parent.height = (
-                max(left.height, right.height) + 1 if right else left.height + 1
-            )
+            left.parent_id = parent.id
+
+            if right is not None:
+                parent.right_child_id = right.id
+                parent.span_end = right.span_end
+                parent.height = max(int(left.height), int(right.height)) + 1
+                right.parent_id = parent.id
+                step = 2
+            else:
+                parent.right_child_id = None
+                parent.span_end = left.span_end
+                parent.height = int(left.height) + 1
+                step = 1
+
             parent.text = ""
             parent.token_count = 0
             parent.embedding = None
-
-            left.parent_id = parent.id
-            if right:
-                right.parent_id = parent.id
 
             summary_ids.append(parent.id)
             tracking.summary_node_ids.add(parent.id)
@@ -507,9 +508,7 @@ class TreeBuilder:
 
             next_level.append(parent)
 
-            if right is None:
-                break
-            idx += 2
+            idx += step
 
         # Update neighbor links for the newly formed level
         for i, parent in enumerate(next_level):

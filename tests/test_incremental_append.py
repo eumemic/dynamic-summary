@@ -1,7 +1,9 @@
 import asyncio
 import os
 from collections.abc import Callable
+from pathlib import Path
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -75,6 +77,132 @@ def _reconstruct_document(doc_store: DocumentStore) -> str:
     return "".join(leaf.text or "" for leaf in leaves)
 
 
+def _snapshot_document(doc_store: DocumentStore) -> list[tuple[int, int, int, str]]:
+    nodes = doc_store.nodes.get_all()
+    return sorted(
+        [
+            (
+                int(node.height),
+                int(node.span_start),
+                int(node.span_end),
+                node.text or "",
+            )
+            for node in nodes
+        ]
+    )
+
+
+def _split_into_segments(text: str, segment_count: int) -> list[str]:
+    if segment_count <= 1:
+        return [text]
+    total = len(text)
+    base = total // segment_count
+    segments: list[str] = []
+    cursor = 0
+    for idx in range(segment_count - 1):
+        segments.append(text[cursor : cursor + base])
+        cursor += base
+    segments.append(text[cursor:])
+    return segments
+
+
+def _build_full_and_incremental_documents(
+    storage_backend: StorageBackend,
+    config: IndexConfig,
+    vector_backend: str,
+    database_url: str,
+    mock_client: MagicMock,
+    full_text: str,
+    segments: list[str],
+) -> tuple[DocumentStore, DocumentStore]:
+    full_doc_id = f"full-{uuid4()}"
+    incremental_doc_id = f"inc-{uuid4()}"
+
+    full_builder, _ = _make_tree_builder(
+        full_doc_id,
+        storage_backend,
+        config,
+        vector_backend,
+        database_url,
+        mock_client,
+    )
+
+    incremental_builder, _ = _make_tree_builder(
+        incremental_doc_id,
+        storage_backend,
+        config,
+        vector_backend,
+        database_url,
+        mock_client,
+    )
+
+    asyncio.run(full_builder.add_document_async(full_text, show_progress=False))
+
+    for segment in segments:
+        asyncio.run(
+            incremental_builder.append_text_async(
+                segment,
+                show_progress=False,
+            )
+        )
+
+    return full_builder.document_store, incremental_builder.document_store
+
+
+def _collect_leaf_depths(doc_store: DocumentStore) -> list[int]:
+    root = doc_store.tree.get_root()
+    if root is None:
+        return []
+
+    nodes = {node.id: node for node in doc_store.nodes.get_all()}
+    stack: list[tuple[str, int]] = [(root.id, 0)]
+    depths: list[int] = []
+
+    while stack:
+        node_id, depth = stack.pop()
+        node = nodes.get(node_id)
+        if node is None:
+            continue
+        left_id = node.left_child_id
+        right_id = node.right_child_id
+        if not left_id and not right_id:
+            depths.append(depth)
+            continue
+        if right_id:
+            stack.append((right_id, depth + 1))
+        if left_id:
+            stack.append((left_id, depth + 1))
+
+    return depths
+
+
+def _assert_left_balanced(doc_store: DocumentStore) -> None:
+    nodes = {node.id: node for node in doc_store.nodes.get_all()}
+
+    for node in nodes.values():
+        left_id = node.left_child_id
+        right_id = node.right_child_id
+
+        if not left_id and not right_id:
+            continue
+
+        left = nodes.get(left_id) if left_id else None
+        right = nodes.get(right_id) if right_id else None
+
+        if right is None:
+            assert left is not None
+            assert int(node.height) == int(left.height) + 1
+            continue
+
+        assert left is not None
+        left_height = int(left.height)
+        right_height = int(right.height)
+
+        assert left_height >= right_height
+        assert left_height - right_height <= 1
+        assert int(node.height) == max(left_height, right_height) + 1
+
+
 @pytest.fixture
 def enable_incremental(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RAGZOOM_ENABLE_INCREMENTAL", "1")
@@ -93,62 +221,134 @@ class TestIncrementalAppend:
         vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
         database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
 
-        full_builder, full_snapshot = _make_tree_builder(
-            "doc-full",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
-        incremental_builder, incremental_snapshot = _make_tree_builder(
-            "doc-incremental",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
         full_text = "".join(
             [
-                f"Paragraph {i}. This is deterministic content for testing.\n"
-                for i in range(6)
+                (
+                    f"Paragraph {i}. This is deterministic content for testing. "
+                    f"It references dragons, dwarves, and hobbits to mimic the novel.\n"
+                )
+                for i in range(240)
             ]
         )
 
-        asyncio.run(full_builder.add_document_async(full_text, show_progress=False))
+        segments = _split_into_segments(full_text, 3)
 
-        # Append the document in three segments (two paragraphs each)
-        splitter = TextSplitter(config)
-        chunks = splitter.split_text(full_text)
-        first_chunk = chunks[0]
-        remaining_text = full_text[len(first_chunk) :]
-        midpoint = len(remaining_text) // 2
-        pieces = [
-            first_chunk,
-            remaining_text[:midpoint],
-            remaining_text[midpoint:],
-        ]
-        asyncio.run(
-            incremental_builder.add_document_async(pieces[0], show_progress=False)
+        full_store, incremental_store = _build_full_and_incremental_documents(
+            storage_backend,
+            config,
+            vector_backend,
+            database_url,
+            mock_openai_async_client,
+            full_text,
+            segments,
         )
-        for part in pieces[1:]:
-            asyncio.run(
-                incremental_builder.append_text_async(
-                    part,
-                    show_progress=False,
-                )
-            )
 
-        assert full_snapshot() == incremental_snapshot()
+        assert _snapshot_document(full_store) == _snapshot_document(incremental_store)
 
-        full_doc = _reconstruct_document(full_builder.document_store)
-        incremental_doc = _reconstruct_document(incremental_builder.document_store)
+        full_doc = _reconstruct_document(full_store)
+        incremental_doc = _reconstruct_document(incremental_store)
         assert incremental_doc == full_doc == full_text
 
-        assert incremental_builder.document_store.get_version() == 1 + (len(pieces) - 1)
+        assert incremental_store.get_version() == 1 + (len(segments) - 1)
+
+    @pytest.mark.slow_threshold(60.0)
+    def test_append_height_matches_full_build(
+        self,
+        base_config: BackwardCompatibilityConfig,
+        storage_backend: StorageBackend,
+        mock_openai_async_client: MagicMock,
+        enable_incremental: None,
+    ) -> None:
+        config = base_config.index_config
+
+        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
+        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+
+        full_builder, _ = _make_tree_builder(
+            "height-full",
+            storage_backend,
+            config,
+            vector_backend,
+            database_url,
+            mock_openai_async_client,
+        )
+
+        incremental_builder, _ = _make_tree_builder(
+            "height-incremental",
+            storage_backend,
+            config,
+            vector_backend,
+            database_url,
+            mock_openai_async_client,
+        )
+
+        chunk_paths = [
+            Path("test_data/the_hobbit_incremental/the_hobbit_chunk_1.txt"),
+            Path("test_data/the_hobbit_incremental/the_hobbit_chunk_2.txt"),
+            Path("test_data/the_hobbit_incremental/the_hobbit_chunk_3.txt"),
+        ]
+
+        segments = [path.read_text(encoding="utf-8") for path in chunk_paths]
+        full_text = "".join(segments)
+
+        full_store, incremental_store = _build_full_and_incremental_documents(
+            storage_backend,
+            config,
+            vector_backend,
+            database_url,
+            mock_openai_async_client,
+            full_text,
+            segments,
+        )
+
+        full_root = full_store.tree.get_root()
+        assert full_root is not None
+
+        incremental_root = incremental_store.tree.get_root()
+        assert incremental_root is not None
+
+        assert incremental_root.height == full_root.height
+
+    @pytest.mark.slow_threshold(60.0)
+    def test_incremental_tree_invariants(
+        self,
+        base_config: BackwardCompatibilityConfig,
+        storage_backend: StorageBackend,
+        mock_openai_async_client: MagicMock,
+        enable_incremental: None,
+    ) -> None:
+        config = base_config.index_config
+
+        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
+        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+
+        full_text = "".join(
+            [
+                (
+                    f"Paragraph {i}. This is deterministic content for testing. "
+                    f"It references dragons, dwarves, and hobbits to mimic the novel.\n"
+                )
+                for i in range(240)
+            ]
+        )
+
+        segments = _split_into_segments(full_text, 4)
+
+        _, incremental_store = _build_full_and_incremental_documents(
+            storage_backend,
+            config,
+            vector_backend,
+            database_url,
+            mock_openai_async_client,
+            full_text,
+            segments,
+        )
+
+        depths = _collect_leaf_depths(incremental_store)
+        assert depths
+        assert min(depths) == max(depths)
+
+        _assert_left_balanced(incremental_store)
 
     def test_append_promotes_new_root(
         self,
