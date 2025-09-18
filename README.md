@@ -32,7 +32,7 @@ Incremental append is opt-in while we finish hardening the feature. To enable it
 export RAGZOOM_ENABLE_INCREMENTAL=1
 ```
 
-When enabled, `IndexingService.append_to_document(...)` and the CLI append command reuse
+When enabled, `IndexingService.append_to_document(...)` and the CLI `ragzoom index --append` path reuse
 the existing tree, resummarize only the affected nodes, and version-gate visibility so
 queries see a consistent snapshot. Telemetry files produced during append runs contain
 an `append_metadata` block describing the patch (document version, span, and node counts).

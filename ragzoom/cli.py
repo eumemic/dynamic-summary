@@ -13,6 +13,7 @@ from ragzoom.config import (
     IndexConfig,
     OperationalConfig,
     QueryConfig,
+    is_incremental_append_enabled,
 )
 from ragzoom.exceptions import (
     ConfigurationError,
@@ -24,7 +25,7 @@ from ragzoom.exceptions import (
     ValidationError,
 )
 from ragzoom.services.document_service import DocumentService
-from ragzoom.services.indexing_service import IndexingService
+from ragzoom.services.indexing_service import IndexingResult, IndexingService
 from ragzoom.services.query_service import QueryService
 from ragzoom.store import create_store_with_docker
 from ragzoom.tree_viz import build_ascii_tree
@@ -193,6 +194,11 @@ def cli(ctx: click.Context) -> None:
 )
 @click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.option("--no-progress", is_flag=True, help="Disable progress bar")
+@click.option(
+    "--append",
+    is_flag=True,
+    help="Append file contents to an existing document instead of rebuilding. Requires --document-id and incremental append to be enabled.",
+)
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -212,6 +218,7 @@ def index(
     telemetry_file: str | None,
     validate: bool,
     no_progress: bool,
+    append: bool,
 ) -> None:
     """Index a document from file.
 
@@ -275,17 +282,43 @@ def index(
         )
         indexing_service = IndexingService(store, index_config, operational_config)
 
-        # Index document from file
-        click.echo(f"Indexing {Path(file_path).name}...")
+        append_document_id: str | None = None
 
-        result = indexing_service.index_from_file(
-            file_path,
-            document_id=document_id,
-            show_progress=not no_progress,
-            collect_telemetry=bool(telemetry_file),
-        )
+        if append:
+            if not document_id:
+                raise click.UsageError("--document-id is required when using --append")
+            if not is_incremental_append_enabled():
+                raise click.UsageError(
+                    "Incremental append is disabled. Set RAGZOOM_ENABLE_INCREMENTAL=1 before using --append."
+                )
+            append_document_id = document_id
 
-        click.echo("✅ Document indexed successfully!")
+        result: IndexingResult
+
+        if append:
+            assert append_document_id is not None
+            click.echo(
+                f"Appending {Path(file_path).name} to document '{append_document_id}'..."
+            )
+            text_to_append = Path(file_path).read_text(encoding="utf-8")
+            result = indexing_service.append_to_document(
+                document_id=append_document_id,
+                new_text=text_to_append,
+                show_progress=not no_progress,
+                collect_telemetry=bool(telemetry_file),
+            )
+            success_message = "✅ Document appended successfully!"
+        else:
+            click.echo(f"Indexing {Path(file_path).name}...")
+            result = indexing_service.index_from_file(
+                file_path,
+                document_id=document_id,
+                show_progress=not no_progress,
+                collect_telemetry=bool(telemetry_file),
+            )
+            success_message = "✅ Document indexed successfully!"
+
+        click.echo(success_message)
         click.echo(f"   Document ID: {result.document_id}")
         click.echo(f"   Chunks created: {result.chunks_created}")
         click.echo(f"   Tree height: {result.tree_depth}")

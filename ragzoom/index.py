@@ -901,7 +901,16 @@ class TreeBuilder:
 
         right_leaf = nodes_repo.get_rightmost_leaf_for_document(document_id)
         if right_leaf is None:
-            raise ValueError("Cannot append to an empty document; reindex instead")
+            if reporter:
+                return await self._add_document_impl(
+                    new_text,
+                    show_progress=show_progress,
+                    reporter=reporter,
+                )
+            return await self._add_document_impl(
+                new_text,
+                show_progress=show_progress,
+            )
 
         combined_text = (right_leaf.text or "") + new_text
         if not combined_text:
