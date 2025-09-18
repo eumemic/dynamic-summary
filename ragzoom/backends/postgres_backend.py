@@ -90,6 +90,7 @@ class PostgresStorageBackend(StorageBackend):
             chunk_count,
             embedding_model,
             summary_model,
+            version=1,
         )
         # jscpd:ignore-end
         return self.for_document(document_id)
