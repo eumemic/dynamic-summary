@@ -331,14 +331,23 @@ class IndexingService:
         with lock_cm:
             doc_record = self.store.get_document_by_id(document_id)
             if doc_record is None:
-                raise ValueError(f"Document '{document_id}' has not been indexed yet")
+                from ragzoom.document_store import DocumentStore
 
-            doc_version_attr = getattr(doc_record, "version", None)
-            if doc_version_attr is None:
-                raise RuntimeError(
-                    "Incremental append requires documents.version to be present. "
-                    "Run storage migrations before enabling incremental append."
+                content_hash = DocumentStore.compute_content_hash(new_text)
+                self.store.add_document(
+                    document_id=document_id,
+                    file_path=None,
+                    content_hash=content_hash,
+                    chunk_count=0,
+                    embedding_model=self.index_config.embedding_model,
+                    summary_model=self.index_config.summary_model,
                 )
+            else:
+                if getattr(doc_record, "version", None) is None:
+                    raise RuntimeError(
+                        "Incremental append requires documents.version to be present. "
+                        "Run storage migrations before enabling incremental append."
+                    )
 
             tree_builder = self._create_tree_builder(document_id)
 
