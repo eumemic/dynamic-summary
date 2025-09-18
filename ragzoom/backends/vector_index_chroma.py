@@ -7,7 +7,7 @@ canonical Vector objects for core consumption.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TypedDict, cast
+from typing import Literal, TypedDict, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -29,6 +29,24 @@ def _coerce_version(value: object) -> int:
 # jscpd:ignore-end
 
 
+def _normalize_where(
+    where: dict[str, str | int | float | bool | None],
+) -> dict[str, object]:
+    clauses: list[dict[str, object]] = []
+    for key, val in where.items():
+        if val is None:
+            continue
+        if isinstance(val, dict):
+            clauses.append({key: val})
+        elif isinstance(val, str | int | float | bool):
+            clauses.append({key: {"$eq": val}})
+    if not clauses:
+        return {}
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$and": clauses}
+
+
 class ChromaVectorIndexAdapter(VectorIndex):
     def __init__(self, persist_dir: str, model_id: str) -> None:
         self._under = ChromaVectorIndex(persist_dir)
@@ -40,24 +58,49 @@ class ChromaVectorIndexAdapter(VectorIndex):
         k: int,
         where: dict[str, str | int | float | bool | None] | None = None,
     ) -> list[Vector]:
-        # Filter where to remove None values per adapter's expected type
-        where_clean: dict[str, str | int | float | bool] | None = None
+        include: list[
+            Literal["documents", "embeddings", "metadatas", "distances", "uris", "data"]
+        ] = [
+            "metadatas",
+            "distances",
+        ]
+        where_param: Mapping[str, object] | None = None
         if where:
-            tmp: dict[str, str | int | float | bool] = {}
-            for key, val in where.items():
-                if val is None:
-                    continue
-                if isinstance(val, str | int | float | bool):
-                    tmp[key] = val
-            where_clean = tmp or None
-        base_results = self._under.search_similar(query_embedding, k, where_clean)
-        ids = [r[0] for r in base_results]
+            normalized = _normalize_where(where)
+            where_param = normalized or None
+
+        class _QueryResult(TypedDict, total=False):
+            ids: Sequence[Sequence[str]]
+            distances: Sequence[Sequence[float]]
+            metadatas: Sequence[Sequence[Mapping[str, str | int | float | bool | None]]]
+
+        res = cast(
+            _QueryResult,
+            self._under._collection.query(
+                query_embeddings=[
+                    cast(Sequence[float], list(map(float, query_embedding)))
+                ],
+                n_results=k,
+                include=include,
+                where=where_param,  # type: ignore[arg-type]
+            ),
+        )
+
+        ids_nested = res.get("ids")
+        ids = list(ids_nested[0]) if ids_nested else []
+        metas_nested = res.get("metadatas")
+        metas: list[dict[str, object]] = (
+            [cast(dict[str, object], dict(m)) for m in metas_nested[0]]
+            if metas_nested and len(metas_nested) > 0
+            else []
+        )
+
         vecs = self.get_vectors(ids)
-        meta_map: dict[str, dict[str, object]] = {
-            str(r[0]): dict(r[2]) for r in base_results
-        }
+        meta_map: dict[str, dict[str, object]] = {}
+        for idx, node_id in enumerate(ids):
+            meta_map[node_id] = metas[idx] if idx < len(metas) else {}
         out: list[Vector] = []
-        for v in vecs:
+        for idx, v in enumerate(vecs):
             out.append(
                 Vector(
                     id=v.id,

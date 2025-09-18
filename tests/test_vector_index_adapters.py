@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -102,3 +103,35 @@ def test_chroma_vector_index_adapter_round_trip(
     deleted_by_filter = adapter.delete(filter={"document_id": "doc-1"})
     assert deleted_by_filter >= 1
     assert adapter.search_similar([0.0, 1.0], k=1) == []
+
+
+def test_chroma_adapter_combines_multiple_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    try:
+        __import__("chromadb")
+    except Exception:
+        pytest.skip("chromadb is required for adapter tests")
+    from ragzoom.backends.vector_index_chroma import ChromaVectorIndexAdapter
+
+    captured: dict[str, object] = {}
+
+    idx_dir = tmp_path / f"chroma-filter-{uuid4().hex}"
+    idx_dir.mkdir(parents=True, exist_ok=True)
+    adapter = ChromaVectorIndexAdapter(str(idx_dir), "test-model")
+
+    def fake_query(*args: object, **kwargs: object) -> dict[str, list[list[object]]]:
+        captured["where"] = kwargs.get("where")
+        return {"ids": [[]], "distances": [[]], "metadatas": [[]]}
+
+    monkeypatch.setattr(adapter._under._collection, "query", fake_query)
+
+    adapter.search_similar(
+        [1.0, 0.0],
+        1,
+        {"document_id": "doc-1", "doc_version": 1},
+    )
+
+    where = captured.get("where")
+    assert isinstance(where, dict)
+    assert "$and" in where
