@@ -33,6 +33,29 @@ class ProcessingStrategy(Enum):
     LeftToRight = "left_to_right"  # Position-first regardless of level
 
 
+# NOTE: DomainNode is aliased to TreeNode throughout this module for clarity.
+
+
+@dataclass
+class TreePatch:
+    """Representation of the work to run through the dataflow engine.
+
+    The lookup contains every node participating in this patch. Nodes whose text
+    is already populated and need embeddings should have their IDs listed in
+    ``embedding_node_ids``. ``summary_root_ids`` contains the initial set of
+    internal nodes that should be poked to kick off summarisation.
+    """
+
+    lookup: dict[str, TreeNode]
+    embedding_node_ids: list[str]
+    summary_root_ids: list[str]
+
+    def nodes(self) -> list[TreeNode]:
+        """Return all nodes participating in this patch."""
+
+        return list(self.lookup.values())
+
+
 class BatchAwareQueue:
     """Queue that coordinates batching using condition variables.
 
@@ -645,53 +668,79 @@ async def _process_embedding_batch(
         raise
 
 
-async def build_tree_dataflow(
+def _collect_summary_roots(
+    leaves: list[TreeNode], lookup: dict[str, TreeNode]
+) -> list[str]:
+    """Collect unique height-1 nodes in left-to-right order."""
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for leaf in leaves:
+        parent_id = leaf.parent_id
+        if not parent_id or parent_id in seen:
+            continue
+
+        parent = lookup.get(parent_id)
+        if parent is None:
+            raise ValueError(f"Parent node {parent_id} missing from lookup")
+
+        seen.add(parent_id)
+        ordered.append(parent_id)
+
+    ordered.sort(key=lambda node_id: lookup[node_id].span_start)
+    return ordered
+
+
+def _build_full_document_patch(
     chunks: list[str],
     document_id: str,
-    llm_service: LLMService,
-    target_tokens: int = 200,
-    max_summary_concurrency: int = 30,
-    max_embedding_concurrency: int = 10,
-    embedding_batch_size: int = 100,
-    processing_strategy: ProcessingStrategy = ProcessingStrategy.BottomToTop,
-    reporter: TelemetryCollector | None = None,
-    progress: AsyncProgressWrapper | None = None,
-) -> list[TreeNode]:
-    """Build tree using dataflow pattern.
+    reporter: TelemetryCollector | None,
+) -> TreePatch:
+    """Create a TreePatch representing a full-document build."""
 
-    Args:
-        chunks: List of text chunks from the document
-        document_id: Document ID
-        llm_service: Service for generating summaries and embeddings
-        target_tokens: Target token count for summaries
-        max_summary_concurrency: Maximum concurrent summary workers
-        max_embedding_concurrency: Maximum concurrent embedding workers
-        embedding_batch_size: Batch size for embeddings
-        reporter: Optional telemetry collector
-        progress: Optional progress wrapper for updates
-
-    Returns:
-        List of TreeNode objects ready for database insertion
-    """
-    # Create leaf nodes
     lookup, leaves = create_leaf_nodes(chunks, document_id, reporter)
-
-    # Build internal nodes
     build_internal_nodes(lookup, leaves, document_id, reporter)
 
-    # Initialize queues and storage
+    embedding_node_ids = [leaf.id for leaf in leaves if leaf.text]
+    summary_root_ids = _collect_summary_roots(leaves, lookup)
+
+    return TreePatch(
+        lookup=lookup,
+        embedding_node_ids=embedding_node_ids,
+        summary_root_ids=summary_root_ids,
+    )
+
+
+async def _run_dataflow_patch(
+    patch: TreePatch,
+    llm_service: LLMService,
+    target_tokens: int,
+    max_summary_concurrency: int,
+    max_embedding_concurrency: int,
+    embedding_batch_size: int,
+    processing_strategy: ProcessingStrategy,
+    reporter: TelemetryCollector | None,
+    progress: AsyncProgressWrapper | None,
+) -> list[TreeNode]:
+    """Execute the dataflow engine for the provided patch."""
+
+    lookup = patch.lookup
+
     summary_queue: asyncio.PriorityQueue[SummaryJob] = asyncio.PriorityQueue()
     embedding_queue = BatchAwareQueue(batch_size=embedding_batch_size)
 
-    # Queue leaf embeddings immediately (they have text)
-    for leaf in leaves:
-        if leaf.text:  # Leaf nodes always have text
-            await embedding_queue.put(leaf)
+    for node_id in patch.embedding_node_ids:
+        node = lookup.get(node_id)
+        if node is None:
+            raise ValueError(f"Embedding node {node_id} missing from lookup")
+        if not node.text:
+            raise ValueError(
+                f"Embedding node {node_id} has no text; patches must provide populated leaves"
+            )
+        await embedding_queue.put(node)
 
-    # Create shutdown event
     shutdown = asyncio.Event()
 
-    # Start workers
     summary_workers = []
     for i in range(max_summary_concurrency):
         worker = asyncio.create_task(
@@ -725,52 +774,56 @@ async def build_tree_dataflow(
         embedding_workers.append(worker)
 
     try:
-        # Start the cascade - poke all height 1 nodes (parents of leaves)
-        # For trees with only leaves (no internal nodes), no summaries needed
-        if len(lookup) > len(leaves):
-            # Collect unique height-1 nodes and sort by span_start for ordered processing
-            height_1_nodes = list(
-                set(leaf.parent_id for leaf in leaves if leaf.parent_id)
-            )
-            height_1_nodes.sort(key=lambda node_id: lookup[node_id].span_start)
+        for node_id in patch.summary_root_ids:
+            poke(node_id, lookup, summary_queue, processing_strategy)
 
-            # Poke all unique height 1 nodes in document order - they can all start immediately
-            for node_id in height_1_nodes:
-                poke(node_id, lookup, summary_queue, processing_strategy)
-
-        # Wait for all summaries to complete
         await summary_queue.join()
-
-        # Wait for all embeddings to complete
-        # The root node acts as a natural sentinel, so workers will exit
-        # when they process it (always the last node)
         await embedding_queue.join()
 
-        # NOW signal shutdown - all work is complete
         shutdown.set()
 
-        # Wait for all workers to finish cleanly
         all_workers = summary_workers + embedding_workers
         results = await asyncio.gather(*all_workers, return_exceptions=True)
-
-        # Check for any errors
         for result in results:
             if isinstance(result, Exception):
                 raise result
 
     finally:
-        # Always clean up workers
         shutdown.set()
-
-        # Cancel all workers
         for worker in summary_workers:
             worker.cancel()
         for worker in embedding_workers:
             worker.cancel()
-
         await asyncio.gather(
             *(summary_workers + embedding_workers), return_exceptions=True
         )
 
-    # Return all nodes ready for database insertion
-    return list(lookup.values())
+    return patch.nodes()
+
+
+async def build_tree_dataflow(
+    chunks: list[str],
+    document_id: str,
+    llm_service: LLMService,
+    target_tokens: int = 200,
+    max_summary_concurrency: int = 30,
+    max_embedding_concurrency: int = 10,
+    embedding_batch_size: int = 100,
+    processing_strategy: ProcessingStrategy = ProcessingStrategy.BottomToTop,
+    reporter: TelemetryCollector | None = None,
+    progress: AsyncProgressWrapper | None = None,
+) -> list[TreeNode]:
+    """Build tree using the shared dataflow engine for a full document."""
+
+    patch = _build_full_document_patch(chunks, document_id, reporter)
+    return await _run_dataflow_patch(
+        patch,
+        llm_service,
+        target_tokens,
+        max_summary_concurrency,
+        max_embedding_concurrency,
+        embedding_batch_size,
+        processing_strategy,
+        reporter,
+        progress,
+    )
