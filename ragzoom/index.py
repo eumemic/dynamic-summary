@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import overload
 
@@ -70,6 +71,10 @@ class PatchTracking:
         default_factory=list
     )
     leaf_delta: int = 0
+    tail_start: int = 0
+    tail_text: str = ""
+    summary_node_ids: set[str] = field(default_factory=set)
+    original_heights: dict[str, int] = field(default_factory=dict)
 
 
 class TreeBuilder:
@@ -222,8 +227,10 @@ class TreeBuilder:
                 domain.preceding_neighbor_id,
                 domain.following_neighbor_id,
             )
+            tracking.original_heights[domain.id] = int(domain.height)
 
         leaf_domain = spine_domains[right_leaf.id]
+        tracking.tail_start = int(leaf_domain.span_start)
         original_following = leaf_domain.following_neighbor_id
         self._ensure_context_nodes(
             lookup, [leaf_domain.preceding_neighbor_id], tracking
@@ -261,6 +268,8 @@ class TreeBuilder:
                 tracking.original_neighbors[new_leaf.id] = (None, None)
 
             span_cursor = span_end
+
+        tracking.tail_text = "".join(new_chunks)
 
         last_leaf_id = leaf_domain.id
         if new_leaf_domains:
@@ -398,6 +407,7 @@ class TreeBuilder:
 
         if current_level:
             current_level[0].parent_id = None
+            self._assign_patch_depths(current_level[0].id, lookup)
 
         patch = TreePatch(
             lookup=lookup,
@@ -405,6 +415,25 @@ class TreeBuilder:
             summary_root_ids=summary_root_ids,
         )
         return patch, tracking
+
+    def _assign_patch_depths(self, root_id: str, lookup: dict[str, DomainNode]) -> None:
+        """Assign depth values within a patch so batching logic remains correct."""
+
+        queue: deque[tuple[str, int]] = deque([(root_id, 0)])
+        visited: set[str] = set()
+
+        while queue:
+            node_id, depth = queue.popleft()
+            node = lookup.get(node_id)
+            if node is None or node_id in visited:
+                continue
+            visited.add(node_id)
+            node.depth = depth
+
+            if node.left_child_id:
+                queue.append((node.left_child_id, depth + 1))
+            if node.right_child_id:
+                queue.append((node.right_child_id, depth + 1))
 
     def _build_parent_level(
         self,
@@ -473,6 +502,7 @@ class TreeBuilder:
                 right.parent_id = parent.id
 
             summary_ids.append(parent.id)
+            tracking.summary_node_ids.add(parent.id)
             self._ensure_context_nodes(lookup, [left.preceding_neighbor_id], tracking)
 
             next_level.append(parent)
@@ -758,6 +788,8 @@ class TreeBuilder:
             # Two-phase apply for backends with external vector index (e.g., SQLite + PythonVectorIndex):
             # After all SQL writes are complete and parent references set, upsert vectors.
             # Upsert vectors into the configured VectorIndex (required dependency)
+            doc_version = self.document_store.get_version() or 1
+
             upsert_items: list[
                 tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
             ] = []
@@ -938,6 +970,7 @@ class TreeBuilder:
             }
             vector_upserts.append((node.id, [float(x) for x in node.embedding], meta))
 
+        vectors_written = len(vector_upserts)
         if vector_upserts:
             self.vector_index.upsert(vector_upserts)
 
@@ -961,19 +994,31 @@ class TreeBuilder:
 
         new_chunk_count = old_leaf_count + tracking.leaf_delta
 
-        with self.document_store.transaction() as session:
-            for _, nodes_group in groupby(mutated_sorted, key=lambda n: n.height):
-                payload = [self._domain_to_repo_dict(node) for node in nodes_group]
-                self.document_store.nodes.upsert_nodes_batch(payload, session=session)
+        try:
+            with self.document_store.transaction() as session:
+                for _, nodes_group in groupby(mutated_sorted, key=lambda n: n.height):
+                    payload = [self._domain_to_repo_dict(node) for node in nodes_group]
+                    self.document_store.nodes.upsert_nodes_batch(
+                        payload, session=session
+                    )
 
-            if neighbor_updates:
-                self.document_store.nodes.update_neighbors_batch(
-                    neighbor_updates, session=session
+                if neighbor_updates:
+                    self.document_store.nodes.update_neighbors_batch(
+                        neighbor_updates, session=session
+                    )
+
+                self.document_store.set_metadata(
+                    chunk_count=new_chunk_count, version=new_version, session=session
                 )
-
-            self.document_store.set_metadata(
-                chunk_count=new_chunk_count, version=new_version, session=session
-            )
+        except Exception:
+            if vectors_written:
+                logger.warning(
+                    "Append rollback after vector write: doc=%s next_version=%d vectors=%d",
+                    document_id,
+                    new_version,
+                    vectors_written,
+                )
+            raise
 
         if neighbor_updates:
             affected_for_depth = set(tracking.mutable_node_ids)
@@ -987,6 +1032,27 @@ class TreeBuilder:
         reconstructed = "".join(leaf.text or "" for leaf in leaves_after)
         new_hash = DocumentStore.compute_content_hash(reconstructed)
         self.document_store.set_metadata(content_hash=new_hash)
+
+        logger.info(
+            "Append stats doc=%s version=%d->%d mutated=%d new_leaves=%d resummarized=%d vectors=%d",
+            document_id,
+            doc_version,
+            new_version,
+            len(tracking.mutable_node_ids),
+            max(tracking.leaf_delta, 0),
+            len(tracking.summary_node_ids),
+            vectors_written,
+        )
+
+        validate(
+            lambda: self._validate_append_results(
+                tracking,
+                patch,
+                leaves_after,
+                reconstructed,
+            ),
+            "incremental append",
+        )
 
         if reporter:
             telemetry: TelemetryDataDict = reporter.finalize()
@@ -1004,6 +1070,66 @@ class TreeBuilder:
         return asyncio.run(
             self.append_text_async(new_text, show_progress=show_progress)
         )
+
+    def _validate_append_results(
+        self,
+        tracking: PatchTracking,
+        patch: TreePatch,
+        leaves_after: list[TreeNode],
+        reconstructed_text: str,
+    ) -> str | None:
+        """Execute expensive validations for incremental append when enabled."""
+
+        if not tracking.tail_text:
+            return None
+
+        if tracking.tail_start < 0 or tracking.tail_start > len(reconstructed_text):
+            return (
+                f"Tail start {tracking.tail_start} is outside document bounds "
+                f"(doc length {len(reconstructed_text)})"
+            )
+
+        tail_after = reconstructed_text[tracking.tail_start :]
+        if tail_after != tracking.tail_text:
+            return (
+                "Tail reconstruction mismatch after append; expected length "
+                f"{len(tracking.tail_text)} but observed {len(tail_after)}"
+            )
+
+        for node_id, original_height in tracking.original_heights.items():
+            node = patch.lookup.get(node_id)
+            if node is None:
+                return f"Expected node {node_id} missing from patch lookup"
+            if int(node.height) != int(original_height):
+                return (
+                    f"Height changed for reused node {node_id}: "
+                    f"was {original_height}, now {node.height}"
+                )
+
+        for node_id in tracking.summary_node_ids:
+            node = patch.lookup.get(node_id)
+            if node is None:
+                continue
+            if not node.left_child_id and not node.right_child_id:
+                continue
+            left = patch.lookup.get(node.left_child_id) if node.left_child_id else None
+            right = (
+                patch.lookup.get(node.right_child_id) if node.right_child_id else None
+            )
+            if left is None:
+                return f"Parent {node_id} missing left child {node.left_child_id}"
+            expected_start = int(left.span_start)
+            expected_end = int(right.span_end) if right else int(left.span_end)
+            if (
+                int(node.span_start) != expected_start
+                or int(node.span_end) != expected_end
+            ):
+                return (
+                    f"Parent span mismatch for {node_id}: [{node.span_start}, {node.span_end}) "
+                    f"vs expected [{expected_start}, {expected_end})"
+                )
+
+        return None
 
     async def _process_node_pair(
         self,
