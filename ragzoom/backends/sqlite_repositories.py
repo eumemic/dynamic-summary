@@ -457,6 +457,21 @@ class SqliteDocumentRepository:
     def get_document_embedding_model(self, document_id: str) -> str | None:
         return self.db.get_document_embedding_model(document_id)
 
+    def get_document_version(self, document_id: str) -> int | None:
+        with self.SessionLocal() as session:
+            row = (
+                session.execute(
+                    select(SqliteDocument.version).where(
+                        SqliteDocument.id == document_id
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if row is None:
+                return None
+            return int(row)
+
     def list_documents(self) -> list[SqliteDocument]:
         with self.SessionLocal() as session:
             rows = session.query(SqliteDocument).all()

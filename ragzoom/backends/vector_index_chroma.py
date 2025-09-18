@@ -17,6 +17,18 @@ from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.vector_api import MetaDict, Vector
 
 
+# jscpd:ignore-start - helper intentionally mirrors python adapter for parity
+def _coerce_version(value: object) -> int:
+    if isinstance(value, int | float):
+        return int(value)
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return 1
+
+
+# jscpd:ignore-end
+
+
 class ChromaVectorIndexAdapter(VectorIndex):
     def __init__(self, persist_dir: str, model_id: str) -> None:
         self._under = ChromaVectorIndex(persist_dir)
@@ -184,4 +196,5 @@ def _as_meta(meta: dict[str, object]) -> MetaDict:
         "parent_id": _to_str(meta.get("parent_id")),
         "document_id": _to_str(meta.get("document_id")),
         "is_leaf": _to_int(meta.get("is_leaf")),
+        "doc_version": _coerce_version(meta.get("doc_version", 1)),
     }

@@ -68,6 +68,23 @@ class DocumentRepository(BaseRepository):
         doc = self.get_document_by_id(document_id)
         return doc.embedding_model if doc else None
 
+    def get_document_version(self, document_id: str) -> int | None:
+        """Get the version counter for a document."""
+
+        with self.SessionLocal() as session:
+            row = (
+                session.query(Document.version)
+                .filter(Document.id == document_id)
+                .first()
+            )
+            if not row:
+                return None
+            version_raw = row[0]
+            try:
+                return int(version_raw)
+            except Exception:
+                return None
+
     def list_documents(self) -> list[Document]:
         """Return all Document rows."""
         with self.SessionLocal() as session:

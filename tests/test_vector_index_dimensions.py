@@ -24,6 +24,7 @@ def _meta(
         "span_end": se,
         "parent_id": pid,
         "is_leaf": leaf,
+        "doc_version": 1,
     }
 
 

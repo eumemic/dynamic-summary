@@ -430,6 +430,26 @@ class DocumentStore:
         with self._open_session() as session:
             return session.query(Document).filter_by(id=self.document_id).first()
 
+    def get_version(self) -> int | None:
+        """Return the version counter for this document."""
+
+        if not self.document_id:
+            return None
+
+        getter = getattr(self._doc_repo, "get_document_version", None)
+        if callable(getter):
+            version = getter(self.document_id)
+            if version is not None:
+                return int(version)
+
+        doc = self.get_metadata()
+        if doc is None:
+            return None
+        try:
+            return int(getattr(doc, "version", 1))
+        except Exception:
+            return 1
+
     def set_metadata(
         self,
         file_path: str | None = None,
