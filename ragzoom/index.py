@@ -245,6 +245,7 @@ class TreeBuilder:
         document_id = self.document_store.document_id
         if not document_id:
             raise ValueError("DocumentStore must have a document_id set")
+        doc_version = self.document_store.get_version() or 1
 
         # Step 2: Create and validate chunks
         chunks = self._create_and_validate_chunks(text, show_progress)
@@ -373,6 +374,7 @@ class TreeBuilder:
                     "parent_id": n.parent_id or "",
                     "document_id": n.document_id or "",
                     "is_leaf": 1 if int(getattr(n, "height", 0)) == 0 else 0,
+                    "doc_version": doc_version,
                 }
                 emb = getattr(n, "embedding", None)
                 if emb is not None:

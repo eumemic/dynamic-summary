@@ -24,6 +24,7 @@ def sample_items() -> (
         "parent_id": "",
         "document_id": "doc-1",
         "is_leaf": 1,
+        "doc_version": 1,
     }
     return [
         ("n1", [1.0, 0.0], dict(meta)),
@@ -55,6 +56,7 @@ def test_python_vector_index_adapter_round_trip(
     results = adapter.search_similar([1.0, 0.0], k=2)
     assert results[0].id == "n1"
     assert results[0].meta["document_id"] == "doc-1"
+    assert results[0].meta["doc_version"] == 1
 
     # Delete by id
     deleted = adapter.delete(ids=["n1"])
@@ -89,6 +91,7 @@ def test_chroma_vector_index_adapter_round_trip(
 
     results = adapter.search_similar([1.0, 0.0], k=2)
     assert results and results[0].id == "n1"
+    assert results[0].meta["doc_version"] == 1
 
     deleted = adapter.delete(ids=["n1"])
     assert deleted == 1

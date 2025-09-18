@@ -83,15 +83,17 @@ class PythonVectorIndex:
                     pid = v.get("parent_id")
                     did = v.get("document_id")
                     leaf = v.get("is_leaf")
-                    ver = v.get("doc_version", 1)
+                    ver_raw = v.get("doc_version", 1)
                     if not isinstance(ss, int) or not isinstance(se, int):
                         raise TypeError("Invalid span types in meta")
                     if not isinstance(pid, str) or not isinstance(did, str):
                         raise TypeError("Invalid ID types in meta")
                     if not isinstance(leaf, int):
                         raise TypeError("Invalid is_leaf type in meta")
-                    if not isinstance(ver, int):
-                        raise TypeError("Invalid doc_version type in meta")
+                    try:
+                        ver = int(ver_raw)
+                    except Exception:
+                        ver = 1
                     meta_out[k] = _Meta(
                         span_start=ss,
                         span_end=se,
@@ -197,7 +199,7 @@ class PythonVectorIndex:
             elif isinstance(doc_version_val, str) and doc_version_val.isdigit():
                 doc_version_i = int(doc_version_val)
             else:
-                raise TypeError("Missing or invalid integer for doc_version")
+                doc_version_i = 1
 
             self._meta[node_id] = _Meta(
                 span_start=_req_int("span_start"),
