@@ -3,14 +3,12 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
-
-if TYPE_CHECKING:
-    from ragzoom.telemetry_types import TelemetryDataDict
+from typing import Optional, cast
 
 from ragzoom.config import IndexConfig, OperationalConfig, is_incremental_append_enabled
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
+from ragzoom.telemetry_types import TelemetryDataDict
 from ragzoom.vector_factory import create_vector_index
 
 logger = logging.getLogger(__name__)
@@ -186,7 +184,6 @@ class IndexingService:
 
         # Acquire per-document lock when supported by backend
         from contextlib import AbstractContextManager, nullcontext
-        from typing import cast
 
         _lock_fn = getattr(self.store, "lock_document", None)
         cm_any = _lock_fn(document_id) if callable(_lock_fn) else None
@@ -234,25 +231,56 @@ class IndexingService:
             # Create document-scoped store and TreeBuilder
             tree_builder = self._create_tree_builder(document_id)
 
+            use_incremental = is_incremental_append_enabled()
+
             # Index with or without telemetry
             if collect_telemetry:
-                # TreeBuilder's add_document_with_telemetry is sync only; run in executor
-                import asyncio
-                from functools import partial
+                if use_incremental:
+                    from ragzoom.telemetry_collection import TelemetryCollector
 
-                func = partial(
-                    tree_builder.add_document_with_telemetry,
-                    text,
-                    show_progress=show_progress,
-                )
-                loop = asyncio.get_event_loop()
-                doc_id, telemetry = await loop.run_in_executor(None, func)
+                    reporter = TelemetryCollector(
+                        document_id,
+                        tree_builder.tokenizer.count_tokens(text),
+                        self.index_config,
+                        document_path=file_path,
+                    )
+
+                    append_result = await tree_builder.append_text_async(
+                        text,
+                        show_progress=show_progress,
+                        reporter=reporter,
+                    )
+                    doc_id, telemetry = cast(
+                        tuple[str, TelemetryDataDict], append_result
+                    )
+                else:
+                    import asyncio
+                    from functools import partial
+
+                    func = partial(
+                        tree_builder.add_document_with_telemetry,
+                        text,
+                        show_progress=show_progress,
+                    )
+                    loop = asyncio.get_event_loop()
+                    doc_id, telemetry = await loop.run_in_executor(None, func)
             else:
-                doc_id = await tree_builder.add_document_async(
-                    text,
-                    show_progress=show_progress,
-                )
-                telemetry = None
+                if use_incremental:
+                    append_result = await tree_builder.append_text_async(
+                        text,
+                        show_progress=show_progress,
+                    )
+                    if isinstance(append_result, tuple):
+                        doc_id, telemetry = append_result
+                    else:
+                        doc_id = append_result
+                        telemetry = None
+                else:
+                    doc_id = await tree_builder.add_document_async(
+                        text,
+                        show_progress=show_progress,
+                    )
+                    telemetry = None
 
             return self._finalize_result(doc_id, telemetry)
 
@@ -292,7 +320,6 @@ class IndexingService:
             raise ValueError("document_id is required for append")
 
         from contextlib import AbstractContextManager, nullcontext
-        from typing import cast
 
         _lock_fn = getattr(self.store, "lock_document", None)
         cm_any = _lock_fn(document_id) if callable(_lock_fn) else None

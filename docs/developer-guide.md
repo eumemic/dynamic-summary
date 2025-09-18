@@ -426,6 +426,9 @@ document tree instead of rebuilding from scratch. The feature is currently opt-i
 we finish rollout hardening.
 
 - Enable it via `RAGZOOM_ENABLE_INCREMENTAL=1`.
+- Use the CLI with `ragzoom index --append --document-id <id>` to stream new files into
+  an existing document without rebuilding it. The non-append mode continues to clear the
+  document before indexing, even when incremental append is enabled.
 - Ensure the schema migrations for `documents.version` and `node_vectors.doc_version`
   have been applied (automatic for new environments).
 - Retrieval calls now supply `(document_id, doc_version)` so queries see atomic snapshots.

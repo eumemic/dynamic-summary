@@ -165,6 +165,12 @@ class TestCLI:
                 tree_depth=3,
                 telemetry=None,
             )
+            indexing_service_instance.append_to_document.return_value = IndexingResult(
+                document_id="doc-append",
+                chunks_created=2,
+                tree_depth=4,
+                telemetry=None,
+            )
             mock_indexing_service.return_value = indexing_service_instance
 
             # Mock query service
@@ -267,6 +273,60 @@ class TestCLI:
                     "indexing_service_instance"
                 ].index_from_file.call_args
                 assert call_args[1]["document_id"] == "my-doc-id"
+        finally:
+            os.unlink(temp_file)
+
+    def test_index_append_requires_document_id(
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
+    ) -> None:
+        """--append should require an explicit document ID."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("Append me")
+            temp_file = f.name
+
+        try:
+            with patch.dict(
+                os.environ,
+                {"OPENAI_API_KEY": "test-key", "RAGZOOM_ENABLE_INCREMENTAL": "1"},
+            ):
+                result = runner.invoke(cli, ["index", temp_file, "--append"])
+
+                assert result.exit_code != 0
+                assert "--document-id is required" in result.output
+        finally:
+            os.unlink(temp_file)
+
+    def test_index_append_invokes_service(
+        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
+    ) -> None:
+        """Ensure the append flag routes through append_to_document."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("Chunk for append")
+            temp_file = f.name
+
+        try:
+            with patch.dict(
+                os.environ,
+                {"OPENAI_API_KEY": "test-key", "RAGZOOM_ENABLE_INCREMENTAL": "1"},
+            ):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "index",
+                        temp_file,
+                        "--document-id",
+                        "append-doc",
+                        "--append",
+                    ],
+                )
+
+                assert result.exit_code == 0
+                assert "Document appended successfully" in result.output
+                service = mock_ragzoom["indexing_service_instance"]
+                service.append_to_document.assert_called_once()
+                service.index_from_file.assert_not_called()
+                call_args = service.append_to_document.call_args
+                assert call_args.kwargs["document_id"] == "append-doc"
         finally:
             os.unlink(temp_file)
 
