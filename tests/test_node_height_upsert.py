@@ -41,8 +41,8 @@ class _StubPostgresNodeRepository(PostgresNodeRepository):
         return []
 
 
-def test_sqlite_upsert_updates_height() -> None:
-    """A second upsert must persist the updated height for promoted nodes."""
+def test_sqlite_upsert_preserves_height_on_conflict() -> None:
+    """An upsert must not overwrite an existing node's height."""
 
     db = SqliteDatabaseManager("sqlite:///:memory:")
     try:
@@ -67,13 +67,13 @@ def test_sqlite_upsert_updates_height() -> None:
 
         row = repo.get_node(node_id)
         assert row is not None
-        assert row.height == 1
+        assert row.height == 0
     finally:
         db.close()
 
 
-def test_postgres_upsert_updates_height_clause() -> None:
-    """The ON CONFLICT clause must include height to keep tree state consistent."""
+def test_postgres_upsert_omits_height_update_clause() -> None:
+    """The ON CONFLICT clause must not overwrite height for existing nodes."""
 
     repo = _StubPostgresNodeRepository()
 
@@ -93,4 +93,4 @@ def test_postgres_upsert_updates_height_clause() -> None:
 
     assert dummy_session.executed, "Expected upsert SQL to execute"
     sql_text = dummy_session.executed[0][0].text
-    assert "height = EXCLUDED.height" in sql_text
+    assert "height = EXCLUDED.height" not in sql_text

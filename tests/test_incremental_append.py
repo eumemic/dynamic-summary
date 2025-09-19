@@ -404,6 +404,11 @@ class TestIncrementalAppend:
         for vec in vectors_all:
             assert _meta_to_int(vec.meta.get("doc_version")) == doc_version
 
+        all_node_ids = [node.id for node in builder.document_store.nodes.get_all()]
+        vectors_all_nodes = builder.vector_index.get_vectors(all_node_ids)
+        for vec in vectors_all_nodes:
+            assert _meta_to_int(vec.meta.get("doc_version")) == doc_version
+
     def test_append_promotes_new_root(
         self,
         base_config: BackwardCompatibilityConfig,

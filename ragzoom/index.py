@@ -128,6 +128,19 @@ class TreeBuilder:
         # Backward compatibility: provide access to centralized tokenizer
         self.tokenizer = tokenizer
 
+    @staticmethod
+    def _coerce_doc_version(raw: object, default: int) -> int:
+        """Convert stored doc_version metadata into an int with fallback."""
+
+        if isinstance(raw, int | float):
+            return int(raw)
+        if isinstance(raw, str):
+            try:
+                return int(raw)
+            except ValueError:
+                return default
+        return default
+
     def _node_to_domain(self, node: TreeNode) -> DomainNode:
         """Convert a stored TreeNode into a DomainNode for patch construction."""
 
@@ -1134,18 +1147,19 @@ class TreeBuilder:
         new_hash = DocumentStore.compute_content_hash(reconstructed)
         self.document_store.set_metadata(content_hash=new_hash)
 
-        # Promote untouched vectors to the new document version so retrieval sees the full tree.
-        if leaves_after:
-            mutated_vector_ids: set[str] = {
-                node_id for node_id, _embedding, _meta in vector_upserts
-            }
-            unaffected_leaf_ids = [
-                leaf.id for leaf in leaves_after if leaf.id not in mutated_vector_ids
+        # Promote untouched vectors (leaves and internal nodes) to the new document version.
+        all_nodes_after = self.document_store.nodes.get_all()
+        if all_nodes_after:
+            mutated_node_ids_set = set(tracking.mutable_node_ids)
+            unaffected_node_ids = [
+                node.id
+                for node in all_nodes_after
+                if node.id not in mutated_node_ids_set
             ]
-            if unaffected_leaf_ids:
+            if unaffected_node_ids:
                 try:
                     existing_vectors = self.vector_index.get_vectors(
-                        unaffected_leaf_ids
+                        unaffected_node_ids
                     )
                 except Exception as exc:  # pragma: no cover - defensive logging
                     logger.warning(
@@ -1154,21 +1168,12 @@ class TreeBuilder:
                         exc,
                     )
                 else:
-                    promote_items: list[
-                        tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
-                    ] = []
+                    promote_items: list[VectorPayload] = []
                     for vector in existing_vectors:
                         meta = dict(vector.meta)
-                        raw_version = meta.get("doc_version", 1)
-                        if isinstance(raw_version, int | float):
-                            current_version_meta = int(raw_version)
-                        elif isinstance(raw_version, str):
-                            try:
-                                current_version_meta = int(raw_version)
-                            except ValueError:
-                                current_version_meta = 1
-                        else:
-                            current_version_meta = 1
+                        current_version_meta = self._coerce_doc_version(
+                            meta.get("doc_version"), doc_version
+                        )
                         if current_version_meta == new_version:
                             continue
                         meta["doc_version"] = new_version
