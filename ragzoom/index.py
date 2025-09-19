@@ -6,7 +6,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import cast, overload
+from typing import TypeAlias, cast, overload
 
 import numpy as np
 from numpy.typing import NDArray
@@ -87,6 +87,13 @@ class AppendStats:
     new_leaves: int
     total_leaves: int
     telemetry: TelemetryDataDict | None = None
+
+
+VectorPayload: TypeAlias = tuple[
+    str,
+    list[float] | NDArray[np.float64],
+    dict[str, object],
+]
 
 
 class TreeBuilder:
@@ -308,6 +315,7 @@ class TreeBuilder:
                 if following_node
                 else None
             )
+            # Record how the right-edge neighbor chain is rewritten so rollback can restore it
             tracking.neighbor_updates.append(
                 (original_following, last_leaf_id, following_follow)
             )
@@ -399,6 +407,7 @@ class TreeBuilder:
                             sibling_domain.id != existing.id
                             for existing in current_level
                         ):
+                            # Pull the left sibling into the patch to keep adjacency consistent
                             current_level.insert(0, sibling_domain)
                             self._ensure_context_nodes(
                                 lookup,
@@ -904,7 +913,7 @@ class TreeBuilder:
         nodes_repo = self.document_store.nodes
         if not hasattr(nodes_repo, "upsert_nodes_batch"):
             raise NotImplementedError(
-                "Storage backend does not support incremental appends"
+                "Storage backend must implement upsert_nodes_batch() to enable incremental appends"
             )
 
         right_leaf = nodes_repo.get_rightmost_leaf_for_document(document_id)
@@ -1007,9 +1016,7 @@ class TreeBuilder:
             patch.lookup[node_id] for node_id in tracking.mutable_node_ids
         ]
 
-        vector_upserts: list[
-            tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
-        ] = []
+        vector_upserts: list[VectorPayload] = []
         vector_node_ids: list[str] = []
         for node in mutated_node_objs:
             if node.embedding is None:
@@ -1025,13 +1032,7 @@ class TreeBuilder:
             vector_node_ids.append(node.id)
             vector_upserts.append((node.id, [float(x) for x in node.embedding], meta))
 
-        rollback_vectors: list[
-            tuple[
-                str,
-                list[float] | NDArray[np.float64],
-                dict[str, object],
-            ]
-        ] = []
+        rollback_vectors: list[VectorPayload] = []
         rollback_delete_ids: set[str] = set()
 
         if vector_node_ids:
