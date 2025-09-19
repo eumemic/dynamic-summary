@@ -333,12 +333,16 @@ def index(
                 validate_tree_structure,
             )
 
-            # Read file to get text for validation
-            text = Path(file_path).read_text(encoding="utf-8")
-
-            # Get leaf nodes for validation
             doc_store_for_validate = store.for_document(result.document_id)
             doc_leaves = doc_store_for_validate.nodes.get_leaves()
+
+            if append:
+                sorted_leaves = sorted(
+                    doc_leaves, key=lambda node: int(node.span_start)
+                )
+                text = "".join(leaf.text or "" for leaf in sorted_leaves)
+            else:
+                text = Path(file_path).read_text(encoding="utf-8")
 
             run_validate(
                 lambda: validate_document_coverage(text, doc_leaves),

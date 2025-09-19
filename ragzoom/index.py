@@ -941,6 +941,22 @@ class TreeBuilder:
             max(1, len(patch.embedding_node_ids)), show_progress
         )
 
+        if reporter:
+            for mutable_id in tracking.mutable_node_ids:
+                node = patch.lookup.get(mutable_id)
+                if node is None:
+                    continue
+                reporter.track_node_created(
+                    node_id=node.id,
+                    height=int(node.height),
+                    span=(int(node.span_start), int(node.span_end)),
+                )
+                if int(node.height) == 0:
+                    reporter.record_chunk_created(
+                        node.id,
+                        self.tokenizer.count_tokens(node.text or ""),
+                    )
+
         try:
             await run_tree_patch(
                 patch=patch,
