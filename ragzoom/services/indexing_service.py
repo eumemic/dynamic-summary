@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.index import TreeBuilder
+from ragzoom.index import AppendStats, TreeBuilder
 from ragzoom.telemetry_types import TelemetryDataDict
 
 if TYPE_CHECKING:
@@ -26,6 +26,9 @@ class IndexingResult:
     document_id: str
     chunks_created: int
     tree_depth: int
+    mutated_nodes: int | None = None
+    resummarized_nodes: int | None = None
+    new_leaves: int | None = None
     telemetry: TelemetryDataDict | None = None
 
 
@@ -54,6 +57,10 @@ class IndexingService:
         self,
         document_id: str,
         telemetry: TelemetryDataDict | None,
+        *,
+        mutated_nodes: int | None = None,
+        resummarized_nodes: int | None = None,
+        new_leaves: int | None = None,
     ) -> IndexingResult:
         doc_store_final = self.store.for_document(document_id)
         leaves = doc_store_final.nodes.get_leaves()
@@ -64,11 +71,34 @@ class IndexingService:
         root = doc_store_final.tree.get_root()
         tree_height = root.height if root else 0
 
+        total_leaves = len(leaves)
+
+        if mutated_nodes is None:
+            mutated_nodes = doc_store_final.nodes.count()
+        if resummarized_nodes is None:
+            resummarized_nodes = max(mutated_nodes - total_leaves, 0)
+        if new_leaves is None:
+            new_leaves = total_leaves
+
         return IndexingResult(
             document_id=document_id,
-            chunks_created=len(leaves),
+            chunks_created=total_leaves,
             tree_depth=tree_height,
+            mutated_nodes=mutated_nodes,
+            resummarized_nodes=resummarized_nodes,
+            new_leaves=new_leaves,
             telemetry=telemetry,
+        )
+
+    def _from_append_result(self, append_result: AppendStats) -> IndexingResult:
+        """Convert append stats into a finalized indexing result."""
+
+        return self._finalize_result(
+            append_result.document_id,
+            append_result.telemetry,
+            mutated_nodes=append_result.mutated_nodes,
+            resummarized_nodes=append_result.resummarized_nodes,
+            new_leaves=append_result.new_leaves,
         )
 
     def _create_tree_builder(self, document_id: str) -> TreeBuilder:
@@ -253,15 +283,7 @@ class IndexingService:
                 reporter=reporter,
             )
 
-            doc_id: str
-            telemetry: TelemetryDataDict | None
-            if isinstance(append_result, tuple):
-                doc_id, telemetry = append_result
-            else:
-                doc_id = append_result
-                telemetry = None
-
-            return self._finalize_result(doc_id, telemetry)
+            return self._from_append_result(append_result)
 
     def append_to_document(
         self,
@@ -345,10 +367,4 @@ class IndexingService:
                 reporter=reporter,
             )
 
-            if isinstance(append_result, tuple):
-                doc_id, telemetry = append_result
-            else:
-                doc_id = append_result
-                telemetry = None
-
-            return self._finalize_result(doc_id, telemetry)
+            return self._from_append_result(append_result)

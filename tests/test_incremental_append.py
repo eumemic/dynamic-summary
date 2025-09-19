@@ -10,7 +10,7 @@ from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
-from ragzoom.index import TreeBuilder
+from ragzoom.index import AppendStats, TreeBuilder
 from ragzoom.splitter import TextSplitter
 from ragzoom.validate import set_validation_enabled
 from ragzoom.vector_factory import create_vector_index
@@ -574,8 +574,9 @@ class TestIncrementalAppend:
             )
         )
 
-        assert isinstance(result, tuple)
-        _doc_id, telemetry = result
+        assert isinstance(result, AppendStats)
+        telemetry = result.telemetry
+        assert telemetry is not None
         assert telemetry.get("nodes") == []
 
         reporter.record_append_metadata.assert_called_once()

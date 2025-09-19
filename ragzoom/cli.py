@@ -315,7 +315,14 @@ def index(
 
         click.echo(success_message)
         click.echo(f"   Document ID: {result.document_id}")
-        click.echo(f"   Chunks created: {result.chunks_created}")
+        click.echo(f"   Total chunks: {result.chunks_created}")
+        if result.mutated_nodes is not None:
+            resummarized = result.resummarized_nodes or 0
+            click.echo(
+                f"   Mutated nodes: {result.mutated_nodes} (resummarized {resummarized})"
+            )
+        if result.new_leaves is not None:
+            click.echo(f"   New leaves: {result.new_leaves}")
         click.echo(f"   Tree height: {result.tree_depth}")
 
         # Store telemetry reference for later use

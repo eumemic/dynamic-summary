@@ -6,7 +6,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import overload
+from typing import cast, overload
 
 import numpy as np
 from numpy.typing import NDArray
@@ -75,6 +75,18 @@ class PatchTracking:
     tail_text: str = ""
     summary_node_ids: set[str] = field(default_factory=set)
     original_heights: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class AppendStats:
+    """Summary of an incremental append operation."""
+
+    document_id: str
+    mutated_nodes: int
+    resummarized_nodes: int
+    new_leaves: int
+    total_leaves: int
+    telemetry: TelemetryDataDict | None = None
 
 
 class TreeBuilder:
@@ -879,7 +891,7 @@ class TreeBuilder:
         new_text: str,
         show_progress: bool = True,
         reporter: TelemetryCollector | None = None,
-    ) -> str | tuple[str, TelemetryDataDict]:
+    ) -> AppendStats:
         """Append new text to an existing document incrementally."""
 
         if not new_text:
@@ -897,15 +909,33 @@ class TreeBuilder:
 
         right_leaf = nodes_repo.get_rightmost_leaf_for_document(document_id)
         if right_leaf is None:
-            if reporter:
-                return await self._add_document_impl(
-                    new_text,
-                    show_progress=show_progress,
-                    reporter=reporter,
-                )
-            return await self._add_document_impl(
+            result = await self._add_document_impl(
                 new_text,
                 show_progress=show_progress,
+                reporter=reporter,
+            )
+
+            if reporter:
+                document_id, initial_telemetry = cast(
+                    tuple[str, TelemetryDataDict], result
+                )
+            else:
+                document_id = cast(str, result)
+                initial_telemetry = None
+
+            leaves_after = self.document_store.nodes.get_leaves()
+            total_leaves = len(leaves_after)
+            total_nodes = self.document_store.nodes.count()
+            mutated_nodes = int(total_nodes)
+            resummarized_nodes = max(mutated_nodes - total_leaves, 0)
+
+            return AppendStats(
+                document_id=document_id,
+                mutated_nodes=mutated_nodes,
+                resummarized_nodes=resummarized_nodes,
+                new_leaves=total_leaves,
+                total_leaves=total_leaves,
+                telemetry=initial_telemetry,
             )
 
         combined_text = (right_leaf.text or "") + new_text
@@ -973,12 +1003,14 @@ class TreeBuilder:
             if progress:
                 progress.close()
 
-        mutated_nodes = [patch.lookup[node_id] for node_id in tracking.mutable_node_ids]
+        mutated_node_objs = [
+            patch.lookup[node_id] for node_id in tracking.mutable_node_ids
+        ]
 
         vector_upserts: list[
             tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
         ] = []
-        for node in mutated_nodes:
+        for node in mutated_node_objs:
             if node.embedding is None:
                 continue
             meta = {
@@ -997,13 +1029,13 @@ class TreeBuilder:
 
         from itertools import groupby
 
-        mutated_sorted = sorted(mutated_nodes, key=lambda n: n.height, reverse=True)
+        mutated_sorted = sorted(mutated_node_objs, key=lambda n: n.height, reverse=True)
 
         neighbor_map: dict[str, tuple[str | None, str | None]] = {}
         for node_id, preceding, following in tracking.neighbor_updates:
             neighbor_map[node_id] = (preceding, following)
 
-        for node in mutated_nodes:
+        for node in mutated_node_objs:
             original = tracking.original_neighbors.get(node.id)
             new_pair = (node.preceding_neighbor_id, node.following_neighbor_id)
             if original != new_pair:
@@ -1102,15 +1134,14 @@ class TreeBuilder:
                     if promote_items:
                         self.vector_index.upsert(promote_items)
 
-        logger.info(
-            "Append stats doc=%s version=%d->%d mutated=%d new_leaves=%d resummarized=%d vectors=%d",
+        logger.debug(
+            "Append stats doc=%s version=%d->%d mutated=%d new_leaves=%d resummarized=%d",
             document_id,
             doc_version,
             new_version,
             len(tracking.mutable_node_ids),
             max(tracking.leaf_delta, 0),
             len(tracking.summary_node_ids),
-            vectors_written,
         )
 
         validate(
@@ -1123,6 +1154,7 @@ class TreeBuilder:
             "incremental append",
         )
 
+        telemetry_payload: TelemetryDataDict | None = None
         if reporter:
             reporter.record_append_metadata(
                 document_version=new_version,
@@ -1132,16 +1164,22 @@ class TreeBuilder:
                 summary_nodes=len(tracking.summary_node_ids),
                 leaf_delta=tracking.leaf_delta,
             )
-            telemetry: TelemetryDataDict = reporter.finalize()
-            return document_id, telemetry
+            telemetry_payload = reporter.finalize()
 
-        return document_id
+        return AppendStats(
+            document_id=document_id,
+            mutated_nodes=len(tracking.mutable_node_ids),
+            resummarized_nodes=len(tracking.summary_node_ids),
+            new_leaves=max(tracking.leaf_delta, 0),
+            total_leaves=len(leaves_after),
+            telemetry=telemetry_payload,
+        )
 
     def append_text(
         self,
         new_text: str,
         show_progress: bool = True,
-    ) -> str | tuple[str, TelemetryDataDict]:
+    ) -> AppendStats:
         """Sync wrapper for append_text_async."""
 
         return asyncio.run(
