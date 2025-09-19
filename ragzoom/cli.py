@@ -13,7 +13,6 @@ from ragzoom.config import (
     IndexConfig,
     OperationalConfig,
     QueryConfig,
-    is_incremental_append_enabled,
 )
 from ragzoom.exceptions import (
     ConfigurationError,
@@ -197,7 +196,7 @@ def cli(ctx: click.Context) -> None:
 @click.option(
     "--append",
     is_flag=True,
-    help="Append file contents to an existing document instead of rebuilding. Requires --document-id and incremental append to be enabled.",
+    help="Append file contents to an existing document instead of rebuilding. Requires --document-id.",
 )
 @click.pass_context
 def index(
@@ -287,10 +286,6 @@ def index(
         if append:
             if not document_id:
                 raise click.UsageError("--document-id is required when using --append")
-            if not is_incremental_append_enabled():
-                raise click.UsageError(
-                    "Incremental append is disabled. Set RAGZOOM_ENABLE_INCREMENTAL=1 before using --append."
-                )
             append_document_id = document_id
 
         result: IndexingResult

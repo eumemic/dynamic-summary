@@ -170,8 +170,6 @@ class TestIndexingService:
 
         index_config = IndexConfig.load()
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
-        monkeypatch.setenv("RAGZOOM_ENABLE_INCREMENTAL", "1")
-
         mock_async_client = MagicMock()
 
         async def mock_embeddings(*args: object, **kwargs: object) -> object:
@@ -224,14 +222,11 @@ class TestIndexingService:
     def test_append_creates_document_when_missing(
         self,
         storage_backend: StorageBackend,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Initial append seeds metadata and builds the tree."""
 
         index_config = IndexConfig.load()
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
-        monkeypatch.setenv("RAGZOOM_ENABLE_INCREMENTAL", "1")
-
         mock_async_client = MagicMock()
 
         async def mock_embeddings(*args: object, **kwargs: object) -> object:

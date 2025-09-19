@@ -422,13 +422,12 @@ The script generates comprehensive analysis in the specified output directory (d
 ## Incremental Append (Beta)
 
 Incremental append lets the engine mutate only the rightmost frontier of an existing
-document tree instead of rebuilding from scratch. The feature is currently opt-in while
-we finish rollout hardening.
+document tree instead of rebuilding from scratch. The feature ships enabled by default
+while we continue rollout hardening.
 
-- Enable it via `RAGZOOM_ENABLE_INCREMENTAL=1`.
 - Use the CLI with `ragzoom index --append --document-id <id>` to stream new files into
   an existing document without rebuilding it. The non-append mode continues to clear the
-  document before indexing, even when incremental append is enabled.
+  document before indexing.
 - Ensure the schema migrations for `documents.version` and `node_vectors.doc_version`
   have been applied (automatic for new environments).
 - Retrieval calls now supply `(document_id, doc_version)` so queries see atomic snapshots.

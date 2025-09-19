@@ -11,7 +11,7 @@ from typing import overload
 import numpy as np
 from numpy.typing import NDArray
 
-from ragzoom.config import IndexConfig, SecretStr, is_incremental_append_enabled
+from ragzoom.config import IndexConfig, SecretStr
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.dataflow import (
@@ -881,9 +881,6 @@ class TreeBuilder:
         reporter: TelemetryCollector | None = None,
     ) -> str | tuple[str, TelemetryDataDict]:
         """Append new text to an existing document incrementally."""
-
-        if not is_incremental_append_enabled():
-            raise RuntimeError("Incremental append is currently disabled")
 
         if not new_text:
             raise ValueError("append_text_async requires non-empty text")

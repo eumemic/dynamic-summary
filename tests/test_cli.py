@@ -285,10 +285,7 @@ class TestCLI:
             temp_file = f.name
 
         try:
-            with patch.dict(
-                os.environ,
-                {"OPENAI_API_KEY": "test-key", "RAGZOOM_ENABLE_INCREMENTAL": "1"},
-            ):
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
                 result = runner.invoke(cli, ["index", temp_file, "--append"])
 
                 assert result.exit_code != 0
@@ -305,10 +302,7 @@ class TestCLI:
             temp_file = f.name
 
         try:
-            with patch.dict(
-                os.environ,
-                {"OPENAI_API_KEY": "test-key", "RAGZOOM_ENABLE_INCREMENTAL": "1"},
-            ):
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
                 result = runner.invoke(
                     cli,
                     [

@@ -20,25 +20,20 @@ Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system tha
 
 ## Incremental Append (Beta)
 
-Incremental append is opt-in while we finish hardening the feature. To enable it:
+Incremental append is enabled by default. Before using it, make sure the storage
+migrations have introduced the required columns:
 
-1. Run the latest storage migrations so the new columns are present:
-   - PostgreSQL: migrations are applied automatically on startup; ensure `documents.version`
-     and `node_vectors.doc_version` exist.
-   - SQLite: the bundled migrations add the same columns on first access.
-2. Set the feature flag before launching RagZoom:
+- PostgreSQL: migrations run automatically on startup; confirm `documents.version` and
+  `node_vectors.doc_version` exist.
+- SQLite: the bundled migrations add the same columns on first access.
 
-```bash
-export RAGZOOM_ENABLE_INCREMENTAL=1
-```
-
-When enabled, `IndexingService.append_to_document(...)` and the CLI `ragzoom index --append` path reuse
+`IndexingService.append_to_document(...)` and the CLI `ragzoom index --append` path reuse
 the existing tree, resummarize only the affected nodes, and version-gate visibility so
 queries see a consistent snapshot. Telemetry files produced during append runs contain
 an `append_metadata` block describing the patch (document version, span, and node counts).
 
-If the schema is out of date or the flag is unset, append requests fail fast with a
-clear error so you can migrate or re-run in full-reindex mode.
+If the schema is out of date, append requests fail fast with a clear error so you can
+migrate or re-run in full-reindex mode.
 
 ## Installation
 

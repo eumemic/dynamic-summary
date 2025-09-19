@@ -119,13 +119,6 @@ def get_llm_costs(model: str) -> tuple[float, float]:
         return 0.0, 0.0
 
 
-def is_incremental_append_enabled() -> bool:
-    """Return whether incremental append is globally enabled."""
-
-    val = os.getenv("RAGZOOM_ENABLE_INCREMENTAL", "")
-    return val.lower() in {"1", "true", "yes", "on"}
-
-
 def get_cache_discount(model: str) -> float:
     """Get cache discount multiplier for LLM using ModelInfo."""
     from ragzoom.model_info import ModelInfo

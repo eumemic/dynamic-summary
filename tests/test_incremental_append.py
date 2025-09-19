@@ -135,7 +135,7 @@ def _build_full_and_incremental_documents(
         mock_client,
     )
 
-    asyncio.run(full_builder.add_document_async(full_text, show_progress=False))
+    asyncio.run(full_builder.append_text_async(full_text, show_progress=False))
 
     for segment in segments:
         asyncio.run(
@@ -213,11 +213,6 @@ def _meta_to_int(value: object, default: int = 0) -> int:
     return default
 
 
-@pytest.fixture
-def enable_incremental(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("RAGZOOM_ENABLE_INCREMENTAL", "1")
-
-
 class TestIncrementalAppend:
     @pytest.mark.slow_threshold(20.0)
     def test_incremental_equivalence(
@@ -225,7 +220,6 @@ class TestIncrementalAppend:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
-        enable_incremental: None,
     ) -> None:
         config = base_config.index_config.replace(
             target_chunk_tokens=32,
@@ -271,7 +265,6 @@ class TestIncrementalAppend:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
-        enable_incremental: None,
     ) -> None:
         config = base_config.index_config.replace(
             target_chunk_tokens=32,
@@ -318,7 +311,6 @@ class TestIncrementalAppend:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
-        enable_incremental: None,
     ) -> None:
         config = base_config.index_config.replace(
             target_chunk_tokens=32,
@@ -362,7 +354,6 @@ class TestIncrementalAppend:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
-        enable_incremental: None,
     ) -> None:
         config = base_config.index_config.replace(
             target_chunk_tokens=32,
@@ -418,7 +409,6 @@ class TestIncrementalAppend:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
-        enable_incremental: None,
     ) -> None:
         config = base_config.index_config
         splitter = TextSplitter(config)
@@ -485,7 +475,6 @@ class TestIncrementalAppend:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
-        enable_incremental: None,
     ) -> None:
         config = base_config.index_config
         vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
@@ -522,7 +511,6 @@ class TestIncrementalAppend:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
-        enable_incremental: None,
     ) -> None:
         config = base_config.index_config
         vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
@@ -551,7 +539,6 @@ class TestIncrementalAppend:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
-        enable_incremental: None,
     ) -> None:
         from unittest.mock import MagicMock
 
@@ -608,7 +595,6 @@ class TestIncrementalAppend:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
-        enable_incremental: None,
     ) -> None:
         config = base_config.index_config
         vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
@@ -643,7 +629,6 @@ class TestIncrementalAppend:
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
-        enable_incremental: None,
     ) -> None:
         config = base_config.index_config
         vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
@@ -687,7 +672,6 @@ class TestIncrementalAppend:
         assert _reconstruct_document(builder.document_store) == initial
 
 
-@pytest.mark.usefixtures("enable_incremental")
 class TestAppendValidation:
     def test_validation_passes_on_correct_append(
         self,

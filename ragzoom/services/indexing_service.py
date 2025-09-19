@@ -1,14 +1,19 @@
 """Indexing service for RagZoom document processing."""
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, cast
+from typing import TYPE_CHECKING, cast
 
-from ragzoom.config import IndexConfig, OperationalConfig, is_incremental_append_enabled
+from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_types import TelemetryDataDict
+
+if TYPE_CHECKING:
+    from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.vector_factory import create_vector_index
 
 logger = logging.getLogger(__name__)
@@ -21,7 +26,7 @@ class IndexingResult:
     document_id: str
     chunks_created: int
     tree_depth: int
-    telemetry: Optional["TelemetryDataDict"] = None
+    telemetry: TelemetryDataDict | None = None
 
 
 class IndexingService:
@@ -48,7 +53,7 @@ class IndexingService:
     def _finalize_result(
         self,
         document_id: str,
-        telemetry: Optional["TelemetryDataDict"],
+        telemetry: TelemetryDataDict | None,
     ) -> IndexingResult:
         doc_store_final = self.store.for_document(document_id)
         leaves = doc_store_final.nodes.get_leaves()
@@ -231,56 +236,30 @@ class IndexingService:
             # Create document-scoped store and TreeBuilder
             tree_builder = self._create_tree_builder(document_id)
 
-            use_incremental = is_incremental_append_enabled()
-
-            # Index with or without telemetry
+            reporter: TelemetryCollector | None = None
             if collect_telemetry:
-                if use_incremental:
-                    from ragzoom.telemetry_collection import TelemetryCollector
+                from ragzoom.telemetry_collection import TelemetryCollector
 
-                    reporter = TelemetryCollector(
-                        document_id,
-                        tree_builder.tokenizer.count_tokens(text),
-                        self.index_config,
-                        document_path=file_path,
-                    )
+                reporter = TelemetryCollector(
+                    document_id,
+                    tree_builder.tokenizer.count_tokens(text),
+                    self.index_config,
+                    document_path=file_path,
+                )
 
-                    append_result = await tree_builder.append_text_async(
-                        text,
-                        show_progress=show_progress,
-                        reporter=reporter,
-                    )
-                    doc_id, telemetry = cast(
-                        tuple[str, TelemetryDataDict], append_result
-                    )
-                else:
-                    import asyncio
-                    from functools import partial
+            append_result = await tree_builder.append_text_async(
+                text,
+                show_progress=show_progress,
+                reporter=reporter,
+            )
 
-                    func = partial(
-                        tree_builder.add_document_with_telemetry,
-                        text,
-                        show_progress=show_progress,
-                    )
-                    loop = asyncio.get_event_loop()
-                    doc_id, telemetry = await loop.run_in_executor(None, func)
+            doc_id: str
+            telemetry: TelemetryDataDict | None
+            if isinstance(append_result, tuple):
+                doc_id, telemetry = append_result
             else:
-                if use_incremental:
-                    append_result = await tree_builder.append_text_async(
-                        text,
-                        show_progress=show_progress,
-                    )
-                    if isinstance(append_result, tuple):
-                        doc_id, telemetry = append_result
-                    else:
-                        doc_id = append_result
-                        telemetry = None
-                else:
-                    doc_id = await tree_builder.add_document_async(
-                        text,
-                        show_progress=show_progress,
-                    )
-                    telemetry = None
+                doc_id = append_result
+                telemetry = None
 
             return self._finalize_result(doc_id, telemetry)
 
@@ -312,9 +291,6 @@ class IndexingService:
         collect_telemetry: bool = False,
     ) -> IndexingResult:
         """Append new text to an existing document incrementally."""
-
-        if not is_incremental_append_enabled():
-            raise RuntimeError("Incremental append is currently disabled")
 
         if not document_id:
             raise ValueError("document_id is required for append")
