@@ -1,7 +1,6 @@
 import asyncio
 import os
 from collections.abc import Callable
-from pathlib import Path
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -217,7 +216,11 @@ class TestIncrementalAppend:
         mock_openai_async_client: MagicMock,
         enable_incremental: None,
     ) -> None:
-        config = base_config.index_config
+        config = base_config.index_config.replace(
+            target_chunk_tokens=32,
+            preceding_context_tokens=0,
+            embedding_batch_size=4,
+        )
         vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
         database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
 
@@ -225,9 +228,9 @@ class TestIncrementalAppend:
             [
                 (
                     f"Paragraph {i}. This is deterministic content for testing. "
-                    f"It references dragons, dwarves, and hobbits to mimic the novel.\n"
+                    f"Dragons and dwarves confer in room {i % 7}.\n"
                 )
-                for i in range(240)
+                for i in range(12)
             ]
         )
 
@@ -259,37 +262,26 @@ class TestIncrementalAppend:
         mock_openai_async_client: MagicMock,
         enable_incremental: None,
     ) -> None:
-        config = base_config.index_config
+        config = base_config.index_config.replace(
+            target_chunk_tokens=32,
+            preceding_context_tokens=0,
+            embedding_batch_size=4,
+        )
 
         vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
         database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
 
-        full_builder, _ = _make_tree_builder(
-            "height-full",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
+        full_text = "".join(
+            [
+                (
+                    f"Paragraph {i}. This is deterministic content for testing. "
+                    f"Dragons and dwarves confer in room {i % 5}.\n"
+                )
+                for i in range(12)
+            ]
         )
 
-        incremental_builder, _ = _make_tree_builder(
-            "height-incremental",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
-        chunk_paths = [
-            Path("test_data/the_hobbit_incremental/the_hobbit_chunk_1.txt"),
-            Path("test_data/the_hobbit_incremental/the_hobbit_chunk_2.txt"),
-            Path("test_data/the_hobbit_incremental/the_hobbit_chunk_3.txt"),
-        ]
-
-        segments = [path.read_text(encoding="utf-8") for path in chunk_paths]
-        full_text = "".join(segments)
+        segments = _split_into_segments(full_text, 3)
 
         full_store, incremental_store = _build_full_and_incremental_documents(
             storage_backend,
@@ -317,7 +309,11 @@ class TestIncrementalAppend:
         mock_openai_async_client: MagicMock,
         enable_incremental: None,
     ) -> None:
-        config = base_config.index_config
+        config = base_config.index_config.replace(
+            target_chunk_tokens=32,
+            preceding_context_tokens=0,
+            embedding_batch_size=4,
+        )
 
         vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
         database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
@@ -326,13 +322,13 @@ class TestIncrementalAppend:
             [
                 (
                     f"Paragraph {i}. This is deterministic content for testing. "
-                    f"It references dragons, dwarves, and hobbits to mimic the novel.\n"
+                    f"Dragons and dwarves confer in room {i % 9}.\n"
                 )
-                for i in range(240)
+                for i in range(12)
             ]
         )
 
-        segments = _split_into_segments(full_text, 4)
+        segments = _split_into_segments(full_text, 3)
 
         _, incremental_store = _build_full_and_incremental_documents(
             storage_backend,
