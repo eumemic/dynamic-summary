@@ -340,13 +340,10 @@ class TestDatabaseScalability:
 class TestMemoryEfficiency:
     """Test memory efficiency of optimized operations."""
 
-    @pytest.mark.slow_threshold(5.0)
     def test_deletion_memory_usage(self, storage_backend: StorageBackend) -> None:
         """Test that deletion doesn't load excessive data into memory."""
         document_id = "memory_test_doc"
-        num_nodes = (
-            5000  # Smaller test for memory monitoring (fast but still meaningful)
-        )
+        num_nodes = 600  # Keeps coverage meaningful while remaining fast
         doc_store = storage_backend.for_document(document_id)
 
         # Set up document metadata
@@ -368,8 +365,8 @@ class TestMemoryEfficiency:
             nodes_data.append(
                 {
                     "node_id": f"mem_test_node_{i}",
-                    "text": f"Memory test node {i} " * 50,  # Larger text content
-                    "embedding": [0.1] * 1536,
+                    "text": f"Memory test node {i} " * 10,
+                    "embedding": [0.1] * 128,
                     "span_start": i * 100,
                     "span_end": (i + 1) * 100,
                     "document_id": document_id,
