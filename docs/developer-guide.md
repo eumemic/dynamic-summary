@@ -1,6 +1,6 @@
 # Developer Guide
 
-**Last Updated**: January 2025
+**Last Updated**: September 2025
 
 Welcome to the RagZoom project! This comprehensive guide covers the technology stack, development environment setup, testing strategies, and best practices for contributing to the project.
 
@@ -422,12 +422,14 @@ The script generates comprehensive analysis in the specified output directory (d
 ## Incremental Append (Beta)
 
 Incremental append lets the engine mutate only the rightmost frontier of an existing
-document tree instead of rebuilding from scratch. The feature ships enabled by default
-while we continue rollout hardening.
+document tree instead of rebuilding from scratch. The feature now powers **every**
+indexing path: a plain `ragzoom index` run clears the document and feeds the new text
+through the same patch engine that handles append-only updates.
 
 - Use the CLI with `ragzoom index --append --document-id <id>` to stream new files into
-  an existing document without rebuilding it. The non-append mode continues to clear the
-  document before indexing.
+  an existing document without clearing prior content. Omit `--append` when you want a
+  clean rebuild; the service wipes the document first and then seeds version 1 through the
+  patch engine.
 - Ensure the schema migrations for `documents.version` and `node_vectors.doc_version`
   have been applied (automatic for new environments).
 - Retrieval calls now supply `(document_id, doc_version)` so queries see atomic snapshots.
@@ -438,6 +440,7 @@ while we continue rollout hardening.
 
 If the schema prerequisites are missing, the service raises a descriptive error prompting
 you to run migrations before trying the incremental path again.
+
 - **visualization.png**: Visual charts showing performance differences
 
 File paths are displayed as clickable links in supported terminals.

@@ -1,6 +1,6 @@
 # RagZoom System Architecture
 
-**Last Verified**: January 2025
+**Last Verified**: September 2025
 
 This document provides a high-level overview of the RagZoom system, its core components, and the flow of data during indexing and querying.
 
@@ -42,12 +42,13 @@ The RagZoom system maintains several critical invariants to ensure correct opera
 
 The system is composed of several key modules that work together.
 
--   **`ragzoom.index.TreeBuilder`**: The component responsible for building the node tree from a source document. It splits the text, creates leaf nodes, and then recursively calls an LLM to generate parent summaries in a bottom-up fashion.
+-   **`ragzoom.index.TreeBuilder`**: Orchestrates the patch engine that builds both full-document and incremental append patches. It splits text into leaves, constructs `TreePatch` objects, and drives the LLM to generate parent summaries while preserving tree invariants and document/version metadata.
 
 -   **Storage Layer (StorageBackend + DocumentStore)**: The persistence layer is abstracted behind a `StorageBackend` protocol.
     - SQLiteStorageBackend (default for development) stores nodes in `data/sqlite.db` and vectors in a local index (Chroma in `data/chroma/` or a pure‑Python index).
     - PostgresStorageBackend (for production/perf) uses PostgreSQL with pgvector for embeddings via repositories and a `DatabaseManager`.
     - All application code creates a per‑document `DocumentStore` via `store.for_document(doc_id)` to enforce strict document isolation.
+    - Document stores maintain a monotonically increasing `documents.version` that is propagated to vector backends so retrieval always targets a consistent snapshot.
 
 -   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent node or recurse into children for higher detail. Budget is split proportionally based on relevance scores. 
 
@@ -166,9 +167,9 @@ For complete configuration documentation including all parameters and environmen
 
 ### Indexing a Document
 1. Text splitter creates leaf nodes
-2. TreeBuilder creates parents bottom-up
-3. Each parent summarizes its children into a single coherent text
-4. Store persists nodes and embeddings
+2. TreeBuilder builds a `TreePatch` (full document or append) and drives the LLM to produce summaries bottom-up
+3. Each parent summarizes its children into a single coherent text while the patch tracks neighbor and span updates
+4. Store persists nodes, embeddings, and document/version metadata in a single transaction
 
 ### Querying a Document
 1. Query embedding generated
