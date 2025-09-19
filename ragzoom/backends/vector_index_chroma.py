@@ -199,6 +199,10 @@ class ChromaVectorIndexAdapter(VectorIndex):
             for k, v in filter.items():
                 if v is None:
                     continue
+                if k == "doc_version" and not isinstance(v, dict):
+                    coerced = _coerce_version(v)
+                    where_param[k] = {"$eq": coerced}
+                    continue
                 where_param[k] = v if isinstance(v, dict) else {"$eq": v}
 
             # Fetch matching ids to report a count
@@ -209,7 +213,8 @@ class ChromaVectorIndexAdapter(VectorIndex):
                 ids: list[str]
 
             read = _cast(
-                _GetIds, self._under._collection.get(where=where_param)  # type: ignore[arg-type]
+                _GetIds,
+                self._under._collection.get(where=where_param),  # type: ignore[arg-type]
             )
             matched_ids = list(read.get("ids", []))
 
