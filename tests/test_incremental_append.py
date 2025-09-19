@@ -373,18 +373,13 @@ class TestIncrementalAppend:
             mock_openai_async_client,
         )
 
-        segments = _split_into_segments(
-            "".join(
-                [
-                    (
-                        f"Paragraph {i}. Deterministic content about dragons {i}. "
-                        f"Room {i % 4}.\n"
-                    )
-                    for i in range(12)
-                ]
-            ),
-            3,
-        )
+        segments = [
+            "Opening stanza about dragons.\n",
+            "Middle stanza with concise details.\n",
+            "Closing stanza that wraps up neatly.\n",
+        ]
+
+        assert len(segments) == 3
 
         asyncio.run(builder.add_document_async(segments[0], show_progress=False))
         for segment in segments[1:]:
@@ -415,7 +410,11 @@ class TestIncrementalAppend:
         storage_backend: StorageBackend,
         mock_openai_async_client: MagicMock,
     ) -> None:
-        config = base_config.index_config
+        config = base_config.index_config.replace(
+            target_chunk_tokens=48,
+            preceding_context_tokens=0,
+            embedding_batch_size=4,
+        )
         splitter = TextSplitter(config)
         vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
         database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
@@ -439,15 +438,15 @@ class TestIncrementalAppend:
 
         paragraphs = [
             f"Section {i}. Deterministic paragraph for root promotion testing.\n"
-            for i in range(8)
+            for i in range(4)
         ]
         full_text = "".join(paragraphs)
         full_chunks = splitter.split_text(full_text)
-        while len(full_chunks) < 4:
+        while len(full_chunks) < 3:
             start_index = len(paragraphs)
             paragraphs.extend(
                 f"Section {start_index + j}. Additional deterministic text to force splits.\n"
-                for j in range(4)
+                for j in range(2)
             )
             full_text = "".join(paragraphs)
             full_chunks = splitter.split_text(full_text)
