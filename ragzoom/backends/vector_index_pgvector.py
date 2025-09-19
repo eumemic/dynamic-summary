@@ -72,7 +72,7 @@ class PgVectorIndexAdapter(VectorIndex):
             ver_val = where["doc_version"]
             if isinstance(ver_val, (str | int | float | bool)):
                 try:
-                    version_filter = int(ver_val)  # type: ignore[arg-type]
+                    version_filter = int(ver_val)
                 except Exception:
                     version_filter = None
 
