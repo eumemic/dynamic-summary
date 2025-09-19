@@ -1041,6 +1041,54 @@ class TreeBuilder:
         new_hash = DocumentStore.compute_content_hash(reconstructed)
         self.document_store.set_metadata(content_hash=new_hash)
 
+        # Promote untouched vectors to the new document version so retrieval sees the full tree.
+        if leaves_after:
+            mutated_vector_ids: set[str] = {
+                node_id for node_id, _embedding, _meta in vector_upserts
+            }
+            unaffected_leaf_ids = [
+                leaf.id for leaf in leaves_after if leaf.id not in mutated_vector_ids
+            ]
+            if unaffected_leaf_ids:
+                try:
+                    existing_vectors = self.vector_index.get_vectors(
+                        unaffected_leaf_ids
+                    )
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    logger.warning(
+                        "Failed to load vectors for doc_version promotion: doc=%s error=%s",
+                        document_id,
+                        exc,
+                    )
+                else:
+                    promote_items: list[
+                        tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+                    ] = []
+                    for vector in existing_vectors:
+                        meta = dict(vector.meta)
+                        raw_version = meta.get("doc_version", 1)
+                        if isinstance(raw_version, int | float):
+                            current_version_meta = int(raw_version)
+                        elif isinstance(raw_version, str):
+                            try:
+                                current_version_meta = int(raw_version)
+                            except ValueError:
+                                current_version_meta = 1
+                        else:
+                            current_version_meta = 1
+                        if current_version_meta == new_version:
+                            continue
+                        meta["doc_version"] = new_version
+                        promote_items.append(
+                            (
+                                vector.id,
+                                [float(x) for x in vector.vec.tolist()],
+                                meta,
+                            )
+                        )
+                    if promote_items:
+                        self.vector_index.upsert(promote_items)
+
         logger.info(
             "Append stats doc=%s version=%d->%d mutated=%d new_leaves=%d resummarized=%d vectors=%d",
             document_id,

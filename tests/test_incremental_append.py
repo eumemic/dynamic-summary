@@ -202,6 +202,17 @@ def _assert_left_balanced(doc_store: DocumentStore) -> None:
         assert int(node.height) == max(left_height, right_height) + 1
 
 
+def _meta_to_int(value: object, default: int = 0) -> int:
+    if isinstance(value, int | float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
 @pytest.fixture
 def enable_incremental(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RAGZOOM_ENABLE_INCREMENTAL", "1")
@@ -345,6 +356,62 @@ class TestIncrementalAppend:
         assert min(depths) == max(depths)
 
         _assert_left_balanced(incremental_store)
+
+    def test_vector_version_promotion(
+        self,
+        base_config: BackwardCompatibilityConfig,
+        storage_backend: StorageBackend,
+        mock_openai_async_client: MagicMock,
+        enable_incremental: None,
+    ) -> None:
+        config = base_config.index_config.replace(
+            target_chunk_tokens=32,
+            preceding_context_tokens=0,
+            embedding_batch_size=4,
+        )
+
+        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
+        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+
+        builder, _ = _make_tree_builder(
+            "doc-version",
+            storage_backend,
+            config,
+            vector_backend,
+            database_url,
+            mock_openai_async_client,
+        )
+
+        segments = _split_into_segments(
+            "".join(
+                [
+                    (
+                        f"Paragraph {i}. Deterministic content about dragons {i}. "
+                        f"Room {i % 4}.\n"
+                    )
+                    for i in range(12)
+                ]
+            ),
+            3,
+        )
+
+        asyncio.run(builder.add_document_async(segments[0], show_progress=False))
+        for segment in segments[1:]:
+            asyncio.run(builder.append_text_async(segment, show_progress=False))
+
+        doc_version = builder.document_store.get_version()
+        assert doc_version == len(segments)
+
+        leaves = builder.document_store.nodes.get_leaves()
+        leaves.sort(key=lambda n: int(n.span_start))
+        first_leaf = leaves[0]
+
+        vector = builder.vector_index.get_vectors([first_leaf.id])[0]
+        assert _meta_to_int(vector.meta.get("doc_version")) == doc_version
+
+        vectors_all = builder.vector_index.get_vectors([leaf.id for leaf in leaves])
+        for vec in vectors_all:
+            assert _meta_to_int(vec.meta.get("doc_version")) == doc_version
 
     def test_append_promotes_new_root(
         self,
