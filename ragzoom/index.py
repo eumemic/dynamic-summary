@@ -1010,6 +1010,7 @@ class TreeBuilder:
         vector_upserts: list[
             tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
         ] = []
+        vector_node_ids: list[str] = []
         for node in mutated_node_objs:
             if node.embedding is None:
                 continue
@@ -1021,7 +1022,40 @@ class TreeBuilder:
                 "is_leaf": 1 if int(node.height) == 0 else 0,
                 "doc_version": new_version,
             }
+            vector_node_ids.append(node.id)
             vector_upserts.append((node.id, [float(x) for x in node.embedding], meta))
+
+        rollback_vectors: list[
+            tuple[
+                str,
+                list[float] | NDArray[np.float64],
+                dict[str, object],
+            ]
+        ] = []
+        rollback_delete_ids: set[str] = set()
+
+        if vector_node_ids:
+            for node_id in vector_node_ids:
+                try:
+                    existing_vector = self.vector_index.get_vectors([node_id])[0]
+                except (KeyError, IndexError):
+                    rollback_delete_ids.add(node_id)
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    rollback_delete_ids.add(node_id)
+                    logger.warning(
+                        "Failed to load existing vector before append: doc=%s node=%s error=%s",
+                        document_id,
+                        node_id,
+                        exc,
+                    )
+                else:
+                    rollback_vectors.append(
+                        (
+                            existing_vector.id,
+                            [float(x) for x in existing_vector.vec.tolist()],
+                            dict(existing_vector.meta),
+                        )
+                    )
 
         vectors_written = len(vector_upserts)
         if vector_upserts:
@@ -1065,12 +1099,25 @@ class TreeBuilder:
                 )
         except Exception:
             if vectors_written:
-                logger.warning(
-                    "Append rollback after vector write: doc=%s next_version=%d vectors=%d",
-                    document_id,
-                    new_version,
-                    vectors_written,
-                )
+                if rollback_vectors:
+                    try:
+                        self.vector_index.upsert(rollback_vectors)
+                    except Exception as exc:  # pragma: no cover - defensive logging
+                        logger.error(
+                            "Failed to restore vectors after append rollback: doc=%s error=%s",
+                            document_id,
+                            exc,
+                        )
+                if rollback_delete_ids:
+                    try:
+                        self.vector_index.delete(ids=list(rollback_delete_ids))
+                    except Exception as exc:  # pragma: no cover - defensive logging
+                        logger.error(
+                            "Failed to delete new vectors after append rollback: doc=%s ids=%s error=%s",
+                            document_id,
+                            sorted(rollback_delete_ids),
+                            exc,
+                        )
             raise
 
         if neighbor_updates:

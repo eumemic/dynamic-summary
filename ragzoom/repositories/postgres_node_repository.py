@@ -266,6 +266,7 @@ class PostgresNodeRepository(BaseRepository):
                 right_child_id = EXCLUDED.right_child_id,
                 document_id = EXCLUDED.document_id,
                 token_count = EXCLUDED.token_count,
+                height = EXCLUDED.height,
                 preceding_neighbor_id = EXCLUDED.preceding_neighbor_id,
                 following_neighbor_id = EXCLUDED.following_neighbor_id
             """

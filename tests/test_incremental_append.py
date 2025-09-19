@@ -672,6 +672,15 @@ class TestIncrementalAppend:
         assert builder.document_store.get_version() == 1
         assert _reconstruct_document(builder.document_store) == initial
 
+        leaves_after_failure = builder.document_store.nodes.get_leaves()
+        leaf_ids = [node.id for node in leaves_after_failure]
+        vectors_after_failure = builder.vector_index.get_vectors(leaf_ids)
+        expected_version = builder.document_store.get_version()
+        for vector in vectors_after_failure:
+            meta_version = vector.meta.get("doc_version")
+            assert isinstance(meta_version, int | float | str)
+            assert int(meta_version) == expected_version
+
 
 class TestAppendValidation:
     def test_validation_passes_on_correct_append(

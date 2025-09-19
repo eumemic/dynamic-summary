@@ -145,6 +145,7 @@ class SqliteNodeRepository:
                         "right_child_id": stmt.excluded.right_child_id,
                         "document_id": stmt.excluded.document_id,
                         "token_count": stmt.excluded.token_count,
+                        "height": stmt.excluded.height,
                         "preceding_neighbor_id": stmt.excluded.preceding_neighbor_id,
                         "following_neighbor_id": stmt.excluded.following_neighbor_id,
                     },
