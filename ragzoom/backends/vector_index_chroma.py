@@ -13,6 +13,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.backends.chroma_vector_index import ChromaVectorIndex
+from ragzoom.backends.vector_common import (
+    NormalizedUpsertItem,
+    VectorUpsertItem,
+    normalize_upsert_items,
+)
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.vector_api import MetaDict, Vector
 
@@ -167,36 +172,24 @@ class ChromaVectorIndexAdapter(VectorIndex):
             )
         return out
 
-    def upsert(
-        self,
-        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
-    ) -> None:
+    def upsert(self, items: Sequence[VectorUpsertItem]) -> None:
         if not items:
             return
 
         for start in range(0, len(items), self._max_batch_size):
             chunk = items[start : start + self._max_batch_size]
-
-            payload: list[
-                tuple[
-                    str,
-                    list[float] | NDArray[np.float64],
-                    dict[str, str | int | float | bool | None],
-                ]
-            ] = []
-
-            for node_id, embedding, meta in chunk:
-                payload.append(
-                    (
-                        str(node_id),
-                        [float(x) for x in cast(list[float], embedding)],
-                        cast(
-                            dict[str, str | int | float | bool | None],
-                            {k: v for k, v in meta.items()},
-                        ),
-                    )
+            normalized: list[NormalizedUpsertItem] = normalize_upsert_items(chunk)
+            payload = [
+                (
+                    node_id,
+                    vector,
+                    cast(
+                        dict[str, str | int | float | bool | None],
+                        {k: v for k, v in meta.items()},
+                    ),
                 )
-
+                for node_id, vector, meta in normalized
+            ]
             self._under.upsert(payload)
 
     def delete(
