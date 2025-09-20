@@ -45,6 +45,13 @@ class NodeRepository(Protocol):
         session: Session | None = None,
     ) -> list[TreeNode]: ...
 
+    def upsert_nodes_batch(
+        self,
+        nodes_data: list[dict[str, object]],
+        *,
+        session: Session | None = None,
+    ) -> list[TreeNode]: ...
+
     # Reads
     def get_node(self, node_id: str) -> TreeNode | None: ...
     def get_nodes(self, node_ids: list[str]) -> list[TreeNode]: ...
@@ -69,4 +76,15 @@ class NodeRepository(Protocol):
     def update_parent_references_batch(
         self, updates: list[tuple[str, str]], *, session: Session | None = None
     ) -> None: ...
+
+    def update_neighbors_batch(
+        self,
+        updates: list[tuple[str, str | None, str | None]],
+        *,
+        session: Session | None = None,
+    ) -> None: ...
+
+    def get_rightmost_leaf_for_document(
+        self, document_id: str | None
+    ) -> TreeNode | None: ...
     def pin_node(self, node_id: str) -> None: ...

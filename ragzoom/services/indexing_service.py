@@ -1,16 +1,19 @@
 """Indexing service for RagZoom document processing."""
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
-
-if TYPE_CHECKING:
-    from ragzoom.telemetry_types import TelemetryDataDict
+from typing import TYPE_CHECKING, cast
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.index import TreeBuilder
+from ragzoom.index import AppendStats, TreeBuilder
+from ragzoom.telemetry_types import TelemetryDataDict
+
+if TYPE_CHECKING:
+    from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.vector_factory import create_vector_index
 
 logger = logging.getLogger(__name__)
@@ -23,7 +26,10 @@ class IndexingResult:
     document_id: str
     chunks_created: int
     tree_depth: int
-    telemetry: Optional["TelemetryDataDict"] = None
+    mutated_nodes: int | None = None
+    resummarized_nodes: int | None = None
+    new_leaves: int | None = None
+    telemetry: TelemetryDataDict | None = None
 
 
 class IndexingService:
@@ -46,6 +52,69 @@ class IndexingService:
         self.index_config = index_config
         self.operational_config = operational_config
         # TreeBuilder will be created per-request with a DocumentStore
+
+    def _finalize_result(
+        self,
+        document_id: str,
+        telemetry: TelemetryDataDict | None,
+        *,
+        mutated_nodes: int | None = None,
+        resummarized_nodes: int | None = None,
+        new_leaves: int | None = None,
+    ) -> IndexingResult:
+        doc_store_final = self.store.for_document(document_id)
+        leaves = doc_store_final.nodes.get_leaves()
+        try:
+            doc_store_final.set_metadata(chunk_count=len(leaves))
+        except Exception:
+            pass
+        root = doc_store_final.tree.get_root()
+        tree_height = root.height if root else 0
+
+        total_leaves = len(leaves)
+
+        if mutated_nodes is None:
+            mutated_nodes = doc_store_final.nodes.count()
+        if resummarized_nodes is None:
+            resummarized_nodes = max(mutated_nodes - total_leaves, 0)
+        if new_leaves is None:
+            new_leaves = total_leaves
+
+        return IndexingResult(
+            document_id=document_id,
+            chunks_created=total_leaves,
+            tree_depth=tree_height,
+            mutated_nodes=mutated_nodes,
+            resummarized_nodes=resummarized_nodes,
+            new_leaves=new_leaves,
+            telemetry=telemetry,
+        )
+
+    def _from_append_result(self, append_result: AppendStats) -> IndexingResult:
+        """Convert append stats into a finalized indexing result."""
+
+        return self._finalize_result(
+            append_result.document_id,
+            append_result.telemetry,
+            mutated_nodes=append_result.mutated_nodes,
+            resummarized_nodes=append_result.resummarized_nodes,
+            new_leaves=append_result.new_leaves,
+        )
+
+    def _create_tree_builder(self, document_id: str) -> TreeBuilder:
+        document_store = self.store.for_document(document_id)
+        vector_index = create_vector_index(
+            self.operational_config.vector_backend,
+            self.operational_config.database_url,
+            self.index_config.embedding_model,
+        )
+        return TreeBuilder(
+            self.index_config,
+            document_store,
+            api_key=self.operational_config.openai_api_key.get_secret_value(),
+            max_concurrent=30,
+            vector_index=vector_index,
+        )
 
     def index_document(
         self,
@@ -150,7 +219,6 @@ class IndexingService:
 
         # Acquire per-document lock when supported by backend
         from contextlib import AbstractContextManager, nullcontext
-        from typing import cast
 
         _lock_fn = getattr(self.store, "lock_document", None)
         cm_any = _lock_fn(document_id) if callable(_lock_fn) else None
@@ -196,55 +264,107 @@ class IndexingService:
             )
 
             # Create document-scoped store and TreeBuilder
-            document_store = self.store.for_document(document_id)
+            tree_builder = self._create_tree_builder(document_id)
 
-            vector_index = create_vector_index(
-                self.operational_config.vector_backend,
-                self.operational_config.database_url,
-                self.index_config.embedding_model,
-            )
-            tree_builder = TreeBuilder(
-                self.index_config,
-                document_store,
-                api_key=self.operational_config.openai_api_key.get_secret_value(),
-                max_concurrent=30,
-                vector_index=vector_index,
-            )
-
-            # Index with or without telemetry
+            reporter: TelemetryCollector | None = None
             if collect_telemetry:
-                # TreeBuilder's add_document_with_telemetry is sync only; run in executor
-                import asyncio
-                from functools import partial
+                from ragzoom.telemetry_collection import TelemetryCollector
 
-                func = partial(
-                    tree_builder.add_document_with_telemetry,
-                    text,
-                    show_progress=show_progress,
+                reporter = TelemetryCollector(
+                    document_id,
+                    tree_builder.tokenizer.count_tokens(text),
+                    self.index_config,
+                    document_path=file_path,
                 )
-                loop = asyncio.get_event_loop()
-                doc_id, telemetry = await loop.run_in_executor(None, func)
-            else:
-                doc_id = await tree_builder.add_document_async(
-                    text,
-                    show_progress=show_progress,
-                )
-                telemetry = None
 
-            # Get document statistics and update metadata without exposing sessions
-            doc_store_final = self.store.for_document(doc_id)
-            leaves = doc_store_final.nodes.get_leaves()
-            # Update chunk_count metadata for the document
-            try:
-                doc_store_final.set_metadata(chunk_count=len(leaves))
-            except Exception:
-                pass
-            root = doc_store_final.tree.get_root()
-            tree_height = root.height if root else 0
-
-            return IndexingResult(
-                document_id=doc_id,
-                chunks_created=len(leaves),
-                tree_depth=tree_height,
-                telemetry=telemetry,
+            append_result = await tree_builder.append_text_async(
+                text,
+                show_progress=show_progress,
+                reporter=reporter,
             )
+
+            return self._from_append_result(append_result)
+
+    def append_to_document(
+        self,
+        document_id: str,
+        new_text: str,
+        show_progress: bool = False,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        """Sync wrapper for append_to_document_async."""
+
+        import asyncio
+
+        return asyncio.run(
+            self.append_to_document_async(
+                document_id=document_id,
+                new_text=new_text,
+                show_progress=show_progress,
+                collect_telemetry=collect_telemetry,
+            )
+        )
+
+    async def append_to_document_async(
+        self,
+        document_id: str,
+        new_text: str,
+        show_progress: bool = False,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        """Append new text to an existing document incrementally."""
+
+        if not document_id:
+            raise ValueError("document_id is required for append")
+
+        from contextlib import AbstractContextManager, nullcontext
+
+        _lock_fn = getattr(self.store, "lock_document", None)
+        cm_any = _lock_fn(document_id) if callable(_lock_fn) else None
+        if not (hasattr(cm_any, "__enter__") and hasattr(cm_any, "__exit__")):
+            lock_cm = cast(AbstractContextManager[object], nullcontext())
+        else:
+            lock_cm = cast(AbstractContextManager[object], cm_any)
+
+        with lock_cm:
+            doc_record = self.store.get_document_by_id(document_id)
+            if doc_record is None:
+                from ragzoom.document_store import DocumentStore
+
+                content_hash = DocumentStore.compute_content_hash(new_text)
+                self.store.add_document(
+                    document_id=document_id,
+                    file_path=None,
+                    content_hash=content_hash,
+                    chunk_count=0,
+                    embedding_model=self.index_config.embedding_model,
+                    summary_model=self.index_config.summary_model,
+                )
+            else:
+                if getattr(doc_record, "version", None) is None:
+                    raise RuntimeError(
+                        "Incremental append requires documents.version to be present. "
+                        "Run storage migrations before enabling incremental append."
+                    )
+
+            tree_builder = self._create_tree_builder(document_id)
+
+            reporter = None
+            if collect_telemetry:
+                from ragzoom.telemetry_collection import TelemetryCollector
+
+                token_estimate = tree_builder.tokenizer.count_tokens(new_text)
+                reporter = TelemetryCollector(
+                    document_id,
+                    token_estimate,
+                    self.index_config,
+                    document_path=None,
+                )
+
+            append_result = await tree_builder.append_text_async(
+                new_text,
+                show_progress=show_progress,
+                reporter=reporter,
+            )
+
+            return self._from_append_result(append_result)

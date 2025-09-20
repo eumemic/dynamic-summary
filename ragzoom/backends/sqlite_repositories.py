@@ -13,6 +13,7 @@ from typing import cast
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import case, delete, func, insert, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from ragzoom.backends.sqlite_db import (
@@ -100,6 +101,75 @@ class SqliteNodeRepository:
             if own_session:
                 session.close()
 
+    # jscpd:ignore-start - SQLite implementation parallels Postgres version for parity
+    def upsert_nodes_batch(
+        self, nodes_data: list[dict[str, object]], *, session: Session | None = None
+    ) -> list[TreeNode]:
+        if not nodes_data:
+            return []
+        own_session = False
+        if session is None:
+            session = self.SessionLocal()
+            own_session = True
+        try:
+            node_ids: list[str] = []
+            for raw in nodes_data:
+                node_id = str(raw["node_id"])
+                node_ids.append(node_id)
+                stmt = sqlite_insert(SQLiteTreeNode).values(
+                    id=node_id,
+                    parent_id=cast(str | None, raw.get("parent_id")),
+                    left_child_id=cast(str | None, raw.get("left_child_id")),
+                    right_child_id=cast(str | None, raw.get("right_child_id")),
+                    span_start=cast(int, raw.get("span_start", 0)),
+                    span_end=cast(int, raw.get("span_end", 0)),
+                    text=cast(str, raw.get("text", "")),
+                    token_count=cast(int, raw.get("token_count", 0)),
+                    document_id=cast(str | None, raw.get("document_id")),
+                    preceding_neighbor_id=cast(
+                        str | None, raw.get("preceding_neighbor_id")
+                    ),
+                    following_neighbor_id=cast(
+                        str | None, raw.get("following_neighbor_id")
+                    ),
+                    height=cast(int, raw.get("height", 0)),
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[SQLiteTreeNode.id],
+                    set_={
+                        "text": stmt.excluded.text,
+                        "span_start": stmt.excluded.span_start,
+                        "span_end": stmt.excluded.span_end,
+                        "parent_id": stmt.excluded.parent_id,
+                        "left_child_id": stmt.excluded.left_child_id,
+                        "right_child_id": stmt.excluded.right_child_id,
+                        "document_id": stmt.excluded.document_id,
+                        "token_count": stmt.excluded.token_count,
+                        "preceding_neighbor_id": stmt.excluded.preceding_neighbor_id,
+                        "following_neighbor_id": stmt.excluded.following_neighbor_id,
+                    },
+                )
+                session.execute(stmt)
+                self.cache_manager.invalidate(node_id)
+
+            if own_session:
+                session.commit()
+
+            rows = (
+                session.execute(
+                    select(SQLiteTreeNode).where(SQLiteTreeNode.id.in_(node_ids))
+                )
+                .scalars()
+                .all()
+            )
+            detached = _detach_rows(session, rows)
+            for node in detached:
+                self.cache_manager.put(node.id, node)
+            return detached
+        finally:
+            if own_session:
+                session.close()
+
     # jscpd:ignore-start - Small wrapper mirrors NodeRepository signature for tests
     def add_node(
         self,
@@ -165,6 +235,37 @@ class SqliteNodeRepository:
             if own_session:
                 session.close()
 
+    def update_neighbors_batch(
+        self,
+        updates: list[tuple[str, str | None, str | None]],
+        *,
+        session: Session | None = None,
+    ) -> None:
+        if not updates:
+            return
+        own_session = False
+        if session is None:
+            session = self.SessionLocal()
+            own_session = True
+        try:
+            for node_id, preceding, following in updates:
+                session.execute(
+                    update(SQLiteTreeNode)
+                    .where(SQLiteTreeNode.id == node_id)
+                    .values(
+                        preceding_neighbor_id=preceding,
+                        following_neighbor_id=following,
+                    )
+                )
+                self.cache_manager.invalidate(node_id)
+            if own_session:
+                session.commit()
+        finally:
+            if own_session:
+                session.close()
+
+    # jscpd:ignore-end
+
     # --- Read ---
     def get_node(self, node_id: str) -> TreeNode | None:
         with self.SessionLocal() as session:
@@ -196,6 +297,24 @@ class SqliteNodeRepository:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             rows = session.execute(stmt).scalars().all()
             return _detach_rows(session, rows)
+
+    def get_rightmost_leaf_for_document(
+        self, document_id: str | None
+    ) -> TreeNode | None:
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.height == 0)
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            stmt = stmt.order_by(SQLiteTreeNode.span_end.desc()).limit(1)
+            row = session.execute(stmt).scalars().first()
+            if not row:
+                return None
+            try:
+                session.expunge(row)
+            except Exception:
+                pass
+            self.cache_manager.put(row.id, row)
+            return cast(TreeNode, row)
 
     def get_all_nodes_for_document(self, document_id: str | None) -> list[TreeNode]:
         with self.SessionLocal() as session:
@@ -374,6 +493,7 @@ class SqliteDocumentRepository:
         summary_model: str,
         *,
         session: Session | None = None,
+        version: int = 1,
     ) -> None:
         own_session = False
         if session is None:
@@ -387,6 +507,7 @@ class SqliteDocumentRepository:
                 chunk_count=chunk_count,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
+                version=version,
             )
             session.add(doc)
             if own_session:
@@ -454,6 +575,21 @@ class SqliteDocumentRepository:
 
     def get_document_embedding_model(self, document_id: str) -> str | None:
         return self.db.get_document_embedding_model(document_id)
+
+    def get_document_version(self, document_id: str) -> int | None:
+        with self.SessionLocal() as session:
+            row = (
+                session.execute(
+                    select(SqliteDocument.version).where(
+                        SqliteDocument.id == document_id
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if row is None:
+                return None
+            return int(row)
 
     def list_documents(self) -> list[SqliteDocument]:
         with self.SessionLocal() as session:

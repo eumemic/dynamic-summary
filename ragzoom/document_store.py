@@ -4,7 +4,7 @@ import hashlib
 import logging
 from collections.abc import Generator
 from contextlib import AbstractContextManager, contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -85,6 +85,25 @@ class DocumentNodeRepository:
             processed_data.append(processed_node)  # type: ignore[arg-type]
         return self._repo.add_nodes_batch(processed_data, session=session)
 
+    # jscpd:ignore-start - wrappers mirror repository signatures for document scoping
+    def upsert_nodes_batch(
+        self,
+        nodes_data: list[dict[str, object]],
+        *,
+        session: Session | None = None,
+    ) -> list[TreeNode]:
+        """Upsert multiple nodes while enforcing document scope."""
+
+        processed: list[dict[str, object]] = []
+        for node_data in nodes_data:
+            data_copy = dict(node_data)
+            data_copy["document_id"] = self.document_id
+            processed.append(data_copy)
+        upserts = getattr(self._repo, "upsert_nodes_batch", None)
+        if not callable(upserts):
+            raise NotImplementedError("Underlying repository does not support upsert")
+        return cast(list[TreeNode], upserts(processed, session=session))
+
     def get(self, node_id: str) -> TreeNode | None:
         """Get a node by ID, ensuring it belongs to this document."""
         node = self._repo.get_node(node_id)
@@ -111,6 +130,20 @@ class DocumentNodeRepository:
         if target_doc is None:
             return nodes
         return [node for node in nodes if node.document_id == target_doc]
+
+    def get_rightmost_leaf_for_document(
+        self, document_id: str | None
+    ) -> TreeNode | None:
+        target_doc = document_id or self.document_id
+        getter = getattr(self._repo, "get_rightmost_leaf_for_document", None)
+        if not callable(getter):
+            raise NotImplementedError(
+                "Underlying repository does not support rightmost leaf lookup"
+            )
+        node = getter(target_doc)
+        if node and (target_doc is None or node.document_id == target_doc):
+            return cast(TreeNode, node)
+        return None
 
     def get_many(self, node_ids: list[str]) -> list[TreeNode]:
         """Get multiple nodes, filtering to this document only."""
@@ -183,6 +216,21 @@ class DocumentNodeRepository:
         # as this is typically called during tree construction where document consistency is maintained
         self._repo.update_parent_references_batch(updates, session=session)
 
+    def update_neighbors_batch(
+        self,
+        updates: list[tuple[str, str | None, str | None]],
+        *,
+        session: Session | None = None,
+    ) -> None:
+        updater = getattr(self._repo, "update_neighbors_batch", None)
+        if not callable(updater):
+            raise NotImplementedError(
+                "Underlying repository does not support neighbor updates"
+            )
+        updater(updates, session=session)
+
+    # jscpd:ignore-end
+
 
 # Legacy DocumentSearchService removed; retrieval uses VectorIndex directly
 
@@ -193,6 +241,9 @@ class DocumentTreeNavigator:
     def __init__(self, document_id: str | None, tree_navigator: TreeNavigator):
         self.document_id = document_id
         self._navigator = tree_navigator
+
+    def clear_depth_cache(self, node_ids: list[str]) -> None:
+        self._navigator.clear_depth_cache(node_ids)
 
     def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
         """Get children of a node, verifying document scope."""
@@ -430,6 +481,27 @@ class DocumentStore:
         with self._open_session() as session:
             return session.query(Document).filter_by(id=self.document_id).first()
 
+    def get_version(self) -> int | None:
+        """Return the version counter for this document."""
+
+        if not self.document_id:
+            return None
+
+        getter = getattr(self._doc_repo, "get_document_version", None)
+        if callable(getter):
+            version = getter(self.document_id)
+            if version is not None:
+                return int(version)
+
+        doc = self.get_metadata()
+        if doc is None:
+            return None
+        try:
+            return int(getattr(doc, "version", 1))
+        except Exception:
+            return 1
+
+    # jscpd:ignore-start - Signature mirrors repository APIs for session support
     def set_metadata(
         self,
         file_path: str | None = None,
@@ -437,6 +509,9 @@ class DocumentStore:
         chunk_count: int = 0,
         embedding_model: str | None = None,
         summary_model: str | None = None,
+        version: int | None = None,
+        *,
+        session: Session | None = None,
     ) -> None:
         """Set or update metadata for this document.
 
@@ -452,12 +527,10 @@ class DocumentStore:
 
         from ragzoom.models import Document
 
-        with self._open_session() as session:
-            # Try to get existing document
-            doc = session.query(Document).filter_by(id=self.document_id).first()
+        def _apply(session_obj: Session) -> None:
+            doc = session_obj.query(Document).filter_by(id=self.document_id).first()
 
             if doc:
-                # Update existing document
                 if file_path is not None:
                     doc.file_path = file_path
                 if content_hash is not None:
@@ -468,8 +541,9 @@ class DocumentStore:
                     doc.embedding_model = embedding_model
                 if summary_model is not None:
                     doc.summary_model = summary_model
+                if version is not None:
+                    doc.version = version
             else:
-                # Create new document record
                 doc = Document(
                     id=self.document_id,
                     file_path=file_path,
@@ -477,10 +551,19 @@ class DocumentStore:
                     chunk_count=chunk_count,
                     embedding_model=embedding_model,
                     summary_model=summary_model,
+                    version=version or 1,
                 )
-                session.add(doc)
+                session_obj.add(doc)
 
-            session.commit()
+        if session is not None:
+            _apply(session)
+            return
+
+        with self._open_session() as session_ctx:
+            _apply(session_ctx)
+            session_ctx.commit()
+
+    # jscpd:ignore-end
 
     def get_embedding_model(self) -> str | None:
         """Get the embedding model used for this document.

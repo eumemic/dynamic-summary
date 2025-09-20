@@ -14,6 +14,24 @@ from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.vector_api import MetaDict, Vector
 
 
+def _coerce_version(value: object) -> int:
+    if isinstance(value, int | float):
+        return int(value)
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return 1
+
+
+def _coerce_int(value: object) -> int:
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, int | float):
+        return int(value)
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return 0
+
+
 class PythonVectorIndexAdapter(VectorIndex):
     def __init__(self, persist_dir: str | None, model_id: str) -> None:
         # Intentionally ignore persist_dir: PythonVectorIndex is in-memory only and
@@ -80,6 +98,10 @@ class PythonVectorIndexAdapter(VectorIndex):
             doc = (
                 str(filter["document_id"]) if filter["document_id"] is not None else ""
             )
+            ver_filter = filter.get("doc_version")
+            version_value: int | None = None
+            if ver_filter is not None:
+                version_value = _coerce_version(ver_filter)
             remaining2: list[
                 tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
             ] = []
@@ -87,7 +109,13 @@ class PythonVectorIndexAdapter(VectorIndex):
             all_ids = list(self._idx._ids)
             for i in all_ids:
                 meta = self._meta_for_id(i)
-                if str(meta.get("document_id", "")) == doc:
+                same_doc = str(meta.get("document_id", "")) == doc
+                same_version = (
+                    True
+                    if version_value is None
+                    else _coerce_version(meta.get("doc_version", 1)) == version_value
+                )
+                if same_doc and same_version:
                     deleted += 1
                     continue
                 v = self._vector_for_id(i)
@@ -115,19 +143,21 @@ class PythonVectorIndexAdapter(VectorIndex):
             return {}
         if hasattr(meta_obj, "span_start"):
             return {
-                "span_start": int(getattr(meta_obj, "span_start")),
-                "span_end": int(getattr(meta_obj, "span_end")),
+                "span_start": _coerce_int(getattr(meta_obj, "span_start")),
+                "span_end": _coerce_int(getattr(meta_obj, "span_end")),
                 "parent_id": str(getattr(meta_obj, "parent_id")),
                 "document_id": str(getattr(meta_obj, "document_id")),
-                "is_leaf": int(getattr(meta_obj, "is_leaf")),
+                "is_leaf": _coerce_int(getattr(meta_obj, "is_leaf")),
+                "doc_version": _coerce_version(getattr(meta_obj, "doc_version", 1)),
             }
         if isinstance(meta_obj, dict):
             return {
-                "span_start": int(meta_obj.get("span_start", 0)),
-                "span_end": int(meta_obj.get("span_end", 0)),
+                "span_start": _coerce_int(meta_obj.get("span_start", 0)),
+                "span_end": _coerce_int(meta_obj.get("span_end", 0)),
                 "parent_id": str(meta_obj.get("parent_id", "")),
                 "document_id": str(meta_obj.get("document_id", "")),
-                "is_leaf": int(meta_obj.get("is_leaf", 0)),
+                "is_leaf": _coerce_int(meta_obj.get("is_leaf", 0)),
+                "doc_version": _coerce_version(meta_obj.get("doc_version", 1)),
             }
         return {}
 
@@ -144,18 +174,20 @@ class PythonVectorIndexAdapter(VectorIndex):
 def _as_meta(meta: object) -> MetaDict:
     if hasattr(meta, "span_start"):
         return {
-            "span_start": int(getattr(meta, "span_start")),
-            "span_end": int(getattr(meta, "span_end")),
+            "span_start": _coerce_int(getattr(meta, "span_start")),
+            "span_end": _coerce_int(getattr(meta, "span_end")),
             "parent_id": str(getattr(meta, "parent_id")),
             "document_id": str(getattr(meta, "document_id")),
-            "is_leaf": int(getattr(meta, "is_leaf")),
+            "is_leaf": _coerce_int(getattr(meta, "is_leaf")),
+            "doc_version": _coerce_version(getattr(meta, "doc_version", 1)),
         }
     if isinstance(meta, dict):
         return {
-            "span_start": int(meta.get("span_start", 0)),
-            "span_end": int(meta.get("span_end", 0)),
+            "span_start": _coerce_int(meta.get("span_start", 0)),
+            "span_end": _coerce_int(meta.get("span_end", 0)),
             "parent_id": str(meta.get("parent_id", "")),
             "document_id": str(meta.get("document_id", "")),
-            "is_leaf": int(meta.get("is_leaf", 0)),
+            "is_leaf": _coerce_int(meta.get("is_leaf", 0)),
+            "doc_version": _coerce_version(meta.get("doc_version", 1)),
         }
     return {}

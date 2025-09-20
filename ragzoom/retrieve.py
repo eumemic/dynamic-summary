@@ -84,6 +84,30 @@ class Retriever:
         else:
             self.async_dp_generator = None
 
+    def _build_vector_where(
+        self, document_id: str | None
+    ) -> dict[str, str | int | float | bool | None] | None:
+        """Construct metadata filter for vector searches."""
+
+        if not document_id:
+            return None
+
+        version: int | None = None
+        getter = getattr(self.document_store, "get_version", None)
+        if callable(getter):
+            try:
+                version = getter()
+            except Exception:
+                version = None
+
+        if version is None:
+            version = 1
+
+        return {
+            "document_id": str(document_id),
+            "doc_version": int(version),
+        }
+
     async def retrieve_async(
         self,
         query: str,
@@ -151,10 +175,11 @@ class Retriever:
         from ragzoom.retrieval import mmr
         from ragzoom.retrieval import similarity as sim
 
+        where_clause = self._build_vector_where(effective_doc_id)
         raw_candidates = self.vector_index.search_similar(
             query_embedding,
             k_candidates,
-            {"document_id": effective_doc_id} if effective_doc_id else None,
+            where_clause,
         )
         # Filter out stale vectors that don't exist in storage to preserve invariants
         cand_ids = [v.id for v in raw_candidates]

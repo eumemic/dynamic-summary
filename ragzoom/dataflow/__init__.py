@@ -1,5 +1,15 @@
-"""Dataflow implementation for parallel tree indexing."""
+"""Public surface for RagZoom dataflow utilities."""
 
-from ragzoom.dataflow.core import build_tree_dataflow
+from ragzoom.dataflow.core import (
+    TreePatch,
+    build_full_document_patch,
+    build_tree_dataflow,
+    run_tree_patch,
+)
 
-__all__ = ["build_tree_dataflow"]
+__all__ = [
+    "TreePatch",
+    "build_full_document_patch",
+    "build_tree_dataflow",
+    "run_tree_patch",
+]

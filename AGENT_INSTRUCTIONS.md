@@ -82,7 +82,7 @@ Every agent must approach code as a master craftsperson. Each line you write is 
 #### When to Run Checks Manually
 1. **Before committing** (if you want to verify tests pass): Use `./scripts/run-checks.sh`
 2. **To test specific functionality**: Use `./scripts/run-checks.sh` with appropriate options
-3. **NEVER use `pytest` directly** - always use `run-checks.sh` which ensures proper environment setup
+3. **NEVER use `pytest` directly unless given explicit approval by the user** - in general you should use `run-checks.sh` which ensures proper environment setup
 
 #### Common Commands for Agents
 ```bash
