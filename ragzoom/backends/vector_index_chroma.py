@@ -51,6 +51,8 @@ class ChromaVectorIndexAdapter(VectorIndex):
     def __init__(self, persist_dir: str, model_id: str) -> None:
         self._under = ChromaVectorIndex(persist_dir)
         self._model_id = model_id
+        # Chroma rejects batches larger than 5461; stay comfortably under the ceiling.
+        self._max_batch_size = 5000
 
     def search_similar(
         self,
@@ -169,21 +171,33 @@ class ChromaVectorIndexAdapter(VectorIndex):
         self,
         items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
     ) -> None:
-        narrowed: list[
-            tuple[
-                str,
-                list[float] | NDArray[np.float64],
-                dict[str, str | int | float | bool | None],
-            ]
-        ] = [
-            (
-                i,
-                e,
-                cast(dict[str, str | int | float | bool | None], m),
-            )
-            for (i, e, m) in items
-        ]
-        self._under.upsert(narrowed)
+        if not items:
+            return
+
+        for start in range(0, len(items), self._max_batch_size):
+            chunk = items[start : start + self._max_batch_size]
+
+            payload: list[
+                tuple[
+                    str,
+                    list[float] | NDArray[np.float64],
+                    dict[str, str | int | float | bool | None],
+                ]
+            ] = []
+
+            for node_id, embedding, meta in chunk:
+                payload.append(
+                    (
+                        str(node_id),
+                        [float(x) for x in cast(list[float], embedding)],
+                        cast(
+                            dict[str, str | int | float | bool | None],
+                            {k: v for k, v in meta.items()},
+                        ),
+                    )
+                )
+
+            self._under.upsert(payload)
 
     def delete(
         self,
