@@ -12,11 +12,35 @@ Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system tha
 - **MMR Diversity**: Maximal Marginal Relevance for diverse, comprehensive results
 - **Slope-Capped Transitions**: Smooth depth transitions (±1 level) for coherent summaries *(planned feature)*
 - **Token Budget Management**: Strict adherence to configurable token limits
-- **Incremental Updates**: Append-only design with efficient dirty node tracking
+- **Incremental Appends (beta)**: Default patch-based indexing that reuses existing tree structure while appending new content under strict invariants
 - **Optional Features**:
   - Node pinning for always-included content
   - Sliding queue eviction with freshness decay
   - Smoothing pass for enhanced coherence
+
+## Incremental Append (Beta)
+
+Incremental append is now the default indexing pipeline. A fresh `ragzoom index`
+run still clears the document and writes version 1, but the work happens through the
+same patch engine that powers append-only updates. Before using it, make sure the
+storage migrations have introduced the required columns:
+
+- PostgreSQL: migrations run automatically on startup; confirm `documents.version` and
+  `node_vectors.doc_version` exist.
+- SQLite: the bundled migrations add the same columns on first access.
+
+`IndexingService.append_to_document(...)` and the CLI `ragzoom index --append` path reuse
+the existing tree, resummarize only the affected rightmost path, and version-gate
+visibility so queries see a consistent snapshot. Telemetry files produced during append
+runs contain an `append_metadata` block describing the patch (document version, span, and
+node counts).
+
+When you need to extend an existing document, pass `--append --document-id <id>` to the
+CLI (or call `append_to_document`). For one-off rebuilds, omit `--append`; the service
+clears the document first and then seeds a brand-new patch through the same pipeline.
+
+If the schema is out of date, append requests fail fast with a clear error so you can
+migrate or re-run in full-reindex mode.
 
 ## Installation
 

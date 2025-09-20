@@ -83,6 +83,7 @@ class SqliteDocument(SqliteBase):
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 @dataclass
@@ -113,6 +114,14 @@ class SqliteDatabaseManager:
             # Pragmas are best-effort; ignore on unsupported environments
             pass
         SqliteBase.metadata.create_all(self.engine)
+        try:
+            with self.engine.begin() as conn:
+                conn.exec_driver_sql(
+                    "ALTER TABLE documents ADD COLUMN version INTEGER DEFAULT 1"
+                )
+        except Exception:
+            # Column already exists or table newly created; ignore
+            pass
         self.SessionLocal = sessionmaker(bind=self.engine)
 
     def close(self) -> None:

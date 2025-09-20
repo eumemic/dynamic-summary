@@ -169,6 +169,25 @@ class DatabaseManager:
                     )
                 )
 
+                # Ensure documents.version exists for incremental append metadata
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'documents'
+                            AND column_name = 'version'
+                        ) THEN
+                            ALTER TABLE documents
+                            ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist

@@ -84,6 +84,9 @@ class TextSplitter:
             return []
 
         if len(raw_chunks) == 1:
+            chunk = raw_chunks[0]
+            if len(chunk) < len(original_text):
+                return [chunk + original_text[len(chunk) :]]
             return raw_chunks
 
         # Find positions of each chunk in the original text

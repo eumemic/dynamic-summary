@@ -289,6 +289,29 @@ class TelemetryCollector:
         self._nodes_at_current_height = 0
         self._pending_embeddings: dict[str, NodeTelemetry] = {}
         self._memory_lock = threading.Lock()
+        self.append_metadata: dict[str, object] | None = None
+
+    def record_append_metadata(
+        self,
+        *,
+        document_version: int,
+        span_start: int,
+        span_end: int,
+        mutated_nodes: int,
+        summary_nodes: int,
+        leaf_delta: int,
+    ) -> None:
+        """Record metadata describing an incremental append patch."""
+
+        self.append_metadata = {
+            "scope": "append",
+            "document_version": int(document_version),
+            "span_start": int(span_start),
+            "span_end": int(span_end),
+            "mutated_nodes": int(mutated_nodes),
+            "summary_nodes": int(summary_nodes),
+            "leaf_delta": int(leaf_delta),
+        }
 
     def track_node_created(
         self,
@@ -586,6 +609,9 @@ class TelemetryCollector:
         # Add document path if available
         if self.document_path:
             telemetry_data["document_path"] = self.document_path
+
+        if self.append_metadata is not None:
+            telemetry_data["append_metadata"] = self.append_metadata
 
         return cast(TelemetryDataDict, telemetry_data)
 
