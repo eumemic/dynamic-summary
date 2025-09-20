@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Optional, TypedDict, cast
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import func, update
+from sqlalchemy import func, text, update
 
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.models import PostgresTreeNode
@@ -217,6 +217,98 @@ class PostgresNodeRepository(BaseRepository):
             if should_commit:
                 db_session.close()
 
+    # jscpd:ignore-start - Upsert mirrors SQLite implementation for parity
+    def upsert_nodes_batch(
+        self,
+        nodes_data: list[dict[str, object]],
+        *,
+        session: Optional["Session"] = None,
+    ) -> list[TreeNode]:
+        if not nodes_data:
+            return []
+
+        db_session, should_commit = self._get_session(session)
+        insert_sql = text(
+            """
+            INSERT INTO tree_nodes (
+                id,
+                text,
+                span_start,
+                span_end,
+                parent_id,
+                left_child_id,
+                right_child_id,
+                document_id,
+                token_count,
+                height,
+                preceding_neighbor_id,
+                following_neighbor_id
+            ) VALUES (
+                :id,
+                :text,
+                :span_start,
+                :span_end,
+                :parent_id,
+                :left_child_id,
+                :right_child_id,
+                :document_id,
+                :token_count,
+                :height,
+                :preceding_neighbor_id,
+                :following_neighbor_id
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                text = EXCLUDED.text,
+                span_start = EXCLUDED.span_start,
+                span_end = EXCLUDED.span_end,
+                parent_id = EXCLUDED.parent_id,
+                left_child_id = EXCLUDED.left_child_id,
+                right_child_id = EXCLUDED.right_child_id,
+                document_id = EXCLUDED.document_id,
+                token_count = EXCLUDED.token_count,
+                preceding_neighbor_id = EXCLUDED.preceding_neighbor_id,
+                following_neighbor_id = EXCLUDED.following_neighbor_id
+            """
+        )
+
+        node_ids: list[str] = []
+        try:
+            for raw in nodes_data:
+                node_id = str(raw["node_id"])
+                node_ids.append(node_id)
+                params = {
+                    "id": node_id,
+                    "text": str(raw.get("text", "")),
+                    "span_start": int(cast(int | float, raw.get("span_start", 0))),
+                    "span_end": int(cast(int | float, raw.get("span_end", 0))),
+                    "parent_id": cast(str | None, raw.get("parent_id")),
+                    "left_child_id": cast(str | None, raw.get("left_child_id")),
+                    "right_child_id": cast(str | None, raw.get("right_child_id")),
+                    "document_id": cast(str | None, raw.get("document_id")),
+                    "token_count": int(cast(int | float, raw.get("token_count", 0))),
+                    "height": int(cast(int | float, raw.get("height", 0))),
+                    "preceding_neighbor_id": cast(
+                        str | None, raw.get("preceding_neighbor_id")
+                    ),
+                    "following_neighbor_id": cast(
+                        str | None, raw.get("following_neighbor_id")
+                    ),
+                }
+                db_session.execute(insert_sql, params)
+                self.cache_manager.invalidate(node_id)
+
+            if should_commit:
+                db_session.commit()
+
+            return self.get_nodes(node_ids)
+        except Exception:
+            if should_commit:
+                db_session.rollback()
+            raise
+        finally:
+            if should_commit:
+                db_session.close()
+
     def update_parent_references_batch(
         self, updates: list[tuple[str, str]], *, session: Optional["Session"] = None
     ) -> None:
@@ -241,6 +333,29 @@ class PostgresNodeRepository(BaseRepository):
             # Invalidate cache for updated nodes
             for node_id, _ in updates:
                 self.cache_manager.invalidate(node_id)
+
+    def update_neighbors_batch(
+        self,
+        updates: list[tuple[str, str | None, str | None]],
+        *,
+        session: Optional["Session"] = None,
+    ) -> None:
+        if not updates:
+            return
+
+        with self._session_scope(session) as db_session:
+            for node_id, preceding, following in updates:
+                db_session.execute(
+                    update(PostgresTreeNode)
+                    .where(PostgresTreeNode.id == node_id)
+                    .values(
+                        preceding_neighbor_id=preceding,
+                        following_neighbor_id=following,
+                    )
+                )
+                self.cache_manager.invalidate(node_id)
+
+    # jscpd:ignore-end
 
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID.
@@ -326,6 +441,22 @@ class PostgresNodeRepository(BaseRepository):
                 extracted.append(node)
 
             return extracted
+
+    def get_rightmost_leaf_for_document(
+        self, document_id: str | None
+    ) -> TreeNode | None:
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).filter(PostgresTreeNode.height == 0)
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+
+            node = query.order_by(PostgresTreeNode.span_end.desc()).limit(1).first()
+            if not node:
+                return None
+
+            self._force_load_and_detach(session, node)
+            self.cache_manager.put(node.id, node)
+            return node
 
     def update_node_access(self, node_id: str) -> None:
         """Update access time and count for a node.

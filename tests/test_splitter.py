@@ -92,6 +92,20 @@ class TestTextSplitter:
         with pytest.raises(ValueError, match="produced no valid chunks"):
             splitter.split_text("")
 
+    def test_single_chunk_retains_trailing_whitespace(self) -> None:
+        """Single chunk rebuild must preserve trailing whitespace and padding."""
+
+        index_config = IndexConfig.load(
+            target_chunk_tokens=512, preceding_context_tokens=32
+        )
+        splitter = TextSplitter(index_config)
+
+        text = "Hello world" + " " * 10
+        chunks = splitter.split_text(text)
+
+        assert len(chunks) == 1
+        assert chunks[0] == text
+
     def test_sequential_chunks(self) -> None:
         """Test that chunks are sequential without overlap."""
         index_config = IndexConfig.load(

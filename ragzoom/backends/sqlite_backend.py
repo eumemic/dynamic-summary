@@ -151,6 +151,7 @@ class SQLiteStorageBackend(StorageBackend):
             chunk_count,
             embedding_model,
             summary_model,
+            version=1,
         )
         return self.for_document(document_id)
 

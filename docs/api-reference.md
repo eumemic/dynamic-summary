@@ -2,7 +2,7 @@
 
 This document provides a comprehensive reference for all RagZoom interfaces: CLI commands, REST API endpoints, Python API, and configuration options.
 
-**Last Verified**: January 2025
+**Last Verified**: September 2025
 
 ## Table of Contents
 
@@ -26,14 +26,24 @@ ragzoom index <input> [OPTIONS]
 - `input` - File path or text to index (use `-` for stdin)
 
 **Options:**
-- `--document-id, -d` - Unique document identifier (default: filename)
-- `--no-progress` - Disable progress bar
-- `--max-concurrent` - Maximum concurrent API calls (default: 10)
+- `--document-id, -d` - Explicit document identifier (defaults to filename when indexing from a file)
+- `--config PATH` - Load indexing configuration from JSON
+- `--target-chunk-tokens INT` - Override target leaf chunk size
+- `--preceding-context-tokens INT` - Override contextual tokens carried forward
+- `--summary-model, -m TEXT` - Summarization model override
+- `--embedding-model TEXT` - Embedding model override
+- `--retry-threshold FLOAT` - Deviation threshold before summary retry
+- `--max-retries INT` - Maximum summary retries
+- `--embedding-batch-size INT` - Override embedding batch size
+- `--data-dir PATH` - Base directory for databases and vector stores
+- `--database URL` - Explicit database URL (sqlite:///... or postgresql+psycopg://...)
+- `--no-progress` - Disable progress bars
 - `--validate` - Enable validation checks during indexing
-- `--debug` - Enable debug logging (shows token counts, etc.)
-- `--telemetry` - Save telemetry data to JSON file (default: telemetry.json when flag is set)
-- `--database` - Database URL (sqlite:///path/to.db or postgresql+psycopg://host/db)
-- `--data-dir` - Base directory for data (defaults to current directory). SQLite DB is placed at `<data-dir>/data/sqlite.db`.
+- `--debug` - Emit detailed debug logging (includes token usage)
+- `--telemetry [PATH]` - Persist telemetry JSON (defaults to `telemetry.json` when flag is provided without a value)
+- `--append` - Append the file's contents to an existing document (requires `--document-id`)
+
+The command clears the target document before indexing unless `--append` is provided. Both paths run through the incremental patch engine, so fresh indexes and appends share the same invariants and telemetry.
 
 **Examples:**
 ```bash
@@ -54,6 +64,9 @@ ragzoom index document.txt --debug
 
 # Index with telemetry collection
 ragzoom index document.txt --telemetry
+
+# Append new content to an existing document
+ragzoom index delta.txt --document-id my-doc --append
 ```
 
 ### `ragzoom query`
@@ -214,8 +227,7 @@ Index a new document.
 {
   "text": "Document content to index",
   "document_id": "my-doc",
-  "clear_existing": false,
-  "validate": false
+  "file_path": "path/used/for/metadata.json"
 }
 ```
 
@@ -223,11 +235,14 @@ Index a new document.
 ```json
 {
   "document_id": "my-doc",
-  "nodes_created": 127,
-  "tree_depth": 7,
-  "indexing_time": 12.5
+  "chunks_created": 127,
+  "tree_depth": 7
 }
 ```
+
+The endpoint clears any existing nodes for the document before invoking the same patch
+engine used by CLI indexing. Append-style updates are currently surfaced via the CLI and
+service layer (`IndexingService.append_to_document`).
 
 #### `GET /documents`
 
@@ -239,8 +254,10 @@ List all documents.
   "documents": [
     {
       "document_id": "my-doc",
-      "node_count": 127,
-      "indexed_at": "2025-01-15T10:30:00Z"
+      "file_path": "reports/2024.txt",
+      "indexed_at": "2025-01-15T10:30:00Z",
+      "chunk_count": 64,
+      "node_count": 127
     }
   ]
 }
