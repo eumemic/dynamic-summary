@@ -137,9 +137,9 @@ class LLMService:
 
         actual_key = ensure_secret_str(api_key, "LLMService")
 
-        # Embedding providers impose both per-request token ceilings and hard
-        # caps on the number of vectors that can be submitted at once. The
-        # worker layer may tighten these values during tests.
+        # OpenAI lists an 8K token hard limit for embedding requests and allows
+        # up to 1K items per call. Use conservative defaults so callers stay
+        # inside those guardrails, while tests may override them.
         self._embedding_batch_token_limit = 8000
         self._provider_max_embedding_batch_size = 1000
 
@@ -213,8 +213,8 @@ class LLMService:
 
             if token_limit is not None and token_count > token_limit:
                 raise ValueError(
-                    "Single text exceeds embedding token limit: "
-                    f"item {idx} has {token_count} tokens (limit {token_limit})."
+                    f"Item {idx} exceeds embedding token limit: {token_count} tokens "
+                    f"(limit: {token_limit})."
                 )
 
             would_exceed_tokens = (

@@ -14,6 +14,9 @@ VectorUpsertItem: TypeAlias = tuple[
     dict[str, object],
 ]
 
+# We return the same structural type after normalization, but the helper ensures
+# the embedding is a plain list[float] and the metadata dict is copied so the
+# adapters may mutate it freely without surprising callers.
 NormalizedUpsertItem: TypeAlias = tuple[
     str,
     list[float] | NDArray[np.float64],

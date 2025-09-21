@@ -635,8 +635,14 @@ async def embedding_worker(
                 if len(pending_nodes) >= max_items:
                     await flush_pending()
 
-            if pending_nodes and embedding_queue.queue.qsize() == 0:
-                await flush_pending()
+            if pending_nodes:
+                # Yield to allow producers (summary workers) a chance to enqueue more
+                # nodes before we decide to flush a partial batch. Without this, a
+                # race between appending and checking the queue size could cause us
+                # to flush early and fragment batching.
+                await asyncio.sleep(0)
+                if embedding_queue.queue.empty():
+                    await flush_pending()
 
         except asyncio.CancelledError:
             break
