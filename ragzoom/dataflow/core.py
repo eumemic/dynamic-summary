@@ -567,35 +567,95 @@ async def embedding_worker(
         llm_service: Service for generating embeddings
         shutdown: Event to signal shutdown
     """
-    while not shutdown.is_set():
+    pending_nodes: list[TreeNode] = []
+    pending_tokens = 0
+
+    raw_max_items = getattr(llm_service, "_provider_max_embedding_batch_size", 1000)
+    if isinstance(raw_max_items, int | float) and raw_max_items > 0:
+        max_items = int(raw_max_items)
+    else:
+        max_items = 1000
+
+    raw_token_limit = getattr(llm_service, "_embedding_batch_token_limit", None)
+    if isinstance(raw_token_limit, int | float) and raw_token_limit > 0:
+        token_limit: int | None = int(raw_token_limit)
+    else:
+        token_limit = None
+
+    async def flush_pending() -> None:
+        nonlocal pending_nodes, pending_tokens
+        if not pending_nodes:
+            return
+        await _process_embedding_batch(
+            pending_nodes, llm_service, reporter, progress, worker_id
+        )
+        for _ in pending_nodes:
+            embedding_queue.task_done()
+        pending_nodes = []
+        pending_tokens = 0
+
+    while True:
         try:
-            # Wait for a batch (sleeps until ready)
             batch = await embedding_queue.get_batch(shutdown)
 
             if batch is None:
-                # Queue is closed, no more work
+                if pending_nodes:
+                    await flush_pending()
                 logger.debug(f"Embedding worker {worker_id}: Queue closed, exiting")
                 break
 
-            # Process the batch
-            await _process_embedding_batch(
-                batch, llm_service, reporter, progress, worker_id
-            )
+            for batch_index, node in enumerate(batch):
+                node_tokens = int(getattr(node, "token_count", 0))
+                if node_tokens <= 0:
+                    node_tokens = tokenizer.count_tokens(node.text or "")
+                    setattr(node, "token_count", node_tokens)
 
-            # Mark all items as done
-            for _ in batch:
-                embedding_queue.task_done()
+                if token_limit is not None and node_tokens > token_limit:
+                    await flush_pending()
+                    for remaining in batch[batch_index:]:
+                        embedding_queue.task_done()
+                    raise ValueError(
+                        "Node exceeds embedding token limit: "
+                        f"node {node.id} has {node_tokens} tokens (limit {token_limit})."
+                    )
 
-            # Continue processing until queue empties; do not exit early on root
-            # BatchAwareQueue will return None when root is queued and queue drains
+                would_exceed_items = len(pending_nodes) >= max_items
+                would_exceed_tokens = (
+                    token_limit is not None
+                    and pending_nodes
+                    and pending_tokens + node_tokens > token_limit
+                )
+
+                if pending_nodes and (would_exceed_items or would_exceed_tokens):
+                    await flush_pending()
+
+                pending_nodes.append(node)
+                pending_tokens += node_tokens
+
+                if len(pending_nodes) >= max_items:
+                    await flush_pending()
+
+            if pending_nodes:
+                # Yield to allow producers (summary workers) a chance to enqueue more
+                # nodes before we decide to flush a partial batch. Without this, a
+                # race between appending and checking the queue size could cause us
+                # to flush early and fragment batching.
+                await asyncio.sleep(0)
+                if embedding_queue.queue.empty():
+                    await flush_pending()
 
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error(f"Embedding worker {worker_id} error: {e}")
-            # Set shutdown to stop other workers
             shutdown.set()
             raise
+
+    if pending_nodes:
+        try:
+            await flush_pending()
+        except asyncio.CancelledError:
+            pass
 
 
 async def _process_embedding_batch(
@@ -609,6 +669,26 @@ async def _process_embedding_batch(
     try:
         # Generate embeddings for batch
         texts = [node.text for node in batch]
+
+        token_counts: list[int] = []
+        invalid_nodes: list[str] = []
+        for node in batch:
+            raw_count = getattr(node, "token_count", None)
+            if raw_count is None:
+                tokens = tokenizer.count_tokens(node.text or "")
+                setattr(node, "token_count", tokens)
+            else:
+                tokens = int(raw_count)
+
+            if tokens < 0:
+                invalid_nodes.append(node.id)
+            token_counts.append(tokens)
+
+        if invalid_nodes:
+            raise ValueError(
+                "Embedding batch encountered nodes with negative token counts: "
+                f"{invalid_nodes}"
+            )
         start_time = time.time()
         embeddings = await llm_service._get_embeddings_batch(texts)
 
@@ -627,8 +707,8 @@ async def _process_embedding_batch(
             else f"h{min(heights)}-{max(heights)}"
         )
         elapsed = time.time() - start_time
+        total_tokens = sum(token_counts)
         if logger.isEnabledFor(logging.DEBUG):
-            total_tokens = sum(tokenizer.count_tokens(node.text) for node in batch)
             logger.debug(
                 f"Embedded batch size={len(batch)} type={batch_type} tokens={total_tokens} time={elapsed:.2f}s"
             )
@@ -640,11 +720,9 @@ async def _process_embedding_batch(
         # Track telemetry
         if reporter:
             # Prepare node embeddings data
-            node_embeddings = []
-            for node in batch:
-                # Token counts are only needed for telemetry; compute lazily here
-                token_count = tokenizer.count_tokens(node.text)
-                node_embeddings.append((node.id, token_count))
+            node_embeddings = [
+                (node.id, token_count) for node, token_count in zip(batch, token_counts)
+            ]
 
             # Record v2 telemetry with per-node tracking
             model = (
