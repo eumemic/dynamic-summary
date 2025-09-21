@@ -520,6 +520,8 @@ class TestEmbeddingBatching:
         mock_llm_service = MagicMock()
         mock_llm_service._summarize_text = mock_slow_summary
         mock_llm_service._get_embeddings_batch = mock_embeddings
+        mock_llm_service._provider_max_embedding_batch_size = embedding_batch_size
+        mock_llm_service._embedding_batch_token_limit = embedding_batch_size * 1000
 
         # Create a larger tree to ensure we have enough summaries to batch
         # 16 chunks -> 8 parents -> 4 grandparents -> 2 great-grandparents -> 1 root
@@ -589,6 +591,8 @@ class TestEmbeddingBatching:
         mock_llm_service = MagicMock()
         mock_llm_service._summarize_text = AsyncMock(side_effect=gated_summary)
         mock_llm_service._get_embeddings_batch = mock_embeddings
+        mock_llm_service._provider_max_embedding_batch_size = embedding_batch_size
+        mock_llm_service._embedding_batch_token_limit = embedding_batch_size * 1000
 
         # Use many chunks to create lots of summaries
         chunks = [f"Chunk {i}" for i in range(32)]  # 31 total internal nodes
@@ -629,6 +633,8 @@ class TestEmbeddingBatching:
         mock_llm_service = MagicMock()
         mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
         mock_llm_service._get_embeddings_batch = mock_embeddings
+        mock_llm_service._provider_max_embedding_batch_size = 3
+        mock_llm_service._embedding_batch_token_limit = 3 * 1000
 
         # Choose chunk count that will result in partial final batch
         # 7 chunks -> 4 parents -> 2 grandparents -> 1 root = 7 internal nodes
@@ -669,6 +675,8 @@ class TestEmbeddingBatching:
         mock_llm_service = MagicMock()
         mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
         mock_llm_service._get_embeddings_batch = mock_embeddings
+        mock_llm_service._provider_max_embedding_batch_size = 3
+        mock_llm_service._embedding_batch_token_limit = 3 * 1000
 
         # Create a small tree
         chunks = ["Chunk 1", "Chunk 2", "Chunk 3", "Chunk 4"]
@@ -710,6 +718,8 @@ class TestEmbeddingBatching:
         mock_llm_service = MagicMock()
         mock_llm_service._summarize_text = AsyncMock(return_value=("Summary", 1, 10))
         mock_llm_service._get_embeddings_batch = mock_embeddings
+        mock_llm_service._provider_max_embedding_batch_size = 3
+        mock_llm_service._embedding_batch_token_limit = 3 * 1000
 
         # Create chunks that will generate batches
         chunks = [f"Chunk {i}" for i in range(10)]
@@ -798,6 +808,8 @@ class TestEmbeddingBatching:
         mock_llm_service = MagicMock()
         mock_llm_service._summarize_text = mock_slow_summary
         mock_llm_service._get_embeddings_batch = mock_embeddings
+        mock_llm_service._provider_max_embedding_batch_size = 4
+        mock_llm_service._embedding_batch_token_limit = 4 * 1000
 
         # Create a tree large enough to test batching
         # 8 chunks -> 4 parents -> 2 grandparents -> 1 root

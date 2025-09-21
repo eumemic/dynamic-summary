@@ -6,10 +6,17 @@ by returning canonical Vector objects with normalized float32 arrays.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.backends.python_vector_index import PythonVectorIndex
+from ragzoom.backends.vector_common import (
+    NormalizedUpsertItem,
+    VectorUpsertItem,
+    normalize_upsert_items,
+)
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.vector_api import MetaDict, Vector
 
@@ -62,12 +69,16 @@ class PythonVectorIndexAdapter(VectorIndex):
             out.append(self._wrap(node_id, vec, meta))
         return out
 
-    def upsert(
-        self,
-        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
-    ) -> None:
+    def upsert(self, items: Sequence[VectorUpsertItem]) -> None:
+        normalized: list[NormalizedUpsertItem] = normalize_upsert_items(items)
+        if not normalized:
+            return
+
         # In-memory only; do not persist to disk
-        self._idx.upsert(items, persist=False)
+        payload: list[
+            tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+        ] = [(node_id, vector, meta) for node_id, vector, meta in normalized]
+        self._idx.upsert(payload, persist=False)
 
     def delete(
         self,

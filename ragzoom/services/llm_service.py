@@ -137,6 +137,12 @@ class LLMService:
 
         actual_key = ensure_secret_str(api_key, "LLMService")
 
+        # OpenAI lists an 8K token hard limit for embedding requests and allows
+        # up to 1K items per call. Use conservative defaults so callers stay
+        # inside those guardrails, while tests may override them.
+        self._embedding_batch_token_limit = 8000
+        self._provider_max_embedding_batch_size = 1000
+
         if os.environ.get("PYTEST_CURRENT_TEST"):
             self.client = _build_test_openai_client(self.config.embedding_model)
         else:
@@ -184,23 +190,8 @@ class LLMService:
         if not texts:
             return []
 
-        # OpenAI embeddings API has a limit of ~2048 inputs per batch
-        # Use a conservative limit to avoid hitting API constraints
-        max_batch_size = 1000
-
-        if len(texts) > max_batch_size:
-            logger.debug(
-                f"Large batch of {len(texts)} texts - splitting into smaller batches of {max_batch_size}"
-            )
-            all_embeddings = []
-            for i in range(0, len(texts), max_batch_size):
-                batch = texts[i : i + max_batch_size]
-                logger.debug(
-                    f"Processing batch {i//max_batch_size + 1}/{(len(texts) + max_batch_size - 1)//max_batch_size} ({len(batch)} texts)"
-                )
-                batch_embeddings = await self._get_embeddings_batch(batch)
-                all_embeddings.extend(batch_embeddings)
-            return all_embeddings
+        token_limit = getattr(self, "_embedding_batch_token_limit", None)
+        max_items = getattr(self, "_provider_max_embedding_batch_size", 1000)
 
         # Safety net: Check for empty strings that could cause API errors
         for i, text in enumerate(texts):
@@ -212,12 +203,63 @@ class LLMService:
                     f"Empty text at index {i} in embedding batch. This should be filtered by the caller."
                 )
 
-        try:
-            response = await self.client.embeddings.create(
-                model=self.config.embedding_model,
-                input=texts,
+        batches: list[tuple[list[str], list[int]]] = []
+        current_batch: list[str] = []
+        current_token_counts: list[int] = []
+        current_tokens = 0
+
+        for idx, text in enumerate(texts):
+            token_count = tokenizer.count_tokens(text)
+
+            if token_limit is not None and token_count > token_limit:
+                raise ValueError(
+                    f"Item {idx} exceeds embedding token limit: {token_count} tokens "
+                    f"(limit: {token_limit})."
+                )
+
+            would_exceed_tokens = (
+                token_limit is not None
+                and current_batch
+                and current_tokens + token_count > token_limit
             )
-            return [data.embedding for data in response.data]
+
+            if current_batch and (
+                would_exceed_tokens or len(current_batch) >= max_items
+            ):
+                batches.append((current_batch, current_token_counts))
+                current_batch = []
+                current_token_counts = []
+                current_tokens = 0
+
+            current_batch.append(text)
+            current_token_counts.append(token_count)
+            current_tokens += token_count
+
+            if len(current_batch) >= max_items:
+                batches.append((current_batch, current_token_counts))
+                current_batch = []
+                current_token_counts = []
+                current_tokens = 0
+
+        if current_batch:
+            batches.append((current_batch, current_token_counts))
+
+        results: list[list[float]] = []
+
+        try:
+            for batch_idx, (batch, token_counts) in enumerate(batches, start=1):
+                response = await self.client.embeddings.create(
+                    model=self.config.embedding_model,
+                    input=batch,
+                )
+                results.extend(data.embedding for data in response.data)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Processed embedding batch %s size=%s tokens=%s",
+                        batch_idx,
+                        len(batch),
+                        sum(token_counts),
+                    )
         except Exception as e:
             from ragzoom.error_utils import preserve_exception_chain
             from ragzoom.exceptions import LLMError
@@ -229,6 +271,8 @@ class LLMService:
                 batch_size=len(texts),
             )
             raise preserve_exception_chain(llm_error, e)
+
+        return results
 
     async def _make_summary_call(  # jscpd:ignore-start
         self,

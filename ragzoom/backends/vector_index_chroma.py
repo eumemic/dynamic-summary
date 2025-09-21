@@ -13,6 +13,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.backends.chroma_vector_index import ChromaVectorIndex
+from ragzoom.backends.vector_common import (
+    NormalizedUpsertItem,
+    VectorUpsertItem,
+    normalize_upsert_items,
+)
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.vector_api import MetaDict, Vector
 
@@ -51,6 +56,8 @@ class ChromaVectorIndexAdapter(VectorIndex):
     def __init__(self, persist_dir: str, model_id: str) -> None:
         self._under = ChromaVectorIndex(persist_dir)
         self._model_id = model_id
+        # Chroma rejects batches larger than 5461; stay comfortably under the ceiling.
+        self._max_batch_size = 5000
 
     def search_similar(
         self,
@@ -165,25 +172,25 @@ class ChromaVectorIndexAdapter(VectorIndex):
             )
         return out
 
-    def upsert(
-        self,
-        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
-    ) -> None:
-        narrowed: list[
-            tuple[
-                str,
-                list[float] | NDArray[np.float64],
-                dict[str, str | int | float | bool | None],
+    def upsert(self, items: Sequence[VectorUpsertItem]) -> None:
+        if not items:
+            return
+
+        for start in range(0, len(items), self._max_batch_size):
+            chunk = items[start : start + self._max_batch_size]
+            normalized: list[NormalizedUpsertItem] = normalize_upsert_items(chunk)
+            payload = [
+                (
+                    node_id,
+                    vector,
+                    cast(
+                        dict[str, str | int | float | bool | None],
+                        {k: v for k, v in meta.items()},
+                    ),
+                )
+                for node_id, vector, meta in normalized
             ]
-        ] = [
-            (
-                i,
-                e,
-                cast(dict[str, str | int | float | bool | None], m),
-            )
-            for (i, e, m) in items
-        ]
-        self._under.upsert(narrowed)
+            self._under.upsert(payload)
 
     def delete(
         self,

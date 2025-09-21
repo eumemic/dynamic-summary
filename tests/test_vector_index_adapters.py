@@ -36,6 +36,7 @@ def _install_fake_chroma_client(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FakeCollection:
         def __init__(self) -> None:
             self._store: dict[str, tuple[list[float], dict[str, object]]] = {}
+            self.batch_sizes: list[int] = []
 
         def upsert(
             self,
@@ -43,6 +44,7 @@ def _install_fake_chroma_client(monkeypatch: pytest.MonkeyPatch) -> None:
             embeddings: list[Iterable[float]],
             metadatas: list[dict[str, object]],
         ) -> None:
+            self.batch_sizes.append(len(ids))
             for node_id, emb, meta in zip(ids, embeddings, metadatas, strict=False):
                 self._store[node_id] = ([float(x) for x in emb], dict(meta))
 
@@ -238,6 +240,41 @@ def test_chroma_vector_index_adapter_round_trip(
     deleted_by_filter = adapter.delete(filter={"document_id": "doc-1"})
     assert deleted_by_filter >= 1
     assert adapter.search_similar([0.0, 1.0], k=1) == []
+
+
+def test_chroma_vector_index_adapter_chunks_large_batches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ragzoom.backends.vector_index_chroma import ChromaVectorIndexAdapter
+
+    if chromadb is None or Settings is None:
+        pytest.skip("chromadb is required for adapter tests")
+
+    _install_fake_chroma_client(monkeypatch)
+
+    idx_dir = tmp_path / "chroma-large"
+    idx_dir.mkdir()
+    adapter = ChromaVectorIndexAdapter(str(idx_dir), "test-model")
+
+    meta = {
+        "span_start": 0,
+        "span_end": 1,
+        "parent_id": "",
+        "document_id": "doc",
+        "is_leaf": 1,
+        "doc_version": 1,
+    }
+    large_items: list[
+        tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+    ] = [(f"node-{i}", [float(i), float(i + 1)], dict(meta)) for i in range(6000)]
+
+    adapter.upsert(large_items)
+
+    collection = getattr(adapter._under, "_collection")
+    sizes = getattr(collection, "batch_sizes")
+    assert sum(sizes) == len(large_items)
+    assert len(sizes) > 1
+    assert all(size <= adapter._max_batch_size for size in sizes)
 
 
 def test_chroma_adapter_combines_multiple_filters(
