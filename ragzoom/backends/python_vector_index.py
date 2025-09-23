@@ -27,7 +27,6 @@ class _Meta:
     parent_id: str
     document_id: str
     is_leaf: int
-    doc_version: int
 
 
 class PythonVectorIndex:
@@ -83,24 +82,18 @@ class PythonVectorIndex:
                     pid = v.get("parent_id")
                     did = v.get("document_id")
                     leaf = v.get("is_leaf")
-                    ver_raw = v.get("doc_version", 1)
                     if not isinstance(ss, int) or not isinstance(se, int):
                         raise TypeError("Invalid span types in meta")
                     if not isinstance(pid, str) or not isinstance(did, str):
                         raise TypeError("Invalid ID types in meta")
                     if not isinstance(leaf, int):
                         raise TypeError("Invalid is_leaf type in meta")
-                    try:
-                        ver = int(ver_raw)
-                    except Exception:
-                        ver = 1
                     meta_out[k] = _Meta(
                         span_start=ss,
                         span_end=se,
                         parent_id=pid,
                         document_id=did,
                         is_leaf=leaf,
-                        doc_version=ver,
                     )
                 self._meta = meta_out
         except Exception:
@@ -128,7 +121,6 @@ class PythonVectorIndex:
                             "parent_id": m.parent_id,
                             "document_id": m.document_id,
                             "is_leaf": m.is_leaf,
-                            "doc_version": m.doc_version,
                         }
                         for i, m in self._meta.items()
                     },
@@ -145,7 +137,7 @@ class PythonVectorIndex:
     ) -> None:
         """Insert or replace vectors.
 
-        Each item: (node_id, embedding, meta{span_start, span_end, parent_id, document_id, is_leaf, doc_version})
+        Each item: (node_id, embedding, meta{span_start, span_end, parent_id, document_id, is_leaf})
         """
         if not items:
             return
@@ -193,21 +185,12 @@ class PythonVectorIndex:
             else:
                 raise TypeError("Missing or invalid integer for is_leaf")
 
-            doc_version_val = meta.get("doc_version", 1)
-            if isinstance(doc_version_val, int | np.integer):
-                doc_version_i = int(doc_version_val)
-            elif isinstance(doc_version_val, str) and doc_version_val.isdigit():
-                doc_version_i = int(doc_version_val)
-            else:
-                doc_version_i = 1
-
             self._meta[node_id] = _Meta(
                 span_start=_req_int("span_start"),
                 span_end=_req_int("span_end"),
                 parent_id=_req_str("parent_id"),
                 document_id=_req_str("document_id"),
                 is_leaf=is_leaf_i,
-                doc_version=doc_version_i,
             )
 
         if vecs:
@@ -247,15 +230,6 @@ class PythonVectorIndex:
                 mask &= np.array(
                     [self._meta[i].document_id == doc for i in self._ids], dtype=bool
                 )
-            ver_filter = where.get("doc_version")
-            if ver_filter is not None:
-                try:
-                    ver = int(ver_filter)
-                except Exception:
-                    ver = 1
-                mask &= np.array(
-                    [self._meta[i].doc_version == ver for i in self._ids], dtype=bool
-                )
             if mask is not None and not mask.any():
                 return []
         if mask is not None:
@@ -283,7 +257,6 @@ class PythonVectorIndex:
                         "parent_id": m.parent_id,
                         "document_id": m.document_id,
                         "is_leaf": m.is_leaf,
-                        "doc_version": m.doc_version,
                     },
                 )
             )

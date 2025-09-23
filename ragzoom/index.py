@@ -128,19 +128,6 @@ class TreeBuilder:
         # Backward compatibility: provide access to centralized tokenizer
         self.tokenizer = tokenizer
 
-    @staticmethod
-    def _coerce_doc_version(raw: object, default: int) -> int:
-        """Convert stored doc_version metadata into an int with fallback."""
-
-        if isinstance(raw, int | float):
-            return int(raw)
-        if isinstance(raw, str):
-            try:
-                return int(raw)
-            except ValueError:
-                return default
-        return default
-
     def _node_to_domain(self, node: TreeNode) -> DomainNode:
         """Convert a stored TreeNode into a DomainNode for patch construction."""
 
@@ -704,7 +691,6 @@ class TreeBuilder:
         document_id = self.document_store.document_id
         if not document_id:
             raise ValueError("DocumentStore must have a document_id set")
-        doc_version = self.document_store.get_version() or 1
 
         # Step 2: Create and validate chunks
         chunks = self._create_and_validate_chunks(text, show_progress)
@@ -821,8 +807,6 @@ class TreeBuilder:
             # Two-phase apply for backends with external vector index (e.g., SQLite + PythonVectorIndex):
             # After all SQL writes are complete and parent references set, upsert vectors.
             # Upsert vectors into the configured VectorIndex (required dependency)
-            doc_version = self.document_store.get_version() or 1
-
             upsert_items: list[
                 tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
             ] = []
@@ -835,7 +819,6 @@ class TreeBuilder:
                     "parent_id": n.parent_id or "",
                     "document_id": n.document_id or "",
                     "is_leaf": 1 if int(getattr(n, "height", 0)) == 0 else 0,
-                    "doc_version": doc_version,
                 }
                 emb = getattr(n, "embedding", None)
                 if emb is not None:
@@ -1040,7 +1023,6 @@ class TreeBuilder:
                 "parent_id": node.parent_id or "",
                 "document_id": node.document_id,
                 "is_leaf": 1 if int(node.height) == 0 else 0,
-                "doc_version": new_version,
             }
             vector_node_ids.append(node.id)
             vector_upserts.append((node.id, [float(x) for x in node.embedding], meta))
@@ -1146,46 +1128,6 @@ class TreeBuilder:
         reconstructed = "".join(leaf.text or "" for leaf in leaves_after)
         new_hash = DocumentStore.compute_content_hash(reconstructed)
         self.document_store.set_metadata(content_hash=new_hash)
-
-        # Promote untouched vectors (leaves and internal nodes) to the new document version.
-        all_nodes_after = self.document_store.nodes.get_all()
-        if all_nodes_after:
-            mutated_node_ids_set = set(tracking.mutable_node_ids)
-            unaffected_node_ids = [
-                node.id
-                for node in all_nodes_after
-                if node.id not in mutated_node_ids_set
-            ]
-            if unaffected_node_ids:
-                try:
-                    existing_vectors = self.vector_index.get_vectors(
-                        unaffected_node_ids
-                    )
-                except Exception as exc:  # pragma: no cover - defensive logging
-                    logger.warning(
-                        "Failed to load vectors for doc_version promotion: doc=%s error=%s",
-                        document_id,
-                        exc,
-                    )
-                else:
-                    promote_items: list[VectorPayload] = []
-                    for vector in existing_vectors:
-                        meta = dict(vector.meta)
-                        current_version_meta = self._coerce_doc_version(
-                            meta.get("doc_version"), doc_version
-                        )
-                        if current_version_meta == new_version:
-                            continue
-                        meta["doc_version"] = new_version
-                        promote_items.append(
-                            (
-                                vector.id,
-                                [float(x) for x in vector.vec.tolist()],
-                                meta,
-                            )
-                        )
-                    if promote_items:
-                        self.vector_index.upsert(promote_items)
 
         logger.debug(
             "Append stats doc=%s version=%d->%d mutated=%d new_leaves=%d resummarized=%d",
