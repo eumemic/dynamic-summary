@@ -13,6 +13,7 @@ from ragzoom.document_store import DocumentStore
 from ragzoom.index import AppendStats, TreeBuilder
 from ragzoom.splitter import TextSplitter
 from ragzoom.validate import set_validation_enabled
+from ragzoom.vector_api import Vector
 from ragzoom.vector_factory import create_vector_index
 from tests.conftest import BackwardCompatibilityConfig
 
@@ -202,17 +203,6 @@ def _assert_left_balanced(doc_store: DocumentStore) -> None:
         assert int(node.height) == max(left_height, right_height) + 1
 
 
-def _meta_to_int(value: object, default: int = 0) -> int:
-    if isinstance(value, int | float):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return default
-    return default
-
-
 class TestIncrementalAppend:
     @pytest.mark.slow_threshold(20.0)
     def test_incremental_equivalence(
@@ -349,7 +339,7 @@ class TestIncrementalAppend:
 
         _assert_left_balanced(incremental_store)
 
-    def test_vector_version_promotion(
+    def test_append_does_not_promote_unaffected_vectors(
         self,
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
@@ -373,36 +363,33 @@ class TestIncrementalAppend:
             mock_openai_async_client,
         )
 
-        segments = [
-            "Opening stanza about dragons.\n",
+        initial = "Opening stanza about dragons.\n"
+        append_segments = [
             "Middle stanza with concise details.\n",
             "Closing stanza that wraps up neatly.\n",
         ]
 
-        assert len(segments) == 3
+        asyncio.run(builder.add_document_async(initial, show_progress=False))
 
-        asyncio.run(builder.add_document_async(segments[0], show_progress=False))
-        for segment in segments[1:]:
-            asyncio.run(builder.append_text_async(segment, show_progress=False))
+        get_calls: list[tuple[str, ...]] = []
+        original_get = builder.vector_index.get_vectors
 
-        doc_version = builder.document_store.get_version()
-        assert doc_version == len(segments)
+        def tracked_get(ids: list[str]) -> list[Vector]:
+            get_calls.append(tuple(ids))
+            return original_get(ids)
 
-        leaves = builder.document_store.nodes.get_leaves()
-        leaves.sort(key=lambda n: int(n.span_start))
-        first_leaf = leaves[0]
+        spy = MagicMock(side_effect=tracked_get)
+        setattr(builder.vector_index, "get_vectors", spy)
 
-        vector = builder.vector_index.get_vectors([first_leaf.id])[0]
-        assert _meta_to_int(vector.meta.get("doc_version")) == doc_version
+        try:
+            for segment in append_segments:
+                asyncio.run(builder.append_text_async(segment, show_progress=False))
+        finally:
+            setattr(builder.vector_index, "get_vectors", original_get)
 
-        vectors_all = builder.vector_index.get_vectors([leaf.id for leaf in leaves])
-        for vec in vectors_all:
-            assert _meta_to_int(vec.meta.get("doc_version")) == doc_version
-
-        all_node_ids = [node.id for node in builder.document_store.nodes.get_all()]
-        vectors_all_nodes = builder.vector_index.get_vectors(all_node_ids)
-        for vec in vectors_all_nodes:
-            assert _meta_to_int(vec.meta.get("doc_version")) == doc_version
+        # We only expect rollback probes that touch single nodes.
+        assert spy.call_count == len(get_calls) > 0
+        assert all(len(call_ids) == 1 for call_ids in get_calls)
 
     def test_append_promotes_new_root(
         self,
@@ -679,11 +666,8 @@ class TestIncrementalAppend:
         leaves_after_failure = builder.document_store.nodes.get_leaves()
         leaf_ids = [node.id for node in leaves_after_failure]
         vectors_after_failure = builder.vector_index.get_vectors(leaf_ids)
-        expected_version = builder.document_store.get_version()
         for vector in vectors_after_failure:
-            meta_version = vector.meta.get("doc_version")
-            assert isinstance(meta_version, int | float | str)
-            assert int(meta_version) == expected_version
+            assert "doc_version" not in vector.meta
 
 
 class TestAppendValidation:

@@ -25,13 +25,14 @@ run still clears the document and writes version 1, but the work happens through
 same patch engine that powers append-only updates. Before using it, make sure the
 storage migrations have introduced the required columns:
 
-- PostgreSQL: migrations run automatically on startup; confirm `documents.version` and
-  `node_vectors.doc_version` exist.
+- PostgreSQL: migrations run automatically on startup; confirm `documents.version`
+  exists.
 - SQLite: the bundled migrations add the same columns on first access.
 
 `IndexingService.append_to_document(...)` and the CLI `ragzoom index --append` path reuse
-the existing tree, resummarize only the affected rightmost path, and version-gate
-visibility so queries see a consistent snapshot. Telemetry files produced during append
+the existing tree, resummarize only the affected rightmost path, and rely on storage
+consistency checks (missing nodes are filtered after vector search) so queries see a
+coherent snapshot. Telemetry files produced during append
 runs contain an `append_metadata` block describing the patch (document version, span, and
 node counts).
 

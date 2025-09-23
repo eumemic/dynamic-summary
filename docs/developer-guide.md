@@ -430,9 +430,10 @@ through the same patch engine that handles append-only updates.
   an existing document without clearing prior content. Omit `--append` when you want a
   clean rebuild; the service wipes the document first and then seeds version 1 through the
   patch engine.
-- Ensure the schema migrations for `documents.version` and `node_vectors.doc_version`
+- Ensure the schema migrations for `documents.version`
   have been applied (automatic for new environments).
-- Retrieval calls now supply `(document_id, doc_version)` so queries see atomic snapshots.
+- Retrieval calls now supply `document_id` only; stale vectors are discarded if their
+  nodes are missing from storage, ensuring consistency without version gates.
 - Telemetry emitted during append runs includes an `append_metadata` block describing the
   patch span, version, and node counts. Use this for diff-based validation during testing.
 - The validation framework (`ragzoom.validate`) can be toggled on to byte-compare the tail
