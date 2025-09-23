@@ -245,22 +245,27 @@ class Retriever:
             for node in loaded_nodes:
                 nodes[node.id] = node
 
-        # Find the root node
-        root_id = None
-        for node_id in list(nodes.keys()):
-            node_p: TreeNode = nodes[node_id]
-            # Check if node is root (compatible with both TreeNode and SqliteTreeNode)
-            is_root = getattr(node_p, "is_root", lambda: node_p.parent_id is None)()
-            if is_root or node_p.parent_id not in nodes:
-                root_id = node_id
-                break
+        # Find all root nodes (supporting forests)
+        root_ids: list[str] = []
+        for node_id, node_p in nodes.items():
+            parent_id = node_p.parent_id
+            is_root = getattr(node_p, "is_root", lambda: parent_id is None)()
+            if is_root or parent_id not in nodes:
+                root_ids.append(node_id)
 
-        if not root_id:
+        if not root_ids:
             raise ValueError(
-                f"Failed to find root node in coverage map with {len(nodes)} nodes. "
+                f"Failed to find root nodes in coverage map with {len(nodes)} nodes. "
                 f"This indicates the coverage tree is incomplete - all ancestors should be included "
                 f"up to the document root. Selected node IDs: {selected_ids[:5]}{'...' if len(selected_ids) > 5 else ''}"
             )
+
+        root_ids.sort(
+            key=lambda node_id: (
+                int(getattr(nodes[node_id], "span_start", 0)),
+                node_id,
+            )
+        )
 
         # Sanity: drop any selected ids that aren't present in the document store
         selected_ids = [nid for nid in selected_ids if nid in nodes]
@@ -274,12 +279,12 @@ class Retriever:
 
         # Use async DP generator if available, otherwise use sync version
         if self.async_dp_generator is not None:
-            dp_result = await self.async_dp_generator.find_optimal_tiling(
-                final_budget, scores, nodes, root_id
+            dp_result = await self.async_dp_generator.find_optimal_tiling_over_roots(
+                root_ids, final_budget, scores, nodes
             )
         else:
-            dp_result = self.dp_generator.find_optimal_tiling(
-                final_budget, scores, nodes, root_id
+            dp_result = self.dp_generator.find_optimal_tiling_over_roots(
+                root_ids, final_budget, scores, nodes
             )
         if telemetry_collector:
             telemetry_collector.end_phase("dp")

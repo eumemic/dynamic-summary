@@ -402,7 +402,7 @@ def mock_openai_client() -> MagicMock:
     mock_client = MagicMock()
 
     # Mock embeddings
-    async def mock_embeddings_create(**kwargs: object) -> MagicMock:
+    def mock_embeddings_create(**kwargs: object) -> MagicMock:
         input_texts = kwargs.get("input", [])
         if isinstance(input_texts, str):
             input_texts = [input_texts]

@@ -2,7 +2,7 @@
 
 import hashlib
 import logging
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, cast
 
@@ -209,7 +209,10 @@ class DocumentNodeRepository:
             self._repo.update_node_access(node_id)
 
     def update_parent_references_batch(
-        self, updates: list[tuple[str, str]], *, session: Session | None = None
+        self,
+        updates: Sequence[tuple[str, str | None]],
+        *,
+        session: Session | None = None,
     ) -> None:
         """Update parent references for nodes in this document."""
         # Note: We trust that the caller is only updating nodes from this document
