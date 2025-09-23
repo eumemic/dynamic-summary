@@ -61,20 +61,12 @@ class PgVectorIndexAdapter(VectorIndex):
         where: dict[str, str | int | float | bool | None] | None = None,
     ) -> list[Vector]:
         doc_filter = None
-        version_filter: int | None = None
         if where and "document_id" in where and where["document_id"] is not None:
             val = where["document_id"]
             if isinstance(val, str | int | float | bool):
                 doc_filter = str(val)
 
         q: list[float] = [float(x) for x in cast(Sequence[float], query_embedding)]
-        if where and "doc_version" in where and where["doc_version"] is not None:
-            ver_val = where["doc_version"]
-            if isinstance(ver_val, (str | int | float | bool)):
-                try:
-                    version_filter = int(ver_val)
-                except Exception:
-                    version_filter = None
 
         sql = (
             "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf, doc_version "
@@ -84,12 +76,6 @@ class PgVectorIndexAdapter(VectorIndex):
         if doc_filter is not None:
             sql += "WHERE document_id = :doc_id "
             params["doc_id"] = doc_filter
-            if version_filter is not None:
-                sql += "AND doc_version = :doc_ver "
-                params["doc_ver"] = version_filter
-        elif version_filter is not None:
-            sql += "WHERE doc_version = :doc_ver "
-            params["doc_ver"] = version_filter
         # Order by cosine distance; convert to similarity in Python
         sql += "ORDER BY embedding <=> :q LIMIT :k"
 
@@ -168,13 +154,7 @@ class PgVectorIndexAdapter(VectorIndex):
             if filter and "document_id" in filter:
                 doc = filter["document_id"]
                 params: dict[str, object] = {"doc": str(doc)}
-                if "doc_version" in filter and filter["doc_version"] is not None:
-                    params["ver"] = int(cast(int | float | bool, filter["doc_version"]))
-                    del_sql = text(
-                        "DELETE FROM node_vectors WHERE document_id = :doc AND doc_version = :ver"
-                    )
-                else:
-                    del_sql = text("DELETE FROM node_vectors WHERE document_id = :doc")
+                del_sql = text("DELETE FROM node_vectors WHERE document_id = :doc")
                 res = conn.execute(del_sql, params)
                 return int(res.rowcount or 0)
         return 0
@@ -243,7 +223,6 @@ class PgVectorIndexAdapter(VectorIndex):
             "span_end": int(cast(int | float | None, row[4]) or 0),
             "parent_id": str(row[5]) if row[5] is not None else "",
             "is_leaf": int(cast(int | float | None, row[6]) or 0),
-            "doc_version": int(cast(int | float | None, row[7]) or 1),
         }
         return Vector(
             id=node_id, vec=emb, meta=meta, model_id=self._model_id, dim=len(emb)

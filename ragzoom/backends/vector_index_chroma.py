@@ -22,18 +22,6 @@ from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.vector_api import MetaDict, Vector
 
 
-# jscpd:ignore-start - helper intentionally mirrors python adapter for parity
-def _coerce_version(value: object) -> int:
-    if isinstance(value, int | float):
-        return int(value)
-    if isinstance(value, str) and value.isdigit():
-        return int(value)
-    return 1
-
-
-# jscpd:ignore-end
-
-
 def _normalize_where(
     where: dict[str, str | int | float | bool | None],
 ) -> dict[str, object]:
@@ -206,10 +194,6 @@ class ChromaVectorIndexAdapter(VectorIndex):
             for k, v in filter.items():
                 if v is None:
                     continue
-                if k == "doc_version" and not isinstance(v, dict):
-                    coerced = _coerce_version(v)
-                    where_param[k] = {"$eq": coerced}
-                    continue
                 where_param[k] = v if isinstance(v, dict) else {"$eq": v}
 
             # Fetch matching ids to report a count
@@ -251,5 +235,4 @@ def _as_meta(meta: dict[str, object]) -> MetaDict:
         "parent_id": _to_str(meta.get("parent_id")),
         "document_id": _to_str(meta.get("document_id")),
         "is_leaf": _to_int(meta.get("is_leaf")),
-        "doc_version": _coerce_version(meta.get("doc_version", 1)),
     }

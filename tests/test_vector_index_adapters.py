@@ -158,7 +158,6 @@ def sample_items() -> (
         "parent_id": "",
         "document_id": "doc-1",
         "is_leaf": 1,
-        "doc_version": 1,
     }
     return [
         ("n1", [1.0, 0.0], dict(meta)),
@@ -190,7 +189,7 @@ def test_python_vector_index_adapter_round_trip(
     results = adapter.search_similar([1.0, 0.0], k=2)
     assert results[0].id == "n1"
     assert results[0].meta["document_id"] == "doc-1"
-    assert results[0].meta["doc_version"] == 1
+    assert "doc_version" not in results[0].meta
 
     # Delete by id
     deleted = adapter.delete(ids=["n1"])
@@ -229,7 +228,7 @@ def test_chroma_vector_index_adapter_round_trip(
 
     results = adapter.search_similar([1.0, 0.0], k=2)
     assert results and results[0].id == "n1"
-    assert results[0].meta["doc_version"] == 1
+    assert "doc_version" not in results[0].meta
 
     deleted = adapter.delete(ids=["n1"])
     assert deleted == 1
@@ -262,7 +261,6 @@ def test_chroma_vector_index_adapter_chunks_large_batches(
         "parent_id": "",
         "document_id": "doc",
         "is_leaf": 1,
-        "doc_version": 1,
     }
     large_items: list[
         tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
@@ -302,7 +300,7 @@ def test_chroma_adapter_combines_multiple_filters(
     adapter.search_similar(
         [1.0, 0.0],
         1,
-        {"document_id": "doc-1", "doc_version": 1},
+        {"document_id": "doc-1", "is_leaf": 1},
     )
 
     where = captured.get("where")
