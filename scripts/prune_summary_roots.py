@@ -73,6 +73,11 @@ def parse_args() -> argparse.Namespace:
         help="Random seed for reproducible root selection",
     )
     parser.add_argument(
+        "--prefer-highest",
+        action="store_true",
+        help="Always remove the tallest available non-leaf root first",
+    )
+    parser.add_argument(
         "--skip-vector",
         action="store_true",
         help="Skip vector index cleanup (use if index is external or unavailable)",
@@ -197,6 +202,19 @@ def remove_single_root(
     return root.id
 
 
+def select_root(candidates: list[TreeNode], prefer_highest: bool) -> TreeNode:
+    if not prefer_highest:
+        return random.choice(candidates)
+
+    max_height = max(int(getattr(node, "height", 0) or 0) for node in candidates)
+    tallest = [
+        node
+        for node in candidates
+        if int(getattr(node, "height", 0) or 0) == max_height
+    ]
+    return random.choice(tallest)
+
+
 def main() -> None:
     load_dotenv()
 
@@ -249,7 +267,7 @@ def main() -> None:
             LOGGER.info("No removable non-leaf roots remain after %d iteration(s)", i)
             break
 
-        root = random.choice(candidates)
+        root = select_root(candidates, prefer_highest=args.prefer_highest)
         LOGGER.info(
             "Selected root %s (height=%s, span=[%s,%s]) for removal",
             root.id,
