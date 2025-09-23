@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -42,12 +42,42 @@ class BaseDynamicTilingGenerator:
         self.tokenizer = tokenizer
         self._subtree_relevance_cache: dict[str, float] = {}
         self._nodes: Mapping[str, TreeNode] = {}  # Will be set per tiling request
+        self._min_cover_cost_cache: dict[str, int] = {}
 
     def _get_node_cost(self, node: "TreeNode") -> int:
         """Get the token cost of a node."""
         if not node:
             return 0
         return node.token_count
+
+    def _get_min_cover_cost(self, node: "TreeNode") -> int:
+        """Compute the minimum token cost needed to cover the node's full span."""
+
+        if node.id in self._min_cover_cost_cache:
+            return self._min_cover_cost_cache[node.id]
+
+        left_child = self._nodes.get(node.left_child_id) if node.left_child_id else None
+        right_child = (
+            self._nodes.get(node.right_child_id) if node.right_child_id else None
+        )
+
+        if not left_child and not right_child:
+            cost = self._get_node_cost(node)
+            self._min_cover_cost_cache[node.id] = cost
+            return cost
+
+        children_cost = 0
+        if left_child:
+            children_cost += self._get_min_cover_cost(left_child)
+        if right_child:
+            children_cost += self._get_min_cover_cost(right_child)
+
+        if children_cost == 0:
+            children_cost = self._get_node_cost(node)
+
+        cost = min(self._get_node_cost(node), children_cost)
+        self._min_cover_cost_cache[node.id] = cost
+        return cost
 
     def _get_subtree_relevance(
         self, node: "TreeNode", scores: dict[str, float]
@@ -75,7 +105,7 @@ class BaseDynamicTilingGenerator:
 
     def _split_budget_proportionally(
         self, budget: int, node: "TreeNode", scores: dict[str, float]
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int] | None:
         """Split budget between left and right children based on their relevance."""
         # Get children from our nodes dict
         left_child = self._nodes.get(node.left_child_id) if node.left_child_id else None
@@ -84,51 +114,84 @@ class BaseDynamicTilingGenerator:
         )
 
         if not left_child or not right_child:
-            return budget // 2, budget // 2
+            return None
 
-        # Get minimum costs for each child
-        min_left = self._get_node_cost(left_child)
-        min_right = self._get_node_cost(right_child)
-        min_total = min_left + min_right
+        allocations = self._allocate_budget_for_nodes(
+            [left_child, right_child], budget, scores
+        )
+        if allocations is None:
+            return None
 
-        # If budget can't even cover minimum, split proportionally by min costs
-        if budget <= min_total:
-            budget_l = int(budget * (min_left / min_total))
-            budget_r = budget - budget_l
-            return budget_l, budget_r
+        return allocations[0], allocations[1]
 
-        # Compute total relevance mass in each subtree
-        relevance_left = self._get_subtree_relevance(left_child, scores)
-        relevance_right = self._get_subtree_relevance(right_child, scores)
-        total_relevance = relevance_left + relevance_right
+    @staticmethod
+    def _distribute_budget(weights: Sequence[float], total: int) -> list[int]:
+        """Distribute integer budget according to weights."""
 
-        # Direct proportional split based on relevance
-        if total_relevance == 0:
-            # Fall back to text length-based allocation
-            len_left = len(left_child.text) if left_child.text else 1
-            len_right = len(right_child.text) if right_child.text else 1
-            total_len = len_left + len_right
-            target_left = int(budget * (len_left / total_len))
+        count = len(weights)
+        if count == 0:
+            return []
+        if total <= 0:
+            return [0] * count
+
+        weight_sum = sum(w for w in weights if w > 0)
+        if weight_sum <= 0:
+            normalized = [1.0 / count for _ in range(count)]
         else:
-            target_left = int(budget * (relevance_left / total_relevance))
+            normalized = [max(0.0, w) / weight_sum for w in weights]
 
-        target_right = budget - target_left
+        allocations: list[int] = []
+        assigned = 0
+        running = 0.0
+        for idx, weight in enumerate(normalized):
+            if idx == count - 1:
+                alloc = total - assigned
+            else:
+                running += weight * total
+                alloc = int(round(running)) - assigned
+            if alloc < 0:
+                alloc = 0
+            allocations.append(alloc)
+            assigned += alloc
 
-        # Ensure minimums are met
-        if target_left < min_left:
-            # Left is under minimum, give it what it needs
-            budget_l = min_left
-            budget_r = budget - budget_l
-        elif target_right < min_right:
-            # Right is under minimum, give it what it needs
-            budget_r = min_right
-            budget_l = budget - budget_r
-        else:
-            # Both meet minimums, use the targets
-            budget_l = target_left
-            budget_r = target_right
+        if allocations:
+            diff = total - sum(allocations)
+            if diff != 0:
+                allocations[-1] += diff
+        return allocations
 
-        return budget_l, budget_r
+    def _allocate_budget_for_nodes(
+        self,
+        nodes: Sequence["TreeNode"],
+        budget: int,
+        scores: dict[str, float],
+    ) -> list[int] | None:
+        """Allocate budget across nodes while respecting minimum cover cost."""
+
+        if not nodes:
+            return []
+
+        min_costs = [self._get_min_cover_cost(node) for node in nodes]
+        required = sum(min_costs)
+
+        if budget < required:
+            return None
+
+        allocations = min_costs[:]
+        remaining = budget - required
+        if remaining <= 0:
+            return allocations
+
+        weights: list[float] = []
+        for node in nodes:
+            relevance = self._get_subtree_relevance(node, scores)
+            if relevance <= 0:
+                text_len = len(node.text) if node.text else 1
+                relevance = max(1.0, float(text_len))
+            weights.append(float(relevance))
+
+        extras = self._distribute_budget(weights, remaining)
+        return [base + extra for base, extra in zip(allocations, extras)]
 
     def _build_result(
         self, tiling: Tiling, nodes: Mapping[str, "TreeNode"]
@@ -167,23 +230,65 @@ class DynamicTilingGenerator(BaseDynamicTilingGenerator):
         nodes: Mapping[str, "TreeNode"],
         root_id: str,
     ) -> DPResult:
-        logger.info("Using DP tiling generation")
+        result = self.find_optimal_tiling_over_roots(
+            [root_id], budget_tokens, scores, nodes
+        )
+        logger.info(
+            "DP tiling generated with total quality %.3f and %d nodes.",
+            result.total_quality,
+            len(result.tiling.node_ids),
+        )
+        return result
 
-        if not nodes or root_id not in nodes:
+    def find_optimal_tiling_over_roots(
+        self,
+        root_ids: Sequence[str],
+        budget_tokens: int,
+        scores: dict[str, float],
+        nodes: Mapping[str, "TreeNode"],
+    ) -> DPResult:
+        logger.info("Using DP tiling generation across %d roots", len(root_ids))
+
+        if not nodes:
             return DPResult(Tiling.empty(), [], 0.0, {})
+
+        unique_root_ids: list[str] = []
+        seen: set[str] = set()
+        for root_id in root_ids:
+            if root_id in nodes and root_id not in seen:
+                unique_root_ids.append(root_id)
+                seen.add(root_id)
+
+        if not unique_root_ids:
+            return DPResult(Tiling.empty(), [], 0.0, {})
+
+        root_nodes = sorted(
+            (nodes[root_id] for root_id in unique_root_ids),
+            key=lambda node: (int(getattr(node, "span_start", 0)), node.id),
+        )
 
         self._nodes = nodes
         self._memo_cache = {}
         self._subtree_relevance_cache = {}
+        self._min_cover_cost_cache = {}
 
-        root_node = nodes[root_id]
-        tiling = self._find_optimal_tiling_for_span(root_node, budget_tokens, scores)
+        budgets = self._allocate_budget_for_nodes(root_nodes, budget_tokens, scores)
+        if budgets is None:
+            logger.debug(
+                "Budget %d cannot cover forest; returning empty tiling",
+                budget_tokens,
+            )
+            return self._build_result(Tiling.empty(), nodes)
+        combined = Tiling.empty()
 
-        logger.info(
-            f"DP tiling generated with total quality {tiling.relevance_tokens:.3f} and {len(tiling.node_ids)} nodes."
-        )
+        for root_node, root_budget in zip(root_nodes, budgets):
+            if root_budget <= 0:
+                continue
+            combined += self._find_optimal_tiling_for_span(
+                root_node, root_budget, scores
+            )
 
-        return self._build_result(tiling, nodes)
+        return self._build_result(combined, nodes)
 
     # jscpd:ignore-start - Legitimate async/sync wrapper pattern for DP algorithm
     def _find_optimal_tiling_for_span_unmemoized(
@@ -225,15 +330,18 @@ class DynamicTilingGenerator(BaseDynamicTilingGenerator):
             left_tiling = self._find_optimal_tiling_for_span(left_child, budget, scores)
             option2 = left_tiling
         elif left_child and right_child:
-            # Both children exist - split budget proportionally
-            budget_l, budget_r = self._split_budget_proportionally(budget, node, scores)
-            left_tiling = self._find_optimal_tiling_for_span(
-                left_child, budget_l, scores
-            )
-            right_tiling = self._find_optimal_tiling_for_span(
-                right_child, budget_r, scores
-            )
-            option2 = left_tiling + right_tiling
+            split = self._split_budget_proportionally(budget, node, scores)
+            if split is None:
+                option2 = Tiling.empty()
+            else:
+                budget_l, budget_r = split
+                left_tiling = self._find_optimal_tiling_for_span(
+                    left_child, budget_l, scores
+                )
+                right_tiling = self._find_optimal_tiling_for_span(
+                    right_child, budget_r, scores
+                )
+                option2 = left_tiling + right_tiling
         else:
             # No children - this should be caught by is_leaf check above
             raise ValueError(f"Internal node {node.id} has no children")
@@ -283,25 +391,68 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
         nodes: Mapping[str, "TreeNode"],
         root_id: str,
     ) -> DPResult:
-        logger.info("Using async DP tiling generation")
+        result = await self.find_optimal_tiling_over_roots(
+            [root_id], budget_tokens, scores, nodes
+        )
+        logger.info(
+            "Async DP tiling generated with total quality %.3f and %d nodes.",
+            result.total_quality,
+            len(result.tiling.node_ids),
+        )
+        return result
 
-        if not nodes or root_id not in nodes:
+    # jscpd:ignore-start - async variant mirrors sync implementation for parity
+    async def find_optimal_tiling_over_roots(
+        self,
+        root_ids: Sequence[str],
+        budget_tokens: int,
+        scores: dict[str, float],
+        nodes: Mapping[str, "TreeNode"],
+    ) -> DPResult:
+        logger.info("Using async DP tiling generation across %d roots", len(root_ids))
+
+        if not nodes:
             return DPResult(Tiling.empty(), [], 0.0, {})
+
+        unique_root_ids: list[str] = []
+        seen: set[str] = set()
+        for root_id in root_ids:
+            if root_id in nodes and root_id not in seen:
+                unique_root_ids.append(root_id)
+                seen.add(root_id)
+
+        if not unique_root_ids:
+            return DPResult(Tiling.empty(), [], 0.0, {})
+
+        root_nodes = sorted(
+            (nodes[root_id] for root_id in unique_root_ids),
+            key=lambda node: (int(getattr(node, "span_start", 0)), node.id),
+        )
 
         self._nodes = nodes
         self._memo_cache = {}
         self._subtree_relevance_cache = {}
+        self._min_cover_cost_cache = {}
 
-        root_node = nodes[root_id]
-        tiling = await self._find_optimal_tiling_for_span(
-            root_node, budget_tokens, scores
-        )
+        budgets = self._allocate_budget_for_nodes(root_nodes, budget_tokens, scores)
+        if budgets is None:
+            logger.debug(
+                "Budget %d cannot cover forest; returning empty tiling",
+                budget_tokens,
+            )
+            return self._build_result(Tiling.empty(), nodes)
+        combined = Tiling.empty()
 
-        logger.info(
-            f"Async DP tiling generated with total quality {tiling.relevance_tokens:.3f} and {len(tiling.node_ids)} nodes."
-        )
+        for root_node, root_budget in zip(root_nodes, budgets):
+            if root_budget <= 0:
+                continue
+            combined += await self._find_optimal_tiling_for_span(
+                root_node, root_budget, scores
+            )
 
-        return self._build_result(tiling, nodes)
+        return self._build_result(combined, nodes)
+
+    # jscpd:ignore-end
 
     def _count_subtree_nodes(self, node: "TreeNode") -> int:
         """Count total nodes in a subtree."""
@@ -364,32 +515,50 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
             )
             option2 = left_tiling
         elif left_child and right_child:
-            # Both children exist - split budget proportionally
-            budget_l, budget_r = self._split_budget_proportionally(budget, node, scores)
+            split = self._split_budget_proportionally(budget, node, scores)
+            if split is None:
+                option2 = Tiling.empty()
+            else:
+                budget_l, budget_r = split
 
-            # Decide whether to parallelize based on subtree size
-            if self._should_parallelize(left_child, right_child):
-                try:
-                    # Run both recursive calls in parallel
-                    left_task = asyncio.create_task(
-                        self._find_optimal_tiling_for_span(left_child, budget_l, scores)
-                    )
-                    right_task = asyncio.create_task(
-                        self._find_optimal_tiling_for_span(
-                            right_child, budget_r, scores
+                # Decide whether to parallelize based on subtree size
+                if self._should_parallelize(left_child, right_child):
+                    try:
+                        # Run both recursive calls in parallel
+                        left_task = asyncio.create_task(
+                            self._find_optimal_tiling_for_span(
+                                left_child, budget_l, scores
+                            )
                         )
-                    )
-                    results = await asyncio.gather(
-                        left_task, right_task, return_exceptions=True
-                    )
+                        right_task = asyncio.create_task(
+                            self._find_optimal_tiling_for_span(
+                                right_child, budget_r, scores
+                            )
+                        )
+                        results = await asyncio.gather(
+                            left_task, right_task, return_exceptions=True
+                        )
 
-                    # Handle exceptions gracefully - if one subtree fails, fall back to sequential
-                    if isinstance(results[0], Exception) or isinstance(
-                        results[1], Exception
-                    ):
-                        errors = [r for r in results if isinstance(r, Exception)]
+                        # Handle exceptions gracefully - if one subtree fails, fall back to sequential
+                        if isinstance(results[0], Exception) or isinstance(
+                            results[1], Exception
+                        ):
+                            errors = [r for r in results if isinstance(r, Exception)]
+                            logger.warning(
+                                f"Parallel execution failed for node {node.id} with errors: {errors}, falling back to sequential"
+                            )
+                            left_tiling = await self._find_optimal_tiling_for_span(
+                                left_child, budget_l, scores
+                            )
+                            right_tiling = await self._find_optimal_tiling_for_span(
+                                right_child, budget_r, scores
+                            )
+                        else:
+                            left_tiling = results[0]  # type: ignore[assignment]
+                            right_tiling = results[1]  # type: ignore[assignment]
+                    except Exception as e:
                         logger.warning(
-                            f"Parallel execution failed for node {node.id} with errors: {errors}, falling back to sequential"
+                            f"Parallelization failed for node {node.id}: {e}, using sequential"
                         )
                         left_tiling = await self._find_optimal_tiling_for_span(
                             left_child, budget_l, scores
@@ -397,30 +566,16 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
                         right_tiling = await self._find_optimal_tiling_for_span(
                             right_child, budget_r, scores
                         )
-                    else:
-                        # Both results are successful Tiling objects
-                        left_tiling = results[0]  # type: ignore[assignment]
-                        right_tiling = results[1]  # type: ignore[assignment]
-                except Exception as e:
-                    logger.warning(
-                        f"Parallelization failed for node {node.id}: {e}, using sequential"
-                    )
+                else:
+                    # Sequential processing for small subtrees
                     left_tiling = await self._find_optimal_tiling_for_span(
                         left_child, budget_l, scores
                     )
                     right_tiling = await self._find_optimal_tiling_for_span(
                         right_child, budget_r, scores
                     )
-            else:
-                # Sequential processing for small subtrees
-                left_tiling = await self._find_optimal_tiling_for_span(
-                    left_child, budget_l, scores
-                )
-                right_tiling = await self._find_optimal_tiling_for_span(
-                    right_child, budget_r, scores
-                )
 
-            option2 = left_tiling + right_tiling
+                option2 = left_tiling + right_tiling
         else:
             # No children - this should be caught by is_leaf check above
             raise ValueError(f"Internal node {node.id} has no children")

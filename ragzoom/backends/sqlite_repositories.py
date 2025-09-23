@@ -207,7 +207,10 @@ class SqliteNodeRepository:
     # jscpd:ignore-end
 
     def update_parent_references_batch(
-        self, updates: list[tuple[str, str]], *, session: Session | None = None
+        self,
+        updates: Sequence[tuple[str, str | None]],
+        *,
+        session: Session | None = None,
     ) -> None:
         if not updates:
             return
@@ -235,6 +238,7 @@ class SqliteNodeRepository:
             if own_session:
                 session.close()
 
+    # jscpd:ignore-start
     def update_neighbors_batch(
         self,
         updates: list[tuple[str, str | None, str | None]],
