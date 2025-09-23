@@ -1,6 +1,7 @@
 """Repository for PostgresTreeNode CRUD operations using PostgreSQL with pgvector."""
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional, TypedDict, cast
 
@@ -310,7 +311,10 @@ class PostgresNodeRepository(BaseRepository):
                 db_session.close()
 
     def update_parent_references_batch(
-        self, updates: list[tuple[str, str]], *, session: Optional["Session"] = None
+        self,
+        updates: Sequence[tuple[str, str | None]],
+        *,
+        session: Optional["Session"] = None,
     ) -> None:
         """Update parent references for multiple nodes in batch.
 
@@ -356,7 +360,6 @@ class PostgresNodeRepository(BaseRepository):
                 self.cache_manager.invalidate(node_id)
 
     # jscpd:ignore-end
-
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID.
 

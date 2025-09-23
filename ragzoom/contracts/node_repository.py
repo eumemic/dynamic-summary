@@ -6,6 +6,7 @@ Implementations include Postgres and SQLite repositories.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from ragzoom.contracts.tree_node import TreeNode
@@ -74,15 +75,21 @@ class NodeRepository(Protocol):
     # Mutations
     def update_node_access(self, node_id: str) -> None: ...
     def update_parent_references_batch(
-        self, updates: list[tuple[str, str]], *, session: Session | None = None
+        self,
+        updates: Sequence[tuple[str, str | None]],
+        *,
+        session: Session | None = None,
     ) -> None: ...
 
+    # jscpd:ignore-start
     def update_neighbors_batch(
         self,
         updates: list[tuple[str, str | None, str | None]],
         *,
         session: Session | None = None,
     ) -> None: ...
+
+    # jscpd:ignore-end
 
     def get_rightmost_leaf_for_document(
         self, document_id: str | None

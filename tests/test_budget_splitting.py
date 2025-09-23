@@ -1,5 +1,6 @@
 """Test budget splitting logic in dynamic tiling."""
 
+import math
 from typing import cast
 
 from ragzoom.config import QueryConfig
@@ -54,10 +55,6 @@ class TestBudgetSplitting:
         )
 
         # Set up generator's nodes dict
-        from typing import cast
-
-        from ragzoom.contracts.tree_node import TreeNode as ProtoTreeNode
-
         generator._nodes = {
             "left": cast(ProtoTreeNode, left_child),
             "right": cast(ProtoTreeNode, right_child),
@@ -74,21 +71,30 @@ class TestBudgetSplitting:
         # Calculate subtree relevances (in this case, just the node scores)
         generator._subtree_relevance_cache = {"left": 1.0, "right": 2.0}
 
-        budget_l, budget_r = generator._split_budget_proportionally(
+        allocation = generator._split_budget_proportionally(
             budget, cast(ProtoTreeNode, parent), scores
         )
+        assert allocation is not None
+        budget_l, budget_r = allocation
 
-        # Should allocate 100 to left (1/3 of 300) and 200 to right (2/3 of 300)
-        assert budget_l == 100, f"Left should get 100 tokens, got {budget_l}"
-        assert budget_r == 200, f"Right should get 200 tokens, got {budget_r}"
+        # Compute minimum cover costs and ensure they're respected
+        min_left = generator._get_min_cover_cost(cast(ProtoTreeNode, left_child))
+        min_right = generator._get_min_cover_cost(cast(ProtoTreeNode, right_child))
+        assert budget_l >= min_left
+        assert budget_r >= min_right
         assert budget_l + budget_r == budget, "Total allocation must equal budget"
 
-        # Test the ratio
-        ratio = budget_l / budget_r
-        expected_ratio = 1.0 / 2.0
-        assert (
-            abs(ratio - expected_ratio) < 0.01
-        ), f"Ratio {ratio:.2f} != expected {expected_ratio}"
+        extra_total = budget - (min_left + min_right)
+        extra_left = budget_l - min_left
+        extra_right = budget_r - min_right
+        assert extra_left + extra_right == extra_total
+
+        if extra_total > 0 and extra_right > 0:
+            ratio = extra_left / extra_right
+            expected_ratio = scores["left"] / scores["right"]
+            assert math.isclose(
+                ratio, expected_ratio, rel_tol=0.05
+            ), f"Extra ratio {ratio:.2f} != expected {expected_ratio:.2f}"
 
     def test_minimum_constraints_respected(self) -> None:
         """Test that minimum token requirements are always met."""
@@ -144,9 +150,11 @@ class TestBudgetSplitting:
         # Proportionally: left should get 25, right should get 225
         # But left needs minimum 150, so it should get 150 and right gets 100
         budget = 250
-        budget_l, budget_r = generator._split_budget_proportionally(
+        allocation = generator._split_budget_proportionally(
             budget, cast(ProtoTreeNode, parent), scores
         )
+        assert allocation is not None
+        budget_l, budget_r = allocation
 
         # Verify minimums are met
         assert budget_l >= 150, f"Left minimum not met: {budget_l} < 150"
@@ -203,9 +211,11 @@ class TestBudgetSplitting:
         scores = {"left": 1.0, "right": 2.0}
         generator._subtree_relevance_cache = {"left": 1.0, "right": 2.0}
 
-        budget_l, budget_r = generator._split_budget_proportionally(
+        allocation = generator._split_budget_proportionally(
             budget, cast(ProtoTreeNode, parent), scores
         )
+        assert allocation is not None
+        budget_l, budget_r = allocation
 
         # With tight budget, should split by minimum costs (equal in this case)
         assert budget_l == 100
