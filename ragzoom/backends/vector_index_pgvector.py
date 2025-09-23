@@ -61,35 +61,21 @@ class PgVectorIndexAdapter(VectorIndex):
         where: dict[str, str | int | float | bool | None] | None = None,
     ) -> list[Vector]:
         doc_filter = None
-        version_filter: int | None = None
         if where and "document_id" in where and where["document_id"] is not None:
             val = where["document_id"]
             if isinstance(val, str | int | float | bool):
                 doc_filter = str(val)
 
         q: list[float] = [float(x) for x in cast(Sequence[float], query_embedding)]
-        if where and "doc_version" in where and where["doc_version"] is not None:
-            ver_val = where["doc_version"]
-            if isinstance(ver_val, (str | int | float | bool)):
-                try:
-                    version_filter = int(ver_val)
-                except Exception:
-                    version_filter = None
 
         sql = (
-            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf, doc_version "
+            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf "
             "FROM node_vectors "
         )
         params: dict[str, object] = {"q": q, "k": int(k)}
         if doc_filter is not None:
             sql += "WHERE document_id = :doc_id "
             params["doc_id"] = doc_filter
-            if version_filter is not None:
-                sql += "AND doc_version = :doc_ver "
-                params["doc_ver"] = version_filter
-        elif version_filter is not None:
-            sql += "WHERE doc_version = :doc_ver "
-            params["doc_ver"] = version_filter
         # Order by cosine distance; convert to similarity in Python
         sql += "ORDER BY embedding <=> :q LIMIT :k"
 
@@ -106,7 +92,7 @@ class PgVectorIndexAdapter(VectorIndex):
         # Use ANY array binding to avoid constructing SQL fragments
         params: dict[str, object] = {"ids": list(ids)}
         sql = text(
-            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf, doc_version "
+            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf "
             "FROM node_vectors WHERE id = ANY(:ids)"
         )
         out: list[Vector] = []
@@ -128,23 +114,19 @@ class PgVectorIndexAdapter(VectorIndex):
             return
         sql = text(
             """
-            INSERT INTO node_vectors (id, embedding, document_id, span_start, span_end, parent_id, is_leaf, doc_version)
-            VALUES (:id, :emb, :doc, :ss, :se, :pid, :leaf, :ver)
+            INSERT INTO node_vectors (id, embedding, document_id, span_start, span_end, parent_id, is_leaf)
+            VALUES (:id, :emb, :doc, :ss, :se, :pid, :leaf)
             ON CONFLICT (id)
             DO UPDATE SET embedding = EXCLUDED.embedding,
                           document_id = EXCLUDED.document_id,
                           span_start = EXCLUDED.span_start,
                           span_end = EXCLUDED.span_end,
                           parent_id = EXCLUDED.parent_id,
-                          is_leaf = EXCLUDED.is_leaf,
-                          doc_version = EXCLUDED.doc_version
+                          is_leaf = EXCLUDED.is_leaf
             """
         )
         with self._engine.begin() as conn:
             for node_id, emb, meta in items:
-                doc_version = meta.get("doc_version")
-                if doc_version is None:
-                    doc_version = 1
                 params = {
                     "id": node_id,
                     "emb": [float(x) for x in cast(Sequence[float], emb)],
@@ -153,7 +135,6 @@ class PgVectorIndexAdapter(VectorIndex):
                     "se": int(cast(int | float, meta.get("span_end", 0))),
                     "pid": str(meta.get("parent_id", "")),
                     "leaf": int(cast(int | float | bool, meta.get("is_leaf", 0))),
-                    "ver": int(cast(int | float | bool, doc_version)),
                 }
                 conn.execute(sql, params)
 
@@ -168,13 +149,7 @@ class PgVectorIndexAdapter(VectorIndex):
             if filter and "document_id" in filter:
                 doc = filter["document_id"]
                 params: dict[str, object] = {"doc": str(doc)}
-                if "doc_version" in filter and filter["doc_version"] is not None:
-                    params["ver"] = int(cast(int | float | bool, filter["doc_version"]))
-                    del_sql = text(
-                        "DELETE FROM node_vectors WHERE document_id = :doc AND doc_version = :ver"
-                    )
-                else:
-                    del_sql = text("DELETE FROM node_vectors WHERE document_id = :doc")
+                del_sql = text("DELETE FROM node_vectors WHERE document_id = :doc")
                 res = conn.execute(del_sql, params)
                 return int(res.rowcount or 0)
         return 0
@@ -197,8 +172,7 @@ class PgVectorIndexAdapter(VectorIndex):
                         span_start INTEGER,
                         span_end INTEGER,
                         parent_id TEXT,
-                        is_leaf SMALLINT,
-                        doc_version INTEGER DEFAULT 1
+                        is_leaf SMALLINT
                     );
                     """
                 )
@@ -209,25 +183,19 @@ class PgVectorIndexAdapter(VectorIndex):
                     "CREATE INDEX IF NOT EXISTS idx_node_vectors_doc ON node_vectors(document_id)"
                 )
             )
-            conn.execute(
-                text(
-                    "CREATE INDEX IF NOT EXISTS idx_node_vectors_doc_ver ON node_vectors(document_id, doc_version)"
-                )
-            )
-
-            # Ensure doc_version column exists for legacy tables
+            # Drop legacy doc_version column if still present
             conn.execute(
                 text(
                     """
                     DO $$
                     BEGIN
-                        IF NOT EXISTS (
+                        IF EXISTS (
                             SELECT 1 FROM information_schema.columns
                             WHERE table_name = 'node_vectors'
                             AND column_name = 'doc_version'
                         ) THEN
                             ALTER TABLE node_vectors
-                            ADD COLUMN doc_version INTEGER DEFAULT 1;
+                            DROP COLUMN doc_version;
                         END IF;
                     END $$;
                     """
@@ -243,7 +211,6 @@ class PgVectorIndexAdapter(VectorIndex):
             "span_end": int(cast(int | float | None, row[4]) or 0),
             "parent_id": str(row[5]) if row[5] is not None else "",
             "is_leaf": int(cast(int | float | None, row[6]) or 0),
-            "doc_version": int(cast(int | float | None, row[7]) or 1),
         }
         return Vector(
             id=node_id, vec=emb, meta=meta, model_id=self._model_id, dim=len(emb)

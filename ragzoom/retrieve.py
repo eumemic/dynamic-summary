@@ -92,21 +92,7 @@ class Retriever:
         if not document_id:
             return None
 
-        version: int | None = None
-        getter = getattr(self.document_store, "get_version", None)
-        if callable(getter):
-            try:
-                version = getter()
-            except Exception:
-                version = None
-
-        if version is None:
-            version = 1
-
-        return {
-            "document_id": str(document_id),
-            "doc_version": int(version),
-        }
+        return {"document_id": str(document_id)}
 
     async def retrieve_async(
         self,
