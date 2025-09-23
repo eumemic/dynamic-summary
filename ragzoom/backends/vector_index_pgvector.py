@@ -69,7 +69,7 @@ class PgVectorIndexAdapter(VectorIndex):
         q: list[float] = [float(x) for x in cast(Sequence[float], query_embedding)]
 
         sql = (
-            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf, doc_version "
+            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf "
             "FROM node_vectors "
         )
         params: dict[str, object] = {"q": q, "k": int(k)}
@@ -92,7 +92,7 @@ class PgVectorIndexAdapter(VectorIndex):
         # Use ANY array binding to avoid constructing SQL fragments
         params: dict[str, object] = {"ids": list(ids)}
         sql = text(
-            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf, doc_version "
+            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf "
             "FROM node_vectors WHERE id = ANY(:ids)"
         )
         out: list[Vector] = []
@@ -114,23 +114,19 @@ class PgVectorIndexAdapter(VectorIndex):
             return
         sql = text(
             """
-            INSERT INTO node_vectors (id, embedding, document_id, span_start, span_end, parent_id, is_leaf, doc_version)
-            VALUES (:id, :emb, :doc, :ss, :se, :pid, :leaf, :ver)
+            INSERT INTO node_vectors (id, embedding, document_id, span_start, span_end, parent_id, is_leaf)
+            VALUES (:id, :emb, :doc, :ss, :se, :pid, :leaf)
             ON CONFLICT (id)
             DO UPDATE SET embedding = EXCLUDED.embedding,
                           document_id = EXCLUDED.document_id,
                           span_start = EXCLUDED.span_start,
                           span_end = EXCLUDED.span_end,
                           parent_id = EXCLUDED.parent_id,
-                          is_leaf = EXCLUDED.is_leaf,
-                          doc_version = EXCLUDED.doc_version
+                          is_leaf = EXCLUDED.is_leaf
             """
         )
         with self._engine.begin() as conn:
             for node_id, emb, meta in items:
-                doc_version = meta.get("doc_version")
-                if doc_version is None:
-                    doc_version = 1
                 params = {
                     "id": node_id,
                     "emb": [float(x) for x in cast(Sequence[float], emb)],
@@ -139,7 +135,6 @@ class PgVectorIndexAdapter(VectorIndex):
                     "se": int(cast(int | float, meta.get("span_end", 0))),
                     "pid": str(meta.get("parent_id", "")),
                     "leaf": int(cast(int | float | bool, meta.get("is_leaf", 0))),
-                    "ver": int(cast(int | float | bool, doc_version)),
                 }
                 conn.execute(sql, params)
 
@@ -177,8 +172,7 @@ class PgVectorIndexAdapter(VectorIndex):
                         span_start INTEGER,
                         span_end INTEGER,
                         parent_id TEXT,
-                        is_leaf SMALLINT,
-                        doc_version INTEGER DEFAULT 1
+                        is_leaf SMALLINT
                     );
                     """
                 )
@@ -189,25 +183,19 @@ class PgVectorIndexAdapter(VectorIndex):
                     "CREATE INDEX IF NOT EXISTS idx_node_vectors_doc ON node_vectors(document_id)"
                 )
             )
-            conn.execute(
-                text(
-                    "CREATE INDEX IF NOT EXISTS idx_node_vectors_doc_ver ON node_vectors(document_id, doc_version)"
-                )
-            )
-
-            # Ensure doc_version column exists for legacy tables
+            # Drop legacy doc_version column if still present
             conn.execute(
                 text(
                     """
                     DO $$
                     BEGIN
-                        IF NOT EXISTS (
+                        IF EXISTS (
                             SELECT 1 FROM information_schema.columns
                             WHERE table_name = 'node_vectors'
                             AND column_name = 'doc_version'
                         ) THEN
                             ALTER TABLE node_vectors
-                            ADD COLUMN doc_version INTEGER DEFAULT 1;
+                            DROP COLUMN doc_version;
                         END IF;
                     END $$;
                     """
