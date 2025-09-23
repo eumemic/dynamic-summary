@@ -31,6 +31,15 @@ class CoverageBuilder:
         """
         coverage_map = self.build_coverage_map(selected_ids)
 
+        # Ensure every root node participates in coverage so forests remain contiguous.
+        try:
+            root_nodes = self.store.nodes.get_root_nodes()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to load root nodes for coverage map: %s", exc)
+        else:
+            for root in root_nodes:
+                coverage_map[root.id] = True
+
         # Include pinned nodes, scoped appropriately if a DocumentStore is provided.
         try:
             depth_max = getattr(self.store, "PIN_DEPTH_MAX", 2)

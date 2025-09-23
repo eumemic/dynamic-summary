@@ -1,7 +1,7 @@
 """Test that demonstrates the current bug in Retriever - creates incomplete coverage trees."""
 
 import asyncio
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -15,6 +15,7 @@ from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
+from ragzoom.dynamic_tiling import DPResult
 from ragzoom.vector_api import Vector
 
 
@@ -262,19 +263,21 @@ class TestRetrieverBugSQLite:
         )
 
         # Patch to capture what nodes the DP algorithm receives
-        captured_nodes = {}
-        original_find_optimal = retriever.dp_generator.find_optimal_tiling
+        captured_nodes: dict[str, TreeNode] = {}
+        original_find_optimal = retriever.dp_generator.find_optimal_tiling_over_roots
 
         def capture_and_pass_through(
+            root_ids: Sequence[str],
             budget_tokens: int,
             scores: dict[str, float],
-            nodes: dict[str, TreeNode],
-            root_id: str,
-        ) -> object:
+            nodes: Mapping[str, TreeNode],
+        ) -> DPResult:
             captured_nodes.update(nodes)
-            return original_find_optimal(budget_tokens, scores, nodes, root_id)
+            return original_find_optimal(root_ids, budget_tokens, scores, nodes)
 
-        retriever.dp_generator.find_optimal_tiling = capture_and_pass_through  # type: ignore[method-assign,assignment]
+        retriever.dp_generator.find_optimal_tiling_over_roots = (  # type: ignore[method-assign]
+            capture_and_pass_through
+        )
 
         # Run retriever - should work without errors
         result = asyncio.run(
