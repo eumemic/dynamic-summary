@@ -39,7 +39,6 @@ class DocumentPreparationResult:
     """
 
     document_id: str
-    content_hash: str
     skip_indexing: bool
     existing_doc_id: str | None = None
 
@@ -52,7 +51,6 @@ class IndexingContext:
     """
 
     document_id: str
-    content_hash: str
     file_path: str | None
     async_progress: AsyncProgressWrapper | None
     overall_start_time: float
@@ -1116,8 +1114,6 @@ class TreeBuilder:
         leaves_after = self.document_store.nodes.get_leaves()
         leaves_after.sort(key=lambda n: int(n.span_start))
         reconstructed = "".join(leaf.text or "" for leaf in leaves_after)
-        new_hash = DocumentStore.compute_content_hash(reconstructed)
-        self.document_store.set_metadata(content_hash=new_hash)
 
         logger.debug(
             "Append stats doc=%s mutated=%d new_leaves=%d resummarized=%d",

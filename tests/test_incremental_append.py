@@ -34,7 +34,6 @@ def _make_tree_builder(
     doc_store = storage_backend.for_document(doc_id)
     doc_store.set_metadata(
         file_path=f"{doc_id}.txt",
-        content_hash="",
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )

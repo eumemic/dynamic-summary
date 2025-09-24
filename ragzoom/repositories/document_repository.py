@@ -77,7 +77,6 @@ class DocumentRepository(BaseRepository):
         self,
         document_id: str,
         file_path: str | None,
-        content_hash: str,
         embedding_model: str,
         summary_model: str,
         *,
@@ -88,7 +87,6 @@ class DocumentRepository(BaseRepository):
         Args:
             document_id: Unique identifier for the document
             file_path: Optional path to the source file
-            content_hash: SHA256 hash of the document content
             embedding_model: Name of the embedding model used for indexing
             summary_model: Name of the summarization model used
             session: Optional database session for transactional operations
@@ -103,7 +101,6 @@ class DocumentRepository(BaseRepository):
             doc = Document(
                 id=document_id,
                 file_path=file_path,
-                content_hash=content_hash,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
             )

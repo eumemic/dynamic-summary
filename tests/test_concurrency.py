@@ -36,7 +36,6 @@ class TestConcurrency:
         doc_store = storage_backend.for_document("concurrent-doc")
         doc_store.set_metadata(
             file_path="concurrent_test.txt",
-            content_hash="concurrent-test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -108,7 +107,6 @@ class TestConcurrency:
             doc_store = storage_backend.for_document(f"doc-{i}")
             doc_store.set_metadata(
                 file_path=f"doc-{i}.txt",
-                content_hash=f"doc-{i}-hash",
                 embedding_model="text-embedding-3-small",
                 summary_model="gpt-4o-mini",
             )
@@ -150,14 +148,12 @@ class TestConcurrency:
         store1 = storage_backend.for_document("state-test-1")
         store1.set_metadata(
             file_path="state-test-1.txt",
-            content_hash="state-test-1-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
         store2 = storage_backend.for_document("state-test-2")
         store2.set_metadata(
             file_path="state-test-2.txt",
-            content_hash="state-test-2-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -216,14 +212,12 @@ class TestConcurrency:
         doc1_store = storage_backend.for_document("doc1")
         doc1_store.set_metadata(
             file_path="doc1.txt",
-            content_hash="doc1-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
         doc2_store = storage_backend.for_document("doc2")
         doc2_store.set_metadata(
             file_path="doc2.txt",
-            content_hash="doc2-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -290,7 +284,6 @@ class TestConcurrency:
         doc_store = storage_backend.for_document("batch-doc")
         doc_store.set_metadata(
             file_path="batch-doc.txt",
-            content_hash="batch-doc-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -344,7 +337,6 @@ class TestConcurrency:
         doc_store = storage_backend.for_document("search-doc")
         doc_store.set_metadata(
             file_path="search-doc.txt",
-            content_hash="search-doc-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

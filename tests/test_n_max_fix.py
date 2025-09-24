@@ -30,7 +30,6 @@ class TestNumSeedsFixSQLite:
         document_store = doc_store.for_document("doc1")
         document_store.set_metadata(
             file_path="test.txt",
-            content_hash="test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

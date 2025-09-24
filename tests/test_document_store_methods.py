@@ -22,7 +22,6 @@ class TestDocumentStoreMethods:
         doc_store = storage_backend.for_document("doc1")
         doc_store.set_metadata(
             file_path="test_file.txt",
-            content_hash="test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -44,7 +43,6 @@ class TestDocumentStoreMethods:
         doc_store = storage_backend.for_document("doc1")
         doc_store.set_metadata(
             file_path="test_file.txt",
-            content_hash="test-hash",
             embedding_model="",
             summary_model="gpt-4o-mini",
         )
@@ -128,14 +126,12 @@ class TestDocumentStoreMethods:
         doc1_store = storage_backend.for_document("doc1")
         doc1_store.set_metadata(
             file_path="test1.txt",
-            content_hash="test-hash-1",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
         doc2_store = storage_backend.for_document("doc2")
         doc2_store.set_metadata(
             file_path="test2.txt",
-            content_hash="test-hash-2",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

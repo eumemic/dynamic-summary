@@ -62,7 +62,6 @@ class TestFollowingNeighbor:
         doc_store = storage_backend.for_document("test-doc")
         doc_store.set_metadata(
             file_path="test.txt",
-            content_hash="test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -117,7 +116,6 @@ class TestFollowingNeighbor:
         doc_store = storage_backend.for_document("neighbor-test")
         doc_store.set_metadata(
             file_path="test.txt",
-            content_hash="test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -185,7 +183,6 @@ class TestFollowingNeighbor:
         doc_store = storage_backend.for_document("parent-neighbor-test")
         doc_store.set_metadata(
             file_path="test.txt",
-            content_hash="test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

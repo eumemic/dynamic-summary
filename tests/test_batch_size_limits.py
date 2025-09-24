@@ -29,7 +29,6 @@ class TestBatchSizeLimits:
         with patch("ragzoom.document_store.DocumentStore"):
             mock_doc_store = Mock()
             mock_doc_store.document_id = "test-doc"
-            mock_doc_store.compute_content_hash = Mock(return_value="hash123")
             mock_doc_store.set_metadata = Mock()
             mock_doc_store.session_local = Mock
             mock_doc_store.node_cache = {}

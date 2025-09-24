@@ -76,7 +76,6 @@ class SqliteDocument(SqliteBase):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     file_path: Mapped[str | None] = mapped_column(String, nullable=True)
-    content_hash: Mapped[str] = mapped_column(String, nullable=False)
     indexed_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=dt.datetime.utcnow
     )
@@ -116,6 +115,12 @@ class SqliteDatabaseManager:
             with self.engine.begin() as conn:
                 try:
                     conn.exec_driver_sql("ALTER TABLE documents DROP COLUMN version")
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE documents DROP COLUMN content_hash"
+                    )
                 except Exception:
                     pass
                 try:

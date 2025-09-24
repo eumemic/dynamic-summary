@@ -186,6 +186,14 @@ class DatabaseManager:
                         IF EXISTS (
                             SELECT 1 FROM information_schema.columns
                             WHERE table_name = 'documents'
+                            AND column_name = 'content_hash'
+                        ) THEN
+                            ALTER TABLE documents
+                            DROP COLUMN content_hash;
+                        END IF;
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'documents'
                             AND column_name = 'chunk_count'
                         ) THEN
                             ALTER TABLE documents

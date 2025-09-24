@@ -21,7 +21,6 @@ class StorageBackend(Protocol):
         self,
         document_id: str,
         file_path: str | None,
-        content_hash: str,
         embedding_model: str,
         summary_model: str,
     ) -> DocumentStore: ...

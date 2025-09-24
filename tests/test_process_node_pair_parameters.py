@@ -61,7 +61,6 @@ async def test_process_node_pair_passes_all_parameters(
     doc_store = storage_backend.for_document("test_doc")
     doc_store.set_metadata(
         file_path="process_node_pair_test.txt",
-        content_hash="process-node-pair-test-hash",
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
     )
@@ -139,7 +138,6 @@ async def test_prev_context_affects_prompt(
     doc_store = storage_backend.for_document("test_doc")
     doc_store.set_metadata(
         file_path="prev_context_test.txt",
-        content_hash="prev-context-test-hash",
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
     )
@@ -213,7 +211,6 @@ async def test_parameter_validation_would_catch_bug(
     doc_store = storage_backend.for_document("test_doc")
     doc_store.set_metadata(
         file_path="parameter_validation_test.txt",
-        content_hash="parameter-validation-test-hash",
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
     )

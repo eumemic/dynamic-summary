@@ -1,6 +1,5 @@
 """Document-scoped store that prevents cross-document contamination."""
 
-import hashlib
 import logging
 from collections.abc import Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager
@@ -425,11 +424,6 @@ class DocumentStore:
                 filtered.append(node)
         return filtered
 
-    @staticmethod
-    def compute_content_hash(content: str) -> str:
-        """Compute SHA256 hash of content."""
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
     def update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference and invalidate cache.
 
@@ -488,7 +482,6 @@ class DocumentStore:
     def set_metadata(
         self,
         file_path: str | None = None,
-        content_hash: str | None = None,
         embedding_model: str | None = None,
         summary_model: str | None = None,
         *,
@@ -498,7 +491,6 @@ class DocumentStore:
 
         Args:
             file_path: Optional file path
-            content_hash: Optional content hash
             embedding_model: Model used for embeddings
             summary_model: Model used for summaries
         """
@@ -513,8 +505,6 @@ class DocumentStore:
             if doc:
                 if file_path is not None:
                     doc.file_path = file_path
-                if content_hash is not None:
-                    doc.content_hash = content_hash
                 if embedding_model is not None:
                     doc.embedding_model = embedding_model
                 if summary_model is not None:
@@ -523,7 +513,6 @@ class DocumentStore:
                 doc = Document(
                     id=self.document_id,
                     file_path=file_path,
-                    content_hash=content_hash,
                     embedding_model=embedding_model,
                     summary_model=summary_model,
                 )

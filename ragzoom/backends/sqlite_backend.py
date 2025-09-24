@@ -139,14 +139,12 @@ class SQLiteStorageBackend(StorageBackend):
         self,
         document_id: str,
         file_path: str | None,
-        content_hash: str,
         embedding_model: str,
         summary_model: str,
     ) -> DocumentStore:
         self.doc_repo.add_document(
             document_id,
             file_path,
-            content_hash,
             embedding_model,
             summary_model,
         )

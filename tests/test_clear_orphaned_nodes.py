@@ -159,7 +159,6 @@ class TestAutomaticClearing:
                     doc_store = storage_backend.for_document(document_id)
                     doc_store.set_metadata(
                         file_path="test_document.txt",
-                        content_hash="mock-hash",
                         embedding_model="text-embedding-3-small",
                         summary_model="gpt-4o-mini",
                     )
@@ -255,7 +254,6 @@ class TestAutomaticClearing:
         doc_store = storage_backend.for_document(document_id)
         doc_store.set_metadata(
             file_path="/test/path.txt",
-            content_hash="test_hash",
             embedding_model="test-model",
             summary_model="test-model",
         )
@@ -288,7 +286,6 @@ class TestAutomaticClearing:
                     doc_store = storage_backend.for_document(document_id)
                     doc_store.set_metadata(
                         file_path="test_document.txt",
-                        content_hash="mock-hash",
                         embedding_model="text-embedding-3-small",
                         summary_model="gpt-4o-mini",
                     )

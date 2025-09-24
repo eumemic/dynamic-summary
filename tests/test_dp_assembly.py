@@ -27,7 +27,6 @@ class TestDPAssembly:
         doc_store = storage_backend.for_document("doc1")
         doc_store.set_metadata(
             file_path="dp_assembly_test.txt",
-            content_hash="dp-assembly-test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

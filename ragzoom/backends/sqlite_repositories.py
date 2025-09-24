@@ -491,7 +491,6 @@ class SqliteDocumentRepository:
         self,
         document_id: str,
         file_path: str | None,
-        content_hash: str,
         embedding_model: str,
         summary_model: str,
         *,
@@ -505,7 +504,6 @@ class SqliteDocumentRepository:
             doc = SqliteDocument(
                 id=document_id,
                 file_path=file_path,
-                content_hash=content_hash,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
             )

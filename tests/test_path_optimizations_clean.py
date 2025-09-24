@@ -27,7 +27,6 @@ class TestTreeNavigation:
         # Set up document metadata
         doc_store.set_metadata(
             file_path="path_test.txt",
-            content_hash="path-test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

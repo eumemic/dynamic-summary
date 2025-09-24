@@ -97,7 +97,6 @@ async def test_cached_tokens_recorded_in_telemetry(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )
@@ -189,7 +188,6 @@ async def test_backward_compatibility_without_cached_tokens(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )
@@ -279,7 +277,6 @@ async def test_cached_tokens_across_multiple_retries(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )
@@ -379,7 +376,6 @@ async def test_passthrough_summary_has_no_cached_tokens(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )
@@ -451,7 +447,6 @@ async def test_cached_tokens_with_high_cache_rate(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )

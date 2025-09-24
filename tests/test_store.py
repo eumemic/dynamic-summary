@@ -23,7 +23,6 @@ class TestStore:
         doc_store = storage_backend.for_document("doc-id")
         doc_store.set_metadata(
             file_path="test_file.txt",
-            content_hash="test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

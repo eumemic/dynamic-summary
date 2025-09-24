@@ -88,7 +88,6 @@ class TestDocumentModel:
     def test_required_fields(self) -> None:
         """Test that Document has all required fields."""
         assert hasattr(Document, "id")
-        assert hasattr(Document, "content_hash")
         assert hasattr(Document, "embedding_model")
         assert hasattr(Document, "summary_model")
 
@@ -147,12 +146,10 @@ class TestModelIntegration:
         # Test Document instantiation
         doc = Document(
             id="test_doc",
-            content_hash="abc123",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
         assert doc.id == "test_doc"
-        assert doc.content_hash == "abc123"
 
     def test_datetime_fields(self) -> None:
         """Test that datetime fields work correctly."""
@@ -193,7 +190,6 @@ class TestModelIntegration:
 
         doc = Document(
             id="test_doc",
-            content_hash="abc123",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
             file_path=None,

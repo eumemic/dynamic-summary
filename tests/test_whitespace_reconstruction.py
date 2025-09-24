@@ -54,7 +54,6 @@ class TestWhitespaceReconstruction:
         doc_store = storage_backend.for_document("test-doc")
         doc_store.set_metadata(
             file_path="whitespace_test.txt",
-            content_hash="whitespace-test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -170,7 +169,6 @@ class TestWhitespaceReconstruction:
         doc_store = storage_backend.for_document("test-doc-indexing")
         doc_store.set_metadata(
             file_path="indexing_whitespace_test.txt",
-            content_hash="indexing-whitespace-test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -279,7 +277,6 @@ class TestWhitespaceReconstruction:
         doc_store = storage_backend.for_document("test-doc-validation")
         doc_store.set_metadata(
             file_path="validation_whitespace_test.txt",
-            content_hash="validation-whitespace-test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -331,7 +328,6 @@ class TestWhitespaceReconstruction:
         doc_store = storage_backend.for_document("test-doc-manual")
         doc_store.set_metadata(
             file_path="manual_whitespace_test.txt",
-            content_hash="manual-whitespace-test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

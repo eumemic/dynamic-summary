@@ -27,7 +27,6 @@ class TestDocumentService:
         doc_store = storage_backend.for_document(doc_id)
         doc_store.set_metadata(
             file_path="/path/to/file.txt",
-            content_hash="hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -63,7 +62,6 @@ class TestDocumentService:
             ds = storage_backend.for_document(d)
             ds.set_metadata(
                 file_path=None,
-                content_hash="h",
                 embedding_model="text-embedding-3-small",
                 summary_model="gpt-4o-mini",
             )

@@ -225,11 +225,6 @@ class IndexingService:
             lock_cm = cast(AbstractContextManager[object], cm_any)
 
         with lock_cm:
-            # Compute content hash for metadata (backend-agnostic)
-            from ragzoom.document_store import DocumentStore
-
-            content_hash = DocumentStore.compute_content_hash(text)
-
             # Clear existing data for the document
             deleted_count = self.store.clear_document(document_id)
             if deleted_count > 0:
@@ -253,7 +248,6 @@ class IndexingService:
             self.store.add_document(
                 document_id=document_id,
                 file_path=file_path,
-                content_hash=content_hash,
                 embedding_model=self.index_config.embedding_model,
                 summary_model=self.index_config.summary_model,
             )
@@ -324,13 +318,9 @@ class IndexingService:
         with lock_cm:
             doc_record = self.store.get_document_by_id(document_id)
             if doc_record is None:
-                from ragzoom.document_store import DocumentStore
-
-                content_hash = DocumentStore.compute_content_hash(new_text)
                 self.store.add_document(
                     document_id=document_id,
                     file_path=None,
-                    content_hash=content_hash,
                     embedding_model=self.index_config.embedding_model,
                     summary_model=self.index_config.summary_model,
                 )

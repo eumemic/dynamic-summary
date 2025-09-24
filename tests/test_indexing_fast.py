@@ -42,7 +42,6 @@ class TestIndexingFast:
         doc_store = storage_backend.for_document("test-doc")
         doc_store.set_metadata(
             file_path="test-doc.txt",
-            content_hash="test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -127,7 +126,6 @@ class TestIndexingFast:
         doc_store = storage_backend.for_document("test-doc")
         doc_store.set_metadata(
             file_path="test-doc.txt",
-            content_hash="test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -201,7 +199,6 @@ class TestIndexingFast:
         doc_store = storage_backend.for_document("test-doc")
         doc_store.set_metadata(
             file_path="test-doc.txt",
-            content_hash="test-hash",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

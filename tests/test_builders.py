@@ -135,7 +135,6 @@ class DocumentBuilder:
         self._data: dict[str, object] = {
             "id": "test-doc-1",
             "file_path": "/test/document.txt",
-            "content_hash": "abc123",
             "embedding_model": "text-embedding-3-small",
             "summary_model": "gpt-4o-mini",
         }
@@ -148,11 +147,6 @@ class DocumentBuilder:
     def with_file_path(self, file_path: str | None) -> "DocumentBuilder":
         """Set the file path."""
         self._data["file_path"] = file_path
-        return self
-
-    def with_content_hash(self, content_hash: str) -> "DocumentBuilder":
-        """Set the content hash."""
-        self._data["content_hash"] = content_hash
         return self
 
     def with_embedding_model(self, model: str) -> "DocumentBuilder":
