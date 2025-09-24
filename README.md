@@ -195,6 +195,16 @@ Commit the updated lock files. CI installs from locks via `pip-sync` to guarante
 
 Workflow guard: `scripts/run-checks.sh` contains a check that fails if workflows include unpinned `pip install` lines. Only pip-tools/pip-sync or specific tooling installs (e.g. pytest-cov, awscli) are allowed.
 
+### gRPC API code generation
+
+Generated protobuf stubs live in `ragzoom/rpc/`. When you update files in `proto/`, regenerate the Python code with:
+
+```
+python -m grpc_tools.protoc -I proto --python_out=ragzoom/rpc --grpc_python_out=ragzoom/rpc proto/dynamic_summary.proto
+```
+
+Install `grpcio-tools` via `pip-sync requirements/dev.lock` to make sure the compiler is available.
+
 ### Running checks
 
 ```
@@ -211,7 +221,10 @@ Workflow guard: `scripts/run-checks.sh` contains a check that fails if workflows
 ### First Time Use
 
 ```bash
-# Index your first document (SQLite + local vector index)
+# Start the gRPC server (leave running in its own terminal)
+ragzoom server start
+
+# Index your first document
 ragzoom index document.txt
 
 # Query the document
@@ -255,6 +268,9 @@ ragzoom pin <node-id>
 
 # Start API server
 ragzoom serve
+
+# Start gRPC server
+ragzoom server start
 ```
 
 ### Python API

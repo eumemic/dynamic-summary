@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
+from ragzoom.client import GrpcRagzoomClient
 from ragzoom.config import (
     IndexConfig,
     OperationalConfig,
@@ -23,11 +25,10 @@ from ragzoom.exceptions import (
     ResourceError,
     ValidationError,
 )
+from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
-from ragzoom.services.indexing_service import IndexingResult, IndexingService
-from ragzoom.services.query_service import QueryService
+from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.store import create_store_with_docker
-from ragzoom.tree_viz import build_ascii_tree
 from ragzoom.worktree_utils import DEFAULT_DATA_DIR_NAME
 
 # Load environment variables
@@ -49,6 +50,16 @@ logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
 logging.getLogger("chromadb").setLevel(logging.WARNING)
 logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
 logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
+
+
+def _resolve_server_address(value: str | None) -> str:
+    """Resolve the gRPC server address with sensible defaults."""
+    if value:
+        return value
+    env_value = os.environ.get("RAGZOOM_SERVER_ADDRESS")
+    if env_value:
+        return env_value
+    return "127.0.0.1:50051"
 
 
 def handle_cli_error(e: Exception, operation: str) -> None:
@@ -198,6 +209,13 @@ def cli(ctx: click.Context) -> None:
     is_flag=True,
     help="Append file contents to an existing document instead of rebuilding. Requires --document-id.",
 )
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help="gRPC server address (defaults to 127.0.0.1:50051)",
+)
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -218,6 +236,7 @@ def index(
     validate: bool,
     no_progress: bool,
     append: bool,
+    server_address: str | None,
 ) -> None:
     """Index a document from file.
 
@@ -275,12 +294,6 @@ def index(
         ctx.obj["query_config"] = query_config
         ctx.obj["operational_config"] = operational_config
 
-        # Create services for this command (respects backend configured)
-        store = create_store_with_docker(
-            operational_config, embedding_model=index_config.embedding_model
-        )
-        indexing_service = IndexingService(store, index_config, operational_config)
-
         append_document_id: str | None = None
 
         if append:
@@ -289,28 +302,33 @@ def index(
             append_document_id = document_id
 
         result: IndexingResult
+        resolved_address = _resolve_server_address(server_address)
 
         if append:
             assert append_document_id is not None
             click.echo(
                 f"Appending {Path(file_path).name} to document '{append_document_id}'..."
             )
-            text_to_append = Path(file_path).read_text(encoding="utf-8")
-            result = indexing_service.append_to_document(
-                document_id=append_document_id,
-                new_text=text_to_append,
-                show_progress=not no_progress,
-                collect_telemetry=bool(telemetry_file),
-            )
+            content_bytes = Path(file_path).read_bytes()
+            with GrpcRagzoomClient(resolved_address) as client:
+                result = client.append_text(
+                    document_id=append_document_id,
+                    content=content_bytes,
+                    collect_telemetry=bool(telemetry_file),
+                )
             success_message = "✅ Document appended successfully!"
         else:
             click.echo(f"Indexing {Path(file_path).name}...")
-            result = indexing_service.index_from_file(
-                file_path,
-                document_id=document_id,
-                show_progress=not no_progress,
-                collect_telemetry=bool(telemetry_file),
-            )
+            path = Path(file_path)
+            content_bytes = path.read_bytes()
+            target_document_id = document_id or path.name
+            with GrpcRagzoomClient(resolved_address) as client:
+                result = client.index_document(
+                    document_id=target_document_id,
+                    content=content_bytes,
+                    collect_telemetry=bool(telemetry_file),
+                )
+            document_id = target_document_id
             success_message = "✅ Document indexed successfully!"
 
         click.echo(success_message)
@@ -323,52 +341,23 @@ def index(
             )
         if result.new_leaves is not None:
             click.echo(f"   New leaves: {result.new_leaves}")
-        click.echo(f"   Tree height: {result.tree_depth}")
+        if result.tree_depth is not None:
+            click.echo(f"   Tree height: {result.tree_depth}")
 
-        # Store telemetry reference for later use
         telemetry_data = result.telemetry
 
-        # Run validation checks
+        if telemetry_file and telemetry_data:
+            try:
+                with open(telemetry_file, "w", encoding="utf-8") as f:
+                    json.dump(telemetry_data, f, indent=2)
+                click.echo(f"✅ Saved telemetry: {telemetry_file}")
+            except OSError as exc:
+                click.echo(f"❌ Failed to write telemetry file: {exc}", err=True)
+
         if validate:
-            from ragzoom.validate import (
-                validate as run_validate,
-            )
-            from ragzoom.validate import (
-                validate_chunk_sizes,
-                validate_document_coverage,
-                validate_equal_leaf_depth,
-                validate_tree_structure,
-            )
-
-            doc_store_for_validate = store.for_document(result.document_id)
-            doc_leaves = doc_store_for_validate.nodes.get_leaves()
-
-            if append:
-                sorted_leaves = sorted(
-                    doc_leaves, key=lambda node: int(node.span_start)
-                )
-                text = "".join(leaf.text or "" for leaf in sorted_leaves)
-            else:
-                text = Path(file_path).read_text(encoding="utf-8")
-
-            run_validate(
-                lambda: validate_document_coverage(text, doc_leaves),
-                "document coverage",
-            )
-            run_validate(
-                lambda: validate_chunk_sizes(
-                    doc_leaves, index_config.target_chunk_tokens
-                ),
-                "chunk sizes",
-            )
-            doc_store = store.for_document(result.document_id)
-            run_validate(
-                lambda: validate_tree_structure(doc_store, text),
-                "tree structure",
-            )
-            run_validate(
-                lambda: validate_equal_leaf_depth(doc_store),
-                "equal leaf depth",
+            click.echo(
+                "⚠️ Validation checks are not yet supported when using the gRPC server.",
+                err=True,
             )
 
         # Show debug hint if enabled
@@ -376,12 +365,6 @@ def index(
             click.echo(
                 "\n💡 Debug information (including token usage statistics) logged to stderr"
             )
-
-        # Save telemetry if requested
-        if telemetry_file and telemetry_data:
-            with open(telemetry_file, "w") as f:
-                json.dump(telemetry_data, f, indent=2)
-            click.echo(f"✅ Saved telemetry: {telemetry_file}")
 
     except OSError as e:
         # Clean user-friendly errors (no "Error indexing document" prefix)
@@ -453,6 +436,13 @@ def documents(ctx: click.Context) -> None:
     default="output-tokens",
     help="Coordinate system for tree visualization (source-chars=source position, output-tokens=output budget)",
 )
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help="gRPC server address (defaults to 127.0.0.1:50051)",
+)
 @click.pass_context
 def query(
     ctx: click.Context,
@@ -465,170 +455,99 @@ def query(
     validate: bool,
     viz_width: int | None,
     viz_coords: str,
+    server_address: str | None,
 ) -> None:
     """Query the system and get a summary."""
 
     setup_command_environment(None, debug, validate)
 
     try:
-        # Get configs from context (set up during CLI initialization)
         query_config = ctx.obj["query_config"]
-        operational_config = ctx.obj["operational_config"]
 
-        # Override with CLI parameters if provided
         if token_budget is not None:
             query_config = query_config.replace(budget_tokens=token_budget)
         if embedding_model is not None:
             query_config = query_config.replace(embedding_model=embedding_model)
 
-        # Create services for this command
-        store = create_store_with_docker(
-            operational_config, embedding_model=query_config.embedding_model
-        )
-        query_service = QueryService(store, query_config, operational_config)
+        ctx.obj["query_config"] = query_config
 
-        # Execute query
-        query_result = query_service.execute_query(
-            query_text,
-            document_id,
-            num_seeds=num_seeds,
-            token_budget=token_budget,
-        )
+        effective_budget = token_budget or query_config.budget_tokens
+        resolved_address = _resolve_server_address(server_address)
 
-        # Get retrieval result for debug info (if needed)
-        result = None
         if debug:
-            # We need the raw retrieval result for debug visualization
-            from openai import OpenAI
+            if viz_width:
+                actual_viz_width = viz_width
+            else:
+                terminal_width = shutil.get_terminal_size(fallback=(120, 24)).columns
+                actual_viz_width = max(80, terminal_width - 1)
+        else:
+            actual_viz_width = viz_width or 0
 
-            # Create services
-            from ragzoom.config import IndexConfig
-            from ragzoom.retrieval.budget_planner import BudgetPlanner
-            from ragzoom.retrieval.embedding_service import EmbeddingService
-            from ragzoom.retrieve import Retriever
-            from ragzoom.vector_factory import create_vector_index
+        use_token_coords = viz_coords == "output-tokens"
 
-            client = OpenAI(
-                api_key=operational_config.openai_api_key.get_secret_value()
-            )
-            document_store = store.for_document(document_id)
-            embedding_service = EmbeddingService(
-                client, document_store, query_config.embedding_model
-            )
-            index_cfg = IndexConfig.load()
-            budget_planner = BudgetPlanner(
-                document_store, index_cfg.target_chunk_tokens
-            )
-            vector_index = create_vector_index(
-                operational_config.vector_backend,
-                operational_config.database_url,
-                query_config.embedding_model,
-            )
-            retriever = Retriever(
-                query_config,
-                document_store,
-                embedding_service,
-                budget_planner,
-                vector_index,
-            )
-            result = retriever.retrieve(
-                query_text,
-                budget_tokens=token_budget or query_config.budget_tokens,
+        with GrpcRagzoomClient(resolved_address) as client:
+            response = client.execute_query(
+                query=query_text,
                 document_id=document_id,
+                budget_tokens=effective_budget,
                 num_seeds=num_seeds,
+                embedding_model=query_config.embedding_model,
+                debug=debug,
+                viz_width=actual_viz_width,
+                use_token_coords=use_token_coords,
             )
 
-        # Tiling validation
-        if validate and result and getattr(result, "tiling", None) and result.tiling:
-            from ragzoom.validate import validate_tiling
+        query_result = response.query_result
+        retrieval = response.retrieval
 
-            doc_store = store.for_document(document_id)
-            error = validate_tiling(
-                result.tiling,
-                doc_store,
-                budget_tokens=query_config.budget_tokens,
-                preloaded_nodes=result.nodes,
+        if validate:
+            click.echo(
+                "⚠️ Query validation is not yet supported when using the gRPC server.",
+                err=True,
             )
-            if error:
-                click.echo(f"⚠️ Tiling validation warning: {error}", err=True)
 
-        # Output summary
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY")
         click.echo("=" * 60)
-        if debug and result and getattr(result, "tiling", None) and result.tiling:
-            # Create document-scoped store for node access
-            doc_store = store.for_document(document_id)
-            for idx, node_id in enumerate(result.tiling):
-                node = doc_store.nodes.get(node_id)
-                if node:
-                    # Node span is always the full span
-                    span_start, span_end = node.span_start, node.span_end
-                    span = f"{span_start}-{span_end}"
-                    height = node.height
-                    # Add asterisk to index if this is a seed node
-                    is_seed = node_id in result.node_ids
-                    idx_str = f"{idx}{'*' if is_seed else ' '}"
-                    click.echo(
-                        f"[{idx_str}| SPAN: {span} | HEIGHT: {height} | NODE: {node.id}]"
-                    )
-                    # Get the node text
-                    text = node.text
-                    click.echo(text)
-                    if idx < len(result.tiling) - 1:
+        if debug and retrieval.tiling_ids:
+            for idx, node_id in enumerate(retrieval.tiling_ids):
+                node = retrieval.nodes.get(node_id)
+                if node is None:
+                    continue
+                span = f"{node.span_start}-{node.span_end}"
+                height = node.height
+                is_seed = node_id in retrieval.selected_ids
+                idx_str = f"{idx}{'*' if is_seed else ' '}"
+                click.echo(
+                    f"[{idx_str}| SPAN: {span} | HEIGHT: {height} | NODE: {node.node_id}]"
+                )
+                if node.text:
+                    click.echo(node.text)
+                    if idx < len(retrieval.tiling_ids) - 1:
                         click.echo("")
         else:
-            click.echo(query_result.summary)
+            summary_text = query_result.summary or "<no summary>"
+            click.echo(summary_text)
         click.echo("")
 
-        # Show debug info if requested
-        if debug and result:
-            # Show ASCII tree visualization first
-            if result.tiling:
-                # Get terminal width with fallback, or use CLI override
-                if viz_width:
-                    actual_viz_width = viz_width
-                else:
-                    terminal_width = shutil.get_terminal_size(
-                        fallback=(120, 24)
-                    ).columns
-                    # Use width minus 1 to prevent wrapping on exact terminal width
-                    actual_viz_width = max(80, terminal_width - 1)
+        if debug and response.visualization:
+            click.echo("=" * 60)
+            click.echo("VISUALIZATION")
+            click.echo("=" * 60)
+            click.echo(response.visualization)
+            click.echo("")
 
-                click.echo("=" * 60)
-                click.echo("VISUALIZATION")
-                click.echo("=" * 60)
+        if response.validation_warning:
+            click.echo(f"⚠️ {response.validation_warning}", err=True)
 
-                doc_store = store.for_document(document_id)
-                tree_viz = build_ascii_tree(
-                    result.tiling,
-                    doc_store,
-                    width=actual_viz_width,
-                    coverage_map=result.coverage_map,
-                    seed_node_ids=set(result.node_ids),
-                    use_token_coords=(viz_coords == "output-tokens"),
-                    preloaded_nodes=result.nodes,
-                )
-                click.echo(tree_viz)
-                click.echo("")
-
-            # Show statistics after tree visualization
-            click.echo("=" * 60)
-            click.echo("STATISTICS")
-            click.echo("=" * 60)
-            click.echo(f"  Nodes retrieved: {query_result.nodes_retrieved}")
-            click.echo(f"  Tiling size: {query_result.tiling_size}")
-            click.echo(f"  Token count: {query_result.token_count}")
-            if result:
-                click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
-        elif debug:
-            # Show basic statistics if debug but no detailed result
-            click.echo("=" * 60)
-            click.echo("STATISTICS")
-            click.echo("=" * 60)
-            click.echo(f"  Nodes retrieved: {query_result.nodes_retrieved}")
-            click.echo(f"  Tiling size: {query_result.tiling_size}")
-            click.echo(f"  Token count: {query_result.token_count}")
+        click.echo("=" * 60)
+        click.echo("STATISTICS")
+        click.echo("=" * 60)
+        click.echo(f"  Nodes retrieved: {query_result.nodes_retrieved}")
+        click.echo(f"  Tiling size: {query_result.tiling_size}")
+        click.echo(f"  Token count: {query_result.token_count}")
+        if debug:
+            click.echo(f"  Coverage: {len(retrieval.coverage_map)} nodes")
 
     except Exception as e:
         handle_cli_error(e, "processing query")
@@ -1096,6 +1015,40 @@ def config(examples: bool, output_file: str | None) -> None:
         click.echo("  ragzoom config --examples     Show configuration examples")
         click.echo("  ragzoom config --create FILE  Create a sample config file")
         click.echo("\nFor detailed help: ragzoom config --help")
+
+
+@cli.group()
+def server() -> None:
+    """Manage the RagZoom gRPC server."""
+
+
+@server.command("start")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind")
+@click.option("--port", default=50051, type=int, show_default=True, help="Port to bind")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Optional indexing config file",
+)
+@click.option("--debug", is_flag=True, help="Enable debug logging")
+@click.option("--validate", is_flag=True, help="Enable validation checks")
+def start_server(
+    host: str,
+    port: int,
+    config_path: Path | None,
+    debug: bool,
+    validate: bool,
+) -> None:
+    """Start the RagZoom gRPC server."""
+
+    setup_command_environment(None, debug, validate)
+    options = ServerOptions(
+        host=host,
+        port=port,
+        config_path=str(config_path) if config_path else None,
+    )
+    run_server(options)
 
 
 @cli.command()

@@ -1,595 +1,316 @@
-"""Tests for CLI functionality."""
+"""Tests for the RagZoom CLI in the gRPC-backed architecture."""
+
+from __future__ import annotations
 
 import os
-import tempfile
 from collections.abc import Iterator
-from unittest.mock import MagicMock, Mock, patch
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import TypedDict
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from ragzoom.cli import cli
+from ragzoom.client.grpc_client import ExecuteQueryOutput, NodeSummary, RetrievalView
 from ragzoom.exceptions import InvalidOperationError
+from ragzoom.services.document_service import DocumentInfo, SystemStatus
+from ragzoom.services.indexing_service import IndexingResult
+from ragzoom.services.query_service import QueryResult
 
 
-class TestCLI:
-    """Test the CLI commands."""
+class CliMocks(TypedDict):
+    store: MagicMock
+    document_service: MagicMock
+    grpc_client: MagicMock
+    vector_index: MagicMock
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a CLI runner."""
-        return CliRunner()
 
-    @pytest.fixture
-    def mock_ragzoom(self) -> Iterator[dict[str, object]]:
-        """Mock RagZoom components."""
-        with (
-            patch("ragzoom.cli.IndexConfig") as mock_index_config,
-            patch("ragzoom.cli.QueryConfig") as mock_query_config,
-            patch("ragzoom.cli.OperationalConfig") as mock_operational_config,
-            patch("ragzoom.cli.create_store_with_docker") as mock_create_store,
-            patch("ragzoom.cli.DocumentService") as mock_document_service,
-            patch("ragzoom.cli.IndexingService") as mock_indexing_service,
-            patch("ragzoom.cli.QueryService") as mock_query_service,
-        ):
+@pytest.fixture
+def runner() -> CliRunner:
+    """Provide a Click test runner."""
+    return CliRunner()
 
-            # Mock index config
-            index_config_instance = Mock()
-            index_config_instance.target_chunk_tokens = 200
-            index_config_instance.embedding_model = "text-embedding-3-small"
-            mock_index_config.return_value = index_config_instance
 
-            # Mock query config
-            query_config_instance = Mock()
-            query_config_instance.budget_tokens = 8000
-            query_config_instance.mmr_lambda = 0.7
+@pytest.fixture
+def cli_mocks() -> Iterator[CliMocks]:
+    """Patch expensive dependencies and provide reusable fakes."""
+    with (
+        patch("ragzoom.cli.create_store_with_docker") as mock_create_store,
+        patch("ragzoom.cli.DocumentService") as mock_document_service,
+        patch("ragzoom.cli.GrpcRagzoomClient") as mock_grpc_client_cls,
+        patch("ragzoom.vector_factory.create_vector_index") as mock_create_vector_index,
+    ):
+        # Storage backend impersonation used by several commands
+        store = MagicMock(name="store")
+        document_row = SimpleNamespace(
+            id="doc-123",
+            embedding_model="text-embedding-3-small",
+            file_path="/path/to/file.txt",
+            indexed_at=datetime(2023, 1, 1),
+        )
+        store.list_documents.return_value = [document_row]
+        store.get_document_by_id.return_value = document_row
+        doc_store = MagicMock(name="doc_store")
+        doc_store.nodes.get_leaves.return_value = [MagicMock() for _ in range(5)]
+        store.for_document.return_value = doc_store
+        mock_create_store.return_value = store
 
-            # Mock the replace method to return a proper config with updated values
-            def mock_replace(**kwargs: object) -> object:
-                new_config = Mock()
-                new_config.budget_tokens = kwargs.get(
-                    "budget_tokens", query_config_instance.budget_tokens
-                )
-                new_config.mmr_lambda = kwargs.get(
-                    "mmr_lambda", query_config_instance.mmr_lambda
-                )
-                new_config.mmr_k_multiplier = kwargs.get("mmr_k_multiplier", 2.0)
-                return new_config
-
-            query_config_instance.replace = mock_replace
-            mock_query_config.return_value = query_config_instance
-
-            # Mock operational config
-            operational_config_instance = Mock()
-            operational_config_instance.openai_api_key = "test-key"
-            operational_config_instance.database_url = "postgresql:///ragzoom"
-            mock_operational_config.return_value = operational_config_instance
-
-            # Mock store
-            store_instance = Mock()
-            store_instance.get_leaf_nodes.return_value = [
-                Mock(id=f"node-{i}") for i in range(5)
-            ]
-            store_instance.get_root_node.return_value = Mock(height=3)
-            store_instance.get_pinned_nodes.return_value = []
-            store_instance.clear_document.return_value = (
-                0  # Default to no nodes cleared
-            )
-
-            # Mock SessionLocal for database queries (handles count queries)
-            mock_session = Mock()
-            mock_query = Mock()
-            # Set up count to return 10 for TreeNode queries
-            mock_query.count = Mock(return_value=10)
-
-            # Mock leaf nodes query
-            leaf_nodes = [
-                Mock(
-                    id=f"leaf-{i}",
-                    span_start=i * 100,
-                    span_end=(i + 1) * 100,
-                    text=f"text-{i}",
-                    summary=None,
-                    left_child_id=None,
-                    right_child_id=None,
-                )
-                for i in range(5)
-            ]
-
-            # Set up chained query mocks for filter pattern
-            mock_filter_result = Mock()
-            mock_filter_result.all.return_value = leaf_nodes
-            mock_filter_result.count.return_value = len(leaf_nodes)
-            mock_filter_result.first.return_value = Mock(
-                id="root", depth=3, parent_id=None
-            )
-
-            # Handle both filter_by().filter() chain and just filter_by()
-            mock_query.filter_by.return_value.filter.return_value = mock_filter_result
-            mock_query.filter_by.return_value.all.return_value = leaf_nodes
-            mock_query.filter_by.return_value.first.return_value = Mock(
-                id="root", depth=3, parent_id=None
-            )
-            mock_query.filter_by.return_value.count.return_value = 10
-
-            mock_session.query.return_value = mock_query
-            mock_context_manager = Mock()
-            mock_context_manager.__enter__ = Mock(return_value=mock_session)
-            mock_context_manager.__exit__ = Mock(return_value=None)
-            store_instance.SessionLocal.return_value = mock_context_manager
-
-            # Mock document store (returned by for_document)
-            mock_doc_store = Mock()
-            mock_doc_store.nodes.get_all.return_value = [
-                Mock() for _ in range(10)
-            ]  # Mock list
-            mock_doc_store.nodes.get_leaves.return_value = [
-                Mock() for _ in range(5)
-            ]  # Mock list
-            store_instance.for_document.return_value = mock_doc_store
-
-            mock_create_store.return_value = store_instance
-
-            # Mock services
-            document_service_instance = Mock()
-
-            # Create mock document for list_documents
-            from datetime import datetime
-
-            from ragzoom.services.document_service import DocumentInfo
-
-            mock_document = DocumentInfo(
+        # Document service behaviour
+        document_service = MagicMock(name="document_service")
+        document_service.get_system_status.return_value = SystemStatus(
+            total_nodes=10,
+            leaf_nodes=5,
+            tree_depth=3,
+            pinned_nodes=0,
+        )
+        document_service.list_documents.return_value = [
+            DocumentInfo(
                 document_id="doc-123",
                 file_path="/path/to/file.txt",
                 indexed_at=datetime(2023, 1, 1),
                 node_count=15,
             )
-            document_service_instance.list_documents.return_value = [mock_document]
-
-            document_service_instance.get_system_status.return_value = Mock(
-                total_nodes=10, leaf_nodes=5, tree_depth=3, pinned_nodes=0
-            )
-            # Set default clear values - individual tests can override these
-            document_service_instance.clear_document.return_value = 10
-            document_service_instance.clear_all_documents.return_value = 50
-            mock_document_service.return_value = document_service_instance
-
-            # Mock indexing service
-            indexing_service_instance = Mock()
-            from ragzoom.services.indexing_service import IndexingResult
-
-            indexing_service_instance.index_from_file.return_value = IndexingResult(
-                document_id="doc-123",
-                chunks_created=5,
-                tree_depth=3,
-                telemetry=None,
-            )
-            indexing_service_instance.append_to_document.return_value = IndexingResult(
-                document_id="doc-append",
-                chunks_created=2,
-                tree_depth=4,
-                telemetry=None,
-            )
-            mock_indexing_service.return_value = indexing_service_instance
-
-            # Mock query service
-            query_service_instance = Mock()
-            from ragzoom.services.query_service import QueryResult
-
-            query_service_instance.execute_query.return_value = QueryResult(
-                summary="This is a summary of the content.",
-                token_count=100,
-                nodes_retrieved=2,
-                tiling_size=3,
-            )
-            mock_query_service.return_value = query_service_instance
-
-            yield {
-                "index_config": mock_index_config,
-                "query_config": mock_query_config,
-                "operational_config": mock_operational_config,
-                "create_store": mock_create_store,
-                "document_service": mock_document_service,
-                "indexing_service": mock_indexing_service,
-                "query_service": mock_query_service,
-                "index_config_instance": index_config_instance,
-                "query_config_instance": query_config_instance,
-                "operational_config_instance": operational_config_instance,
-                "store_instance": store_instance,
-                "document_service_instance": document_service_instance,
-                "indexing_service_instance": indexing_service_instance,
-                "query_service_instance": query_service_instance,
-            }
-
-    def test_cli_help(self, runner: CliRunner) -> None:
-        """Test CLI help command."""
-        result = runner.invoke(cli, ["--help"])
-        assert result.exit_code == 0
-        assert "RagZoom: Incremental, hierarchical RAG memory system." in result.output
-        assert "Commands:" in result.output
-
-    def test_status_command(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test status command."""
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            result = runner.invoke(cli, ["status"])
-
-            assert result.exit_code == 0
-            assert "SYSTEM STATUS" in result.output
-            assert "Total nodes: 10" in result.output
-            assert "Leaf nodes: 5" in result.output
-            assert "Tree height: 3" in result.output
-            assert "Pinned nodes: 0" in result.output
-
-    def test_index_command_with_file(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test indexing a file."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write("Test content for indexing.")
-            temp_file = f.name
-
-        try:
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(cli, ["index", temp_file])
-
-                assert result.exit_code == 0
-                assert "Document indexed successfully!" in result.output
-                assert "doc-123" in result.output
-
-                # Verify index_from_file was called with the content
-                mock_ragzoom[
-                    "indexing_service_instance"
-                ].index_from_file.assert_called_once()
-                call_args = mock_ragzoom[
-                    "indexing_service_instance"
-                ].index_from_file.call_args
-                assert temp_file in call_args[0][0]
-        finally:
-            os.unlink(temp_file)
-
-    def test_index_command_with_text(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test indexing with document ID."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write("Test content.")
-            temp_file = f.name
-
-        try:
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(
-                    cli, ["index", temp_file, "--document-id", "my-doc-id"]
-                )
-
-                assert result.exit_code == 0
-                assert "Document indexed successfully!" in result.output
-                assert "doc-123" in result.output
-
-                # Verify index_from_file was called with document_id
-                call_args = mock_ragzoom[
-                    "indexing_service_instance"
-                ].index_from_file.call_args
-                assert call_args[1]["document_id"] == "my-doc-id"
-        finally:
-            os.unlink(temp_file)
-
-    def test_index_append_requires_document_id(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """--append should require an explicit document ID."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write("Append me")
-            temp_file = f.name
-
-        try:
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(cli, ["index", temp_file, "--append"])
-
-                assert result.exit_code != 0
-                assert "--document-id is required" in result.output
-        finally:
-            os.unlink(temp_file)
-
-    def test_index_append_invokes_service(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Ensure the append flag routes through append_to_document."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write("Chunk for append")
-            temp_file = f.name
-
-        try:
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(
-                    cli,
-                    [
-                        "index",
-                        temp_file,
-                        "--document-id",
-                        "append-doc",
-                        "--append",
-                    ],
-                )
-
-                assert result.exit_code == 0
-                assert "Document appended successfully" in result.output
-                service = mock_ragzoom["indexing_service_instance"]
-                service.append_to_document.assert_called_once()
-                service.index_from_file.assert_not_called()
-                call_args = service.append_to_document.call_args
-                assert call_args.kwargs["document_id"] == "append-doc"
-        finally:
-            os.unlink(temp_file)
-
-    def test_query_command(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test query command."""
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            result = runner.invoke(
-                cli, ["query", "Tell me about cats", "-d", "test-doc"]
-            )
-
-            assert result.exit_code == 0
-            assert "SUMMARY" in result.output
-            assert "This is a summary of the content." in result.output
-
-    def test_query_with_options(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test query command with options."""
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            result = runner.invoke(
-                cli,
-                [
-                    "query",
-                    "Tell me about cats",
-                    "-d",
-                    "test-doc",
-                    "--num-seeds",
-                    "5",
-                    "--token-budget",
-                    "1000",
-                ],
-            )
-
-            assert result.exit_code == 0
-
-            # Verify execute_query was called with correct parameters
-            mock_ragzoom[
-                "query_service_instance"
-            ].execute_query.assert_called_once_with(
-                "Tell me about cats",
-                "test-doc",
-                num_seeds=5,
-                token_budget=1000,
-            )
-
-    def test_pin_command(
-        self, runner: CliRunner, mock_ragzoom: dict[str, object]
-    ) -> None:
-        """Test pin command."""
-        mock_service_instance = mock_ragzoom["document_service_instance"]
-        assert hasattr(mock_service_instance, "pin_node")
-        mock_service_instance.pin_node.return_value = None
-
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            result = runner.invoke(cli, ["pin", "node-123"])
-
-            assert result.exit_code == 0
-            assert "✅ Node node-123 pinned successfully!" in result.output
-
-    def test_pin_command_failure(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test pin command when pinning fails."""
-        mock_ragzoom["document_service_instance"].pin_node.side_effect = (
-            InvalidOperationError("pin_node", "Node is too deep or already pinned")
-        )
-
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            result = runner.invoke(cli, ["pin", "node-999"])
-
-            # Pin command returns exit code 1 on failure
-            assert result.exit_code == 1
-            assert "Failed to pin node node-999" in result.output
-
-    def test_serve_command(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test serve command."""
-        with patch("uvicorn.run") as mock_uvicorn:
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(cli, ["serve", "--port", "8080"])
-
-                assert result.exit_code == 0
-
-                # Verify uvicorn was called with correct parameters
-                mock_uvicorn.assert_called_once_with(
-                    "ragzoom.api:app", host="127.0.0.1", port=8080, reload=False
-                )
-
-    def test_documents_command(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test documents command."""
-        # Mock document results using the document service
-        from datetime import datetime
-
-        from ragzoom.services.document_service import DocumentInfo
-
-        mock_doc_info = DocumentInfo(
-            document_id="doc-123",
-            file_path="/path/to/file.txt",
-            indexed_at=datetime.now(),
-            node_count=15,
-        )
-
-        mock_ragzoom["document_service_instance"].list_documents.return_value = [
-            mock_doc_info
         ]
+        document_service.clear_document.return_value = 10
+        document_service.clear_all_documents.return_value = 50
+        mock_document_service.return_value = document_service
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            result = runner.invoke(cli, ["documents"])
+        # Vector index stubbed for clear command side effects
+        vector_index = MagicMock(name="vector_index")
+        mock_create_vector_index.return_value = vector_index
 
-            assert result.exit_code == 0
-            assert "Document ID: doc-123" in result.output
-            assert "File: /path/to/file.txt" in result.output
-            assert "Total nodes: 15" in result.output
-            assert "Leaf nodes: 5" in result.output
-
-    def test_missing_api_key(self, runner: CliRunner) -> None:
-        """Test commands fail without API key."""
-        # Mock the OperationalConfig to have empty API key
-        with patch("ragzoom.cli.OperationalConfig") as mock_config:
-            mock_config_instance = Mock()
-            mock_config_instance.openai_api_key = ""
-            mock_config.return_value = mock_config_instance
-
-            with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=True):
-                result = runner.invoke(cli, ["status"])
-
-                # Should fail due to missing API key - but for now just check it runs
-                # The actual API key validation happens in the components, not CLI init
-                assert result.exit_code == 0 or result.exception is not None
-
-    def test_index_with_automatic_clearing(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test that indexing automatically clears existing data."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write("Test content for clear.")
-            temp_file = f.name
-
-        try:
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(cli, ["index", temp_file])
-
-                assert result.exit_code == 0
-                assert "Document indexed successfully!" in result.output
-
-                # Verify that the indexing service was called
-                mock_ragzoom[
-                    "indexing_service_instance"
-                ].index_from_file.assert_called_once()
-        finally:
-            os.unlink(temp_file)
-
-    def test_index_automatic_clearing_no_nodes(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test that automatic clearing works when no nodes exist."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write("Test content.")
-            temp_file = f.name
-
-        try:
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(cli, ["index", temp_file])
-
-                assert result.exit_code == 0
-                assert "Document indexed successfully!" in result.output
-
-                # Verify that the indexing service was called
-                mock_ragzoom[
-                    "indexing_service_instance"
-                ].index_from_file.assert_called_once()
-        finally:
-            os.unlink(temp_file)
-
-    def test_index_basic(
-        self, runner: CliRunner, mock_ragzoom: dict[str, object]
-    ) -> None:
-        """Test basic indexing command."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write("Test content.")
-            temp_file = f.name
-
-        try:
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                result = runner.invoke(cli, ["index", temp_file])
-
-                assert result.exit_code == 0
-
-                # Verify index_from_file was called
-                mock_indexing_service = mock_ragzoom["indexing_service_instance"]
-                assert hasattr(mock_indexing_service, "index_from_file")
-                mock_indexing_service.index_from_file.assert_called_once()
-        finally:
-            os.unlink(temp_file)
-
-    def test_clear_specific_document(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test clearing a specific document."""
-        # Mock document exists
-        mock_session = MagicMock()
-        mock_doc = MagicMock()
-        mock_doc.id = "test-doc"
-        mock_session.query.return_value.filter_by.return_value.first.return_value = (
-            mock_doc
+        # gRPC client facade
+        index_result = IndexingResult(
+            document_id="doc-123",
+            chunks_created=5,
+            tree_depth=3,
+            mutated_nodes=5,
+            resummarized_nodes=2,
+            new_leaves=5,
+            telemetry=None,
         )
-        mock_session.query.return_value.filter_by.return_value.delete.return_value = 1
+        append_result = IndexingResult(
+            document_id="doc-append",
+            chunks_created=2,
+            tree_depth=4,
+            mutated_nodes=4,
+            resummarized_nodes=1,
+            new_leaves=2,
+            telemetry=None,
+        )
+        node_summary = NodeSummary(
+            node_id="n1",
+            text="Leaf text",
+            token_count=42,
+            span_start=0,
+            span_end=42,
+            parent_id="",
+            left_child_id="",
+            right_child_id="",
+            height=0,
+        )
+        retrieval_view = RetrievalView(
+            selected_ids=["n1"],
+            tiling_ids=["n1"],
+            scores={"n1": 1.0},
+            coverage_map={"n1": True},
+            nodes={"n1": node_summary},
+        )
+        execute_output = ExecuteQueryOutput(
+            query_result=QueryResult(
+                summary="This is a summary of the content.",
+                token_count=50,
+                nodes_retrieved=1,
+                tiling_size=1,
+            ),
+            retrieval=retrieval_view,
+            visualization="<viz>",
+            validation_warning="",
+        )
+        grpc_client = MagicMock(name="grpc_client")
+        grpc_client.__enter__.return_value = grpc_client
+        grpc_client.__exit__.return_value = None
+        grpc_client.index_document.return_value = index_result
+        grpc_client.append_text.return_value = append_result
+        grpc_client.execute_query.return_value = execute_output
+        grpc_client.run_workers_once.return_value = ["workers drained"]
+        mock_grpc_client_cls.return_value = grpc_client
 
-        mock_ragzoom[
-            "store_instance"
-        ].SessionLocal.return_value.__enter__.return_value = mock_session
-        mock_ragzoom["store_instance"].clear_document.return_value = 10
+        yield CliMocks(
+            store=store,
+            document_service=document_service,
+            grpc_client=grpc_client,
+            vector_index=vector_index,
+        )
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            result = runner.invoke(
-                cli, ["clear", "--document-id", "test-doc", "--confirm"]
-            )
 
-            assert result.exit_code == 0
-            assert "Cleared document 'test-doc' (10 nodes deleted)" in result.output
+@pytest.fixture
+def api_key() -> Iterator[None]:
+    """Ensure an API key is visible to the CLI while the test runs."""
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+        yield
 
-            # Verify clear_document was called
-            mock_ragzoom[
-                "document_service_instance"
-            ].clear_document.assert_called_once_with("test-doc")
 
-    def test_clear_document_with_orphaned_nodes(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test clearing orphaned nodes (no Document record)."""
-        # Mock document service clearing orphaned nodes
-        mock_ragzoom["document_service_instance"].clear_document.return_value = 248
+def _write_temp_file(tmp_path: Path, name: str, content: str) -> Path:
+    file_path = tmp_path / name
+    file_path.write_text(content, encoding="utf-8")
+    return file_path
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            result = runner.invoke(
-                cli, ["clear", "--document-id", "orphaned-doc", "--confirm"]
-            )
 
-            assert result.exit_code == 0
-            assert (
-                "Cleared document 'orphaned-doc' (248 nodes deleted)" in result.output
-            )
+def test_cli_help(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    assert "RagZoom: Incremental, hierarchical RAG memory system." in result.output
 
-            # Verify clear_document was called even without Document record
-            mock_ragzoom[
-                "document_service_instance"
-            ].clear_document.assert_called_once_with("orphaned-doc")
 
-    def test_clear_all_data(
-        self, runner: CliRunner, mock_ragzoom: dict[str, Mock]
-    ) -> None:
-        """Test clearing all data."""
-        # Mock database state
-        mock_session = MagicMock()
-        mock_session.query.return_value.count.return_value = 50
+def test_status_command(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:
+    result = runner.invoke(cli, ["status"])
+    assert result.exit_code == 0
+    assert "SYSTEM STATUS" in result.output
+    cli_mocks["document_service"].get_system_status.assert_called_once()
 
-        mock_ragzoom[
-            "store_instance"
-        ].SessionLocal.return_value.__enter__.return_value = mock_session
-        mock_ragzoom["store_instance"].collection.get.return_value = {
-            "ids": ["id1", "id2"]
-        }
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            result = runner.invoke(cli, ["clear", "--confirm"])
+def test_index_command_with_file(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None, tmp_path: Path
+) -> None:
+    file_path = _write_temp_file(tmp_path, "doc.txt", "Test content")
+    result = runner.invoke(cli, ["index", str(file_path)])
+    assert result.exit_code == 0
+    assert "Document indexed successfully" in result.output
+    cli_mocks["grpc_client"].index_document.assert_called_once()
 
-            assert result.exit_code == 0
-            assert "Cleared 50 nodes from the database" in result.output
+
+def test_index_command_with_document_id(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None, tmp_path: Path
+) -> None:
+    file_path = _write_temp_file(tmp_path, "doc.txt", "Test content")
+    result = runner.invoke(
+        cli,
+        ["index", str(file_path), "--document-id", "my-doc"],
+    )
+    assert result.exit_code == 0
+    call = cli_mocks["grpc_client"].index_document.call_args
+    assert call.kwargs["document_id"] == "my-doc"
+
+
+def test_index_append_requires_document_id(
+    runner: CliRunner, api_key: None, tmp_path: Path
+) -> None:
+    file_path = _write_temp_file(tmp_path, "doc.txt", "Append me")
+    result = runner.invoke(cli, ["index", str(file_path), "--append"])
+    assert result.exit_code != 0
+    assert "--document-id is required" in result.output
+
+
+def test_index_append_invokes_append(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None, tmp_path: Path
+) -> None:
+    file_path = _write_temp_file(tmp_path, "doc.txt", "Append me")
+    result = runner.invoke(
+        cli,
+        [
+            "index",
+            str(file_path),
+            "--document-id",
+            "append-doc",
+            "--append",
+        ],
+    )
+    assert result.exit_code == 0
+    cli_mocks["grpc_client"].append_text.assert_called_once()
+    cli_mocks["grpc_client"].index_document.assert_not_called()
+
+
+def test_query_command(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:
+    result = runner.invoke(cli, ["query", "Tell me about cats", "-d", "doc-123"])
+    assert result.exit_code == 0
+    assert "This is a summary of the content." in result.output
+    cli_mocks["grpc_client"].execute_query.assert_called_once()
+
+
+def test_query_with_options(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    result = runner.invoke(
+        cli,
+        [
+            "query",
+            "Tell me about cats",
+            "-d",
+            "doc-123",
+            "--num-seeds",
+            "5",
+            "--token-budget",
+            "1000",
+        ],
+    )
+    assert result.exit_code == 0
+    call = cli_mocks["grpc_client"].execute_query.call_args
+    assert call.kwargs["num_seeds"] == 5
+    assert call.kwargs["budget_tokens"] == 1000
+
+
+def test_pin_command(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:
+    result = runner.invoke(cli, ["pin", "node-123"])
+    assert result.exit_code == 0
+    cli_mocks["document_service"].pin_node.assert_called_once_with("node-123")
+
+
+def test_pin_command_failure(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    cli_mocks["document_service"].pin_node.side_effect = InvalidOperationError(
+        "pin_node", "Node is already pinned"
+    )
+    result = runner.invoke(cli, ["pin", "node-999"])
+    assert result.exit_code == 1
+    assert "Failed to pin node node-999" in result.output
+
+
+def test_documents_command(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    result = runner.invoke(cli, ["documents"])
+    assert result.exit_code == 0
+    assert "Document ID: doc-123" in result.output
+    assert "Leaf nodes: 5" in result.output
+    cli_mocks["document_service"].list_documents.assert_called_once()
+
+
+def test_clear_specific_document(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    result = runner.invoke(
+        cli,
+        ["clear", "--document-id", "doc-123", "--confirm"],
+    )
+    assert result.exit_code == 0
+    cli_mocks["document_service"].clear_document.assert_called_once_with("doc-123")
+    cli_mocks["vector_index"].delete.assert_called_with(
+        filter={"document_id": "doc-123"}
+    )
+
+
+def test_clear_all_data(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:
+    result = runner.invoke(cli, ["clear", "--confirm"])
+    assert result.exit_code == 0
+    cli_mocks["document_service"].clear_all_documents.assert_called_once()
+    cli_mocks["vector_index"].delete.assert_called()
+
+
+def test_serve_command(runner: CliRunner, api_key: None) -> None:
+    with patch("uvicorn.run") as mock_uvicorn:
+        result = runner.invoke(cli, ["serve", "--port", "8080"])
+        assert result.exit_code == 0
+        mock_uvicorn.assert_called_once_with(
+            "ragzoom.api:app", host="127.0.0.1", port=8080, reload=False
+        )
+
+
+def test_status_succeeds_without_api_key(runner: CliRunner) -> None:
+    with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=True):
+        result = runner.invoke(cli, ["status"])
+    assert result.exit_code == 0
