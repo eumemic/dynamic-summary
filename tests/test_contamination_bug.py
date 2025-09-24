@@ -24,7 +24,6 @@ class TestContaminationBug:
         doc_store.set_metadata(
             file_path="contamination_doc1.txt",
             content_hash="contamination-doc1-hash",
-            chunk_count=3,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -39,7 +38,6 @@ class TestContaminationBug:
         doc_store.set_metadata(
             file_path="contamination_doc2.txt",
             content_hash="contamination-doc2-hash",
-            chunk_count=3,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

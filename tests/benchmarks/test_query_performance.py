@@ -85,7 +85,6 @@ def setup_test_document(
         document_id=doc_id,
         file_path="test_narrative.txt",
         content_hash="test-narrative-hash",
-        chunk_count=0,
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )

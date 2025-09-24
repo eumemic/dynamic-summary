@@ -28,7 +28,6 @@ class TestDPAssembly:
         doc_store.set_metadata(
             file_path="dp_assembly_test.txt",
             content_hash="dp-assembly-test-hash",
-            chunk_count=4,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

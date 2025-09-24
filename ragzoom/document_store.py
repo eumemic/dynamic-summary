@@ -509,7 +509,6 @@ class DocumentStore:
         self,
         file_path: str | None = None,
         content_hash: str | None = None,
-        chunk_count: int = 0,
         embedding_model: str | None = None,
         summary_model: str | None = None,
         version: int | None = None,
@@ -521,7 +520,6 @@ class DocumentStore:
         Args:
             file_path: Optional file path
             content_hash: Optional content hash
-            chunk_count: Number of chunks/leaf nodes
             embedding_model: Model used for embeddings
             summary_model: Model used for summaries
         """
@@ -538,8 +536,6 @@ class DocumentStore:
                     doc.file_path = file_path
                 if content_hash is not None:
                     doc.content_hash = content_hash
-                if chunk_count > 0:
-                    doc.chunk_count = chunk_count
                 if embedding_model is not None:
                     doc.embedding_model = embedding_model
                 if summary_model is not None:
@@ -551,7 +547,6 @@ class DocumentStore:
                     id=self.document_id,
                     file_path=file_path,
                     content_hash=content_hash,
-                    chunk_count=chunk_count,
                     embedding_model=embedding_model,
                     summary_model=summary_model,
                     version=version or 1,

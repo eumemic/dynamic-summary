@@ -96,17 +96,11 @@ class TestDocumentModel:
         """Test that Document has correct optional fields."""
         assert hasattr(Document, "file_path")
         assert hasattr(Document, "indexed_at")
-        assert hasattr(Document, "chunk_count")
 
     def test_unique_constraints(self) -> None:
         """Test that Document has correct unique constraints."""
         file_path_col = Document.__table__.columns["file_path"]
         assert file_path_col.unique is True
-
-    def test_default_values(self) -> None:
-        """Test that Document has correct default values."""
-        chunk_count_col = Document.__table__.columns["chunk_count"]
-        assert chunk_count_col.default.arg == 0
 
     def test_primary_key(self) -> None:
         """Test that Document has correct primary key."""

@@ -29,14 +29,12 @@ class TestCLIPinCommandIsolation:
         doc1_store.set_metadata(
             file_path="doc1.txt",
             content_hash="doc1-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
         doc2_store.set_metadata(
             file_path="doc2.txt",
             content_hash="doc2-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -139,7 +137,6 @@ class TestCLIPinCommandIsolation:
         doc_store.set_metadata(
             file_path="doc1.txt",
             content_hash="doc1-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -209,7 +206,6 @@ class TestCLIPinCommandIsolation:
         doc_store.set_metadata(
             file_path="doc1.txt",
             content_hash="doc1-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -260,7 +256,6 @@ class TestCLIPinCommandIsolation:
             doc2_store.set_metadata(
                 file_path="doc2.txt",
                 content_hash="doc2-hash",
-                chunk_count=0,
                 embedding_model="text-embedding-3-small",
                 summary_model="gpt-4o-mini",
             )
@@ -284,7 +279,6 @@ class TestCLIPinCommandIsolation:
         doc_store.set_metadata(
             file_path="doc1.txt",
             content_hash="doc1-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -326,14 +320,12 @@ class SkipTestQueryVisualizationIsolation:
         doc1_store.set_metadata(
             file_path="doc1.txt",
             content_hash="doc1-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
         doc2_store.set_metadata(
             file_path="doc2.txt",
             content_hash="doc2-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

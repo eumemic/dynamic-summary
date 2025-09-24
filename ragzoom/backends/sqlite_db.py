@@ -80,7 +80,6 @@ class SqliteDocument(SqliteBase):
     indexed_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=dt.datetime.utcnow
     )
-    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -119,6 +118,12 @@ class SqliteDatabaseManager:
                 conn.exec_driver_sql(
                     "ALTER TABLE documents ADD COLUMN version INTEGER DEFAULT 1"
                 )
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE documents DROP COLUMN chunk_count"
+                    )
+                except Exception:
+                    pass
         except Exception:
             # Column already exists or table newly created; ignore
             pass

@@ -168,7 +168,6 @@ class TestChunkSizeRegressionSQLite:
         doc_store.set_metadata(
             file_path=None,
             content_hash=doc_store.compute_content_hash(test_doc),
-            chunk_count=0,
             embedding_model=index_config.embedding_model,
             summary_model=index_config.summary_model,
         )

@@ -28,7 +28,6 @@ class TestDocumentService:
         doc_store.set_metadata(
             file_path="/path/to/file.txt",
             content_hash="hash",
-            chunk_count=5,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -54,7 +53,7 @@ class TestDocumentService:
         assert isinstance(documents[0], DocumentInfo)
         assert documents[0].document_id == doc_id
         assert documents[0].file_path == "/path/to/file.txt"
-        assert documents[0].chunk_count == 5
+        assert not hasattr(documents[0], "chunk_count")
         assert documents[0].node_count == 10
 
     def test_get_system_status(self, storage_backend: StorageBackend) -> None:
@@ -65,7 +64,6 @@ class TestDocumentService:
             ds.set_metadata(
                 file_path=None,
                 content_hash="h",
-                chunk_count=0,
                 embedding_model="text-embedding-3-small",
                 summary_model="gpt-4o-mini",
             )

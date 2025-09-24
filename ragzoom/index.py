@@ -968,8 +968,6 @@ class TreeBuilder:
         doc_version = self.document_store.get_version() or 1
         new_version = doc_version + 1
 
-        old_leaf_count = nodes_repo.leaf_count()
-
         patch, tracking = self._build_append_patch(right_leaf, new_chunks, document_id)
 
         progress, async_progress = self._setup_progress_tracking(
@@ -1075,8 +1073,6 @@ class TreeBuilder:
             (node_id, values[0], values[1]) for node_id, values in neighbor_map.items()
         ]
 
-        new_chunk_count = old_leaf_count + tracking.leaf_delta
-
         try:
             with self.document_store.transaction() as session:
                 for _, nodes_group in groupby(mutated_sorted, key=lambda n: n.height):
@@ -1090,9 +1086,7 @@ class TreeBuilder:
                         neighbor_updates, session=session
                     )
 
-                self.document_store.set_metadata(
-                    chunk_count=new_chunk_count, version=new_version, session=session
-                )
+                self.document_store.set_metadata(version=new_version, session=session)
         except Exception:
             if vectors_written:
                 if rollback_vectors:

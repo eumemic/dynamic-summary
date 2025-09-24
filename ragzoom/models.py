@@ -91,7 +91,6 @@ class Document(Base):
         String, nullable=False
     )  # SHA256 hash of content
     indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

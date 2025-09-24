@@ -201,7 +201,6 @@ class DocumentInfoResponse(BaseModel):  # type: ignore[explicit-any]
     document_id: str
     file_path: str | None
     indexed_at: str
-    chunk_count: int
     node_count: int
 
     @classmethod
@@ -211,7 +210,6 @@ class DocumentInfoResponse(BaseModel):  # type: ignore[explicit-any]
             document_id=doc_info.document_id,
             file_path=doc_info.file_path,
             indexed_at=doc_info.indexed_at.isoformat(),
-            chunk_count=doc_info.chunk_count,
             node_count=doc_info.node_count,
         )
 

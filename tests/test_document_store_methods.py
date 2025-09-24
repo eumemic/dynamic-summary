@@ -23,7 +23,6 @@ class TestDocumentStoreMethods:
         doc_store.set_metadata(
             file_path="test_file.txt",
             content_hash="test-hash",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -46,7 +45,6 @@ class TestDocumentStoreMethods:
         doc_store.set_metadata(
             file_path="test_file.txt",
             content_hash="test-hash",
-            chunk_count=0,
             embedding_model="",
             summary_model="gpt-4o-mini",
         )
@@ -131,7 +129,6 @@ class TestDocumentStoreMethods:
         doc1_store.set_metadata(
             file_path="test1.txt",
             content_hash="test-hash-1",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -139,7 +136,6 @@ class TestDocumentStoreMethods:
         doc2_store.set_metadata(
             file_path="test2.txt",
             content_hash="test-hash-2",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

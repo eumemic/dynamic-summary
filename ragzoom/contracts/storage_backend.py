@@ -22,7 +22,6 @@ class StorageBackend(Protocol):
         document_id: str,
         file_path: str | None,
         content_hash: str,
-        chunk_count: int,
         embedding_model: str,
         summary_model: str,
     ) -> DocumentStore: ...

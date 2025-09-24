@@ -95,7 +95,6 @@ class DocumentRepository(BaseRepository):
         document_id: str,
         file_path: str | None,
         content_hash: str,
-        chunk_count: int,
         embedding_model: str,
         summary_model: str,
         *,
@@ -108,7 +107,6 @@ class DocumentRepository(BaseRepository):
             document_id: Unique identifier for the document
             file_path: Optional path to the source file
             content_hash: SHA256 hash of the document content
-            chunk_count: Number of chunks in the document
             embedding_model: Name of the embedding model used for indexing
             summary_model: Name of the summarization model used
             session: Optional database session for transactional operations
@@ -124,7 +122,6 @@ class DocumentRepository(BaseRepository):
                 id=document_id,
                 file_path=file_path,
                 content_hash=content_hash,
-                chunk_count=chunk_count,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
                 version=version,

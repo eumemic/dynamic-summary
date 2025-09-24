@@ -134,7 +134,6 @@ class PostgresStorageBackend(StorageBackend):
         document_id: str,
         file_path: str | None,
         content_hash: str,
-        chunk_count: int,
         embedding_model: str,
         summary_model: str,
     ) -> DocumentStore:
@@ -142,7 +141,6 @@ class PostgresStorageBackend(StorageBackend):
             document_id,
             file_path,
             content_hash,
-            chunk_count,
             embedding_model,
             summary_model,
             version=1,

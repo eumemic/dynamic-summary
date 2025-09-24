@@ -64,10 +64,6 @@ class IndexingService:
     ) -> IndexingResult:
         doc_store_final = self.store.for_document(document_id)
         leaves = doc_store_final.nodes.get_leaves()
-        try:
-            doc_store_final.set_metadata(chunk_count=len(leaves))
-        except Exception:
-            pass
         root = doc_store_final.tree.get_root()
         tree_height = root.height if root else 0
 
@@ -258,7 +254,6 @@ class IndexingService:
                 document_id=document_id,
                 file_path=file_path,
                 content_hash=content_hash,
-                chunk_count=0,  # Will be updated after indexing
                 embedding_model=self.index_config.embedding_model,
                 summary_model=self.index_config.summary_model,
             )
@@ -336,7 +331,6 @@ class IndexingService:
                     document_id=document_id,
                     file_path=None,
                     content_hash=content_hash,
-                    chunk_count=0,
                     embedding_model=self.index_config.embedding_model,
                     summary_model=self.index_config.summary_model,
                 )

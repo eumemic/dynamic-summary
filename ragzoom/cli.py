@@ -419,7 +419,6 @@ def documents(ctx: click.Context) -> None:
             if doc.file_path:
                 click.echo(f"File: {doc.file_path}")
             click.echo(f"Indexed: {doc.indexed_at}")
-            click.echo(f"Chunks: {doc.chunk_count}")
             click.echo(f"Total nodes: {doc.node_count}")
 
             # Calculate leaf count via DocumentStore

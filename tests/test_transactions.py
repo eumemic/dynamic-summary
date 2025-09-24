@@ -46,7 +46,6 @@ class TestTransactionContext:
             doc_store.set_metadata(
                 file_path="test.txt",
                 content_hash="test-hash",
-                chunk_count=1,
                 embedding_model="text-embedding-3-small",
                 summary_model="gpt-4o-mini",
             )
@@ -77,7 +76,6 @@ class TestTransactionContext:
                 doc_store.set_metadata(
                     file_path="test.txt",
                     content_hash="test-hash",
-                    chunk_count=1,
                     embedding_model="text-embedding-3-small",
                     summary_model="gpt-4o-mini",
                 )
@@ -148,7 +146,6 @@ class TestTransactionContext:
             doc_store.set_metadata(
                 file_path="test.txt",
                 content_hash="test-hash",
-                chunk_count=2,
                 embedding_model="text-embedding-3-small",
                 summary_model="gpt-4o-mini",
             )
@@ -191,7 +188,6 @@ class TestBackwardCompatibility:
         doc_store.set_metadata(
             file_path="test.txt",
             content_hash="test-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -210,7 +206,6 @@ class TestBackwardCompatibility:
         doc_store.set_metadata(
             file_path="test.txt",
             content_hash="test-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -249,7 +244,6 @@ class TestBackwardCompatibility:
         doc_store.set_metadata(
             file_path="test.txt",
             content_hash="test-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -294,7 +288,6 @@ class TestAtomicReindexing:
         doc_store.set_metadata(
             file_path="test.txt",
             content_hash="old-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -360,7 +353,6 @@ class TestAtomicReindexing:
         doc_store.set_metadata(
             file_path="test.txt",
             content_hash="old-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -415,7 +407,6 @@ class TestTransactionSafety:
         doc_store.set_metadata(
             file_path="test.txt",
             content_hash="hash123",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -498,7 +489,6 @@ class TestTransactionSafety:
         doc_store.set_metadata(
             file_path="test.txt",
             content_hash="hash123",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

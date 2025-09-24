@@ -137,7 +137,6 @@ def forest_store(storage_backend: StorageBackend) -> DocumentStore:
     store.set_metadata(
         file_path="forest.txt",
         content_hash="",
-        chunk_count=0,
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
         version=1,

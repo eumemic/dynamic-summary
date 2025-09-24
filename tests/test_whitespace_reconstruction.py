@@ -55,7 +55,6 @@ class TestWhitespaceReconstruction:
         doc_store.set_metadata(
             file_path="whitespace_test.txt",
             content_hash="whitespace-test-hash",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -172,7 +171,6 @@ class TestWhitespaceReconstruction:
         doc_store.set_metadata(
             file_path="indexing_whitespace_test.txt",
             content_hash="indexing-whitespace-test-hash",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -282,7 +280,6 @@ class TestWhitespaceReconstruction:
         doc_store.set_metadata(
             file_path="validation_whitespace_test.txt",
             content_hash="validation-whitespace-test-hash",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -335,7 +332,6 @@ class TestWhitespaceReconstruction:
         doc_store.set_metadata(
             file_path="manual_whitespace_test.txt",
             content_hash="manual-whitespace-test-hash",
-            chunk_count=3,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

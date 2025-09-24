@@ -183,6 +183,14 @@ class DatabaseManager:
                             ALTER TABLE documents
                             ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
                         END IF;
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'documents'
+                            AND column_name = 'chunk_count'
+                        ) THEN
+                            ALTER TABLE documents
+                            DROP COLUMN chunk_count;
+                        END IF;
                     END $$;
                 """
                     )

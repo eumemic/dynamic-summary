@@ -92,7 +92,6 @@ class RagZoom:
             document_id=document_id,
             file_path=None,
             content_hash=content_hash,
-            chunk_count=0,  # Will be updated after indexing
             embedding_model=self.index_config.embedding_model,
             summary_model=self.index_config.summary_model,
         )
@@ -211,7 +210,6 @@ class AsyncRagZoom:
             document_id=document_id,
             file_path=None,
             content_hash=content_hash,
-            chunk_count=0,  # Will be updated after indexing
             embedding_model=self.index_config.embedding_model,
             summary_model=self.index_config.summary_model,
         )

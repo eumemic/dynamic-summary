@@ -46,7 +46,6 @@ async def test_mark_accepted_attempt_is_called(
     doc_store.set_metadata(
         file_path="llm_regression_test.txt",
         content_hash="llm-regression-test-hash",
-        chunk_count=1,
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
     )
@@ -202,7 +201,6 @@ async def test_retry_selection_uses_proper_logic(
     doc_store.set_metadata(
         file_path="llm_retry_test.txt",
         content_hash="llm-retry-test-hash",
-        chunk_count=1,
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
     )
