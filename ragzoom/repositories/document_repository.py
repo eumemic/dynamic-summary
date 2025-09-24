@@ -68,23 +68,6 @@ class DocumentRepository(BaseRepository):
         doc = self.get_document_by_id(document_id)
         return doc.embedding_model if doc else None
 
-    def get_document_version(self, document_id: str) -> int | None:
-        """Get the version counter for a document."""
-
-        with self.SessionLocal() as session:
-            row = (
-                session.query(Document.version)
-                .filter(Document.id == document_id)
-                .first()
-            )
-            if not row:
-                return None
-            version_raw = row[0]
-            try:
-                return int(version_raw)
-            except Exception:
-                return None
-
     def list_documents(self) -> list[Document]:
         """Return all Document rows."""
         with self.SessionLocal() as session:
@@ -94,21 +77,16 @@ class DocumentRepository(BaseRepository):
         self,
         document_id: str,
         file_path: str | None,
-        content_hash: str,
-        chunk_count: int,
         embedding_model: str,
         summary_model: str,
         *,
         session: Optional["Session"] = None,
-        version: int = 1,
     ) -> Document:
         """Add a document record.
 
         Args:
             document_id: Unique identifier for the document
             file_path: Optional path to the source file
-            content_hash: SHA256 hash of the document content
-            chunk_count: Number of chunks in the document
             embedding_model: Name of the embedding model used for indexing
             summary_model: Name of the summarization model used
             session: Optional database session for transactional operations
@@ -123,11 +101,8 @@ class DocumentRepository(BaseRepository):
             doc = Document(
                 id=document_id,
                 file_path=file_path,
-                content_hash=content_hash,
-                chunk_count=chunk_count,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
-                version=version,
             )
             db_session.add(doc)
             return doc

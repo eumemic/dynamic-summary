@@ -48,7 +48,6 @@ The system is composed of several key modules that work together.
     - SQLiteStorageBackend (default for development) stores nodes in `data/sqlite.db` and vectors in a local index (Chroma in `data/chroma/` or a pure‑Python index).
     - PostgresStorageBackend (for production/perf) uses PostgreSQL with pgvector for embeddings via repositories and a `DatabaseManager`.
     - All application code creates a per‑document `DocumentStore` via `store.for_document(doc_id)` to enforce strict document isolation.
-    - Document stores maintain a monotonically increasing `documents.version` that is propagated to vector backends so retrieval always targets a consistent snapshot.
 
 -   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent node or recurse into children for higher detail. Budget is split proportionally based on relevance scores. 
 

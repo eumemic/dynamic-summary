@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `--document-id` parameter added to `clear` command for targeted deletion
   - `--clear` flag added to `index` command for atomic re-indexing
   - API endpoints updated to require `document_id` in query requests
-  - Document metadata tracked: file path, index timestamp, chunk count
+  - Document metadata tracked: file path, index timestamp
 
 ### Changed
 - **BREAKING**: Replaced SQLite + ChromaDB with PostgreSQL + pgvector (requires re-indexing)

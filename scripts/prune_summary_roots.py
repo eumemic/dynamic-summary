@@ -284,14 +284,6 @@ def main() -> None:
             break
         removed.append(removed_id)
 
-    if not args.dry_run and removed:
-        current_version = doc_store.get_version() or 1
-        try:
-            doc_store.set_metadata(version=current_version + 1)
-            LOGGER.info("Bumped document version to %d", current_version + 1)
-        except Exception as exc:
-            LOGGER.warning("Failed to bump document version: %s", exc)
-
     if args.dry_run:
         LOGGER.info("Dry run complete. %d root(s) would be removed.", args.count)
     else:

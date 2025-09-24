@@ -70,8 +70,6 @@ async def test_retry_maintains_conversation_history(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
-        chunk_count=0,
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
@@ -183,8 +181,6 @@ async def test_retry_preserves_original_context(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
-        chunk_count=0,
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
@@ -267,8 +263,6 @@ async def test_multiple_retries_build_conversation(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
-        chunk_count=0,
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
@@ -345,8 +339,6 @@ async def test_no_retry_when_within_threshold(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
-        chunk_count=0,
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
@@ -399,8 +391,6 @@ async def test_accept_retry_within_threshold_immediately(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
-        chunk_count=0,
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )
@@ -463,8 +453,6 @@ async def test_passthrough_for_text_under_target(
     doc_store = storage_backend.for_document("doc-id")
     doc_store.set_metadata(
         file_path="test.txt",
-        content_hash="test-hash",
-        chunk_count=0,
         embedding_model=config.embedding_model,
         summary_model=config.summary_model,
     )

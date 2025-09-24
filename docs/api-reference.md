@@ -256,7 +256,6 @@ List all documents.
       "document_id": "my-doc",
       "file_path": "reports/2024.txt",
       "indexed_at": "2025-01-15T10:30:00Z",
-      "chunk_count": 64,
       "node_count": 127
     }
   ]

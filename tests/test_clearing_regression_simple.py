@@ -24,8 +24,6 @@ def test_index_document_always_clears(storage_backend: StorageBackend) -> None:
     doc_store = storage_backend.for_document(doc_id)
     doc_store.set_metadata(
         file_path=None,
-        content_hash="pre-hash",
-        chunk_count=0,
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
     )

@@ -142,7 +142,6 @@ class TestCLI:
                 document_id="doc-123",
                 file_path="/path/to/file.txt",
                 indexed_at=datetime(2023, 1, 1),
-                chunk_count=5,
                 node_count=15,
             )
             document_service_instance.list_documents.return_value = [mock_document]
@@ -425,7 +424,6 @@ class TestCLI:
             document_id="doc-123",
             file_path="/path/to/file.txt",
             indexed_at=datetime.now(),
-            chunk_count=10,
             node_count=15,
         )
 
@@ -439,7 +437,8 @@ class TestCLI:
             assert result.exit_code == 0
             assert "Document ID: doc-123" in result.output
             assert "File: /path/to/file.txt" in result.output
-            assert "Chunks: 10" in result.output
+            assert "Total nodes: 15" in result.output
+            assert "Leaf nodes: 5" in result.output
 
     def test_missing_api_key(self, runner: CliRunner) -> None:
         """Test commands fail without API key."""

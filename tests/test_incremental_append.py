@@ -34,11 +34,8 @@ def _make_tree_builder(
     doc_store = storage_backend.for_document(doc_id)
     doc_store.set_metadata(
         file_path=f"{doc_id}.txt",
-        content_hash="",
-        chunk_count=0,
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
-        version=1,
     )
 
     vector_index = create_vector_index(
@@ -246,8 +243,6 @@ class TestIncrementalAppend:
         full_doc = _reconstruct_document(full_store)
         incremental_doc = _reconstruct_document(incremental_store)
         assert incremental_doc == full_doc == full_text
-
-        assert incremental_store.get_version() == 1 + (len(segments) - 1)
 
     @pytest.mark.slow_threshold(60.0)
     def test_append_height_matches_full_build(
@@ -459,7 +454,6 @@ class TestIncrementalAppend:
 
         assert incremental_snapshot() == full_snapshot()
         assert _reconstruct_document(incremental_builder.document_store) == full_text
-        assert incremental_builder.document_store.get_version() == 2
 
     def test_small_append_fast_path_preserves_leaf(
         self,
@@ -492,8 +486,6 @@ class TestIncrementalAppend:
         leaves_after = builder.document_store.nodes.get_leaves()
         assert len(leaves_after) == 1
         assert leaves_after[0].id == leaf_id
-        assert builder.document_store.get_version() == 2
-
         reconstructed = _reconstruct_document(builder.document_store)
         assert reconstructed == initial_text + " General Kenobi!"
 
@@ -572,9 +564,7 @@ class TestIncrementalAppend:
 
         reporter.record_append_metadata.assert_called_once()
         metadata_kwargs = reporter.record_append_metadata.call_args.kwargs
-        assert (
-            metadata_kwargs["document_version"] == builder.document_store.get_version()
-        )
+        assert "document_version" not in metadata_kwargs
 
         expected_start = int(right_leaf.span_start)
         expected_end = expected_start + len((right_leaf.text or "") + extra)
@@ -612,8 +602,7 @@ class TestIncrementalAppend:
         with pytest.raises(RuntimeError, match="boom"):
             asyncio.run(builder.append_text_async(" will fail", show_progress=False))
 
-        # Ensure version unchanged and content intact
-        assert builder.document_store.get_version() == 1
+        # Ensure content intact
         assert _reconstruct_document(builder.document_store) == initial
 
     def test_append_rollback_on_sql_failure(
@@ -660,7 +649,6 @@ class TestIncrementalAppend:
                 original_upsert,
             )
 
-        assert builder.document_store.get_version() == 1
         assert _reconstruct_document(builder.document_store) == initial
 
         leaves_after_failure = builder.document_store.nodes.get_leaves()
@@ -697,5 +685,3 @@ class TestAppendValidation:
             asyncio.run(builder.append_text_async(" appended", show_progress=False))
         finally:
             set_validation_enabled(False)
-
-        assert builder.document_store.get_version() == 2
