@@ -496,7 +496,6 @@ class SqliteDocumentRepository:
         summary_model: str,
         *,
         session: Session | None = None,
-        version: int = 1,
     ) -> None:
         own_session = False
         if session is None:
@@ -509,7 +508,6 @@ class SqliteDocumentRepository:
                 content_hash=content_hash,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
-                version=version,
             )
             session.add(doc)
             if own_session:
@@ -577,21 +575,6 @@ class SqliteDocumentRepository:
 
     def get_document_embedding_model(self, document_id: str) -> str | None:
         return self.db.get_document_embedding_model(document_id)
-
-    def get_document_version(self, document_id: str) -> int | None:
-        with self.SessionLocal() as session:
-            row = (
-                session.execute(
-                    select(SqliteDocument.version).where(
-                        SqliteDocument.id == document_id
-                    )
-                )
-                .scalars()
-                .first()
-            )
-            if row is None:
-                return None
-            return int(row)
 
     def list_documents(self) -> list[SqliteDocument]:
         with self.SessionLocal() as session:

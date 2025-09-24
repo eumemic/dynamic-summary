@@ -149,7 +149,6 @@ class SQLiteStorageBackend(StorageBackend):
             content_hash,
             embedding_model,
             summary_model,
-            version=1,
         )
         return self.for_document(document_id)
 

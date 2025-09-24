@@ -139,7 +139,6 @@ def forest_store(storage_backend: StorageBackend) -> DocumentStore:
         content_hash="",
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
-        version=1,
     )
     return store
 

@@ -965,9 +965,6 @@ class TreeBuilder:
             "append chunk size validation",
         )
 
-        doc_version = self.document_store.get_version() or 1
-        new_version = doc_version + 1
-
         patch, tracking = self._build_append_patch(right_leaf, new_chunks, document_id)
 
         progress, async_progress = self._setup_progress_tracking(
@@ -1086,7 +1083,6 @@ class TreeBuilder:
                         neighbor_updates, session=session
                     )
 
-                self.document_store.set_metadata(version=new_version, session=session)
         except Exception:
             if vectors_written:
                 if rollback_vectors:
@@ -1124,10 +1120,8 @@ class TreeBuilder:
         self.document_store.set_metadata(content_hash=new_hash)
 
         logger.debug(
-            "Append stats doc=%s version=%d->%d mutated=%d new_leaves=%d resummarized=%d",
+            "Append stats doc=%s mutated=%d new_leaves=%d resummarized=%d",
             document_id,
-            doc_version,
-            new_version,
             len(tracking.mutable_node_ids),
             max(tracking.leaf_delta, 0),
             len(tracking.summary_node_ids),
@@ -1146,7 +1140,6 @@ class TreeBuilder:
         telemetry_payload: TelemetryDataDict | None = None
         if reporter:
             reporter.record_append_metadata(
-                document_version=new_version,
                 span_start=tracking.tail_start,
                 span_end=tracking.tail_start + len(tracking.tail_text),
                 mutated_nodes=len(tracking.mutable_node_ids),

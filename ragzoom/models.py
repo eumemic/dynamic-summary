@@ -93,4 +93,3 @@ class Document(Base):
     indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

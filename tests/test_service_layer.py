@@ -159,12 +159,12 @@ class TestIndexingService:
             assert result.tree_depth >= 0
             assert result.telemetry is None
 
-    def test_append_requires_schema_version(
+    def test_append_handles_missing_version_metadata(
         self,
         storage_backend: StorageBackend,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Ensure append fails cleanly when schema is missing version column."""
+        """Ensure append proceeds even when documents have no version metadata."""
 
         index_config = IndexConfig.load()
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
@@ -199,7 +199,6 @@ class TestIndexingService:
 
             doc = service.store.get_document_by_id("doc-append")
             assert doc is not None
-            doc.version = None  # type: ignore[assignment]
 
             monkeypatch.setattr(
                 service.store,
@@ -214,8 +213,7 @@ class TestIndexingService:
                     show_progress=False,
                 )
 
-            with pytest.raises(RuntimeError, match="documents.version"):
-                asyncio.run(attempt())
+            asyncio.run(attempt())
 
     def test_append_creates_document_when_missing(
         self,
@@ -264,7 +262,7 @@ class TestIndexingService:
 
             doc = service.store.get_document_by_id("doc-new")
             assert doc is not None
-            assert getattr(doc, "version", None) == 1
+            assert not hasattr(doc, "version")
 
             doc_store = service.store.for_document("doc-new")
             leaves = doc_store.nodes.get_leaves()
@@ -280,7 +278,7 @@ class TestIndexingService:
 
             asyncio.run(do_second_append())
             doc_after = service.store.get_document_by_id("doc-new")
-            assert getattr(doc_after, "version", None) == 2
+            assert not hasattr(doc_after, "version")
 
 
 class TestQueryService:

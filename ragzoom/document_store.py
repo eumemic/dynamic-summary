@@ -484,26 +484,6 @@ class DocumentStore:
         with self._open_session() as session:
             return session.query(Document).filter_by(id=self.document_id).first()
 
-    def get_version(self) -> int | None:
-        """Return the version counter for this document."""
-
-        if not self.document_id:
-            return None
-
-        getter = getattr(self._doc_repo, "get_document_version", None)
-        if callable(getter):
-            version = getter(self.document_id)
-            if version is not None:
-                return int(version)
-
-        doc = self.get_metadata()
-        if doc is None:
-            return None
-        try:
-            return int(getattr(doc, "version", 1))
-        except Exception:
-            return 1
-
     # jscpd:ignore-start - Signature mirrors repository APIs for session support
     def set_metadata(
         self,
@@ -511,7 +491,6 @@ class DocumentStore:
         content_hash: str | None = None,
         embedding_model: str | None = None,
         summary_model: str | None = None,
-        version: int | None = None,
         *,
         session: Session | None = None,
     ) -> None:
@@ -540,8 +519,6 @@ class DocumentStore:
                     doc.embedding_model = embedding_model
                 if summary_model is not None:
                     doc.summary_model = summary_model
-                if version is not None:
-                    doc.version = version
             else:
                 doc = Document(
                     id=self.document_id,
@@ -549,7 +526,6 @@ class DocumentStore:
                     content_hash=content_hash,
                     embedding_model=embedding_model,
                     summary_model=summary_model,
-                    version=version or 1,
                 )
                 session_obj.add(doc)
 

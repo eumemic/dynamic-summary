@@ -143,7 +143,6 @@ class PostgresStorageBackend(StorageBackend):
             content_hash,
             embedding_model,
             summary_model,
-            version=1,
         )
         # jscpd:ignore-end
         return self.for_document(document_id)

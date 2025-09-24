@@ -334,12 +334,6 @@ class IndexingService:
                     embedding_model=self.index_config.embedding_model,
                     summary_model=self.index_config.summary_model,
                 )
-            else:
-                if getattr(doc_record, "version", None) is None:
-                    raise RuntimeError(
-                        "Incremental append requires documents.version to be present. "
-                        "Run storage migrations before enabling incremental append."
-                    )
 
             tree_builder = self._create_tree_builder(document_id)
 
