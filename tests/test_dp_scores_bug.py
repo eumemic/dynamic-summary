@@ -26,8 +26,6 @@ class TestDPScoresBug:
         doc_store = storage_backend.for_document("doc-id")
         doc_store.set_metadata(
             file_path="dp_scores_test.txt",
-            content_hash="dp-scores-test-hash",
-            chunk_count=7,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -186,8 +184,6 @@ class TestDPScoresBug:
         doc_store = storage_backend.for_document("doc-id")
         doc_store.set_metadata(
             file_path="retrieval_bug_test.txt",
-            content_hash="retrieval-bug-test-hash",
-            chunk_count=3,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

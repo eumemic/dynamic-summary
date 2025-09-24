@@ -18,7 +18,6 @@ class DocumentInfo:
     document_id: str
     file_path: str | None
     indexed_at: datetime
-    chunk_count: int
     node_count: int
 
 
@@ -58,7 +57,6 @@ class DocumentService:
                     document_id=doc.id,
                     file_path=doc.file_path,
                     indexed_at=doc.indexed_at,
-                    chunk_count=doc.chunk_count,
                     node_count=node_count,
                 )
             )

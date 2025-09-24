@@ -294,7 +294,6 @@ class TelemetryCollector:
     def record_append_metadata(
         self,
         *,
-        document_version: int,
         span_start: int,
         span_end: int,
         mutated_nodes: int,
@@ -305,7 +304,6 @@ class TelemetryCollector:
 
         self.append_metadata = {
             "scope": "append",
-            "document_version": int(document_version),
             "span_start": int(span_start),
             "span_end": int(span_end),
             "mutated_nodes": int(mutated_nodes),

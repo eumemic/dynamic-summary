@@ -24,8 +24,6 @@ class TestZeroScoreCollapse:
         # Set up document metadata
         doc_store.set_metadata(
             file_path="zero_score_test.txt",
-            content_hash="zero-score-test-hash",
-            chunk_count=5,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

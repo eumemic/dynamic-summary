@@ -1,6 +1,5 @@
 """Document-scoped store that prevents cross-document contamination."""
 
-import hashlib
 import logging
 from collections.abc import Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager
@@ -425,11 +424,6 @@ class DocumentStore:
                 filtered.append(node)
         return filtered
 
-    @staticmethod
-    def compute_content_hash(content: str) -> str:
-        """Compute SHA256 hash of content."""
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
     def update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference and invalidate cache.
 
@@ -484,35 +478,12 @@ class DocumentStore:
         with self._open_session() as session:
             return session.query(Document).filter_by(id=self.document_id).first()
 
-    def get_version(self) -> int | None:
-        """Return the version counter for this document."""
-
-        if not self.document_id:
-            return None
-
-        getter = getattr(self._doc_repo, "get_document_version", None)
-        if callable(getter):
-            version = getter(self.document_id)
-            if version is not None:
-                return int(version)
-
-        doc = self.get_metadata()
-        if doc is None:
-            return None
-        try:
-            return int(getattr(doc, "version", 1))
-        except Exception:
-            return 1
-
     # jscpd:ignore-start - Signature mirrors repository APIs for session support
     def set_metadata(
         self,
         file_path: str | None = None,
-        content_hash: str | None = None,
-        chunk_count: int = 0,
         embedding_model: str | None = None,
         summary_model: str | None = None,
-        version: int | None = None,
         *,
         session: Session | None = None,
     ) -> None:
@@ -520,8 +491,6 @@ class DocumentStore:
 
         Args:
             file_path: Optional file path
-            content_hash: Optional content hash
-            chunk_count: Number of chunks/leaf nodes
             embedding_model: Model used for embeddings
             summary_model: Model used for summaries
         """
@@ -536,25 +505,16 @@ class DocumentStore:
             if doc:
                 if file_path is not None:
                     doc.file_path = file_path
-                if content_hash is not None:
-                    doc.content_hash = content_hash
-                if chunk_count > 0:
-                    doc.chunk_count = chunk_count
                 if embedding_model is not None:
                     doc.embedding_model = embedding_model
                 if summary_model is not None:
                     doc.summary_model = summary_model
-                if version is not None:
-                    doc.version = version
             else:
                 doc = Document(
                     id=self.document_id,
                     file_path=file_path,
-                    content_hash=content_hash,
-                    chunk_count=chunk_count,
                     embedding_model=embedding_model,
                     summary_model=summary_model,
-                    version=version or 1,
                 )
                 session_obj.add(doc)
 

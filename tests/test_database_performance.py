@@ -141,8 +141,6 @@ class TestDatabaseScalability:
         # Set up document metadata first
         doc_store.set_metadata(
             file_path="small_deletion_test.txt",
-            content_hash="small-deletion-test-hash",
-            chunk_count=expected_count,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -178,8 +176,6 @@ class TestDatabaseScalability:
         # Set up document metadata first
         doc_store.set_metadata(
             file_path="small_performance_test.txt",
-            content_hash="small-perf-test-hash",
-            chunk_count=expected_count,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -221,8 +217,6 @@ class TestDatabaseScalability:
         # Set up document metadata first
         doc_store.set_metadata(
             file_path="small_paginated_test.txt",
-            content_hash="small-paginated-test-hash",
-            chunk_count=expected_count,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -273,8 +267,6 @@ class TestDatabaseScalability:
         # Set up document metadata
         doc_store.set_metadata(
             file_path="boundary_test.txt",
-            content_hash="boundary-test-hash",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -349,8 +341,6 @@ class TestMemoryEfficiency:
         # Set up document metadata
         doc_store.set_metadata(
             file_path="memory_test.txt",
-            content_hash="memory-test-hash",
-            chunk_count=num_nodes,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -407,8 +397,6 @@ class TestRegressionPrevention:
         # Set up document metadata
         doc_store.set_metadata(
             file_path="cache_test.txt",
-            content_hash="cache-test-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -450,8 +438,6 @@ class TestRegressionPrevention:
         # Set up document metadata
         doc_store.set_metadata(
             file_path="transaction_test.txt",
-            content_hash="transaction-test-hash",
-            chunk_count=5,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

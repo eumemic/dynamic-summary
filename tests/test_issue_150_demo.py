@@ -30,8 +30,6 @@ class TestIssue150Demonstration:
         # Create initial document record
         doc_store.set_metadata(
             file_path="demo.txt",
-            content_hash="old-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -61,8 +59,6 @@ class TestIssue150Demonstration:
         new_doc_data: dict[str, str | int] = {
             "document_id": doc_id,
             "file_path": "demo.txt",
-            "content_hash": "new-hash",
-            "chunk_count": 1,
             "embedding_model": "text-embedding-3-small",
             "summary_model": "gpt-4o-mini",
         }
@@ -93,8 +89,6 @@ class TestIssue150Demonstration:
             # In a real scenario, this would be update_document()
             doc_store.set_metadata(
                 file_path=str(new_doc_data["file_path"]),
-                content_hash=str(new_doc_data["content_hash"]),
-                chunk_count=int(new_doc_data["chunk_count"]),
                 embedding_model=str(new_doc_data["embedding_model"]),
                 summary_model=str(new_doc_data["summary_model"]),
             )
@@ -110,7 +104,7 @@ class TestIssue150Demonstration:
         # Verify final state: atomic replacement succeeded
         final_doc = doc_store.get_metadata()
         assert final_doc is not None
-        assert final_doc.content_hash == "new-hash"  # Document updated
+        assert not hasattr(final_doc, "content_hash")
 
         assert doc_store.nodes.get_node("old-node") is None  # Old node deleted
         assert doc_store.nodes.get_node("new-node") is not None  # New node added
@@ -125,8 +119,6 @@ class TestIssue150Demonstration:
         doc_store = storage_backend.for_document("backward-compat-doc")
         doc_store.set_metadata(
             file_path="test.txt",
-            content_hash="test-hash",
-            chunk_count=1,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
