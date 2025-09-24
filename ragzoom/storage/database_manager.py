@@ -169,19 +169,35 @@ class DatabaseManager:
                     )
                 )
 
-                # Ensure documents.version exists for incremental append metadata
+                # Drop legacy document metadata columns no longer used
                 conn.execute(
                     text(
                         """
                     DO $$
                     BEGIN
-                        IF NOT EXISTS (
+                        IF EXISTS (
                             SELECT 1 FROM information_schema.columns
                             WHERE table_name = 'documents'
                             AND column_name = 'version'
                         ) THEN
                             ALTER TABLE documents
-                            ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+                            DROP COLUMN version;
+                        END IF;
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'documents'
+                            AND column_name = 'content_hash'
+                        ) THEN
+                            ALTER TABLE documents
+                            DROP COLUMN content_hash;
+                        END IF;
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'documents'
+                            AND column_name = 'chunk_count'
+                        ) THEN
+                            ALTER TABLE documents
+                            DROP COLUMN chunk_count;
                         END IF;
                     END $$;
                 """

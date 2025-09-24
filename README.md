@@ -25,8 +25,7 @@ run still clears the document and writes version 1, but the work happens through
 same patch engine that powers append-only updates. Before using it, make sure the
 storage migrations have introduced the required columns:
 
-- PostgreSQL: migrations run automatically on startup; confirm `documents.version`
-  exists.
+- PostgreSQL: migrations run automatically on startup.
 - SQLite: the bundled migrations add the same columns on first access.
 
 `IndexingService.append_to_document(...)` and the CLI `ragzoom index --append` path reuse

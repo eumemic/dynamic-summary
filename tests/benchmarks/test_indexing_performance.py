@@ -70,8 +70,6 @@ def test_indexing_performance(
     doc_store = storage_backend.add_document(
         document_id="indexing_perf_test",
         file_path="indexing_perf_test.txt",
-        content_hash="indexing-perf-hash",
-        chunk_count=0,
         embedding_model=index_config.embedding_model,
         summary_model=index_config.summary_model,
     )

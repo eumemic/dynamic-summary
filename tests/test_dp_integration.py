@@ -91,8 +91,6 @@ class TestDPIntegration:
         doc_store = storage_backend.for_document("doc1")
         doc_store.set_metadata(
             file_path="dp_integration_test.txt",
-            content_hash="test-hash",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -166,8 +164,6 @@ class TestDPIntegration:
         doc_store = storage_backend.for_document("doc1")
         doc_store.set_metadata(
             file_path="dp_integration_test.txt",
-            content_hash="test-hash",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -241,8 +237,6 @@ class TestDPIntegration:
         doc_store = storage_backend.for_document("doc1")
         doc_store.set_metadata(
             file_path="dp_integration_test.txt",
-            content_hash="test-hash",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
@@ -308,8 +302,6 @@ class TestDPIntegration:
         doc_store = storage_backend.for_document("doc1")
         doc_store.set_metadata(
             file_path="dp_integration_test.txt",
-            content_hash="test-hash",
-            chunk_count=0,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )

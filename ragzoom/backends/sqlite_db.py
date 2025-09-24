@@ -76,14 +76,11 @@ class SqliteDocument(SqliteBase):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     file_path: Mapped[str | None] = mapped_column(String, nullable=True)
-    content_hash: Mapped[str] = mapped_column(String, nullable=False)
     indexed_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=dt.datetime.utcnow
     )
-    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 @dataclass
@@ -116,11 +113,24 @@ class SqliteDatabaseManager:
         SqliteBase.metadata.create_all(self.engine)
         try:
             with self.engine.begin() as conn:
-                conn.exec_driver_sql(
-                    "ALTER TABLE documents ADD COLUMN version INTEGER DEFAULT 1"
-                )
+                try:
+                    conn.exec_driver_sql("ALTER TABLE documents DROP COLUMN version")
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE documents DROP COLUMN content_hash"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE documents DROP COLUMN chunk_count"
+                    )
+                except Exception:
+                    pass
         except Exception:
-            # Column already exists or table newly created; ignore
+            # Columns already dropped or table newly created; ignore
             pass
         self.SessionLocal = sessionmaker(bind=self.engine)
 
