@@ -19,8 +19,12 @@ TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 
 # Global variable to track created database for cleanup
 CREATED_DB_NAME=""
+OWN_SERVER_PID=""
+OWN_SERVER_HOST=""
+OWN_SERVER_PORT=""
+STARTED_SERVER=false
 
-# Cleanup function for error handling
+# Cleanup helpers
 cleanup_benchmark_db() {
     # Only clean up if we explicitly created a database and it's still marked for cleanup
     if [ -n "$CREATED_DB_NAME" ] && [ "$CREATED_DB_NAME" != "" ]; then
@@ -41,8 +45,81 @@ except Exception as e:
     fi
 }
 
+stop_grpc_server() {
+    if [ "$STARTED_SERVER" = true ] && [ -n "$OWN_SERVER_PID" ]; then
+        echo "🛑 Stopping RagZoom gRPC server (pid: $OWN_SERVER_PID)"
+        kill "$OWN_SERVER_PID" >/dev/null 2>&1 || true
+        wait "$OWN_SERVER_PID" >/dev/null 2>&1 || true
+        OWN_SERVER_PID=""
+        STARTED_SERVER=false
+    fi
+}
+
+ensure_server_running() {
+    python - "$1" "$2" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+
+try:
+    with socket.create_connection((host, port), timeout=0.5):
+        sys.exit(0)
+except OSError:
+    sys.exit(1)
+PY
+}
+
+wait_for_server() {
+    local host="$1"
+    local port="$2"
+    local timeout="${3:-30}"
+    local elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if ensure_server_running "$host" "$port"; then
+            return 0
+        fi
+        sleep 0.5
+        elapsed=$((elapsed + 1))
+    done
+    return 1
+}
+
+start_grpc_server() {
+    local host="$1"
+    local port="$2"
+    local log_file="$3"
+
+    if ensure_server_running "$host" "$port"; then
+        echo "🔌 Reusing existing RagZoom gRPC server at $host:$port"
+        STARTED_SERVER=false
+        return 0
+    fi
+
+    echo "🚀 Starting RagZoom gRPC server on $host:$port (log: $log_file)"
+    python -m ragzoom.cli server start --host "$host" --port "$port" \
+        >"$log_file" 2>&1 &
+    OWN_SERVER_PID=$!
+    STARTED_SERVER=true
+
+    if ! wait_for_server "$host" "$port" 60; then
+        echo "❌ Failed to start RagZoom gRPC server (see $log_file for details)"
+        stop_grpc_server
+        return 1
+    fi
+
+    echo "✅ RagZoom gRPC server is ready"
+    return 0
+}
+
+cleanup_all() {
+    cleanup_benchmark_db
+    stop_grpc_server
+}
+
 # Set trap for cleanup on exit
-trap cleanup_benchmark_db EXIT INT TERM
+trap cleanup_all EXIT INT TERM
 
 # Check required dependencies
 check_dependencies() {
@@ -385,6 +462,21 @@ else
     echo ""
 fi
 
+# Determine gRPC server configuration (start unless explicitly disabled)
+SERVER_HOST="${RAGZOOM_SERVER_HOST:-127.0.0.1}"
+SERVER_PORT="${RAGZOOM_SERVER_PORT:-50051}"
+if [ "${RAGZOOM_START_GRPC_SERVER:-1}" != "0" ]; then
+    mkdir -p "$OUTPUT_DIR"
+    SERVER_LOG_FILE="$OUTPUT_DIR/server.log"
+    if ! start_grpc_server "$SERVER_HOST" "$SERVER_PORT" "$SERVER_LOG_FILE"; then
+        exit 1
+    fi
+    OWN_SERVER_HOST="$SERVER_HOST"
+    OWN_SERVER_PORT="$SERVER_PORT"
+else
+    echo "⚙️  RAGZOOM_START_GRPC_SERVER=0 – assuming server already running at $SERVER_HOST:$SERVER_PORT"
+fi
+
 # Run indexing with telemetry
 # Implicitly adds: --telemetry <file> --validate --debug --no-progress
 echo "📝 Running indexing with telemetry..."
@@ -424,6 +516,8 @@ if [ -z "${RAGZOOM_VECTOR_BACKEND:-}" ]; then
         RUN_ENV+=(RAGZOOM_VECTOR_BACKEND="python")
     fi
 fi
+
+RUN_ENV+=(RAGZOOM_SERVER_ADDRESS="${SERVER_HOST}:${SERVER_PORT}")
 
 env "${RUN_ENV[@]}" python -m ragzoom.cli index "${INDEX_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
 
