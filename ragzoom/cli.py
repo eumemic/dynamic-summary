@@ -10,7 +10,7 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
-from ragzoom.client import GrpcRagzoomClient
+from ragzoom.client import GrpcRagzoomClient, WorkerRunSnapshot
 from ragzoom.config import (
     IndexConfig,
     OperationalConfig,
@@ -67,6 +67,26 @@ def _resolve_server_address(value: str | None) -> str:
     if env_value:
         return env_value
     return DEFAULT_GRPC_ADDRESS
+
+
+def _display_worker_snapshots(snapshots: list[WorkerRunSnapshot]) -> None:
+    if not snapshots:
+        return
+
+    for snapshot in snapshots:
+        if snapshot.documents:
+            details = ", ".join(
+                f"{doc_id}(pending={pending}, inflight={inflight})"
+                for doc_id, (pending, inflight) in sorted(snapshot.documents.items())
+            )
+            suffix = f" [{details}]"
+        else:
+            suffix = ""
+
+        click.echo(snapshot.message)
+        click.echo(
+            f"   Workers: queue={snapshot.queue_depth}, inflight={snapshot.inflight}{suffix}"
+        )
 
 
 def handle_cli_error(e: Exception, operation: str) -> None:
@@ -323,6 +343,7 @@ def index(
                     content=content_bytes,
                     collect_telemetry=bool(telemetry_file),
                 )
+                _display_worker_snapshots(client.run_workers_once())
             success_message = "✅ Document appended successfully!"
         else:
             click.echo(f"Indexing {Path(file_path).name}...")
@@ -335,6 +356,7 @@ def index(
                     content=content_bytes,
                     collect_telemetry=bool(telemetry_file),
                 )
+                _display_worker_snapshots(client.run_workers_once())
             document_id = target_document_id
             success_message = "✅ Document indexed successfully!"
 
