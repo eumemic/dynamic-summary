@@ -274,6 +274,11 @@ class LLMService:
 
         return results
 
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Public wrapper to obtain embeddings for a batch of texts."""
+
+        return await self._get_embeddings_batch(texts)
+
     async def _make_summary_call(  # jscpd:ignore-start
         self,
         messages: summary_utils.SummaryMessages,

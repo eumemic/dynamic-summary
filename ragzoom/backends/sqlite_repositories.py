@@ -481,6 +481,30 @@ class SqliteNodeRepository:
                 session.add(row)
                 session.commit()
 
+    def delete_nodes(
+        self,
+        node_ids: Sequence[str],
+        *,
+        session: Session | None = None,
+    ) -> None:
+        if not node_ids:
+            return
+        own_session = False
+        if session is None:
+            session = self.SessionLocal()
+            own_session = True
+        try:
+            session.execute(
+                delete(SQLiteTreeNode).where(SQLiteTreeNode.id.in_(node_ids))
+            )
+            if own_session:
+                session.commit()
+            for node_id in node_ids:
+                self.cache_manager.invalidate(node_id)
+        finally:
+            if own_session:
+                session.close()
+
 
 class SqliteDocumentRepository:
     def __init__(self, db: SqliteDatabaseManager):

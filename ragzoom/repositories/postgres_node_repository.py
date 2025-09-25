@@ -1,12 +1,15 @@
 """Repository for PostgresTreeNode CRUD operations using PostgreSQL with pgvector."""
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import numpy as np
 from numpy.typing import NDArray
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, text, update
 
 from ragzoom.contracts.tree_node import TreeNode
@@ -61,9 +64,7 @@ class PostgresNodeRepository(BaseRepository):
         self.cache_manager = cache_manager
         self.SessionLocal = database_manager.SessionLocal
 
-    def _force_load_and_detach(
-        self, session: "Session", node: PostgresTreeNode
-    ) -> None:
+    def _force_load_and_detach(self, session: Session, node: PostgresTreeNode) -> None:
         """Force load all attributes and detach node from session."""
         # Force load all attributes before detaching
         _ = (
@@ -153,7 +154,7 @@ class PostgresNodeRepository(BaseRepository):
         self,
         nodes_data: list[dict[str, object]],
         *,
-        session: Optional["Session"] = None,
+        session: Session | None = None,
     ) -> list[TreeNode]:
         """Add multiple nodes to the database in batch.
 
@@ -223,7 +224,7 @@ class PostgresNodeRepository(BaseRepository):
         self,
         nodes_data: list[dict[str, object]],
         *,
-        session: Optional["Session"] = None,
+        session: Session | None = None,
     ) -> list[TreeNode]:
         if not nodes_data:
             return []
@@ -314,7 +315,7 @@ class PostgresNodeRepository(BaseRepository):
         self,
         updates: Sequence[tuple[str, str | None]],
         *,
-        session: Optional["Session"] = None,
+        session: Session | None = None,
     ) -> None:
         """Update parent references for multiple nodes in batch.
 
@@ -342,7 +343,7 @@ class PostgresNodeRepository(BaseRepository):
         self,
         updates: list[tuple[str, str | None, str | None]],
         *,
-        session: Optional["Session"] = None,
+        session: Session | None = None,
     ) -> None:
         if not updates:
             return
@@ -479,6 +480,28 @@ class PostgresNodeRepository(BaseRepository):
                 if cached:
                     cached.last_accessed = node.last_accessed
                     cached.access_count = node.access_count
+
+    def delete_nodes(
+        self,
+        node_ids: Sequence[str],
+        *,
+        session: Session | None = None,
+    ) -> None:
+        if not node_ids:
+            return
+
+        db_session, should_commit = self._get_session(session)
+        try:
+            db_session.execute(
+                sa_delete(PostgresTreeNode).where(PostgresTreeNode.id.in_(node_ids))
+            )
+            if should_commit:
+                db_session.commit()
+            for node_id in node_ids:
+                self.cache_manager.invalidate(node_id)
+        finally:
+            if should_commit:
+                db_session.close()
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         """Get all pinned nodes up to optional max depth.

@@ -95,3 +95,10 @@ class NodeRepository(Protocol):
         self, document_id: str | None
     ) -> TreeNode | None: ...
     def pin_node(self, node_id: str) -> None: ...
+
+    def delete_nodes(
+        self,
+        node_ids: Sequence[str],
+        *,
+        session: Session | None = None,
+    ) -> None: ...

@@ -103,6 +103,31 @@ class DocumentNodeRepository:
             raise NotImplementedError("Underlying repository does not support upsert")
         return cast(list[TreeNode], upserts(processed, session=session))
 
+    def delete_nodes(
+        self,
+        node_ids: Sequence[str],
+        *,
+        session: Session | None = None,
+    ) -> None:
+        """Delete a set of nodes while enforcing document scope."""
+
+        deleter = getattr(self._repo, "delete_nodes", None)
+        if not callable(deleter):
+            raise NotImplementedError("Underlying repository does not support deletion")
+
+        scoped: list[str] = []
+        for node_id in node_ids:
+            if not node_id:
+                continue
+            node = self.get(node_id)
+            if node is None:
+                continue
+            scoped.append(node_id)
+
+        if not scoped:
+            return
+        deleter(scoped, session=session)
+
     def get(self, node_id: str) -> TreeNode | None:
         """Get a node by ID, ensuring it belongs to this document."""
         node = self._repo.get_node(node_id)
