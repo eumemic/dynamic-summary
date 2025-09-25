@@ -1,14 +1,19 @@
 from collections.abc import Generator
-from typing import cast
 
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
+from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.server.worker_coordinator import (
     ReadyParentCandidate,
+    WorkerCoordinator,
     compute_ready_parent_candidates,
 )
+from ragzoom.vector_api import Vector
 
 
 @pytest.fixture()
@@ -26,7 +31,7 @@ def sqlite_store() -> Generator[DocumentStore, None, None]:
         backend.close()
 
 
-NodePayloadValue = str | int | float | bool | list[float] | None
+NodePayloadValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
 NodePayload = dict[str, NodePayloadValue]
 
 
@@ -54,9 +59,10 @@ def _leaf_payload(
 
 
 def _add_batch(store: DocumentStore, *payloads: NodePayload) -> None:
-    store.nodes.add_batch(
-        cast(list[dict[str, NodePayloadValue]], list(payloads))  # type: ignore[arg-type]
-    )
+    batch: list[
+        dict[str, str | int | float | bool | list[float] | NDArray[np.float64] | None]
+    ] = [dict(payload) for payload in payloads]
+    store.nodes.add_batch(batch)
 
 
 def test_detects_leaf_pairs(sqlite_store: DocumentStore) -> None:
@@ -116,3 +122,112 @@ def test_requires_bidirectional_neighbor_link(sqlite_store: DocumentStore) -> No
     )
 
     assert compute_ready_parent_candidates(sqlite_store) == []
+
+
+class StubLLMService:
+    async def _summarize_text(
+        self,
+        left_text: str,
+        right_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str,
+        reporter: object | None = None,
+        prev_context: str | None = None,
+        left_token_count: int = 0,
+        right_token_count: int = 0,
+    ) -> tuple[str, int, int]:
+        summary = f"summary-{parent_id[:8]}"
+        return summary, 0, len(summary.split())
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+
+
+class StubVectorIndex(VectorIndex):
+    def __init__(self) -> None:
+        self.upserts: list[
+            tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+        ] = []
+
+    def search_similar(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        k: int,
+        where: dict[str, str | int | float | bool | None] | None = None,
+    ) -> list[Vector]:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def get_vectors(self, ids: list[str]) -> list[Vector]:  # pragma: no cover - unused
+        return []
+
+    def upsert(
+        self,
+        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
+    ) -> None:
+        self.upserts.extend(items)
+
+    def delete(
+        self,
+        filter: dict[str, object] | None = None,
+        ids: list[str] | None = None,
+    ) -> int:  # pragma: no cover - unused
+        return 0
+
+
+@pytest.mark.asyncio
+async def test_worker_coordinator_builds_parent() -> None:
+    backend = SQLiteStorageBackend()
+    try:
+        backend.add_document(
+            document_id="doc",
+            file_path=None,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-5-nano",
+        )
+        store = backend.for_document("doc")
+
+        _add_batch(
+            store,
+            _leaf_payload("L", 0, 10, following_neighbor_id="R"),
+            _leaf_payload("R", 10, 20, preceding_neighbor_id="L"),
+        )
+
+        llm = StubLLMService()
+        vector_index = StubVectorIndex()
+
+        coordinator = WorkerCoordinator(
+            store=backend,
+            index_config=IndexConfig.load(),
+            operational_config=OperationalConfig(
+                openai_api_key=SecretStr("test"),
+                vector_backend="python",
+                database_url="sqlite:///:memory:",
+            ),
+            llm_service=llm,
+            vector_index_factory=lambda _doc: vector_index,
+            worker_count=1,
+        )
+
+        await coordinator.start()
+        await coordinator.enqueue_document("doc")
+        await coordinator.wait_until_idle("doc")
+
+        parents = [node for node in store.nodes.get_all() if node.height == 1]
+        assert len(parents) == 1
+        parent = parents[0]
+        assert parent.left_child_id == "L"
+        assert parent.right_child_id == "R"
+        assert parent.text
+        left_node = store.nodes.get("L")
+        right_node = store.nodes.get("R")
+        assert left_node is not None
+        assert right_node is not None
+        assert left_node.parent_id == parent.id
+        assert right_node.parent_id == parent.id
+
+        assert any(item[0] == parent.id for item in vector_index.upserts)
+
+        await coordinator.shutdown()
+    finally:
+        backend.close()
