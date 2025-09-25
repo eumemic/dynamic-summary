@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
@@ -49,6 +49,16 @@ class NodeLike(Protocol):
     height: int | None
 
 
+class GrpcServerProto(Protocol):
+    def add_insecure_port(self, address: str) -> int: ...
+
+    def start(self) -> Awaitable[object]: ...
+
+    def stop(self, grace: object | None = ...) -> Awaitable[object]: ...
+
+    def wait_for_termination(self) -> Awaitable[object]: ...
+
+
 def _stats_to_proto(stats: IndexingResult) -> pb2.DocumentStats:
     if (
         stats.mutated_nodes is None
@@ -77,7 +87,7 @@ def json_dumps(data: object) -> str:
 
 
 async def _abort(
-    context: ServicerContextProto, *, code: GrpcStatusCode, message: str
+    context: ServicerContextProto, *, code: object, message: str
 ) -> NoReturn:
     await context.abort(code, message)
     raise AssertionError("context.abort should raise")
@@ -415,13 +425,13 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         return pb2.GetDocumentResponse(status=status)
 
 
-async def shutdown_gracefully(server: GrpcServer) -> None:
+async def shutdown_gracefully(server: GrpcServerProto) -> None:
     await server.stop(grace=None)
     await server.wait_for_termination()
 
 
 async def serve(state: ServerState, *, host: str, port: int) -> None:
-    server = grpc.aio.server()
+    server = cast(GrpcServerProto, grpc.aio.server())
     pb2_grpc.add_IndexerServiceServicer_to_server(IndexerServicer(state), server)
     pb2_grpc.add_RetrievalServiceServicer_to_server(RetrievalServicer(state), server)
     pb2_grpc.add_WorkerServiceServicer_to_server(WorkerServicer(state), server)
