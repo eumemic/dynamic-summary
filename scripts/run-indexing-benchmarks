@@ -24,6 +24,17 @@ OWN_SERVER_HOST=""
 OWN_SERVER_PORT=""
 STARTED_SERVER=false
 
+DEFAULT_SERVER_HOST=$(python - <<'PY'
+from ragzoom.constants import DEFAULT_GRPC_HOST
+print(DEFAULT_GRPC_HOST)
+PY
+)
+DEFAULT_SERVER_PORT=$(python - <<'PY'
+from ragzoom.constants import DEFAULT_GRPC_PORT
+print(DEFAULT_GRPC_PORT)
+PY
+)
+
 # Cleanup helpers
 cleanup_benchmark_db() {
     # Only clean up if we explicitly created a database and it's still marked for cleanup
@@ -463,8 +474,8 @@ else
 fi
 
 # Determine gRPC server configuration (start unless explicitly disabled)
-SERVER_HOST="${RAGZOOM_SERVER_HOST:-127.0.0.1}"
-SERVER_PORT="${RAGZOOM_SERVER_PORT:-50051}"
+SERVER_HOST="${RAGZOOM_SERVER_HOST:-$DEFAULT_SERVER_HOST}"
+SERVER_PORT="${RAGZOOM_SERVER_PORT:-$DEFAULT_SERVER_PORT}"
 if [ "${RAGZOOM_START_GRPC_SERVER:-1}" != "0" ]; then
     mkdir -p "$OUTPUT_DIR"
     SERVER_LOG_FILE="$OUTPUT_DIR/server.log"

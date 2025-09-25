@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
+from ragzoom.constants import DEFAULT_GRPC_HOST, DEFAULT_GRPC_PORT
 from ragzoom.server.servicers import serve
 from ragzoom.server.state import ServerState
 
@@ -18,8 +19,8 @@ logger = logging.getLogger(__name__)
 class ServerOptions:
     """Command-level options for starting the gRPC server."""
 
-    host: str = "127.0.0.1"
-    port: int = 50051
+    host: str = DEFAULT_GRPC_HOST
+    port: int = DEFAULT_GRPC_PORT
     config_path: str | None = None
 
 

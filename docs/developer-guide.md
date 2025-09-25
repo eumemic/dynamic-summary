@@ -199,6 +199,21 @@ def retrieve(self, ...):  # Intentional: async/sync wrapper pattern
 - "Almost identical" logic (parameterize the differences)
 - Copy-pasted implementations (extract shared code)
 
+### 4.6. Protobuf Code Generation
+
+gRPC service stubs live under `ragzoom/rpc/` and are generated from
+`proto/dynamic_summary.proto`. The generated `.py` files are committed but should never
+be edited manually.
+
+- Use `./scripts/compile-proto.sh` to regenerate stubs after modifying the
+  `.proto` file. The script wraps `grpcio-tools` and reapplies our lint/type headers.
+- `grpcio-tools` ships with the development requirements; install it explicitly with
+  `pip install grpcio-tools` if you are working outside the virtualenv.
+- CI runs the script and fails if regenerated files differ, so always run it locally
+  before pushing proto changes.
+- Type stubs (`.pyi`) remain in version control. Update them alongside the generated
+  Python when you introduce new message/service fields.
+
 ### 4.6. Error Handling Standards
 
 The project follows strict error handling principles aligned with our "No Fallback Code" craftsmanship rule.

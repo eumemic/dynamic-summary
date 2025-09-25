@@ -1,0 +1,11 @@
+"""Shared constants for RagZoom configuration."""
+
+DEFAULT_GRPC_HOST = "127.0.0.1"
+DEFAULT_GRPC_PORT = 50051
+DEFAULT_GRPC_ADDRESS = f"{DEFAULT_GRPC_HOST}:{DEFAULT_GRPC_PORT}"
+
+__all__ = [
+    "DEFAULT_GRPC_HOST",
+    "DEFAULT_GRPC_PORT",
+    "DEFAULT_GRPC_ADDRESS",
+]

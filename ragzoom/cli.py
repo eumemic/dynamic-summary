@@ -16,6 +16,11 @@ from ragzoom.config import (
     OperationalConfig,
     QueryConfig,
 )
+from ragzoom.constants import (
+    DEFAULT_GRPC_ADDRESS,
+    DEFAULT_GRPC_HOST,
+    DEFAULT_GRPC_PORT,
+)
 from ragzoom.exceptions import (
     ConfigurationError,
     DatabaseError,
@@ -51,6 +56,8 @@ logging.getLogger("chromadb").setLevel(logging.WARNING)
 logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
 logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
 
+GRPC_ADDRESS_HELP = f"gRPC server address (defaults to {DEFAULT_GRPC_ADDRESS})"
+
 
 def _resolve_server_address(value: str | None) -> str:
     """Resolve the gRPC server address with sensible defaults."""
@@ -59,7 +66,7 @@ def _resolve_server_address(value: str | None) -> str:
     env_value = os.environ.get("RAGZOOM_SERVER_ADDRESS")
     if env_value:
         return env_value
-    return "127.0.0.1:50051"
+    return DEFAULT_GRPC_ADDRESS
 
 
 def handle_cli_error(e: Exception, operation: str) -> None:
@@ -214,7 +221,7 @@ def cli(ctx: click.Context) -> None:
     envvar="RAGZOOM_SERVER_ADDRESS",
     default=None,
     show_default=False,
-    help="gRPC server address (defaults to 127.0.0.1:50051)",
+    help=GRPC_ADDRESS_HELP,
 )
 @click.pass_context
 def index(
@@ -441,7 +448,7 @@ def documents(ctx: click.Context) -> None:
     envvar="RAGZOOM_SERVER_ADDRESS",
     default=None,
     show_default=False,
-    help="gRPC server address (defaults to 127.0.0.1:50051)",
+    help=GRPC_ADDRESS_HELP,
 )
 @click.pass_context
 def query(
@@ -1023,8 +1030,19 @@ def server() -> None:
 
 
 @server.command("start")
-@click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind")
-@click.option("--port", default=50051, type=int, show_default=True, help="Port to bind")
+@click.option(
+    "--host",
+    default=DEFAULT_GRPC_HOST,
+    show_default=True,
+    help="Host to bind",
+)
+@click.option(
+    "--port",
+    default=DEFAULT_GRPC_PORT,
+    type=int,
+    show_default=True,
+    help="Port to bind",
+)
 @click.option(
     "--config",
     "config_path",
