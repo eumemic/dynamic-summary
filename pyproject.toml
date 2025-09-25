@@ -97,6 +97,15 @@ ignore_missing_imports = true
 module = "tomllib"
 ignore_missing_imports = true
 
+# grpc does not ship type information yet
+[[tool.mypy.overrides]]
+module = "grpc"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "grpc.*"
+ignore_missing_imports = true
+
 # matplotlib doesn't have complete type stubs
 [[tool.mypy.overrides]]
 module = "matplotlib.*"

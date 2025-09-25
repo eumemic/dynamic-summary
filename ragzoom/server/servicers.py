@@ -408,13 +408,13 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         return pb2.GetDocumentResponse(status=status)
 
 
-async def shutdown_gracefully(server: grpc.aio.Server) -> None:  # type: ignore[attr-defined]
+async def shutdown_gracefully(server: grpc.aio.Server) -> None:
     await server.stop(grace=None)
     await server.wait_for_termination()
 
 
 async def serve(state: ServerState, *, host: str, port: int) -> None:
-    server = grpc.aio.server()  # type: ignore[attr-defined]
+    server = grpc.aio.server()
     pb2_grpc.add_IndexerServiceServicer_to_server(IndexerServicer(state), server)
     pb2_grpc.add_RetrievalServiceServicer_to_server(RetrievalServicer(state), server)
     pb2_grpc.add_WorkerServiceServicer_to_server(WorkerServicer(state), server)
