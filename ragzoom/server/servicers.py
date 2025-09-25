@@ -19,6 +19,7 @@ from ragzoom.retrieve import Retriever
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.server.state import ServerState
+from ragzoom.server.worker_coordinator import WorkerStatus
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.tree_viz import build_ascii_tree
 from ragzoom.validate import validate_tiling
@@ -32,6 +33,10 @@ else:  # pragma: no cover - typing aid only
     GrpcServer = object  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+_UNSPECIFIED_WORKER_MODE = 0
+_UNTIL_IDLE_WORKER_MODE = getattr(pb2, "WORKER_RUN_MODE_UNTIL_IDLE", 1)
+_CONTINUOUS_WORKER_MODE = 2
 
 
 class ServicerContextProto(Protocol):
@@ -256,6 +261,14 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
             collect_telemetry=request.collect_telemetry,
         )
 
+        try:
+            await self._state.worker_coordinator.enqueue_document(request.document_id)
+        except Exception:  # pragma: no cover - defensive logging
+            logger.exception(
+                "Failed to enqueue document %s for worker processing",
+                request.document_id,
+            )
+
         return pb2.AppendTextResponse(stats=_stats_to_proto(stats))
 
 
@@ -393,11 +406,38 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         request: pb2.RunWorkersRequest,
         context: ServicerContextProto,
     ) -> AsyncIterator[pb2.RunWorkersResponse]:
-        del request
-        del context
-        message = "Background workers are not yet implemented; returning immediate idle state."
-        logger.info(message)
-        yield pb2.RunWorkersResponse(message=message, idle=True)
+        mode = request.mode
+        if mode == _UNSPECIFIED_WORKER_MODE:
+            mode = _UNTIL_IDLE_WORKER_MODE
+        if mode not in {_UNTIL_IDLE_WORKER_MODE, _CONTINUOUS_WORKER_MODE}:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message=f"Unsupported worker run mode: {request.mode}",
+            )
+
+        documents = self._state.store.list_documents()
+        for document in documents:
+            doc_id = getattr(document, "id", None)
+            if not doc_id:
+                continue
+            await self._state.worker_coordinator.enqueue_document(doc_id)
+
+        poll_interval = 0.5
+
+        while True:
+            status = await self._state.worker_coordinator.status()
+            message = self._format_status(status)
+            idle = status.queue_depth == 0 and status.in_flight == 0
+            yield pb2.RunWorkersResponse(message=message, idle=idle)
+
+            if mode == _UNTIL_IDLE_WORKER_MODE and idle:
+                return
+
+            try:
+                await asyncio.sleep(poll_interval)
+            except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
+                return
 
     async def GetDocument(  # noqa: N802
         self,
@@ -416,13 +456,37 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         root = document_store.tree.get_root()
         tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
 
-        status = pb2.DocumentStatus(
+        worker_status = await self._state.worker_coordinator.status()
+        pending = worker_status.pending_by_document.get(request.document_id, 0)
+        inflight = worker_status.inflight_by_document.get(request.document_id, 0)
+        has_pending_work = pending > 0 or inflight > 0
+
+        doc_status = pb2.DocumentStatus(
             document_id=request.document_id,
             leaf_count=len(leaves),
-            has_pending_work=False,
+            has_pending_work=has_pending_work,
             tree_depth=tree_depth,
         )
-        return pb2.GetDocumentResponse(status=status)
+        return pb2.GetDocumentResponse(status=doc_status)
+
+    def _format_status(self, status: WorkerStatus) -> str:
+        parts = [
+            f"queue={status.queue_depth}",
+            f"inflight={status.in_flight}",
+        ]
+        if status.pending_by_document:
+            pending = ", ".join(
+                f"{doc}:{count}"
+                for doc, count in sorted(status.pending_by_document.items())
+            )
+            parts.append(f"pending=[{pending}]")
+        if status.inflight_by_document:
+            inflight = ", ".join(
+                f"{doc}:{count}"
+                for doc, count in sorted(status.inflight_by_document.items())
+            )
+            parts.append(f"active=[{inflight}]")
+        return " ".join(parts)
 
 
 async def shutdown_gracefully(server: GrpcServerProto) -> None:
@@ -440,11 +504,25 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
     server.add_insecure_port(listen_addr)
     logger.info("Starting RagZoom gRPC server on %s", listen_addr)
 
-    await server.start()
-
+    await state.worker_coordinator.start()
     try:
-        await server.wait_for_termination()
-    except asyncio.CancelledError:
-        logger.info("Received cancellation; shutting down gRPC server")
-        await shutdown_gracefully(server)
-        raise
+        try:
+            documents = state.store.list_documents()
+            for document in documents:
+                doc_id = getattr(document, "id", None)
+                if not doc_id:
+                    continue
+                await state.worker_coordinator.enqueue_document(doc_id)
+        except Exception:  # pragma: no cover - defensive logging
+            logger.exception("Failed to enqueue existing documents at startup")
+
+        await server.start()
+
+        try:
+            await server.wait_for_termination()
+        except asyncio.CancelledError:
+            logger.info("Received cancellation; shutting down gRPC server")
+            await shutdown_gracefully(server)
+            raise
+    finally:
+        await state.worker_coordinator.shutdown()

@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Generator
 
 import numpy as np
@@ -131,13 +132,14 @@ class StubLLMService:
         right_text: str,
         target_tokens: int,
         *,
-        parent_id: str,
+        parent_id: str | None = None,
         reporter: object | None = None,
         prev_context: str | None = None,
-        left_token_count: int = 0,
-        right_token_count: int = 0,
+        left_token_count: int | None = None,
+        right_token_count: int | None = None,
     ) -> tuple[str, int, int]:
-        summary = f"summary-{parent_id[:8]}"
+        pid = parent_id or "parent"
+        summary = f"summary-{pid[:8]}"
         return summary, 0, len(summary.split())
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -173,6 +175,41 @@ class StubVectorIndex(VectorIndex):
         ids: list[str] | None = None,
     ) -> int:  # pragma: no cover - unused
         return 0
+
+
+class BlockingLLMService(StubLLMService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self._release = asyncio.Event()
+
+    async def _summarize_text(
+        self,
+        left_text: str,
+        right_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str | None = None,
+        reporter: object | None = None,
+        prev_context: str | None = None,
+        left_token_count: int | None = None,
+        right_token_count: int | None = None,
+    ) -> tuple[str, int, int]:
+        self.started.set()
+        await self._release.wait()
+        return await super()._summarize_text(
+            left_text,
+            right_text,
+            target_tokens,
+            parent_id=parent_id,
+            reporter=reporter,
+            prev_context=prev_context,
+            left_token_count=left_token_count,
+            right_token_count=right_token_count,
+        )
+
+    def release(self) -> None:
+        self._release.set()
 
 
 @pytest.mark.asyncio
@@ -227,6 +264,60 @@ async def test_worker_coordinator_builds_parent() -> None:
         assert right_node.parent_id == parent.id
 
         assert any(item[0] == parent.id for item in vector_index.upserts)
+
+        await coordinator.shutdown()
+    finally:
+        backend.close()
+
+
+@pytest.mark.asyncio
+async def test_status_tracks_inflight_work() -> None:
+    backend = SQLiteStorageBackend()
+    try:
+        backend.add_document(
+            document_id="doc",
+            file_path=None,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-5-nano",
+        )
+        store = backend.for_document("doc")
+
+        _add_batch(
+            store,
+            _leaf_payload("L", 0, 10, following_neighbor_id="R"),
+            _leaf_payload("R", 10, 20, preceding_neighbor_id="L"),
+        )
+
+        llm = BlockingLLMService()
+        vector_index = StubVectorIndex()
+
+        coordinator = WorkerCoordinator(
+            store=backend,
+            index_config=IndexConfig.load(),
+            operational_config=OperationalConfig(
+                openai_api_key=SecretStr("test"),
+                vector_backend="python",
+                database_url="sqlite:///:memory:",
+            ),
+            llm_service=llm,
+            vector_index_factory=lambda _doc: vector_index,
+            worker_count=1,
+        )
+
+        await coordinator.start()
+        await coordinator.enqueue_document("doc")
+        await asyncio.wait_for(llm.started.wait(), timeout=2)
+
+        status_during = await coordinator.status()
+        assert status_during.in_flight == 1
+        assert status_during.inflight_by_document.get("doc") == 1
+
+        llm.release()
+        await coordinator.wait_until_idle("doc")
+
+        status_final = await coordinator.status()
+        assert status_final.queue_depth == 0
+        assert status_final.in_flight == 0
 
         await coordinator.shutdown()
     finally:

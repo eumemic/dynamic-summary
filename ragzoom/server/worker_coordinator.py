@@ -9,7 +9,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from itertools import count
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -20,6 +20,11 @@ from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.vector_factory import create_vector_index
+
+if TYPE_CHECKING:  # pragma: no cover - import only for typing
+    from ragzoom.telemetry_collection import TelemetryCollector
+else:  # pragma: no cover - fallback for runtime when telemetry isn’t available
+    TelemetryCollector = object
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,16 @@ class ReadyParentCandidate:
 NodeFieldValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
 
 
+@dataclass(frozen=True, slots=True)
+class WorkerStatus:
+    """Snapshot of queue depth and in-flight activity."""
+
+    queue_depth: int
+    in_flight: int
+    pending_by_document: dict[str, int]
+    inflight_by_document: dict[str, int]
+
+
 class SummaryBackend(Protocol):
     async def _summarize_text(
         self,
@@ -46,11 +61,11 @@ class SummaryBackend(Protocol):
         right_text: str,
         target_tokens: int,
         *,
-        parent_id: str,
-        reporter: object | None = None,
+        parent_id: str | None = None,
+        reporter: TelemetryCollector | None = None,
         prev_context: str | None = None,
-        left_token_count: int = 0,
-        right_token_count: int = 0,
+        left_token_count: int | None = None,
+        right_token_count: int | None = None,
     ) -> tuple[str, int, int]: ...
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
@@ -163,6 +178,7 @@ class WorkerCoordinator:
         self._queued: set[str] = set()
         self._inflight: set[str] = set()
         self._pending_counts: defaultdict[str, int] = defaultdict(int)
+        self._inflight_counts: defaultdict[str, int] = defaultdict(int)
         self._doc_locks: dict[str, asyncio.Lock] = {}
 
         self._coord_lock = asyncio.Lock()
@@ -217,6 +233,15 @@ class WorkerCoordinator:
             return sum(self._pending_counts.values())
         return self._pending_counts.get(document_id, 0)
 
+    async def status(self) -> WorkerStatus:
+        async with self._coord_lock:
+            return WorkerStatus(
+                queue_depth=sum(self._pending_counts.values()),
+                in_flight=len(self._inflight),
+                pending_by_document=dict(self._pending_counts),
+                inflight_by_document=dict(self._inflight_counts),
+            )
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -267,6 +292,7 @@ class WorkerCoordinator:
             async with self._coord_lock:
                 self._queued.discard(key)
                 self._inflight.add(key)
+                self._inflight_counts[candidate.document_id] += 1
 
             try:
                 await self._process_candidate(candidate)
@@ -278,6 +304,11 @@ class WorkerCoordinator:
                 async with self._coord_lock:
                     self._inflight.discard(key)
                     doc_id = candidate.document_id
+                    current_inflight = self._inflight_counts.get(doc_id, 0)
+                    if current_inflight > 1:
+                        self._inflight_counts[doc_id] = current_inflight - 1
+                    else:
+                        self._inflight_counts.pop(doc_id, None)
                     self._pending_counts[doc_id] -= 1
                     if self._pending_counts[doc_id] <= 0:
                         self._pending_counts.pop(doc_id, None)
@@ -464,6 +495,7 @@ class WorkerCoordinator:
 __all__ = [
     "ReadyParentCandidate",
     "SummaryBackend",
+    "WorkerStatus",
     "compute_ready_parent_candidates",
     "WorkerCoordinator",
 ]
