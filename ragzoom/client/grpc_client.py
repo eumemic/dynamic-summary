@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from types import TracebackType
 from typing import cast
@@ -214,25 +215,24 @@ class GrpcRagzoomClient:
         )
 
     def run_workers_once(self) -> list[WorkerRunSnapshot]:
+        return list(self.iter_worker_snapshots())
+
+    def iter_worker_snapshots(self) -> Iterator[WorkerRunSnapshot]:
         request = pb2.RunWorkersRequest(mode=pb2.WORKER_RUN_MODE_UNTIL_IDLE)
         try:
-            responses = list(self._workers.RunWorkers(request, timeout=self._timeout))
-        except grpc.RpcError as error:  # pragma: no cover
-            raise _map_rpc_error(error) from error
-        snapshots: list[WorkerRunSnapshot] = []
-        for resp in responses:
-            documents = {
-                progress.document_id: (progress.pending, progress.inflight)
-                for progress in resp.documents
-                if progress.document_id
-            }
-            snapshots.append(
-                WorkerRunSnapshot(
+            responses = self._workers.RunWorkers(request, timeout=self._timeout)
+            for resp in responses:
+                documents = {
+                    progress.document_id: (progress.pending, progress.inflight)
+                    for progress in resp.documents
+                    if progress.document_id
+                }
+                yield WorkerRunSnapshot(
                     message=resp.message,
                     idle=resp.idle,
                     queue_depth=resp.queue_depth,
                     inflight=resp.inflight,
                     documents=documents,
                 )
-            )
-        return snapshots
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error

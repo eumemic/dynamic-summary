@@ -97,15 +97,6 @@ def cli_mocks() -> Iterator[CliMocks]:
             new_leaves=5,
             telemetry=None,
         )
-        append_result = IndexingResult(
-            document_id="doc-append",
-            chunks_created=2,
-            tree_depth=4,
-            mutated_nodes=4,
-            resummarized_nodes=1,
-            new_leaves=2,
-            telemetry=None,
-        )
         node_summary = NodeSummary(
             node_id="n1",
             text="Leaf text",
@@ -138,10 +129,9 @@ def cli_mocks() -> Iterator[CliMocks]:
         grpc_client = MagicMock(name="grpc_client")
         grpc_client.__enter__.return_value = grpc_client
         grpc_client.__exit__.return_value = None
-        grpc_client.index_document.return_value = index_result
-        grpc_client.append_text.return_value = append_result
+        grpc_client.append_text.return_value = index_result
         grpc_client.execute_query.return_value = execute_output
-        grpc_client.run_workers_once.return_value = [
+        grpc_client.iter_worker_snapshots.return_value = [
             WorkerRunSnapshot(
                 message="workers drained",
                 idle=True,
@@ -193,7 +183,7 @@ def test_index_command_with_file(
     result = runner.invoke(cli, ["index", str(file_path)])
     assert result.exit_code == 0
     assert "Document indexed successfully" in result.output
-    cli_mocks["grpc_client"].index_document.assert_called_once()
+    cli_mocks["grpc_client"].append_text.assert_called_once()
 
 
 def test_index_command_with_document_id(
@@ -205,7 +195,7 @@ def test_index_command_with_document_id(
         ["index", str(file_path), "--document-id", "my-doc"],
     )
     assert result.exit_code == 0
-    call = cli_mocks["grpc_client"].index_document.call_args
+    call = cli_mocks["grpc_client"].append_text.call_args
     assert call.kwargs["document_id"] == "my-doc"
 
 
@@ -234,7 +224,7 @@ def test_index_append_invokes_append(
     )
     assert result.exit_code == 0
     cli_mocks["grpc_client"].append_text.assert_called_once()
-    cli_mocks["grpc_client"].index_document.assert_not_called()
+    assert not cli_mocks["grpc_client"].index_document.called
 
 
 def test_query_command(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:

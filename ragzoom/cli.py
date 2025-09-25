@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 import click
@@ -69,11 +70,10 @@ def _resolve_server_address(value: str | None) -> str:
     return DEFAULT_GRPC_ADDRESS
 
 
-def _display_worker_snapshots(snapshots: list[WorkerRunSnapshot]) -> None:
-    if not snapshots:
-        return
-
+def _display_worker_snapshots(snapshots: Iterable[WorkerRunSnapshot]) -> None:
+    seen = False
     for snapshot in snapshots:
+        seen = True
         if snapshot.documents:
             details = ", ".join(
                 f"{doc_id}(pending={pending}, inflight={inflight})"
@@ -87,6 +87,8 @@ def _display_worker_snapshots(snapshots: list[WorkerRunSnapshot]) -> None:
         click.echo(
             f"   Workers: queue={snapshot.queue_depth}, inflight={snapshot.inflight}{suffix}"
         )
+    if not seen:
+        return
 
 
 def handle_cli_error(e: Exception, operation: str) -> None:
@@ -331,34 +333,29 @@ def index(
         result: IndexingResult
         resolved_address = _resolve_server_address(server_address)
 
-        if append:
-            assert append_document_id is not None
-            click.echo(
-                f"Appending {Path(file_path).name} to document '{append_document_id}'..."
+        content_bytes = Path(file_path).read_bytes()
+        target_document_id = append_document_id or document_id or Path(file_path).name
+
+        click.echo(
+            f"Appending {Path(file_path).name} to document '{target_document_id}'..."
+            if append
+            else f"Indexing {Path(file_path).name}..."
+        )
+
+        with GrpcRagzoomClient(resolved_address) as client:
+            result = client.append_text(
+                document_id=target_document_id,
+                content=content_bytes,
+                collect_telemetry=bool(telemetry_file),
             )
-            content_bytes = Path(file_path).read_bytes()
-            with GrpcRagzoomClient(resolved_address) as client:
-                result = client.append_text(
-                    document_id=append_document_id,
-                    content=content_bytes,
-                    collect_telemetry=bool(telemetry_file),
-                )
-                _display_worker_snapshots(client.run_workers_once())
-            success_message = "✅ Document appended successfully!"
-        else:
-            click.echo(f"Indexing {Path(file_path).name}...")
-            path = Path(file_path)
-            content_bytes = path.read_bytes()
-            target_document_id = document_id or path.name
-            with GrpcRagzoomClient(resolved_address) as client:
-                result = client.index_document(
-                    document_id=target_document_id,
-                    content=content_bytes,
-                    collect_telemetry=bool(telemetry_file),
-                )
-                _display_worker_snapshots(client.run_workers_once())
-            document_id = target_document_id
-            success_message = "✅ Document indexed successfully!"
+            _display_worker_snapshots(client.iter_worker_snapshots())
+
+        document_id = target_document_id
+        success_message = (
+            "✅ Document appended successfully!"
+            if append
+            else "✅ Document indexed successfully!"
+        )
 
         click.echo(success_message)
         click.echo(f"   Document ID: {result.document_id}")

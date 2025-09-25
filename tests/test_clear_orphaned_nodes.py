@@ -135,7 +135,7 @@ class TestAutomaticClearing:
                 client.__enter__.return_value = client
                 client.__exit__.return_value = None
 
-                def index_document_side_effect(
+                def append_text_side_effect(
                     *,
                     document_id: str,
                     content: bytes,
@@ -171,7 +171,7 @@ class TestAutomaticClearing:
                         telemetry=None,
                     )
 
-                client.index_document.side_effect = index_document_side_effect
+                client.append_text.side_effect = append_text_side_effect
                 mock_client_cls.return_value = client
 
                 with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
@@ -217,7 +217,7 @@ class TestAutomaticClearing:
                 client.__enter__.return_value = client
                 client.__exit__.return_value = None
 
-                def index_document_side_effect(
+                def append_text_side_effect(
                     *,
                     document_id: str,
                     content: bytes,
@@ -253,7 +253,7 @@ class TestAutomaticClearing:
                         telemetry=None,
                     )
 
-                client.index_document.side_effect = index_document_side_effect
+                client.append_text.side_effect = append_text_side_effect
                 mock_client_cls.return_value = client
 
                 with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
