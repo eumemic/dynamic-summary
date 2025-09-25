@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
-from typing import NoReturn, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
 import grpc
 from openai import OpenAI
@@ -23,6 +23,13 @@ from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.tree_viz import build_ascii_tree
 from ragzoom.validate import validate_tiling
 from ragzoom.vector_factory import create_vector_index
+
+if TYPE_CHECKING:
+    from grpc import StatusCode as GrpcStatusCode
+    from grpc.aio import Server as GrpcServer
+else:  # pragma: no cover - typing aid only
+    GrpcStatusCode = object  # type: ignore[assignment]
+    GrpcServer = object  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +77,7 @@ def json_dumps(data: object) -> str:
 
 
 async def _abort(
-    context: ServicerContextProto, *, code: grpc.StatusCode, message: str
+    context: ServicerContextProto, *, code: GrpcStatusCode, message: str
 ) -> NoReturn:
     await context.abort(code, message)
     raise AssertionError("context.abort should raise")
@@ -408,7 +415,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         return pb2.GetDocumentResponse(status=status)
 
 
-async def shutdown_gracefully(server: grpc.aio.Server) -> None:
+async def shutdown_gracefully(server: GrpcServer) -> None:
     await server.stop(grace=None)
     await server.wait_for_termination()
 

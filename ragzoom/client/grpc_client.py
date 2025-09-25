@@ -36,10 +36,11 @@ def _document_stats_to_result(stats: pb2.DocumentStats) -> IndexingResult:
     )
 
 
-def _map_rpc_error(error: grpc.RpcError) -> RuntimeError:
-    status = error.code()
-    details = error.details() or ""
-    message = f"gRPC {status.name}: {details}" if status else details
+def _map_rpc_error(error: object) -> RuntimeError:
+    status = getattr(error, "code", lambda: None)()
+    details = getattr(error, "details", lambda: "")() or ""
+    name = getattr(status, "name", None)
+    message = f"gRPC {name}: {details}" if name else details
     return RuntimeError(message)
 
 
