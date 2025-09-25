@@ -100,8 +100,11 @@ greenlet==3.2.4
 grpcio==1.75.0
     # via
     #   chromadb
+    #   grpcio-tools
     #   opentelemetry-exporter-otlp-proto-grpc
     #   ragzoom
+grpcio-tools==1.75.0
+    # via -r requirements/dev.in
 h11==0.16.0
     # via
     #   httpcore
@@ -279,6 +282,7 @@ propcache==0.3.2
 protobuf==6.32.1
     # via
     #   googleapis-common-protos
+    #   grpcio-tools
     #   onnxruntime
     #   opentelemetry-proto
 psutil==7.0.0
@@ -488,3 +492,6 @@ zipp==3.23.0
     # via importlib-metadata
 zstandard==0.25.0
     # via langsmith
+
+# The following packages are considered to be unsafe in a requirements file:
+# setuptools
