@@ -61,4 +61,8 @@ for name, header in HEADERS.items():
     path.write_text(text)
 PY
 
+python -m black --quiet \
+  "$OUT_DIR/dynamic_summary_pb2.py" \
+  "$OUT_DIR/dynamic_summary_pb2_grpc.py"
+
 echo "✅ Generated protobuf sources in ragzoom/rpc"
