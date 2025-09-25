@@ -74,6 +74,15 @@ class ExecuteQueryOutput:
     validation_warning: str
 
 
+@dataclass(slots=True)
+class WorkerRunSnapshot:
+    message: str
+    idle: bool
+    queue_depth: int
+    inflight: int
+    documents: dict[str, tuple[int, int]]
+
+
 class GrpcRagzoomClient:
     """Synchronous convenience wrapper for the RagZoom gRPC services."""
 
@@ -204,10 +213,26 @@ class GrpcRagzoomClient:
             validation_warning=response.validation_warning,
         )
 
-    def run_workers_once(self) -> list[str]:
+    def run_workers_once(self) -> list[WorkerRunSnapshot]:
         request = pb2.RunWorkersRequest(mode=pb2.WORKER_RUN_MODE_UNTIL_IDLE)
         try:
             responses = list(self._workers.RunWorkers(request, timeout=self._timeout))
         except grpc.RpcError as error:  # pragma: no cover
             raise _map_rpc_error(error) from error
-        return [resp.message for resp in responses]
+        snapshots: list[WorkerRunSnapshot] = []
+        for resp in responses:
+            documents = {
+                progress.document_id: (progress.pending, progress.inflight)
+                for progress in resp.documents
+                if progress.document_id
+            }
+            snapshots.append(
+                WorkerRunSnapshot(
+                    message=resp.message,
+                    idle=resp.idle,
+                    queue_depth=resp.queue_depth,
+                    inflight=resp.inflight,
+                    documents=documents,
+                )
+            )
+        return snapshots

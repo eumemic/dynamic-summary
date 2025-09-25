@@ -96,9 +96,18 @@ message RunWorkersRequest {
   WorkerRunMode mode = 1;
 }
 
+message WorkerDocumentProgress {
+  string document_id = 1;
+  int32 pending = 2;
+  int32 inflight = 3;
+}
+
 message RunWorkersResponse {
   string message = 1;
   bool idle = 2;
+  int32 queue_depth = 3;
+  int32 inflight = 4;
+  repeated WorkerDocumentProgress documents = 5;
 }
 
 message GetDocumentRequest {

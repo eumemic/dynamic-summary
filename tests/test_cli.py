@@ -14,7 +14,12 @@ import pytest
 from click.testing import CliRunner
 
 from ragzoom.cli import cli
-from ragzoom.client.grpc_client import ExecuteQueryOutput, NodeSummary, RetrievalView
+from ragzoom.client.grpc_client import (
+    ExecuteQueryOutput,
+    NodeSummary,
+    RetrievalView,
+    WorkerRunSnapshot,
+)
 from ragzoom.exceptions import InvalidOperationError
 from ragzoom.services.document_service import DocumentInfo, SystemStatus
 from ragzoom.services.indexing_service import IndexingResult
@@ -136,7 +141,15 @@ def cli_mocks() -> Iterator[CliMocks]:
         grpc_client.index_document.return_value = index_result
         grpc_client.append_text.return_value = append_result
         grpc_client.execute_query.return_value = execute_output
-        grpc_client.run_workers_once.return_value = ["workers drained"]
+        grpc_client.run_workers_once.return_value = [
+            WorkerRunSnapshot(
+                message="workers drained",
+                idle=True,
+                queue_depth=0,
+                inflight=0,
+                documents={},
+            )
+        ]
         mock_grpc_client_cls.return_value = grpc_client
 
         yield CliMocks(

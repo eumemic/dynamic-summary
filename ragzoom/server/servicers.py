@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
@@ -254,22 +255,79 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
 
         text = await _decode_text(request.content, context)
 
-        stats = await self._state.indexing_service.append_to_document_async(
-            document_id=request.document_id,
-            new_text=text,
-            show_progress=False,
-            collect_telemetry=request.collect_telemetry,
-        )
+        document_id = request.document_id
+
+        lock_fn = getattr(self._state.store, "lock_document", None)
+        lock_candidate = lock_fn(document_id) if callable(lock_fn) else None
+        if (
+            lock_candidate
+            and hasattr(lock_candidate, "__enter__")
+            and hasattr(lock_candidate, "__exit__")
+        ):
+            lock_cm = cast(AbstractContextManager[object], lock_candidate)
+        else:
+            lock_cm = cast(AbstractContextManager[object], nullcontext())
+
+        with lock_cm:
+            doc_record = self._state.store.get_document_by_id(document_id)
+            embedding_model = (
+                doc_record.embedding_model
+                if doc_record and getattr(doc_record, "embedding_model", None)
+                else self._state.index_config.embedding_model
+            )
+            summary_model = (
+                doc_record.summary_model
+                if doc_record and getattr(doc_record, "summary_model", None)
+                else self._state.index_config.summary_model
+            )
+
+            if doc_record is None:
+                self._state.store.add_document(
+                    document_id=document_id,
+                    file_path=None,
+                    embedding_model=embedding_model,
+                    summary_model=summary_model,
+                )
+
+            document_store = self._state.store.for_document(document_id)
+            vector_index = create_vector_index(
+                self._state.operational_config.vector_backend,
+                self._state.operational_config.database_url,
+                embedding_model,
+            )
+
+            outcome = await self._state.append_executor.append(
+                store=document_store,
+                vector_index=vector_index,
+                document_id=document_id,
+                new_text=text,
+            )
+
+            root = document_store.tree.get_root()
+            tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
+
+            mutated_nodes = len(outcome.new_leaf_ids) + len(outcome.deleted_node_ids)
+            new_leaves = len(outcome.new_leaf_ids)
+
+            result = IndexingResult(
+                document_id=outcome.document_id,
+                chunks_created=outcome.total_leaves,
+                tree_depth=tree_depth,
+                mutated_nodes=mutated_nodes,
+                resummarized_nodes=0,
+                new_leaves=new_leaves,
+                telemetry=None,
+            )
 
         try:
-            await self._state.worker_coordinator.enqueue_document(request.document_id)
+            await self._state.worker_coordinator.enqueue_document(document_id)
         except Exception:  # pragma: no cover - defensive logging
             logger.exception(
                 "Failed to enqueue document %s for worker processing",
-                request.document_id,
+                document_id,
             )
 
-        return pb2.AppendTextResponse(stats=_stats_to_proto(stats))
+        return pb2.AppendTextResponse(stats=_stats_to_proto(result))
 
 
 class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
@@ -416,8 +474,8 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
                 message=f"Unsupported worker run mode: {request.mode}",
             )
 
-        documents = self._state.store.list_documents()
-        for document in documents:
+        existing_documents = self._state.store.list_documents()
+        for document in existing_documents:
             doc_id = getattr(document, "id", None)
             if not doc_id:
                 continue
@@ -429,7 +487,23 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             status = await self._state.worker_coordinator.status()
             message = self._format_status(status)
             idle = status.queue_depth == 0 and status.in_flight == 0
-            yield pb2.RunWorkersResponse(message=message, idle=idle)
+            doc_ids = set(status.pending_by_document)
+            doc_ids.update(status.inflight_by_document)
+            document_progress = (
+                pb2.WorkerDocumentProgress(
+                    document_id=doc_id,
+                    pending=status.pending_by_document.get(doc_id, 0),
+                    inflight=status.inflight_by_document.get(doc_id, 0),
+                )
+                for doc_id in sorted(doc_ids)
+            )
+            yield pb2.RunWorkersResponse(
+                message=message,
+                idle=idle,
+                queue_depth=status.queue_depth,
+                inflight=status.in_flight,
+                documents=document_progress,
+            )
 
             if mode == _UNTIL_IDLE_WORKER_MODE and idle:
                 return

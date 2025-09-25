@@ -54,6 +54,7 @@ class WorkerStatus:
     inflight_by_document: dict[str, int]
 
 
+# jscpd:ignore-start - Signature must match LLMService._summarize_text exactly for type safety
 class SummaryBackend(Protocol):
     async def _summarize_text(
         self,
@@ -69,6 +70,9 @@ class SummaryBackend(Protocol):
     ) -> tuple[str, int, int]: ...
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
+
+
+# jscpd:ignore-end
 
 
 def _span_bounds(nodes: Iterable[TreeNode]) -> int:

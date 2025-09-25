@@ -168,11 +168,35 @@ class RunWorkersRequest:
 
     def __init__(self, *, mode: int) -> None: ...
 
+class WorkerDocumentProgress:
+    document_id: str
+    pending: int
+    inflight: int
+
+    def __init__(
+        self,
+        *,
+        document_id: str,
+        pending: int,
+        inflight: int,
+    ) -> None: ...
+
 class RunWorkersResponse:
     message: str
     idle: bool
+    queue_depth: int
+    inflight: int
+    documents: Sequence[WorkerDocumentProgress]
 
-    def __init__(self, *, message: str, idle: bool) -> None: ...
+    def __init__(
+        self,
+        *,
+        message: str,
+        idle: bool,
+        queue_depth: int,
+        inflight: int,
+        documents: Iterable[WorkerDocumentProgress],
+    ) -> None: ...
 
 class GetDocumentRequest:
     document_id: str

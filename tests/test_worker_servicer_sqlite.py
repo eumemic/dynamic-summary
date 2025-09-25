@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 from types import SimpleNamespace
 from typing import NoReturn, cast
 
@@ -154,19 +155,41 @@ async def test_run_workers_until_idle_streams_status() -> None:
         )
         servicer = WorkerServicer(cast(ServerState, state))
 
+        async def _release_when_ready(service: BlockingLLMService) -> None:
+            await service.started.wait()
+            service.release()
+
         request = pb2.RunWorkersRequest(mode=pb2.WORKER_RUN_MODE_UNTIL_IDLE)
-        llm.release()
+        release_task = asyncio.create_task(_release_when_ready(llm))
         responses: list[pb2.RunWorkersResponse] = []
         async for response in servicer.RunWorkers(request, StubContext()):
             responses.append(response)
+            if response.idle:
+                break
 
         assert responses, "Expected at least one streamed response"
-        assert responses[-1].idle is True
-        assert "queue=" in responses[-1].message
+        first_snapshot = responses[0]
+        assert first_snapshot.queue_depth >= 0
+        if first_snapshot.queue_depth > 0:
+            assert first_snapshot.documents
+            doc_progress = {
+                doc.document_id: (doc.pending, doc.inflight)
+                for doc in first_snapshot.documents
+            }
+            assert "doc" in doc_progress
+
+        final_snapshot = responses[-1]
+        assert final_snapshot.idle is True
+        assert final_snapshot.queue_depth == 0
+        assert final_snapshot.inflight == 0
+        assert "queue=" in final_snapshot.message
 
         parents = [node for node in store.nodes.get_all() if node.height == 1]
         assert parents, "Worker run should build a parent node"
     finally:
+        release_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await release_task
         if coordinator is not None:
             await coordinator.shutdown()
         backend.close()
