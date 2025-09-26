@@ -73,6 +73,117 @@ def _leaf_payload(
     }
 
 
+def test_parentless_nodes_sorted_by_height_and_level(
+    doc_store: DocStoreFixture,
+) -> None:
+    document_id, store = doc_store
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "leaf-right",
+                span_start=10,
+                span_end=20,
+                level_index=1,
+                document_id=document_id,
+                preceding="leaf-left",
+            ),
+            _leaf_payload(
+                "leaf-left",
+                span_start=0,
+                span_end=10,
+                level_index=0,
+                document_id=document_id,
+                following="leaf-right",
+            ),
+            {
+                "node_id": "intermediate",
+                "text": "intermediate",
+                "span_start": 0,
+                "span_end": 20,
+                "parent_id": None,
+                "left_child_id": None,
+                "right_child_id": None,
+                "document_id": document_id,
+                "token_count": 20,
+                "height": 1,
+                "preceding_neighbor_id": None,
+                "following_neighbor_id": None,
+                "level_index": 0,
+            },
+        ]
+    )
+
+    ordered_ids = [node.id for node in store.nodes.get_parentless_nodes()]
+    assert ordered_ids == ["leaf-left", "leaf-right", "intermediate"]
+
+
+def test_parentless_nodes_respects_document_scope(
+    doc_store: DocStoreFixture, storage_backend: StorageBackend
+) -> None:
+    document_id, store = doc_store
+    other_store = storage_backend.add_document(
+        document_id="other-doc",
+        file_path=None,
+        embedding_model="text-embedding-3-small",
+        summary_model="gpt-5-mini",
+    )
+    try:
+        other_store.nodes.add_batch(
+            [
+                _leaf_payload(
+                    "foreign",
+                    span_start=0,
+                    span_end=5,
+                    level_index=0,
+                    document_id="other-doc",
+                )
+            ]
+        )
+
+        store.nodes.add_batch(
+            [
+                _leaf_payload(
+                    "doc-node",
+                    span_start=0,
+                    span_end=5,
+                    level_index=0,
+                    document_id=document_id,
+                )
+            ]
+        )
+
+        ids = {node.id for node in store.nodes.get_parentless_nodes()}
+        assert ids == {"doc-node"}
+    finally:
+        storage_backend.clear_document("other-doc")
+
+
+def test_ready_left_children_returns_ids(doc_store: DocStoreFixture) -> None:
+    document_id, store = doc_store
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "left",
+                span_start=0,
+                span_end=10,
+                level_index=0,
+                document_id=document_id,
+                following="right",
+            ),
+            _leaf_payload(
+                "right",
+                span_start=10,
+                span_end=20,
+                level_index=1,
+                document_id=document_id,
+                preceding="left",
+            ),
+        ]
+    )
+
+    assert store.nodes.get_ready_left_children() == ["left"]
+
+
 def test_compute_ready_parent_candidates_pairs_nodes(
     doc_store: DocStoreFixture,
 ) -> None:

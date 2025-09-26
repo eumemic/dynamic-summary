@@ -93,7 +93,7 @@ class WorkerCoordinator:
         llm_service: SummaryBackend,
         run_manager: TelemetryRunManager | None = None,
         vector_index_factory: Callable[[str], VectorIndex] | None = None,
-        worker_count: int = 2,
+        worker_count: int = 30,
     ) -> None:
         self._store = store
         self._index_config = index_config
