@@ -364,13 +364,13 @@ class WorkerCoordinator:
         right_tokens = int(getattr(right, "token_count", 0))
 
         prev_context = None
-        preceding_node = None
-        if left.preceding_neighbor_id:
-            preceding_node = store.nodes.get(left.preceding_neighbor_id)
-            if preceding_node is None:
+        preceding_node_id = getattr(left, "preceding_neighbor_id", None)
+        if preceding_node_id:
+            preceding_for_context = store.nodes.get(preceding_node_id)
+            if preceding_for_context is None:
                 return
-            if preceding_node.text:
-                prev_context = preceding_node.text
+            if preceding_for_context.text:
+                prev_context = preceding_for_context.text
 
         parent_id = str(uuid.uuid4())
 
@@ -406,22 +406,9 @@ class WorkerCoordinator:
                 start_time=start_time,
             )
 
-        preceding_parent_id = None
-        if preceding_node and preceding_node.parent_id:
-            preceding_parent_id = preceding_node.parent_id
-
-        following_parent_id = None
         following_neighbor_id = getattr(right, "following_neighbor_id", None)
-        if following_neighbor_id:
-            following_neighbor = store.nodes.get(following_neighbor_id)
-            if following_neighbor and following_neighbor.parent_id:
-                following_parent_id = following_neighbor.parent_id
 
         vector_index = self._vector_index_factory(candidate.document_id)
-
-        neighbors_update: list[tuple[str, str | None, str | None]] = [
-            (parent_id, preceding_parent_id, following_parent_id)
-        ]
 
         affected_ids = {parent_id, left.id, right.id}
         parent_refs: list[tuple[str, str | None]] = [
@@ -429,49 +416,75 @@ class WorkerCoordinator:
             (right.id, parent_id),
         ]
 
-        if preceding_parent_id:
-            preceding_parent = store.nodes.get(preceding_parent_id)
-            if preceding_parent is not None:
-                neighbors_update.append(
-                    (
-                        preceding_parent_id,
-                        getattr(preceding_parent, "preceding_neighbor_id", None),
-                        parent_id,
-                    )
-                )
-                affected_ids.add(preceding_parent_id)
-
-        if following_parent_id:
-            following_parent = store.nodes.get(following_parent_id)
-            if following_parent is not None:
-                neighbors_update.append(
-                    (
-                        following_parent_id,
-                        parent_id,
-                        getattr(following_parent, "following_neighbor_id", None),
-                    )
-                )
-                affected_ids.add(following_parent_id)
-
-        node_payload: dict[str, NodeFieldValue] = {
-            "node_id": parent_id,
-            "text": summary,
-            "span_start": span_start,
-            "span_end": span_end,
-            "parent_id": None,
-            "left_child_id": left.id,
-            "right_child_id": right.id if right else None,
-            "document_id": candidate.document_id,
-            "token_count": summary_tokens,
-            "height": height,
-            "preceding_neighbor_id": preceding_parent_id,
-            "following_neighbor_id": following_parent_id,
-            "level_index": parent_level_index,
-        }
-
         vector_written = False
         try:
             with store.transaction() as session:
+                preceding_parent_id: str | None = None
+                preceding_parent_node = None
+                if preceding_node_id:
+                    refreshed_preceding = store.nodes.get(preceding_node_id)
+                    if refreshed_preceding is None:
+                        return
+                    parent_candidate = getattr(refreshed_preceding, "parent_id", None)
+                    if parent_candidate:
+                        preceding_parent_id = str(parent_candidate)
+                        preceding_parent_node = store.nodes.get(preceding_parent_id)
+
+                following_parent_id: str | None = None
+                following_parent_node = None
+                if following_neighbor_id:
+                    refreshed_following = store.nodes.get(following_neighbor_id)
+                    if refreshed_following is None:
+                        return
+                    parent_candidate = getattr(refreshed_following, "parent_id", None)
+                    if parent_candidate:
+                        following_parent_id = str(parent_candidate)
+                        following_parent_node = store.nodes.get(following_parent_id)
+
+                node_payload: dict[str, NodeFieldValue] = {
+                    "node_id": parent_id,
+                    "text": summary,
+                    "span_start": span_start,
+                    "span_end": span_end,
+                    "parent_id": None,
+                    "left_child_id": left.id,
+                    "right_child_id": right.id if right else None,
+                    "document_id": candidate.document_id,
+                    "token_count": summary_tokens,
+                    "height": height,
+                    "preceding_neighbor_id": preceding_parent_id,
+                    "following_neighbor_id": following_parent_id,
+                    "level_index": parent_level_index,
+                }
+
+                neighbors_update: list[tuple[str, str | None, str | None]] = [
+                    (parent_id, preceding_parent_id, following_parent_id)
+                ]
+
+                if preceding_parent_id and preceding_parent_node is not None:
+                    neighbors_update.append(
+                        (
+                            preceding_parent_id,
+                            getattr(
+                                preceding_parent_node, "preceding_neighbor_id", None
+                            ),
+                            parent_id,
+                        )
+                    )
+                    affected_ids.add(preceding_parent_id)
+
+                if following_parent_id and following_parent_node is not None:
+                    neighbors_update.append(
+                        (
+                            following_parent_id,
+                            parent_id,
+                            getattr(
+                                following_parent_node, "following_neighbor_id", None
+                            ),
+                        )
+                    )
+                    affected_ids.add(following_parent_id)
+
                 store.nodes.add_batch([node_payload], session=session)
                 store.nodes.update_parent_references_batch(parent_refs, session=session)
                 if neighbors_update:

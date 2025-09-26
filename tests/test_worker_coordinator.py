@@ -326,6 +326,98 @@ async def test_worker_coordinator_builds_parent(
 
 
 @pytest.mark.asyncio
+async def test_worker_coordinator_converges_to_single_root(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+    leaf_payloads: list[NodePayload] = []
+    for idx in range(8):
+        span_start = idx * 100
+        span_end = (idx + 1) * 100
+        preceding = None if idx == 0 else f"leaf-{idx - 1}"
+        following = None if idx == 7 else f"leaf-{idx + 1}"
+        leaf_payloads.append(
+            _leaf_payload(
+                f"leaf-{idx}",
+                span_start,
+                span_end,
+                level_index=idx,
+                document_id=document_id,
+                preceding=preceding,
+                following=following,
+            )
+        )
+    store.nodes.add_batch(leaf_payloads)
+
+    class CoordinatedLLM(StubLLMService):
+        def __init__(self, expected: int) -> None:
+            self._expected = expected
+            self._seen = 0
+            self._lock = asyncio.Lock()
+            self._gate = asyncio.Event()
+
+        async def _summarize_text(
+            self,
+            left_text: str,
+            right_text: str,
+            target_tokens: int,
+            *,
+            parent_id: str | None = None,
+            reporter: object | None = None,
+            prev_context: str | None = None,
+            left_token_count: int | None = None,
+            right_token_count: int | None = None,
+        ) -> tuple[str, int, int]:
+            async with self._lock:
+                self._seen += 1
+                if self._seen == self._expected:
+                    self._gate.set()
+            await self._gate.wait()
+            return await super()._summarize_text(
+                left_text,
+                right_text,
+                target_tokens,
+                parent_id=parent_id,
+                reporter=reporter,
+                prev_context=prev_context,
+                left_token_count=left_token_count,
+                right_token_count=right_token_count,
+            )
+
+    llm = CoordinatedLLM(expected=4)
+    vector_index = StubVectorIndex()
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return vector_index
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=llm,
+        vector_index_factory=_vector_factory,
+        worker_count=4,
+    )
+
+    await coordinator.start()
+    try:
+        await coordinator.enqueue_document(document_id)
+        await coordinator.wait_until_idle(document_id)
+    finally:
+        await coordinator.shutdown()
+
+    parentless = store.nodes.get_parentless_nodes()
+    assert len(parentless) == 1
+    assert int(parentless[0].height) >= 2
+
+
+@pytest.mark.asyncio
 async def test_worker_status_tracks_queue_and_inflight(
     doc_store: DocStoreFixture,
     storage_backend: StorageBackend,
