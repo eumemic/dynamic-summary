@@ -30,6 +30,7 @@ class IndexingResult:
     resummarized_nodes: int | None = None
     new_leaves: int | None = None
     telemetry: TelemetryDataDict | None = None
+    telemetry_run_id: str | None = None
 
 
 class IndexingService:

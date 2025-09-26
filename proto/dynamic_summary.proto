@@ -32,10 +32,12 @@ message AppendTextRequest {
   string document_id = 1;
   bytes content = 2;
   bool collect_telemetry = 3;
+  bool replace_existing = 4;
 }
 
 message AppendTextResponse {
   DocumentStats stats = 1;
+  string telemetry_run_id = 2;
 }
 
 message RetrieveRequest {
@@ -125,6 +127,18 @@ message GetDocumentResponse {
   DocumentStatus status = 1;
 }
 
+message GetTelemetryRequest {
+  string document_id = 1;
+  string run_id = 2;
+  bool wait = 3;
+}
+
+message GetTelemetryResponse {
+  bool complete = 1;
+  string telemetry_json = 2;
+  string error = 3;
+}
+
 service IndexerService {
   rpc IndexDocument(IndexDocumentRequest) returns (IndexDocumentResponse);
   rpc AppendText(AppendTextRequest) returns (AppendTextResponse);
@@ -138,4 +152,5 @@ service RetrievalService {
 service WorkerService {
   rpc RunWorkers(RunWorkersRequest) returns (stream RunWorkersResponse);
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
+  rpc GetTelemetry(GetTelemetryRequest) returns (GetTelemetryResponse);
 }

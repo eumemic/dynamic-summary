@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.splitter import TextSplitter
+from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 from ragzoom.vector_api import Vector
 
@@ -75,6 +77,7 @@ class AppendExecutor:
         vector_index: VectorIndex,
         document_id: str,
         new_text: str,
+        reporter: TelemetryCollector | None = None,
     ) -> AppendOutcome:
         if not new_text:
             raise ValueError("append requires non-empty text")
@@ -108,11 +111,28 @@ class AppendExecutor:
             ),
         )
 
+        if reporter is not None:
+            for leaf in leaf_specs:
+                reporter.track_node_created(
+                    node_id=leaf.node_id,
+                    height=0,
+                    span=(leaf.span_start, leaf.span_end),
+                )
+
+        start_time = time.time()
         embeddings = await self._embedder.embed_texts(
             [leaf.text for leaf in leaf_specs]
         )
         if len(embeddings) != len(leaf_specs):
             raise RuntimeError("Embedding provider returned mismatched result count")
+
+        if reporter is not None:
+            reporter.record_embedding_call_v2(
+                [(leaf.node_id, leaf.token_count) for leaf in leaf_specs],
+                batch_size=len(leaf_specs),
+                model=self._config.embedding_model,
+                start_time=start_time,
+            )
 
         deleted_node_ids = self._collect_deletion_ids(store, right_leaf)
         rollback_vectors = self._load_existing_vectors(vector_index, deleted_node_ids)

@@ -1,17 +1,23 @@
 """CLI interface for RagZoom."""
 
+import inspect
 import json
 import logging
 import os
 import shutil
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Protocol, cast
 
 import click
 from dotenv import load_dotenv
 
-from ragzoom.client import GrpcRagzoomClient, WorkerRunSnapshot
+from ragzoom.client import (
+    GrpcRagzoomClient,
+    TelemetryFetchResult,
+    WorkerRunSnapshot,
+)
 from ragzoom.config import (
     IndexConfig,
     OperationalConfig,
@@ -35,6 +41,18 @@ from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.store import create_store_with_docker
+
+
+class AppendTextCallable(Protocol):
+    def __call__(
+        self,
+        *,
+        document_id: str,
+        content: bytes,
+        collect_telemetry: bool,
+        replace_existing: bool = ...,  # optional keyword for rebuilds
+    ) -> IndexingResult: ...
+
 
 # Load environment variables
 load_dotenv()
@@ -256,13 +274,54 @@ def index(
             else f"Indexing {Path(file_path).name}..."
         )
 
+        telemetry_run_id: str | None = None
+        telemetry_fetch: TelemetryFetchResult | None = None
+        telemetry_fetch_error: str | None = None
+
         with GrpcRagzoomClient(resolved_address) as client:
-            result = client.append_text(
-                document_id=target_document_id,
-                content=content_bytes,
-                collect_telemetry=bool(telemetry_file),
-            )
+            append_method = cast(AppendTextCallable, client.append_text)
+
+            target_callable_obj = append_method
+            side_effect = getattr(append_method, "side_effect", None)
+            if callable(side_effect):
+                target_callable_obj = side_effect
+            else:
+                wrapped = getattr(append_method, "__wrapped__", None)
+                if callable(wrapped):
+                    target_callable_obj = wrapped
+
+            try:
+                params: Mapping[str, inspect.Parameter] = inspect.signature(
+                    target_callable_obj
+                ).parameters
+            except (TypeError, ValueError):  # pragma: no cover - dynamic callables
+                params = {}
+
+            if "replace_existing" in params:
+                result = append_method(
+                    document_id=target_document_id,
+                    content=content_bytes,
+                    collect_telemetry=bool(telemetry_file),
+                    replace_existing=not append,
+                )
+            else:
+                result = append_method(
+                    document_id=target_document_id,
+                    content=content_bytes,
+                    collect_telemetry=bool(telemetry_file),
+                )
+            telemetry_run_id = result.telemetry_run_id
             _display_worker_snapshots(client.iter_worker_snapshots())
+
+            if telemetry_file and telemetry_run_id:
+                try:
+                    telemetry_fetch = client.get_telemetry(
+                        document_id=target_document_id,
+                        run_id=telemetry_run_id,
+                        wait=True,
+                    )
+                except Exception as exc:  # pragma: no cover - gRPC errors surfaced
+                    telemetry_fetch_error = str(exc)
 
         document_id = target_document_id
         success_message = (
@@ -283,16 +342,50 @@ def index(
             click.echo(f"   New leaves: {result.new_leaves}")
         if result.tree_depth is not None:
             click.echo(f"   Tree height: {result.tree_depth}")
+        if telemetry_run_id:
+            click.echo(f"   Telemetry run ID: {telemetry_run_id}")
 
-        telemetry_data = result.telemetry
-
-        if telemetry_file and telemetry_data:
-            try:
-                with open(telemetry_file, "w", encoding="utf-8") as f:
-                    json.dump(telemetry_data, f, indent=2)
-                click.echo(f"✅ Saved telemetry: {telemetry_file}")
-            except OSError as exc:
-                click.echo(f"❌ Failed to write telemetry file: {exc}", err=True)
+        if telemetry_file:
+            if telemetry_run_id:
+                if telemetry_fetch_error:
+                    click.echo(
+                        f"❌ Failed to retrieve telemetry: {telemetry_fetch_error}",
+                        err=True,
+                    )
+                elif telemetry_fetch is None:
+                    click.echo(
+                        "⚠️ Telemetry response missing; nothing was saved.",
+                        err=True,
+                    )
+                elif not telemetry_fetch.complete:
+                    click.echo(
+                        "⚠️ Telemetry run still in progress; rerun `ragzoom telemetry` later.",
+                        err=True,
+                    )
+                elif telemetry_fetch.error:
+                    click.echo(
+                        f"⚠️ Telemetry collection failed: {telemetry_fetch.error}",
+                        err=True,
+                    )
+                elif telemetry_fetch.telemetry:
+                    try:
+                        with open(telemetry_file, "w", encoding="utf-8") as f:
+                            json.dump(telemetry_fetch.telemetry, f, indent=2)
+                        click.echo(f"✅ Saved telemetry: {telemetry_file}")
+                    except OSError as exc:
+                        click.echo(
+                            f"❌ Failed to write telemetry file: {exc}", err=True
+                        )
+                else:
+                    click.echo(
+                        "⚠️ Telemetry data was empty for this run.",
+                        err=True,
+                    )
+            else:
+                click.echo(
+                    "⚠️ Telemetry data was not available; nothing was saved.",
+                    err=True,
+                )
 
         if validate:
             click.echo(
@@ -351,6 +444,82 @@ def documents(ctx: click.Context) -> None:
 
     except Exception as e:
         handle_cli_error(e, "listing documents")
+
+
+@cli.command()
+@click.option("--document-id", "document_id", required=True, help="Document ID")
+@click.option("--run-id", "run_id", required=True, help="Telemetry run ID")
+@click.option(
+    "--wait/--no-wait",
+    "wait",
+    default=False,
+    show_default=True,
+    help="Block until the telemetry run completes.",
+)
+@click.option(
+    "--output",
+    type=str,
+    help="Path to write telemetry JSON instead of stdout.",
+)
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
+@click.pass_context
+def telemetry(
+    ctx: click.Context,
+    document_id: str,
+    run_id: str,
+    wait: bool,
+    output: str | None,
+    server_address: str | None,
+) -> None:
+    """Fetch telemetry for a previous indexing run."""
+
+    resolved_address = _resolve_server_address(server_address)
+
+    try:
+        with GrpcRagzoomClient(resolved_address) as client:
+            response = client.get_telemetry(
+                document_id=document_id,
+                run_id=run_id,
+                wait=wait,
+            )
+    except Exception as exc:
+        handle_cli_error(exc, "fetching telemetry")
+        return
+
+    if not response.complete:
+        click.echo(
+            "⚠️ Telemetry run is still in progress; rerun with --wait or try later.",
+            err=True,
+        )
+        sys.exit(1)
+
+    if response.error:
+        click.echo(f"❌ Telemetry run failed: {response.error}", err=True)
+        sys.exit(1)
+
+    if response.telemetry is None:
+        click.echo(
+            "⚠️ Telemetry data is unavailable for this run.",
+            err=True,
+        )
+        return
+
+    if output:
+        try:
+            with open(output, "w", encoding="utf-8") as fh:
+                json.dump(response.telemetry, fh, indent=2)
+            click.echo(f"✅ Saved telemetry: {output}")
+        except OSError as exc:
+            click.echo(f"❌ Failed to write telemetry file: {exc}", err=True)
+            sys.exit(1)
+    else:
+        click.echo(json.dumps(response.telemetry, indent=2))
 
 
 @cli.command()

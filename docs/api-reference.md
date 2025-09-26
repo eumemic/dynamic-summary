@@ -40,7 +40,7 @@ ragzoom index <input> [OPTIONS]
 - `--no-progress` - Disable progress bars
 - `--validate` - Enable validation checks during indexing
 - `--debug` - Emit detailed debug logging (includes token usage)
-- `--telemetry [PATH]` - Persist telemetry JSON (defaults to `telemetry.json` when flag is provided without a value)
+- `--telemetry [PATH]` - Request telemetry collection. The CLI waits for server workers to finish, persists the telemetry JSON (default `telemetry.json` if no path is provided), and prints the telemetry run ID. Use `ragzoom telemetry` to fetch the same run later if needed.
 - `--append` - Append the file's contents to an existing document (requires `--document-id`)
 
 The command clears the target document before indexing unless `--append` is provided. Both paths run through the incremental patch engine, so fresh indexes and appends share the same invariants and telemetry.
@@ -120,6 +120,16 @@ Documents in database:
   - my-doc (1234 nodes, indexed: 2025-01-15 10:30:00)
   - paper.pdf (567 nodes, indexed: 2025-01-14 15:45:00)
 ```
+
+### `ragzoom telemetry`
+
+Fetch telemetry produced by a previous indexing run. The command is helpful when `--telemetry` was used with `ragzoom index` but the results need to be retrieved later.
+
+```bash
+ragzoom telemetry --document-id my-doc --run-id <run_id> [--wait] [--output telemetry.json]
+```
+
+If `--wait` is provided the command blocks until the run finishes collecting telemetry. Otherwise it returns immediately when the run is still active. Passing `--output` writes the telemetry JSON to disk; without it the payload is printed to stdout.
 
 ### `ragzoom pin`
 

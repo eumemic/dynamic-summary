@@ -10,7 +10,7 @@ This document defines the architecture for running RagZoom indexing and summariz
 - **Correct-by-construction appends:** After an append RPC returns, the document’s leaf layer fully reflects the new text span and can be queried immediately.
 - **Eventual summarization:** Background workers continuously build parents above the leaves. They may lag behind append throughput, but converge to a complete tree when load subsides.
 - **Crash resilience:** A server restart can discover the current tree state and resume work without manual intervention or data loss.
-- **Telemetry parity:** Existing telemetry and CLI experiences (`ragzoom index`, `--telemetry`, etc.) continue to function on top of the server-managed workflow.
+- **Telemetry parity:** Existing telemetry and CLI experiences (`ragzoom index`, `--telemetry`, etc.) continue to function via server-managed telemetry runs and the `GetTelemetry` RPC.
 
 ## Non-Goals
 
@@ -145,7 +145,7 @@ Per worker task:
 - `ragzoom index [FILE]`: uploads content via append RPC, then waits for the worker queue to drain.
   1. Call `AppendText` for the full document (reusing streaming upload if needed).
   2. Subscribe to `RunWorkers(mode=UNTIL_IDLE)` to receive progress events until `queue_depth == 0`.
-  3. If `--telemetry` flagged, collect the emitted telemetry payloads and write them as today.
+  3. If `--telemetry` flagged, capture the `telemetry_run_id` from the response and, once `RunWorkers` reports idle, call `GetTelemetry(wait=true)` to persist the returned JSON.
 - `ragzoom index --async`: only runs the append RPC, prints basic stats, and exits. `--telemetry` is invalid with `--async` (CLI should error and explain).
 
 ## gRPC Service Adjustments
@@ -165,7 +165,7 @@ Per worker task:
 
 - Append emits ingestion telemetry (chunks created, tokens, cost estimates).
 - Workers publish node-level telemetry events (depth, duration, retries) to the existing telemetry sink.
-- CLI `RunWorkers` subscription aggregates those events into the same summary JSON the previous pipeline produced.
+- The server stores telemetry per run; the CLI waits for `RunWorkers` to go idle and then retrieves the finalized JSON via `GetTelemetry`.
 
 ## Error Handling & Atomicity
 

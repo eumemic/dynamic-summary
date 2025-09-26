@@ -19,16 +19,31 @@ from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
+from ragzoom.server.run_manager import IndexRunContext
 from ragzoom.server.state import ServerState
 from ragzoom.server.worker_coordinator import WorkerStatus
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.tree_viz import build_ascii_tree
+from ragzoom.utils.tokenization import tokenizer
 from ragzoom.validate import validate_tiling
 from ragzoom.vector_factory import create_vector_index
 
 if TYPE_CHECKING:
+    from typing import Protocol
+
     from grpc import StatusCode as GrpcStatusCode
     from grpc.aio import Server as GrpcServer
+
+    class TelemetryRequestProto(Protocol):
+        document_id: str
+        run_id: str
+        wait: bool
+
+    class TelemetryResponseProto(Protocol):
+        complete: bool
+        telemetry_json: str
+        error: str
+
 else:  # pragma: no cover - typing aid only
     GrpcStatusCode = object  # type: ignore[assignment]
     GrpcServer = object  # type: ignore[assignment]
@@ -268,66 +283,153 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
         else:
             lock_cm = cast(AbstractContextManager[object], nullcontext())
 
-        with lock_cm:
-            doc_record = self._state.store.get_document_by_id(document_id)
-            embedding_model = (
-                doc_record.embedding_model
-                if doc_record and getattr(doc_record, "embedding_model", None)
-                else self._state.index_config.embedding_model
-            )
-            summary_model = (
-                doc_record.summary_model
-                if doc_record and getattr(doc_record, "summary_model", None)
-                else self._state.index_config.summary_model
-            )
+        telemetry_manager = self._state.telemetry_run_manager
+        run_context: IndexRunContext | None = None
+        previous_leaf_count = 0
 
-            if doc_record is None:
-                self._state.store.add_document(
-                    document_id=document_id,
-                    file_path=None,
-                    embedding_model=embedding_model,
-                    summary_model=summary_model,
-                )
-
-            document_store = self._state.store.for_document(document_id)
-            vector_index = create_vector_index(
-                self._state.operational_config.vector_backend,
-                self._state.operational_config.database_url,
-                embedding_model,
-            )
-
-            outcome = await self._state.append_executor.append(
-                store=document_store,
-                vector_index=vector_index,
-                document_id=document_id,
-                new_text=text,
-            )
-
-            root = document_store.tree.get_root()
-            tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
-
-            mutated_nodes = len(outcome.new_leaf_ids) + len(outcome.deleted_node_ids)
-            new_leaves = len(outcome.new_leaf_ids)
-
-            result = IndexingResult(
-                document_id=outcome.document_id,
-                chunks_created=outcome.total_leaves,
-                tree_depth=tree_depth,
-                mutated_nodes=mutated_nodes,
-                resummarized_nodes=0,
-                new_leaves=new_leaves,
-                telemetry=None,
-            )
+        replace_existing = bool(getattr(request, "replace_existing", False))
 
         try:
-            await self._state.worker_coordinator.enqueue_document(document_id)
-        except Exception:  # pragma: no cover - defensive logging
-            logger.exception(
-                "Failed to enqueue document %s for worker processing",
-                document_id,
-            )
+            with lock_cm:
+                doc_record = self._state.store.get_document_by_id(document_id)
+                document_previously_existed = doc_record is not None
+                embedding_model = (
+                    doc_record.embedding_model
+                    if doc_record and getattr(doc_record, "embedding_model", None)
+                    else self._state.index_config.embedding_model
+                )
+                summary_model = (
+                    doc_record.summary_model
+                    if doc_record and getattr(doc_record, "summary_model", None)
+                    else self._state.index_config.summary_model
+                )
 
-        return pb2.AppendTextResponse(stats=_stats_to_proto(result))
+                if doc_record is None:
+                    self._state.store.add_document(
+                        document_id=document_id,
+                        file_path=None,
+                        embedding_model=embedding_model,
+                        summary_model=summary_model,
+                    )
+                doc_record = self._state.store.get_document_by_id(document_id)
+                file_path = (
+                    getattr(doc_record, "file_path", None) if doc_record else None
+                )
+
+                document_store = self._state.store.for_document(document_id)
+                previous_leaf_count = document_store.nodes.leaf_count()
+
+                if request.collect_telemetry:
+                    existing_tokens = sum(
+                        int(getattr(node, "token_count", 0))
+                        for node in document_store.nodes.get_leaves()
+                    )
+                    new_tokens = tokenizer.count_tokens(text)
+                    source_tokens = existing_tokens + new_tokens
+                    run_context = await telemetry_manager.start_run(
+                        document_id,
+                        collect=True,
+                        source_tokens=source_tokens,
+                        document_path=(
+                            getattr(doc_record, "file_path", None)
+                            if doc_record
+                            else None
+                        ),
+                    )
+
+                vector_index = create_vector_index(
+                    self._state.operational_config.vector_backend,
+                    self._state.operational_config.database_url,
+                    embedding_model,
+                )
+
+                if replace_existing and (
+                    document_previously_existed or previous_leaf_count > 0
+                ):
+                    try:
+                        vector_index.delete(filter={"document_id": document_id})
+                    except Exception:  # pragma: no cover - defensive logging
+                        logger.exception(
+                            "Failed to clear vectors for document %s before rebuild",
+                            document_id,
+                        )
+
+                    try:
+                        self._state.store.clear_document(document_id)
+                    except Exception:  # pragma: no cover - defensive logging
+                        logger.exception(
+                            "Failed to clear document %s before rebuild", document_id
+                        )
+                        raise
+
+                    self._state.store.add_document(
+                        document_id=document_id,
+                        file_path=file_path,
+                        embedding_model=embedding_model,
+                        summary_model=summary_model,
+                    )
+                    document_store = self._state.store.for_document(document_id)
+                    previous_leaf_count = 0
+                    vector_index = create_vector_index(
+                        self._state.operational_config.vector_backend,
+                        self._state.operational_config.database_url,
+                        embedding_model,
+                    )
+
+                outcome = await self._state.append_executor.append(
+                    store=document_store,
+                    vector_index=vector_index,
+                    document_id=document_id,
+                    new_text=text,
+                    reporter=run_context.telemetry_collector if run_context else None,
+                )
+
+                root = document_store.tree.get_root()
+                tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
+
+                mutated_nodes = len(outcome.new_leaf_ids) + len(
+                    outcome.deleted_node_ids
+                )
+                new_leaves = len(outcome.new_leaf_ids)
+
+                result = IndexingResult(
+                    document_id=outcome.document_id,
+                    chunks_created=outcome.total_leaves,
+                    tree_depth=tree_depth,
+                    mutated_nodes=mutated_nodes,
+                    resummarized_nodes=0,
+                    new_leaves=new_leaves,
+                    telemetry=None,
+                    telemetry_run_id=run_context.run_id if run_context else None,
+                )
+
+                if run_context is not None:
+                    run_context.register_append_outcome(
+                        span_start=outcome.appended_span_start,
+                        span_end=outcome.appended_span_end,
+                        mutated_nodes=mutated_nodes,
+                        new_leaves=new_leaves,
+                        previous_leaf_count=previous_leaf_count,
+                        total_leaves=outcome.total_leaves,
+                    )
+
+            if run_context is not None:
+                await self._state.worker_coordinator.attach_run(run_context)
+
+            await self._state.worker_coordinator.enqueue_document(document_id)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception(
+                "AppendText failed for document %s", document_id, exc_info=True
+            )
+            if run_context is not None:
+                await telemetry_manager.complete_run(run_context.run_id, error=str(exc))
+                await self._state.worker_coordinator.detach_run(document_id)
+            raise
+
+        telemetry_run_id = result.telemetry_run_id or ""
+        response = pb2.AppendTextResponse(stats=_stats_to_proto(result))
+        setattr(response, "telemetry_run_id", telemetry_run_id)
+        return response
 
 
 class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
@@ -542,6 +644,53 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             tree_depth=tree_depth,
         )
         return pb2.GetDocumentResponse(status=doc_status)
+
+    async def GetTelemetry(  # noqa: N802
+        self,
+        request: TelemetryRequestProto,
+        context: ServicerContextProto,
+    ) -> TelemetryResponseProto:
+        if not request.document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="GetTelemetry requires `document_id`.",
+            )
+        if not request.run_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="GetTelemetry requires `run_id`.",
+            )
+
+        run = await self._state.telemetry_run_manager.get_run(request.run_id)
+        if run is None or run.document_id != request.document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.NOT_FOUND,
+                message="Telemetry run not found.",
+            )
+
+        if request.wait and run.status == "in_progress":
+            run = await self._state.telemetry_run_manager.wait_for_completion(run)
+
+        response_cls = getattr(pb2, "GetTelemetryResponse")
+
+        if run.status == "in_progress":
+            response = response_cls(complete=False)
+            return cast("TelemetryResponseProto", response)
+
+        error_message = run.error or ""
+        telemetry_payload = ""
+        if not error_message and run.result is not None:
+            telemetry_payload = json_dumps(run.result)
+
+        response = response_cls(
+            complete=True,
+            telemetry_json=telemetry_payload,
+            error=error_message,
+        )
+        return cast("TelemetryResponseProto", response)
 
     def _format_status(self, status: WorkerStatus) -> str:
         parts = [

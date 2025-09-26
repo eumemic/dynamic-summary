@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from typing import NoReturn, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -9,6 +10,7 @@ from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.server.append_executor import AppendOutcome
+from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.server.servicers import IndexerServicer
 from ragzoom.server.state import ServerState
 
@@ -16,7 +18,9 @@ from ragzoom.server.state import ServerState
 class StubAppendExecutor:
     def __init__(self, outcome: AppendOutcome) -> None:
         self.outcome = outcome
-        self.calls: list[tuple[DocumentStore, VectorIndex, str, str]] = []
+        self.calls: list[tuple[DocumentStore, VectorIndex, str, str, object | None]] = (
+            []
+        )
 
     async def append(
         self,
@@ -25,8 +29,9 @@ class StubAppendExecutor:
         vector_index: VectorIndex,
         document_id: str,
         new_text: str,
+        reporter: object | None = None,
     ) -> AppendOutcome:
-        self.calls.append((store, vector_index, document_id, new_text))
+        self.calls.append((store, vector_index, document_id, new_text, reporter))
         return self.outcome
 
 
@@ -36,6 +41,12 @@ class StubWorkerCoordinator:
 
     async def enqueue_document(self, document_id: str) -> None:
         self.enqueued.append(document_id)
+
+    async def attach_run(self, context: object) -> None:
+        return None
+
+    async def detach_run(self, document_id: str) -> None:
+        return None
 
 
 class StubContext:
@@ -77,6 +88,7 @@ async def test_append_text_uses_append_executor() -> None:
                 indexing_service=None,
                 query_service=None,
                 llm_service=None,
+                telemetry_run_manager=TelemetryRunManager(index_config),
                 append_executor=append_executor,
                 worker_coordinator=worker_coordinator,
             ),
@@ -108,5 +120,111 @@ async def test_append_text_uses_append_executor() -> None:
         assert stats.mutated_nodes == expected_mutations
         assert stats.new_leaves == len(outcome.new_leaf_ids)
         assert stats.resummarized_nodes == 0
+        assert getattr(response, "telemetry_run_id", "") == ""
+    finally:
+        backend.close()
+
+
+@pytest.mark.asyncio
+async def test_append_text_with_replace_existing_sets_flag() -> None:
+    backend = SQLiteStorageBackend()
+    try:
+        index_config = IndexConfig.load()
+        query_config = QueryConfig()
+        operational_config = OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        )
+
+        backend.add_document(
+            "doc",
+            file_path=None,
+            embedding_model=index_config.embedding_model,
+            summary_model=index_config.summary_model,
+        )
+
+        outcome = AppendOutcome(
+            document_id="doc",
+            appended_span_start=0,
+            appended_span_end=5,
+            new_leaf_ids=["leaf-1"],
+            deleted_node_ids=[],
+            total_leaves=1,
+        )
+
+        append_executor = StubAppendExecutor(outcome)
+        worker_coordinator = StubWorkerCoordinator()
+
+        state = cast(
+            ServerState,
+            SimpleNamespace(
+                index_config=index_config,
+                query_config=query_config,
+                operational_config=operational_config,
+                store=backend,
+                indexing_service=None,
+                query_service=None,
+                llm_service=None,
+                telemetry_run_manager=TelemetryRunManager(index_config),
+                append_executor=append_executor,
+                worker_coordinator=worker_coordinator,
+            ),
+        )
+
+        servicer = IndexerServicer(state)
+
+        request = pb2.AppendTextRequest(
+            document_id="doc",
+            content=b"hello world",
+            collect_telemetry=False,
+        )
+        setattr(request, "replace_existing", True)
+
+        delete_calls: list[bool] = []
+
+        class VectorIndexStub:
+            def delete(
+                self,
+                filter: dict[str, object] | None = None,
+                ids: list[str] | None = None,
+            ) -> int:
+                delete_calls.append(True)
+                return 0
+
+            def upsert(
+                self,
+                items: list[tuple[str, list[float], dict[str, object]]],
+            ) -> None:  # pragma: no cover - not used in this test
+                return None
+
+            def search_similar(
+                self,
+                query_embedding: object,
+                k: int,
+                where: dict[str, object] | None = None,
+            ) -> list[object]:  # pragma: no cover
+                return []
+
+            def get_vectors(self, ids: list[str]) -> list[object]:  # pragma: no cover
+                return []
+
+        def vector_factory(*args: object, **kwargs: object) -> VectorIndexStub:
+            return VectorIndexStub()
+
+        with (
+            patch.object(
+                backend, "clear_document", wraps=backend.clear_document
+            ) as clear_mock,
+            patch(
+                "ragzoom.server.servicers.create_vector_index",
+                side_effect=vector_factory,
+            ),
+        ):
+            await servicer.AppendText(request, StubContext())
+
+        assert clear_mock.called
+        assert delete_calls, "Vector index delete was not invoked"
+        assert append_executor.calls
     finally:
         backend.close()

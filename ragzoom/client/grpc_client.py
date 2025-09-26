@@ -24,7 +24,9 @@ def _decode_telemetry(payload: str) -> TelemetryDataDict | None:
     return cast(TelemetryDataDict, data)
 
 
-def _document_stats_to_result(stats: pb2.DocumentStats) -> IndexingResult:
+def _document_stats_to_result(
+    stats: pb2.DocumentStats, *, telemetry_run_id: str | None = None
+) -> IndexingResult:
     telemetry = _decode_telemetry(stats.telemetry_json)
     return IndexingResult(
         document_id=stats.document_id,
@@ -34,6 +36,7 @@ def _document_stats_to_result(stats: pb2.DocumentStats) -> IndexingResult:
         resummarized_nodes=stats.resummarized_nodes,
         new_leaves=stats.new_leaves,
         telemetry=telemetry,
+        telemetry_run_id=telemetry_run_id,
     )
 
 
@@ -82,6 +85,13 @@ class WorkerRunSnapshot:
     queue_depth: int
     inflight: int
     documents: dict[str, tuple[int, int]]
+
+
+@dataclass(slots=True)
+class TelemetryFetchResult:
+    complete: bool
+    telemetry: TelemetryDataDict | None
+    error: str | None
 
 
 class GrpcRagzoomClient:
@@ -139,17 +149,23 @@ class GrpcRagzoomClient:
         document_id: str,
         content: bytes,
         collect_telemetry: bool,
+        replace_existing: bool,
     ) -> IndexingResult:
         request = pb2.AppendTextRequest(
             document_id=document_id,
             content=content,
             collect_telemetry=collect_telemetry,
         )
+        setattr(request, "replace_existing", replace_existing)
         try:
             response = self._indexer.AppendText(request, timeout=self._timeout)
         except grpc.RpcError as error:  # pragma: no cover
             raise _map_rpc_error(error) from error
-        return _document_stats_to_result(response.stats)
+        telemetry_run_id = getattr(response, "telemetry_run_id", "") or None
+        return _document_stats_to_result(
+            response.stats,
+            telemetry_run_id=telemetry_run_id,
+        )
 
     def execute_query(
         self,
@@ -236,3 +252,32 @@ class GrpcRagzoomClient:
                 )
         except grpc.RpcError as error:  # pragma: no cover
             raise _map_rpc_error(error) from error
+
+    def get_telemetry(
+        self,
+        *,
+        document_id: str,
+        run_id: str,
+        wait: bool = False,
+    ) -> TelemetryFetchResult:
+        request_cls = getattr(pb2, "GetTelemetryRequest")
+        request = request_cls(
+            document_id=document_id,
+            run_id=run_id,
+            wait=wait,
+        )
+        try:
+            get_telemetry = getattr(self._workers, "GetTelemetry")
+            response = get_telemetry(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        telemetry_json = getattr(response, "telemetry_json", "")
+        telemetry = _decode_telemetry(telemetry_json)
+        error_message = getattr(response, "error", "") or ""
+
+        return TelemetryFetchResult(
+            complete=bool(getattr(response, "complete", False)),
+            telemetry=telemetry,
+            error=error_message or None,
+        )

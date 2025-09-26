@@ -4,6 +4,7 @@ from .grpc_client import (
     ExecuteQueryOutput,
     GrpcRagzoomClient,
     RetrievalView,
+    TelemetryFetchResult,
     WorkerRunSnapshot,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "ExecuteQueryOutput",
     "GrpcRagzoomClient",
     "RetrievalView",
+    "TelemetryFetchResult",
     "WorkerRunSnapshot",
 ]

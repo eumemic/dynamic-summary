@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections import defaultdict
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
+from ragzoom.server.run_manager import IndexRunContext, TelemetryRunManager
 from ragzoom.vector_factory import create_vector_index
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing
@@ -89,6 +91,7 @@ class WorkerCoordinator:
         index_config: IndexConfig,
         operational_config: OperationalConfig,
         llm_service: SummaryBackend,
+        run_manager: TelemetryRunManager | None = None,
         vector_index_factory: Callable[[str], VectorIndex] | None = None,
         worker_count: int = 2,
     ) -> None:
@@ -97,6 +100,10 @@ class WorkerCoordinator:
         self._operational_config = operational_config
         self._llm_service = llm_service
         self._worker_count = max(worker_count, 1)
+        self._run_manager = run_manager
+
+        # Active run contexts keyed by document_id
+        self._runs: dict[str, IndexRunContext] = {}
 
         if vector_index_factory is None:
             vector_index_factory = lambda _doc_id: create_vector_index(  # noqa: E731
@@ -147,6 +154,7 @@ class WorkerCoordinator:
     # ------------------------------------------------------------------
     async def enqueue_document(self, document_id: str) -> None:
         await self._scan_document(document_id)
+        await self._maybe_finish_run(document_id)
 
     async def wait_until_idle(self, document_id: str | None = None) -> None:
         while True:
@@ -167,6 +175,15 @@ class WorkerCoordinator:
         if document_id is None:
             return sum(self._pending_counts.values())
         return self._pending_counts.get(document_id, 0)
+
+    async def attach_run(self, context: IndexRunContext) -> None:
+        async with self._coord_lock:
+            self._runs[context.document_id] = context
+
+    async def detach_run(self, document_id: str) -> None:
+        async with self._coord_lock:
+            if document_id in self._runs:
+                self._runs.pop(document_id)
 
     async def status(self) -> WorkerStatus:
         async with self._coord_lock:
@@ -228,9 +245,11 @@ class WorkerCoordinator:
                 self._inflight.add(key)
                 self._inflight_counts[candidate.document_id] += 1
 
+            error_exc: Exception | None = None
             try:
                 await self._process_candidate(candidate)
-            except Exception:  # pragma: no cover - defensive logging
+            except Exception as exc:  # pragma: no cover - defensive logging
+                error_exc = exc
                 logger.exception(
                     "Worker failed while processing %s", candidate, exc_info=True
                 )
@@ -242,10 +261,12 @@ class WorkerCoordinator:
                     if current_inflight > 1:
                         self._inflight_counts[doc_id] = current_inflight - 1
                     else:
-                        self._inflight_counts.pop(doc_id, None)
+                        if doc_id in self._inflight_counts:
+                            self._inflight_counts.pop(doc_id)
                     self._pending_counts[doc_id] -= 1
                     if self._pending_counts[doc_id] <= 0:
-                        self._pending_counts.pop(doc_id, None)
+                        if doc_id in self._pending_counts:
+                            self._pending_counts.pop(doc_id)
                     if (
                         not self._pending_counts
                         and self._queue.empty()
@@ -255,12 +276,18 @@ class WorkerCoordinator:
 
                 self._queue.task_done()
 
-            try:
-                await self._scan_document(candidate.document_id)
-            except Exception:  # pragma: no cover - defensive logging
-                logger.exception(
-                    "Failed to rescan document %s", candidate.document_id, exc_info=True
-                )
+            if error_exc is None:
+                try:
+                    await self._scan_document(candidate.document_id)
+                except Exception:  # pragma: no cover - defensive logging
+                    logger.exception(
+                        "Failed to rescan document %s",
+                        candidate.document_id,
+                        exc_info=True,
+                    )
+                await self._maybe_finish_run(candidate.document_id)
+            else:
+                await self._handle_worker_failure(candidate.document_id, error_exc)
 
         while not self._queue.empty():
             _, candidate = await self._queue.get()
@@ -269,8 +296,41 @@ class WorkerCoordinator:
                 self._queued.discard(key)
             self._queue.task_done()
 
+    async def _handle_worker_failure(self, document_id: str, error: Exception) -> None:
+        if self._run_manager is None:
+            return
+        message = f"Worker failure for {document_id}: {error}"
+        await self._finalize_run(document_id, error=message)
+
+    async def _maybe_finish_run(self, document_id: str) -> None:
+        if self._run_manager is None:
+            return
+        async with self._coord_lock:
+            context = self._runs.get(document_id)
+            if context is None:
+                return
+            if self._pending_counts.get(document_id, 0) > 0:
+                return
+            if self._inflight_counts.get(document_id, 0) > 0:
+                return
+        await self._finalize_run(document_id, error=None)
+
+    async def _finalize_run(self, document_id: str, *, error: str | None) -> None:
+        if self._run_manager is None:
+            return
+        async with self._coord_lock:
+            context = self._runs.get(document_id)
+        if context is None:
+            return
+        await self._run_manager.complete_run(context.run_id, error=error)
+        await self.detach_run(document_id)
+
     async def _process_candidate(self, candidate: ReadyParentCandidate) -> None:
         store = self._store.for_document(candidate.document_id)
+
+        async with self._coord_lock:
+            context = self._runs.get(candidate.document_id)
+        collector = context.telemetry_collector if context else None
 
         left = store.nodes.get(candidate.left_child_id)
         if left is None or left.parent_id is not None:
@@ -314,21 +374,37 @@ class WorkerCoordinator:
 
         parent_id = str(uuid.uuid4())
 
+        if collector is not None:
+            collector.track_node_created(
+                node_id=parent_id,
+                height=height,
+                span=(span_start, span_end),
+            )
+
         summary, _retry_count, summary_tokens = await self._llm_service._summarize_text(
             left_text,
             right_text,
             self._index_config.target_chunk_tokens,
             parent_id=parent_id,
-            reporter=None,
+            reporter=collector,
             prev_context=prev_context,
             left_token_count=left_tokens,
             right_token_count=right_tokens,
         )
 
+        start_time = time.time()
         embeddings = await self._llm_service.embed_texts([summary])
         if len(embeddings) != 1:
             raise ValueError("Embedding provider returned unexpected batch size")
         embedding_vector = np.asarray(embeddings[0], dtype=np.float64)
+
+        if collector is not None:
+            collector.record_embedding_call_v2(
+                [(parent_id, summary_tokens)],
+                batch_size=1,
+                model=self._index_config.embedding_model,
+                start_time=start_time,
+            )
 
         preceding_parent_id = None
         if preceding_node and preceding_node.parent_id:
@@ -430,6 +506,9 @@ class WorkerCoordinator:
                         "Failed to delete vector during rollback", exc_info=True
                     )
             raise
+
+        if context is not None:
+            context.register_summary_node(parent_id)
 
 
 __all__ = [

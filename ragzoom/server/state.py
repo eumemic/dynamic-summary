@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.server.append_executor import AppendExecutor
+from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.server.worker_coordinator import WorkerCoordinator
 from ragzoom.services.indexing_service import IndexingService
 from ragzoom.services.llm_service import LLMService
@@ -25,6 +26,7 @@ class ServerState:
     indexing_service: IndexingService
     query_service: QueryService
     llm_service: LLMService
+    telemetry_run_manager: TelemetryRunManager
     append_executor: AppendExecutor
     worker_coordinator: WorkerCoordinator
 
@@ -51,12 +53,14 @@ class ServerState:
             index_cfg,
             api_key=operational_cfg.openai_api_key,
         )
+        telemetry_run_manager = TelemetryRunManager(index_cfg)
         append_executor = AppendExecutor(index_cfg, llm_service)
         worker_coordinator = WorkerCoordinator(
             store=store,
             index_config=index_cfg,
             operational_config=operational_cfg,
             llm_service=llm_service,
+            run_manager=telemetry_run_manager,
         )
 
         return cls(
@@ -67,6 +71,7 @@ class ServerState:
             indexing_service=indexing_service,
             query_service=query_service,
             llm_service=llm_service,
+            telemetry_run_manager=telemetry_run_manager,
             append_executor=append_executor,
             worker_coordinator=worker_coordinator,
         )

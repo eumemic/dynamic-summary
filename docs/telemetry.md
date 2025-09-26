@@ -13,6 +13,21 @@ RagZoom's telemetry system provides detailed insights into the indexing process 
 5. [Debugging with Telemetry](#debugging-with-telemetry)
 6. [Format Migration](#format-migration)
 
+## Collecting Telemetry
+
+Telemetry is captured by the gRPC server whenever `ragzoom index` is invoked with the `--telemetry` flag. The CLI waits for the server-managed workers to drain, writes the telemetry JSON to the requested path, and prints the **telemetry run ID**. That run ID can be reused later with `ragzoom telemetry --document-id <doc> --run-id <id>` to retrieve the same payload again (for example after an asynchronous append or on a different machine).
+
+Example:
+
+```bash
+python -m ragzoom.cli index notes.txt --document-id lab-notes --telemetry telemetry.json
+
+# Later (or in another shell)
+python -m ragzoom.cli telemetry --document-id lab-notes --run-id 4f70a2fd --output telemetry.json
+```
+
+Telemetry collection fails fast if a worker encounters an error (the CLI surfaces the failure message). In that situation the telemetry run remains cached and `ragzoom telemetry` returns the error string instead of JSON.
+
 ## Telemetry Data Format
 
 ### Format Version
