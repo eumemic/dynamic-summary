@@ -40,6 +40,7 @@ class DocumentNodeRepository:
         token_count: int = 0,
         height: int = 0,
         is_left_child: bool | None = None,
+        level_index: int = 0,
     ) -> TreeNode:
         """Add a node scoped to this document."""
         # Ensure embedding type matches repository protocol
@@ -62,6 +63,7 @@ class DocumentNodeRepository:
             token_count=token_count,
             height=height,
             is_left_child=is_left_child,
+            level_index=level_index,
         )
 
     def add_batch(
@@ -154,6 +156,24 @@ class DocumentNodeRepository:
         if target_doc is None:
             return nodes
         return [node for node in nodes if node.document_id == target_doc]
+
+    def get_parentless_nodes(self) -> list[TreeNode]:
+        """Return nodes without parents for this document."""
+
+        getter = getattr(self._repo, "get_parentless_nodes_for_document", None)
+        if not callable(getter):
+            raise NotImplementedError(
+                "Underlying repository does not support parentless node queries"
+            )
+        return list(getter(self.document_id))
+
+    def get_ready_left_children(self) -> list[str]:
+        getter = getattr(self._repo, "get_ready_left_children", None)
+        if not callable(getter):
+            raise NotImplementedError(
+                "Underlying repository does not support ready left child queries"
+            )
+        return list(getter(self.document_id))
 
     def get_rightmost_leaf_for_document(
         self, document_id: str | None

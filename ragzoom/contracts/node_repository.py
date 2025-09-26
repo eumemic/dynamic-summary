@@ -37,6 +37,7 @@ class NodeRepository(Protocol):
         token_count: int = 0,
         height: int = 0,
         is_left_child: bool | None = None,
+        level_index: int = 0,
     ) -> TreeNode: ...
 
     def add_nodes_batch(
@@ -71,6 +72,10 @@ class NodeRepository(Protocol):
     def get_pinned_nodes_for_document(
         self, document_id: str, depth_max: int | None = None
     ) -> list[TreeNode]: ...
+    def get_parentless_nodes_for_document(
+        self, document_id: str | None
+    ) -> list[TreeNode]: ...
+    def get_ready_left_children(self, document_id: str | None) -> list[str]: ...
 
     # Mutations
     def update_node_access(self, node_id: str) -> None: ...

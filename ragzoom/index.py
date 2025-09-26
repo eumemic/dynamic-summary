@@ -152,6 +152,7 @@ class TreeBuilder:
             preceding_neighbor_id=getattr(node, "preceding_neighbor_id", None),
             following_neighbor_id=getattr(node, "following_neighbor_id", None),
             embedding=None,
+            level_index=int(getattr(node, "level_index", 0)),
         )
 
     def _generate_node_id(self) -> str:
@@ -189,6 +190,7 @@ class TreeBuilder:
             "height": int(node.height),
             "preceding_neighbor_id": node.preceding_neighbor_id,
             "following_neighbor_id": node.following_neighbor_id,
+            "level_index": int(node.level_index),
         }
 
     def _ensure_context_nodes(

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, Protocol
@@ -16,7 +16,6 @@ from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.vector_factory import create_vector_index
@@ -35,10 +34,6 @@ class ReadyParentCandidate:
 
     document_id: str
     left_child_id: str
-    right_child_id: str | None
-    height: int
-    span_start: int
-    span_end: int
 
 
 NodeFieldValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
@@ -75,77 +70,13 @@ class SummaryBackend(Protocol):
 # jscpd:ignore-end
 
 
-def _span_bounds(nodes: Iterable[TreeNode]) -> int:
-    max_end = 0
-    for node in nodes:
-        max_end = max(max_end, int(getattr(node, "span_end", 0)))
-    return max_end
-
-
 def compute_ready_parent_candidates(store: DocumentStore) -> list[ReadyParentCandidate]:
     document_id = store.document_id or ""
-    nodes = store.nodes.get_all()
-    if not nodes:
-        return []
-
-    by_id: dict[str, TreeNode] = {node.id: node for node in nodes}
-    doc_span_end = _span_bounds(nodes)
-
-    candidates: list[ReadyParentCandidate] = []
-    claimed: set[str] = set()
-
-    for node in sorted(nodes, key=lambda n: int(getattr(n, "span_start", 0))):
-        node_id = node.id
-        if node_id in claimed or node.parent_id is not None:
-            continue
-
-        span_start = int(getattr(node, "span_start", 0))
-        span_end = int(getattr(node, "span_end", 0))
-        height = int(getattr(node, "height", 0))
-
-        right_id = getattr(node, "following_neighbor_id", None)
-        if right_id:
-            right_node = by_id.get(right_id)
-            if (
-                right_node
-                and right_node.parent_id is None
-                and int(getattr(right_node, "height", -1)) == height
-                and getattr(right_node, "preceding_neighbor_id", None) == node_id
-            ):
-                candidates.append(
-                    ReadyParentCandidate(
-                        document_id=document_id,
-                        left_child_id=node_id,
-                        right_child_id=right_id,
-                        height=height,
-                        span_start=span_start,
-                        span_end=int(getattr(right_node, "span_end", span_end)),
-                    )
-                )
-                claimed.add(node_id)
-                claimed.add(right_id)
-                continue
-
-        if (
-            right_id is None
-            and span_start == 0
-            and span_end == doc_span_end
-            and getattr(node, "left_child_id", None) is None
-            and getattr(node, "right_child_id", None) is None
-        ):
-            candidates.append(
-                ReadyParentCandidate(
-                    document_id=document_id,
-                    left_child_id=node_id,
-                    right_child_id=None,
-                    height=height,
-                    span_start=span_start,
-                    span_end=span_end,
-                )
-            )
-            claimed.add(node_id)
-
-    return candidates
+    left_ids = store.nodes.get_ready_left_children()
+    return [
+        ReadyParentCandidate(document_id=document_id, left_child_id=left_id)
+        for left_id in left_ids
+    ]
 
 
 class WorkerCoordinator:
@@ -250,8 +181,7 @@ class WorkerCoordinator:
     # Internal helpers
     # ------------------------------------------------------------------
     def _candidate_key(self, candidate: ReadyParentCandidate) -> str:
-        right = candidate.right_child_id or "-"
-        return f"{candidate.document_id}:{candidate.left_child_id}:{right}"
+        return f"{candidate.document_id}:{candidate.left_child_id}"
 
     def _doc_lock(self, document_id: str) -> asyncio.Lock:
         lock = self._doc_locks.get(document_id)
@@ -272,7 +202,7 @@ class WorkerCoordinator:
                     if key in self._queued or key in self._inflight:
                         continue
 
-                    priority = (candidate.height, next(self._sequence))
+                    priority = (0, next(self._sequence))
                     await self._queue.put((priority, candidate))
                     self._queued.add(key)
                     self._pending_counts[candidate.document_id] += 1
@@ -346,33 +276,41 @@ class WorkerCoordinator:
         if left is None or left.parent_id is not None:
             return
 
-        right = (
-            store.nodes.get(candidate.right_child_id)
-            if candidate.right_child_id is not None
-            else None
-        )
-        if right is not None and right.parent_id is not None:
+        right_id = getattr(left, "following_neighbor_id", None)
+        if right_id is None:
+            return
+        right = store.nodes.get(right_id)
+        if right is None or right.parent_id is not None:
+            return
+        if int(getattr(right, "height", -1)) != int(getattr(left, "height", -1)):
+            return
+        if getattr(right, "preceding_neighbor_id", None) != left.id:
             return
 
-        span_start = int(left.span_start)
-        span_end = int(right.span_end) if right else int(left.span_end)
+        left_level_index = int(getattr(left, "level_index", 0))
+        if left_level_index % 2 != 0:
+            return
+        parent_level_index = left_level_index // 2
+
+        span_start = int(getattr(left, "span_start", 0))
+        span_end = int(getattr(right, "span_end", span_start))
         height = (
-            max(int(left.height), int(right.height) if right else int(left.height)) + 1
+            max(int(getattr(left, "height", 0)), int(getattr(right, "height", 0))) + 1
         )
-
-        if right is not None and int(right.height) != int(left.height):
-            return
 
         left_text = left.text or ""
-        right_text = right.text or "" if right else ""
+        right_text = right.text or ""
         left_tokens = int(getattr(left, "token_count", 0))
-        right_tokens = int(getattr(right, "token_count", 0)) if right else 0
+        right_tokens = int(getattr(right, "token_count", 0))
 
         prev_context = None
+        preceding_node = None
         if left.preceding_neighbor_id:
-            preceding = store.nodes.get(left.preceding_neighbor_id)
-            if preceding and preceding.text:
-                prev_context = preceding.text
+            preceding_node = store.nodes.get(left.preceding_neighbor_id)
+            if preceding_node is None:
+                return
+            if preceding_node.text:
+                prev_context = preceding_node.text
 
         parent_id = str(uuid.uuid4())
 
@@ -393,14 +331,11 @@ class WorkerCoordinator:
         embedding_vector = np.asarray(embeddings[0], dtype=np.float64)
 
         preceding_parent_id = None
-        if left.preceding_neighbor_id:
-            preceding_neighbor = store.nodes.get(left.preceding_neighbor_id)
-            if preceding_neighbor and preceding_neighbor.parent_id:
-                preceding_parent_id = preceding_neighbor.parent_id
+        if preceding_node and preceding_node.parent_id:
+            preceding_parent_id = preceding_node.parent_id
 
         following_parent_id = None
-        sibling = right or left
-        following_neighbor_id = getattr(sibling, "following_neighbor_id", None)
+        following_neighbor_id = getattr(right, "following_neighbor_id", None)
         if following_neighbor_id:
             following_neighbor = store.nodes.get(following_neighbor_id)
             if following_neighbor and following_neighbor.parent_id:
@@ -412,11 +347,11 @@ class WorkerCoordinator:
             (parent_id, preceding_parent_id, following_parent_id)
         ]
 
-        affected_ids = {parent_id, left.id}
-        parent_refs: list[tuple[str, str | None]] = [(left.id, parent_id)]
-        if right is not None:
-            parent_refs.append((right.id, parent_id))
-            affected_ids.add(right.id)
+        affected_ids = {parent_id, left.id, right.id}
+        parent_refs: list[tuple[str, str | None]] = [
+            (left.id, parent_id),
+            (right.id, parent_id),
+        ]
 
         if preceding_parent_id:
             preceding_parent = store.nodes.get(preceding_parent_id)
@@ -455,6 +390,7 @@ class WorkerCoordinator:
             "height": height,
             "preceding_neighbor_id": preceding_parent_id,
             "following_neighbor_id": following_parent_id,
+            "level_index": parent_level_index,
         }
 
         vector_written = False

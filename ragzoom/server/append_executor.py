@@ -41,6 +41,7 @@ class LeafSpec:
     token_count: int
     preceding_neighbor_id: str | None
     following_neighbor_id: str | None
+    level_index: int
 
 
 @dataclass
@@ -102,6 +103,9 @@ class AppendExecutor:
             first_leaf_id=right_leaf.id if right_leaf else None,
             preceding_neighbor_id=preceding_neighbor,
             following_neighbor_id=following_neighbor,
+            start_level_index=(
+                int(getattr(right_leaf, "level_index", 0)) if right_leaf else 0
+            ),
         )
 
         embeddings = await self._embedder.embed_texts(
@@ -130,6 +134,7 @@ class AppendExecutor:
                     "height": 0,
                     "preceding_neighbor_id": leaf.preceding_neighbor_id,
                     "following_neighbor_id": leaf.following_neighbor_id,
+                    "level_index": leaf.level_index,
                 }
             )
 
@@ -217,6 +222,7 @@ class AppendExecutor:
         first_leaf_id: str | None,
         preceding_neighbor_id: str | None,
         following_neighbor_id: str | None,
+        start_level_index: int,
     ) -> list[LeafSpec]:
         specs: list[LeafSpec] = []
         span_cursor = tail_start
@@ -237,6 +243,7 @@ class AppendExecutor:
                     token_count=token_count,
                     preceding_neighbor_id=None,
                     following_neighbor_id=None,
+                    level_index=start_level_index + index,
                 )
             )
             span_cursor = span_end
@@ -256,6 +263,7 @@ class AppendExecutor:
                 token_count=leaf.token_count,
                 preceding_neighbor_id=prev_id,
                 following_neighbor_id=next_id,
+                level_index=leaf.level_index,
             )
 
         return specs

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, text, update
+from sqlalchemy import func, or_, text, update
 
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.models import PostgresTreeNode
@@ -44,6 +44,8 @@ class NodeDataDict(TypedDict, total=False):
     created_at: datetime
     updated_at: datetime
     preceding_neighbor_id: str | None
+    following_neighbor_id: str | None
+    level_index: int
 
 
 class PostgresNodeRepository(BaseRepository):
@@ -82,10 +84,13 @@ class PostgresNodeRepository(BaseRepository):
             node.created_at,
             node.document_id,
             node.preceding_neighbor_id,
+            node.following_neighbor_id,
             node.height,
+            node.level_index,
         )
         session.expunge(node)
 
+    # jscpd:ignore-start -- signature must mirror NodeRepository.add_node exactly
     def add_node(
         self,
         node_id: str,
@@ -100,6 +105,7 @@ class PostgresNodeRepository(BaseRepository):
         token_count: int = 0,
         height: int = 0,
         is_left_child: bool | None = None,
+        level_index: int = 0,
     ) -> TreeNode:
         """Add a node to the database (embedding ignored).
 
@@ -135,6 +141,7 @@ class PostgresNodeRepository(BaseRepository):
                 document_id=document_id,
                 token_count=token_count,
                 height=height,
+                level_index=level_index,
             )
             session.add(node)
             session.commit()
@@ -149,6 +156,8 @@ class PostgresNodeRepository(BaseRepository):
             self.cache_manager.put(node_id, node)
 
         return node
+
+    # jscpd:ignore-end
 
     def add_nodes_batch(
         self,
@@ -190,7 +199,11 @@ class PostgresNodeRepository(BaseRepository):
                     preceding_neighbor_id=cast(
                         str | None, data.get("preceding_neighbor_id")
                     ),
+                    following_neighbor_id=cast(
+                        str | None, data.get("following_neighbor_id")
+                    ),
                     height=cast(int, data.get("height", 0)),
+                    level_index=cast(int, data.get("level_index", 0)),
                 )
                 nodes_pg.append(node)
                 out.append(node)
@@ -245,6 +258,7 @@ class PostgresNodeRepository(BaseRepository):
                 height,
                 preceding_neighbor_id,
                 following_neighbor_id
+                , level_index
             ) VALUES (
                 :id,
                 :text,
@@ -257,7 +271,8 @@ class PostgresNodeRepository(BaseRepository):
                 :token_count,
                 :height,
                 :preceding_neighbor_id,
-                :following_neighbor_id
+                :following_neighbor_id,
+                :level_index
             )
             ON CONFLICT (id) DO UPDATE SET
                 text = EXCLUDED.text,
@@ -269,7 +284,8 @@ class PostgresNodeRepository(BaseRepository):
                 document_id = EXCLUDED.document_id,
                 token_count = EXCLUDED.token_count,
                 preceding_neighbor_id = EXCLUDED.preceding_neighbor_id,
-                following_neighbor_id = EXCLUDED.following_neighbor_id
+                following_neighbor_id = EXCLUDED.following_neighbor_id,
+                level_index = EXCLUDED.level_index
             """
         )
 
@@ -295,6 +311,7 @@ class PostgresNodeRepository(BaseRepository):
                     "following_neighbor_id": cast(
                         str | None, raw.get("following_neighbor_id")
                     ),
+                    "level_index": int(cast(int | float, raw.get("level_index", 0))),
                 }
                 db_session.execute(insert_sql, params)
                 self.cache_manager.invalidate(node_id)
@@ -603,6 +620,71 @@ class PostgresNodeRepository(BaseRepository):
                 self._force_load_and_detach(session, node)
                 out.append(node)
             return out
+
+    def get_parentless_nodes_for_document(
+        self, document_id: str | None
+    ) -> list[TreeNode]:
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.parent_id.is_(None)
+            )
+            if document_id is None:
+                query = query.filter(PostgresTreeNode.document_id.is_(None))
+            else:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+
+            db_nodes = query.order_by(
+                PostgresTreeNode.height,
+                PostgresTreeNode.level_index,
+                PostgresTreeNode.span_start,
+            ).all()
+
+            out: list[TreeNode] = []
+            for node in db_nodes:
+                self._force_load_and_detach(session, node)
+                self.cache_manager.put(node.id, node)
+                out.append(node)
+            return out
+
+    def get_ready_left_children(self, document_id: str | None) -> list[str]:
+        if not document_id:
+            return []
+        with self.SessionLocal() as session:
+            doc_span_end = (
+                session.query(func.max(PostgresTreeNode.span_end))
+                .filter(PostgresTreeNode.document_id == document_id)
+                .scalar()
+            )
+            if doc_span_end is None:
+                return []
+
+            query = (
+                session.query(PostgresTreeNode.id)
+                .filter(PostgresTreeNode.document_id == document_id)
+                .filter(PostgresTreeNode.parent_id.is_(None))
+                .filter(func.mod(PostgresTreeNode.level_index, 2) == 0)
+                .filter(
+                    or_(
+                        PostgresTreeNode.span_start > 0,
+                        PostgresTreeNode.span_end < doc_span_end,
+                    )
+                )
+                .filter(
+                    or_(
+                        PostgresTreeNode.span_start == 0,
+                        PostgresTreeNode.preceding_neighbor_id.isnot(None),
+                    )
+                )
+                .filter(
+                    or_(
+                        PostgresTreeNode.span_end == doc_span_end,
+                        PostgresTreeNode.following_neighbor_id.isnot(None),
+                    )
+                )
+                .order_by(PostgresTreeNode.height, PostgresTreeNode.level_index)
+            )
+
+            return [str(row[0]) for row in query.all()]
 
     def count_pinned_for_document(self, document_id: str | None) -> int:
         """Return count of pinned nodes for a document."""
