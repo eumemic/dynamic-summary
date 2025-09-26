@@ -42,6 +42,7 @@ from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.store import create_store_with_docker
 from ragzoom.validation import validate_document
+from ragzoom.vector_factory import create_vector_index
 
 
 class AppendTextCallable(Protocol):
@@ -540,11 +541,18 @@ def validate(ctx: click.Context, document_id: str, complete: bool) -> None:
     store = create_store_with_docker(
         operational_config, embedding_model=index_config.embedding_model
     )
+    vector_index = create_vector_index(
+        operational_config.vector_backend,
+        operational_config.database_url,
+        index_config.embedding_model,
+    )
 
     report = validate_document(
         document_id=document_id,
         store=store,
+        vector_index=vector_index,
         require_complete=complete,
+        target_chunk_tokens=index_config.target_chunk_tokens,
     )
 
     heading = (

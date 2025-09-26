@@ -6,14 +6,16 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.tree_node import (
+    TreeNode,
+)
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 
 Severity = Literal["error", "warning"]
 
 
-@dataclass(slots=True)
+@dataclass
 class ValidationFinding:
     """Individual validation result."""
 
@@ -23,7 +25,7 @@ class ValidationFinding:
     node_id: str | None = None
 
 
-@dataclass(slots=True)
+@dataclass
 class ValidationReport:
     """Aggregated findings for a single validation invocation."""
 
@@ -44,7 +46,7 @@ class ValidationReport:
         return [f for f in self.findings if f.severity == "warning"]
 
 
-@dataclass(slots=True)
+@dataclass
 class DocumentSnapshot:
     """In-memory snapshot of a document's tree state."""
 
@@ -76,6 +78,8 @@ def validate_document(
     store: StorageBackend,
     vector_index: VectorIndex | None = None,
     require_complete: bool = False,
+    target_chunk_tokens: int | None = None,
+    chunk_tolerance: float = 0.2,
 ) -> ValidationReport:
     """Validate invariants for a single document.
 
@@ -97,12 +101,19 @@ def validate_document(
         _leaf_spans_are_ordered,
         _parent_child_relationships,
         _neighbor_consistency,
+        _left_balanced,
+        _parent_span_union,
+        _per_tree_leaf_depth,
     ]
 
     findings: list[ValidationFinding] = []
     for invariant in invariants:
         findings.extend(invariant(snapshot))
 
+    findings.extend(_leaf_chunk_size(snapshot, target_chunk_tokens, chunk_tolerance))
+    findings.extend(
+        _vector_index_consistency(snapshot, vector_index) if vector_index else []
+    )
     findings.extend(_completeness_check(snapshot, require_complete=require_complete))
 
     metrics = {
@@ -110,9 +121,6 @@ def validate_document(
         "leaf_count": len(snapshot.leaves),
         "parentless_count": len(snapshot.parentless),
     }
-
-    # vector_index currently unused but kept to avoid unused-argument lint
-    _ = vector_index
 
     return ValidationReport(document_id=document_id, findings=findings, metrics=metrics)
 
@@ -171,6 +179,20 @@ def _leaf_spans_are_ordered(snapshot: DocumentSnapshot) -> list[ValidationFindin
                     node_id=current.id,
                 )
             )
+    last_leaf = leaves[-1]
+    document_end = max((leaf.span_end for leaf in leaves), default=0)
+    if last_leaf.span_end != document_end:
+        findings.append(
+            ValidationFinding(
+                code="leaf.span_end",
+                message=(
+                    f"Last leaf ends at {last_leaf.span_end}, expected {document_end}"
+                ),
+                node_id=last_leaf.id,
+                severity="warning",
+            )
+        )
+
     return findings
 
 
@@ -282,6 +304,228 @@ def _neighbor_consistency(snapshot: DocumentSnapshot) -> list[ValidationFinding]
                         node_id=node.id,
                     )
                 )
+    return findings
+
+
+def _left_balanced(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
+    findings: list[ValidationFinding] = []
+    for node in snapshot.nodes:
+        if getattr(node, "right_child_id", None) and not getattr(
+            node, "left_child_id", None
+        ):
+            findings.append(
+                ValidationFinding(
+                    code="tree.right_without_left",
+                    message=(
+                        f"Node {node.id} has a right child but no left child, violating left-balanced invariant"
+                    ),
+                    node_id=node.id,
+                )
+            )
+    return findings
+
+
+def _parent_span_union(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
+    lookup = snapshot.node_lookup
+    findings: list[ValidationFinding] = []
+
+    for node in snapshot.nodes:
+        left_id = getattr(node, "left_child_id", None)
+        right_id = getattr(node, "right_child_id", None)
+        if not left_id and not right_id:
+            continue
+
+        left_node = lookup.get(left_id) if left_id else None
+        right_node = lookup.get(right_id) if right_id else None
+
+        if left_node is None:
+            findings.append(
+                ValidationFinding(
+                    code="span.left_missing",
+                    message=f"Parent {node.id} references missing left child {left_id}",
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        expected_start = left_node.span_start
+        expected_end = left_node.span_end
+        if right_node is not None:
+            expected_end = right_node.span_end
+            if left_node.span_end != right_node.span_start:
+                findings.append(
+                    ValidationFinding(
+                        code="span.child_gap",
+                        message=(
+                            f"Children of {node.id} have non-adjacent spans: "
+                            f"left ends {left_node.span_end}, right starts {right_node.span_start}"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+        if node.span_start != expected_start or node.span_end != expected_end:
+            findings.append(
+                ValidationFinding(
+                    code="span.union_mismatch",
+                    message=(
+                        f"Parent {node.id} span [{node.span_start}, {node.span_end}) "
+                        f"does not match union of child spans [{expected_start}, {expected_end})"
+                    ),
+                    node_id=node.id,
+                )
+            )
+
+    return findings
+
+
+def _leaf_chunk_size(
+    snapshot: DocumentSnapshot,
+    target_tokens: int | None,
+    tolerance: float,
+) -> list[ValidationFinding]:
+    if target_tokens is None or target_tokens <= 0 or not snapshot.leaves:
+        return []
+
+    upper = int(target_tokens * (1 + tolerance))
+    leaves = sorted(snapshot.leaves, key=lambda node: node.span_start)
+    findings: list[ValidationFinding] = []
+
+    for idx, leaf in enumerate(leaves):
+        tokens = int(getattr(leaf, "token_count", 0))
+        if tokens <= 0:
+            continue
+        if tokens > upper:
+            findings.append(
+                ValidationFinding(
+                    code="leaf.tokens_over",
+                    message=(
+                        f"Leaf {leaf.id} has {tokens} tokens, above upper bound {upper}"
+                    ),
+                    node_id=leaf.id,
+                    severity="warning",
+                )
+            )
+
+    return findings
+
+
+def _vector_index_consistency(
+    snapshot: DocumentSnapshot, vector_index: VectorIndex
+) -> list[ValidationFinding]:
+    findings: list[ValidationFinding] = []
+    node_ids = list(snapshot.node_lookup.keys())
+    batch_size = 256
+
+    for start in range(0, len(node_ids), batch_size):
+        chunk = node_ids[start : start + batch_size]
+        try:
+            vectors = vector_index.get_vectors(chunk)
+        except Exception as exc:  # pragma: no cover - defensive
+            for node_id in chunk:
+                findings.append(
+                    ValidationFinding(
+                        code="vector.fetch_error",
+                        message=f"Failed to fetch vector for {node_id}: {exc}",
+                        node_id=node_id,
+                    )
+                )
+            continue
+
+        returned = {vec.id for vec in vectors}
+        for node_id in chunk:
+            if node_id not in returned:
+                findings.append(
+                    ValidationFinding(
+                        code="vector.missing",
+                        message=f"Embedding missing for node {node_id}",
+                        node_id=node_id,
+                    )
+                )
+
+    extra_ids = _vector_index_ids(vector_index)
+    if extra_ids is not None:
+        for vec_id in extra_ids:
+            if vec_id not in snapshot.node_lookup:
+                findings.append(
+                    ValidationFinding(
+                        code="vector.orphan",
+                        message=f"Vector index contains id {vec_id} with no matching node",
+                        node_id=vec_id,
+                        severity="warning",
+                    )
+                )
+
+    return findings
+
+
+def _vector_index_ids(vector_index: VectorIndex) -> list[str] | None:
+    candidates = [
+        getattr(vector_index, "list_ids", None),
+        getattr(vector_index, "ids", None),
+    ]
+    for candidate in candidates:
+        if callable(candidate):
+            try:
+                ids = candidate()
+                return list(ids)
+            except Exception:  # pragma: no cover - best effort
+                continue
+    inner = getattr(vector_index, "_idx", None)
+    if inner is not None and hasattr(inner, "_ids"):
+        try:
+            ids_attr = getattr(inner, "_ids")
+            return list(ids_attr)
+        except Exception:  # pragma: no cover
+            return None
+    return None
+
+
+def _per_tree_leaf_depth(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
+    lookup = snapshot.node_lookup
+    children: dict[str, list[str]] = {}
+    for node in snapshot.nodes:
+        if node.parent_id and node.parent_id in lookup:
+            children.setdefault(node.parent_id, []).append(node.id)
+
+    roots = [
+        node
+        for node in snapshot.nodes
+        if node.parent_id is None or node.parent_id not in lookup
+    ]
+    findings: list[ValidationFinding] = []
+    for root in roots:
+        stack: list[tuple[str, int]] = [(root.id, 0)]
+        visited: set[str] = set()
+        leaf_depths: list[tuple[str, int]] = []
+        while stack:
+            node_id, depth = stack.pop()
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+            current = lookup.get(node_id)
+            if current is None:
+                continue
+            child_ids = children.get(node_id, [])
+            actual_children = [cid for cid in child_ids if cid in lookup]
+            if not actual_children:
+                leaf_depths.append((node_id, depth))
+            else:
+                for cid in actual_children:
+                    stack.append((cid, depth + 1))
+        depths = {depth for _, depth in leaf_depths}
+        if len(depths) > 1:
+            sample = ", ".join(
+                f"{leaf_id}:{depth}" for leaf_id, depth in leaf_depths[:4]
+            )
+            findings.append(
+                ValidationFinding(
+                    code="leaf.depth",
+                    message=(
+                        f"Leaves under root {root.id} occur at multiple depths: {sorted(depths)} (sample: {sample})"
+                    ),
+                    node_id=root.id,
+                )
+            )
     return findings
 
 

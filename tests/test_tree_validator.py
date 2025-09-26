@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from click.testing import CliRunner
 
@@ -7,6 +8,7 @@ from ragzoom.config import OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 from ragzoom.validation import validate_document
+from ragzoom.vector_api import Vector
 
 
 @pytest.fixture()
@@ -208,12 +210,63 @@ def test_cli_validate_command(
 
     from ragzoom import cli as cli_module
 
+    class DummyVectorIndex:
+        def __init__(self, ids: list[str]) -> None:
+            self._ids = set(ids)
+
+        def get_vectors(self, ids: list[str]) -> list[Vector]:
+            vectors: list[Vector] = []
+            for node_id in ids:
+                if node_id in self._ids:
+                    vectors.append(
+                        Vector(
+                            id=node_id,
+                            vec=np.asarray([1.0], dtype=np.float32),
+                            meta={"document_id": document_id},
+                            model_id="dummy",
+                            dim=1,
+                        )
+                    )
+            return vectors
+
+        def list_ids(self) -> list[str]:
+            return list(self._ids)
+
+        def search_similar(
+            self,
+            query_embedding: list[float],
+            k: int,
+            where: dict[str, str | int | float | bool | None] | None = None,
+        ) -> list[Vector]:  # pragma: no cover - unused
+            return []
+
+        def upsert(
+            self,
+            items: list[tuple[str, list[float], dict[str, object]]],
+        ) -> None:  # pragma: no cover - unused
+            for node_id, _vec, _meta in items:
+                self._ids.add(node_id)
+
+        def delete(
+            self,
+            filter: dict[str, object] | None = None,
+            ids: list[str] | None = None,
+        ) -> int:  # pragma: no cover - unused
+            return 0
+
     def fake_create_store(
         config: OperationalConfig, embedding_model: str
     ) -> StorageBackend:
         return validator_store
 
+    def fake_create_vector_index(
+        backend: str, database_url: str, embedding_model: str
+    ) -> DummyVectorIndex:
+        node_ids = [node.id for node in store.nodes.get_all()]
+        return DummyVectorIndex(node_ids)
+
     monkeypatch.setattr(cli_module, "create_store_with_docker", fake_create_store)
+    monkeypatch.setattr(cli_module, "create_vector_index", fake_create_vector_index)
 
     result = runner.invoke(cli_module.cli, ["validate", document_id, "--complete"])
     assert result.exit_code == 0
