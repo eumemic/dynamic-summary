@@ -35,7 +35,6 @@ from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.store import create_store_with_docker
-from ragzoom.worktree_utils import DEFAULT_DATA_DIR_NAME
 
 # Load environment variables
 load_dotenv()
@@ -189,35 +188,6 @@ def cli(ctx: click.Context) -> None:
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--document-id", help="Document ID (defaults to filename)")
 @click.option(
-    "--config",
-    "config_path",
-    type=click.Path(exists=True, path_type=Path),
-    help="Load configuration from JSON file",
-)
-@click.option(
-    "--target-chunk-tokens", type=int, help="Target size for leaf chunks in tokens"
-)
-@click.option(
-    "--preceding-context-tokens", type=int, help="Context tokens from adjacent chunks"
-)
-@click.option("--summary-model", "-m", type=str, help="Model for summarization")
-@click.option("--embedding-model", type=str, help="Model for embeddings")
-@click.option(
-    "--retry-threshold", type=float, help="Max deviation before retry (0.0-1.0)"
-)
-@click.option("--max-retries", type=int, help="Maximum summary retries")
-@click.option("--embedding-batch-size", type=int, help="Batch size for embeddings")
-@click.option(
-    "--data-dir",
-    type=click.Path(),
-    help="Directory for data storage (default: current directory)",
-)
-@click.option(
-    "--database",
-    type=str,
-    help="Database URL (sqlite:///path/to.db or postgresql+psycopg://host/db)",
-)
-@click.option(
     "--debug",
     is_flag=True,
     help="Show debug information including token usage statistics",
@@ -250,16 +220,6 @@ def index(
     ctx: click.Context,
     file_path: str,
     document_id: str | None,
-    config_path: Path | None,
-    target_chunk_tokens: int | None,
-    preceding_context_tokens: int | None,
-    summary_model: str | None,
-    embedding_model: str | None,
-    retry_threshold: float | None,
-    max_retries: int | None,
-    embedding_batch_size: int | None,
-    data_dir: str | None,
-    database: str | None,
     debug: bool,
     telemetry_file: str | None,
     validate: bool,
@@ -269,60 +229,14 @@ def index(
 ) -> None:
     """Index a document from file.
 
-    Configuration can be set via:
-    1. CLI options (highest priority)
-    2. Config file specified with --config
-    3. Default values from internal configuration
-
     Examples:
-      ragzoom index document.txt --target-chunk-tokens 300 --summary-model gpt-5-nano
-      ragzoom index document.txt --config myconfig.json
+      ragzoom index document.txt
+      ragzoom index notes.txt --document-id my-doc --append
     """
 
     setup_command_environment(None, debug, validate)
 
     try:
-        # Load indexing configuration with CLI overrides
-        # Create config object with merged values
-        index_config = IndexConfig.load(
-            config_path,
-            target_chunk_tokens=target_chunk_tokens,
-            preceding_context_tokens=preceding_context_tokens,
-            summary_model=summary_model,
-            embedding_model=embedding_model,
-            retry_threshold=retry_threshold,
-            max_retries=max_retries,
-            embedding_batch_size=embedding_batch_size,
-        )
-        query_config = QueryConfig()  # Use defaults for indexing command
-        # Prefer Chroma by default in CLI; fail loudly if unavailable
-        operational_config = OperationalConfig(vector_backend="chroma")
-
-        # Override storage location if provided
-        if data_dir:
-            data_path = Path(data_dir)
-            # Choose URL based on backend
-            if operational_config.backend == "sqlite":
-                from ragzoom.worktree_utils import get_default_sqlite_url
-
-                operational_config = operational_config.replace(
-                    database_url=get_default_sqlite_url(data_path)
-                )
-            else:
-                # For postgres, form a sensible DB name under base_dir
-                dbname = (data_path / DEFAULT_DATA_DIR_NAME / "ragzoom").name
-                operational_config = operational_config.replace(
-                    database_url=f"postgresql+psycopg://localhost/{dbname}"
-                )
-
-        if database:
-            operational_config = operational_config.replace(database_url=database)
-
-        # Update context with new configs
-        ctx.obj["index_config"] = index_config
-        ctx.obj["query_config"] = query_config
-        ctx.obj["operational_config"] = operational_config
-
         append_document_id: str | None = None
 
         if append:
