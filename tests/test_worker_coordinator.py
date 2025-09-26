@@ -418,6 +418,62 @@ async def test_worker_coordinator_converges_to_single_root(
 
 
 @pytest.mark.asyncio
+async def test_worker_coordinator_converges_with_odd_parent_count(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+    leaf_payloads: list[NodePayload] = []
+    for idx in range(10):
+        span_start = idx * 100
+        span_end = (idx + 1) * 100
+        preceding = None if idx == 0 else f"leaf-{idx - 1}"
+        following = None if idx == 9 else f"leaf-{idx + 1}"
+        leaf_payloads.append(
+            _leaf_payload(
+                f"leaf-{idx}",
+                span_start,
+                span_end,
+                level_index=idx,
+                document_id=document_id,
+                preceding=preceding,
+                following=following,
+            )
+        )
+    store.nodes.add_batch(leaf_payloads)
+
+    vector_index = StubVectorIndex()
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return vector_index
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        vector_index_factory=_vector_factory,
+        worker_count=4,
+    )
+
+    await coordinator.start()
+    try:
+        await coordinator.enqueue_document(document_id)
+        await coordinator.wait_until_idle(document_id)
+    finally:
+        await coordinator.shutdown()
+
+    parentless = store.nodes.get_parentless_nodes()
+    assert len(parentless) == 1
+    assert parentless[0].span_end == 1000
+
+
+@pytest.mark.asyncio
 async def test_worker_status_tracks_queue_and_inflight(
     doc_store: DocStoreFixture,
     storage_backend: StorageBackend,

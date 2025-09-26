@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.server.run_manager import IndexRunContext, TelemetryRunManager
@@ -30,7 +31,7 @@ else:  # pragma: no cover - fallback for runtime when telemetry isn’t availabl
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ReadyParentCandidate:
     """Payload describing a parent node that should be built."""
 
@@ -41,7 +42,7 @@ class ReadyParentCandidate:
 NodeFieldValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class WorkerStatus:
     """Snapshot of queue depth and in-flight activity."""
 
@@ -336,16 +337,16 @@ class WorkerCoordinator:
         if left is None or left.parent_id is not None:
             return
 
+        right: TreeNode | None = None
         right_id = getattr(left, "following_neighbor_id", None)
-        if right_id is None:
-            return
-        right = store.nodes.get(right_id)
-        if right is None or right.parent_id is not None:
-            return
-        if int(getattr(right, "height", -1)) != int(getattr(left, "height", -1)):
-            return
-        if getattr(right, "preceding_neighbor_id", None) != left.id:
-            return
+        if right_id is not None:
+            right = store.nodes.get(right_id)
+            if right is None or right.parent_id is not None:
+                return
+            if int(getattr(right, "height", -1)) != int(getattr(left, "height", -1)):
+                return
+            if getattr(right, "preceding_neighbor_id", None) != left.id:
+                return
 
         left_level_index = int(getattr(left, "level_index", 0))
         if left_level_index % 2 != 0:
@@ -353,15 +354,19 @@ class WorkerCoordinator:
         parent_level_index = left_level_index // 2
 
         span_start = int(getattr(left, "span_start", 0))
-        span_end = int(getattr(right, "span_end", span_start))
-        height = (
-            max(int(getattr(left, "height", 0)), int(getattr(right, "height", 0))) + 1
+        span_end = (
+            int(getattr(right, "span_end", span_start))
+            if right
+            else int(getattr(left, "span_end", span_start))
         )
+        height = int(getattr(left, "height", 0)) + 1
+        if right is not None:
+            height = max(height, int(getattr(right, "height", 0)) + 1)
 
         left_text = left.text or ""
-        right_text = right.text or ""
+        right_text = right.text or "" if right is not None else ""
         left_tokens = int(getattr(left, "token_count", 0))
-        right_tokens = int(getattr(right, "token_count", 0))
+        right_tokens = int(getattr(right, "token_count", 0)) if right else 0
 
         prev_context = None
         preceding_node_id = getattr(left, "preceding_neighbor_id", None)
@@ -406,15 +411,17 @@ class WorkerCoordinator:
                 start_time=start_time,
             )
 
-        following_neighbor_id = getattr(right, "following_neighbor_id", None)
+        following_neighbor_id = (
+            getattr(right, "following_neighbor_id", None) if right is not None else None
+        )
 
         vector_index = self._vector_index_factory(candidate.document_id)
 
-        affected_ids = {parent_id, left.id, right.id}
-        parent_refs: list[tuple[str, str | None]] = [
-            (left.id, parent_id),
-            (right.id, parent_id),
-        ]
+        affected_ids = {parent_id, left.id}
+        parent_refs: list[tuple[str, str | None]] = [(left.id, parent_id)]
+        if right is not None:
+            affected_ids.add(right.id)
+            parent_refs.append((right.id, parent_id))
 
         vector_written = False
         try:

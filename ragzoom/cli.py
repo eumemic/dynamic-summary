@@ -41,6 +41,7 @@ from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.store import create_store_with_docker
+from ragzoom.validation import validate_document
 
 
 class AppendTextCallable(Protocol):
@@ -520,6 +521,62 @@ def telemetry(
             sys.exit(1)
     else:
         click.echo(json.dumps(response.telemetry, indent=2))
+
+
+@cli.command()
+@click.argument("document_id", type=str)
+@click.option(
+    "--complete",
+    is_flag=True,
+    help="Require the document tree to be fully summarized (single root).",
+)
+@click.pass_context
+def validate(ctx: click.Context, document_id: str, complete: bool) -> None:
+    """Validate invariants for a document tree."""
+
+    index_config: IndexConfig = ctx.obj["index_config"]
+    operational_config = OperationalConfig()
+
+    store = create_store_with_docker(
+        operational_config, embedding_model=index_config.embedding_model
+    )
+
+    report = validate_document(
+        document_id=document_id,
+        store=store,
+        require_complete=complete,
+    )
+
+    heading = (
+        "✅ Document validation passed"
+        if report.status == "ok"
+        else "❌ Document validation failed"
+    )
+    if complete and report.status == "ok":
+        heading += " (complete tree required)"
+
+    click.echo(heading)
+    click.echo(
+        f"   Nodes: {report.metrics.get('node_count', 0)}, "
+        f"Leaves: {report.metrics.get('leaf_count', 0)}, "
+        f"Parentless: {report.metrics.get('parentless_count', 0)}"
+    )
+
+    if report.findings:
+        click.echo("\nFindings:")
+        ordered = sorted(
+            report.findings,
+            key=lambda finding: 0 if finding.severity == "error" else 1,
+        )
+        for finding in ordered:
+            prefix = "ERROR" if finding.severity == "error" else "WARN"
+            suffix = f" (node {finding.node_id})" if finding.node_id else ""
+            click.echo(f" - [{prefix}] {finding.message}{suffix}")
+    else:
+        click.echo("\nNo issues detected.")
+
+    if report.status == "failed":
+        raise SystemExit(1)
 
 
 @cli.command()
