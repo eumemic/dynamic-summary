@@ -94,6 +94,14 @@ class TelemetryFetchResult:
     error: str | None
 
 
+@dataclass(slots=True)
+class DocumentStatusView:
+    document_id: str
+    leaf_count: int
+    tree_depth: int
+    has_pending_work: bool
+
+
 class GrpcRagzoomClient:
     """Synchronous convenience wrapper for the RagZoom gRPC services."""
 
@@ -252,6 +260,24 @@ class GrpcRagzoomClient:
                 )
         except grpc.RpcError as error:  # pragma: no cover
             raise _map_rpc_error(error) from error
+
+    def get_document_status(self, document_id: str) -> DocumentStatusView:
+        request = pb2.GetDocumentRequest(document_id=document_id)
+        try:
+            response = self._workers.GetDocument(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover - network failures
+            raise _map_rpc_error(error) from error
+
+        status = getattr(response, "status", None)
+        if status is None or not getattr(status, "document_id", ""):
+            raise RuntimeError("Worker service returned empty document status")
+
+        return DocumentStatusView(
+            document_id=status.document_id,
+            leaf_count=status.leaf_count,
+            tree_depth=status.tree_depth,
+            has_pending_work=status.has_pending_work,
+        )
 
     def get_telemetry(
         self,

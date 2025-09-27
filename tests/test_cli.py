@@ -15,6 +15,7 @@ from click.testing import CliRunner
 
 from ragzoom.cli import cli
 from ragzoom.client.grpc_client import (
+    DocumentStatusView,
     ExecuteQueryOutput,
     NodeSummary,
     RetrievalView,
@@ -131,6 +132,12 @@ def cli_mocks() -> Iterator[CliMocks]:
         grpc_client.__exit__.return_value = None
         grpc_client.append_text.return_value = index_result
         grpc_client.execute_query.return_value = execute_output
+        grpc_client.get_document_status.return_value = DocumentStatusView(
+            document_id="doc-123",
+            leaf_count=5,
+            tree_depth=4,
+            has_pending_work=False,
+        )
         grpc_client.iter_worker_snapshots.return_value = [
             WorkerRunSnapshot(
                 message="workers drained",
@@ -184,6 +191,8 @@ def test_index_command_with_file(
     assert result.exit_code == 0
     assert "Document indexed successfully" in result.output
     cli_mocks["grpc_client"].append_text.assert_called_once()
+    cli_mocks["grpc_client"].get_document_status.assert_called_once_with("doc.txt")
+    assert "Tree height: 4" in result.output
 
 
 def test_index_command_with_document_id(
@@ -197,6 +206,7 @@ def test_index_command_with_document_id(
     assert result.exit_code == 0
     call = cli_mocks["grpc_client"].append_text.call_args
     assert call.kwargs["document_id"] == "my-doc"
+    cli_mocks["grpc_client"].get_document_status.assert_called_once_with("my-doc")
 
 
 def test_index_append_requires_document_id(

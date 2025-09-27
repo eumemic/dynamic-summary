@@ -14,6 +14,7 @@ import click
 from dotenv import load_dotenv
 
 from ragzoom.client import (
+    DocumentStatusView,
     GrpcRagzoomClient,
     TelemetryFetchResult,
     WorkerRunSnapshot,
@@ -89,10 +90,12 @@ def _resolve_server_address(value: str | None) -> str:
     return DEFAULT_GRPC_ADDRESS
 
 
-def _display_worker_snapshots(snapshots: Iterable[WorkerRunSnapshot]) -> None:
-    seen = False
+def _display_worker_snapshots(
+    snapshots: Iterable[WorkerRunSnapshot],
+) -> WorkerRunSnapshot | None:
+    last_snapshot: WorkerRunSnapshot | None = None
     for snapshot in snapshots:
-        seen = True
+        last_snapshot = snapshot
         if snapshot.documents:
             details = ", ".join(
                 f"{doc_id}(pending={pending}, inflight={inflight})"
@@ -106,8 +109,7 @@ def _display_worker_snapshots(snapshots: Iterable[WorkerRunSnapshot]) -> None:
         click.echo(
             f"   Workers: queue={snapshot.queue_depth}, inflight={snapshot.inflight}{suffix}"
         )
-    if not seen:
-        return
+    return last_snapshot
 
 
 def handle_cli_error(e: Exception, operation: str) -> None:
@@ -266,6 +268,9 @@ def index(
 
         result: IndexingResult
         resolved_address = _resolve_server_address(server_address)
+        final_snapshot: WorkerRunSnapshot | None = None
+        refreshed_status: DocumentStatusView | None = None
+        refresh_error: str | None = None
 
         content_bytes = Path(file_path).read_bytes()
         target_document_id = append_document_id or document_id or Path(file_path).name
@@ -313,7 +318,13 @@ def index(
                     collect_telemetry=bool(telemetry_file),
                 )
             telemetry_run_id = result.telemetry_run_id
-            _display_worker_snapshots(client.iter_worker_snapshots())
+            final_snapshot = _display_worker_snapshots(client.iter_worker_snapshots())
+
+            if final_snapshot and final_snapshot.idle:
+                try:
+                    refreshed_status = client.get_document_status(target_document_id)
+                except Exception as exc:  # pragma: no cover - network failures
+                    refresh_error = str(exc)
 
             if telemetry_file and telemetry_run_id:
                 try:
@@ -326,6 +337,15 @@ def index(
                     telemetry_fetch_error = str(exc)
 
         document_id = target_document_id
+
+        if refreshed_status:
+            result.tree_depth = refreshed_status.tree_depth
+            result.chunks_created = refreshed_status.leaf_count
+        elif refresh_error:
+            click.echo(
+                f"⚠️ Failed to refresh document status: {refresh_error}",
+                err=True,
+            )
         success_message = (
             "✅ Document appended successfully!"
             if append

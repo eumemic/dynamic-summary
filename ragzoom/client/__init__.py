@@ -1,6 +1,7 @@
 """Client helpers for interacting with the RagZoom gRPC server."""
 
 from .grpc_client import (
+    DocumentStatusView,
     ExecuteQueryOutput,
     GrpcRagzoomClient,
     RetrievalView,
@@ -10,6 +11,7 @@ from .grpc_client import (
 
 __all__ = [
     "ExecuteQueryOutput",
+    "DocumentStatusView",
     "GrpcRagzoomClient",
     "RetrievalView",
     "TelemetryFetchResult",
