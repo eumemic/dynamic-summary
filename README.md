@@ -462,8 +462,9 @@ ragzoom index doc.txt \
   --embedding-batch-size 50 \
   --cache-size 500
 
-# Debugging: Verbose output with validation
-ragzoom index doc.txt --debug --validate --log-level DEBUG
+# Debugging: Verbose output followed by structural validation
+ragzoom index doc.txt --debug --log-level DEBUG
+ragzoom validate doc.txt
 ```
 
 ## Architecture

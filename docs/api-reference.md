@@ -38,7 +38,6 @@ ragzoom index <input> [OPTIONS]
 - `--data-dir PATH` - Base directory for databases and vector stores
 - `--database URL` - Explicit database URL (sqlite:///... or postgresql+psycopg://...)
 - `--no-progress` - Disable progress bars
-- `--validate` - Enable validation checks during indexing
 - `--debug` - Emit detailed debug logging (includes token usage)
 - `--telemetry [PATH]` - Request telemetry collection. The CLI waits for server workers to finish, persists the telemetry JSON (default `telemetry.json` if no path is provided), and prints the telemetry run ID. Use `ragzoom telemetry` to fetch the same run later if needed.
 - `--append` - Append the file's contents to an existing document (requires `--document-id`)
@@ -56,14 +55,14 @@ ragzoom index document.txt --document-id my-doc
 # Re-index a document (automatically clears existing data)
 ragzoom index document.txt
 
-# Index with validation
-ragzoom index document.txt --validate
-
 # Index with debug logging
 ragzoom index document.txt --debug
 
 # Index with telemetry collection
 ragzoom index document.txt --telemetry
+
+# Validate the tree after indexing
+ragzoom validate document.txt
 
 # Append new content to an existing document
 ragzoom index delta.txt --document-id my-doc --append
@@ -87,7 +86,6 @@ ragzoom query <query_text> [OPTIONS]
 - `--num-seeds` - Number of seed nodes to retrieve
 - `--token-budget` - Token budget for summary
 - `--debug` - Show debug information and tree visualization
-- `--validate` - Enable validation checks
 - `--viz-width` - Tree visualization width (defaults to terminal width)
 - `--viz-coords` - Coordinate system: `source-chars` or `output-tokens` (default: output-tokens)
 
@@ -102,8 +100,8 @@ ragzoom query "neural networks" -d my-doc -n 10 -b 4000
 # Debug mode with visualization
 ragzoom query "transformer architecture" -d my-doc --debug
 
-# Validate tiling coverage
-ragzoom query "attention mechanism" -d my-doc --validate
+# Validate the document tree separately
+ragzoom validate my-doc
 ```
 
 ### `ragzoom documents`
@@ -130,6 +128,22 @@ ragzoom telemetry --document-id my-doc --run-id <run_id> [--wait] [--output tele
 ```
 
 If `--wait` is provided the command blocks until the run finishes collecting telemetry. Otherwise it returns immediately when the run is still active. Passing `--output` writes the telemetry JSON to disk; without it the payload is printed to stdout.
+
+### `ragzoom validate`
+
+Validate structural invariants for an indexed document.
+
+```bash
+ragzoom validate <document_id> [--complete]
+```
+
+**Arguments:**
+- `document_id` - Target document identifier
+
+**Options:**
+- `--complete` - Require the tree to have converged to a single root (fails otherwise)
+
+The validator reads from the active storage backend and executes the invariant suite in `ragzoom/validation/tree.py`. It exits with a non-zero status when any errors are detected.
 
 ### `ragzoom pin`
 
@@ -561,7 +575,7 @@ operational_config = OperationalConfig(
 
 1. **Document IDs**: Use meaningful, URL-safe identifiers
 2. **Token Budgets**: Start with defaults, adjust based on output quality
-3. **Validation**: Use `--validate` flag during development
+3. **Validation**: Run `ragzoom validate <document_id>` regularly during development
 4. **Caching**: Enable caching for repeated queries
 5. **Batch Operations**: Use async API for bulk indexing
 6. **Error Handling**: Always handle potential errors in production

@@ -168,7 +168,7 @@ def configure_logging_level(debug: bool) -> None:
 
 
 def setup_command_environment(
-    log_level: str | None, debug: bool, validate: bool
+    log_level: str | None, debug: bool, validate: bool = False
 ) -> None:
     """Set up logging and validation for CLI commands."""
     # Configure logging level
@@ -223,7 +223,6 @@ def cli(ctx: click.Context) -> None:
     default=None,
     help="Save telemetry data to JSON file",
 )
-@click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.option("--no-progress", is_flag=True, help="Disable progress bar")
 @click.option(
     "--append",
@@ -244,7 +243,6 @@ def index(
     document_id: str | None,
     debug: bool,
     telemetry_file: str | None,
-    validate: bool,
     no_progress: bool,
     append: bool,
     server_address: str | None,
@@ -256,7 +254,7 @@ def index(
       ragzoom index notes.txt --document-id my-doc --append
     """
 
-    setup_command_environment(None, debug, validate)
+    setup_command_environment(None, debug)
 
     try:
         append_document_id: str | None = None
@@ -408,12 +406,6 @@ def index(
                     "⚠️ Telemetry data was not available; nothing was saved.",
                     err=True,
                 )
-
-        if validate:
-            click.echo(
-                "⚠️ Validation checks are not yet supported when using the gRPC server.",
-                err=True,
-            )
 
         # Show debug hint if enabled
         if debug:
@@ -618,7 +610,6 @@ def validate(ctx: click.Context, document_id: str, complete: bool) -> None:
     is_flag=True,
     help="Show debug information including retrieval statistics",
 )
-@click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.option(
     "--viz-width",
     type=int,
@@ -646,14 +637,13 @@ def query(
     token_budget: int | None,
     embedding_model: str | None,
     debug: bool,
-    validate: bool,
     viz_width: int | None,
     viz_coords: str,
     server_address: str | None,
 ) -> None:
     """Query the system and get a summary."""
 
-    setup_command_environment(None, debug, validate)
+    setup_command_environment(None, debug)
 
     try:
         query_config = ctx.obj["query_config"]
@@ -693,12 +683,6 @@ def query(
 
         query_result = response.query_result
         retrieval = response.retrieval
-
-        if validate:
-            click.echo(
-                "⚠️ Query validation is not yet supported when using the gRPC server.",
-                err=True,
-            )
 
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY")
@@ -1237,17 +1221,15 @@ def server() -> None:
     help="Optional indexing config file",
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging")
-@click.option("--validate", is_flag=True, help="Enable validation checks")
 def start_server(
     host: str,
     port: int,
     config_path: Path | None,
     debug: bool,
-    validate: bool,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
-    setup_command_environment(None, debug, validate)
+    setup_command_environment(None, debug)
     options = ServerOptions(
         host=host,
         port=port,

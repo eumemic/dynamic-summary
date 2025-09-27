@@ -463,7 +463,8 @@ File paths are displayed as clickable links in supported terminals.
 ### 7.3. CI Integration
 
 The benchmarking script is designed for CI environments:
-- Uses `--telemetry --validate --debug --no-progress` flags automatically
+- Uses `--telemetry --debug --no-progress` flags automatically
+- Runs `ragzoom validate` after indexing to enforce structural safety
 - Generates machine-readable outputs for automated analysis
 - Creates visual reports for human review in pull requests
 

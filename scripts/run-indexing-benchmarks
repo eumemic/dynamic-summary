@@ -208,7 +208,7 @@ Document:
 Additional Options:
     All other options are passed through to the ragzoom index command.
     The script automatically:
-    - Adds: --telemetry --validate --debug --no-progress
+    - Adds: --telemetry --debug --no-progress
     - Uses current default_config.json for all settings
     - Applies any CLI overrides (e.g., --target-chunk-tokens 400)
 
@@ -489,7 +489,7 @@ else
 fi
 
 # Run indexing with telemetry
-# Implicitly adds: --telemetry <file> --validate --debug --no-progress
+# Implicitly adds: --telemetry <file> --debug --no-progress
 echo "📝 Running indexing with telemetry..."
 
 # Build command args
@@ -497,7 +497,6 @@ INDEX_ARGS=(
     "$DOCUMENT"
     --telemetry "$TELEMETRY_FILE"
     --database "$DATABASE_URL"
-    --validate
     --debug
     --no-progress
 )
@@ -508,6 +507,27 @@ INDEX_ARGS=(
 # Add any extra arguments
 if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
     INDEX_ARGS+=("${EXTRA_ARGS[@]}")
+fi
+
+# Determine document ID for validation (default to filename unless overridden)
+EFFECTIVE_DOCUMENT_ID=""
+for ((idx = 0; idx < ${#EXTRA_ARGS[@]}; idx++)); do
+    arg="${EXTRA_ARGS[idx]}"
+    case "$arg" in
+        --document-id)
+            next_index=$((idx + 1))
+            if [ $next_index -lt ${#EXTRA_ARGS[@]} ]; then
+                EFFECTIVE_DOCUMENT_ID="${EXTRA_ARGS[next_index]}"
+            fi
+            ;;
+        --document-id=*)
+            EFFECTIVE_DOCUMENT_ID="${arg#--document-id=}"
+            ;;
+    esac
+done
+
+if [ -z "$EFFECTIVE_DOCUMENT_ID" ]; then
+    EFFECTIVE_DOCUMENT_ID="$(basename "$DOCUMENT")"
 fi
 
 # Configure backend defaults for the run when not explicitly set
@@ -540,6 +560,17 @@ fi
 
 echo ""
 echo "✅ Indexing completed. Telemetry saved to $TELEMETRY_FILE"
+echo ""
+
+echo "🧪 Running document validation..."
+env "${RUN_ENV[@]}" python -m ragzoom.cli validate "$EFFECTIVE_DOCUMENT_ID" 2>&1 | tee -a "$LOG_FILE"
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+    echo "❌ Validation failed. Check $LOG_FILE for details."
+    exit 1
+fi
+
+echo ""
+echo "✅ Validation completed for document $EFFECTIVE_DOCUMENT_ID"
 echo ""
 
 # Generate comparison report and visualization
