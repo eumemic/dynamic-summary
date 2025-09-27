@@ -23,6 +23,8 @@ OWN_SERVER_PID=""
 OWN_SERVER_HOST=""
 OWN_SERVER_PORT=""
 STARTED_SERVER=false
+declare -a SERVER_ENV
+declare -a RUN_ENV
 
 DEFAULT_SERVER_HOST=$(python - <<'PY'
 from ragzoom.constants import DEFAULT_GRPC_HOST
@@ -109,8 +111,13 @@ start_grpc_server() {
     fi
 
     echo "🚀 Starting RagZoom gRPC server on $host:$port (log: $log_file)"
-    python -m ragzoom.cli server start --host "$host" --port "$port" \
-        >"$log_file" 2>&1 &
+    if [ ${#SERVER_ENV[@]} -gt 0 ]; then
+        env "${SERVER_ENV[@]}" python -m ragzoom.cli server start --host "$host" --port "$port" \
+            >"$log_file" 2>&1 &
+    else
+        python -m ragzoom.cli server start --host "$host" --port "$port" \
+            >"$log_file" 2>&1 &
+    fi
     OWN_SERVER_PID=$!
     STARTED_SERVER=true
 
@@ -473,10 +480,48 @@ else
     echo ""
 fi
 
+# Build environment configuration for server and client based on database/vector settings
+SERVER_ENV=()
+if [ -n "$DATABASE_URL" ]; then
+    SERVER_ENV+=(RAGZOOM_DATABASE_URL="$DATABASE_URL")
+fi
+if [ "$SKIP_DB_SETUP" != true ]; then
+    SERVER_ENV+=(RAGZOOM_BACKEND="sqlite")
+fi
+
+VECTOR_BACKEND_VALUE="${RAGZOOM_VECTOR_BACKEND:-}"
+VECTOR_PERSIST_DIR_VALUE="${RAGZOOM_VECTOR_PERSIST_DIR:-}"
+if [ -z "$VECTOR_BACKEND_VALUE" ]; then
+    if python -c "import chromadb" 2>/dev/null; then
+        VECTOR_BACKEND_VALUE="chroma"
+    else
+        echo "⚠️  chromadb not installed; falling back to RAGZOOM_VECTOR_BACKEND=python" | tee -a "$LOG_FILE"
+        VECTOR_BACKEND_VALUE="python"
+    fi
+fi
+if [ "$VECTOR_BACKEND_VALUE" = "chroma" ] && [ -z "$VECTOR_PERSIST_DIR_VALUE" ]; then
+    VECTOR_PERSIST_DIR_VALUE="$OUTPUT_DIR/chroma"
+fi
+SERVER_ENV+=(RAGZOOM_VECTOR_BACKEND="$VECTOR_BACKEND_VALUE")
+if [ -n "$VECTOR_PERSIST_DIR_VALUE" ]; then
+    SERVER_ENV+=(RAGZOOM_VECTOR_PERSIST_DIR="$VECTOR_PERSIST_DIR_VALUE")
+fi
+
 # Determine gRPC server configuration (start unless explicitly disabled)
 SERVER_HOST="${RAGZOOM_SERVER_HOST:-$DEFAULT_SERVER_HOST}"
 SERVER_PORT="${RAGZOOM_SERVER_PORT:-$DEFAULT_SERVER_PORT}"
 if [ "${RAGZOOM_START_GRPC_SERVER:-1}" != "0" ]; then
+    if ensure_server_running "$SERVER_HOST" "$SERVER_PORT"; then
+        ORIGINAL_PORT="$SERVER_PORT"
+        SERVER_PORT=$(python - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(('', 0))
+    print(sock.getsockname()[1])
+PY
+)
+        echo "ℹ️  Existing RagZoom server detected on $SERVER_HOST:$ORIGINAL_PORT; starting benchmark server on $SERVER_HOST:$SERVER_PORT" | tee -a "$LOG_FILE"
+    fi
     mkdir -p "$OUTPUT_DIR"
     SERVER_LOG_FILE="$OUTPUT_DIR/server.log"
     if ! start_grpc_server "$SERVER_HOST" "$SERVER_PORT" "$SERVER_LOG_FILE"; then
@@ -496,7 +541,6 @@ echo "📝 Running indexing with telemetry..."
 INDEX_ARGS=(
     "$DOCUMENT"
     --telemetry "$TELEMETRY_FILE"
-    --database "$DATABASE_URL"
     --debug
     --no-progress
 )
@@ -535,19 +579,10 @@ fi
 RUN_ENV=()
 
 # If we created a local SQLite DB, set backend accordingly
-if [ "$SKIP_DB_SETUP" != true ]; then
-    RUN_ENV+=(RAGZOOM_BACKEND="sqlite")
+RUN_ENV=()
+if [ ${#SERVER_ENV[@]} -gt 0 ]; then
+    RUN_ENV+=("${SERVER_ENV[@]}")
 fi
-
-if [ -z "${RAGZOOM_VECTOR_BACKEND:-}" ]; then
-    if python -c "import chromadb" 2>/dev/null; then
-        RUN_ENV+=(RAGZOOM_VECTOR_BACKEND="chroma")
-    else
-        echo "⚠️  chromadb not installed; falling back to RAGZOOM_VECTOR_BACKEND=python" | tee -a "$LOG_FILE"
-        RUN_ENV+=(RAGZOOM_VECTOR_BACKEND="python")
-    fi
-fi
-
 RUN_ENV+=(RAGZOOM_SERVER_ADDRESS="${SERVER_HOST}:${SERVER_PORT}")
 
 env "${RUN_ENV[@]}" python -m ragzoom.cli index "${INDEX_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
