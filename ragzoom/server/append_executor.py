@@ -119,20 +119,35 @@ class AppendExecutor:
                     span=(leaf.span_start, leaf.span_end),
                 )
 
-        start_time = time.time()
-        embeddings = await self._embedder.embed_texts(
-            [leaf.text for leaf in leaf_specs]
-        )
-        if len(embeddings) != len(leaf_specs):
-            raise RuntimeError("Embedding provider returned mismatched result count")
-
-        if reporter is not None:
-            reporter.record_embedding_call_v2(
-                [(leaf.node_id, leaf.token_count) for leaf in leaf_specs],
-                batch_size=len(leaf_specs),
-                model=self._config.embedding_model,
-                start_time=start_time,
+        configured_batch_size = max(1, self._config.embedding_batch_size)
+        provider_limit = int(
+            getattr(
+                self._embedder,
+                "_provider_max_embedding_batch_size",
+                configured_batch_size,
             )
+        )
+        batch_size = max(1, min(configured_batch_size, provider_limit))
+
+        embeddings: list[list[float]] = []
+        for offset in range(0, len(leaf_specs), batch_size):
+            chunk_specs = leaf_specs[offset : offset + batch_size]
+            chunk_texts = [leaf.text for leaf in chunk_specs]
+            chunk_start_time = time.time()
+            chunk_embeddings = await self._embedder.embed_texts(chunk_texts)
+            if len(chunk_embeddings) != len(chunk_specs):
+                raise RuntimeError(
+                    "Embedding provider returned mismatched result count"
+                )
+            embeddings.extend(chunk_embeddings)
+
+            if reporter is not None:
+                reporter.record_embedding_call_v2(
+                    [(leaf.node_id, leaf.token_count) for leaf in chunk_specs],
+                    batch_size=len(chunk_specs),
+                    model=self._config.embedding_model,
+                    start_time=chunk_start_time,
+                )
 
         deleted_node_ids = self._collect_deletion_ids(store, right_leaf)
         rollback_vectors = self._load_existing_vectors(vector_index, deleted_node_ids)
