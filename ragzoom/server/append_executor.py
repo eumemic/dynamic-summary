@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -129,17 +130,35 @@ class AppendExecutor:
         )
         batch_size = max(1, min(configured_batch_size, provider_limit))
 
-        embeddings: list[list[float]] = []
-        for offset in range(0, len(leaf_specs), batch_size):
-            chunk_specs = leaf_specs[offset : offset + batch_size]
-            chunk_texts = [leaf.text for leaf in chunk_specs]
-            chunk_start_time = time.time()
-            chunk_embeddings = await self._embedder.embed_texts(chunk_texts)
+        chunk_specs_list = [
+            leaf_specs[offset : offset + batch_size]
+            for offset in range(0, len(leaf_specs), batch_size)
+        ]
+
+        if not chunk_specs_list:
+            raise RuntimeError("No leaf batches prepared for embedding")
+
+        max_parallel_batches = max(
+            1,
+            min(
+                len(chunk_specs_list),
+                int(getattr(self._embedder, "_max_parallel_api_calls", 4)),
+            ),
+        )
+        semaphore = asyncio.Semaphore(max_parallel_batches)
+
+        async def _embed_chunk(
+            index: int, chunk_specs: list[LeafSpec]
+        ) -> tuple[int, list[list[float]]]:
+            async with semaphore:
+                chunk_start_time = time.time()
+                chunk_embeddings = await self._embedder.embed_texts(
+                    [leaf.text for leaf in chunk_specs]
+                )
             if len(chunk_embeddings) != len(chunk_specs):
                 raise RuntimeError(
                     "Embedding provider returned mismatched result count"
                 )
-            embeddings.extend(chunk_embeddings)
 
             if reporter is not None:
                 reporter.record_embedding_call_v2(
@@ -148,6 +167,18 @@ class AppendExecutor:
                     model=self._config.embedding_model,
                     start_time=chunk_start_time,
                 )
+
+            return index, chunk_embeddings
+
+        chunk_results = await asyncio.gather(
+            *[
+                asyncio.create_task(_embed_chunk(idx, chunk_specs))
+                for idx, chunk_specs in enumerate(chunk_specs_list)
+            ]
+        )
+        embeddings: list[list[float]] = []
+        for _, chunk_embeddings in sorted(chunk_results, key=lambda item: item[0]):
+            embeddings.extend(chunk_embeddings)
 
         deleted_node_ids = self._collect_deletion_ids(store, right_leaf)
         rollback_vectors = self._load_existing_vectors(vector_index, deleted_node_ids)

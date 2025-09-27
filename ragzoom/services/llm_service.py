@@ -131,6 +131,7 @@ class LLMService:
             max_concurrent: Maximum concurrent API requests
         """  # jscpd:ignore-end
         self.config = config
+        self._max_parallel_api_calls = max(1, max_concurrent)
 
         # Get API key from parameter or environment
         from ragzoom.config import ensure_secret_str
