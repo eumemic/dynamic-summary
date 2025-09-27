@@ -686,6 +686,25 @@ class PostgresNodeRepository(BaseRepository):
 
             return [str(row[0]) for row in query.all()]
 
+    def get_node_by_height_and_level(
+        self,
+        document_id: str | None,
+        height: int,
+        level_index: int,
+    ) -> TreeNode | None:
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.height == height,
+                PostgresTreeNode.level_index == level_index,
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+            node = query.first()
+            if node is None:
+                return None
+            self._force_load_and_detach(session, node)
+            return node
+
     def count_pinned_for_document(self, document_id: str | None) -> int:
         """Return count of pinned nodes for a document."""
         with self.SessionLocal() as session:

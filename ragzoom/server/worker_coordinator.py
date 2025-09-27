@@ -436,6 +436,15 @@ class WorkerCoordinator:
                     if parent_candidate:
                         preceding_parent_id = str(parent_candidate)
                         preceding_parent_node = store.nodes.get(preceding_parent_id)
+                if preceding_parent_id is None and parent_level_index > 0:
+                    fallback_prev = store.nodes.get_by_height_and_level(
+                        height=height,
+                        level_index=parent_level_index - 1,
+                    )
+                    if fallback_prev is not None:
+                        preceding_parent_id = fallback_prev.id
+                        preceding_parent_node = fallback_prev
+                        affected_ids.add(preceding_parent_id)
 
                 following_parent_id: str | None = None
                 following_parent_node = None
@@ -447,6 +456,15 @@ class WorkerCoordinator:
                     if parent_candidate:
                         following_parent_id = str(parent_candidate)
                         following_parent_node = store.nodes.get(following_parent_id)
+                if following_parent_id is None:
+                    fallback_next = store.nodes.get_by_height_and_level(
+                        height=height,
+                        level_index=parent_level_index + 1,
+                    )
+                    if fallback_next is not None:
+                        following_parent_id = fallback_next.id
+                        following_parent_node = fallback_next
+                        affected_ids.add(following_parent_id)
 
                 node_payload: dict[str, NodeFieldValue] = {
                     "node_id": parent_id,
@@ -473,7 +491,9 @@ class WorkerCoordinator:
                         (
                             preceding_parent_id,
                             getattr(
-                                preceding_parent_node, "preceding_neighbor_id", None
+                                preceding_parent_node,
+                                "preceding_neighbor_id",
+                                None,
                             ),
                             parent_id,
                         )
@@ -486,7 +506,9 @@ class WorkerCoordinator:
                             following_parent_id,
                             parent_id,
                             getattr(
-                                following_parent_node, "following_neighbor_id", None
+                                following_parent_node,
+                                "following_neighbor_id",
+                                None,
                             ),
                         )
                     )

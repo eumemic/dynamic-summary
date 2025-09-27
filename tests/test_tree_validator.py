@@ -131,6 +131,56 @@ def _build_four_leaf_tree(store: DocumentStore, document_id: str) -> None:
     )
 
 
+def _build_misordered_parent_level(store: DocumentStore, document_id: str) -> None:
+    leaf_ids = [f"leaf-{idx}" for idx in range(6)]
+    spans = [(idx * 100, (idx + 1) * 100) for idx in range(6)]
+
+    for idx, (node_id, (start, end)) in enumerate(zip(leaf_ids, spans, strict=True)):
+        _add_leaf(store, node_id=node_id, start=start, end=end, level_index=idx)
+
+    neighbor_updates = []
+    for idx, node_id in enumerate(leaf_ids):
+        preceding = leaf_ids[idx - 1] if idx > 0 else None
+        following = leaf_ids[idx + 1] if idx + 1 < len(leaf_ids) else None
+        neighbor_updates.append((node_id, preceding, following))
+    store.nodes.update_neighbors_batch(neighbor_updates)
+
+    parents = [
+        ("parent-a", 0, 200, "leaf-0", "leaf-1", 1, 0),
+        ("parent-b", 200, 400, "leaf-2", "leaf-3", 1, 1),
+        ("parent-c", 400, 600, "leaf-4", "leaf-5", 1, 2),
+    ]
+    for node_id, start, end, left, right, height, level_index in parents:
+        _add_parent(
+            store,
+            node_id=node_id,
+            start=start,
+            end=end,
+            left=left,
+            right=right,
+            height=height,
+            level_index=level_index,
+        )
+
+    parent_updates = [
+        ("leaf-0", "parent-a"),
+        ("leaf-1", "parent-a"),
+        ("leaf-2", "parent-b"),
+        ("leaf-3", "parent-b"),
+        ("leaf-4", "parent-c"),
+        ("leaf-5", "parent-c"),
+    ]
+    store.nodes.update_parent_references_batch(parent_updates)
+
+    store.nodes.update_neighbors_batch(
+        [
+            ("parent-a", None, "parent-c"),
+            ("parent-b", None, None),
+            ("parent-c", "parent-a", None),
+        ]
+    )
+
+
 def test_tree_validator_accepts_complete_tree(validator_store: StorageBackend) -> None:
     document_id = "validate-complete"
     store: DocumentStore = validator_store.add_document(
@@ -190,6 +240,35 @@ def test_tree_validator_flags_incomplete_tree_when_required(
     )
     assert report.status == "failed"
     assert any(f.code == "tree.multiple_roots" for f in report.errors)
+
+    validator_store.clear_document(document_id)
+
+
+def test_tree_validator_detects_misordered_parent_neighbors(
+    validator_store: StorageBackend,
+) -> None:
+    document_id = "validate-neighbor-chain"
+    store: DocumentStore = validator_store.add_document(
+        document_id=document_id,
+        file_path=None,
+        embedding_model="text-embedding-3-small",
+        summary_model="gpt-5-mini",
+    )
+
+    _build_misordered_parent_level(store, document_id)
+
+    report = validate_document(document_id=document_id, store=validator_store)
+
+    mismatch_codes = {
+        (finding.code, finding.node_id)
+        for finding in report.findings
+        if finding.code.startswith("level_neighbors.")
+    }
+
+    assert ("level_neighbors.following_mismatch", "parent-a") in mismatch_codes
+    assert ("level_neighbors.preceding_mismatch", "parent-b") in mismatch_codes
+    assert ("level_neighbors.following_mismatch", "parent-b") in mismatch_codes
+    assert ("level_neighbors.preceding_mismatch", "parent-c") in mismatch_codes
 
     validator_store.clear_document(document_id)
 

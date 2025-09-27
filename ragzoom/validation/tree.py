@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
@@ -101,6 +102,7 @@ def validate_document(
         _leaf_spans_are_ordered,
         _parent_child_relationships,
         _neighbor_consistency,
+        _level_neighbor_chains,
         _left_balanced,
         _parent_span_union,
         _per_tree_leaf_depth,
@@ -304,6 +306,121 @@ def _neighbor_consistency(snapshot: DocumentSnapshot) -> list[ValidationFinding]
                         node_id=node.id,
                     )
                 )
+    return findings
+
+
+def _level_neighbor_chains(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
+    """Ensure neighbors at each height form a contiguous chain."""
+
+    findings: list[ValidationFinding] = []
+    by_height: dict[int, dict[int, TreeNode]] = defaultdict(dict)
+    for node in snapshot.nodes:
+        height = int(getattr(node, "height", 0))
+        if height < 0:
+            continue
+        raw_index = getattr(node, "level_index", None)
+        if raw_index is None:
+            findings.append(
+                ValidationFinding(
+                    code="level_neighbors.missing_level_index",
+                    message=f"Node {node.id} at height {height} is missing a level_index",
+                    node_id=node.id,
+                )
+            )
+            continue
+        try:
+            level_index = int(raw_index)
+        except (TypeError, ValueError):
+            findings.append(
+                ValidationFinding(
+                    code="level_neighbors.invalid_level_index",
+                    message=(
+                        f"Node {node.id} at height {height} has non-integer level_index "
+                        f"{raw_index!r}"
+                    ),
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        existing = by_height[height].get(level_index)
+        if existing is not None:
+            findings.append(
+                ValidationFinding(
+                    code="level_neighbors.duplicate_level_index",
+                    message=(
+                        f"Nodes {existing.id} and {node.id} at height {height} share level_index "
+                        f"{level_index}"
+                    ),
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        by_height[height][level_index] = node
+
+    for height, nodes_by_index in by_height.items():
+        if len(nodes_by_index) <= 1:
+            continue
+        for level_index, node in nodes_by_index.items():
+            expected_prev = nodes_by_index.get(level_index - 1)
+            expected_next = nodes_by_index.get(level_index + 1)
+
+            prev_id = getattr(node, "preceding_neighbor_id", None)
+            next_id = getattr(node, "following_neighbor_id", None)
+
+            if expected_prev is None:
+                if prev_id:
+                    findings.append(
+                        ValidationFinding(
+                            code="level_neighbors.leading_unexpected",
+                            message=(
+                                f"Node {node.id} at height {height} (level_index {level_index}) "
+                                f"has preceding neighbor {prev_id} despite no level_index {level_index - 1}"
+                            ),
+                            node_id=node.id,
+                        )
+                    )
+            else:
+                if prev_id != expected_prev.id:
+                    findings.append(
+                        ValidationFinding(
+                            code="level_neighbors.preceding_mismatch",
+                            message=(
+                                f"Node {node.id} at height {height} (level_index {level_index}) should "
+                                f"reference {expected_prev.id} as preceding neighbor but found "
+                                f"{prev_id or 'None'}"
+                            ),
+                            node_id=node.id,
+                        )
+                    )
+
+            if expected_next is None:
+                if next_id:
+                    findings.append(
+                        ValidationFinding(
+                            code="level_neighbors.trailing_unexpected",
+                            message=(
+                                f"Node {node.id} at height {height} (level_index {level_index}) "
+                                f"has following neighbor {next_id} despite no level_index {level_index + 1}"
+                            ),
+                            node_id=node.id,
+                        )
+                    )
+            else:
+                if next_id != expected_next.id:
+                    findings.append(
+                        ValidationFinding(
+                            code="level_neighbors.following_mismatch",
+                            message=(
+                                f"Node {node.id} at height {height} (level_index {level_index}) should "
+                                f"reference {expected_next.id} as following neighbor but found "
+                                f"{next_id or 'None'}"
+                            ),
+                            node_id=node.id,
+                        )
+                    )
+
     return findings
 
 

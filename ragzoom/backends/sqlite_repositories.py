@@ -479,6 +479,28 @@ class SqliteNodeRepository:
             )
             return [str(row) for row in session.execute(stmt).scalars().all()]
 
+    def get_node_by_height_and_level(
+        self,
+        document_id: str | None,
+        height: int,
+        level_index: int,
+    ) -> TreeNode | None:
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(
+                SQLiteTreeNode.height == height,
+                SQLiteTreeNode.level_index == level_index,
+            )
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            row = session.execute(stmt).scalars().first()
+            if not row:
+                return None
+            try:
+                session.expunge(row)
+            except Exception:
+                pass
+            return cast(TreeNode, row)
+
     def get_parentless_nodes_for_document(
         self, document_id: str | None
     ) -> list[TreeNode]:

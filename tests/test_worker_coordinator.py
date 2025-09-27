@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import types
 from collections.abc import Generator
 
 import numpy as np
@@ -548,3 +549,130 @@ async def test_worker_status_tracks_queue_and_inflight(
         assert status.inflight_by_document.get(document_id) == 1
     finally:
         await coordinator.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow_threshold(20)
+async def test_worker_coordinator_preserves_preceding_parent_links(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+
+    leaves = [
+        _leaf_payload(
+            "leaf-0",
+            span_start=0,
+            span_end=100,
+            level_index=0,
+            document_id=document_id,
+            preceding=None,
+            following="leaf-1",
+        ),
+        _leaf_payload(
+            "leaf-1",
+            span_start=100,
+            span_end=200,
+            level_index=1,
+            document_id=document_id,
+            preceding="leaf-0",
+            following="leaf-2",
+        ),
+        _leaf_payload(
+            "leaf-2",
+            span_start=200,
+            span_end=300,
+            level_index=2,
+            document_id=document_id,
+            preceding="leaf-1",
+            following="leaf-3",
+        ),
+        _leaf_payload(
+            "leaf-3",
+            span_start=300,
+            span_end=400,
+            level_index=3,
+            document_id=document_id,
+            preceding="leaf-2",
+            following=None,
+        ),
+    ]
+    store.nodes.add_batch(leaves)
+
+    vector_index = StubVectorIndex()
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return vector_index
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        vector_index_factory=_vector_factory,
+        worker_count=2,
+    )
+
+    left_ready = asyncio.Event()
+    left_resume = asyncio.Event()
+    orig_process = WorkerCoordinator._process_candidate
+
+    async def _instrumented_process(
+        self: WorkerCoordinator, candidate: ReadyParentCandidate
+    ) -> None:
+        if candidate.document_id != document_id or candidate.left_child_id != "leaf-0":
+            await orig_process(self, candidate)
+            return
+
+        if not left_ready.is_set():
+            left_ready.set()
+            await left_resume.wait()
+
+        await orig_process(self, candidate)
+
+    WorkerCoordinator._process_candidate = types.MethodType(  # type: ignore[assignment]
+        _instrumented_process, coordinator
+    )
+
+    left_candidate = ReadyParentCandidate(
+        document_id=document_id, left_child_id="leaf-0"
+    )
+    right_candidate = ReadyParentCandidate(
+        document_id=document_id, left_child_id="leaf-2"
+    )
+
+    left_task = asyncio.create_task(coordinator._process_candidate(left_candidate))
+    await left_ready.wait()
+    await coordinator._process_candidate(right_candidate)
+    left_resume.set()
+    await left_task
+
+    # Restore to avoid side-effects for later tests
+    WorkerCoordinator._process_candidate = orig_process  # type: ignore[assignment]
+
+    left_node = store.nodes.get("leaf-0")
+    right_node = store.nodes.get("leaf-2")
+
+    assert left_node is not None
+    assert right_node is not None
+
+    left_parent_id = left_node.parent_id
+    right_parent_id = right_node.parent_id
+
+    assert left_parent_id is not None
+    assert right_parent_id is not None
+
+    left_parent = store.nodes.get(left_parent_id)
+    right_parent = store.nodes.get(right_parent_id)
+
+    assert left_parent is not None
+    assert right_parent is not None
+
+    # Parent nodes must be linked bidirectionally once both exist
+    assert left_parent.following_neighbor_id == right_parent.id
+    assert right_parent.preceding_neighbor_id == left_parent.id

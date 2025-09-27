@@ -148,6 +148,19 @@ class DocumentNodeRepository:
         nodes = self._repo.get_nodes(node_ids)
         return [node for node in nodes if node.document_id == self.document_id]
 
+    def get_by_height_and_level(
+        self, *, height: int, level_index: int
+    ) -> TreeNode | None:
+        """Lookup a node at a specific height/level within this document."""
+
+        getter = getattr(self._repo, "get_node_by_height_and_level", None)
+        if not callable(getter):
+            return None
+        return cast(
+            TreeNode | None,
+            getter(self.document_id, height, level_index),
+        )
+
     def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]:
         """Get root nodes scoped to the provided or default document."""
 
