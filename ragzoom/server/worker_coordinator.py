@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import heapq
 import logging
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, Protocol
@@ -37,6 +38,9 @@ class ReadyParentCandidate:
 
     document_id: str
     left_child_id: str
+    height: int
+    level_index: int
+    span_start: int
 
 
 NodeFieldValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
@@ -50,6 +54,24 @@ class WorkerStatus:
     in_flight: int
     pending_by_document: dict[str, int]
     inflight_by_document: dict[str, int]
+
+
+@dataclass(slots=True)
+class DependencySnapshot:
+    """Resolved neighbors required to build a parent."""
+
+    preceding: TreeNode | None
+    left: TreeNode | None
+    right: TreeNode | None
+
+
+@dataclass(slots=True)
+class DocumentState:
+    """Mutable per-document scheduling state."""
+
+    queued: set[str]
+    inflight: set[str]
+    tombstones: set[str]
 
 
 # jscpd:ignore-start - Signature must match LLMService._summarize_text exactly for type safety
@@ -76,10 +98,26 @@ class SummaryBackend(Protocol):
 def compute_ready_parent_candidates(store: DocumentStore) -> list[ReadyParentCandidate]:
     document_id = store.document_id or ""
     left_ids = store.nodes.get_ready_left_children()
-    return [
-        ReadyParentCandidate(document_id=document_id, left_child_id=left_id)
-        for left_id in left_ids
-    ]
+    nodes_by_id = {node.id: node for node in store.nodes.get_nodes(left_ids)}
+
+    candidates: list[ReadyParentCandidate] = []
+    for left_id in left_ids:
+        node = nodes_by_id.get(left_id)
+        if node is None:
+            logger.warning(
+                "Ready-left candidate %s missing node record in store", left_id
+            )
+            continue
+        candidates.append(
+            ReadyParentCandidate(
+                document_id=document_id,
+                left_child_id=left_id,
+                height=int(getattr(node, "height", 0)),
+                level_index=int(getattr(node, "level_index", 0)),
+                span_start=int(getattr(node, "span_start", 0)),
+            )
+        )
+    return candidates
 
 
 class WorkerCoordinator:
@@ -115,11 +153,10 @@ class WorkerCoordinator:
         self._vector_index_factory = vector_index_factory
 
         self._queue: asyncio.PriorityQueue[
-            tuple[tuple[int, int], ReadyParentCandidate]
+            tuple[tuple[int, int, int, int], ReadyParentCandidate]
         ] = asyncio.PriorityQueue()
         self._sequence = count()
-        self._queued: set[str] = set()
-        self._inflight: set[str] = set()
+        self._documents: dict[str, DocumentState] = {}
         self._pending_counts: defaultdict[str, int] = defaultdict(int)
         self._inflight_counts: defaultdict[str, int] = defaultdict(int)
         self._doc_locks: dict[str, asyncio.Lock] = {}
@@ -153,8 +190,20 @@ class WorkerCoordinator:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    async def enqueue_document(self, document_id: str) -> None:
-        await self._scan_document(document_id)
+    async def enqueue_document(
+        self,
+        document_id: str,
+        *,
+        deleted_node_ids: Iterable[str] | None = None,
+        new_root_ids: Iterable[str] | None = None,
+    ) -> None:
+        state = self._get_or_create_document_state(document_id)
+        await self._resync_document(
+            document_id,
+            state,
+            deleted_node_ids=deleted_node_ids,
+            new_root_ids=new_root_ids,
+        )
         await self._maybe_finish_run(document_id)
 
     async def wait_until_idle(self, document_id: str | None = None) -> None:
@@ -163,11 +212,14 @@ class WorkerCoordinator:
                 if (
                     not self._pending_counts
                     and self._queue.empty()
-                    and not self._inflight
+                    and sum(self._inflight_counts.values()) == 0
                 ):
                     return
             else:
-                if self._pending_counts.get(document_id, 0) == 0:
+                if (
+                    self._pending_counts.get(document_id, 0) == 0
+                    and self._inflight_counts.get(document_id, 0) == 0
+                ):
                     return
 
             await self._idle_event.wait()
@@ -190,7 +242,7 @@ class WorkerCoordinator:
         async with self._coord_lock:
             return WorkerStatus(
                 queue_depth=sum(self._pending_counts.values()),
-                in_flight=len(self._inflight),
+                in_flight=sum(self._inflight_counts.values()),
                 pending_by_document=dict(self._pending_counts),
                 inflight_by_document=dict(self._inflight_counts),
             )
@@ -198,6 +250,13 @@ class WorkerCoordinator:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _get_or_create_document_state(self, document_id: str) -> DocumentState:
+        state = self._documents.get(document_id)
+        if state is None:
+            state = DocumentState(set(), set(), set())
+            self._documents[document_id] = state
+        return state
+
     def _candidate_key(self, candidate: ReadyParentCandidate) -> str:
         return f"{candidate.document_id}:{candidate.left_child_id}"
 
@@ -208,26 +267,203 @@ class WorkerCoordinator:
             self._doc_locks[document_id] = lock
         return lock
 
-    async def _scan_document(self, document_id: str) -> None:
+    async def _resync_document(
+        self,
+        document_id: str,
+        state: DocumentState,
+        *,
+        deleted_node_ids: Iterable[str] | None,
+        new_root_ids: Iterable[str] | None,
+    ) -> None:
         async with self._doc_lock(document_id):
+            if deleted_node_ids:
+                await self._handle_deleted_nodes(document_id, state, deleted_node_ids)
+
             store = self._store.for_document(document_id)
-            candidates = compute_ready_parent_candidates(store)
+            if new_root_ids is None:
+                roots = store.nodes.get_root_nodes()
+                root_ids = [node.id for node in roots]
+            else:
+                root_ids = [root_id for root_id in new_root_ids if root_id]
 
-            async with self._coord_lock:
-                added = False
-                for candidate in candidates:
-                    key = self._candidate_key(candidate)
-                    if key in self._queued or key in self._inflight:
-                        continue
+            for root_id in root_ids:
+                await self._process_new_root(document_id, root_id, state)
 
-                    priority = (0, next(self._sequence))
-                    await self._queue.put((priority, candidate))
-                    self._queued.add(key)
-                    self._pending_counts[candidate.document_id] += 1
-                    added = True
+    async def _handle_deleted_nodes(
+        self,
+        document_id: str,
+        state: DocumentState,
+        deleted_node_ids: Iterable[str],
+    ) -> None:
+        deleted_ids = {node_id for node_id in deleted_node_ids if node_id}
+        if not deleted_ids:
+            return
 
-                if added:
-                    self._idle_event.clear()
+        state.tombstones.update(deleted_ids)
+
+        async with self._coord_lock:
+            queue_list = self._queue._queue  # type: ignore[attr-defined]
+            retained: list[tuple[tuple[int, int, int, int], ReadyParentCandidate]] = []
+            removed = 0
+
+            for priority, candidate in queue_list:
+                if (
+                    candidate.document_id == document_id
+                    and candidate.left_child_id in deleted_ids
+                ):
+                    removed += 1
+                    state.queued.discard(candidate.left_child_id)
+                    continue
+                retained.append((priority, candidate))
+
+            if removed == 0:
+                return
+
+            self._queue._queue = retained  # type: ignore[attr-defined]
+            heapq.heapify(self._queue._queue)  # type: ignore[attr-defined]
+
+            unfinished = getattr(self._queue, "_unfinished_tasks", 0)
+            if unfinished > 0:
+                self._queue._unfinished_tasks = max(0, unfinished - removed)  # type: ignore[attr-defined]
+
+            current_pending = self._pending_counts.get(document_id, 0)
+            if current_pending > 0:
+                remaining = current_pending - removed
+                if remaining > 0:
+                    self._pending_counts[document_id] = remaining
+                else:
+                    self._pending_counts.pop(document_id, None)
+
+            if (
+                self._queue.empty()
+                and not self._pending_counts
+                and sum(self._inflight_counts.values()) == 0
+            ):
+                self._idle_event.set()
+
+    async def _process_new_root(
+        self, document_id: str, root_id: str, state: DocumentState
+    ) -> None:
+        if not root_id or root_id in state.tombstones:
+            return
+
+        store = self._store.for_document(document_id)
+        root = store.nodes.get(root_id)
+        if root is None or getattr(root, "parent_id", None) is not None:
+            return
+
+        level_index = int(getattr(root, "level_index", 0))
+
+        candidate_left_ids: list[str] = []
+        if level_index % 2 == 0:
+            candidate_left_ids.append(root.id)
+        else:
+            preceding_id = getattr(root, "preceding_neighbor_id", None)
+            if preceding_id:
+                candidate_left_ids.append(str(preceding_id))
+            following_id = getattr(root, "following_neighbor_id", None)
+            if following_id:
+                candidate_left_ids.append(str(following_id))
+
+        for left_id in candidate_left_ids:
+            if not left_id or left_id in state.tombstones:
+                continue
+            left_node = store.nodes.get(left_id)
+            if left_node is None or getattr(left_node, "parent_id", None) is not None:
+                continue
+            preceding_neighbor_id = getattr(left_node, "preceding_neighbor_id", None)
+            following_neighbor_id = getattr(left_node, "following_neighbor_id", None)
+            if preceding_neighbor_id is None and following_neighbor_id is None:
+                continue
+
+            candidate = ReadyParentCandidate(
+                document_id=document_id,
+                left_child_id=left_node.id,
+                height=int(getattr(left_node, "height", 0)),
+                level_index=int(getattr(left_node, "level_index", 0)),
+                span_start=int(getattr(left_node, "span_start", 0)),
+            )
+            await self._enqueue_candidate(candidate, state)
+
+    async def _enqueue_candidate(
+        self, candidate: ReadyParentCandidate, state: DocumentState
+    ) -> None:
+        key = candidate.left_child_id
+        if key in state.tombstones:
+            return
+
+        async with self._coord_lock:
+            if key in state.queued or key in state.inflight:
+                return
+
+            priority = (
+                max(candidate.height, 0),
+                max(candidate.level_index, 0),
+                max(candidate.span_start, 0),
+                next(self._sequence),
+            )
+            await self._queue.put((priority, candidate))
+            state.queued.add(key)
+            self._pending_counts[candidate.document_id] += 1
+            self._idle_event.clear()
+
+    def _dependency_signature(
+        self, snapshot: DependencySnapshot
+    ) -> tuple[str | None, str | None, str | None]:
+        return (
+            snapshot.preceding.id if snapshot.preceding is not None else None,
+            snapshot.left.id if snapshot.left is not None else None,
+            snapshot.right.id if snapshot.right is not None else None,
+        )
+
+    def _dependencies_match(
+        self, before: DependencySnapshot, after: DependencySnapshot
+    ) -> bool:
+        return self._dependency_signature(before) == self._dependency_signature(after)
+
+    def _check_dependencies_still_valid(
+        self,
+        document_id: str,
+        left_child_id: str,
+        state: DocumentState,
+    ) -> tuple[bool, DependencySnapshot]:
+        if left_child_id in state.tombstones:
+            return False, DependencySnapshot(None, None, None)
+
+        store = self._store.for_document(document_id)
+        left = store.nodes.get(left_child_id)
+        if left is None or getattr(left, "parent_id", None) is not None:
+            return False, DependencySnapshot(None, None, None)
+
+        level_index = int(getattr(left, "level_index", 0))
+        if level_index % 2 != 0:
+            return False, DependencySnapshot(None, left, None)
+
+        preceding: TreeNode | None = None
+        preceding_id = getattr(left, "preceding_neighbor_id", None)
+        if preceding_id:
+            if preceding_id in state.tombstones:
+                return False, DependencySnapshot(None, left, None)
+            preceding = store.nodes.get(preceding_id)
+            if preceding is None:
+                return False, DependencySnapshot(None, left, None)
+
+        right: TreeNode | None = None
+        right_id = getattr(left, "following_neighbor_id", None)
+        if right_id:
+            if right_id in state.tombstones:
+                return False, DependencySnapshot(preceding, left, None)
+            right = store.nodes.get(right_id)
+            if right is None or getattr(right, "parent_id", None) is not None:
+                return False, DependencySnapshot(preceding, left, None)
+
+        return True, DependencySnapshot(preceding, left, right)
+
+    async def _scan_document(self, document_id: str) -> None:
+        state = self._get_or_create_document_state(document_id)
+        await self._resync_document(
+            document_id, state, deleted_node_ids=None, new_root_ids=None
+        )
 
     async def _worker_loop(self, worker_id: int) -> None:
         while not self._shutdown.is_set():
@@ -240,15 +476,17 @@ class WorkerCoordinator:
             except asyncio.CancelledError:  # pragma: no cover - shutdown
                 return
 
-            key = self._candidate_key(candidate)
+            state = self._get_or_create_document_state(candidate.document_id)
+            key = candidate.left_child_id
             async with self._coord_lock:
-                self._queued.discard(key)
-                self._inflight.add(key)
+                state.queued.discard(key)
+                state.inflight.add(key)
                 self._inflight_counts[candidate.document_id] += 1
 
             error_exc: Exception | None = None
+            new_roots: list[str] = []
             try:
-                await self._process_candidate(candidate)
+                new_roots = await self._process_candidate(candidate, state)
             except Exception as exc:  # pragma: no cover - defensive logging
                 error_exc = exc
                 logger.exception(
@@ -256,22 +494,23 @@ class WorkerCoordinator:
                 )
             finally:
                 async with self._coord_lock:
-                    self._inflight.discard(key)
                     doc_id = candidate.document_id
+                    state.inflight.discard(key)
                     current_inflight = self._inflight_counts.get(doc_id, 0)
                     if current_inflight > 1:
                         self._inflight_counts[doc_id] = current_inflight - 1
                     else:
-                        if doc_id in self._inflight_counts:
-                            self._inflight_counts.pop(doc_id)
-                    self._pending_counts[doc_id] -= 1
-                    if self._pending_counts[doc_id] <= 0:
-                        if doc_id in self._pending_counts:
-                            self._pending_counts.pop(doc_id)
+                        self._inflight_counts.pop(doc_id, None)
+
+                    current_pending = self._pending_counts.get(doc_id, 0)
+                    if current_pending > 1:
+                        self._pending_counts[doc_id] = current_pending - 1
+                    else:
+                        self._pending_counts.pop(doc_id, None)
                     if (
                         not self._pending_counts
                         and self._queue.empty()
-                        and not self._inflight
+                        and sum(self._inflight_counts.values()) == 0
                     ):
                         self._idle_event.set()
 
@@ -279,10 +518,13 @@ class WorkerCoordinator:
 
             if error_exc is None:
                 try:
-                    await self._scan_document(candidate.document_id)
+                    for root_id in new_roots:
+                        await self._process_new_root(
+                            candidate.document_id, root_id, state
+                        )
                 except Exception:  # pragma: no cover - defensive logging
                     logger.exception(
-                        "Failed to rescan document %s",
+                        "Failed to queue follow-up work for %s",
                         candidate.document_id,
                         exc_info=True,
                     )
@@ -292,9 +534,15 @@ class WorkerCoordinator:
 
         while not self._queue.empty():
             _, candidate = await self._queue.get()
-            key = self._candidate_key(candidate)
             async with self._coord_lock:
-                self._queued.discard(key)
+                state = self._get_or_create_document_state(candidate.document_id)
+                state.queued.discard(candidate.left_child_id)
+                doc_id = candidate.document_id
+                current_pending = self._pending_counts.get(doc_id, 0)
+                if current_pending > 1:
+                    self._pending_counts[doc_id] = current_pending - 1
+                else:
+                    self._pending_counts.pop(doc_id, None)
             self._queue.task_done()
 
     async def _handle_worker_failure(self, document_id: str, error: Exception) -> None:
@@ -326,37 +574,32 @@ class WorkerCoordinator:
         await self._run_manager.complete_run(context.run_id, error=error)
         await self.detach_run(document_id)
 
-    async def _process_candidate(self, candidate: ReadyParentCandidate) -> None:
+    async def _process_candidate(
+        self, candidate: ReadyParentCandidate, state: DocumentState
+    ) -> list[str]:
         store = self._store.for_document(candidate.document_id)
 
         async with self._coord_lock:
             context = self._runs.get(candidate.document_id)
         collector = context.telemetry_collector if context else None
 
-        left = store.nodes.get(candidate.left_child_id)
-        if left is None or left.parent_id is not None:
-            return
+        ready, snapshot = self._check_dependencies_still_valid(
+            candidate.document_id, candidate.left_child_id, state
+        )
+        if not ready or snapshot.left is None:
+            return []
 
-        right: TreeNode | None = None
-        right_id = getattr(left, "following_neighbor_id", None)
-        if right_id is not None:
-            right = store.nodes.get(right_id)
-            if right is None or right.parent_id is not None:
-                return
-            if int(getattr(right, "height", -1)) != int(getattr(left, "height", -1)):
-                return
-            if getattr(right, "preceding_neighbor_id", None) != left.id:
-                return
+        left = snapshot.left
+        right = snapshot.right
+        preceding = snapshot.preceding
 
         left_level_index = int(getattr(left, "level_index", 0))
-        if left_level_index % 2 != 0:
-            return
         parent_level_index = left_level_index // 2
 
         span_start = int(getattr(left, "span_start", 0))
         span_end = (
             int(getattr(right, "span_end", span_start))
-            if right
+            if right is not None
             else int(getattr(left, "span_end", span_start))
         )
         height = int(getattr(left, "height", 0)) + 1
@@ -369,13 +612,8 @@ class WorkerCoordinator:
         right_tokens = int(getattr(right, "token_count", 0)) if right else 0
 
         prev_context = None
-        preceding_node_id = getattr(left, "preceding_neighbor_id", None)
-        if preceding_node_id:
-            preceding_for_context = store.nodes.get(preceding_node_id)
-            if preceding_for_context is None:
-                return
-            if preceding_for_context.text:
-                prev_context = preceding_for_context.text
+        if preceding is not None and preceding.text:
+            prev_context = preceding.text
 
         parent_id = str(uuid.uuid4())
 
@@ -397,6 +635,15 @@ class WorkerCoordinator:
             right_token_count=right_tokens,
         )
 
+        ready, post_summary = self._check_dependencies_still_valid(
+            candidate.document_id, candidate.left_child_id, state
+        )
+        if not ready or not self._dependencies_match(snapshot, post_summary):
+            return []
+
+        if post_summary.left is None:
+            return []
+
         start_time = time.time()
         embeddings = await self._llm_service.embed_texts([summary])
         if len(embeddings) != 1:
@@ -411,27 +658,66 @@ class WorkerCoordinator:
                 start_time=start_time,
             )
 
+        ready, post_embedding = self._check_dependencies_still_valid(
+            candidate.document_id, candidate.left_child_id, state
+        )
+        if not ready or not self._dependencies_match(post_summary, post_embedding):
+            return []
+
+        left_after_embedding = post_embedding.left
+        right_after_embedding = post_embedding.right
+        if left_after_embedding is None:
+            return []
+
         following_neighbor_id = (
-            getattr(right, "following_neighbor_id", None) if right is not None else None
+            getattr(right_after_embedding, "following_neighbor_id", None)
+            if right_after_embedding is not None
+            else None
         )
 
         vector_index = self._vector_index_factory(candidate.document_id)
 
-        affected_ids = {parent_id, left.id}
-        parent_refs: list[tuple[str, str | None]] = [(left.id, parent_id)]
-        if right is not None:
-            affected_ids.add(right.id)
-            parent_refs.append((right.id, parent_id))
+        affected_ids = {parent_id, left_after_embedding.id}
+        parent_refs: list[tuple[str, str | None]] = [
+            (left_after_embedding.id, parent_id)
+        ]
+        if right_after_embedding is not None:
+            affected_ids.add(right_after_embedding.id)
+            parent_refs.append((right_after_embedding.id, parent_id))
+
+        ready, final_snapshot = self._check_dependencies_still_valid(
+            candidate.document_id, left_after_embedding.id, state
+        )
+        if (
+            not ready
+            or not self._dependencies_match(post_embedding, final_snapshot)
+            or final_snapshot.left is None
+        ):
+            return []
+
+        left_final = final_snapshot.left
+        right_final = final_snapshot.right
+        if left_final is None:
+            return []
+
+        span_start_final = int(getattr(left_final, "span_start", span_start))
+        span_end_final = int(
+            getattr(right_final, "span_end", span_end)
+            if right_final is not None
+            else getattr(left_final, "span_end", span_end)
+        )
+
+        preceding_node_id_final = getattr(left_final, "preceding_neighbor_id", None)
 
         vector_written = False
         try:
             with store.transaction() as session:
                 preceding_parent_id: str | None = None
                 preceding_parent_node = None
-                if preceding_node_id:
-                    refreshed_preceding = store.nodes.get(preceding_node_id)
+                if preceding_node_id_final:
+                    refreshed_preceding = store.nodes.get(preceding_node_id_final)
                     if refreshed_preceding is None:
-                        return
+                        return []
                     parent_candidate = getattr(refreshed_preceding, "parent_id", None)
                     if parent_candidate:
                         preceding_parent_id = str(parent_candidate)
@@ -451,7 +737,7 @@ class WorkerCoordinator:
                 if following_neighbor_id:
                     refreshed_following = store.nodes.get(following_neighbor_id)
                     if refreshed_following is None:
-                        return
+                        return []
                     parent_candidate = getattr(refreshed_following, "parent_id", None)
                     if parent_candidate:
                         following_parent_id = str(parent_candidate)
@@ -469,11 +755,11 @@ class WorkerCoordinator:
                 node_payload: dict[str, NodeFieldValue] = {
                     "node_id": parent_id,
                     "text": summary,
-                    "span_start": span_start,
-                    "span_end": span_end,
+                    "span_start": span_start_final,
+                    "span_end": span_end_final,
                     "parent_id": None,
-                    "left_child_id": left.id,
-                    "right_child_id": right.id if right else None,
+                    "left_child_id": left_final.id,
+                    "right_child_id": right_final.id if right_final else None,
                     "document_id": candidate.document_id,
                     "token_count": summary_tokens,
                     "height": height,
@@ -528,8 +814,8 @@ class WorkerCoordinator:
                             embedding_vector,
                             {
                                 "document_id": candidate.document_id,
-                                "span_start": span_start,
-                                "span_end": span_end,
+                                "span_start": span_start_final,
+                                "span_end": span_end_final,
                                 "is_leaf": 0,
                                 "height": height,
                             },
@@ -551,6 +837,8 @@ class WorkerCoordinator:
 
         if context is not None:
             context.register_summary_node(parent_id)
+
+        return [parent_id]
 
 
 __all__ = [

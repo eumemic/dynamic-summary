@@ -18,6 +18,7 @@ from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.server.worker_coordinator import (
+    DocumentState,
     ReadyParentCandidate,
     WorkerCoordinator,
     compute_ready_parent_candidates,
@@ -201,8 +202,16 @@ def test_compute_ready_parent_candidates_pairs_nodes(
     )
 
     candidates = compute_ready_parent_candidates(store)
+    node = store.nodes.get("L")
+    assert node is not None
     assert candidates == [
-        ReadyParentCandidate(document_id=document_id, left_child_id="L")
+        ReadyParentCandidate(
+            document_id=document_id,
+            left_child_id="L",
+            height=int(getattr(node, "height", 0)),
+            level_index=int(getattr(node, "level_index", 0)),
+            span_start=int(getattr(node, "span_start", 0)),
+        )
     ]
 
 
@@ -623,37 +632,55 @@ async def test_worker_coordinator_preserves_preceding_parent_links(
     orig_process = WorkerCoordinator._process_candidate
 
     async def _instrumented_process(
-        self: WorkerCoordinator, candidate: ReadyParentCandidate
-    ) -> None:
+        self: WorkerCoordinator,
+        candidate: ReadyParentCandidate,
+        state: DocumentState,
+    ) -> list[str]:
         if candidate.document_id != document_id or candidate.left_child_id != "leaf-0":
-            await orig_process(self, candidate)
-            return
+            return await orig_process(self, candidate, state)
 
         if not left_ready.is_set():
             left_ready.set()
             await left_resume.wait()
 
-        await orig_process(self, candidate)
+        return await orig_process(self, candidate, state)
 
-    WorkerCoordinator._process_candidate = types.MethodType(  # type: ignore[assignment]
+    WorkerCoordinator._process_candidate = types.MethodType(  # type: ignore[method-assign]
         _instrumented_process, coordinator
     )
 
+    doc_state = coordinator._get_or_create_document_state(document_id)
+
+    left_node_meta = store.nodes.get("leaf-0")
+    right_node_meta = store.nodes.get("leaf-2")
+    assert left_node_meta is not None
+    assert right_node_meta is not None
+
     left_candidate = ReadyParentCandidate(
-        document_id=document_id, left_child_id="leaf-0"
+        document_id=document_id,
+        left_child_id="leaf-0",
+        height=int(getattr(left_node_meta, "height", 0)),
+        level_index=int(getattr(left_node_meta, "level_index", 0)),
+        span_start=int(getattr(left_node_meta, "span_start", 0)),
     )
     right_candidate = ReadyParentCandidate(
-        document_id=document_id, left_child_id="leaf-2"
+        document_id=document_id,
+        left_child_id="leaf-2",
+        height=int(getattr(right_node_meta, "height", 0)),
+        level_index=int(getattr(right_node_meta, "level_index", 0)),
+        span_start=int(getattr(right_node_meta, "span_start", 0)),
     )
 
-    left_task = asyncio.create_task(coordinator._process_candidate(left_candidate))
+    left_task = asyncio.create_task(
+        coordinator._process_candidate(left_candidate, doc_state)
+    )
     await left_ready.wait()
-    await coordinator._process_candidate(right_candidate)
+    await coordinator._process_candidate(right_candidate, doc_state)
     left_resume.set()
     await left_task
 
     # Restore to avoid side-effects for later tests
-    WorkerCoordinator._process_candidate = orig_process  # type: ignore[assignment]
+    WorkerCoordinator._process_candidate = orig_process  # type: ignore[method-assign]
 
     left_node = store.nodes.get("leaf-0")
     right_node = store.nodes.get("leaf-2")
@@ -676,3 +703,254 @@ async def test_worker_coordinator_preserves_preceding_parent_links(
     # Parent nodes must be linked bidirectionally once both exist
     assert left_parent.following_neighbor_id == right_parent.id
     assert right_parent.preceding_neighbor_id == left_parent.id
+
+
+@pytest.mark.asyncio
+async def test_worker_coordinator_prioritises_lower_height_candidates(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+
+    initial_leaves = [
+        _leaf_payload(
+            "leaf-0",
+            span_start=0,
+            span_end=100,
+            level_index=0,
+            document_id=document_id,
+            preceding=None,
+            following="leaf-1",
+        ),
+        _leaf_payload(
+            "leaf-1",
+            span_start=100,
+            span_end=200,
+            level_index=1,
+            document_id=document_id,
+            preceding="leaf-0",
+            following="leaf-2",
+        ),
+        _leaf_payload(
+            "leaf-2",
+            span_start=200,
+            span_end=300,
+            level_index=2,
+            document_id=document_id,
+            preceding="leaf-1",
+            following=None,
+        ),
+    ]
+    store.nodes.add_batch(initial_leaves)
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+    )
+
+    await coordinator._scan_document(document_id)
+    doc_state = coordinator._get_or_create_document_state(document_id)
+
+    oldest_priority, oldest_candidate = await coordinator._queue.get()
+    assert oldest_candidate.left_child_id == "leaf-0"
+    doc_state.queued.discard(oldest_candidate.left_child_id)
+    coordinator._queue.task_done()
+    store.update_parent_reference("leaf-0", "parent-x")
+
+    new_leaf = _leaf_payload(
+        "leaf-new",
+        span_start=300,
+        span_end=400,
+        level_index=0,
+        document_id=document_id,
+        preceding="leaf-2",
+        following=None,
+    )
+    store.nodes.add_batch([new_leaf])
+    store.nodes.update_neighbors_batch([("leaf-2", "leaf-1", "leaf-new")])
+
+    await coordinator._scan_document(document_id)
+
+    next_priority, next_candidate = await coordinator._queue.get()
+    assert next_candidate.left_child_id == "leaf-new"
+    coordinator._queue.task_done()
+
+
+@pytest.mark.asyncio
+async def test_process_new_root_unlocks_adjacent_spans(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "leaf-0",
+                span_start=0,
+                span_end=100,
+                level_index=0,
+                document_id=document_id,
+                preceding=None,
+                following="leaf-1",
+            ),
+            _leaf_payload(
+                "leaf-1",
+                span_start=100,
+                span_end=200,
+                level_index=1,
+                document_id=document_id,
+                preceding="leaf-0",
+                following="leaf-2",
+            ),
+            _leaf_payload(
+                "leaf-2",
+                span_start=200,
+                span_end=300,
+                level_index=2,
+                document_id=document_id,
+                preceding="leaf-1",
+                following=None,
+            ),
+        ]
+    )
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+    )
+
+    state = coordinator._get_or_create_document_state(document_id)
+    await coordinator._process_new_root(document_id, "leaf-1", state)
+
+    jobs: list[str] = []
+    while not coordinator._queue.empty():
+        _, job = coordinator._queue.get_nowait()
+        jobs.append(job.left_child_id)
+        coordinator._queue.task_done()
+
+    assert jobs == ["leaf-0", "leaf-2"]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_document_drops_deleted_jobs(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "leaf-0",
+                span_start=0,
+                span_end=100,
+                level_index=0,
+                document_id=document_id,
+                preceding=None,
+                following="leaf-1",
+            ),
+            _leaf_payload(
+                "leaf-1",
+                span_start=100,
+                span_end=200,
+                level_index=1,
+                document_id=document_id,
+                preceding="leaf-0",
+                following=None,
+            ),
+        ]
+    )
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+    )
+
+    await coordinator.enqueue_document(document_id)
+    assert coordinator.queue_depth(document_id) == 1
+
+    await coordinator.enqueue_document(document_id, deleted_node_ids=["leaf-0"])
+    assert coordinator.queue_depth(document_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_dependency_check_detects_missing_right_child(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "leaf-0",
+                span_start=0,
+                span_end=100,
+                level_index=0,
+                document_id=document_id,
+                preceding=None,
+                following="leaf-1",
+            ),
+            _leaf_payload(
+                "leaf-1",
+                span_start=100,
+                span_end=200,
+                level_index=1,
+                document_id=document_id,
+                preceding="leaf-0",
+                following=None,
+            ),
+        ]
+    )
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+    )
+
+    state = coordinator._get_or_create_document_state(document_id)
+    ready, snapshot = coordinator._check_dependencies_still_valid(
+        document_id, "leaf-0", state
+    )
+    assert ready
+    assert snapshot.right is not None
+
+    with store.transaction() as session:
+        store.nodes.delete_nodes(["leaf-1"], session=session)
+
+    ready_after, snapshot_after = coordinator._check_dependencies_still_valid(
+        document_id, "leaf-0", state
+    )
+    assert not ready_after
+    assert snapshot_after.right is None

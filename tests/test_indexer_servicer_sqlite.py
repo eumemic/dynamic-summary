@@ -38,9 +38,19 @@ class StubAppendExecutor:
 class StubWorkerCoordinator:
     def __init__(self) -> None:
         self.enqueued: list[str] = []
+        self.deleted: list[list[str] | None] = []
+        self.new_roots: list[list[str] | None] = []
 
-    async def enqueue_document(self, document_id: str) -> None:
+    async def enqueue_document(
+        self,
+        document_id: str,
+        *,
+        deleted_node_ids: list[str] | None = None,
+        new_root_ids: list[str] | None = None,
+    ) -> None:
         self.enqueued.append(document_id)
+        self.deleted.append(deleted_node_ids)
+        self.new_roots.append(new_root_ids)
 
     async def attach_run(self, context: object) -> None:
         return None
@@ -111,6 +121,8 @@ async def test_append_text_uses_append_executor() -> None:
 
         assert backend.get_document_by_id("doc") is not None
         assert worker_coordinator.enqueued == ["doc"]
+        assert worker_coordinator.deleted == [outcome.deleted_node_ids]
+        assert worker_coordinator.new_roots == [outcome.new_leaf_ids]
 
         stats = response.stats
         assert stats.document_id == "doc"
@@ -137,15 +149,17 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
             database_url="sqlite:///:memory:",
         )
 
+        document_id = "doc-replace"
+
         backend.add_document(
-            "doc",
+            document_id,
             file_path=None,
             embedding_model=index_config.embedding_model,
             summary_model=index_config.summary_model,
         )
 
         outcome = AppendOutcome(
-            document_id="doc",
+            document_id=document_id,
             appended_span_start=0,
             appended_span_end=5,
             new_leaf_ids=["leaf-1"],
@@ -175,7 +189,7 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
         servicer = IndexerServicer(state)
 
         request = pb2.AppendTextRequest(
-            document_id="doc",
+            document_id=document_id,
             content=b"hello world",
             collect_telemetry=False,
         )

@@ -416,7 +416,11 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
             if run_context is not None:
                 await self._state.worker_coordinator.attach_run(run_context)
 
-            await self._state.worker_coordinator.enqueue_document(document_id)
+            await self._state.worker_coordinator.enqueue_document(
+                document_id,
+                deleted_node_ids=outcome.deleted_node_ids,
+                new_root_ids=outcome.new_leaf_ids,
+            )
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception(
                 "AppendText failed for document %s", document_id, exc_info=True
