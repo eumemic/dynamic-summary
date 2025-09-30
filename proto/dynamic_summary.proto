@@ -102,6 +102,8 @@ message WorkerDocumentProgress {
   string document_id = 1;
   int32 pending = 2;
   int32 inflight = 3;
+  int32 completed = 4;
+  int32 total = 5;
 }
 
 message RunWorkersResponse {

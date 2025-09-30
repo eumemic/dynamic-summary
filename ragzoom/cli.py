@@ -1,5 +1,7 @@
 """CLI interface for RagZoom."""
 
+from __future__ import annotations
+
 import inspect
 import json
 import logging
@@ -38,6 +40,7 @@ from ragzoom.exceptions import (
     ResourceError,
     ValidationError,
 )
+from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
 from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
@@ -92,23 +95,43 @@ def _resolve_server_address(value: str | None) -> str:
 
 def _display_worker_snapshots(
     snapshots: Iterable[WorkerRunSnapshot],
+    *,
+    target_document_id: str | None,
 ) -> WorkerRunSnapshot | None:
-    last_snapshot: WorkerRunSnapshot | None = None
-    for snapshot in snapshots:
-        last_snapshot = snapshot
-        if snapshot.documents:
-            details = ", ".join(
-                f"{doc_id}(pending={pending}, inflight={inflight})"
-                for doc_id, (pending, inflight) in sorted(snapshot.documents.items())
-            )
-            suffix = f" [{details}]"
-        else:
-            suffix = ""
+    focus = {target_document_id} if target_document_id else None
+    display = WorkerProgressDisplay(
+        focus_documents=focus,
+        stream=sys.stderr,
+        line_printer=click.echo,
+    )
 
-        click.echo(snapshot.message)
-        click.echo(
-            f"   Workers: queue={snapshot.queue_depth}, inflight={snapshot.inflight}{suffix}"
-        )
+    last_snapshot: WorkerRunSnapshot | None = None
+    try:
+        for snapshot in snapshots:
+            last_snapshot = snapshot
+            documents = {
+                doc_id: DocumentProgressTotals(
+                    pending=progress.pending,
+                    inflight=progress.inflight,
+                    completed=progress.completed,
+                    total=progress.total,
+                )
+                for doc_id, progress in snapshot.documents.items()
+            }
+            display.update(
+                queue_depth=snapshot.queue_depth,
+                inflight=snapshot.inflight,
+                documents=documents,
+                message=snapshot.message,
+            )
+
+            if target_document_id:
+                progress = snapshot.documents.get(target_document_id)
+                if progress and progress.pending == 0 and progress.inflight == 0:
+                    break
+    finally:
+        display.finish()
+
     return last_snapshot
 
 
@@ -316,9 +339,24 @@ def index(
                     collect_telemetry=bool(telemetry_file),
                 )
             telemetry_run_id = result.telemetry_run_id
-            final_snapshot = _display_worker_snapshots(client.iter_worker_snapshots())
+            final_snapshot = _display_worker_snapshots(
+                client.iter_worker_snapshots(),
+                target_document_id=target_document_id,
+            )
 
-            if final_snapshot and final_snapshot.idle:
+            should_refresh_status = False
+            if final_snapshot is None:
+                should_refresh_status = True
+            else:
+                progress = final_snapshot.documents.get(target_document_id)
+                if progress:
+                    should_refresh_status = (
+                        progress.pending == 0 and progress.inflight == 0
+                    )
+                else:
+                    should_refresh_status = final_snapshot.idle
+
+            if should_refresh_status:
                 try:
                     refreshed_status = client.get_document_status(target_document_id)
                 except Exception as exc:  # pragma: no cover - network failures

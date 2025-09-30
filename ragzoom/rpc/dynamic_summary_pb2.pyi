@@ -172,13 +172,17 @@ class WorkerDocumentProgress:
     document_id: str
     pending: int
     inflight: int
+    completed: int
+    total: int
 
     def __init__(
         self,
         *,
-        document_id: str,
-        pending: int,
-        inflight: int,
+        document_id: str = ...,
+        pending: int = ...,
+        inflight: int = ...,
+        completed: int = ...,
+        total: int = ...,
     ) -> None: ...
 
 class RunWorkersResponse:

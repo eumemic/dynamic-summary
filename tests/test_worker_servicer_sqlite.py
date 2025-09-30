@@ -173,7 +173,12 @@ async def test_run_workers_until_idle_streams_status() -> None:
         if first_snapshot.queue_depth > 0:
             assert first_snapshot.documents
             doc_progress = {
-                doc.document_id: (doc.pending, doc.inflight)
+                doc.document_id: (
+                    doc.pending,
+                    doc.inflight,
+                    getattr(doc, "completed", 0),
+                    getattr(doc, "total", 0),
+                )
                 for doc in first_snapshot.documents
             }
             assert "doc" in doc_progress

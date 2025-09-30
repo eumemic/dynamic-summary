@@ -54,6 +54,7 @@ class WorkerStatus:
     in_flight: int
     pending_by_document: dict[str, int]
     inflight_by_document: dict[str, int]
+    completed_by_document: dict[str, int]
 
 
 @dataclass(slots=True)
@@ -72,6 +73,7 @@ class DocumentState:
     queued: set[str]
     inflight: set[str]
     tombstones: set[str]
+    completed: int
 
 
 # jscpd:ignore-start - Signature must match LLMService._summarize_text exactly for type safety
@@ -201,6 +203,12 @@ class WorkerCoordinator:
         new_root_ids: Iterable[str] | None = None,
     ) -> None:
         state = self._get_or_create_document_state(document_id)
+        async with self._coord_lock:
+            if (
+                self._pending_counts.get(document_id, 0) == 0
+                and self._inflight_counts.get(document_id, 0) == 0
+            ):
+                state.completed = 0
         await self._resync_document(
             document_id,
             state,
@@ -243,11 +251,19 @@ class WorkerCoordinator:
 
     async def status(self) -> WorkerStatus:
         async with self._coord_lock:
+            doc_ids = set(self._documents)
+            doc_ids.update(self._pending_counts)
+            doc_ids.update(self._inflight_counts)
+            completed_by_document: dict[str, int] = {}
+            for doc_id in doc_ids:
+                state = self._documents.get(doc_id)
+                completed_by_document[doc_id] = state.completed if state else 0
             return WorkerStatus(
                 queue_depth=sum(self._pending_counts.values()),
                 in_flight=sum(self._inflight_counts.values()),
                 pending_by_document=dict(self._pending_counts),
                 inflight_by_document=dict(self._inflight_counts),
+                completed_by_document=completed_by_document,
             )
 
     # ------------------------------------------------------------------
@@ -256,7 +272,7 @@ class WorkerCoordinator:
     def _get_or_create_document_state(self, document_id: str) -> DocumentState:
         state = self._documents.get(document_id)
         if state is None:
-            state = DocumentState(set(), set(), set())
+            state = DocumentState(set(), set(), set(), 0)
             self._documents[document_id] = state
         return state
 
@@ -611,6 +627,8 @@ class WorkerCoordinator:
                 async with self._coord_lock:
                     doc_id = candidate.document_id
                     state.inflight.discard(key)
+                    if error_exc is None:
+                        state.completed += 1
                     current_inflight = self._inflight_counts.get(doc_id, 0)
                     if current_inflight > 1:
                         self._inflight_counts[doc_id] = current_inflight - 1

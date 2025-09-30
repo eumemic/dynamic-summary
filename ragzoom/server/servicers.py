@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Sequence
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from ragzoom.assemble import Assembler
 from ragzoom.document_store import DocumentStore
+from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
 from ragzoom.retrieval.budget_planner import BudgetPlanner
 from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
@@ -21,7 +22,7 @@ from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.server.run_manager import IndexRunContext
 from ragzoom.server.state import ServerState
-from ragzoom.server.worker_coordinator import WorkerStatus
+from ragzoom.server.worker_coordinator import WorkerCoordinator, WorkerStatus
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.tree_viz import build_ascii_tree
 from ragzoom.utils.tokenization import tokenizer
@@ -595,11 +596,18 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             idle = status.queue_depth == 0 and status.in_flight == 0
             doc_ids = set(status.pending_by_document)
             doc_ids.update(status.inflight_by_document)
+            doc_ids.update(status.completed_by_document)
             document_progress = (
                 pb2.WorkerDocumentProgress(
                     document_id=doc_id,
                     pending=status.pending_by_document.get(doc_id, 0),
                     inflight=status.inflight_by_document.get(doc_id, 0),
+                    completed=status.completed_by_document.get(doc_id, 0),
+                    total=(
+                        status.completed_by_document.get(doc_id, 0)
+                        + status.pending_by_document.get(doc_id, 0)
+                        + status.inflight_by_document.get(doc_id, 0)
+                    ),
                 )
                 for doc_id in sorted(doc_ids)
             )
@@ -732,6 +740,9 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
     logger.info("Starting RagZoom gRPC server on %s", listen_addr)
 
     await state.worker_coordinator.start()
+    progress_task = asyncio.create_task(
+        _render_worker_progress(state.worker_coordinator)
+    )
     try:
         try:
             documents = state.store.list_documents()
@@ -752,4 +763,58 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
             await shutdown_gracefully(server)
             raise
     finally:
+        progress_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await progress_task
         await state.worker_coordinator.shutdown()
+
+
+async def _render_worker_progress(coordinator: WorkerCoordinator) -> None:
+    display = WorkerProgressDisplay(focus_documents=None)
+    try:
+        while True:
+            status = await coordinator.status()
+            active_doc_ids = {
+                doc_id
+                for doc_id, count in status.pending_by_document.items()
+                if count > 0
+            }
+            active_doc_ids.update(
+                {
+                    doc_id
+                    for doc_id, count in status.inflight_by_document.items()
+                    if count > 0
+                }
+            )
+
+            if not active_doc_ids and status.queue_depth == 0 and status.in_flight == 0:
+                display.finish()
+                await asyncio.sleep(0.5)
+                continue
+
+            documents = {
+                doc_id: DocumentProgressTotals(
+                    pending=status.pending_by_document.get(doc_id, 0),
+                    inflight=status.inflight_by_document.get(doc_id, 0),
+                    completed=status.completed_by_document.get(doc_id, 0),
+                    total=(
+                        status.completed_by_document.get(doc_id, 0)
+                        + status.pending_by_document.get(doc_id, 0)
+                        + status.inflight_by_document.get(doc_id, 0)
+                    ),
+                )
+                for doc_id in sorted(active_doc_ids)
+            }
+
+            display.update(
+                queue_depth=status.queue_depth,
+                inflight=status.in_flight,
+                documents=documents,
+                message=None,
+            )
+
+            await asyncio.sleep(0.5)
+    except asyncio.CancelledError:
+        raise
+    finally:
+        display.finish()

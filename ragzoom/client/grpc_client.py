@@ -79,12 +79,20 @@ class ExecuteQueryOutput:
 
 
 @dataclass(slots=True)
+class DocumentProgressSnapshot:
+    pending: int
+    inflight: int
+    completed: int
+    total: int
+
+
+@dataclass(slots=True)
 class WorkerRunSnapshot:
     message: str
     idle: bool
     queue_depth: int
     inflight: int
-    documents: dict[str, tuple[int, int]]
+    documents: dict[str, DocumentProgressSnapshot]
 
 
 @dataclass(slots=True)
@@ -246,11 +254,23 @@ class GrpcRagzoomClient:
         try:
             responses = self._workers.RunWorkers(request, timeout=self._timeout)
             for resp in responses:
-                documents = {
-                    progress.document_id: (progress.pending, progress.inflight)
-                    for progress in resp.documents
-                    if progress.document_id
-                }
+                documents: dict[str, DocumentProgressSnapshot] = {}
+                for progress in resp.documents:
+                    doc_id = progress.document_id
+                    if not doc_id:
+                        continue
+                    pending = progress.pending
+                    inflight = progress.inflight
+                    completed = getattr(progress, "completed", 0)
+                    total = getattr(progress, "total", 0)
+                    if total <= 0:
+                        total = pending + inflight + completed
+                    documents[doc_id] = DocumentProgressSnapshot(
+                        pending=pending,
+                        inflight=inflight,
+                        completed=completed,
+                        total=total,
+                    )
                 yield WorkerRunSnapshot(
                     message=resp.message,
                     idle=resp.idle,
