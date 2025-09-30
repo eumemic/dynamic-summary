@@ -267,15 +267,15 @@ class TestTelemetryIntegration:
                 config=index_config,
             )
 
-            # Index document (file_path parameter removed in refactoring)
-            _ = await builder._add_document_impl(
+            # Index document via append path; telemetry captured on the stats object
+            stats = await builder.append_text_async(
                 test_text,
                 show_progress=False,
                 reporter=reporter,
             )
 
-        # Get final telemetry data
-        telemetry_data = reporter.finalize()
+        telemetry_data = stats.telemetry
+        assert telemetry_data is not None
 
         # Verify telemetry was collected (v4.2 format)
         assert telemetry_data["format_version"] == "4.2"

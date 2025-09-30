@@ -6,7 +6,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TypeAlias, cast, overload
+from typing import TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
@@ -92,6 +92,10 @@ VectorPayload: TypeAlias = tuple[
     list[float] | NDArray[np.float64],
     dict[str, object],
 ]
+
+NodeFieldValue: TypeAlias = (
+    str | int | float | bool | list[float] | NDArray[np.float64] | None
+)
 
 
 class TreeBuilder:
@@ -658,54 +662,26 @@ class TreeBuilder:
 
         return progress, async_progress
 
-    @overload
-    async def _add_document_impl(
+    async def _append_into_empty_document(
         self,
         text: str,
-        show_progress: bool = True,
-        reporter: None = None,
-    ) -> str: ...
+        show_progress: bool,
+        reporter: TelemetryCollector | None,
+    ) -> AppendStats:
+        """Bootstrap a new document using the append machinery."""
 
-    @overload
-    async def _add_document_impl(
-        self,
-        text: str,
-        show_progress: bool = True,
-        reporter: TelemetryCollector = ...,  # jscpd:ignore-start
-    ) -> tuple[str, TelemetryDataDict]: ...  # jscpd:ignore-end
-
-    async def _add_document_impl(
-        self,
-        text: str,
-        show_progress: bool = True,
-        reporter: TelemetryCollector | None = None,
-    ) -> str | tuple[str, TelemetryDataDict]:
-        """Add a document to the tree using dataflow parallelism.
-
-        Returns:
-            If reporter is None: document_id
-            If reporter is provided: (document_id, metrics)
-        """
-        # Step 1: Validate models and get document ID from DocumentStore
         self._validate_model_names()
         document_id = self.document_store.document_id
         if not document_id:
             raise ValueError("DocumentStore must have a document_id set")
 
-        # Step 2: Create and validate chunks
         chunks = self._create_and_validate_chunks(text, show_progress)
-
-        # Step 3: Setup progress tracking
         progress, async_progress = self._setup_progress_tracking(
             len(chunks), show_progress
         )
-
-        # Track overall start time
         overall_start_time = time.time()
 
         try:
-            # Step 4: Build complete tree using dataflow
-            # This creates all nodes (leaves + internal) and generates all embeddings
             patch = build_full_document_patch(
                 chunks=chunks,
                 document_id=document_id,
@@ -715,125 +691,100 @@ class TreeBuilder:
                 patch=patch,
                 llm_service=self.llm_service,
                 target_tokens=self.config.target_chunk_tokens,
-                max_summary_concurrency=30,  # Use default max_concurrent value
-                max_embedding_concurrency=10,  # Reasonable default
+                max_summary_concurrency=30,
+                max_embedding_concurrency=10,
                 embedding_batch_size=self.config.embedding_batch_size,
                 processing_strategy=ProcessingStrategy(self.config.processing_strategy),
                 reporter=reporter,
                 progress=async_progress,
             )
 
-            # Store all nodes using the document store
             doc_store = self.document_store
-
-            # Group nodes by height and insert level by level to respect foreign key constraints
-            # Each batch insert is a single SQL statement, and parents must exist before children
             from itertools import groupby
 
             sorted_nodes = sorted(tree_nodes, key=lambda n: n.height)
             for height, nodes_at_height in groupby(
                 sorted_nodes, key=lambda n: n.height
             ):
-                nodes_list = list(nodes_at_height)  # Consume the iterator
-                logger.debug(f"Inserting {len(nodes_list)} nodes at height {height}")
-                # Prepare node data for this height level
-                nodes_data: list[
-                    dict[
-                        str,
-                        str
-                        | int
-                        | float
-                        | bool
-                        | list[float]
-                        | NDArray[np.float64]
-                        | None,
-                    ]
-                ] = []
-                for node in nodes_list:
-                    node_data: dict[
-                        str,
-                        str
-                        | int
-                        | float
-                        | bool
-                        | list[float]
-                        | NDArray[np.float64]
-                        | None,
-                    ] = {
-                        "node_id": node.id,
-                        "text": node.text,
-                        "document_id": node.document_id,
-                        "span_start": node.span_start,
-                        "span_end": node.span_end,
-                        "parent_id": None,  # All nodes inserted with NULL parent initially
-                        "left_child_id": node.left_child_id,
-                        "right_child_id": node.right_child_id,
-                        "preceding_neighbor_id": node.preceding_neighbor_id,
-                        "following_neighbor_id": node.following_neighbor_id,
-                        # Embeddings are not stored in SQL; kept separate for VectorIndex
-                        "token_count": node.token_count,
-                        "height": node.height,
-                    }
-                    nodes_data.append(node_data)
+                nodes_batch = list(nodes_at_height)
+                if not nodes_batch:
+                    continue
+                logger.debug(
+                    "Inserting %d nodes at height %d", len(nodes_batch), height
+                )
+                payload: list[dict[str, NodeFieldValue]] = []
+                for node in nodes_batch:
+                    payload.append(
+                        {
+                            "node_id": node.id,
+                            "text": node.text,
+                            "document_id": node.document_id,
+                            "span_start": node.span_start,
+                            "span_end": node.span_end,
+                            "parent_id": None,
+                            "left_child_id": node.left_child_id,
+                            "right_child_id": node.right_child_id,
+                            "preceding_neighbor_id": node.preceding_neighbor_id,
+                            "following_neighbor_id": node.following_neighbor_id,
+                            "token_count": node.token_count,
+                            "height": node.height,
+                        }
+                    )
+                doc_store.nodes.add_batch(payload)
 
-                # Insert all nodes at this height level
-                doc_store.nodes.add_batch(nodes_data)
-
-            # Now update ALL parent references after all nodes exist
-            parent_updates = []
-            for node in tree_nodes:
-                if (
-                    node.parent_id
-                ):  # Update parent reference for any node that has a parent
-                    parent_updates.append((node.id, node.parent_id))
+            parent_updates = [
+                (node.id, node.parent_id)
+                for node in tree_nodes
+                if node.parent_id is not None
+            ]
             if parent_updates:
                 doc_store.nodes.update_parent_references_batch(parent_updates)
 
-            # Step 6: Find root node ID
-            root_node = max(tree_nodes, key=lambda n: n.height)
-            root_id = root_node.id
-
-            # Progress is already tracked within dataflow, no need for final update
-
-            # Final completion logging with total elapsed time
-            if root_id:
+            if tree_nodes and not show_progress:
                 total_elapsed = time.time() - overall_start_time
                 mins, secs = divmod(int(total_elapsed), 60)
-                if not show_progress:
-                    logger.info(
-                        f"Document indexed successfully: {document_id} [{mins}m {secs}s total elapsed]"
+                logger.info(
+                    "Document indexed successfully: %s [%dm %ds total elapsed]",
+                    document_id,
+                    mins,
+                    secs,
+                )
+
+            upsert_items: list[VectorPayload] = []
+            for node in tree_nodes:
+                embedding = getattr(node, "embedding", None)
+                if embedding is None:
+                    continue
+                upsert_items.append(
+                    (
+                        node.id,
+                        [float(x) for x in embedding],
+                        {
+                            "span_start": int(node.span_start),
+                            "span_end": int(node.span_end),
+                            "parent_id": node.parent_id or "",
+                            "document_id": node.document_id or "",
+                            "is_leaf": 1 if int(getattr(node, "height", 0)) == 0 else 0,
+                        },
                     )
-
-            # Two-phase apply for backends with external vector index (e.g., SQLite + PythonVectorIndex):
-            # After all SQL writes are complete and parent references set, upsert vectors.
-            # Upsert vectors into the configured VectorIndex (required dependency)
-            upsert_items: list[
-                tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
-            ] = []
-            from typing import cast as _cast
-
-            for n in tree_nodes:
-                meta = {
-                    "span_start": int(n.span_start),
-                    "span_end": int(n.span_end),
-                    "parent_id": n.parent_id or "",
-                    "document_id": n.document_id or "",
-                    "is_leaf": 1 if int(getattr(n, "height", 0)) == 0 else 0,
-                }
-                emb = getattr(n, "embedding", None)
-                if emb is not None:
-                    upsert_items.append((n.id, _cast(list[float], emb), meta))
+                )
             if upsert_items:
                 self.vector_index.upsert(upsert_items)
 
-            # Finalize telemetry if collector was used
-            if reporter:
-                telemetry: TelemetryDataDict = reporter.finalize()
-                return document_id, telemetry
+            leaf_count = len(doc_store.nodes.get_leaves())
+            total_nodes = doc_store.nodes.count()
+            resummarized_nodes = max(total_nodes - leaf_count, 0)
+            telemetry_payload = reporter.finalize() if reporter else None
 
-            return document_id
+            return AppendStats(
+                document_id=document_id,
+                mutated_nodes=total_nodes,
+                resummarized_nodes=resummarized_nodes,
+                new_leaves=leaf_count,
+                total_leaves=leaf_count,
+                telemetry=telemetry_payload,
+            )
         finally:
-            # Always close progress if it exists
             if progress:
                 progress.close()
 
@@ -842,29 +793,18 @@ class TreeBuilder:
         text: str,
         show_progress: bool = True,
     ) -> str:
-        """Sync wrapper for add_document."""
-        return asyncio.run(self.add_document_async(text, show_progress))
+        """Index text into an empty document synchronously."""
+
+        stats = asyncio.run(self.append_text_async(text, show_progress))
+        return stats.document_id
 
     def add_document_with_telemetry(
         self,
         text: str,
         show_progress: bool = False,
     ) -> tuple[str, TelemetryDataDict]:
-        """Add document and return telemetry data. Used for benchmarking.
+        """Index text and return telemetry payload for benchmarking."""
 
-        This is a convenience method that creates a TelemetryCollector internally
-        and returns the collected telemetry data. For production use, add_document() is preferred
-        as it doesn't have the overhead of telemetry collection.
-
-        The dual-method pattern ensures:
-        - Normal indexing (add_document) has zero telemetry overhead
-        - Benchmarking gets detailed telemetry without modifying core logic
-        - Internal implementation (_add_document_impl) remains flexible
-
-        Returns:
-            Tuple of (document_id, telemetry_dict)
-        """
-        # Create collector internally with config for pricing
         source_tokens = tokenizer.count_tokens(text)
         collector = TelemetryCollector(
             self.document_store.document_id or "benchmark",
@@ -872,24 +812,24 @@ class TreeBuilder:
             self.config,
             document_path=None,
         )
-
-        # Run indexing with collector - will return (doc_id, telemetry)
-        result = asyncio.run(self._add_document_impl(text, show_progress, collector))
-
-        # Extract tuple returned when collector is provided
-        # Type checker knows result is a tuple because we passed a collector
-        doc_id, telemetry = result
-        return doc_id, telemetry
+        stats = asyncio.run(
+            self.append_text_async(
+                text, show_progress=show_progress, reporter=collector
+            )
+        )
+        if stats.telemetry is None:
+            raise RuntimeError("Telemetry collection failed")
+        return stats.document_id, stats.telemetry
 
     async def add_document_async(
         self,
         text: str,
         show_progress: bool = True,
     ) -> str:
-        """Async version of add_document - called by sync wrapper."""
-        result = await self._add_document_impl(text, show_progress)
-        # Type checker knows result is a string when no reporter is provided
-        return result
+        """Async helper mirroring :meth:`add_document`."""
+
+        stats = await self.append_text_async(text, show_progress=show_progress)
+        return stats.document_id
 
     async def append_text_async(
         self,
@@ -914,33 +854,10 @@ class TreeBuilder:
 
         right_leaf = nodes_repo.get_rightmost_leaf_for_document(document_id)
         if right_leaf is None:
-            result = await self._add_document_impl(
+            return await self._append_into_empty_document(
                 new_text,
                 show_progress=show_progress,
                 reporter=reporter,
-            )
-
-            if reporter:
-                document_id, initial_telemetry = cast(
-                    tuple[str, TelemetryDataDict], result
-                )
-            else:
-                document_id = cast(str, result)
-                initial_telemetry = None
-
-            leaves_after = self.document_store.nodes.get_leaves()
-            total_leaves = len(leaves_after)
-            total_nodes = self.document_store.nodes.count()
-            mutated_nodes = int(total_nodes)
-            resummarized_nodes = max(mutated_nodes - total_leaves, 0)
-
-            return AppendStats(
-                document_id=document_id,
-                mutated_nodes=mutated_nodes,
-                resummarized_nodes=resummarized_nodes,
-                new_leaves=total_leaves,
-                total_leaves=total_leaves,
-                telemetry=initial_telemetry,
             )
 
         combined_text = (right_leaf.text or "") + new_text

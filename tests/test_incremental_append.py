@@ -1,7 +1,7 @@
 import asyncio
 import os
 from collections.abc import Callable
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -243,6 +243,52 @@ class TestIncrementalAppend:
         full_doc = _reconstruct_document(full_store)
         incremental_doc = _reconstruct_document(incremental_store)
         assert incremental_doc == full_doc == full_text
+
+    def test_append_handles_empty_document_without_fallback(
+        self,
+        base_config: BackwardCompatibilityConfig,
+        storage_backend: StorageBackend,
+        mock_openai_async_client: MagicMock,
+    ) -> None:
+        """Ensure append works when no existing nodes without using legacy fallback."""
+
+        config = base_config.index_config.replace(
+            target_chunk_tokens=32,
+            preceding_context_tokens=0,
+            embedding_batch_size=4,
+        )
+        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
+        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+
+        builder, _ = _make_tree_builder(
+            "doc-empty-append",
+            storage_backend,
+            config,
+            vector_backend,
+            database_url,
+            mock_openai_async_client,
+        )
+
+        async def run_append() -> None:
+            with patch.object(
+                builder,
+                "_add_document_impl",
+                new=AsyncMock(side_effect=AssertionError("fallback should not run")),
+                create=True,
+            ):
+                stats = await builder.append_text_async(
+                    "Initial content for an empty document.",
+                    show_progress=False,
+                )
+
+            assert stats.document_id == builder.document_store.document_id
+            assert stats.total_leaves > 0
+            assert stats.new_leaves == stats.total_leaves
+            # Mutated nodes should include leaves plus internal summaries
+            assert stats.mutated_nodes >= stats.total_leaves
+            assert builder.document_store.nodes.count() == stats.mutated_nodes
+
+        asyncio.run(run_append())
 
     @pytest.mark.slow_threshold(60.0)
     def test_append_height_matches_full_build(
