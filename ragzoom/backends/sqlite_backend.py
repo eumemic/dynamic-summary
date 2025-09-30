@@ -7,6 +7,8 @@ without any server dependency.
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 import threading
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -63,6 +65,9 @@ class SQLiteStorageBackend(StorageBackend):
         self.cache: CacheManager[TreeNode] = CacheManager(1000)
         # Per-document in-process locks
         self._locks: dict[str | None, threading.Lock] = {}
+        self._lock_base_dir: Path | None = None
+        if url.startswith("sqlite:") and ":memory:" in url:
+            self._lock_base_dir = Path(tempfile.mkdtemp(prefix="ragzoom-lock-"))
 
         # No embedded VectorIndex; use independent VectorIndex via factory where needed
 
@@ -97,7 +102,9 @@ class SQLiteStorageBackend(StorageBackend):
     def lock_document(self, document_id: str | None) -> AbstractContextManager[None]:
         # Combine cross-process file lock with in-process thread lock
         url = str(self.db.url)
-        if url.startswith("sqlite:") and ":memory:" not in url:
+        if self._lock_base_dir is not None:
+            base_dir = self._lock_base_dir
+        elif url.startswith("sqlite:") and ":memory:" not in url:
             path_part = url.split("sqlite:///")[-1]
             base_dir = Path(path_part).parent
         else:
@@ -163,6 +170,8 @@ class SQLiteStorageBackend(StorageBackend):
 
     def close(self) -> None:
         self.db.close()
+        if self._lock_base_dir is not None:
+            shutil.rmtree(self._lock_base_dir, ignore_errors=True)
 
 
 # (search adapter removed; VectorIndex is used directly where needed)

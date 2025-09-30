@@ -403,7 +403,7 @@ Health check endpoint.
 ```python
 from ragzoom import RagZoom
 
-# Initialize
+# Initialize (or pass runtime=existing_runtime to reuse the in-process pipeline)
 rz = RagZoom()
 
 # Index a document

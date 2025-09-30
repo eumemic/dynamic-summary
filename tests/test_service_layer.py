@@ -102,6 +102,40 @@ class TestDocumentService:
         mock_store.clear_document.assert_called_once_with("test-doc")
 
 
+class _StubSession:
+    def __init__(self, result: IndexingResult) -> None:
+        self._result = result
+        self.calls: list[dict[str, object]] = []
+
+    async def append_text(
+        self,
+        text: str,
+        *,
+        replace_existing: bool,
+        collect_telemetry: bool,
+    ) -> IndexingResult:
+        self.calls.append(
+            {
+                "text": text,
+                "replace_existing": replace_existing,
+                "collect_telemetry": collect_telemetry,
+            }
+        )
+        return self._result
+
+
+class _StubRuntime:
+    def __init__(self, session: _StubSession) -> None:
+        self._session = session
+        self.requests: list[tuple[str, str | None]] = []
+
+    def get_session(
+        self, document_id: str, *, file_path: str | None = None
+    ) -> _StubSession:
+        self.requests.append((document_id, file_path))
+        return self._session
+
+
 class TestIndexingService:
     """Tests for the gRPC-backed IndexingService."""
 
@@ -189,6 +223,85 @@ class TestIndexingService:
             collect_telemetry=True,
             replace_existing=False,
         )
+
+    def test_index_document_uses_runtime_when_available(self) -> None:
+        store = MagicMock()
+        runtime_result = IndexingResult(
+            document_id="doc-1",
+            chunks_created=2,
+            tree_depth=1,
+            mutated_nodes=2,
+        )
+        session = _StubSession(runtime_result)
+        runtime = _StubRuntime(session)
+
+        service = IndexingService(
+            store,
+            IndexConfig.load(),
+            OperationalConfig(openai_api_key=SecretStr("test-key")),
+            index_runtime=runtime,
+        )
+        assert service._index_runtime is runtime  # type: ignore[attr-defined]
+        assert service._client_factory is None  # type: ignore[attr-defined]
+
+        result = service.index_document("content", document_id="doc-1")
+
+        assert result == runtime_result
+        assert runtime.requests == [("doc-1", None)]
+        assert session.calls[0]["replace_existing"] is True
+
+    def test_append_to_document_uses_runtime_when_available(self) -> None:
+        store = MagicMock()
+        runtime_result = IndexingResult(
+            document_id="doc-1",
+            chunks_created=3,
+            tree_depth=2,
+        )
+        session = _StubSession(runtime_result)
+        runtime = _StubRuntime(session)
+
+        service = IndexingService(
+            store,
+            IndexConfig.load(),
+            OperationalConfig(openai_api_key=SecretStr("test-key")),
+            index_runtime=runtime,
+        )
+        assert service._client_factory is None  # type: ignore[attr-defined]
+
+        with patch.object(
+            service, "_append_via_grpc", wraps=service._append_via_grpc
+        ) as grpc_stub:
+            result = service.append_to_document("doc-1", "more text")
+
+        assert result == runtime_result
+        assert not grpc_stub.called
+        assert session.calls[0]["replace_existing"] is False
+        assert runtime.requests == [("doc-1", None)]
+
+    @pytest.mark.asyncio
+    async def test_index_document_async_uses_runtime(self) -> None:
+        store = MagicMock()
+        runtime_result = IndexingResult(
+            document_id="doc-async",
+            chunks_created=5,
+            tree_depth=3,
+        )
+        session = _StubSession(runtime_result)
+        runtime = _StubRuntime(session)
+
+        service = IndexingService(
+            store,
+            IndexConfig.load(),
+            OperationalConfig(openai_api_key=SecretStr("test-key")),
+            index_runtime=runtime,
+        )
+        assert service._client_factory is None  # type: ignore[attr-defined]
+
+        result = await service.index_document_async("body", document_id="doc-async")
+
+        assert result == runtime_result
+        assert runtime.requests == [("doc-async", None)]
+        assert session.calls[0]["replace_existing"] is True
 
     def test_append_to_document_async(self) -> None:
         service, client_mock = self._make_service()

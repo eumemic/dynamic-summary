@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.constants import DEFAULT_GRPC_ADDRESS
@@ -17,6 +17,25 @@ from ragzoom.telemetry_types import TelemetryDataDict
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ragzoom.client.grpc_client import GrpcRagzoomClient
+
+T = TypeVar("T")
+
+
+class _IndexSession(Protocol):
+    async def append_text(
+        self,
+        text: str,
+        *,
+        replace_existing: bool,
+        collect_telemetry: bool,
+    ) -> IndexingResult: ...
+
+
+class _Runtime(Protocol):
+    def get_session(
+        self, document_id: str, *, file_path: str | None = None
+    ) -> _IndexSession: ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +65,29 @@ class IndexingService:
         *,
         grpc_address: str | None = None,
         client_factory: Callable[[str], GrpcRagzoomClient] | None = None,
+        index_runtime: _Runtime | None = None,
     ):
         self.store = store
         self.index_config = index_config
         self.operational_config = operational_config
-        self._grpc_address = self._resolve_address(grpc_address)
-        self._client_factory = client_factory or self._default_client_factory
+        if index_runtime is not None and (
+            grpc_address is not None or client_factory is not None
+        ):
+            raise ValueError(
+                "IndexingService cannot mix runtime and gRPC client configuration"
+            )
+
+        self._index_runtime: _Runtime | None = index_runtime
+        self._client_factory: Callable[[str], GrpcRagzoomClient] | None
+        self._grpc_address: str | None
+
+        if index_runtime is None:
+            resolved_address = self._resolve_address(grpc_address)
+            self._grpc_address = resolved_address
+            self._client_factory = client_factory or self._default_client_factory
+        else:
+            self._grpc_address = None
+            self._client_factory = None
 
     def _resolve_address(self, explicit: str | None) -> str:
         if explicit:
@@ -74,6 +110,8 @@ class IndexingService:
         collect_telemetry: bool,
         replace_existing: bool,
     ) -> IndexingResult:
+        if self._client_factory is None or self._grpc_address is None:
+            raise RuntimeError("IndexingService is not configured for gRPC access")
         if not text:
             raise ValueError("text must be non-empty")
 
@@ -83,6 +121,57 @@ class IndexingService:
                 content=text.encode("utf-8"),
                 collect_telemetry=collect_telemetry,
                 replace_existing=replace_existing,
+            )
+        return result
+
+    def _append_via_runtime(
+        self,
+        *,
+        document_id: str,
+        text: str,
+        collect_telemetry: bool,
+        replace_existing: bool,
+        file_path: str | None = None,
+    ) -> IndexingResult:
+        runtime = self._index_runtime
+        if runtime is None:
+            raise RuntimeError("IndexingService is not configured with a local runtime")
+        if not text:
+            raise ValueError("text must be non-empty")
+        session = runtime.get_session(document_id, file_path=file_path)
+        return self._await_runtime(
+            session.append_text(
+                text,
+                replace_existing=replace_existing,
+                collect_telemetry=collect_telemetry,
+            )
+        )
+
+    def _await_runtime(self, awaitable: Coroutine[object, object, T]) -> T:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(awaitable)
+        if loop.is_running():
+            raise RuntimeError(
+                "Runtime-backed IndexingService methods must use the async API when an event loop is running"
+            )
+        return loop.run_until_complete(awaitable)
+
+    def _index_via_grpc(
+        self,
+        *,
+        document_id: str,
+        text: str,
+        collect_telemetry: bool,
+    ) -> IndexingResult:
+        if self._client_factory is None or self._grpc_address is None:
+            raise RuntimeError("IndexingService is not configured for gRPC access")
+        with self._client_factory(self._grpc_address) as client:
+            result = client.index_document(
+                document_id=document_id,
+                content=text.encode("utf-8"),
+                collect_telemetry=collect_telemetry,
             )
         return result
 
@@ -106,13 +195,20 @@ class IndexingService:
         if not resolved_id:
             raise ValueError("document_id or file_path must be provided")
 
-        with self._client_factory(self._grpc_address) as client:
-            result = client.index_document(
+        if self._index_runtime is not None:
+            return self._append_via_runtime(
                 document_id=resolved_id,
-                content=text.encode("utf-8"),
+                text=text,
                 collect_telemetry=collect_telemetry,
+                replace_existing=True,
+                file_path=file_path,
             )
-        return result
+
+        return self._index_via_grpc(
+            document_id=resolved_id,
+            text=text,
+            collect_telemetry=collect_telemetry,
+        )
 
     # jscpd:ignore-start - Legitimate sync wrapper pattern
     def index_from_file(
@@ -174,6 +270,19 @@ class IndexingService:
         Returns:
             IndexingResult with document stats and optional telemetry
         """
+        if self._index_runtime is not None:
+            resolved_id = document_id or ""
+            if not resolved_id and file_path:
+                resolved_id = Path(file_path).name
+            if not resolved_id:
+                raise ValueError("document_id or file_path must be provided")
+            session = self._index_runtime.get_session(resolved_id, file_path=file_path)
+            return await session.append_text(
+                text,
+                replace_existing=True,
+                collect_telemetry=collect_telemetry,
+            )
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
@@ -201,6 +310,14 @@ class IndexingService:
         # Compatibility shim – progress display is handled client-side for gRPC workflows.
         _ = show_progress
 
+        if self._index_runtime is not None:
+            return self._append_via_runtime(
+                document_id=document_id,
+                text=new_text,
+                collect_telemetry=collect_telemetry,
+                replace_existing=False,
+            )
+
         return self._append_via_grpc(
             document_id=document_id,
             text=new_text,
@@ -216,6 +333,14 @@ class IndexingService:
         collect_telemetry: bool = False,
     ) -> IndexingResult:
         """Async wrapper for append_to_document."""
+
+        if self._index_runtime is not None:
+            session = self._index_runtime.get_session(document_id)
+            return await session.append_text(
+                new_text,
+                replace_existing=False,
+                collect_telemetry=collect_telemetry,
+            )
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
