@@ -704,6 +704,92 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         )
         return cast("TelemetryResponseProto", response)
 
+    async def ClearDocument(  # noqa: N802
+        self,
+        request: object,
+        context: ServicerContextProto,
+    ) -> object:
+        clear_all = bool(getattr(request, "clear_all", False))
+        raw_ids = list(getattr(request, "document_ids", []))
+
+        if clear_all and raw_ids:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="Specify either `clear_all` or explicit `document_ids`, not both.",
+            )
+
+        if not clear_all and not raw_ids:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="ClearDocument requires `document_ids` when `clear_all` is false.",
+            )
+
+        if clear_all:
+            documents = self._state.store.list_documents()
+            doc_ids = [getattr(doc, "id", "") for doc in documents]
+        else:
+            doc_ids = raw_ids
+
+        normalized_ids = [doc_id for doc_id in doc_ids if doc_id]
+        unique_ids = sorted(set(normalized_ids))
+
+        results: list[object] = []
+        for document_id in unique_ids:
+            deleted_nodes, existed = await self._clear_document(document_id)
+            result_message = getattr(pb2, "ClearDocumentResult")(
+                document_id=document_id,
+                deleted_nodes=deleted_nodes,
+                document_existed=existed,
+            )
+            results.append(result_message)
+
+        response_type = getattr(pb2, "ClearDocumentResponse")
+        return response_type(results=results)
+
+    async def _clear_document(self, document_id: str) -> tuple[int, bool]:
+        await self._state.worker_coordinator.cancel_document(document_id)
+
+        lock_fn = getattr(self._state.store, "lock_document", None)
+        candidate = lock_fn(document_id) if callable(lock_fn) else None
+        if (
+            candidate
+            and hasattr(candidate, "__enter__")
+            and hasattr(candidate, "__exit__")
+        ):
+            lock_cm = cast(AbstractContextManager[object], candidate)
+        else:
+            lock_cm = cast(AbstractContextManager[object], nullcontext())
+
+        with lock_cm:
+
+            doc_record = self._state.store.get_document_by_id(document_id)
+            if doc_record is None:
+                return 0, False
+
+            embedding_model = (
+                getattr(doc_record, "embedding_model", None)
+                or self._state.index_config.embedding_model
+            )
+
+            try:
+                vector_index = create_vector_index(
+                    self._state.operational_config.vector_backend,
+                    self._state.operational_config.database_url,
+                    embedding_model,
+                )
+                vector_index.delete(filter={"document_id": document_id})
+            except Exception:  # pragma: no cover - defensive logging
+                logger.exception(
+                    "Failed to clear vectors for document %s during ClearDocument",
+                    document_id,
+                )
+
+            deleted_nodes = self._state.store.clear_document(document_id)
+
+        return deleted_nodes, True
+
     def _format_status(self, status: WorkerStatus) -> str:
         parts = [
             f"queue={status.queue_depth}",

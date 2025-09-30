@@ -141,6 +141,21 @@ message GetTelemetryResponse {
   string error = 3;
 }
 
+message ClearDocumentRequest {
+  repeated string document_ids = 1;
+  bool clear_all = 2;
+}
+
+message ClearDocumentResult {
+  string document_id = 1;
+  int32 deleted_nodes = 2;
+  bool document_existed = 3;
+}
+
+message ClearDocumentResponse {
+  repeated ClearDocumentResult results = 1;
+}
+
 service IndexerService {
   rpc IndexDocument(IndexDocumentRequest) returns (IndexDocumentResponse);
   rpc AppendText(AppendTextRequest) returns (AppendTextResponse);
@@ -155,4 +170,5 @@ service WorkerService {
   rpc RunWorkers(RunWorkersRequest) returns (stream RunWorkersResponse);
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
   rpc GetTelemetry(GetTelemetryRequest) returns (GetTelemetryResponse);
+  rpc ClearDocument(ClearDocumentRequest) returns (ClearDocumentResponse);
 }

@@ -15,6 +15,7 @@ from click.testing import CliRunner
 
 from ragzoom.cli import cli
 from ragzoom.client.grpc_client import (
+    ClearedDocumentResult,
     DocumentStatusView,
     ExecuteQueryOutput,
     NodeSummary,
@@ -145,6 +146,18 @@ def cli_mocks() -> Iterator[CliMocks]:
                 queue_depth=0,
                 inflight=0,
                 documents={},
+            )
+        ]
+        grpc_client.clear_document.return_value = ClearedDocumentResult(
+            document_id="doc-123",
+            deleted_nodes=10,
+            document_existed=True,
+        )
+        grpc_client.clear_all_documents.return_value = [
+            ClearedDocumentResult(
+                document_id="doc-123",
+                deleted_nodes=10,
+                document_existed=True,
             )
         ]
         mock_grpc_client_cls.return_value = grpc_client
@@ -301,17 +314,13 @@ def test_clear_specific_document(
         ["clear", "--document-id", "doc-123", "--confirm"],
     )
     assert result.exit_code == 0
-    cli_mocks["document_service"].clear_document.assert_called_once_with("doc-123")
-    cli_mocks["vector_index"].delete.assert_called_with(
-        filter={"document_id": "doc-123"}
-    )
+    cli_mocks["grpc_client"].clear_document.assert_called_once_with("doc-123")
 
 
 def test_clear_all_data(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:
     result = runner.invoke(cli, ["clear", "--confirm"])
     assert result.exit_code == 0
-    cli_mocks["document_service"].clear_all_documents.assert_called_once()
-    cli_mocks["vector_index"].delete.assert_called()
+    cli_mocks["grpc_client"].clear_all_documents.assert_called_once()
 
 
 def test_serve_command(runner: CliRunner, api_key: None) -> None:

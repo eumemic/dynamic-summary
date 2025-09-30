@@ -876,83 +876,36 @@ def serve(host: str, port: int, reload: bool) -> None:
 @click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
 def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
-    """Clear data from the database.
+    """Clear data from the database via the gRPC server."""
 
-    Without --document-id, clears all data.
-    With --document-id, clears only the specified document.
-    """
     try:
-        # Create services for this command
-        operational_config = ctx.obj["operational_config"]
-        index_config = ctx.obj["index_config"]
-        store = create_store_with_docker(
-            operational_config, embedding_model=index_config.embedding_model
-        )
-        document_service = DocumentService(store)
+        resolved_address = _resolve_server_address(ctx.obj.get("server_address"))
 
-        if document_id:
-            # Clear specific document
-            if not confirm:
-                click.confirm(
-                    f"⚠️  This will delete document '{document_id}' and all its data. Are you sure?",
-                    abort=True,
-                )
-
-            deleted_count = document_service.clear_document(document_id)
-            # Clear vectors for this document (fail-soft)
-            try:
-                from ragzoom.vector_factory import create_vector_index
-
-                # Use the document's embedding model if available
-                doc_row = store.get_document_by_id(document_id)
-                emb_model = (
-                    doc_row.embedding_model
-                    if doc_row and doc_row.embedding_model
-                    else index_config.embedding_model
-                )
-                vindex = create_vector_index(
-                    operational_config.vector_backend,
-                    operational_config.database_url,
-                    emb_model,
-                )
-                vindex.delete(filter={"document_id": document_id})
-            except Exception:
-                pass
-            click.echo(
-                f"✅ Cleared document '{document_id}' ({deleted_count} nodes deleted)"
-            )
-        else:
-            # Clear all data
-            if not confirm:
-                click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
-
-            deleted_count = document_service.clear_all_documents()
-            # Also clear all vectors for all documents
-            try:
-                from ragzoom.vector_factory import create_vector_index
-
-                # Attempt to clear vectors by iterating all documents first
-                docs = store.list_documents()
-                if docs:
-                    # Use embedding model from first doc, or default
-                    emb_model = (
-                        docs[0].embedding_model
-                        if hasattr(docs[0], "embedding_model")
-                        else index_config.embedding_model
+        with GrpcRagzoomClient(resolved_address) as client:
+            if document_id:
+                if not confirm:
+                    click.confirm(
+                        f"⚠️  This will delete document '{document_id}' and all its data. Are you sure?",
+                        abort=True,
                     )
-                    vindex = create_vector_index(
-                        operational_config.vector_backend,
-                        operational_config.database_url,
-                        emb_model,
+
+                result = client.clear_document(document_id)
+                if result.document_existed:
+                    click.echo(
+                        f"✅ Cleared document '{document_id}' ({result.deleted_nodes} nodes deleted)"
                     )
-                    for doc in docs:
-                        try:
-                            vindex.delete(filter={"document_id": doc.id})
-                        except Exception:
-                            continue
-            except Exception:
-                pass
-            click.echo(f"✅ Cleared {deleted_count} nodes from the database")
+                else:
+                    click.echo(f"⚠️ Document '{document_id}' does not exist")
+            else:
+                if not confirm:
+                    click.confirm(
+                        "⚠️  This will delete ALL data. Are you sure?", abort=True
+                    )
+
+                results = client.clear_all_documents()
+                existing = [entry for entry in results if entry.document_existed]
+                deleted_count = sum(entry.deleted_nodes for entry in existing)
+                click.echo(f"✅ Cleared {deleted_count} nodes from the database")
 
     except click.Abort:
         click.echo("❌ Clear operation cancelled")

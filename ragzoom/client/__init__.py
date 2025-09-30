@@ -1,6 +1,7 @@
 """Client helpers for interacting with the RagZoom gRPC server."""
 
 from .grpc_client import (
+    ClearedDocumentResult,
     DocumentProgressSnapshot,
     DocumentStatusView,
     ExecuteQueryOutput,
@@ -11,6 +12,7 @@ from .grpc_client import (
 )
 
 __all__ = [
+    "ClearedDocumentResult",
     "ExecuteQueryOutput",
     "DocumentStatusView",
     "DocumentProgressSnapshot",

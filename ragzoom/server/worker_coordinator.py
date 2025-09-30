@@ -162,6 +162,7 @@ class WorkerCoordinator:
         self._pending_counts: defaultdict[str, int] = defaultdict(int)
         self._inflight_counts: defaultdict[str, int] = defaultdict(int)
         self._doc_locks: dict[str, asyncio.Lock] = {}
+        self._cancelled_documents: set[str] = set()
 
         self._coord_lock = asyncio.Lock()
         self._shutdown = asyncio.Event()
@@ -202,6 +203,8 @@ class WorkerCoordinator:
         deleted_node_ids: Iterable[str] | None = None,
         new_root_ids: Iterable[str] | None = None,
     ) -> None:
+        if document_id in self._cancelled_documents:
+            return
         state = self._get_or_create_document_state(document_id)
         async with self._coord_lock:
             if (
@@ -279,6 +282,9 @@ class WorkerCoordinator:
     def _candidate_key(self, candidate: ReadyParentCandidate) -> str:
         return f"{candidate.document_id}:{candidate.left_child_id}"
 
+    def _is_cancelled(self, document_id: str) -> bool:
+        return document_id in self._cancelled_documents
+
     def _doc_lock(self, document_id: str) -> asyncio.Lock:
         lock = self._doc_locks.get(document_id)
         if lock is None:
@@ -294,6 +300,8 @@ class WorkerCoordinator:
         deleted_node_ids: Iterable[str] | None,
         new_root_ids: Iterable[str] | None,
     ) -> None:
+        if self._is_cancelled(document_id):
+            return
         async with self._doc_lock(document_id):
             if deleted_node_ids:
                 await self._handle_deleted_nodes(document_id, state, deleted_node_ids)
@@ -459,6 +467,8 @@ class WorkerCoordinator:
     async def _enqueue_candidate(
         self, candidate: ReadyParentCandidate, state: DocumentState
     ) -> None:
+        if self._is_cancelled(candidate.document_id):
+            return
         key = candidate.left_child_id
         if key in state.tombstones:
             return
@@ -719,6 +729,8 @@ class WorkerCoordinator:
     async def _process_candidate(
         self, candidate: ReadyParentCandidate, state: DocumentState
     ) -> list[str]:
+        if self._is_cancelled(candidate.document_id):
+            return []
         store = self._store.for_document(candidate.document_id)
 
         async with self._coord_lock:
@@ -777,6 +789,9 @@ class WorkerCoordinator:
             right_token_count=right_tokens,
         )
 
+        if self._is_cancelled(candidate.document_id):
+            return []
+
         ready, post_summary = self._check_dependencies_still_valid(
             candidate.document_id, candidate.left_child_id, state
         )
@@ -799,6 +814,9 @@ class WorkerCoordinator:
                 model=self._index_config.embedding_model,
                 start_time=start_time,
             )
+
+        if self._is_cancelled(candidate.document_id):
+            return []
 
         ready, post_embedding = self._check_dependencies_still_valid(
             candidate.document_id, candidate.left_child_id, state
@@ -854,6 +872,8 @@ class WorkerCoordinator:
         vector_written = False
         try:
             with store.transaction() as session:
+                if self._is_cancelled(candidate.document_id):
+                    return []
                 preceding_parent_id: str | None = None
                 preceding_parent_node = None
                 if preceding_node_id_final:
@@ -991,6 +1011,48 @@ class WorkerCoordinator:
             context.register_summary_node(parent_id)
 
         return [parent_id]
+
+    async def cancel_document(self, document_id: str) -> None:
+        async with self._coord_lock:
+            self._cancelled_documents.add(document_id)
+            state = self._documents.get(document_id)
+            if state is not None:
+                state.queued.clear()
+                state.inflight.clear()
+                state.tombstones.clear()
+                state.completed = 0
+
+            queue_list = getattr(self._queue, "_queue")
+            retained: list[tuple[tuple[int, int, int, int], ReadyParentCandidate]] = []
+            removed = 0
+            for priority, candidate in queue_list:
+                if candidate.document_id == document_id:
+                    removed += 1
+                    continue
+                retained.append((priority, candidate))
+            if removed:
+                setattr(self._queue, "_queue", retained)
+                heapq.heapify(getattr(self._queue, "_queue"))
+                unfinished = getattr(self._queue, "_unfinished_tasks", 0)
+                if unfinished:
+                    setattr(
+                        self._queue,
+                        "_unfinished_tasks",
+                        max(0, unfinished - removed),
+                    )
+
+            self._pending_counts.pop(document_id, None)
+            self._idle_event.clear()
+
+        await self._finalize_run(document_id, error="Document cleared")
+        await self.wait_until_idle(document_id)
+
+        async with self._coord_lock:
+            self._pending_counts.pop(document_id, None)
+            self._inflight_counts.pop(document_id, None)
+            self._documents.pop(document_id, None)
+            self._cancelled_documents.discard(document_id)
+            self._idle_event.set()
 
 
 __all__ = [

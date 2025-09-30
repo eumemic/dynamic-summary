@@ -96,6 +96,13 @@ class WorkerRunSnapshot:
 
 
 @dataclass(slots=True)
+class ClearedDocumentResult:
+    document_id: str
+    deleted_nodes: int
+    document_existed: bool
+
+
+@dataclass(slots=True)
 class TelemetryFetchResult:
     complete: bool
     telemetry: TelemetryDataDict | None
@@ -298,6 +305,45 @@ class GrpcRagzoomClient:
             tree_depth=status.tree_depth,
             has_pending_work=status.has_pending_work,
         )
+
+    def clear_document(self, document_id: str) -> ClearedDocumentResult:
+        results = self.clear_documents(document_ids=[document_id])
+        if results:
+            return results[0]
+        return ClearedDocumentResult(
+            document_id=document_id, deleted_nodes=0, document_existed=False
+        )
+
+    def clear_all_documents(self) -> list[ClearedDocumentResult]:
+        return self.clear_documents(clear_all=True)
+
+    def clear_documents(
+        self,
+        document_ids: list[str] | None = None,
+        *,
+        clear_all: bool = False,
+    ) -> list[ClearedDocumentResult]:
+        request_type = getattr(pb2, "ClearDocumentRequest")
+        request = request_type(
+            document_ids=document_ids or [],
+            clear_all=clear_all,
+        )
+        try:
+            clear_rpc = getattr(self._workers, "ClearDocument")
+            response = clear_rpc(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        results: list[ClearedDocumentResult] = []
+        for result in getattr(response, "results", []):
+            results.append(
+                ClearedDocumentResult(
+                    document_id=getattr(result, "document_id", ""),
+                    deleted_nodes=int(getattr(result, "deleted_nodes", 0)),
+                    document_existed=bool(getattr(result, "document_existed", False)),
+                )
+            )
+        return results
 
     def get_telemetry(
         self,
