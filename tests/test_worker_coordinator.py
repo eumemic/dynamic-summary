@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import types
 from collections.abc import Generator
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -17,6 +18,7 @@ from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
+from ragzoom.server.append_executor import AppendExecutor
 from ragzoom.server.worker_coordinator import (
     DocumentState,
     ReadyParentCandidate,
@@ -764,6 +766,25 @@ async def test_worker_coordinator_prioritises_lower_height_candidates(
     doc_state.queued.discard(oldest_candidate.left_child_id)
     coordinator._queue.task_done()
     store.update_parent_reference("leaf-0", "parent-x")
+    store.nodes.add_batch(
+        [
+            {
+                "node_id": "parent-x",
+                "text": "parent-x",
+                "span_start": 0,
+                "span_end": 200,
+                "parent_id": None,
+                "left_child_id": "leaf-0",
+                "right_child_id": "leaf-1",
+                "document_id": document_id,
+                "token_count": 200,
+                "height": 1,
+                "preceding_neighbor_id": None,
+                "following_neighbor_id": None,
+                "level_index": 0,
+            }
+        ]
+    )
 
     new_leaf = _leaf_payload(
         "leaf-new",
@@ -837,7 +858,14 @@ async def test_process_new_root_unlocks_adjacent_spans(
     )
 
     state = coordinator._get_or_create_document_state(document_id)
-    await coordinator._process_new_root(document_id, "leaf-1", state)
+    doc_span_end = coordinator._document_span_end(document_id, store)
+    await coordinator._process_new_root(
+        document_id,
+        "leaf-1",
+        state,
+        store,
+        doc_span_end,
+    )
 
     jobs: list[str] = []
     while not coordinator._queue.empty():
@@ -954,3 +982,206 @@ async def test_dependency_check_detects_missing_right_child(
     )
     assert not ready_after
     assert snapshot_after.right is None
+
+
+@pytest.mark.asyncio
+async def test_possibly_enqueue_requires_preceding_neighbor(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "leaf-0",
+                span_start=0,
+                span_end=10,
+                level_index=0,
+                document_id=document_id,
+                following="leaf-1",
+            ),
+            _leaf_payload(
+                "leaf-1",
+                span_start=10,
+                span_end=20,
+                level_index=2,
+                document_id=document_id,
+                preceding=None,
+                following=None,
+            ),
+        ]
+    )
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        vector_index_factory=lambda _: StubVectorIndex(),
+        worker_count=1,
+    )
+
+    state = coordinator._get_or_create_document_state(document_id)
+    left_node = store.nodes.get("leaf-1")
+    assert left_node is not None
+    doc_span_end = coordinator._document_span_end(document_id, store)
+
+    ready, snapshot = coordinator._resolve_dependencies(
+        document_id,
+        left_node,
+        state,
+        store,
+        doc_span_end,
+    )
+
+    assert not ready
+    assert snapshot.left is left_node
+
+    await coordinator._possibly_enqueue_left_child(
+        document_id,
+        left_node,
+        state,
+        store,
+        doc_span_end,
+    )
+
+    assert state.queued == set()
+    assert coordinator._queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_possibly_enqueue_skips_root_span(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "root-span",
+                span_start=0,
+                span_end=50,
+                level_index=0,
+                document_id=document_id,
+                preceding=None,
+                following=None,
+            )
+        ]
+    )
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        vector_index_factory=lambda _: StubVectorIndex(),
+        worker_count=1,
+    )
+
+    state = coordinator._get_or_create_document_state(document_id)
+    left_node = store.nodes.get("root-span")
+    assert left_node is not None
+    doc_span_end = coordinator._document_span_end(document_id, store)
+
+    ready, snapshot = coordinator._resolve_dependencies(
+        document_id,
+        left_node,
+        state,
+        store,
+        doc_span_end,
+    )
+
+    assert not ready
+    assert snapshot.left is left_node
+    assert snapshot.preceding is None
+    assert snapshot.right is None
+
+    await coordinator._possibly_enqueue_left_child(
+        document_id,
+        left_node,
+        state,
+        store,
+        doc_span_end,
+    )
+
+    assert state.queued == set()
+    assert coordinator._queue.empty()
+
+
+class _DeterministicEmbedder:
+    _provider_max_embedding_batch_size = 100
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 4 for _ in texts]
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow_threshold(10)
+async def test_worker_coordinator_rolls_up_after_reappend(
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id = "worker-coordinator-reappend"
+    storage_backend.clear_document(document_id)
+    store = storage_backend.add_document(
+        document_id=document_id,
+        file_path=None,
+        embedding_model="text-embedding-3-small",
+        summary_model="gpt-5-mini",
+    )
+
+    operational_config = OperationalConfig(
+        openai_api_key=SecretStr("test"),
+        vector_backend="python",
+        database_url="sqlite:///:memory:",
+    )
+
+    append_executor = AppendExecutor(index_config, _DeterministicEmbedder())
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=operational_config,
+        llm_service=StubLLMService(),
+        vector_index_factory=lambda _: StubVectorIndex(),
+        worker_count=8,
+    )
+
+    source_text = Path("test_data/the_hobbit_chapter_1.txt").read_text(encoding="utf-8")
+
+    async def _append_once() -> None:
+        await append_executor.append(
+            store=store,
+            vector_index=StubVectorIndex(),
+            document_id=document_id,
+            new_text=source_text,
+            reporter=None,
+        )
+
+    async def _run_workers() -> None:
+        await coordinator.start()
+        try:
+            await coordinator.enqueue_document(document_id)
+            await asyncio.wait_for(coordinator.wait_until_idle(document_id), timeout=5)
+        finally:
+            await coordinator.shutdown()
+
+    await _append_once()
+    await _run_workers()
+    first_parentless = store.nodes.get_parentless_nodes()
+    assert len(first_parentless) == 1
+
+    await _append_once()
+    await _run_workers()
+    second_parentless = store.nodes.get_parentless_nodes()
+    assert len(second_parentless) == 1
